@@ -306,8 +306,8 @@ pub fn swift_type_server_return(shape: &'static Shape) -> String {
     }
 }
 
-/// Check if a shape uses channels (Tx or Rx).
-pub fn is_stream(shape: &'static Shape) -> bool {
+/// Check if a shape represents a channel type (Tx or Rx).
+pub fn is_channel(shape: &'static Shape) -> bool {
     is_tx(shape) || is_rx(shape)
 }
 

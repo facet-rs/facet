@@ -120,20 +120,20 @@ pub fn is_rx(shape: &Shape) -> bool {
     shape.decl_id == roam_session::Rx::<()>::SHAPE.decl_id
 }
 
-/// Check if a shape represents any streaming type (Tx or Rx).
-pub fn is_stream(shape: &Shape) -> bool {
+/// Check if a shape represents any channel type (Tx or Rx).
+pub fn is_channel(shape: &Shape) -> bool {
     is_tx(shape) || is_rx(shape)
 }
 
-/// Recursively check if a shape or any of its type parameters contains a stream.
-pub fn contains_stream(shape: &Shape) -> bool {
-    if is_stream(shape) {
+/// Recursively check if a shape or any of its type parameters contains a channel.
+pub fn contains_channels(shape: &Shape) -> bool {
+    if is_channel(shape) {
         return true;
     }
 
     // Check type parameters recursively
     for param in shape.type_params {
-        if contains_stream(param.shape) {
+        if contains_channels(param.shape) {
             return true;
         }
     }

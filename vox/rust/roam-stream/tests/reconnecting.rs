@@ -14,10 +14,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
+use facet::Facet;
 use once_cell::sync::Lazy;
 use roam_session::{
-    Caller, ChannelRegistry, Context, RpcPlan, Rx, ServiceDispatcher, dispatch_call,
-    dispatch_unknown_method,
+    Caller, ChannelRegistry, Context, MethodDescriptor, RpcPlan, Rx, ServiceDispatcher,
+    dispatch_call, dispatch_unknown_method,
 };
 use roam_stream::{
     ConnectError, Connector, HandshakeConfig, RetryPolicy, accept, connect, connect_with_policy,
@@ -32,6 +33,38 @@ use tokio::net::TcpStream;
 static STRING_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<String>);
 static STRING_RESPONSE_PLAN: Lazy<&'static RpcPlan> =
     Lazy::new(|| Box::leak(Box::new(RpcPlan::for_type::<String>())));
+
+// ============================================================================
+// Method Descriptors
+// ============================================================================
+
+static DESC_1: Lazy<&'static MethodDescriptor> = Lazy::new(|| {
+    Box::leak(Box::new(MethodDescriptor {
+        id: 1,
+        service_name: "Test",
+        method_name: "test",
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <() as Facet>::SHAPE,
+        args_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+        ok_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+        err_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+    }))
+});
+
+static DESC_999: Lazy<&'static MethodDescriptor> = Lazy::new(|| {
+    Box::leak(Box::new(MethodDescriptor {
+        id: 999,
+        service_name: "Test",
+        method_name: "test",
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <() as Facet>::SHAPE,
+        args_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+        ok_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+        err_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+    }))
+});
 
 /// Test service that echoes strings and tracks call count.
 #[derive(Clone)]
@@ -167,7 +200,7 @@ async fn test_basic_call() {
 
     // Make a call
     let payload = facet_postcard::to_vec(&"hello".to_string()).unwrap();
-    let response = client.call_raw(1, "test", payload).await.unwrap();
+    let response = client.call_raw(*DESC_1, payload).await.unwrap();
     let result: Result<String, roam_session::RoamError<()>> =
         facet_postcard::from_slice(&response).unwrap();
 
@@ -186,7 +219,7 @@ async fn test_unknown_method_not_reconnect() {
 
     // Call an unknown method
     let payload = facet_postcard::to_vec(&"test".to_string()).unwrap();
-    let response = client.call_raw(999, "test", payload).await.unwrap();
+    let response = client.call_raw(*DESC_999, payload).await.unwrap();
     let result: Result<String, roam_session::RoamError<()>> =
         facet_postcard::from_slice(&response).unwrap();
 
@@ -220,7 +253,7 @@ async fn test_retries_exhausted() {
     let client = connect_with_policy(connector, HandshakeConfig::default(), service, policy);
 
     let payload = facet_postcard::to_vec(&"test".to_string()).unwrap();
-    let result = client.call_raw(1, "test", payload).await;
+    let result = client.call_raw(*DESC_1, payload).await;
 
     // Should get RetriesExhausted error
     assert!(matches!(
@@ -252,7 +285,7 @@ async fn test_backoff_timing() {
 
     let start = Instant::now();
     let payload = facet_postcard::to_vec(&"test".to_string()).unwrap();
-    let _ = client.call_raw(1, "test", payload).await;
+    let _ = client.call_raw(*DESC_1, payload).await;
     let elapsed = start.elapsed();
 
     // Should have waited at least: 50ms (after attempt 1) + 100ms (after attempt 2)
@@ -282,7 +315,7 @@ async fn test_concurrent_callers() {
         let handle = tokio::spawn(async move {
             let msg = format!("message_{}", i);
             let payload = facet_postcard::to_vec(&msg).unwrap();
-            let response = client.call_raw(1, "test", payload).await.unwrap();
+            let response = client.call_raw(*DESC_1, payload).await.unwrap();
             let result: Result<String, roam_session::RoamError<()>> =
                 facet_postcard::from_slice(&response).unwrap();
             assert_eq!(result.unwrap(), msg);
@@ -356,7 +389,7 @@ async fn test_reconnect_after_initial_failure() {
 
     // Should eventually succeed after retries
     let payload = facet_postcard::to_vec(&"hello".to_string()).unwrap();
-    let response = client.call_raw(1, "test", payload).await.unwrap();
+    let response = client.call_raw(*DESC_1, payload).await.unwrap();
     let result: Result<String, roam_session::RoamError<()>> =
         facet_postcard::from_slice(&response).unwrap();
 

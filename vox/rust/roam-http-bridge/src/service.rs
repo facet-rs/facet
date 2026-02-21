@@ -1,13 +1,13 @@
 //! Generic bridge service implementation.
 //!
 //! This module provides `GenericBridgeService`, which wraps a roam `ConnectionHandle`
-//! and `ServiceDetail` to implement `BridgeService` using runtime transcoding.
+//! and `ServiceDescriptor` to implement `BridgeService` using runtime transcoding.
 
 use std::collections::HashMap;
 
 use facet_core::Shape;
-use roam_schema::{MethodDetail, ServiceDetail, contains_stream};
-use roam_session::ConnectionHandle;
+use roam_schema::contains_channels;
+use roam_session::{ConnectionHandle, MethodDescriptor, ServiceDescriptor};
 
 use crate::{
     BoxFuture, BridgeError, BridgeMetadata, BridgeResponse, BridgeService, ProtocolErrorKind,
@@ -21,19 +21,18 @@ use crate::{
 pub struct GenericBridgeService {
     /// The roam connection handle for making calls.
     handle: ConnectionHandle,
-    /// Service metadata (name, methods, types).
-    detail: &'static ServiceDetail,
+    /// Service descriptor (name, methods, types).
+    descriptor: &'static ServiceDescriptor,
     /// Precomputed method info for fast lookup.
     methods: HashMap<String, MethodInfo>,
 }
 
 /// Cached method information for fast lookup.
 struct MethodInfo {
-    method_id: u64,
+    descriptor: &'static MethodDescriptor,
     has_channels: bool,
-    /// The argument type shapes (for encoding requests).
-    arg_shapes: Vec<&'static Shape>,
     /// The return type shape (for decoding responses).
+    /// Unwrapped from Result<T, E> if the method is fallible.
     return_shape: &'static Shape,
     /// The error type shape (for decoding user errors), if any.
     /// For methods returning Result<T, E>, this is E's shape.
@@ -45,27 +44,21 @@ impl GenericBridgeService {
     ///
     /// # Arguments
     /// * `handle` - The roam connection handle for making RPC calls
-    /// * `detail` - Static service metadata (from generated code)
-    pub fn new(handle: ConnectionHandle, detail: &'static ServiceDetail) -> Self {
+    /// * `descriptor` - Static service descriptor (from generated code)
+    pub fn new(handle: ConnectionHandle, descriptor: &'static ServiceDescriptor) -> Self {
         let mut methods = HashMap::new();
 
-        for method in &detail.methods {
-            let method_id = roam_hash::method_id_from_detail(method);
-            let has_channels = method.args.iter().any(|a| contains_stream(a.ty))
-                || contains_stream(method.return_type);
+        for &desc in descriptor.methods {
+            let has_channels = desc.arg_shapes.iter().any(|s| contains_channels(s))
+                || contains_channels(desc.return_shape);
 
-            // Collect arg shapes for encoding requests
-            let arg_shapes: Vec<&'static Shape> = method.args.iter().map(|a| a.ty).collect();
-
-            // Extract return type and error type from the method signature
-            let (return_shape, error_shape) = extract_result_types(method);
+            let (return_shape, error_shape) = extract_result_types(desc.return_shape);
 
             methods.insert(
-                method.method_name.to_string(),
+                desc.method_name.to_string(),
                 MethodInfo {
-                    method_id,
+                    descriptor: desc,
                     has_channels,
-                    arg_shapes,
                     return_shape,
                     error_shape,
                 },
@@ -74,7 +67,7 @@ impl GenericBridgeService {
 
         Self {
             handle,
-            detail,
+            descriptor,
             methods,
         }
     }
@@ -88,9 +81,7 @@ impl GenericBridgeService {
 ///
 /// The wire protocol always wraps in Result with protocol errors,
 /// but the schema reflects the natural signature.
-fn extract_result_types(method: &MethodDetail) -> (&'static Shape, Option<&'static Shape>) {
-    let return_shape = method.return_type;
-
+fn extract_result_types(return_shape: &'static Shape) -> (&'static Shape, Option<&'static Shape>) {
     // Check if the return type is Result<T, E>
     if let facet_core::Def::Result(result_def) = return_shape.def {
         let success_shape = result_def.t();
@@ -103,8 +94,8 @@ fn extract_result_types(method: &MethodDetail) -> (&'static Shape, Option<&'stat
 }
 
 impl BridgeService for GenericBridgeService {
-    fn service_detail(&self) -> &'static ServiceDetail {
-        self.detail
+    fn service_descriptor(&self) -> &'static ServiceDescriptor {
+        self.descriptor
     }
 
     fn connection_handle(&self) -> &ConnectionHandle {
@@ -136,7 +127,8 @@ impl BridgeService for GenericBridgeService {
 
             // r[bridge.json.facet]
             // Transcode JSON array → postcard tuple using arg shapes
-            let postcard_payload = json_args_to_postcard(json_body, &method_info.arg_shapes)?;
+            let postcard_payload =
+                json_args_to_postcard(json_body, method_info.descriptor.arg_shapes)?;
 
             // Convert metadata to wire format
             let wire_metadata = metadata.to_wire_metadata();
@@ -144,12 +136,7 @@ impl BridgeService for GenericBridgeService {
             // Make the roam call
             let response_bytes = self
                 .handle
-                .call_raw_with_metadata(
-                    method_info.method_id,
-                    method_name,
-                    postcard_payload,
-                    wire_metadata,
-                )
+                .call_raw_with_metadata(method_info.descriptor, postcard_payload, wire_metadata)
                 .await
                 .map_err(|e| BridgeError::backend_unavailable(format!("Call failed: {e}")))?;
 

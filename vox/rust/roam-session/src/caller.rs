@@ -4,7 +4,8 @@ use facet::Facet;
 use facet_core::PtrUninit;
 
 use crate::{
-    CallError, ConnectionHandle, DecodeError, ResponseData, RoamError, RpcPlan, TransportError,
+    CallError, ConnectionHandle, DecodeError, MethodDescriptor, ResponseData, RoamError, RpcPlan,
+    TransportError,
 };
 
 /// A raw pointer wrapper that is `Send` and `Sync`.
@@ -58,30 +59,24 @@ macro_rules! define_caller_trait {
         #[allow(async_fn_in_trait)]
         #[allow(unsafe_code)]
         pub trait Caller: Clone + Send + Sync + 'static {
-            /// Make an RPC call with the given method ID and arguments.
+            /// Make an RPC call with the given descriptor and arguments.
             fn call<T: Facet<'static> + Send>(
                 &self,
-                method_id: u64,
-                method_name: &str,
+                descriptor: &'static MethodDescriptor,
                 args: &mut T,
-                args_plan: &RpcPlan,
             ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> $(+ $send)? {
                 self.call_with_metadata(
-                    method_id,
-                    method_name,
+                    descriptor,
                     args,
-                    args_plan,
                     roam_wire::Metadata::default(),
                 )
             }
 
-            /// Make an RPC call with the given method ID, arguments, and metadata.
+            /// Make an RPC call with the given descriptor, arguments, and metadata.
             fn call_with_metadata<T: Facet<'static> + Send>(
                 &self,
-                method_id: u64,
-                method_name: &str,
+                descriptor: &'static MethodDescriptor,
                 args: &mut T,
-                args_plan: &RpcPlan,
                 metadata: roam_wire::Metadata,
             ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> $(+ $send)?;
 
@@ -102,15 +97,13 @@ macro_rules! define_caller_trait {
             ///
             /// # Safety
             ///
-            /// - `args_ptr` must have been created from a valid, initialized pointer matching the plan's shape
+            /// - `args_ptr` must have been created from a valid, initialized pointer matching the descriptor's args_plan shape
             /// - The underlying args type must be `Send`
             #[doc(hidden)]
             fn call_with_metadata_by_plan(
                 &self,
-                method_id: u64,
-                method_name: &str,
+                descriptor: &'static MethodDescriptor,
                 args_ptr: SendPtr,
-                args_plan: &'static RpcPlan,
                 metadata: roam_wire::Metadata,
             ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> $(+ $send)?;
 
@@ -139,24 +132,14 @@ define_caller_trait!();
 impl Caller for ConnectionHandle {
     async fn call_with_metadata<T: Facet<'static> + Send>(
         &self,
-        method_id: u64,
-        method_name: &str,
+        descriptor: &'static MethodDescriptor,
         args: &mut T,
-        args_plan: &RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
         let args_ptr = args as *mut T as *mut ();
         #[allow(unsafe_code)]
         unsafe {
-            ConnectionHandle::call_with_metadata_by_plan(
-                self,
-                method_id,
-                method_name,
-                args_ptr,
-                args_plan,
-                metadata,
-            )
-            .await
+            ConnectionHandle::call_with_metadata_by_plan(self, descriptor, args_ptr, metadata).await
         }
     }
 
@@ -172,19 +155,15 @@ impl Caller for ConnectionHandle {
     #[allow(unsafe_code)]
     fn call_with_metadata_by_plan(
         &self,
-        method_id: u64,
-        method_name: &str,
+        descriptor: &'static MethodDescriptor,
         args_ptr: SendPtr,
-        args_plan: &'static RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
         unsafe {
             ConnectionHandle::call_with_metadata_by_plan(
                 self,
-                method_id,
-                method_name,
+                descriptor,
                 args_ptr.as_ptr(),
-                args_plan,
                 metadata,
             )
         }
@@ -238,16 +217,9 @@ where
     Args: Facet<'static>,
 {
     caller: C,
-    method_id: u64,
-    method_name: &'static str,
+    descriptor: &'static MethodDescriptor,
     args: Args,
     metadata: roam_wire::Metadata,
-    /// Precomputed plan for the Args type.
-    args_plan: &'static RpcPlan,
-    /// Precomputed plan for the Ok (response) type.
-    ok_plan: &'static RpcPlan,
-    /// Precomputed plan for the Err type.
-    err_plan: &'static RpcPlan,
     _phantom: PhantomData<fn() -> (Ok, Err)>,
 }
 
@@ -256,28 +228,15 @@ where
     C: Caller,
     Args: Facet<'static>,
 {
-    /// Create a new CallFuture with precomputed plans.
+    /// Create a new CallFuture with a method descriptor.
     ///
-    /// Plans should be obtained from `OnceLock` statics at the call site
-    /// (e.g., in macro-generated client methods) to ensure one plan per type.
-    pub fn new(
-        caller: C,
-        method_id: u64,
-        method_name: &'static str,
-        args: Args,
-        args_plan: &'static RpcPlan,
-        ok_plan: &'static RpcPlan,
-        err_plan: &'static RpcPlan,
-    ) -> Self {
+    /// The descriptor contains all precomputed plans and method metadata.
+    pub fn new(caller: C, descriptor: &'static MethodDescriptor, args: Args) -> Self {
         Self {
             caller,
-            method_id,
-            method_name,
+            descriptor,
             args,
             metadata: roam_wire::Metadata::default(),
-            args_plan,
-            ok_plan,
-            err_plan,
             _phantom: PhantomData,
         }
     }
@@ -310,15 +269,14 @@ macro_rules! impl_into_future {
             fn into_future(self) -> Self::IntoFuture {
                 let CallFuture {
                     caller,
-                    method_id,
-                    method_name,
+                    descriptor,
                     mut args,
                     metadata,
-                    args_plan,
-                    ok_plan,
-                    err_plan,
                     _phantom,
                 } = self;
+
+                let ok_plan = descriptor.ok_plan;
+                let err_plan = descriptor.err_plan;
 
                 Box::pin(async move {
                     // SAFETY: args is valid, initialized, and Send (enforced by trait bounds).
@@ -327,7 +285,7 @@ macro_rules! impl_into_future {
                     let args_ptr = unsafe { SendPtr::new((&raw mut args).cast::<()>()) };
 
                     let response = caller
-                        .call_with_metadata_by_plan(method_id, method_name, args_ptr, args_plan, metadata)
+                        .call_with_metadata_by_plan(descriptor, args_ptr, metadata)
                         .await
                         .map_err(CallError::from)?;
 

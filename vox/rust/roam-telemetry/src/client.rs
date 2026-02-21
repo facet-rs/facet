@@ -87,10 +87,8 @@ impl<C> TracingCaller<C> {
 impl<C: Caller> Caller for TracingCaller<C> {
     async fn call_with_metadata<T: Facet<'static> + Send>(
         &self,
-        method_id: u64,
-        method_name: &str,
+        descriptor: &'static roam_session::MethodDescriptor,
         args: &mut T,
-        args_plan: &roam_session::RpcPlan,
         mut metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
         let (trace_id, parent_span_id) = roam_session::CURRENT_EXTENSIONS
@@ -119,7 +117,7 @@ impl<C: Caller> Caller for TracingCaller<C> {
 
         let result = self
             .inner
-            .call_with_metadata(method_id, method_name, args, args_plan, metadata)
+            .call_with_metadata(descriptor, args, metadata)
             .await;
 
         let end_time_ns = SystemTime::now()
@@ -129,8 +127,8 @@ impl<C: Caller> Caller for TracingCaller<C> {
 
         let mut attributes = vec![
             KeyValue::string("rpc.system", "roam"),
-            KeyValue::string("rpc.method", method_name),
-            KeyValue::string("rpc.service", self.exporter.service_name()),
+            KeyValue::string("rpc.method", descriptor.method_name),
+            KeyValue::string("rpc.service", descriptor.service_name),
         ];
 
         let status = match &result {
@@ -149,7 +147,7 @@ impl<C: Caller> Caller for TracingCaller<C> {
             trace_id,
             span_id,
             parent_span_id,
-            name: method_name.to_string(),
+            name: descriptor.method_name.to_string(),
             kind: SpanKind::Client.as_u32(),
             start_time_unix_nano: start_time_ns.to_string(),
             end_time_unix_nano: end_time_ns.to_string(),
@@ -173,14 +171,12 @@ impl<C: Caller> Caller for TracingCaller<C> {
     #[allow(unsafe_code)]
     fn call_with_metadata_by_plan(
         &self,
-        method_id: u64,
-        method_name: &str,
+        descriptor: &'static roam_session::MethodDescriptor,
         args_ptr: SendPtr,
-        args_plan: &'static roam_session::RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
         self.inner
-            .call_with_metadata_by_plan(method_id, method_name, args_ptr, args_plan, metadata)
+            .call_with_metadata_by_plan(descriptor, args_ptr, metadata)
     }
 
     #[allow(unsafe_code)]

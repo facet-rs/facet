@@ -8,10 +8,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
+use facet::Facet;
 use once_cell::sync::Lazy;
 use roam_session::{
-    ChannelRegistry, Context, HandshakeConfig, MessageTransport, NoDispatcher, RpcPlan,
-    ServiceDispatcher, accept_framed, dispatch_call, dispatch_unknown_method, initiate_framed,
+    ChannelRegistry, Context, HandshakeConfig, MessageTransport, MethodDescriptor, NoDispatcher,
+    RpcPlan, ServiceDispatcher, accept_framed, dispatch_call, dispatch_unknown_method,
+    initiate_framed,
 };
 use roam_wire::Message;
 use tokio::sync::mpsc;
@@ -25,6 +27,20 @@ static VEC_U8_RESPONSE_PLAN: Lazy<&'static RpcPlan> =
     Lazy::new(|| Box::leak(Box::new(RpcPlan::for_type::<Vec<u8>>())));
 
 const METHOD_BIG_DATA: u64 = 1;
+
+static BIG_DATA_DESC: Lazy<&'static MethodDescriptor> = Lazy::new(|| {
+    Box::leak(Box::new(MethodDescriptor {
+        id: METHOD_BIG_DATA,
+        service_name: "Test",
+        method_name: "big_data",
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <Vec<u8> as Facet>::SHAPE,
+        args_plan: Box::leak(Box::new(RpcPlan::for_type::<Vec<u8>>())),
+        ok_plan: Box::leak(Box::new(RpcPlan::for_type::<Vec<u8>>())),
+        err_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+    }))
+});
 
 #[derive(Clone)]
 struct TestService {
@@ -167,9 +183,7 @@ fn test_concurrent_vec_calls() {
                     *byte = (idx % 256) as u8;
                 }
 
-                let _ = handle
-                    .call(METHOD_BIG_DATA, "test", &mut data, &VEC_U8_ARGS_PLAN)
-                    .await;
+                let _ = handle.call(*BIG_DATA_DESC, &mut data).await;
             });
             tasks.push(task);
         }

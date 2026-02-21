@@ -32,9 +32,9 @@ impl BridgeRouter {
 
     /// Register a service with the bridge.
     ///
-    /// The service name is extracted from `service.service_detail().name`.
+    /// The service name is extracted from `service.service_descriptor().service_name`.
     pub fn service<S: BridgeService>(mut self, service: S) -> Self {
-        let name = service.service_detail().name.to_string();
+        let name = service.service_descriptor().service_name.to_string();
         self.services.insert(name, Arc::new(service));
         self
     }

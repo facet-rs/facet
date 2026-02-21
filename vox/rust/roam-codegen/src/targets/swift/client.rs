@@ -7,7 +7,7 @@ use roam_schema::{MethodDetail, ServiceDetail, ShapeKind, classify_shape, is_rx,
 
 use super::decode::generate_decode_stmt_from_with_cursor;
 use super::encode::generate_encode_expr;
-use super::types::{format_doc, is_stream, swift_type_client_arg, swift_type_client_return};
+use super::types::{format_doc, is_channel, swift_type_client_arg, swift_type_client_return};
 use crate::code_writer::CodeWriter;
 use crate::cw_writeln;
 use crate::render::hex_u64;
@@ -126,7 +126,7 @@ fn generate_client_method(
 
     let ret_type = swift_type_client_return(method.return_type);
     let has_streaming =
-        method.args.iter().any(|a| is_stream(a.ty)) || is_stream(method.return_type);
+        method.args.iter().any(|a| is_channel(a.ty)) || is_channel(method.return_type);
 
     // Method signature
     if ret_type == "Void" {

@@ -20,7 +20,6 @@ tracing = ["dep:tracing"]
 
 [dependencies]
 roam-schema.workspace = true
-roam-hash.workspace = true
 roam-session.workspace = true
 roam-wire.workspace = true
 

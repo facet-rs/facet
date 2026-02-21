@@ -8,7 +8,7 @@ use roam_schema::{MethodDetail, ServiceDetail, ShapeKind, classify_shape, is_rx,
 
 use super::decode::{generate_decode_stmt_with_cursor, generate_inline_decode};
 use super::encode::generate_encode_closure;
-use super::types::{format_doc, is_stream, swift_type_server_arg, swift_type_server_return};
+use super::types::{format_doc, is_channel, swift_type_server_arg, swift_type_server_return};
 use crate::code_writer::CodeWriter;
 use crate::cw_writeln;
 use crate::render::hex_u64;
@@ -132,7 +132,7 @@ fn generate_dispatch_method(w: &mut CodeWriter<&mut String>, method: &MethodDeta
     let method_name = method.method_name.to_lower_camel_case();
     let dispatch_name = dispatch_helper_name(&method_name);
     let has_channeling =
-        method.args.iter().any(|a| is_stream(a.ty)) || is_stream(method.return_type);
+        method.args.iter().any(|a| is_channel(a.ty)) || is_channel(method.return_type);
 
     cw_writeln!(
         w,
@@ -345,7 +345,7 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
     let method_name = method.method_name.to_lower_camel_case();
     let dispatch_name = dispatch_helper_name(&method_name);
     let has_channeling =
-        method.args.iter().any(|a| is_stream(a.ty)) || is_stream(method.return_type);
+        method.args.iter().any(|a| is_channel(a.ty)) || is_channel(method.return_type);
 
     cw_writeln!(
         w,

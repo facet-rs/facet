@@ -5,10 +5,48 @@
 
 use std::sync::Arc;
 
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
 use crate::{
     ChannelRegistry, ConnectionHandle, Context, DriverMessage, IncomingChannelMessage,
-    ServiceDispatcher, TransportError,
+    MethodDescriptor, RpcPlan, ServiceDispatcher, TransportError,
 };
+
+/// Get or create a `&'static MethodDescriptor` for forwarding a given method.
+///
+/// Forwarding is schema-agnostic: it doesn't know the service at compile time.
+/// We cache leaked descriptors per method_id (bounded by the finite method set
+/// of the upstream service).
+fn forwarding_descriptor(method_id: u64, full_method_name: &str) -> &'static MethodDescriptor {
+    static DUMMY_PLAN: LazyLock<&'static RpcPlan> =
+        LazyLock::new(|| Box::leak(Box::new(RpcPlan::for_type::<()>())));
+    static CACHE: LazyLock<std::sync::Mutex<HashMap<u64, &'static MethodDescriptor>>> =
+        LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+    let mut cache = CACHE.lock().unwrap();
+    if let Some(desc) = cache.get(&method_id) {
+        return desc;
+    }
+
+    let (service_name, method_name) = full_method_name
+        .rsplit_once('.')
+        .unwrap_or(("", full_method_name));
+
+    let desc: &'static MethodDescriptor = Box::leak(Box::new(MethodDescriptor {
+        id: method_id,
+        service_name: Box::leak(service_name.to_string().into_boxed_str()),
+        method_name: Box::leak(method_name.to_string().into_boxed_str()),
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <() as facet::Facet>::SHAPE,
+        args_plan: *DUMMY_PLAN,
+        ok_plan: *DUMMY_PLAN,
+        err_plan: *DUMMY_PLAN,
+    }));
+    cache.insert(method_id, desc);
+    desc
+}
 
 // ============================================================================
 // ForwardingDispatcher - Transparent RPC Proxy
@@ -94,6 +132,8 @@ impl ServiceDispatcher for ForwardingDispatcher {
             });
         };
 
+        let descriptor = forwarding_descriptor(method_id, &method_name);
+
         if channels.is_empty() {
             // Unary call - but response may contain Rx<T> channels
             // We need to set up forwarding for any response channels.
@@ -104,7 +144,7 @@ impl ServiceDispatcher for ForwardingDispatcher {
 
             Box::pin(async move {
                 let response = upstream
-                    .call_raw_with_channels(method_id, &method_name, vec![], payload, None)
+                    .call_raw_with_channels(descriptor, vec![], payload, None)
                     .await;
 
                 let (response_payload, upstream_response_channels) = match response {
@@ -229,13 +269,8 @@ impl ServiceDispatcher for ForwardingDispatcher {
             Box::pin(async move {
                 // Send the upstream Request - this queues the Request command
                 // which will be sent before any Data we forward
-                let response_future = upstream.call_raw_with_channels(
-                    method_id,
-                    &method_name,
-                    upstream_channels,
-                    payload,
-                    None,
-                );
+                let response_future =
+                    upstream.call_raw_with_channels(descriptor, upstream_channels, payload, None);
 
                 // Now spawn forwarding tasks - safe because Request is queued first
                 // and command_tx/task_tx are processed in order by the driver

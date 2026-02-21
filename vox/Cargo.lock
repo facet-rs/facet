@@ -2447,7 +2447,6 @@ dependencies = [
  "futures-util",
  "http",
  "reqwest",
- "roam-hash",
  "roam-schema",
  "roam-session",
  "roam-stream",

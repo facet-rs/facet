@@ -13,7 +13,7 @@ use futures_util::{SinkExt, StreamExt};
 use roam_http_bridge::{BridgeRouter, GenericBridgeService};
 use roam_stream::{Connector, HandshakeConfig, NoDispatcher, accept, connect};
 use spec_proto::{
-    LookupError, MathError, Person, Testbed, TestbedDispatcher, testbed_service_detail,
+    LookupError, MathError, Person, Testbed, TestbedDispatcher, testbed_service_descriptor,
 };
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{connect_async, tungstenite};
@@ -223,9 +223,7 @@ async fn start_bridge_server(
     // Get a handle from the client
     let handle = roam_client.handle().await.unwrap();
 
-    // Leak the service detail to get a 'static reference
-    let detail: &'static _ = Box::leak(Box::new(testbed_service_detail()));
-    let service = GenericBridgeService::new(handle, detail);
+    let service = GenericBridgeService::new(handle, testbed_service_descriptor());
 
     let bridge_router = BridgeRouter::new().service(service).build();
 

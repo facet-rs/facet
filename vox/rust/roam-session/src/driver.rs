@@ -507,8 +507,7 @@ where
     /// Make a raw RPC call with automatic reconnection.
     pub async fn call_raw(
         &self,
-        method_id: u64,
-        method_name: &str,
+        descriptor: &'static crate::MethodDescriptor,
         payload: Vec<u8>,
     ) -> Result<Vec<u8>, ConnectError> {
         let mut last_error: Option<io::Error> = None;
@@ -533,10 +532,7 @@ where
                 Err(e) => return Err(e),
             };
 
-            match handle
-                .call_raw(method_id, method_name, payload.clone())
-                .await
-            {
+            match handle.call_raw(descriptor, payload.clone()).await {
                 Ok(response) => return Ok(response),
                 Err(TransportError::Encode(e)) => {
                     return Err(ConnectError::Rpc(TransportError::Encode(e)));
@@ -577,10 +573,8 @@ where
 {
     async fn call_with_metadata<T: Facet<'static> + Send>(
         &self,
-        method_id: u64,
-        method_name: &str,
+        descriptor: &'static crate::MethodDescriptor,
         args: &mut T,
-        args_plan: &RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
         let mut attempt = 0u32;
@@ -602,7 +596,6 @@ where
                 }
                 Err(ConnectError::Rpc(e)) => return Err(e),
                 Err(ConnectError::Rejected(_)) => {
-                    // Virtual connection rejected - this shouldn't happen for link-level connect
                     return Err(TransportError::ConnectionClosed);
                 }
             };
@@ -612,10 +605,8 @@ where
             let call_result = unsafe {
                 crate::ConnectionHandle::call_with_metadata_by_plan(
                     &handle,
-                    method_id,
-                    method_name,
+                    descriptor,
                     args_ptr,
-                    args_plan,
                     metadata.clone(),
                 )
                 .await
@@ -661,14 +652,11 @@ where
     #[allow(unsafe_code)]
     fn call_with_metadata_by_plan(
         &self,
-        method_id: u64,
-        method_name: &str,
+        descriptor: &'static crate::MethodDescriptor,
         args_ptr: crate::SendPtr,
-        args_plan: &'static crate::RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
         let this = self.clone();
-        let method_name = method_name.to_owned();
 
         async move {
             let mut attempt = 0u32;
@@ -697,10 +685,8 @@ where
                 // SAFETY: args_ptr was created from valid, initialized, Send data
                 match unsafe {
                     handle.call_with_metadata_by_plan(
-                        method_id,
-                        &method_name,
+                        descriptor,
                         args_ptr.as_ptr(),
-                        args_plan,
                         metadata.clone(),
                     )
                 }

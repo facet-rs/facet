@@ -13,10 +13,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
+use facet::Facet;
 use once_cell::sync::Lazy;
 use roam_session::{
-    ChannelRegistry, Context, RoamError, RpcPlan, ServiceDispatcher, dispatch_call,
-    dispatch_unknown_method,
+    ChannelRegistry, Context, MethodDescriptor, RoamError, RpcPlan, ServiceDispatcher,
+    dispatch_call, dispatch_unknown_method,
 };
 use roam_stream::{Connector, HandshakeConfig, accept, connect};
 use tokio::net::{UnixListener, UnixStream};
@@ -63,6 +64,115 @@ const METHOD_MEDIUM: u64 = 3;
 const METHOD_SLOW: u64 = 4;
 const METHOD_VERY_SLOW: u64 = 5;
 const METHOD_ECHO: u64 = 6;
+
+// ============================================================================
+// Method Descriptors
+// ============================================================================
+
+static INSTANT_DESC: Lazy<&'static MethodDescriptor> = Lazy::new(|| {
+    Box::leak(Box::new(MethodDescriptor {
+        id: METHOD_INSTANT,
+        service_name: "Test",
+        method_name: "instant",
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <u32 as Facet>::SHAPE,
+        args_plan: Box::leak(Box::new(RpcPlan::for_type::<u32>())),
+        ok_plan: Box::leak(Box::new(RpcPlan::for_type::<u32>())),
+        err_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+    }))
+});
+
+static FAST_DESC: Lazy<&'static MethodDescriptor> = Lazy::new(|| {
+    Box::leak(Box::new(MethodDescriptor {
+        id: METHOD_FAST,
+        service_name: "Test",
+        method_name: "fast",
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <u32 as Facet>::SHAPE,
+        args_plan: Box::leak(Box::new(RpcPlan::for_type::<u32>())),
+        ok_plan: Box::leak(Box::new(RpcPlan::for_type::<u32>())),
+        err_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+    }))
+});
+
+static MEDIUM_DESC: Lazy<&'static MethodDescriptor> = Lazy::new(|| {
+    Box::leak(Box::new(MethodDescriptor {
+        id: METHOD_MEDIUM,
+        service_name: "Test",
+        method_name: "medium",
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <u32 as Facet>::SHAPE,
+        args_plan: Box::leak(Box::new(RpcPlan::for_type::<u32>())),
+        ok_plan: Box::leak(Box::new(RpcPlan::for_type::<u32>())),
+        err_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+    }))
+});
+
+static SLOW_DESC: Lazy<&'static MethodDescriptor> = Lazy::new(|| {
+    Box::leak(Box::new(MethodDescriptor {
+        id: METHOD_SLOW,
+        service_name: "Test",
+        method_name: "slow",
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <u32 as Facet>::SHAPE,
+        args_plan: Box::leak(Box::new(RpcPlan::for_type::<u32>())),
+        ok_plan: Box::leak(Box::new(RpcPlan::for_type::<u32>())),
+        err_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+    }))
+});
+
+static VERY_SLOW_DESC: Lazy<&'static MethodDescriptor> = Lazy::new(|| {
+    Box::leak(Box::new(MethodDescriptor {
+        id: METHOD_VERY_SLOW,
+        service_name: "Test",
+        method_name: "very_slow",
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <u32 as Facet>::SHAPE,
+        args_plan: Box::leak(Box::new(RpcPlan::for_type::<u32>())),
+        ok_plan: Box::leak(Box::new(RpcPlan::for_type::<u32>())),
+        err_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+    }))
+});
+
+static ECHO_DESC: Lazy<&'static MethodDescriptor> = Lazy::new(|| {
+    Box::leak(Box::new(MethodDescriptor {
+        id: METHOD_ECHO,
+        service_name: "Test",
+        method_name: "echo",
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <String as Facet>::SHAPE,
+        args_plan: Box::leak(Box::new(RpcPlan::for_type::<String>())),
+        ok_plan: Box::leak(Box::new(RpcPlan::for_type::<String>())),
+        err_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+    }))
+});
+
+static TIMED_DESCS: Lazy<[&'static MethodDescriptor; 5]> = Lazy::new(|| {
+    [
+        *INSTANT_DESC,
+        *FAST_DESC,
+        *MEDIUM_DESC,
+        *SLOW_DESC,
+        *VERY_SLOW_DESC,
+    ]
+});
+
+static ALL_DESCS: Lazy<[&'static MethodDescriptor; 6]> = Lazy::new(|| {
+    [
+        *INSTANT_DESC,
+        *FAST_DESC,
+        *MEDIUM_DESC,
+        *SLOW_DESC,
+        *VERY_SLOW_DESC,
+        *ECHO_DESC,
+    ]
+});
 
 impl ServiceDispatcher for TestService {
     fn service_descriptor(&self) -> &'static roam_session::ServiceDescriptor {
@@ -239,20 +349,17 @@ async fn load_test_single_connection_varied_calls() {
         let handle = handle.clone();
         let task = tokio::spawn(async move {
             // Pick method based on i
-            let (method, arg, expected_multiplier) = match i % 6 {
-                0 => (METHOD_INSTANT, 0u32, 0u32), // Returns 42
-                1 => (METHOD_FAST, i as u32, 2),
-                2 => (METHOD_MEDIUM, i as u32, 3),
-                3 => (METHOD_SLOW, i as u32, 4),
-                4 => (METHOD_VERY_SLOW, i as u32, 5),
+            let (descriptor, arg, expected_multiplier) = match i % 6 {
+                0 => (*INSTANT_DESC, 0u32, 0u32), // Returns 42
+                1 => (*FAST_DESC, i as u32, 2),
+                2 => (*MEDIUM_DESC, i as u32, 3),
+                3 => (*SLOW_DESC, i as u32, 4),
+                4 => (*VERY_SLOW_DESC, i as u32, 5),
                 5 => {
                     // ECHO method
                     let msg = format!("message-{}", i);
                     let mut args = msg.clone();
-                    let response = handle
-                        .call(METHOD_ECHO, "test", &mut args, &STRING_ARGS_PLAN)
-                        .await
-                        .unwrap();
+                    let response = handle.call(*ECHO_DESC, &mut args).await.unwrap();
                     let result: Result<String, RoamError<()>> = decode_result(response.payload);
                     assert_eq!(result.unwrap(), msg);
                     return;
@@ -261,13 +368,10 @@ async fn load_test_single_connection_varied_calls() {
             };
 
             let mut args = arg;
-            let response = handle
-                .call(method, "test", &mut args, &U32_ARGS_PLAN)
-                .await
-                .unwrap();
+            let response = handle.call(descriptor, &mut args).await.unwrap();
             let result: Result<u32, RoamError<()>> = decode_result(response.payload);
 
-            if method == METHOD_INSTANT {
+            if descriptor.id == METHOD_INSTANT {
                 assert_eq!(result.unwrap(), 42);
             } else {
                 assert_eq!(result.unwrap(), arg * expected_multiplier);
@@ -314,21 +418,11 @@ async fn load_test_multiple_connections() {
                 let i = conn_id * CALLS_PER_CONNECTION + call_id;
                 let call_task = tokio::spawn(async move {
                     // Randomly pick a method
-                    let method = match i % 5 {
-                        0 => METHOD_INSTANT,
-                        1 => METHOD_FAST,
-                        2 => METHOD_MEDIUM,
-                        3 => METHOD_SLOW,
-                        4 => METHOD_VERY_SLOW,
-                        _ => unreachable!(),
-                    };
+                    let descriptor = TIMED_DESCS[i % 5];
 
                     let arg = i as u32;
                     let mut args = arg;
-                    let response = handle
-                        .call(method, "test", &mut args, &U32_ARGS_PLAN)
-                        .await
-                        .unwrap();
+                    let response = handle.call(descriptor, &mut args).await.unwrap();
                     let result: Result<u32, RoamError<()>> = decode_result(response.payload);
 
                     // Verify we got a response
@@ -390,21 +484,12 @@ async fn load_test_mixed_burst() {
                 let i = (wave * 100) + (client_idx * 20) + burst_idx;
 
                 let task = tokio::spawn(async move {
-                    // Mix of methods
-                    let method = match i % 4 {
-                        0 => METHOD_INSTANT,
-                        1 => METHOD_FAST,
-                        2 => METHOD_MEDIUM,
-                        3 => METHOD_SLOW,
-                        _ => unreachable!(),
-                    };
+                    // Mix of methods (first 4 timed methods)
+                    let descriptor = TIMED_DESCS[i % 4];
 
                     let arg = i as u32;
                     let mut args = arg;
-                    let response = client
-                        .call(method, "test", &mut args, &U32_ARGS_PLAN)
-                        .await
-                        .unwrap();
+                    let response = client.call(descriptor, &mut args).await.unwrap();
                     let result: Result<u32, RoamError<()>> = decode_result(response.payload);
                     assert!(result.is_ok());
                 });
@@ -466,31 +551,17 @@ async fn load_test_chaos() {
                     }
 
                     // Random method selection
-                    let method = match seed % 6 {
-                        0 => METHOD_INSTANT,
-                        1 => METHOD_FAST,
-                        2 => METHOD_MEDIUM,
-                        3 => METHOD_SLOW,
-                        4 => METHOD_VERY_SLOW,
-                        5 => METHOD_ECHO,
-                        _ => unreachable!(),
-                    };
+                    let descriptor = ALL_DESCS[(seed % 6) as usize];
 
-                    if method == METHOD_ECHO {
+                    if descriptor.id == METHOD_ECHO {
                         let msg = format!("chaos-{}", seed);
                         let mut args = msg.clone();
-                        let response = handle
-                            .call(method, "test", &mut args, &STRING_ARGS_PLAN)
-                            .await
-                            .unwrap();
+                        let response = handle.call(descriptor, &mut args).await.unwrap();
                         let result: Result<String, RoamError<()>> = decode_result(response.payload);
                         assert_eq!(result.unwrap(), msg);
                     } else {
                         let mut args = seed;
-                        let response = handle
-                            .call(method, "test", &mut args, &U32_ARGS_PLAN)
-                            .await
-                            .unwrap();
+                        let response = handle.call(descriptor, &mut args).await.unwrap();
                         let result: Result<u32, RoamError<()>> = decode_result(response.payload);
                         assert!(result.is_ok());
                     }

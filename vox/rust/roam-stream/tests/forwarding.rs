@@ -12,10 +12,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
+use facet::Facet;
 use once_cell::sync::Lazy;
 use roam_session::{
-    ChannelRegistry, Context, ForwardingDispatcher, RoamError, RpcPlan, Rx, ServiceDispatcher, Tx,
-    channel, dispatch_call, dispatch_unknown_method,
+    ChannelRegistry, Context, ForwardingDispatcher, MethodDescriptor, RoamError, RpcPlan, Rx,
+    ServiceDispatcher, Tx, channel, dispatch_call, dispatch_unknown_method,
 };
 use roam_stream::{Connector, HandshakeConfig, NoDispatcher, accept, connect};
 use tokio::net::TcpStream;
@@ -38,6 +39,66 @@ static UNIT_RESPONSE_PLAN: Lazy<&'static RpcPlan> =
 
 static RX_STRING_TX_STRING_ARGS_PLAN: Lazy<RpcPlan> =
     Lazy::new(RpcPlan::for_type::<(Rx<String>, Tx<String>)>);
+
+// ============================================================================
+// Method Descriptors
+// ============================================================================
+
+static SUM_DESC: Lazy<&'static MethodDescriptor> = Lazy::new(|| {
+    Box::leak(Box::new(MethodDescriptor {
+        id: METHOD_SUM,
+        service_name: "Test",
+        method_name: "sum",
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <i64 as Facet>::SHAPE,
+        args_plan: Box::leak(Box::new(RpcPlan::for_type::<Rx<i32>>())),
+        ok_plan: Box::leak(Box::new(RpcPlan::for_type::<i64>())),
+        err_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+    }))
+});
+
+static GENERATE_DESC: Lazy<&'static MethodDescriptor> = Lazy::new(|| {
+    Box::leak(Box::new(MethodDescriptor {
+        id: METHOD_GENERATE,
+        service_name: "Test",
+        method_name: "generate",
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <() as Facet>::SHAPE,
+        args_plan: Box::leak(Box::new(RpcPlan::for_type::<(u32, Tx<i32>)>())),
+        ok_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+        err_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+    }))
+});
+
+static TRANSFORM_DESC: Lazy<&'static MethodDescriptor> = Lazy::new(|| {
+    Box::leak(Box::new(MethodDescriptor {
+        id: METHOD_TRANSFORM,
+        service_name: "Test",
+        method_name: "transform",
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <() as Facet>::SHAPE,
+        args_plan: Box::leak(Box::new(RpcPlan::for_type::<(Rx<String>, Tx<String>)>())),
+        ok_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+        err_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+    }))
+});
+
+static ECHO_DESC: Lazy<&'static MethodDescriptor> = Lazy::new(|| {
+    Box::leak(Box::new(MethodDescriptor {
+        id: METHOD_ECHO,
+        service_name: "Test",
+        method_name: "echo",
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <String as Facet>::SHAPE,
+        args_plan: Box::leak(Box::new(RpcPlan::for_type::<String>())),
+        ok_plan: Box::leak(Box::new(RpcPlan::for_type::<String>())),
+        err_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+    }))
+});
 
 // ============================================================================
 // Test Service (Backend)
@@ -245,7 +306,7 @@ async fn test_forwarding_unary() {
 
     // Make unary call through proxy
     let payload = facet_postcard::to_vec(&"hello through proxy".to_string()).unwrap();
-    let response = client.call_raw(METHOD_ECHO, "test", payload).await.unwrap();
+    let response = client.call_raw(*ECHO_DESC, payload).await.unwrap();
     let result: Result<String, RoamError<()>> = decode_result(response);
 
     assert_eq!(result.unwrap(), "hello through proxy");
@@ -286,10 +347,7 @@ async fn test_forwarding_client_to_server_streaming() {
 
     // Make the streaming call: sum(numbers: Rx<i32>) -> i64
     let mut args = rx;
-    let response = handle
-        .call(METHOD_SUM, "test", &mut args, &RX_I32_ARGS_PLAN)
-        .await
-        .unwrap();
+    let response = handle.call(*SUM_DESC, &mut args).await.unwrap();
     let result: Result<i64, RoamError<()>> = decode_result(response.payload);
 
     // 1 + 2 + 3 + 4 + 5 = 15
@@ -315,10 +373,7 @@ async fn test_forwarding_client_to_server_empty_stream() {
     drop(tx);
 
     let mut args = rx;
-    let response = handle
-        .call(METHOD_SUM, "test", &mut args, &RX_I32_ARGS_PLAN)
-        .await
-        .unwrap();
+    let response = handle.call(*SUM_DESC, &mut args).await.unwrap();
     let result: Result<i64, RoamError<()>> = decode_result(response.payload);
 
     assert_eq!(result.unwrap(), 0);
@@ -359,10 +414,7 @@ async fn test_forwarding_server_to_client_streaming() {
     // Make the streaming call: generate(count: u32, output: Tx<i32>)
     let count: u32 = 5;
     let mut args = (count, tx);
-    let response = handle
-        .call(METHOD_GENERATE, "test", &mut args, &U32_TX_I32_ARGS_PLAN)
-        .await
-        .unwrap();
+    let response = handle.call(*GENERATE_DESC, &mut args).await.unwrap();
     let result: Result<(), RoamError<()>> = decode_result(response.payload);
     assert!(result.is_ok());
 
@@ -418,15 +470,7 @@ async fn test_forwarding_bidirectional_streaming() {
 
     // Make the bidirectional streaming call: transform(input: Rx<String>, output: Tx<String>)
     let mut args = (input_rx, output_tx);
-    let response = handle
-        .call(
-            METHOD_TRANSFORM,
-            "test",
-            &mut args,
-            &RX_STRING_TX_STRING_ARGS_PLAN,
-        )
-        .await
-        .unwrap();
+    let response = handle.call(*TRANSFORM_DESC, &mut args).await.unwrap();
     let result: Result<(), RoamError<()>> = decode_result(response.payload);
     assert!(result.is_ok());
 
@@ -477,10 +521,7 @@ async fn test_forwarding_multiple_streaming_calls() {
 
             // Call sum
             let mut args = rx;
-            let response = conn_handle
-                .call(METHOD_SUM, "test", &mut args, &RX_I32_ARGS_PLAN)
-                .await
-                .unwrap();
+            let response = conn_handle.call(*SUM_DESC, &mut args).await.unwrap();
             let result: Result<i64, RoamError<()>> = decode_result(response.payload);
 
             // Expected: (i*10+1) + (i*10+2) + (i*10+3) = i*30 + 6
@@ -518,10 +559,7 @@ async fn test_forwarding_client_to_server_empty_stream_multi_hop() {
     drop(tx);
 
     let mut args = rx;
-    let response = handle
-        .call(METHOD_SUM, "test", &mut args, &RX_I32_ARGS_PLAN)
-        .await
-        .unwrap();
+    let response = handle.call(*SUM_DESC, &mut args).await.unwrap();
     let result: Result<i64, RoamError<()>> = decode_result(response.payload);
 
     assert_eq!(result.unwrap(), 0);

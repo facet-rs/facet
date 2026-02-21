@@ -250,8 +250,8 @@ Use `facet_core` to inspect shapes:
 
 Helper functions in `roam_schema`:
 - `is_tx(shape)` / `is_rx(shape)` — check for streaming types
-- `is_stream(shape)` — check for any streaming type
-- `contains_stream(shape)` — recursively check for streams
+- `is_channel(shape)` — check for any channel type
+- `contains_channels(shape)` — recursively check for channels
 - `is_bytes(shape)` — check for `Vec<u8>` or `&[u8]`
 
 ## Usage

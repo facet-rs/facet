@@ -44,7 +44,7 @@ pub use router::BridgeRouter;
 pub use service::GenericBridgeService;
 pub use transcode::{json_args_to_postcard, postcard_to_json_with_shape};
 
-use roam_schema::ServiceDetail;
+use roam_session::ServiceDescriptor;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -56,8 +56,8 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// This trait combines a roam client connection with service metadata.
 /// The bridge handles JSON↔postcard transcoding at runtime using `facet_value::Value`.
 pub trait BridgeService: Send + Sync + 'static {
-    /// Returns metadata about this service (name, methods, types).
-    fn service_detail(&self) -> &'static ServiceDetail;
+    /// Returns the service descriptor (name, methods, types).
+    fn service_descriptor(&self) -> &'static ServiceDescriptor;
 
     /// Call a method with JSON arguments and return a JSON response.
     ///

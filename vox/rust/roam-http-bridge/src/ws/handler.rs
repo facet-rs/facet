@@ -9,9 +9,8 @@ use std::sync::Arc;
 use axum::extract::ws::{Message, WebSocket};
 use facet_core::{Def, Shape};
 use futures_util::{SinkExt, StreamExt};
-#[allow(unused_imports)]
-use roam_schema::{MethodDetail, contains_stream, is_rx, is_tx};
-use roam_session::{IncomingChannelMessage, ResponseData, TransportError};
+use roam_schema::{contains_channels, is_rx, is_tx};
+use roam_session::{IncomingChannelMessage, MethodDescriptor, ResponseData, TransportError};
 
 use crate::{BridgeError, BridgeService, ProtocolErrorKind};
 
@@ -173,13 +172,12 @@ async fn handle_request(
         let outgoing_tx = session_guard.outgoing_tx().clone();
         match session_guard.get_service(&service_name) {
             Ok(service) => {
-                let detail = service.service_detail();
-                match detail.methods.iter().find(|m| m.method_name == method_name) {
-                    Some(method) => {
-                        let method_id = roam_hash::method_id_from_detail(method);
-                        let has_channels = method.args.iter().any(|a| contains_stream(a.ty))
-                            || contains_stream(method.return_type);
-                        Ok((service, method.clone(), method_id, has_channels))
+                let sd = service.service_descriptor();
+                match sd.methods.iter().find(|m| m.method_name == method_name) {
+                    Some(desc) => {
+                        let has_channels = desc.arg_shapes.iter().any(|s| contains_channels(s))
+                            || contains_channels(desc.return_shape);
+                        Ok((service, *desc, has_channels))
                     }
                     None => Err((outgoing_tx, "unknown_method")),
                 }
@@ -188,7 +186,7 @@ async fn handle_request(
         }
     };
 
-    let (service, method_detail, method_id, has_channels) = match lookup_result {
+    let (service, desc, has_channels) = match lookup_result {
         Ok(lookup) => lookup,
         Err((outgoing_tx, error_kind)) => {
             let _ = outgoing_tx
@@ -211,8 +209,7 @@ async fn handle_request(
             Arc::clone(&session),
             request_id,
             Arc::clone(&service),
-            &method_detail,
-            method_id,
+            desc,
             args,
         )
         .await?;
@@ -236,15 +233,8 @@ async fn handle_request(
         // Simple calls can be spawned directly
         let session_clone = Arc::clone(&session);
         roam_session::runtime::spawn("bridge_ws_simple_call", async move {
-            let result = handle_simple_call(
-                session_clone.clone(),
-                request_id,
-                service,
-                &method_detail,
-                method_id,
-                args,
-            )
-            .await;
+            let result =
+                handle_simple_call(session_clone.clone(), request_id, service, desc, args).await;
 
             // Complete the call and send response
             {
@@ -266,8 +256,7 @@ async fn handle_simple_call(
     session: Arc<std::sync::Mutex<WsSession>>,
     request_id: u64,
     service: Arc<dyn BridgeService>,
-    method: &MethodDetail,
-    _method_id: u64,
+    desc: &'static MethodDescriptor,
     args: serde_json::Value,
 ) -> Result<(), BridgeError> {
     // Convert JSON args to postcard
@@ -278,7 +267,7 @@ async fn handle_simple_call(
     // We need to call through the BridgeService trait
     let metadata = crate::BridgeMetadata::default();
     let response = service
-        .call_json(&method.method_name, &args_json, metadata)
+        .call_json(desc.method_name, &args_json, metadata)
         .await;
 
     let outgoing_tx = {
@@ -321,8 +310,7 @@ async fn setup_streaming_call(
     session: Arc<std::sync::Mutex<WsSession>>,
     request_id: u64,
     service: Arc<dyn BridgeService>,
-    method: &MethodDetail,
-    method_id: u64,
+    desc: &'static MethodDescriptor,
     args: serde_json::Value,
 ) -> Result<StreamingCallState, BridgeError> {
     // Get the connection handle for streaming support
@@ -332,13 +320,13 @@ async fn setup_streaming_call(
     let mut rx_channels: Vec<(usize, &'static Shape)> = Vec::new();
     let mut tx_channels: Vec<(usize, &'static Shape)> = Vec::new();
 
-    for (i, arg) in method.args.iter().enumerate() {
-        if is_rx(arg.ty) {
-            if let Some(elem_shape) = get_channel_element_type(arg.ty) {
+    for (i, &arg_shape) in desc.arg_shapes.iter().enumerate() {
+        if is_rx(arg_shape) {
+            if let Some(elem_shape) = get_channel_element_type(arg_shape) {
                 rx_channels.push((i, elem_shape));
             }
-        } else if is_tx(arg.ty)
-            && let Some(elem_shape) = get_channel_element_type(arg.ty)
+        } else if is_tx(arg_shape)
+            && let Some(elem_shape) = get_channel_element_type(arg_shape)
         {
             tx_channels.push((i, elem_shape));
         }
@@ -375,8 +363,8 @@ async fn setup_streaming_call(
     // Build args with roam channel IDs substituted
     let mut modified_args = args_array.clone();
     let mut roam_channel_idx = 0;
-    for (i, arg) in method.args.iter().enumerate() {
-        if (is_rx(arg.ty) || is_tx(arg.ty)) && roam_channel_idx < roam_channel_ids.len() {
+    for (i, &arg_shape) in desc.arg_shapes.iter().enumerate() {
+        if (is_rx(arg_shape) || is_tx(arg_shape)) && roam_channel_idx < roam_channel_ids.len() {
             modified_args[i] = serde_json::Value::Number(serde_json::Number::from(
                 roam_channel_ids[roam_channel_idx],
             ));
@@ -385,10 +373,9 @@ async fn setup_streaming_call(
     }
 
     // Transcode the modified args to postcard
-    let arg_shapes: Vec<&'static Shape> = method.args.iter().map(|a| a.ty).collect();
     let args_json = serde_json::to_vec(&modified_args)
         .map_err(|e| BridgeError::bad_request(format!("Failed to serialize args: {}", e)))?;
-    let postcard_payload = crate::transcode::json_args_to_postcard(&args_json, &arg_shapes)?;
+    let postcard_payload = crate::transcode::json_args_to_postcard(&args_json, desc.arg_shapes)?;
 
     // Set up channels for receiving data from roam (Tx channels)
     let mut roam_receivers: Vec<(u64, roam_session::runtime::Receiver<IncomingChannelMessage>)> =
@@ -440,7 +427,7 @@ async fn setup_streaming_call(
     let call_msg = roam_session::DriverMessage::Call {
         conn_id: roam_wire::ConnectionId::ROOT,
         request_id: roam_request_id,
-        method_id,
+        method_id: desc.id,
         metadata: Vec::new(),
         channels: roam_channel_ids,
         payload: postcard_payload,
@@ -452,7 +439,7 @@ async fn setup_streaming_call(
         .await
         .map_err(|_| BridgeError::internal("Failed to send call to roam driver"))?;
 
-    let (return_shape, error_shape) = extract_result_types(method);
+    let (return_shape, error_shape) = extract_result_types(desc.return_shape);
 
     Ok(StreamingCallState {
         session,
@@ -813,7 +800,6 @@ fn bridge_response_to_ws(
 }
 
 /// Extract the element type from a Tx<T> or Rx<T> shape.
-#[allow(dead_code)]
 fn get_channel_element_type(shape: &'static Shape) -> Option<&'static Shape> {
     // The shape should have a generic parameter for the element type
     // type_params is a slice of TypeParam
@@ -824,10 +810,7 @@ fn get_channel_element_type(shape: &'static Shape) -> Option<&'static Shape> {
 }
 
 /// Extract the success and error types from a method's return type.
-#[allow(dead_code)]
-fn extract_result_types(method: &MethodDetail) -> (&'static Shape, Option<&'static Shape>) {
-    let return_shape = method.return_type;
-
+fn extract_result_types(return_shape: &'static Shape) -> (&'static Shape, Option<&'static Shape>) {
     // Check if the return type is Result<T, E>
     if let Def::Result(result_def) = return_shape.def {
         let success_shape = result_def.t();

@@ -1,9 +1,55 @@
 use facet_testhelpers::test;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::LazyLock;
+
+use facet::Facet;
+use roam_session::{MethodDescriptor, RpcPlan};
 use roam_shm::driver::establish_multi_peer_host;
 use roam_shm::host::ShmHost;
 use roam_shm::layout::SegmentConfig;
-use std::future::Future;
-use std::pin::Pin;
+
+static DESC_1: LazyLock<&'static MethodDescriptor> = LazyLock::new(|| {
+    Box::leak(Box::new(MethodDescriptor {
+        id: 1,
+        service_name: "Test",
+        method_name: "test",
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <() as Facet>::SHAPE,
+        args_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+        ok_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+        err_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+    }))
+});
+
+static DESC_2: LazyLock<&'static MethodDescriptor> = LazyLock::new(|| {
+    Box::leak(Box::new(MethodDescriptor {
+        id: 2,
+        service_name: "Test",
+        method_name: "test",
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <() as Facet>::SHAPE,
+        args_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+        ok_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+        err_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+    }))
+});
+
+static DESC_3: LazyLock<&'static MethodDescriptor> = LazyLock::new(|| {
+    Box::leak(Box::new(MethodDescriptor {
+        id: 3,
+        service_name: "Test",
+        method_name: "test",
+        arg_names: &[],
+        arg_shapes: &[],
+        return_shape: <() as Facet>::SHAPE,
+        args_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+        ok_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+        err_plan: Box::leak(Box::new(RpcPlan::for_type::<()>())),
+    }))
+});
 
 // Mock dispatcher
 #[derive(Clone)]
@@ -85,7 +131,7 @@ async fn verify_queuing_order_on_exhaustion() {
     let h1 = handle.clone();
     let p1 = large_payload.clone();
     tokio::spawn(async move {
-        let _ = h1.call_raw(1, "test", p1).await;
+        let _ = h1.call_raw(*DESC_1, p1).await;
     });
     // This should succeed and consume the slot.
 
@@ -95,7 +141,7 @@ async fn verify_queuing_order_on_exhaustion() {
     let large_payload_2 = large_payload.clone();
     let h2 = handle.clone();
     tokio::spawn(async move {
-        let _ = h2.call_raw(2, "test", large_payload_2).await;
+        let _ = h2.call_raw(*DESC_2, large_payload_2).await;
     });
 
     // Give driver time to process and queue Msg 2
@@ -106,7 +152,7 @@ async fn verify_queuing_order_on_exhaustion() {
     let small_payload_3 = small_payload.clone();
     let h3 = handle.clone();
     tokio::spawn(async move {
-        let _ = h3.call_raw(3, "test", small_payload_3).await;
+        let _ = h3.call_raw(*DESC_3, small_payload_3).await;
     });
 
     // Give driver time to process Msg 3
