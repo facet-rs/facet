@@ -1,11 +1,8 @@
 ---
 source: crates/figue/tests/integration/subcommand.rs
-expression: "$crate :: common :: strip_ansi(& err.to_string())"
+expression: "strip_ansi_escapes :: strip_str(& err.to_string())"
 ---
-Error: missing required argument
-   ╭─[ <suggestion>:1:4 ]
-   │
- 1 │ ci <action>
-   │    ────┬───  
-   │        ╰───── missing required argument
-───╯
+Error: expected a subcommand
+
+available subcommands:
+  generate  Generate CI workflow files from Rust code

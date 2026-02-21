@@ -419,6 +419,72 @@ impl<T: Facet<'static>> Driver<T> {
                 return DriverOutcome::err(DriverError::Help { text: help });
             }
 
+            // Check if the only missing field is a subcommand with available variants
+            // (covers nested subcommands like `tracey query` missing a sub-subcommand)
+            let missing_subcommand_with_variants = !has_unknown
+                && missing_fields.len() == 1
+                && !missing_fields[0].available_subcommands.is_empty();
+
+            if missing_subcommand_with_variants {
+                let field = &missing_fields[0];
+
+                // Format the available subcommands list
+                let items: Vec<(String, Option<&str>)> = field
+                    .available_subcommands
+                    .iter()
+                    .map(|sub| (sub.name.clone(), sub.doc.as_deref()))
+                    .collect();
+
+                // Find max width for alignment
+                let max_width = items.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+                let mut cmds = String::new();
+                for (name, doc) in &items {
+                    use std::fmt::Write;
+                    write!(cmds, "  {name}").unwrap();
+                    let padding = max_width.saturating_sub(name.len());
+                    for _ in 0..padding {
+                        cmds.push(' ');
+                    }
+                    if let Some(doc) = doc {
+                        write!(cmds, "  {}", doc.trim()).unwrap();
+                    }
+                    cmds.push('\n');
+                }
+
+                let mut diagnostics = vec![Diagnostic {
+                    message: format!(
+                        "expected a subcommand\n\navailable subcommands:\n{}",
+                        cmds.trim_end()
+                    ),
+                    label: None,
+                    path: None,
+                    span: None,
+                    severity: Severity::Error,
+                }];
+
+                // Add help hint if the schema has a help field
+                if self.config.schema.special().help.is_some() {
+                    diagnostics.push(Diagnostic {
+                        message: "Run with --help for usage information.".to_string(),
+                        label: None,
+                        path: None,
+                        span: None,
+                        severity: Severity::Note,
+                    });
+                }
+
+                return DriverOutcome::err(DriverError::Failed {
+                    report: Box::new(DriverReport {
+                        diagnostics,
+                        layers,
+                        file_resolution,
+                        overrides,
+                        cli_args_source: cli_args_display.to_string(),
+                        source_name: "<cli>".to_string(),
+                    }),
+                });
+            }
+
             // Check if all missing fields are simple CLI arguments (not config fields)
             // Use the proper kind field to distinguish between CLI args and config fields
             let all_cli_missing = has_missing

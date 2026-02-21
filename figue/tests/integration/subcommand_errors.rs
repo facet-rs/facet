@@ -408,3 +408,120 @@ fn test_subcommand_positional_looks_like_flag() {
     let err = figue::from_slice::<Cli>(&["create", "--help"]).unwrap_err();
     assert_diag_snapshot!(err);
 }
+
+// ============================================================================
+// Test Case 11: Nested subcommand not provided (lists available subcommands)
+// ============================================================================
+
+#[test]
+fn test_nested_subcommand_not_provided() {
+    #[derive(Facet, Debug)]
+    struct Cli {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
+    #[derive(Facet, Debug)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum Command {
+        /// Query operations
+        Query(QueryArgs),
+        /// Serve the dashboard
+        Serve,
+    }
+
+    #[derive(Facet, Debug)]
+    struct QueryArgs {
+        #[facet(args::subcommand)]
+        action: QueryAction,
+    }
+
+    #[derive(Facet, Debug)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum QueryAction {
+        /// Coverage overview
+        Status,
+        /// List rules without implementation references
+        Uncovered,
+        /// List rules without verification references
+        Untested,
+        /// Show unmapped code units
+        Unmapped,
+        /// Show details about a specific rule
+        Rule(RuleArgs),
+        /// Display current configuration
+        Config,
+        /// Validate the spec and implementation
+        Validate,
+    }
+
+    #[derive(Facet, Debug)]
+    struct RuleArgs {
+        /// Rule ID to look up
+        #[facet(args::positional)]
+        rule_id: String,
+    }
+
+    // User types: "cli query" without specifying which query subcommand
+    // Should list the available subcommands for the query level
+    let err = figue::from_slice::<Cli>(&["query"]).unwrap_err();
+    assert_diag_snapshot!(err);
+}
+
+// ============================================================================
+// Test Case 12: Nested subcommand not provided (with FigueBuiltins)
+// ============================================================================
+
+#[test]
+fn test_nested_subcommand_not_provided_with_builtins() {
+    #[derive(Facet, Debug)]
+    struct Cli {
+        #[facet(args::subcommand)]
+        command: Command,
+
+        #[facet(flatten)]
+        builtins: args::FigueBuiltins,
+    }
+
+    #[derive(Facet, Debug)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum Command {
+        /// Repository operations
+        Repo(RepoArgs),
+        /// Build the project
+        Build,
+    }
+
+    #[derive(Facet, Debug)]
+    struct RepoArgs {
+        #[facet(args::subcommand)]
+        action: RepoAction,
+    }
+
+    #[derive(Facet, Debug)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum RepoAction {
+        /// Clone a repository
+        Clone(CloneArgs),
+        /// Push changes
+        Push,
+        /// Pull changes
+        Pull,
+    }
+
+    #[derive(Facet, Debug)]
+    struct CloneArgs {
+        /// Repository URL
+        #[facet(args::positional)]
+        url: String,
+    }
+
+    // User types: "cli repo" without specifying which repo action
+    // Should list clone, push, pull as available subcommands
+    let err = figue::from_slice::<Cli>(&["repo"]).unwrap_err();
+    assert_diag_snapshot!(err);
+}
