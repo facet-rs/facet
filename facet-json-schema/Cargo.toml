@@ -17,9 +17,9 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.43.2" }
-facet-core = { path = "../facet-core", version = "0.43.2" }
-facet-json = { path = "../facet-json", version = "0.43.2" }
+facet = { path = "../facet", version = "0.44.0" }
+facet-core = { path = "../facet-core", version = "0.44.0" }
+facet-json = { path = "../facet-json", version = "0.44.0" }
 
 [dev-dependencies]
 insta = { workspace = true }
