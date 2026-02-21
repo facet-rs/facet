@@ -1,0 +1,14 @@
+---
+source: crates/figue/tests/integration/subcommand_errors.rs
+expression: "strip_ansi_escapes :: strip_str(& err.to_string())"
+---
+Error: expected a subcommand
+
+available subcommands:
+  status     Coverage overview
+  uncovered  List rules without implementation references
+  untested   List rules without verification references
+  unmapped   Show unmapped code units
+  rule       Show details about a specific rule
+  config     Display current configuration
+  validate   Validate the spec and implementation

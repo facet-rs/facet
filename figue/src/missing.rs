@@ -42,6 +42,15 @@ pub enum MissingFieldKind {
     ConfigField,
 }
 
+/// A available subcommand name and its doc summary.
+#[derive(Debug, Clone)]
+pub struct AvailableSubcommand {
+    /// CLI name (kebab-case)
+    pub name: String,
+    /// Doc summary if available
+    pub doc: Option<String>,
+}
+
 /// Information about a missing required field.
 #[derive(Debug, Clone)]
 pub struct MissingFieldInfo {
@@ -61,6 +70,9 @@ pub struct MissingFieldInfo {
     pub env_aliases: Vec<String>,
     /// What kind of field this is - determines error formatting strategy
     pub kind: MissingFieldKind,
+    /// If this field is a subcommand, the available subcommands.
+    /// Non-empty only when the missing field is a subcommand field.
+    pub available_subcommands: Vec<AvailableSubcommand>,
 }
 
 /// Information about a corrected command with missing arguments for display.
@@ -189,6 +201,7 @@ pub fn collect_missing_fields(
                     env_var: None,
                     env_aliases: Vec::new(),
                     kind: MissingFieldKind::ConfigField,
+                    available_subcommands: Vec::new(),
                 });
             }
         } else {
@@ -230,6 +243,7 @@ fn collect_missing_in_arg_level(
                 env_var: None, // CLI args don't have env vars
                 env_aliases: Vec::new(),
                 kind: MissingFieldKind::CliArg,
+                available_subcommands: Vec::new(),
             });
         }
     }
@@ -243,6 +257,16 @@ fn collect_missing_in_arg_level(
             } else {
                 format!("{}.{}", path_prefix, subcommand_field)
             };
+
+            let available_subcommands: Vec<AvailableSubcommand> = arg_level
+                .subcommands()
+                .iter()
+                .map(|(_, sub)| AvailableSubcommand {
+                    name: sub.cli_name().to_string(),
+                    doc: sub.docs().summary().map(|s| s.to_string()),
+                })
+                .collect();
+
             missing.push(MissingFieldInfo {
                 field_name: subcommand_field.to_string(),
                 field_path,
@@ -252,6 +276,7 @@ fn collect_missing_in_arg_level(
                 env_var: None,
                 env_aliases: Vec::new(),
                 kind: MissingFieldKind::CliArg,
+                available_subcommands,
             });
         } else if let Some(ConfigValue::Enum(sourced)) = obj_map.get(subcommand_field) {
             // Subcommand is present - recursively check its arguments
@@ -411,6 +436,7 @@ fn collect_missing_in_config_value(
                                     env_var: None,
                                     env_aliases: field_schema.env_aliases().to_vec(),
                                     kind: MissingFieldKind::ConfigField,
+                                    available_subcommands: Vec::new(),
                                 });
                             }
                         }
@@ -493,6 +519,7 @@ fn check_missing_field(
             env_var,
             env_aliases: field_schema.env_aliases().to_vec(),
             kind: MissingFieldKind::ConfigField,
+            available_subcommands: Vec::new(),
         });
     }
 }
