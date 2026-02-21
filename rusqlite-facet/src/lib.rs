@@ -741,6 +741,13 @@ fn deserialize_column(
         return Ok(partial);
     }
 
+    if let Some(inner) = shape.inner {
+        partial = partial.begin_inner()?;
+        partial = deserialize_column(row, column_idx, field_name, partial, inner)?;
+        partial = partial.end()?;
+        return Ok(partial);
+    }
+
     let value_ref = row.get_ref(column_idx)?;
     if matches!(value_ref, ValueRef::Null) {
         return Err(Error::TypeMismatch {
@@ -1204,5 +1211,43 @@ mod tests {
             .unwrap();
         let row = stmt.facet_query_one::<IdRow, _>(QueryId { id: 5 }).unwrap();
         assert_eq!(row, IdRow { id: 5 });
+    }
+
+    #[test]
+    fn transparent_wrapper_works_for_params_and_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute("CREATE TABLE monks (name TEXT NOT NULL)", ())
+            .unwrap();
+        conn.execute("INSERT INTO monks (name) VALUES ('teacup')", ())
+            .unwrap();
+
+        #[derive(Debug, Facet, PartialEq, Eq)]
+        #[facet(transparent)]
+        struct MonkString(String);
+
+        #[derive(Facet)]
+        struct QueryMonk {
+            name: MonkString,
+        }
+
+        #[derive(Debug, Facet, PartialEq, Eq)]
+        struct MonkRow {
+            name: MonkString,
+        }
+
+        let row = conn
+            .facet_query_one::<MonkRow, _>(
+                "SELECT name FROM monks WHERE name = :name",
+                QueryMonk {
+                    name: MonkString("teacup".to_string()),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            MonkRow {
+                name: MonkString("teacup".to_string())
+            }
+        );
     }
 }
