@@ -10,7 +10,7 @@ pub use moire::sync::oneshot::Sender as OneshotSender;
 pub struct OneshotReceiver<T>(moire::sync::oneshot::Receiver<T>);
 
 impl<T> OneshotReceiver<T> {
-    pub async fn recv(self) -> Result<T, tokio::sync::oneshot::error::RecvError> {
+    pub async fn recv(self) -> Result<T, moire::sync::oneshot::error::RecvError> {
         self.0.await
     }
 }

@@ -68,8 +68,7 @@ pub(crate) struct HandleShared {
     /// Optional diagnostic state for SIGUSR1 dumps.
     pub(crate) diagnostic_state: Option<Arc<crate::diagnostic::DiagnosticState>>,
     /// Optional request concurrency limiter.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) request_semaphore: Option<Arc<tokio::sync::Semaphore>>,
+    pub(crate) request_semaphore: Option<moire::sync::Semaphore>,
 }
 
 /// Handle for making outgoing RPC calls.
@@ -240,13 +239,13 @@ impl ConnectionHandle {
         diagnostic_state: Option<Arc<crate::diagnostic::DiagnosticState>>,
     ) -> Self {
         let channel_registry = ChannelRegistry::new_with_credit(initial_credit, driver_tx.clone());
-        #[cfg(not(target_arch = "wasm32"))]
         let request_semaphore = if max_concurrent_requests == u32::MAX {
             None
         } else {
-            Some(Arc::new(tokio::sync::Semaphore::new(
+            Some(moire::sync::Semaphore::new(
+                "request_semaphore",
                 max_concurrent_requests as usize,
-            )))
+            ))
         };
         Self {
             shared: Arc::new(HandleShared {
@@ -259,19 +258,16 @@ impl ConnectionHandle {
                     channel_registry,
                 ),
                 diagnostic_state,
-                #[cfg(not(target_arch = "wasm32"))]
                 request_semaphore,
             }),
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     async fn acquire_request_slot(
         &self,
-    ) -> Result<Option<tokio::sync::OwnedSemaphorePermit>, TransportError> {
+    ) -> Result<Option<moire::sync::OwnedSemaphorePermit>, TransportError> {
         if let Some(semaphore) = &self.shared.request_semaphore {
             let permit = semaphore
-                .clone()
                 .acquire_owned()
                 .await
                 .map_err(|_| TransportError::DriverGone)?;
@@ -279,11 +275,6 @@ impl ConnectionHandle {
         } else {
             Ok(None)
         }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    async fn acquire_request_slot(&self) -> Result<(), TransportError> {
-        Ok(())
     }
 
     /// Get the connection ID for this handle.
@@ -650,10 +641,7 @@ impl ConnectionHandle {
         args_debug: Option<String>,
         drains: Vec<(ChannelId, Receiver<IncomingChannelMessage>)>,
     ) -> Result<ResponseData, TransportError> {
-        #[cfg(not(target_arch = "wasm32"))]
         let _request_permit = self.acquire_request_slot().await?;
-        #[cfg(target_arch = "wasm32")]
-        self.acquire_request_slot().await?;
 
         let request_id = self.shared.request_ids.next();
         #[cfg(feature = "diagnostics")]
