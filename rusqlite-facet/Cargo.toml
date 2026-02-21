@@ -1,0 +1,11 @@
+[package]
+name = "rusqlite-facet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+facet.workspace = true
+facet-core.workspace = true
+facet-reflect.workspace = true
+rusqlite.workspace = true
