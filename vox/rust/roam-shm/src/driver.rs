@@ -26,8 +26,7 @@ use roam_session::request_response_spy::{
 };
 use roam_session::{
     ChannelError, ChannelRegistry, ConnectError, ConnectionHandle, Context, DriverMessage,
-    MOIRE_TASK_ID_METADATA_KEY, MOIRE_TASK_NAME_METADATA_KEY, ResponseData, Role,
-    ServiceDispatcher, TransportError,
+    ResponseData, Role, ServiceDispatcher, TransportError,
 };
 #[cfg(feature = "diagnostics")]
 use roam_session::{MOIRE_METHOD_NAME_METADATA_KEY, MOIRE_REQUEST_ENTITY_ID_METADATA_KEY};
@@ -57,27 +56,6 @@ fn response_outcome_from_payload(payload: &[u8]) -> ResponseOutcome {
         [1, ..] => ResponseOutcome::Error,
         _ => ResponseOutcome::Error,
     }
-}
-
-fn task_context_from_metadata(metadata: &roam_wire::Metadata) -> (Option<u64>, Option<String>) {
-    let mut task_id = None;
-    let mut task_name = None;
-    for (key, value, _flags) in metadata {
-        if key == MOIRE_TASK_ID_METADATA_KEY {
-            task_id = match value {
-                roam_wire::MetadataValue::U64(id) => Some(*id),
-                roam_wire::MetadataValue::String(s) => s.parse::<u64>().ok(),
-                roam_wire::MetadataValue::Bytes(_) => None,
-            };
-        } else if key == MOIRE_TASK_NAME_METADATA_KEY {
-            task_name = match value {
-                roam_wire::MetadataValue::String(name) => Some(name.clone()),
-                roam_wire::MetadataValue::U64(id) => Some(id.to_string()),
-                roam_wire::MetadataValue::Bytes(_) => None,
-            };
-        }
-    }
-    (task_id, task_name)
 }
 
 #[cfg(feature = "diagnostics")]
@@ -962,7 +940,6 @@ where
                 .await);
         }
 
-        let (request_task_id, request_task_name) = task_context_from_metadata(&metadata);
         // Track incoming request for diagnostics
         if let Some(diag) = &self.diagnostic_state {
             trace!(request_id, method_id, name = %diag.name, "recording incoming request");
@@ -971,8 +948,6 @@ where
                 request_id,
                 method_id,
                 metadata: Some(&metadata),
-                task_id: request_task_id,
-                task_name: request_task_name,
                 args: None,
             });
         }
@@ -2765,7 +2740,6 @@ impl MultiPeerHostDriver {
                 .await);
         }
 
-        let (request_task_id, request_task_name) = task_context_from_metadata(&metadata);
         // Track incoming request for diagnostics
         if let Some(diag) = &state.diagnostic_state {
             trace!(request_id, method_id, name = %diag.name, "recording incoming request");
@@ -2774,8 +2748,6 @@ impl MultiPeerHostDriver {
                 request_id,
                 method_id,
                 metadata: Some(&metadata),
-                task_id: request_task_id,
-                task_name: request_task_name,
                 args: None,
             });
         } else {

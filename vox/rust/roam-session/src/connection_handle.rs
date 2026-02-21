@@ -92,10 +92,6 @@ pub struct ConnectionHandle {
 }
 
 impl ConnectionHandle {
-    fn current_task_context() -> (Option<u64>, Option<String>) {
-        (None, None)
-    }
-
     fn upsert_metadata_entry(
         metadata: &mut roam_wire::Metadata,
         key: &str,
@@ -149,7 +145,7 @@ impl ConnectionHandle {
         mut metadata: roam_wire::Metadata,
         request_id: u64,
         method_name: &str,
-    ) -> (roam_wire::Metadata, Option<u64>, Option<String>) {
+    ) -> roam_wire::Metadata {
         if let Some(current_call_metadata) = crate::dispatch::get_current_call_metadata() {
             for (key, value, flags) in current_call_metadata {
                 if flags & roam_wire::metadata_flags::NO_PROPAGATE != 0 {
@@ -196,25 +192,7 @@ impl ConnectionHandle {
             );
         }
 
-        let (task_id, task_name) = Self::current_task_context();
-        if let Some(task_id) = task_id {
-            Self::upsert_metadata_entry(
-                &mut metadata,
-                crate::MOIRE_TASK_ID_METADATA_KEY,
-                roam_wire::MetadataValue::U64(task_id),
-                roam_wire::metadata_flags::NONE,
-            );
-        }
-        if let Some(ref task_name) = task_name {
-            Self::upsert_metadata_entry(
-                &mut metadata,
-                crate::MOIRE_TASK_NAME_METADATA_KEY,
-                roam_wire::MetadataValue::String(task_name.clone()),
-                roam_wire::metadata_flags::NONE,
-            );
-        }
-
-        (metadata, task_id, task_name)
+        metadata
     }
 
     /// Create a new handle for the root connection (conn_id = 0).
@@ -679,11 +657,9 @@ impl ConnectionHandle {
 
         let request_id = self.shared.request_ids.next();
         #[cfg(feature = "diagnostics")]
-        let (mut metadata, task_id, task_name) =
-            self.merged_outgoing_metadata(metadata, request_id, method_name);
+        let mut metadata = self.merged_outgoing_metadata(metadata, request_id, method_name);
         #[cfg(not(feature = "diagnostics"))]
-        let (metadata, task_id, task_name) =
-            self.merged_outgoing_metadata(metadata, request_id, method_name);
+        let metadata = self.merged_outgoing_metadata(metadata, request_id, method_name);
         let (response_tx, response_rx) = oneshot("call_raw_with_channels");
 
         #[cfg(feature = "diagnostics")]
@@ -729,8 +705,6 @@ impl ConnectionHandle {
                 request_id,
                 method_id,
                 metadata: Some(&metadata),
-                task_id,
-                task_name,
                 args,
             });
             // Associate channels with this request

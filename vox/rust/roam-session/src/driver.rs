@@ -1017,27 +1017,6 @@ struct PendingConnect {
     dispatcher: Option<Box<dyn ServiceDispatcher>>,
 }
 
-fn task_context_from_metadata(metadata: &roam_wire::Metadata) -> (Option<u64>, Option<String>) {
-    let mut task_id = None;
-    let mut task_name = None;
-    for (key, value, _flags) in metadata {
-        if key == crate::MOIRE_TASK_ID_METADATA_KEY {
-            task_id = match value {
-                roam_wire::MetadataValue::U64(id) => Some(*id),
-                roam_wire::MetadataValue::String(s) => s.parse::<u64>().ok(),
-                roam_wire::MetadataValue::Bytes(_) => None,
-            };
-        } else if key == crate::MOIRE_TASK_NAME_METADATA_KEY {
-            task_name = match value {
-                roam_wire::MetadataValue::String(name) => Some(name.clone()),
-                roam_wire::MetadataValue::U64(id) => Some(id.to_string()),
-                roam_wire::MetadataValue::Bytes(_) => None,
-            };
-        }
-    }
-    (task_id, task_name)
-}
-
 #[cfg(feature = "diagnostics")]
 fn metadata_string(metadata: &roam_wire::Metadata, key: &str) -> Option<String> {
     metadata.iter().find_map(|(entry_key, value, _)| {
@@ -1720,15 +1699,12 @@ where
             return Err(self.goodbye("flow.call.payload-limit").await);
         }
 
-        let (request_task_id, request_task_name) = task_context_from_metadata(&metadata);
         if let Some(ref diag) = self.diagnostic_state {
             diag.record_incoming_request(crate::diagnostic::RequestRecord {
                 conn_id: conn_id.raw(),
                 request_id,
                 method_id,
                 metadata: Some(&metadata),
-                task_id: request_task_id,
-                task_name: request_task_name.clone(),
                 args: None,
             });
         }

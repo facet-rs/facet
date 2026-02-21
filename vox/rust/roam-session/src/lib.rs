@@ -64,8 +64,6 @@ pub use rpc_plan::*;
 
 pub(crate) const CHANNEL_SIZE: usize = 1024;
 pub(crate) const RX_STREAM_BUFFER_SIZE: usize = 1024;
-pub const MOIRE_TASK_ID_METADATA_KEY: &str = "moire.task_id";
-pub const MOIRE_TASK_NAME_METADATA_KEY: &str = "moire.task_name";
 pub const MOIRE_CHAIN_ID_METADATA_KEY: &str = "moire.chain_id";
 pub const MOIRE_SPAN_ID_METADATA_KEY: &str = "moire.span_id";
 pub const MOIRE_PARENT_SPAN_ID_METADATA_KEY: &str = "moire.parent_span_id";

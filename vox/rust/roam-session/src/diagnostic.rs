@@ -126,17 +126,11 @@ pub struct InFlightRequest {
     pub handled_at: Option<Instant>,
     pub handled_at_ns: Option<u64>,
     pub direction: RequestDirection,
-    pub task_id: Option<u64>,
-    pub task_name: Option<String>,
     pub metadata: Option<HashMap<String, String>>,
     /// Structured arguments (captured when diagnostics feature is enabled).
     pub args: Option<HashMap<String, String>>,
     /// Backtrace at call site (captured when diagnostics feature is enabled).
     pub backtrace: Option<String>,
-    /// The local task handling this incoming request (server side).
-    pub server_task_id: Option<u64>,
-    /// Name of the local task handling this incoming request.
-    pub server_task_name: Option<String>,
 }
 
 /// A recently completed RPC request.
@@ -165,10 +159,6 @@ pub struct OpenChannel {
     pub direction: ChannelDirection,
     /// The request that opened this channel (if known).
     pub request_id: Option<u64>,
-    /// The moire task that created/opened this channel.
-    pub task_id: Option<u64>,
-    /// Name of the task that created/opened this channel.
-    pub task_name: Option<String>,
     /// Whether this channel has been closed.
     pub closed: bool,
 }
@@ -290,8 +280,6 @@ pub struct RequestRecord<'a> {
     pub request_id: u64,
     pub method_id: u64,
     pub metadata: Option<&'a roam_wire::Metadata>,
-    pub task_id: Option<u64>,
-    pub task_name: Option<String>,
     pub args: Option<HashMap<String, String>>,
 }
 
@@ -631,8 +619,6 @@ impl DiagnosticState {
             request_id,
             method_id,
             metadata,
-            task_id,
-            task_name,
             args,
         } = record;
         let backtrace = Some(format_short_backtrace());
@@ -650,13 +636,9 @@ impl DiagnosticState {
                     handled_at: None,
                     handled_at_ns: None,
                     direction: RequestDirection::Outgoing,
-                    task_id,
-                    task_name,
                     metadata,
                     args,
                     backtrace,
-                    server_task_id: None,
-                    server_task_name: None,
                 },
             );
         }
@@ -670,14 +652,9 @@ impl DiagnosticState {
             request_id,
             method_id,
             metadata,
-            task_id,
-            task_name,
             args,
         } = record;
         let metadata = Self::metadata_to_debug_map(metadata);
-        // Task tracking APIs removed — set to None
-        let server_task_id = None;
-        let server_task_name = None;
         let now = Instant::now();
         let now_unix_ns = unix_now_ns();
         if let Ok(mut requests) = self.requests.lock() {
@@ -691,13 +668,9 @@ impl DiagnosticState {
                     handled_at: None,
                     handled_at_ns: None,
                     direction: RequestDirection::Incoming,
-                    task_id,
-                    task_name,
                     metadata,
                     args,
-                    backtrace: None, // no backtrace for incoming — the remote captured it
-                    server_task_id,
-                    server_task_name,
+                    backtrace: None,
                 },
             );
         }
@@ -788,8 +761,6 @@ impl DiagnosticState {
         direction: ChannelDirection,
         request_id: Option<u64>,
     ) {
-        let task_id = None;
-        let task_name = None;
         if let Ok(mut channels) = self.channels.lock() {
             channels.insert(
                 channel_id,
@@ -798,8 +769,6 @@ impl DiagnosticState {
                     started: Instant::now(),
                     direction,
                     request_id,
-                    task_id,
-                    task_name,
                     closed: false,
                 },
             );
