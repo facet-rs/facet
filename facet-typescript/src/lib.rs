@@ -525,8 +525,8 @@ impl TypeScriptGenerator {
                 let variant_name = variant.effective_name();
                 match variant.data.kind {
                     StructKind::Unit => {
-                        // Unit variant as object with type discriminator
-                        variant_types.push(format!("{{ {}: \"{}\" }}", variant_name, variant_name));
+                        // Unit variant serializes as bare string, even in tagged enums.
+                        variant_types.push(format!("\"{}\"", variant_name));
                     }
                     StructKind::TupleStruct if variant.data.fields.len() == 1 => {
                         // Newtype variant: { VariantName: InnerType }
@@ -818,6 +818,23 @@ mod tests {
 
         let ts = to_typescript::<Message>();
         insta::assert_snapshot!(ts);
+    }
+
+    #[test]
+    fn test_tagged_enum_unit_and_data_variants() {
+        #[derive(Facet)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        #[allow(dead_code)]
+        enum ResponseStatus {
+            Pending,
+            Ok(String),
+            Error { message: String },
+            Cancelled,
+        }
+
+        let ts = to_typescript::<ResponseStatus>();
+        insta::assert_snapshot!("tagged_enum_unit_and_data_variants", ts);
     }
 
     #[test]
