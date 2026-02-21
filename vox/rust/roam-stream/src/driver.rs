@@ -273,10 +273,9 @@ where
                         });
                     }
 
-                    last_error = Some(io::Error::new(
-                        io::ErrorKind::ConnectionReset,
-                        "connection closed",
-                    ));
+                    // Don't overwrite last_error here — if we saw a specific ConnectFailed
+                    // error earlier, preserve it. The unwrap_or_else above handles the
+                    // case where last_error is None.
                     let backoff = self.retry_policy.backoff_for_attempt(attempt);
                     moire::time::sleep(backoff).await;
                 }
