@@ -85,6 +85,7 @@ fn generate_service(parsed: &ServiceTrait) -> Result<TokenStream2, parser::Error
 
     let roam = roam_crate();
 
+    let service_descriptor_fn = generate_service_descriptor_fn(parsed, &roam);
     let method_id_mod = generate_method_id_module(parsed, &roam);
     let service_trait = generate_service_trait(parsed, &roam);
     let dispatcher = generate_dispatcher(parsed, &roam);
@@ -96,6 +97,7 @@ fn generate_service(parsed: &ServiceTrait) -> Result<TokenStream2, parser::Error
     // Note: We use fully qualified paths for RoamError and Never instead of
     // importing them, to allow multiple services in the same module.
     Ok(quote! {
+        #service_descriptor_fn
         #method_id_mod
         #service_trait
         #dispatcher
@@ -105,67 +107,133 @@ fn generate_service(parsed: &ServiceTrait) -> Result<TokenStream2, parser::Error
 }
 
 // ============================================================================
-// Method ID Generation
+// Service Descriptor Generation
 // ============================================================================
 
-fn generate_method_id_module(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
+fn generate_service_descriptor_fn(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
     let service_name = parsed.name();
-    let mod_name = format_ident!("{}_method_id", service_name.to_snake_case());
-    let method_fns: Vec<TokenStream2> = parsed
+    let descriptor_fn_name = format_ident!("{}_service_descriptor", service_name.to_snake_case());
+
+    // Build method descriptor expressions
+    let method_descriptors: Vec<TokenStream2> = parsed
         .methods()
-        .map(|m| generate_method_id_fn(m, &service_name, roam))
+        .map(|m| {
+            let method_name_str = m.name();
+
+            // Build arg name strings array
+            let arg_name_strs: Vec<String> = m.args().map(|arg| arg.name().to_string()).collect();
+
+            // Build arg shapes array
+            let arg_shapes: Vec<TokenStream2> = m
+                .args()
+                .map(|arg| {
+                    let ty = arg.ty.to_token_stream();
+                    quote! { <#ty as #roam::facet::Facet>::SHAPE }
+                })
+                .collect();
+
+            let args_shapes_expr = if arg_shapes.is_empty() {
+                quote! { &[] }
+            } else {
+                quote! { &[#(#arg_shapes),*] }
+            };
+
+            let args_names_expr = if arg_name_strs.is_empty() {
+                quote! { &[] }
+            } else {
+                quote! { &[#(#arg_name_strs),*] }
+            };
+
+            // Build arg types tuple for args_plan
+            let arg_types: Vec<TokenStream2> = m.args().map(|arg| arg.ty.to_token_stream()).collect();
+            let tuple_type = if arg_types.is_empty() {
+                quote! { () }
+            } else if arg_types.len() == 1 {
+                let t = &arg_types[0];
+                quote! { (#t,) }
+            } else {
+                quote! { (#(#arg_types),*) }
+            };
+
+            // Return type
+            let return_type = m.return_type();
+            let return_ty_tokens = return_type.to_token_stream();
+
+            // Ok type and Err type
+            let (ok_ty, err_ty) = if let Some((ok, err)) = return_type.as_result() {
+                (ok.to_token_stream(), err.to_token_stream())
+            } else {
+                (return_type.to_token_stream(), quote! { ::core::convert::Infallible })
+            };
+
+            quote! {
+                Box::leak(Box::new(#roam::session::MethodDescriptor {
+                    id: #roam::hash::method_id_from_shapes(
+                        #service_name,
+                        #method_name_str,
+                        #args_shapes_expr,
+                        <#return_ty_tokens as #roam::facet::Facet>::SHAPE,
+                    ),
+                    service_name: #service_name,
+                    method_name: #method_name_str,
+                    arg_names: #args_names_expr,
+                    arg_shapes: #args_shapes_expr,
+                    return_shape: <#return_ty_tokens as #roam::facet::Facet>::SHAPE,
+                    args_plan: Box::leak(Box::new(#roam::session::RpcPlan::for_type::<#tuple_type>())),
+                    ok_plan: Box::leak(Box::new(#roam::session::RpcPlan::for_type::<#ok_ty>())),
+                    err_plan: Box::leak(Box::new(#roam::session::RpcPlan::for_type::<#err_ty>())),
+                }))
+            }
+        })
         .collect();
 
     quote! {
-        /// Method IDs for the service (computed lazily at runtime).
-        #[allow(non_snake_case, clippy::all, unused)]
-        pub mod #mod_name {
-            use std::sync::LazyLock;
-            use super::*;
-
-            #(#method_fns)*
+        #[allow(non_snake_case, clippy::all)]
+        fn #descriptor_fn_name() -> &'static #roam::session::ServiceDescriptor {
+            static DESCRIPTOR: std::sync::OnceLock<&'static #roam::session::ServiceDescriptor> = std::sync::OnceLock::new();
+            DESCRIPTOR.get_or_init(|| {
+                let methods: Vec<&'static #roam::session::MethodDescriptor> = vec![
+                    #(#method_descriptors),*
+                ];
+                Box::leak(Box::new(#roam::session::ServiceDescriptor {
+                    service_name: #service_name,
+                    methods: Box::leak(methods.into_boxed_slice()),
+                }))
+            })
         }
     }
 }
 
-fn generate_method_id_fn(
-    method: &ServiceMethod,
-    service_name: &str,
-    roam: &TokenStream2,
-) -> TokenStream2 {
-    let method_name = method.name();
-    let fn_name = format_ident!("{}", method_name.to_snake_case());
+// ============================================================================
+// Method ID Generation
+// ============================================================================
 
-    // Build args array - use the types directly
-    let arg_shapes: Vec<TokenStream2> = method
-        .args()
-        .map(|arg| {
-            let ty = arg.ty.to_token_stream();
-            quote! { <#ty as #roam::facet::Facet>::SHAPE }
+fn generate_method_id_module(parsed: &ServiceTrait, _roam: &TokenStream2) -> TokenStream2 {
+    let service_name = parsed.name();
+    let mod_name = format_ident!("{}_method_id", service_name.to_snake_case());
+    let descriptor_fn_name = format_ident!("{}_service_descriptor", service_name.to_snake_case());
+
+    let method_fns: Vec<TokenStream2> = parsed
+        .methods()
+        .enumerate()
+        .map(|(i, m)| {
+            let fn_name = format_ident!("{}", m.name().to_snake_case());
+            let idx = i;
+            quote! {
+                pub fn #fn_name() -> u64 {
+                    super::#descriptor_fn_name().methods[#idx].id
+                }
+            }
         })
         .collect();
 
-    let args_array = if arg_shapes.is_empty() {
-        quote! { &[] }
-    } else {
-        quote! { &[#(#arg_shapes),*] }
-    };
-
-    let return_type = method.return_type();
-    let return_ty_tokens = return_type.to_token_stream();
-    let return_shape = quote! { <#return_ty_tokens as #roam::facet::Facet>::SHAPE };
-
     quote! {
-        pub fn #fn_name() -> u64 {
-            static ID: LazyLock<u64> = LazyLock::new(|| {
-                #roam::hash::method_id_from_shapes(
-                    #service_name,
-                    #method_name,
-                    #args_array,
-                    #return_shape,
-                )
-            });
-            *ID
+        /// Method IDs for the service (indexes into the service descriptor).
+        #[allow(non_snake_case, clippy::all, unused)]
+        pub mod #mod_name {
+            use super::*;
+
+            #(#method_fns)*
         }
     }
 }
@@ -231,11 +299,13 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
     let trait_name = format_ident!("{}", parsed.name());
     let dispatcher_name = format_ident!("{}Dispatcher", parsed.name());
     let method_id_mod = format_ident!("{}_method_id", parsed.name().to_snake_case());
+    let descriptor_fn_name = format_ident!("{}_service_descriptor", parsed.name().to_snake_case());
 
     // Generate dispatch methods
     let dispatch_methods: Vec<TokenStream2> = parsed
         .methods()
-        .map(|m| generate_dispatch_method(m, roam))
+        .enumerate()
+        .map(|(i, m)| generate_dispatch_method(m, i, roam, &descriptor_fn_name))
         .collect();
 
     // Generate the if-else chain for ServiceDispatcher impl
@@ -258,43 +328,6 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
         })
         .collect();
 
-    // Generate method ID calls for method_ids()
-    let method_id_calls: Vec<TokenStream2> = parsed
-        .methods()
-        .map(|m| {
-            let method_name = format_ident!("{}", m.name().to_snake_case());
-            quote! { #method_id_mod::#method_name() }
-        })
-        .collect();
-
-    let method_descriptor_calls: Vec<TokenStream2> = parsed
-        .methods()
-        .map(|m| {
-            let method_name_ident = format_ident!("{}", m.name().to_snake_case());
-            let full_method_name = format!("{}.{}", parsed.name(), m.name());
-            quote! {
-                #roam::session::MethodDescriptor {
-                    id: #method_id_mod::#method_name_ident(),
-                    full_name: #full_method_name,
-                }
-            }
-        })
-        .collect();
-
-    let method_descriptor_arms: Vec<TokenStream2> = parsed
-        .methods()
-        .map(|m| {
-            let method_name_ident = format_ident!("{}", m.name().to_snake_case());
-            let full_method_name = format!("{}.{}", parsed.name(), m.name());
-            quote! {
-                id if id == #method_id_mod::#method_name_ident() => Some(#roam::session::MethodDescriptor {
-                    id,
-                    full_name: #full_method_name,
-                })
-            }
-        })
-        .collect();
-
     quote! {
         /// Dispatcher for this service.
         ///
@@ -304,18 +337,6 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
         pub struct #dispatcher_name<H> {
             handler: H,
             middleware: Vec<std::sync::Arc<dyn #roam::session::Middleware>>,
-        }
-
-        impl<H> #dispatcher_name<H> {
-            /// Returns all method IDs handled by this dispatcher.
-            pub fn method_ids() -> Vec<u64> {
-                vec![#(#method_id_calls),*]
-            }
-
-            /// Returns static method descriptors handled by this dispatcher.
-            pub fn method_descriptors() -> Vec<#roam::session::MethodDescriptor> {
-                vec![#(#method_descriptor_calls),*]
-            }
         }
 
         impl<H> #dispatcher_name<H>
@@ -353,15 +374,8 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
         where
             H: #trait_name + Clone + 'static,
         {
-            fn method_descriptor(&self, method_id: u64) -> Option<#roam::session::MethodDescriptor> {
-                match method_id {
-                    #(#method_descriptor_arms,)*
-                    _ => None,
-                }
-            }
-
-            fn method_ids(&self) -> Vec<u64> {
-                Self::method_ids()
+            fn service_descriptor(&self) -> &'static #roam::session::ServiceDescriptor {
+                #descriptor_fn_name()
             }
 
             fn dispatch(
@@ -380,7 +394,12 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
     }
 }
 
-fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> TokenStream2 {
+fn generate_dispatch_method(
+    method: &ServiceMethod,
+    method_index: usize,
+    roam: &TokenStream2,
+    descriptor_fn_name: &proc_macro2::Ident,
+) -> TokenStream2 {
     let method_name = format_ident!("{}", method.name().to_snake_case());
     let dispatch_name = format_ident!("dispatch_{}", method.name().to_snake_case());
 
@@ -419,14 +438,7 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
     };
 
     let method_name_str = method.name();
-
-    // Build static array of arg name strings for middleware
-    let arg_name_strs: Vec<String> = method.args().map(|arg| arg.name().to_string()).collect();
-    let arg_names_static = if arg_name_strs.is_empty() {
-        quote! { &[] }
-    } else {
-        quote! { &[#(#arg_name_strs),*] }
-    };
+    let idx = method_index;
 
     // For logging, we need to reference the args tuple (no colors for log output)
     let args_log = if arg_names.is_empty() {
@@ -552,13 +564,10 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
             registry: &mut #roam::session::ChannelRegistry,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
             use std::mem::MaybeUninit;
-            use std::sync::{Arc, OnceLock};
 
-            // Precompute plans via OnceLock (one per monomorphized type, program lifetime).
-            static ARGS_PLAN: OnceLock<Arc<#roam::session::RpcPlan>> = OnceLock::new();
-            let args_plan = ARGS_PLAN.get_or_init(|| Arc::new(#roam::session::RpcPlan::for_type::<#tuple_type>()));
-            static RESPONSE_PLAN: OnceLock<Arc<#roam::session::RpcPlan>> = OnceLock::new();
-            let response_plan = RESPONSE_PLAN.get_or_init(|| Arc::new(#roam::session::RpcPlan::for_type::<#result_type>()));
+            let desc = #descriptor_fn_name().methods[#idx];
+            let args_plan = desc.args_plan;
+            let response_plan = desc.ok_plan;
 
             let handler = self.handler.clone();
             let middleware = self.middleware.clone();
@@ -596,7 +605,7 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
 
             Box::pin(#roam::session::DISPATCH_CONTEXT.scope(dispatch_ctx, async move {
                 let mut cx = cx;
-                cx.arg_names = #arg_names_static;
+                cx.arg_names = desc.arg_names;
 
                 // 4. Run pre-middleware (ASYNC)
                 if !middleware.is_empty() {
@@ -664,7 +673,7 @@ fn generate_dispatch_method(method: &ServiceMethod, roam: &TokenStream2) -> Toke
 
 fn generate_client(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
     let client_name = format_ident!("{}Client", parsed.name());
-    let method_id_mod = format_ident!("{}_method_id", parsed.name().to_snake_case());
+    let descriptor_fn_name = format_ident!("{}_service_descriptor", parsed.name().to_snake_case());
 
     let client_doc = format!(
         "Client for {} service.\n\n\
@@ -676,7 +685,8 @@ fn generate_client(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
 
     let client_methods: Vec<TokenStream2> = parsed
         .methods()
-        .map(|m| generate_client_method(m, &parsed.name(), &method_id_mod, roam))
+        .enumerate()
+        .map(|(i, m)| generate_client_method(m, i, &parsed.name(), &descriptor_fn_name, roam))
         .collect();
 
     quote! {
@@ -699,14 +709,15 @@ fn generate_client(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
 
 fn generate_client_method(
     method: &ServiceMethod,
+    method_index: usize,
     service_name: &str,
-    method_id_mod: &proc_macro2::Ident,
+    descriptor_fn_name: &proc_macro2::Ident,
     roam: &TokenStream2,
 ) -> TokenStream2 {
     let method_name = format_ident!("{}", method.name().to_snake_case());
-    let method_id_name = format_ident!("{}", method.name().to_snake_case());
     let full_method_name = format!("{}.{}", service_name, method.name());
     let method_doc = method.doc().map(|d| quote! { #[doc = #d] });
+    let idx = method_index;
 
     // Parameters
     let params: Vec<TokenStream2> = method
@@ -761,23 +772,16 @@ fn generate_client_method(
             &self,
             #(#params),*
         ) -> #call_future_return {
-            use std::sync::{Arc, OnceLock};
-
-            static ARGS_PLAN: OnceLock<Arc<#roam::session::RpcPlan>> = OnceLock::new();
-            let args_plan = ARGS_PLAN.get_or_init(|| Arc::new(#roam::session::RpcPlan::for_type::<#args_tuple_type>()));
-            static OK_PLAN: OnceLock<Arc<#roam::session::RpcPlan>> = OnceLock::new();
-            let ok_plan = OK_PLAN.get_or_init(|| Arc::new(#roam::session::RpcPlan::for_type::<#ok_ty>()));
-            static ERR_PLAN: OnceLock<Arc<#roam::session::RpcPlan>> = OnceLock::new();
-            let err_plan = ERR_PLAN.get_or_init(|| Arc::new(#roam::session::RpcPlan::for_type::<#err_ty>()));
+            let desc = #descriptor_fn_name().methods[#idx];
 
             #roam::session::CallFuture::new(
                 self.caller.clone(),
-                #method_id_mod::#method_id_name(),
+                desc.id,
                 #full_method_name,
                 #args_tuple,
-                args_plan,
-                ok_plan,
-                err_plan,
+                desc.args_plan,
+                desc.ok_plan,
+                desc.err_plan,
             )
         }
     }

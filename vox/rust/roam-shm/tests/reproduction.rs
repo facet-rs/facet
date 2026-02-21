@@ -9,8 +9,8 @@ use std::pin::Pin;
 #[derive(Clone)]
 struct MockDispatcher;
 impl roam_session::ServiceDispatcher for MockDispatcher {
-    fn method_descriptor(&self, _method_id: u64) -> Option<roam_session::MethodDescriptor> {
-        None
+    fn service_descriptor(&self) -> &'static roam_session::ServiceDescriptor {
+        &roam_session::EMPTY_DESCRIPTOR
     }
 
     fn dispatch(
@@ -20,10 +20,6 @@ impl roam_session::ServiceDispatcher for MockDispatcher {
         _registry: &mut roam_session::ChannelRegistry,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async {})
-    }
-
-    fn method_ids(&self) -> Vec<u64> {
-        vec![]
     }
 }
 

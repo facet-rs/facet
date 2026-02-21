@@ -25,14 +25,16 @@ use tokio::net::TcpStream;
 // ============================================================================
 
 static STRING_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<String>);
-static STRING_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> =
-    Lazy::new(|| Arc::new(RpcPlan::for_type::<String>()));
+static STRING_RESPONSE_PLAN: Lazy<&'static RpcPlan> =
+    Lazy::new(|| Box::leak(Box::new(RpcPlan::for_type::<String>())));
 
 static RX_I32_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<Rx<i32>>);
-static I64_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> = Lazy::new(|| Arc::new(RpcPlan::for_type::<i64>()));
+static I64_RESPONSE_PLAN: Lazy<&'static RpcPlan> =
+    Lazy::new(|| Box::leak(Box::new(RpcPlan::for_type::<i64>())));
 
 static U32_TX_I32_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<(u32, Tx<i32>)>);
-static UNIT_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> = Lazy::new(|| Arc::new(RpcPlan::for_type::<()>()));
+static UNIT_RESPONSE_PLAN: Lazy<&'static RpcPlan> =
+    Lazy::new(|| Box::leak(Box::new(RpcPlan::for_type::<()>())));
 
 static RX_STRING_TX_STRING_ARGS_PLAN: Lazy<RpcPlan> =
     Lazy::new(RpcPlan::for_type::<(Rx<String>, Tx<String>)>);
@@ -61,12 +63,8 @@ const METHOD_GENERATE: u64 = 3;
 const METHOD_TRANSFORM: u64 = 4;
 
 impl ServiceDispatcher for StreamingService {
-    fn method_descriptor(&self, _method_id: u64) -> Option<roam_session::MethodDescriptor> {
-        None
-    }
-
-    fn method_ids(&self) -> Vec<u64> {
-        vec![METHOD_ECHO, METHOD_SUM, METHOD_GENERATE, METHOD_TRANSFORM]
+    fn service_descriptor(&self) -> &'static roam_session::ServiceDescriptor {
+        &roam_session::EMPTY_DESCRIPTOR
     }
 
     fn dispatch(
@@ -84,7 +82,7 @@ impl ServiceDispatcher for StreamingService {
                 payload,
                 registry,
                 &STRING_ARGS_PLAN,
-                STRING_RESPONSE_PLAN.clone(),
+                *STRING_RESPONSE_PLAN,
                 |input: String| async move { Ok(input) },
             ),
 
@@ -94,7 +92,7 @@ impl ServiceDispatcher for StreamingService {
                 payload,
                 registry,
                 &RX_I32_ARGS_PLAN,
-                I64_RESPONSE_PLAN.clone(),
+                *I64_RESPONSE_PLAN,
                 |mut numbers: Rx<i32>| async move {
                     let mut total: i64 = 0;
                     while let Ok(Some(n)) = numbers.recv().await {
@@ -110,7 +108,7 @@ impl ServiceDispatcher for StreamingService {
                 payload,
                 registry,
                 &U32_TX_I32_ARGS_PLAN,
-                UNIT_RESPONSE_PLAN.clone(),
+                *UNIT_RESPONSE_PLAN,
                 |(count, output): (u32, Tx<i32>)| async move {
                     for i in 0..count as i32 {
                         let _ = output.send(&i).await;
@@ -125,7 +123,7 @@ impl ServiceDispatcher for StreamingService {
                 payload,
                 registry,
                 &RX_STRING_TX_STRING_ARGS_PLAN,
-                UNIT_RESPONSE_PLAN.clone(),
+                *UNIT_RESPONSE_PLAN,
                 |(mut input, output): (Rx<String>, Tx<String>)| async move {
                     while let Ok(Some(s)) = input.recv().await {
                         let _ = output.send(&s).await;

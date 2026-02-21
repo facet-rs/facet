@@ -267,6 +267,25 @@ pub fn validate_metadata(metadata: &[(String, MetadataValue, u64)]) -> Result<()
 /// r[impl call.metadata.flags] - Each entry includes flags for handling behavior.
 pub type Metadata = Vec<(String, MetadataValue, u64)>;
 
+/// Extract a metadata value as a string.
+pub fn metadata_string(metadata: &Metadata, key: &str) -> Option<String> {
+    metadata
+        .iter()
+        .find(|(k, _, _)| k == key)
+        .map(|(_, value, _)| match value {
+            MetadataValue::String(s) => s.clone(),
+            MetadataValue::U64(n) => n.to_string(),
+            MetadataValue::Bytes(bytes) => {
+                let mut out = String::with_capacity(bytes.len() * 2);
+                for byte in bytes {
+                    use std::fmt::Write as _;
+                    let _ = write!(&mut out, "{byte:02x}");
+                }
+                out
+            }
+        })
+}
+
 /// Protocol message.
 ///
 /// Variant order is wire-significant (postcard enum discriminants).

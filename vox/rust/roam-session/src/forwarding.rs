@@ -54,13 +54,8 @@ impl Clone for ForwardingDispatcher {
 }
 
 impl ServiceDispatcher for ForwardingDispatcher {
-    fn method_descriptor(&self, _method_id: u64) -> Option<crate::MethodDescriptor> {
-        None
-    }
-
-    /// Returns empty - this dispatcher accepts all method IDs.
-    fn method_ids(&self) -> Vec<u64> {
-        vec![]
+    fn service_descriptor(&self) -> &'static crate::ServiceDescriptor {
+        &crate::EMPTY_DESCRIPTOR
     }
 
     fn dispatch(
@@ -75,7 +70,7 @@ impl ServiceDispatcher for ForwardingDispatcher {
         let method_id = cx.method_id.raw();
         let request_id = cx.request_id.raw();
         let channels = cx.channels.clone();
-        let method_name = cx.method_name().map(str::to_owned).or_else(|| {
+        let method_name = cx.method_name().or_else(|| {
             cx.metadata()
                 .iter()
                 .find_map(|(k, v, _)| match (k.as_str(), v) {
@@ -447,12 +442,8 @@ impl Clone for LateBoundForwarder {
 }
 
 impl ServiceDispatcher for LateBoundForwarder {
-    fn method_descriptor(&self, _method_id: u64) -> Option<crate::MethodDescriptor> {
-        None
-    }
-
-    fn method_ids(&self) -> Vec<u64> {
-        vec![]
+    fn service_descriptor(&self) -> &'static crate::ServiceDescriptor {
+        &crate::EMPTY_DESCRIPTOR
     }
 
     fn dispatch(

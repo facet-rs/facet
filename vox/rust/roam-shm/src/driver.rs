@@ -59,31 +59,10 @@ fn response_outcome_from_payload(payload: &[u8]) -> ResponseOutcome {
 }
 
 #[cfg(feature = "diagnostics")]
-fn metadata_string(metadata: &roam_wire::Metadata, key: &str) -> Option<String> {
-    metadata.iter().find_map(|(k, v, _)| {
-        if k == key {
-            match v {
-                roam_wire::MetadataValue::String(s) => Some(s.clone()),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    })
-}
-
-#[cfg(feature = "diagnostics")]
-fn split_method_parts(full_method: &str) -> (&str, &str) {
-    if let Some((service, method)) = full_method.rsplit_once('.') {
-        (service, method)
-    } else {
-        ("", full_method)
-    }
-}
-
-#[cfg(feature = "diagnostics")]
 fn pending_response_body(full_method_name: &str) -> moire_types::ResponseEntity {
-    let (service_name, method_name) = split_method_parts(full_method_name);
+    let (service_name, method_name) = full_method_name
+        .rsplit_once('.')
+        .unwrap_or(("", full_method_name));
     moire_types::ResponseEntity {
         service_name: String::from(service_name),
         method_name: String::from(method_name),
@@ -955,12 +934,13 @@ where
         // Create typed response handle linked to propagated request identity.
         #[cfg(feature = "diagnostics")]
         {
-            let method_name = metadata_string(&metadata, MOIRE_METHOD_NAME_METADATA_KEY)
+            let method_name = roam_wire::metadata_string(&metadata, MOIRE_METHOD_NAME_METADATA_KEY)
                 .or_else(|| {
                     roam_session::diagnostic::get_method_name(method_id).map(|s| s.to_string())
                 })
                 .unwrap_or_else(|| format!("0x{method_id:x}"));
-            let request_wire_id = metadata_string(&metadata, MOIRE_REQUEST_ENTITY_ID_METADATA_KEY);
+            let request_wire_id =
+                roam_wire::metadata_string(&metadata, MOIRE_REQUEST_ENTITY_ID_METADATA_KEY);
             if let Some(diag) = self.diagnostic_state.as_deref() {
                 let response_handle = diag.emit_response_node(
                     method_name.clone(),
@@ -2760,12 +2740,13 @@ impl MultiPeerHostDriver {
         // Create typed response handle linked to propagated request identity.
         #[cfg(feature = "diagnostics")]
         {
-            let method_name = metadata_string(&metadata, MOIRE_METHOD_NAME_METADATA_KEY)
+            let method_name = roam_wire::metadata_string(&metadata, MOIRE_METHOD_NAME_METADATA_KEY)
                 .or_else(|| {
                     roam_session::diagnostic::get_method_name(method_id).map(|s| s.to_string())
                 })
                 .unwrap_or_else(|| format!("0x{method_id:x}"));
-            let request_wire_id = metadata_string(&metadata, MOIRE_REQUEST_ENTITY_ID_METADATA_KEY);
+            let request_wire_id =
+                roam_wire::metadata_string(&metadata, MOIRE_REQUEST_ENTITY_ID_METADATA_KEY);
             if let Some(diag) = state.diagnostic_state.as_deref() {
                 let response_handle = diag.emit_response_node(
                     method_name.clone(),

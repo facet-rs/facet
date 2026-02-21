@@ -30,8 +30,8 @@ use tokio::net::TcpStream;
 // ============================================================================
 
 static STRING_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<String>);
-static STRING_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> =
-    Lazy::new(|| Arc::new(RpcPlan::for_type::<String>()));
+static STRING_RESPONSE_PLAN: Lazy<&'static RpcPlan> =
+    Lazy::new(|| Box::leak(Box::new(RpcPlan::for_type::<String>())));
 
 /// Test service that echoes strings and tracks call count.
 #[derive(Clone)]
@@ -48,12 +48,8 @@ impl TestService {
 }
 
 impl ServiceDispatcher for TestService {
-    fn method_descriptor(&self, _method_id: u64) -> Option<roam_session::MethodDescriptor> {
-        None
-    }
-
-    fn method_ids(&self) -> Vec<u64> {
-        vec![1]
+    fn service_descriptor(&self) -> &'static roam_session::ServiceDescriptor {
+        &roam_session::EMPTY_DESCRIPTOR
     }
 
     fn dispatch(
@@ -71,7 +67,7 @@ impl ServiceDispatcher for TestService {
                 payload,
                 registry,
                 &STRING_ARGS_PLAN,
-                STRING_RESPONSE_PLAN.clone(),
+                *STRING_RESPONSE_PLAN,
                 |input: String| async move { Ok(input) },
             ),
             _ => dispatch_unknown_method(&cx, registry),

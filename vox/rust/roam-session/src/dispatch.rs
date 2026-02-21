@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use facet::Facet;
-use facet_core::{PtrConst, PtrMut, PtrUninit};
+use facet_core::{PtrConst, PtrMut, PtrUninit, Shape};
 use facet_format::{FormatDeserializer, MetaSource};
 use facet_path::PathAccessError;
 use facet_postcard::PostcardParser;
@@ -99,11 +99,11 @@ pub struct Context {
     /// The method ID being called.
     pub method_id: roam_wire::MethodId,
 
-    /// Fully-qualified method name from the active service definition.
+    /// Method descriptor from the active service definition.
     ///
     /// Populated by the connection driver when the selected dispatcher can
     /// resolve `method_id` against its static method descriptors.
-    pub method_name: Option<&'static str>,
+    pub method_descriptor: Option<&'static MethodDescriptor>,
 
     /// Metadata sent with the request.
     ///
@@ -141,7 +141,7 @@ impl Context {
             conn_id,
             request_id,
             method_id,
-            method_name: None,
+            method_descriptor: None,
             metadata,
             channels,
             extensions: Extensions::new(),
@@ -149,9 +149,12 @@ impl Context {
         }
     }
 
-    /// Set the fully-qualified method name from dispatcher descriptors.
-    pub fn with_method_name(mut self, method_name: Option<&'static str>) -> Self {
-        self.method_name = method_name;
+    /// Set the method descriptor from dispatcher descriptors.
+    pub fn with_method_descriptor(
+        mut self,
+        method_descriptor: Option<&'static MethodDescriptor>,
+    ) -> Self {
+        self.method_descriptor = method_descriptor;
         self
     }
 
@@ -193,9 +196,15 @@ impl Context {
         &self.channels
     }
 
+    /// Get the method descriptor for this request, if known.
+    pub fn method_descriptor(&self) -> Option<&'static MethodDescriptor> {
+        self.method_descriptor
+    }
+
     /// Get the fully-qualified method name for this request, if known.
-    pub fn method_name(&self) -> Option<&'static str> {
-        self.method_name
+    pub fn method_name(&self) -> Option<String> {
+        self.method_descriptor
+            .map(|d| format!("{}.{}", d.service_name, d.method_name))
     }
 }
 
@@ -205,7 +214,7 @@ impl Clone for Context {
             conn_id: self.conn_id,
             request_id: self.request_id,
             method_id: self.method_id,
-            method_name: self.method_name,
+            method_descriptor: self.method_descriptor,
             metadata: self.metadata.clone(),
             channels: self.channels.clone(),
             // Extensions are NOT cloned - each clone gets fresh extensions.
@@ -266,7 +275,7 @@ pub fn dispatch_call<A, R, E, F, Fut>(
     payload: Vec<u8>,
     registry: &mut ChannelRegistry,
     args_plan: &RpcPlan,
-    response_plan: Arc<RpcPlan>,
+    response_plan: &'static RpcPlan,
     handler: F,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>
 where
@@ -327,7 +336,7 @@ where
                         // and we don't mutate it while the Peek exists
                         let peek = facet::Peek::new(ok_result);
                         let send_peek = unsafe { SendPeek::new(peek) };
-                        send_ok_response(send_peek, &response_plan, &task_tx, conn_id, request_id)
+                        send_ok_response(send_peek, response_plan, &task_tx, conn_id, request_id)
                             .await;
                     }
                     Err(ref user_error) => {
@@ -354,7 +363,7 @@ pub fn dispatch_call_infallible<A, R, F, Fut>(
     payload: Vec<u8>,
     registry: &mut ChannelRegistry,
     args_plan: &RpcPlan,
-    response_plan: Arc<RpcPlan>,
+    response_plan: &'static RpcPlan,
     handler: F,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>
 where
@@ -408,7 +417,7 @@ where
                 // and we don't mutate it while the Peek exists
                 let peek = facet::Peek::new(&result);
                 let send_peek = unsafe { SendPeek::new(peek) };
-                send_ok_response(send_peek, &response_plan, &task_tx, conn_id, request_id).await;
+                send_ok_response(send_peek, response_plan, &task_tx, conn_id, request_id).await;
             })
             .await
     }))
@@ -899,14 +908,16 @@ pub fn patch_channel_ids<T: Facet<'static>>(args: &mut T, plan: &RpcPlan, channe
 /// The dispatcher handles both simple and channeling methods uniformly.
 /// Channel binding is done via reflection (Poke) on the deserialized args.
 pub trait ServiceDispatcher: Send + Sync {
-    /// Static descriptor for a single RPC method.
-    fn method_descriptor(&self, method_id: u64) -> Option<MethodDescriptor>;
+    /// Returns the static service descriptor for this dispatcher.
+    fn service_descriptor(&self) -> &'static ServiceDescriptor;
 
-    /// Returns the method IDs this dispatcher handles.
+    /// Look up a method descriptor by ID.
     ///
-    /// Used by [`RoutedDispatcher`] to determine which methods to route
-    /// to which dispatcher.
-    fn method_ids(&self) -> Vec<u64>;
+    /// Default implementation searches `service_descriptor().methods`.
+    /// [`RoutedDispatcher`] overrides this to check primary then fallback.
+    fn method_descriptor(&self, method_id: u64) -> Option<&'static MethodDescriptor> {
+        self.service_descriptor().by_id(method_id)
+    }
 
     /// Dispatch a request and send the response via the task channel.
     ///
@@ -938,11 +949,64 @@ pub trait ServiceDispatcher: Send + Sync {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Static descriptor for a single RPC method.
+///
+/// Contains all metadata and precomputed plans needed for dispatching
+/// and calling this method, eliminating the need for per-method OnceLock statics.
 pub struct MethodDescriptor {
+    /// Method ID (hash of service name, method name, arg shapes, return shape).
     pub id: u64,
-    pub full_name: &'static str,
+    /// Service name (e.g., "Calculator").
+    pub service_name: &'static str,
+    /// Method name (e.g., "add").
+    pub method_name: &'static str,
+    /// Argument names in declaration order.
+    pub arg_names: &'static [&'static str],
+    /// Argument shapes in declaration order.
+    pub arg_shapes: &'static [&'static Shape],
+    /// Return type shape.
+    pub return_shape: &'static Shape,
+    /// Precomputed plan for the args tuple type.
+    pub args_plan: &'static RpcPlan,
+    /// Precomputed plan for the Ok/return type.
+    pub ok_plan: &'static RpcPlan,
+    /// Precomputed plan for the Err type (Infallible if infallible).
+    pub err_plan: &'static RpcPlan,
 }
+
+impl std::fmt::Debug for MethodDescriptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MethodDescriptor")
+            .field("id", &self.id)
+            .field("service_name", &self.service_name)
+            .field("method_name", &self.method_name)
+            .finish()
+    }
+}
+
+/// Static descriptor for a roam RPC service.
+///
+/// Contains the service name and all method descriptors. Built once per service
+/// via OnceLock in macro-generated code.
+pub struct ServiceDescriptor {
+    /// Service name (e.g., "Calculator").
+    pub service_name: &'static str,
+    /// All methods in this service.
+    pub methods: &'static [&'static MethodDescriptor],
+}
+
+impl ServiceDescriptor {
+    /// Look up a method descriptor by method ID.
+    pub fn by_id(&self, method_id: u64) -> Option<&'static MethodDescriptor> {
+        self.methods.iter().find(|m| m.id == method_id).copied()
+    }
+}
+
+/// An empty service descriptor for dispatchers that don't serve any methods.
+pub static EMPTY_DESCRIPTOR: ServiceDescriptor = ServiceDescriptor {
+    service_name: "",
+    methods: &[],
+};
 
 // ============================================================================
 // Routed Dispatcher
@@ -950,7 +1014,7 @@ pub struct MethodDescriptor {
 
 /// A dispatcher that routes to one of two dispatchers based on method ID.
 ///
-/// Methods handled by `primary` (via [`ServiceDispatcher::method_ids`]) are
+/// Methods handled by `primary` (via [`ServiceDispatcher::service_descriptor`]) are
 /// routed to it; all other methods are routed to `fallback`.
 #[derive(Clone)]
 pub struct RoutedDispatcher<A, B> {
@@ -965,10 +1029,15 @@ where
 {
     /// Create a new routed dispatcher.
     ///
-    /// Methods declared by `primary.method_ids()` are routed to `primary`,
+    /// Methods declared by `primary.service_descriptor()` are routed to `primary`,
     /// all others to `fallback`.
     pub fn new(primary: A, fallback: B) -> Self {
-        let primary_methods = primary.method_ids();
+        let primary_methods = primary
+            .service_descriptor()
+            .methods
+            .iter()
+            .map(|m| m.id)
+            .collect();
         Self {
             primary,
             fallback,
@@ -982,18 +1051,14 @@ where
     A: ServiceDispatcher,
     B: ServiceDispatcher,
 {
-    fn method_descriptor(&self, method_id: u64) -> Option<MethodDescriptor> {
-        if self.primary_methods.contains(&method_id) {
-            self.primary.method_descriptor(method_id)
-        } else {
-            self.fallback.method_descriptor(method_id)
-        }
+    fn service_descriptor(&self) -> &'static ServiceDescriptor {
+        self.primary.service_descriptor()
     }
 
-    fn method_ids(&self) -> Vec<u64> {
-        let mut ids = self.primary_methods.clone();
-        ids.extend(self.fallback.method_ids());
-        ids
+    fn method_descriptor(&self, method_id: u64) -> Option<&'static MethodDescriptor> {
+        self.primary
+            .method_descriptor(method_id)
+            .or_else(|| self.fallback.method_descriptor(method_id))
     }
 
     fn dispatch(

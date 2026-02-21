@@ -80,15 +80,6 @@ fn next_connection_correlation_id() -> String {
     ulid::Ulid::new().to_string()
 }
 
-#[cfg(feature = "diagnostics")]
-fn split_method_parts(full_method: &str) -> (&str, &str) {
-    if let Some((service, method)) = full_method.rsplit_once('.') {
-        (service, method)
-    } else {
-        ("", full_method)
-    }
-}
-
 /// Negotiated connection parameters after Hello exchange.
 #[derive(Debug, Clone)]
 pub struct Negotiated {
@@ -673,7 +664,7 @@ where
         method_id: u64,
         method_name: &str,
         args_ptr: crate::SendPtr,
-        args_plan: &'static std::sync::Arc<crate::RpcPlan>,
+        args_plan: &'static crate::RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
         let this = self.clone();
@@ -940,20 +931,6 @@ struct PendingConnect {
     response_tx: crate::runtime::OneshotSender<Result<ConnectionHandle, ConnectError>>,
     /// Dispatcher to use for this virtual connection (can receive calls).
     dispatcher: Option<Box<dyn ServiceDispatcher>>,
-}
-
-#[cfg(feature = "diagnostics")]
-fn metadata_string(metadata: &roam_wire::Metadata, key: &str) -> Option<String> {
-    metadata.iter().find_map(|(entry_key, value, _)| {
-        if entry_key != key {
-            return None;
-        }
-        match value {
-            roam_wire::MetadataValue::String(s) => Some(s.clone()),
-            roam_wire::MetadataValue::U64(n) => Some(n.to_string()),
-            roam_wire::MetadataValue::Bytes(_) => None,
-        }
-    })
 }
 
 // ============================================================================
@@ -1651,9 +1628,7 @@ where
         } else {
             &self.dispatcher
         };
-        let method_name = dispatcher
-            .method_descriptor(method_id)
-            .map(|descriptor| descriptor.full_name);
+        let method_desc = dispatcher.method_descriptor(method_id);
 
         // Create typed response handle linked to propagated request identity.
         #[cfg(feature = "diagnostics")]
@@ -1671,7 +1646,7 @@ where
             metadata,
             channels,
         )
-        .with_method_name(method_name);
+        .with_method_descriptor(method_desc);
 
         debug!(
             conn_id = conn_id.raw(),
@@ -1924,7 +1899,8 @@ where
             return Ok(None);
         };
 
-        let Some(method_name) = metadata_string(metadata, crate::MOIRE_METHOD_NAME_METADATA_KEY)
+        let Some(method_name) =
+            roam_wire::metadata_string(metadata, crate::MOIRE_METHOD_NAME_METADATA_KEY)
         else {
             error!(
                 method_id,
@@ -1936,7 +1912,7 @@ where
         };
 
         let Some(request_entity_id) =
-            metadata_string(metadata, crate::MOIRE_REQUEST_ENTITY_ID_METADATA_KEY)
+            roam_wire::metadata_string(metadata, crate::MOIRE_REQUEST_ENTITY_ID_METADATA_KEY)
         else {
             error!(
                 method_id,
@@ -1956,7 +1932,9 @@ where
         full_method_name: String,
         request_entity_id: &str,
     ) -> TypedResponseHandle {
-        let (service_name, method_name) = split_method_parts(full_method_name.as_str());
+        let (service_name, method_name) = full_method_name
+            .rsplit_once('.')
+            .unwrap_or(("", &full_method_name));
         let response_body = moire_types::ResponseEntity {
             service_name: String::from(service_name),
             method_name: String::from(method_name),
@@ -2385,12 +2363,8 @@ where
 pub struct NoDispatcher;
 
 impl ServiceDispatcher for NoDispatcher {
-    fn method_descriptor(&self, _method_id: u64) -> Option<crate::MethodDescriptor> {
-        None
-    }
-
-    fn method_ids(&self) -> Vec<u64> {
-        vec![]
+    fn service_descriptor(&self) -> &'static crate::ServiceDescriptor {
+        &crate::EMPTY_DESCRIPTOR
     }
 
     fn dispatch(

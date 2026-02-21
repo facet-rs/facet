@@ -108,33 +108,6 @@ impl ConnectionHandle {
         metadata.push((key.to_string(), value, flags));
     }
 
-    fn metadata_string(metadata: &roam_wire::Metadata, key: &str) -> Option<String> {
-        metadata
-            .iter()
-            .find(|(entry_key, _, _)| entry_key == key)
-            .map(|(_, value, _)| match value {
-                roam_wire::MetadataValue::String(s) => s.clone(),
-                roam_wire::MetadataValue::U64(n) => n.to_string(),
-                roam_wire::MetadataValue::Bytes(bytes) => {
-                    let mut out = String::with_capacity(bytes.len() * 2);
-                    for byte in bytes {
-                        use std::fmt::Write as _;
-                        let _ = write!(&mut out, "{byte:02x}");
-                    }
-                    out
-                }
-            })
-    }
-
-    #[cfg(feature = "diagnostics")]
-    fn split_method_parts(full_method: &str) -> (&str, &str) {
-        if let Some((service, method)) = full_method.rsplit_once('.') {
-            (service, method)
-        } else {
-            ("", full_method)
-        }
-    }
-
     fn span_id_for_request(&self, _request_id: u64) -> String {
         ulid::Ulid::new().to_string()
     }
@@ -160,9 +133,9 @@ impl ConnectionHandle {
             }
         }
 
-        let parent_span = Self::metadata_string(&metadata, crate::MOIRE_SPAN_ID_METADATA_KEY);
+        let parent_span = roam_wire::metadata_string(&metadata, crate::MOIRE_SPAN_ID_METADATA_KEY);
         let span_id = self.span_id_for_request(request_id);
-        let chain_id = Self::metadata_string(&metadata, crate::MOIRE_CHAIN_ID_METADATA_KEY)
+        let chain_id = roam_wire::metadata_string(&metadata, crate::MOIRE_CHAIN_ID_METADATA_KEY)
             .unwrap_or_else(|| span_id.clone());
         Self::upsert_metadata_entry(
             &mut metadata,
@@ -655,7 +628,8 @@ impl ConnectionHandle {
 
         #[cfg(feature = "diagnostics")]
         let request_handle = if let Some(diag) = self.shared.diagnostic_state.as_deref() {
-            let (service_name, method_name_only) = Self::split_method_parts(method_name);
+            let (service_name, method_name_only) =
+                method_name.rsplit_once('.').unwrap_or(("", method_name));
             let args_json = if args_debug_str.is_empty() {
                 String::from("[]")
             } else {

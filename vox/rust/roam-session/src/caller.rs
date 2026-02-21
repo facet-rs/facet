@@ -1,5 +1,4 @@
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 use facet::Facet;
 use facet_core::PtrUninit;
@@ -111,7 +110,7 @@ macro_rules! define_caller_trait {
                 method_id: u64,
                 method_name: &str,
                 args_ptr: SendPtr,
-                args_plan: &'static Arc<RpcPlan>,
+                args_plan: &'static RpcPlan,
                 metadata: roam_wire::Metadata,
             ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> $(+ $send)?;
 
@@ -176,7 +175,7 @@ impl Caller for ConnectionHandle {
         method_id: u64,
         method_name: &str,
         args_ptr: SendPtr,
-        args_plan: &'static Arc<RpcPlan>,
+        args_plan: &'static RpcPlan,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
         unsafe {
@@ -244,11 +243,11 @@ where
     args: Args,
     metadata: roam_wire::Metadata,
     /// Precomputed plan for the Args type.
-    args_plan: &'static Arc<RpcPlan>,
+    args_plan: &'static RpcPlan,
     /// Precomputed plan for the Ok (response) type.
-    ok_plan: &'static Arc<RpcPlan>,
+    ok_plan: &'static RpcPlan,
     /// Precomputed plan for the Err type.
-    err_plan: &'static Arc<RpcPlan>,
+    err_plan: &'static RpcPlan,
     _phantom: PhantomData<fn() -> (Ok, Err)>,
 }
 
@@ -266,9 +265,9 @@ where
         method_id: u64,
         method_name: &'static str,
         args: Args,
-        args_plan: &'static Arc<RpcPlan>,
-        ok_plan: &'static Arc<RpcPlan>,
-        err_plan: &'static Arc<RpcPlan>,
+        args_plan: &'static RpcPlan,
+        ok_plan: &'static RpcPlan,
+        err_plan: &'static RpcPlan,
     ) -> Self {
         Self {
             caller,

@@ -31,7 +31,7 @@ pub struct PendingSpan {
 impl PendingSpan {
     /// Start a new span, extracting trace context from metadata if present.
     pub fn start(ctx: &Context) -> Self {
-        let name = ctx.method_name().unwrap_or("unknown").to_string();
+        let name = ctx.method_name().unwrap_or_else(|| "unknown".to_string());
 
         // Try to extract trace context from metadata
         let trace_ctx = ctx

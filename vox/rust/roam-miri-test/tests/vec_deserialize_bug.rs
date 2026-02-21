@@ -21,8 +21,8 @@ use tokio::sync::mpsc;
 // ============================================================================
 
 static VEC_U8_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<Vec<u8>>);
-static VEC_U8_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> =
-    Lazy::new(|| Arc::new(RpcPlan::for_type::<Vec<u8>>()));
+static VEC_U8_RESPONSE_PLAN: Lazy<&'static RpcPlan> =
+    Lazy::new(|| Box::leak(Box::new(RpcPlan::for_type::<Vec<u8>>())));
 
 const METHOD_BIG_DATA: u64 = 1;
 
@@ -40,12 +40,8 @@ impl TestService {
 }
 
 impl ServiceDispatcher for TestService {
-    fn method_descriptor(&self, _method_id: u64) -> Option<roam_session::MethodDescriptor> {
-        None
-    }
-
-    fn method_ids(&self) -> Vec<u64> {
-        vec![METHOD_BIG_DATA]
+    fn service_descriptor(&self) -> &'static roam_session::ServiceDescriptor {
+        &roam_session::EMPTY_DESCRIPTOR
     }
 
     fn dispatch(
@@ -62,7 +58,7 @@ impl ServiceDispatcher for TestService {
                 payload,
                 registry,
                 &VEC_U8_ARGS_PLAN,
-                VEC_U8_RESPONSE_PLAN.clone(),
+                *VEC_U8_RESPONSE_PLAN,
                 move |data: Vec<u8>| async move {
                     let mut result = data.clone();
                     result.reverse();

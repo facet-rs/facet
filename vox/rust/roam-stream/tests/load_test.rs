@@ -26,13 +26,14 @@ use tokio::net::{UnixListener, UnixStream};
 // ============================================================================
 
 static UNIT_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<()>);
-static U32_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> = Lazy::new(|| Arc::new(RpcPlan::for_type::<u32>()));
+static U32_RESPONSE_PLAN: Lazy<&'static RpcPlan> =
+    Lazy::new(|| Box::leak(Box::new(RpcPlan::for_type::<u32>())));
 
 static U32_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<u32>);
 
 static STRING_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<String>);
-static STRING_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> =
-    Lazy::new(|| Arc::new(RpcPlan::for_type::<String>()));
+static STRING_RESPONSE_PLAN: Lazy<&'static RpcPlan> =
+    Lazy::new(|| Box::leak(Box::new(RpcPlan::for_type::<String>())));
 
 // ============================================================================
 // Test Service with Fast and Slow Methods
@@ -64,19 +65,8 @@ const METHOD_VERY_SLOW: u64 = 5;
 const METHOD_ECHO: u64 = 6;
 
 impl ServiceDispatcher for TestService {
-    fn method_descriptor(&self, _method_id: u64) -> Option<roam_session::MethodDescriptor> {
-        None
-    }
-
-    fn method_ids(&self) -> Vec<u64> {
-        vec![
-            METHOD_INSTANT,
-            METHOD_FAST,
-            METHOD_MEDIUM,
-            METHOD_SLOW,
-            METHOD_VERY_SLOW,
-            METHOD_ECHO,
-        ]
+    fn service_descriptor(&self) -> &'static roam_session::ServiceDescriptor {
+        &roam_session::EMPTY_DESCRIPTOR
     }
 
     fn dispatch(
@@ -94,7 +84,7 @@ impl ServiceDispatcher for TestService {
                 payload,
                 registry,
                 &UNIT_ARGS_PLAN,
-                U32_RESPONSE_PLAN.clone(),
+                *U32_RESPONSE_PLAN,
                 |_: ()| async move { Ok(42) },
             ),
 
@@ -104,7 +94,7 @@ impl ServiceDispatcher for TestService {
                 payload,
                 registry,
                 &U32_ARGS_PLAN,
-                U32_RESPONSE_PLAN.clone(),
+                *U32_RESPONSE_PLAN,
                 |n: u32| async move {
                     tokio::time::sleep(Duration::from_millis(1 + (n % 5) as u64)).await;
                     Ok(n * 2)
@@ -117,7 +107,7 @@ impl ServiceDispatcher for TestService {
                 payload,
                 registry,
                 &U32_ARGS_PLAN,
-                U32_RESPONSE_PLAN.clone(),
+                *U32_RESPONSE_PLAN,
                 |n: u32| async move {
                     tokio::time::sleep(Duration::from_millis(10 + (n % 20) as u64)).await;
                     Ok(n * 3)
@@ -130,7 +120,7 @@ impl ServiceDispatcher for TestService {
                 payload,
                 registry,
                 &U32_ARGS_PLAN,
-                U32_RESPONSE_PLAN.clone(),
+                *U32_RESPONSE_PLAN,
                 |n: u32| async move {
                     tokio::time::sleep(Duration::from_millis(50 + (n % 50) as u64)).await;
                     Ok(n * 4)
@@ -143,7 +133,7 @@ impl ServiceDispatcher for TestService {
                 payload,
                 registry,
                 &U32_ARGS_PLAN,
-                U32_RESPONSE_PLAN.clone(),
+                *U32_RESPONSE_PLAN,
                 |n: u32| async move {
                     tokio::time::sleep(Duration::from_millis(100 + (n % 100) as u64)).await;
                     Ok(n * 5)
@@ -156,7 +146,7 @@ impl ServiceDispatcher for TestService {
                 payload,
                 registry,
                 &STRING_ARGS_PLAN,
-                STRING_RESPONSE_PLAN.clone(),
+                *STRING_RESPONSE_PLAN,
                 |s: String| async move { Ok(s) },
             ),
 

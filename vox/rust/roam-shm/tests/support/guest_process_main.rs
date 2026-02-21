@@ -15,36 +15,34 @@ use roam_shm::driver::establish_guest;
 use roam_shm::spawn::{SpawnArgs, die_with_parent};
 use roam_shm::transport::ShmGuestTransport;
 use std::pin::Pin;
-use std::sync::Arc;
 
 // ============================================================================
 // RPC Plans
 // ============================================================================
 
 static STRING_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<String>);
-static STRING_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> =
-    Lazy::new(|| Arc::new(RpcPlan::for_type::<String>()));
+static STRING_RESPONSE_PLAN: Lazy<&'static RpcPlan> =
+    Lazy::new(|| Box::leak(Box::new(RpcPlan::for_type::<String>())));
 
 static I32_I32_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<(i32, i32)>);
-static I32_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> = Lazy::new(|| Arc::new(RpcPlan::for_type::<i32>()));
+static I32_RESPONSE_PLAN: Lazy<&'static RpcPlan> =
+    Lazy::new(|| Box::leak(Box::new(RpcPlan::for_type::<i32>())));
 
 static RX_I32_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<Rx<i32>>);
-static I64_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> = Lazy::new(|| Arc::new(RpcPlan::for_type::<i64>()));
+static I64_RESPONSE_PLAN: Lazy<&'static RpcPlan> =
+    Lazy::new(|| Box::leak(Box::new(RpcPlan::for_type::<i64>())));
 
 static U32_TX_I32_ARGS_PLAN: Lazy<RpcPlan> = Lazy::new(RpcPlan::for_type::<(u32, Tx<i32>)>);
-static UNIT_RESPONSE_PLAN: Lazy<Arc<RpcPlan>> = Lazy::new(|| Arc::new(RpcPlan::for_type::<()>()));
+static UNIT_RESPONSE_PLAN: Lazy<&'static RpcPlan> =
+    Lazy::new(|| Box::leak(Box::new(RpcPlan::for_type::<()>())));
 
 /// Test service matching the one in driver.rs tests
 #[derive(Clone)]
 struct TestService;
 
 impl ServiceDispatcher for TestService {
-    fn method_descriptor(&self, _method_id: u64) -> Option<roam_session::MethodDescriptor> {
-        None
-    }
-
-    fn method_ids(&self) -> Vec<u64> {
-        vec![1, 2, 3, 4]
+    fn service_descriptor(&self) -> &'static roam_session::ServiceDescriptor {
+        &roam_session::EMPTY_DESCRIPTOR
     }
 
     fn dispatch(
@@ -60,7 +58,7 @@ impl ServiceDispatcher for TestService {
                 payload,
                 registry,
                 &STRING_ARGS_PLAN,
-                STRING_RESPONSE_PLAN.clone(),
+                *STRING_RESPONSE_PLAN,
                 |input: String| async move { Ok(input) },
             ),
             // Add method: adds two numbers
@@ -69,7 +67,7 @@ impl ServiceDispatcher for TestService {
                 payload,
                 registry,
                 &I32_I32_ARGS_PLAN,
-                I32_RESPONSE_PLAN.clone(),
+                *I32_RESPONSE_PLAN,
                 |(a, b): (i32, i32)| async move { Ok(a + b) },
             ),
             // Sum method: client streams numbers, server returns sum
@@ -78,7 +76,7 @@ impl ServiceDispatcher for TestService {
                 payload,
                 registry,
                 &RX_I32_ARGS_PLAN,
-                I64_RESPONSE_PLAN.clone(),
+                *I64_RESPONSE_PLAN,
                 |mut input: Rx<i32>| async move {
                     let mut sum: i64 = 0;
                     while let Ok(Some(value)) = input.recv().await {
@@ -93,7 +91,7 @@ impl ServiceDispatcher for TestService {
                 payload,
                 registry,
                 &U32_TX_I32_ARGS_PLAN,
-                UNIT_RESPONSE_PLAN.clone(),
+                *UNIT_RESPONSE_PLAN,
                 |(count, output): (u32, Tx<i32>)| async move {
                     for i in 0..count {
                         output.send(&(i as i32)).await.ok();
