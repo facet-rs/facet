@@ -216,6 +216,7 @@ pub trait StatementFacetExt {
 }
 
 pub trait ConnectionFacetExt {
+    fn facet_prepare_cached(&self, sql: &str) -> rusqlite::Result<rusqlite::CachedStatement<'_>>;
     fn facet_execute_ref<'p, P: Facet<'p> + ?Sized>(
         &self,
         sql: &str,
@@ -374,6 +375,10 @@ impl StatementFacetExt for Statement<'_> {
 }
 
 impl ConnectionFacetExt for Connection {
+    fn facet_prepare_cached(&self, sql: &str) -> rusqlite::Result<rusqlite::CachedStatement<'_>> {
+        self.prepare_cached(sql)
+    }
+
     fn facet_execute_ref<'p, P: Facet<'p> + ?Sized>(
         &self,
         sql: &str,
@@ -1175,5 +1180,29 @@ mod tests {
             }
             _ => panic!("expected SQL context wrapper"),
         }
+    }
+
+    #[test]
+    fn connection_ext_prepare_cached_works_with_facet_methods() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute("CREATE TABLE ids (id INTEGER NOT NULL)", ())
+            .unwrap();
+        conn.execute("INSERT INTO ids (id) VALUES (5)", ()).unwrap();
+
+        #[derive(Facet)]
+        struct QueryId {
+            id: i64,
+        }
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct IdRow {
+            id: i64,
+        }
+
+        let mut stmt = conn
+            .facet_prepare_cached("SELECT id FROM ids WHERE id = :id")
+            .unwrap();
+        let row = stmt.facet_query_one::<IdRow, _>(QueryId { id: 5 }).unwrap();
+        assert_eq!(row, IdRow { id: 5 });
     }
 }
