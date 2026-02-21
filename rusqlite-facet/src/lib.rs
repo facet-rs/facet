@@ -41,6 +41,10 @@ pub enum Error {
         expected: usize,
         actual_at_least: usize,
     },
+    WithSqlContext {
+        sql: String,
+        source: Box<Error>,
+    },
     OutOfRange {
         field: String,
         source: i128,
@@ -92,6 +96,9 @@ impl core::fmt::Display for Error {
                     "query returned too many rows: expected {expected}, got at least {actual_at_least}"
                 )
             }
+            Error::WithSqlContext { sql, source } => {
+                write!(f, "{source} (sql: {sql})")
+            }
             Error::OutOfRange {
                 field,
                 source,
@@ -116,7 +123,18 @@ impl core::fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Sql(err) => Some(err),
+            Error::Reflect(err) => Some(err),
+            Error::Alloc(err) => Some(err),
+            Error::ShapeMismatch(err) => Some(err),
+            Error::WithSqlContext { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+}
 
 impl From<rusqlite::Error> for Error {
     fn from(value: rusqlite::Error) -> Self {
@@ -362,7 +380,7 @@ impl ConnectionFacetExt for Connection {
         params: &'p P,
     ) -> Result<usize> {
         let mut stmt = self.prepare(sql)?;
-        stmt.facet_execute_ref(params)
+        with_sql_context(sql, stmt.facet_execute_ref(params))
     }
 
     fn facet_query_ref<'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
@@ -371,7 +389,7 @@ impl ConnectionFacetExt for Connection {
         params: &'p P,
     ) -> Result<Vec<T>> {
         let mut stmt = self.prepare(sql)?;
-        stmt.facet_query_ref::<T, P>(params)
+        with_sql_context(sql, stmt.facet_query_ref::<T, P>(params))
     }
 
     fn facet_query_optional_ref<'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
@@ -380,7 +398,7 @@ impl ConnectionFacetExt for Connection {
         params: &'p P,
     ) -> Result<Option<T>> {
         let mut stmt = self.prepare(sql)?;
-        stmt.facet_query_optional_ref::<T, P>(params)
+        with_sql_context(sql, stmt.facet_query_optional_ref::<T, P>(params))
     }
 
     fn facet_query_one_ref<'p, T: Facet<'static>, P: Facet<'p> + ?Sized>(
@@ -389,12 +407,12 @@ impl ConnectionFacetExt for Connection {
         params: &'p P,
     ) -> Result<T> {
         let mut stmt = self.prepare(sql)?;
-        stmt.facet_query_one_ref::<T, P>(params)
+        with_sql_context(sql, stmt.facet_query_one_ref::<T, P>(params))
     }
 
     fn facet_execute<P: Facet<'static>>(&self, sql: &str, params: P) -> Result<usize> {
         let mut stmt = self.prepare(sql)?;
-        stmt.facet_execute(params)
+        with_sql_context(sql, stmt.facet_execute(params))
     }
 
     fn facet_query<T: Facet<'static>, P: Facet<'static>>(
@@ -403,7 +421,7 @@ impl ConnectionFacetExt for Connection {
         params: P,
     ) -> Result<Vec<T>> {
         let mut stmt = self.prepare(sql)?;
-        stmt.facet_query::<T, P>(params)
+        with_sql_context(sql, stmt.facet_query::<T, P>(params))
     }
 
     fn facet_query_optional<T: Facet<'static>, P: Facet<'static>>(
@@ -412,7 +430,7 @@ impl ConnectionFacetExt for Connection {
         params: P,
     ) -> Result<Option<T>> {
         let mut stmt = self.prepare(sql)?;
-        stmt.facet_query_optional::<T, P>(params)
+        with_sql_context(sql, stmt.facet_query_optional::<T, P>(params))
     }
 
     fn facet_query_one<T: Facet<'static>, P: Facet<'static>>(
@@ -421,8 +439,15 @@ impl ConnectionFacetExt for Connection {
         params: P,
     ) -> Result<T> {
         let mut stmt = self.prepare(sql)?;
-        stmt.facet_query_one::<T, P>(params)
+        with_sql_context(sql, stmt.facet_query_one::<T, P>(params))
     }
+}
+
+fn with_sql_context<T>(sql: &str, result: Result<T>) -> Result<T> {
+    result.map_err(|source| Error::WithSqlContext {
+        sql: sql.to_string(),
+        source: Box::new(source),
+    })
 }
 
 pub fn from_row<T: Facet<'static>>(row: &Row<'_>) -> Result<T> {
@@ -1115,5 +1140,40 @@ mod tests {
             .facet_query_ref::<IdRow, [i64]>("SELECT id FROM ids WHERE id = ?1", &values[..])
             .unwrap();
         assert_eq!(rows, vec![IdRow { id: 3 }]);
+    }
+
+    #[test]
+    fn connection_ext_errors_include_sql_context() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute("CREATE TABLE ids (id INTEGER NOT NULL)", ())
+            .unwrap();
+
+        #[derive(Facet)]
+        struct QueryId {
+            id: i64,
+        }
+
+        #[derive(Debug, Facet, PartialEq)]
+        struct IdRow {
+            id: i64,
+        }
+
+        let sql = "SELECT id FROM ids WHERE id = :id";
+        let err = conn
+            .facet_query_one::<IdRow, _>(sql, QueryId { id: 1 })
+            .unwrap_err();
+        match err {
+            Error::WithSqlContext {
+                sql: actual,
+                source,
+            } => {
+                assert_eq!(actual, sql.to_string());
+                match *source {
+                    Error::Sql(rusqlite::Error::QueryReturnedNoRows) => {}
+                    _ => panic!("unexpected nested source"),
+                }
+            }
+            _ => panic!("expected SQL context wrapper"),
+        }
     }
 }
