@@ -111,10 +111,10 @@ ulid = "1"
 # facet-value = { path = "../facet/facet-value" }
 # facet-testhelpers = { path = "../facet/facet-testhelpers" }
 
-# Uncomment to develop moire
-[patch."https://github.com/bearcove/moire"]
-moire = { path = "../moire/crates/moire" }
-moire-types = { path = "../moire/crates/moire-types" }
+# # Uncomment to develop moire
+# [patch."https://github.com/bearcove/moire"]
+# moire = { path = "../moire/crates/moire" }
+# moire-types = { path = "../moire/crates/moire-types" }
 
 [profile.release]
 debug = 1
