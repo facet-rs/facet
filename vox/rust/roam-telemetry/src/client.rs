@@ -85,7 +85,6 @@ impl<C> TracingCaller<C> {
 }
 
 impl<C: Caller> Caller for TracingCaller<C> {
-    #[cfg(not(target_arch = "wasm32"))]
     async fn call_with_metadata<T: Facet<'static> + Send>(
         &self,
         method_id: u64,
@@ -94,8 +93,6 @@ impl<C: Caller> Caller for TracingCaller<C> {
         args_plan: &roam_session::RpcPlan,
         mut metadata: roam_wire::Metadata,
     ) -> Result<ResponseData, TransportError> {
-        // Get trace context from CURRENT_EXTENSIONS (set by generated dispatch code)
-        // or create a new trace if not in a request context
         let (trace_id, parent_span_id) = roam_session::CURRENT_EXTENSIONS
             .try_with(|ext| {
                 ext.get::<CurrentTrace>()
@@ -108,93 +105,11 @@ impl<C: Caller> Caller for TracingCaller<C> {
         let span_id = generate_span_id();
         let flags: u8 = 0x01; // sampled
 
-        // Inject traceparent into metadata
-        let traceparent = format!("00-{}-{}-{:02x}", trace_id, span_id, flags);
+        let traceparent = format!("00-{trace_id}-{span_id}-{flags:02x}");
         metadata.push((
             "traceparent".to_string(),
             MetadataValue::String(traceparent),
-            0, // flags - traceparent is not sensitive
-        ));
-
-        let start_time_ns = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u64;
-
-        // Make the actual call
-        let result = self
-            .inner
-            .call_with_metadata(method_id, method_name, args, args_plan, metadata)
-            .await;
-
-        let end_time_ns = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u64;
-
-        // Build span attributes
-        let mut attributes = vec![
-            KeyValue::string("rpc.system", "roam"),
-            KeyValue::string("rpc.method", method_name),
-            KeyValue::string("rpc.service", self.exporter.service_name()),
-        ];
-
-        let status = match &result {
-            Ok(_) => {
-                attributes.push(KeyValue::bool("rpc.success", true));
-                Status::ok()
-            }
-            Err(e) => {
-                attributes.push(KeyValue::bool("rpc.success", false));
-                attributes.push(KeyValue::string("rpc.error", format!("{:?}", e)));
-                Status::error(format!("{:?}", e))
-            }
-        };
-
-        // Export the span
-        let span = Span {
-            trace_id,
-            span_id,
-            parent_span_id,
-            name: method_name.to_string(),
-            kind: SpanKind::Client.as_u32(),
-            start_time_unix_nano: start_time_ns.to_string(),
-            end_time_unix_nano: end_time_ns.to_string(),
-            attributes,
-            status,
-        };
-        self.exporter.send(span);
-
-        result
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    async fn call_with_metadata<T: Facet<'static> + Send>(
-        &self,
-        method_id: u64,
-        method_name: &str,
-        args: &mut T,
-        args_plan: &roam_session::RpcPlan,
-        mut metadata: roam_wire::Metadata,
-    ) -> Result<ResponseData, TransportError> {
-        // WASM version - uses same CURRENT_EXTENSIONS task-local
-        let (trace_id, parent_span_id) = roam_session::CURRENT_EXTENSIONS
-            .try_with(|ext| {
-                ext.get::<CurrentTrace>()
-                    .map(|tc| (tc.trace_id.clone(), Some(tc.span_id.clone())))
-            })
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| (generate_trace_id(), None));
-
-        let span_id = generate_span_id();
-        let flags: u8 = 0x01;
-
-        let traceparent = format!("00-{}-{}-{:02x}", trace_id, span_id, flags);
-        metadata.push((
-            "traceparent".to_string(),
-            MetadataValue::String(traceparent),
-            0, // flags - traceparent is not sensitive
+            0,
         ));
 
         let start_time_ns = SystemTime::now()
@@ -225,8 +140,8 @@ impl<C: Caller> Caller for TracingCaller<C> {
             }
             Err(e) => {
                 attributes.push(KeyValue::bool("rpc.success", false));
-                attributes.push(KeyValue::string("rpc.error", format!("{:?}", e)));
-                Status::error(format!("{:?}", e))
+                attributes.push(KeyValue::string("rpc.error", format!("{e:?}")));
+                Status::error(format!("{e:?}"))
             }
         };
 
@@ -263,8 +178,7 @@ impl<C: Caller> Caller for TracingCaller<C> {
         args_ptr: SendPtr,
         args_plan: &'static std::sync::Arc<roam_session::RpcPlan>,
         metadata: roam_wire::Metadata,
-    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
-        // TracingCaller just delegates to inner - tracing happens at the generic call level
+    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
         self.inner
             .call_with_metadata_by_plan(method_id, method_name, args_ptr, args_plan, metadata)
     }
@@ -276,7 +190,6 @@ impl<C: Caller> Caller for TracingCaller<C> {
         response_plan: &roam_session::RpcPlan,
         channels: &[u64],
     ) {
-        // SAFETY: Caller guarantees response_ptr is valid and initialized
         unsafe {
             self.inner
                 .bind_response_channels_by_plan(response_ptr, response_plan, channels)

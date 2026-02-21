@@ -384,7 +384,7 @@ where
         args_ptr: SendPtr,
         args_plan: &'static std::sync::Arc<roam_session::RpcPlan>,
         metadata: roam_wire::Metadata,
-    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
+    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
         let this = self.clone();
         let method_name = method_name.to_owned();
 

@@ -54,167 +54,88 @@ impl SendPtr {
 /// All callers return `TransportError` for transport-level failures.
 /// Generated clients convert this to `CallError<E>` which also includes
 /// response-level errors like `RoamError::User(E)`.
-#[allow(async_fn_in_trait)]
-#[allow(unsafe_code)]
-pub trait Caller: Clone + Send + Sync + 'static {
-    /// Make an RPC call with the given method ID and arguments.
-    ///
-    /// The arguments are mutable because channel bindings (Tx/Rx) need to be
-    /// assigned channel IDs before serialization.
-    ///
-    /// Returns ResponseData containing the payload and any response channel IDs.
-    ///
-    /// The `args_plan` should be created once per type as a static in non-generic code.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn call<T: Facet<'static> + Send>(
-        &self,
-        method_id: u64,
-        method_name: &str,
-        args: &mut T,
-        args_plan: &RpcPlan,
-    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
-        self.call_with_metadata(
-            method_id,
-            method_name,
-            args,
-            args_plan,
-            roam_wire::Metadata::default(),
-        )
+macro_rules! define_caller_trait {
+    ($($send:ident)?) => {
+        #[allow(async_fn_in_trait)]
+        #[allow(unsafe_code)]
+        pub trait Caller: Clone + Send + Sync + 'static {
+            /// Make an RPC call with the given method ID and arguments.
+            fn call<T: Facet<'static> + Send>(
+                &self,
+                method_id: u64,
+                method_name: &str,
+                args: &mut T,
+                args_plan: &RpcPlan,
+            ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> $(+ $send)? {
+                self.call_with_metadata(
+                    method_id,
+                    method_name,
+                    args,
+                    args_plan,
+                    roam_wire::Metadata::default(),
+                )
+            }
+
+            /// Make an RPC call with the given method ID, arguments, and metadata.
+            fn call_with_metadata<T: Facet<'static> + Send>(
+                &self,
+                method_id: u64,
+                method_name: &str,
+                args: &mut T,
+                args_plan: &RpcPlan,
+                metadata: roam_wire::Metadata,
+            ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> $(+ $send)?;
+
+            /// Bind receivers for `Rx<T>` channels in the response.
+            ///
+            /// After deserializing a response, any `Rx<T>` values in it are "hollow" -
+            /// they have channel IDs but no actual receiver. This method walks the
+            /// response and binds receivers for each Rx using the channel IDs from
+            /// the Response message.
+            fn bind_response_channels<T: Facet<'static>>(
+                &self,
+                response: &mut T,
+                plan: &RpcPlan,
+                channels: &[u64],
+            );
+
+            /// Make an RPC call using reflection (non-generic).
+            ///
+            /// # Safety
+            ///
+            /// - `args_ptr` must have been created from a valid, initialized pointer matching the plan's shape
+            /// - The underlying args type must be `Send`
+            #[doc(hidden)]
+            fn call_with_metadata_by_plan(
+                &self,
+                method_id: u64,
+                method_name: &str,
+                args_ptr: SendPtr,
+                args_plan: &'static Arc<RpcPlan>,
+                metadata: roam_wire::Metadata,
+            ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> $(+ $send)?;
+
+            /// Bind receivers for `Rx<T>` channels in the response using reflection (non-generic).
+            ///
+            /// # Safety
+            ///
+            /// - `response_ptr` must point to valid, initialized memory matching the plan's shape
+            #[doc(hidden)]
+            unsafe fn bind_response_channels_by_plan(
+                &self,
+                response_ptr: *mut (),
+                response_plan: &RpcPlan,
+                channels: &[u64],
+            );
+        }
     }
-
-    /// Make an RPC call with the given method ID and arguments.
-    ///
-    /// The arguments are mutable because channel bindings (Tx/Rx) need to be
-    /// assigned channel IDs before serialization.
-    ///
-    /// Returns ResponseData containing the payload and any response channel IDs.
-    ///
-    /// The `args_plan` should be created once per type as a static in non-generic code.
-    #[cfg(target_arch = "wasm32")]
-    fn call<T: Facet<'static> + Send>(
-        &self,
-        method_id: u64,
-        method_name: &str,
-        args: &mut T,
-        args_plan: &RpcPlan,
-    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
-        self.call_with_metadata(
-            method_id,
-            method_name,
-            args,
-            args_plan,
-            roam_wire::Metadata::default(),
-        )
-    }
-
-    /// Make an RPC call with the given method ID, arguments, and metadata.
-    ///
-    /// The arguments are mutable because channel bindings (Tx/Rx) need to be
-    /// assigned channel IDs before serialization.
-    ///
-    /// Returns ResponseData containing the payload and any response channel IDs.
-    ///
-    /// The `args_plan` should be created once per type as a static in non-generic code.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn call_with_metadata<T: Facet<'static> + Send>(
-        &self,
-        method_id: u64,
-        method_name: &str,
-        args: &mut T,
-        args_plan: &RpcPlan,
-        metadata: roam_wire::Metadata,
-    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send;
-
-    /// Make an RPC call with the given method ID, arguments, and metadata.
-    ///
-    /// The arguments are mutable because channel bindings (Tx/Rx) need to be
-    /// assigned channel IDs before serialization.
-    ///
-    /// Returns ResponseData containing the payload and any response channel IDs.
-    ///
-    /// The `args_plan` should be created once per type as a static in non-generic code.
-    #[cfg(target_arch = "wasm32")]
-    fn call_with_metadata<T: Facet<'static> + Send>(
-        &self,
-        method_id: u64,
-        method_name: &str,
-        args: &mut T,
-        args_plan: &RpcPlan,
-        metadata: roam_wire::Metadata,
-    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>>;
-
-    /// Bind receivers for `Rx<T>` channels in the response.
-    ///
-    /// After deserializing a response, any `Rx<T>` values in it are "hollow" -
-    /// they have channel IDs but no actual receiver. This method walks the
-    /// response and binds receivers for each Rx using the channel IDs from
-    /// the Response message.
-    ///
-    /// The `plan` should be created once per type as a static in non-generic code.
-    fn bind_response_channels<T: Facet<'static>>(
-        &self,
-        response: &mut T,
-        plan: &RpcPlan,
-        channels: &[u64],
-    );
-
-    // ========================================================================
-    // Non-generic methods (reduce monomorphization)
-    // ========================================================================
-
-    /// Make an RPC call using reflection (non-generic).
-    ///
-    /// This is the non-generic core implementation that avoids monomorphization.
-    /// The generic `call_with_metadata` can delegate to this.
-    ///
-    /// # Safety
-    ///
-    /// - `args_ptr` must have been created from a valid, initialized pointer matching the plan's shape
-    /// - The underlying args type must be `Send`
-    #[doc(hidden)]
-    #[cfg(not(target_arch = "wasm32"))]
-    fn call_with_metadata_by_plan(
-        &self,
-        method_id: u64,
-        method_name: &str,
-        args_ptr: SendPtr,
-        args_plan: &'static Arc<RpcPlan>,
-        metadata: roam_wire::Metadata,
-    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send;
-
-    /// Make an RPC call using reflection (non-generic).
-    ///
-    /// This is the non-generic core implementation that avoids monomorphization.
-    /// The generic `call_with_metadata` can delegate to this.
-    ///
-    /// # Safety
-    ///
-    /// - `args_ptr` must have been created from a valid, initialized pointer matching the plan's shape
-    /// - The underlying args type must be `Send`
-    #[doc(hidden)]
-    #[cfg(target_arch = "wasm32")]
-    fn call_with_metadata_by_plan(
-        &self,
-        method_id: u64,
-        method_name: &str,
-        args_ptr: SendPtr,
-        args_plan: &'static Arc<RpcPlan>,
-        metadata: roam_wire::Metadata,
-    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>>;
-
-    /// Bind receivers for `Rx<T>` channels in the response using reflection (non-generic).
-    ///
-    /// # Safety
-    ///
-    /// - `response_ptr` must point to valid, initialized memory matching the plan's shape
-    #[doc(hidden)]
-    unsafe fn bind_response_channels_by_plan(
-        &self,
-        response_ptr: *mut (),
-        response_plan: &RpcPlan,
-        channels: &[u64],
-    );
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+define_caller_trait!(Send);
+
+#[cfg(target_arch = "wasm32")]
+define_caller_trait!();
 
 impl Caller for ConnectionHandle {
     async fn call_with_metadata<T: Facet<'static> + Send>(
@@ -249,29 +170,6 @@ impl Caller for ConnectionHandle {
         ConnectionHandle::bind_response_channels(self, response, plan, channels)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    #[allow(unsafe_code)]
-    fn call_with_metadata_by_plan(
-        &self,
-        method_id: u64,
-        method_name: &str,
-        args_ptr: SendPtr,
-        args_plan: &'static Arc<RpcPlan>,
-        metadata: roam_wire::Metadata,
-    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
-        unsafe {
-            ConnectionHandle::call_with_metadata_by_plan(
-                self,
-                method_id,
-                method_name,
-                args_ptr.as_ptr(),
-                args_plan,
-                metadata,
-            )
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
     #[allow(unsafe_code)]
     fn call_with_metadata_by_plan(
         &self,
@@ -397,181 +295,102 @@ where
 
 // On native, the future must be Send so it can be spawned on tokio.
 // On WASM, futures don't need Send since everything is single-threaded.
-#[cfg(not(target_arch = "wasm32"))]
-impl<C, Args, Ok, Err> std::future::IntoFuture for CallFuture<C, Args, Ok, Err>
-where
-    C: Caller,
-    Args: Facet<'static> + Send + 'static,
-    Ok: Facet<'static> + Send + 'static,
-    Err: Facet<'static> + Send + 'static,
-{
-    type Output = Result<Ok, CallError<Err>>;
-    type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send>>;
+macro_rules! impl_into_future {
+    ($($send:ident)?) => {
+        impl<C, Args, Ok, Err> std::future::IntoFuture for CallFuture<C, Args, Ok, Err>
+        where
+            C: Caller,
+            Args: Facet<'static> + Send + 'static,
+            Ok: Facet<'static> + Send + 'static,
+            Err: Facet<'static> + Send + 'static,
+        {
+            type Output = Result<Ok, CallError<Err>>;
+            type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> $(+ $send)?>>;
 
-    #[allow(unsafe_code)]
-    fn into_future(self) -> Self::IntoFuture {
-        let CallFuture {
-            caller,
-            method_id,
-            method_name,
-            mut args,
-            metadata,
-            args_plan,
-            ok_plan,
-            err_plan,
-            _phantom,
-        } = self;
-
-        Box::pin(async move {
-            // SAFETY: args is valid, initialized, and Send (enforced by trait bounds).
-            // We create the pointer INSIDE the async block after the move to ensure
-            // it points to the correct memory location.
-            let args_ptr = unsafe { SendPtr::new((&raw mut args).cast::<()>()) };
-
-            let response = caller
-                .call_with_metadata_by_plan(method_id, method_name, args_ptr, args_plan, metadata)
-                .await
-                .map_err(CallError::from)?;
-
-            // Use non-generic decode to reduce monomorphization.
-            // SAFETY: MaybeUninit is properly aligned and sized for Ok/Err types
-            let mut ok_slot = std::mem::MaybeUninit::<Ok>::uninit();
-            let mut err_slot = std::mem::MaybeUninit::<Err>::uninit();
-
-            let outcome = unsafe {
-                decode_response_into(
-                    &response.payload,
-                    ok_slot.as_mut_ptr().cast::<()>(),
+            #[allow(unsafe_code)]
+            fn into_future(self) -> Self::IntoFuture {
+                let CallFuture {
+                    caller,
+                    method_id,
+                    method_name,
+                    mut args,
+                    metadata,
+                    args_plan,
                     ok_plan,
-                    err_slot.as_mut_ptr().cast::<()>(),
                     err_plan,
-                )
-            };
+                    _phantom,
+                } = self;
 
-            match outcome {
-                DecodeOutcome::Ok => {
-                    // SAFETY: decode_response_into initialized ok_slot
-                    let mut result = unsafe { ok_slot.assume_init() };
-                    // SAFETY: result is valid and initialized
-                    unsafe {
-                        caller.bind_response_channels_by_plan(
-                            (&raw mut result).cast::<()>(),
+                Box::pin(async move {
+                    // SAFETY: args is valid, initialized, and Send (enforced by trait bounds).
+                    // We create the pointer INSIDE the async block after the move to ensure
+                    // it points to the correct memory location.
+                    let args_ptr = unsafe { SendPtr::new((&raw mut args).cast::<()>()) };
+
+                    let response = caller
+                        .call_with_metadata_by_plan(method_id, method_name, args_ptr, args_plan, metadata)
+                        .await
+                        .map_err(CallError::from)?;
+
+                    // Use non-generic decode to reduce monomorphization.
+                    // SAFETY: MaybeUninit is properly aligned and sized for Ok/Err types
+                    let mut ok_slot = std::mem::MaybeUninit::<Ok>::uninit();
+                    let mut err_slot = std::mem::MaybeUninit::<Err>::uninit();
+
+                    let outcome = unsafe {
+                        decode_response_into(
+                            &response.payload,
+                            ok_slot.as_mut_ptr().cast::<()>(),
                             ok_plan,
-                            &response.channels,
-                        );
-                    }
-                    std::result::Result::Ok(result)
-                }
-                DecodeOutcome::UserError => {
-                    // SAFETY: decode_response_into initialized err_slot
-                    let user_error = unsafe { err_slot.assume_init() };
-                    std::result::Result::Err(CallError::Roam(RoamError::User(user_error)))
-                }
-                DecodeOutcome::SystemError(e) => {
-                    // Map RoamError<()> to RoamError<Err>
-                    let mapped = match e {
-                        RoamError::User(()) => unreachable!("SystemError never has User variant"),
-                        RoamError::UnknownMethod => RoamError::UnknownMethod,
-                        RoamError::InvalidPayload => RoamError::InvalidPayload,
-                        RoamError::Cancelled => RoamError::Cancelled,
+                            err_slot.as_mut_ptr().cast::<()>(),
+                            err_plan,
+                        )
                     };
-                    std::result::Result::Err(CallError::Roam(mapped))
-                }
-                DecodeOutcome::DeserializeFailed(msg) => std::result::Result::Err(
-                    CallError::Protocol(DecodeError::DeserializeFailed(msg)),
-                ),
+
+                    match outcome {
+                        DecodeOutcome::Ok => {
+                            // SAFETY: decode_response_into initialized ok_slot
+                            let mut result = unsafe { ok_slot.assume_init() };
+                            // SAFETY: result is valid and initialized
+                            unsafe {
+                                caller.bind_response_channels_by_plan(
+                                    (&raw mut result).cast::<()>(),
+                                    ok_plan,
+                                    &response.channels,
+                                );
+                            }
+                            std::result::Result::Ok(result)
+                        }
+                        DecodeOutcome::UserError => {
+                            // SAFETY: decode_response_into initialized err_slot
+                            let user_error = unsafe { err_slot.assume_init() };
+                            std::result::Result::Err(CallError::Roam(RoamError::User(user_error)))
+                        }
+                        DecodeOutcome::SystemError(e) => {
+                            // Map RoamError<()> to RoamError<Err>
+                            let mapped = match e {
+                                RoamError::User(()) => unreachable!("SystemError never has User variant"),
+                                RoamError::UnknownMethod => RoamError::UnknownMethod,
+                                RoamError::InvalidPayload => RoamError::InvalidPayload,
+                                RoamError::Cancelled => RoamError::Cancelled,
+                            };
+                            std::result::Result::Err(CallError::Roam(mapped))
+                        }
+                        DecodeOutcome::DeserializeFailed(msg) => std::result::Result::Err(
+                            CallError::Protocol(DecodeError::DeserializeFailed(msg)),
+                        ),
+                    }
+                })
             }
-        })
+        }
     }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+impl_into_future!(Send);
 
 #[cfg(target_arch = "wasm32")]
-impl<C, Args, Ok, Err> std::future::IntoFuture for CallFuture<C, Args, Ok, Err>
-where
-    C: Caller,
-    Args: Facet<'static> + Send + 'static,
-    Ok: Facet<'static> + Send + 'static,
-    Err: Facet<'static> + Send + 'static,
-{
-    type Output = Result<Ok, CallError<Err>>;
-    type IntoFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output>>>;
-
-    #[allow(unsafe_code)]
-    fn into_future(self) -> Self::IntoFuture {
-        let CallFuture {
-            caller,
-            method_id,
-            method_name,
-            mut args,
-            metadata,
-            args_plan,
-            ok_plan,
-            err_plan,
-            _phantom,
-        } = self;
-
-        Box::pin(async move {
-            // SAFETY: args is valid, initialized, and Send (enforced by trait bounds).
-            // We create the pointer INSIDE the async block after the move to ensure
-            // it points to the correct memory location.
-            let args_ptr = unsafe { SendPtr::new((&raw mut args).cast::<()>()) };
-
-            let response = caller
-                .call_with_metadata_by_plan(method_id, method_name, args_ptr, args_plan, metadata)
-                .await
-                .map_err(CallError::from)?;
-
-            // Use non-generic decode to reduce monomorphization.
-            // SAFETY: MaybeUninit is properly aligned and sized for Ok/Err types
-            let mut ok_slot = std::mem::MaybeUninit::<Ok>::uninit();
-            let mut err_slot = std::mem::MaybeUninit::<Err>::uninit();
-
-            let outcome = unsafe {
-                decode_response_into(
-                    &response.payload,
-                    ok_slot.as_mut_ptr().cast::<()>(),
-                    ok_plan,
-                    err_slot.as_mut_ptr().cast::<()>(),
-                    err_plan,
-                )
-            };
-
-            match outcome {
-                DecodeOutcome::Ok => {
-                    // SAFETY: decode_response_into initialized ok_slot
-                    let mut result = unsafe { ok_slot.assume_init() };
-                    // SAFETY: result is valid and initialized
-                    unsafe {
-                        caller.bind_response_channels_by_plan(
-                            (&raw mut result).cast::<()>(),
-                            ok_plan,
-                            &response.channels,
-                        );
-                    }
-                    std::result::Result::Ok(result)
-                }
-                DecodeOutcome::UserError => {
-                    // SAFETY: decode_response_into initialized err_slot
-                    let user_error = unsafe { err_slot.assume_init() };
-                    std::result::Result::Err(CallError::Roam(RoamError::User(user_error)))
-                }
-                DecodeOutcome::SystemError(e) => {
-                    // Map RoamError<()> to RoamError<Err>
-                    let mapped = match e {
-                        RoamError::User(()) => unreachable!("SystemError never has User variant"),
-                        RoamError::UnknownMethod => RoamError::UnknownMethod,
-                        RoamError::InvalidPayload => RoamError::InvalidPayload,
-                        RoamError::Cancelled => RoamError::Cancelled,
-                    };
-                    std::result::Result::Err(CallError::Roam(mapped))
-                }
-                DecodeOutcome::DeserializeFailed(msg) => std::result::Result::Err(
-                    CallError::Protocol(DecodeError::DeserializeFailed(msg)),
-                ),
-            }
-        })
-    }
-}
+impl_into_future!();
 
 // ============================================================================
 // Response Decoding

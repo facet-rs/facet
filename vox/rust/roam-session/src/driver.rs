@@ -668,80 +668,6 @@ where
     }
 
     #[allow(unsafe_code)]
-    #[cfg(not(target_arch = "wasm32"))]
-    fn call_with_metadata_by_plan(
-        &self,
-        method_id: u64,
-        method_name: &str,
-        args_ptr: crate::SendPtr,
-        args_plan: &'static std::sync::Arc<crate::RpcPlan>,
-        metadata: roam_wire::Metadata,
-    ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> + Send {
-        // Capture self for use in async block
-        let this = self.clone();
-        let method_name = method_name.to_owned();
-
-        async move {
-            let mut attempt = 0u32;
-
-            loop {
-                let handle = match this.ensure_connected().await {
-                    Ok(h) => h,
-                    Err(ConnectError::ConnectFailed(_)) => {
-                        attempt += 1;
-                        if attempt >= this.retry_policy.max_attempts {
-                            return Err(TransportError::ConnectionClosed);
-                        }
-                        let backoff = this.retry_policy.backoff_for_attempt(attempt);
-                        sleep(backoff, "reconnect.backoff").await;
-                        continue;
-                    }
-                    Err(ConnectError::RetriesExhausted { .. }) => {
-                        return Err(TransportError::ConnectionClosed);
-                    }
-                    Err(ConnectError::Rpc(e)) => return Err(e),
-                    Err(ConnectError::Rejected(_)) => {
-                        return Err(TransportError::ConnectionClosed);
-                    }
-                };
-
-                // SAFETY: args_ptr was created from valid, initialized, Send data
-                match unsafe {
-                    handle.call_with_metadata_by_plan(
-                        method_id,
-                        &method_name,
-                        args_ptr.as_ptr(),
-                        args_plan,
-                        metadata.clone(),
-                    )
-                }
-                .await
-                {
-                    Ok(response) => return Ok(response),
-                    Err(TransportError::Encode(e)) => {
-                        return Err(TransportError::Encode(e));
-                    }
-                    Err(TransportError::ConnectionClosed) | Err(TransportError::DriverGone) => {
-                        {
-                            let mut state = this.state.lock();
-                            *state = None;
-                        }
-
-                        attempt += 1;
-                        if attempt >= this.retry_policy.max_attempts {
-                            return Err(TransportError::ConnectionClosed);
-                        }
-
-                        let backoff = this.retry_policy.backoff_for_attempt(attempt);
-                        sleep(backoff, "reconnect.backoff").await;
-                    }
-                }
-            }
-        }
-    }
-
-    #[allow(unsafe_code)]
-    #[cfg(target_arch = "wasm32")]
     fn call_with_metadata_by_plan(
         &self,
         method_id: u64,
@@ -750,7 +676,6 @@ where
         args_plan: &'static std::sync::Arc<crate::RpcPlan>,
         metadata: roam_wire::Metadata,
     ) -> impl std::future::Future<Output = Result<ResponseData, TransportError>> {
-        // Capture self for use in async block
         let this = self.clone();
         let method_name = method_name.to_owned();
 
