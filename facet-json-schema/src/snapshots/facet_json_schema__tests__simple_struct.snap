@@ -1,6 +1,5 @@
 ---
 source: facet-json-schema/src/lib.rs
-assertion_line: 567
 expression: schema
 ---
 {
@@ -8,8 +7,7 @@ expression: schema
   "properties": {
     "age": {
       "type": "integer",
-      "minimum": "0",
-      "maximum": "4294967295"
+      "minimum": 0
     },
     "name": {
       "type": "string"
