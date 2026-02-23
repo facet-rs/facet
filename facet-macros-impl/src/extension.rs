@@ -3,6 +3,88 @@
 use crate::{Delimiter, Group, Ident, PFacetAttr, Punct, Spacing, TokenStream, TokenTree};
 use quote::{ToTokens, quote, quote_spanned};
 
+fn const_prefix_tokens(needs_const_dispatch: bool) -> TokenStream {
+    if needs_const_dispatch {
+        quote! { @const }
+    } else {
+        TokenStream::new()
+    }
+}
+
+fn emit_extension_attr_with_prefix(
+    ns_ident: &Ident,
+    key_ident: &impl ToTokens,
+    args: &TokenStream,
+    facet_crate: &TokenStream,
+    const_prefix: &TokenStream,
+) -> TokenStream {
+    if args.is_empty() {
+        quote! {
+            #facet_crate::__ext!(#const_prefix #ns_ident::#key_ident { })
+        }
+    } else {
+        quote! {
+            #facet_crate::__ext!(#const_prefix #ns_ident::#key_ident { | #args })
+        }
+    }
+}
+
+fn emit_extension_attr_for_field_with_prefix(
+    ns_ident: &Ident,
+    key_ident: &impl ToTokens,
+    args: &TokenStream,
+    field_name: &impl ToTokens,
+    field_type: &TokenStream,
+    facet_crate: &TokenStream,
+    const_prefix: &TokenStream,
+) -> TokenStream {
+    if args.is_empty() {
+        quote! {
+            #facet_crate::__ext!(#const_prefix #ns_ident::#key_ident { #field_name : #field_type })
+        }
+    } else {
+        quote! {
+            #facet_crate::__ext!(#const_prefix #ns_ident::#key_ident { #field_name : #field_type | #args })
+        }
+    }
+}
+
+fn emit_builtin_attr_with_prefix(
+    key: &impl ToTokens,
+    args: &TokenStream,
+    facet_crate: &TokenStream,
+    const_prefix: &TokenStream,
+) -> TokenStream {
+    if args.is_empty() {
+        quote! {
+            #facet_crate::__attr!(#const_prefix @ns { #facet_crate::builtin } #key { })
+        }
+    } else {
+        quote! {
+            #facet_crate::__attr!(#const_prefix @ns { #facet_crate::builtin } #key { | #args })
+        }
+    }
+}
+
+fn emit_builtin_attr_for_field_with_prefix(
+    key: &impl ToTokens,
+    args: &TokenStream,
+    field_name: &impl ToTokens,
+    field_type: &TokenStream,
+    facet_crate: &TokenStream,
+    const_prefix: &TokenStream,
+) -> TokenStream {
+    if args.is_empty() {
+        quote! {
+            #facet_crate::__attr!(#const_prefix @ns { #facet_crate::builtin } #key { #field_name : #field_type })
+        }
+    } else {
+        quote! {
+            #facet_crate::__attr!(#const_prefix @ns { #facet_crate::builtin } #key { #field_name : #field_type | #args })
+        }
+    }
+}
+
 /// Emits the code for an `ExtensionAttr` on a field.
 ///
 /// This generates code that calls our `__ext!` proc macro, which then
@@ -26,29 +108,16 @@ pub fn emit_extension_attr_for_field(
     facet_crate: &TokenStream,
     needs_const_dispatch: bool,
 ) -> TokenStream {
-    if needs_const_dispatch {
-        if args.is_empty() {
-            // No args: ::facet::__ext!(@const ns::key { field : Type })
-            quote! {
-                #facet_crate::__ext!(@const #ns_ident::#key_ident { #field_name : #field_type })
-            }
-        } else {
-            // With args: ::facet::__ext!(@const ns::key { field : Type | args })
-            quote! {
-                #facet_crate::__ext!(@const #ns_ident::#key_ident { #field_name : #field_type | #args })
-            }
-        }
-    } else if args.is_empty() {
-        // No args: ::facet::__ext!(ns::key { field : Type })
-        quote! {
-            #facet_crate::__ext!(#ns_ident::#key_ident { #field_name : #field_type })
-        }
-    } else {
-        // With args: ::facet::__ext!(ns::key { field : Type | args })
-        quote! {
-            #facet_crate::__ext!(#ns_ident::#key_ident { #field_name : #field_type | #args })
-        }
-    }
+    let const_prefix = const_prefix_tokens(needs_const_dispatch);
+    emit_extension_attr_for_field_with_prefix(
+        ns_ident,
+        key_ident,
+        args,
+        field_name,
+        field_type,
+        facet_crate,
+        &const_prefix,
+    )
 }
 
 /// Emits the code for an `ExtensionAttr` without field context.
@@ -71,29 +140,8 @@ pub fn emit_extension_attr(
     facet_crate: &TokenStream,
     needs_const_dispatch: bool,
 ) -> TokenStream {
-    if needs_const_dispatch {
-        if args.is_empty() {
-            // No args: ::facet::__ext!(@const ns::key { })
-            quote! {
-                #facet_crate::__ext!(@const #ns_ident::#key_ident { })
-            }
-        } else {
-            // With args: ::facet::__ext!(@const ns::key { | args })
-            quote! {
-                #facet_crate::__ext!(@const #ns_ident::#key_ident { | #args })
-            }
-        }
-    } else if args.is_empty() {
-        // No args: ::facet::__ext!(ns::key { })
-        quote! {
-            #facet_crate::__ext!(#ns_ident::#key_ident { })
-        }
-    } else {
-        // With args: ::facet::__ext!(ns::key { | args })
-        quote! {
-            #facet_crate::__ext!(#ns_ident::#key_ident { | #args })
-        }
-    }
+    let const_prefix = const_prefix_tokens(needs_const_dispatch);
+    emit_extension_attr_with_prefix(ns_ident, key_ident, args, facet_crate, &const_prefix)
 }
 
 /// Emits an attribute through grammar dispatch.
@@ -115,25 +163,8 @@ pub fn emit_attr(
         }
         None => {
             // Builtin: route directly to ::facet::__attr! (macro_export puts it at crate root)
-            if needs_const_dispatch {
-                if args.is_empty() {
-                    quote! {
-                        #facet_crate::__attr!(@const @ns { #facet_crate::builtin } #key { })
-                    }
-                } else {
-                    quote! {
-                        #facet_crate::__attr!(@const @ns { #facet_crate::builtin } #key { | #args })
-                    }
-                }
-            } else if args.is_empty() {
-                quote! {
-                    #facet_crate::__attr!(@ns { #facet_crate::builtin } #key { })
-                }
-            } else {
-                quote! {
-                    #facet_crate::__attr!(@ns { #facet_crate::builtin } #key { | #args })
-                }
-            }
+            let const_prefix = const_prefix_tokens(needs_const_dispatch);
+            emit_builtin_attr_with_prefix(key, args, facet_crate, &const_prefix)
         }
     }
 }
@@ -167,25 +198,15 @@ pub fn emit_attr_for_field(
         }
         None => {
             // Builtin: route directly to ::facet::__attr! (macro_export puts it at crate root)
-            if needs_const_dispatch {
-                if args.is_empty() {
-                    quote! {
-                        #facet_crate::__attr!(@const @ns { #facet_crate::builtin } #key { #field_name : #field_type })
-                    }
-                } else {
-                    quote! {
-                        #facet_crate::__attr!(@const @ns { #facet_crate::builtin } #key { #field_name : #field_type | #args })
-                    }
-                }
-            } else if args.is_empty() {
-                quote! {
-                    #facet_crate::__attr!(@ns { #facet_crate::builtin } #key { #field_name : #field_type })
-                }
-            } else {
-                quote! {
-                    #facet_crate::__attr!(@ns { #facet_crate::builtin } #key { #field_name : #field_type | #args })
-                }
-            }
+            let const_prefix = const_prefix_tokens(needs_const_dispatch);
+            emit_builtin_attr_for_field_with_prefix(
+                key,
+                args,
+                field_name,
+                field_type,
+                facet_crate,
+                &const_prefix,
+            )
         }
     }
 }
