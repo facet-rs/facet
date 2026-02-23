@@ -21,6 +21,16 @@ use smallvec::SmallVec;
 use super::arena::{Arena, Idx, SliceRange};
 use crate::AllocError;
 
+#[cfg(feature = "std")]
+#[allow(clippy::std_instead_of_core)]
+fn type_plan_cache() -> &'static std::sync::Mutex<HashMap<&'static Shape, Arc<TypePlanCore>>> {
+    use std::sync::{Mutex, OnceLock};
+
+    static PLAN_CACHE: OnceLock<Mutex<HashMap<&'static Shape, Arc<TypePlanCore>>>> =
+        OnceLock::new();
+    PLAN_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 /// Type alias for node indices in the TypePlan.
 pub type NodeId = Idx<TypePlanNode>;
 
@@ -1722,9 +1732,8 @@ impl<'facet, T: facet_core::Facet<'facet> + ?Sized> TypePlan<T> {
     /// let plan = TypePlan::<MyStruct>::build()?;
     /// ```
     pub fn build() -> Result<Self, AllocError> {
-        let mut builder = TypePlanBuilder::new();
-        let root = builder.build_node(T::SHAPE)?;
-        let core = Arc::new(builder.finish(root));
+        // SAFETY: T::SHAPE comes from Facet metadata for a real type T.
+        let core = unsafe { TypePlanCore::from_shape(T::SHAPE)? };
 
         Ok(TypePlan {
             core,
@@ -1761,7 +1770,10 @@ impl<'facet, T: facet_core::Facet<'facet> + ?Sized> TypePlan<T> {
 }
 
 impl TypePlanCore {
-    /// Build a TypePlanCore directly from a shape.
+    /// Build a TypePlanCore directly from a shape, with process-global caching.
+    ///
+    /// Under `std`, one plan is cached per unique shape (`&'static Shape`) for
+    /// the lifetime of the process. In `no_std`, this builds a fresh plan each call.
     ///
     /// # Safety
     ///
@@ -1769,6 +1781,35 @@ impl TypePlanCore {
     /// Using an incorrect or maliciously crafted shape can lead to undefined behavior
     /// when materializing values.
     pub unsafe fn from_shape(shape: &'static Shape) -> Result<Arc<Self>, AllocError> {
+        #[cfg(feature = "std")]
+        {
+            let mut guard = type_plan_cache()
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+
+            if let Some(plan) = guard.get(&shape) {
+                return Ok(Arc::clone(plan));
+            }
+
+            // SAFETY: caller guarantees the shape is valid.
+            let plan = unsafe { Self::build_uncached(shape)? };
+            guard.insert(shape, Arc::clone(&plan));
+            Ok(plan)
+        }
+
+        #[cfg(not(feature = "std"))]
+        {
+            // SAFETY: caller guarantees the shape is valid.
+            unsafe { Self::build_uncached(shape) }
+        }
+    }
+
+    /// Build a TypePlanCore from a shape without touching the global cache.
+    ///
+    /// # Safety
+    ///
+    /// Same safety contract as [`Self::from_shape`].
+    unsafe fn build_uncached(shape: &'static Shape) -> Result<Arc<Self>, AllocError> {
         let mut builder = TypePlanBuilder::new();
         let root = builder.build_node(shape)?;
         Ok(Arc::new(builder.finish(root)))
@@ -2234,6 +2275,24 @@ mod tests {
         value: u32,
         // Recursive: contains Option<Box<Self>>
         next: Option<Box<RecursiveStruct>>,
+    }
+
+    #[test]
+    fn test_typeplan_build_reuses_cached_core() {
+        #[derive(Facet)]
+        struct CacheProbe {
+            value: u32,
+        }
+
+        let first = TypePlan::<CacheProbe>::build().unwrap().core();
+        let second = TypePlan::<CacheProbe>::build().unwrap().core();
+        assert!(Arc::ptr_eq(&first, &second));
+
+        // SAFETY: CacheProbe::SHAPE comes from Facet metadata for a real type.
+        let third =
+            unsafe { TypePlanCore::from_shape(<CacheProbe as facet_core::Facet<'static>>::SHAPE) }
+                .unwrap();
+        assert!(Arc::ptr_eq(&first, &third));
     }
 
     #[test]

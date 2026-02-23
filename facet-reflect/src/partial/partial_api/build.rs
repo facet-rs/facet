@@ -244,7 +244,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// let mut slot = MaybeUninit::<MyStruct>::uninit();
     /// let ptr = PtrUninit::new(slot.as_mut_ptr().cast());
     ///
-    /// let partial = unsafe { Partial::from_raw(ptr, MyStruct::SHAPE)? };
+    /// let partial = unsafe { Partial::from_raw_with_shape(ptr, MyStruct::SHAPE)? };
     /// // ... deserialize into partial ...
     /// partial.finish_in_place()?;
     ///

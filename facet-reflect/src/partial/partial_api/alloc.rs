@@ -116,7 +116,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// let plan = TypePlan::<MyStruct>::build()?;
     ///
     /// // Create Partial pointing to our stack memory
-    /// let partial = unsafe { Partial::from_raw(data, plan.arc_core(), plan.core().root_id())? };
+    /// let partial = unsafe { Partial::from_raw(data, plan.core(), plan.core().root_id())? };
     ///
     /// // Initialize fields...
     /// let partial = partial.set_field("name", "test")?.set_field("value", 42)?;
@@ -159,6 +159,27 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             root_plan: plan,
             _marker: PhantomData,
         })
+    }
+
+    /// Creates a new Partial from caller-provided memory and a shape.
+    ///
+    /// This is a convenience API over [`Self::from_raw`] that resolves the root
+    /// type plan from `shape` and reuses the process-global TypePlan cache under
+    /// `std`.
+    ///
+    /// # Safety
+    ///
+    /// Same requirements as [`Self::from_raw`], plus the caller must ensure that
+    /// `shape` is valid and corresponds to a real type.
+    pub unsafe fn from_raw_with_shape(
+        data: PtrUninit,
+        shape: &'static facet_core::Shape,
+    ) -> Result<Self, AllocError> {
+        // SAFETY: caller guarantees shape is valid.
+        let plan = unsafe { TypePlanCore::from_shape(shape)? };
+        let root_id = plan.root_id();
+        // SAFETY: same as from_raw; this method forwards caller guarantees.
+        unsafe { Self::from_raw(data, plan, root_id) }
     }
 }
 
