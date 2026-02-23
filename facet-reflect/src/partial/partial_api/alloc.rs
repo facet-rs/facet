@@ -1,9 +1,9 @@
 use super::*;
 use crate::typeplan::{TypePlan, TypePlanCore, TypePlanNode};
 use crate::{AllocError, AllocatedShape, partial::arena::Idx};
-use ::alloc::collections::BTreeMap;
-use ::alloc::sync::Arc;
-use ::alloc::vec;
+use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
+use alloc::vec;
 use core::marker::PhantomData;
 
 impl<'facet> Partial<'facet, true> {
@@ -14,6 +14,15 @@ impl<'facet> Partial<'facet, true> {
     #[inline]
     pub fn alloc<T: Facet<'facet>>() -> Result<Self, AllocError> {
         TypePlan::<T>::build()?.partial()
+    }
+
+    /// Create a new borrowing Partial from a prebuilt TypePlanCore.
+    ///
+    /// This is useful when callers manage their own plan caching.
+    #[inline]
+    pub fn alloc_with_plan(plan: Arc<TypePlanCore>) -> Result<Self, AllocError> {
+        let root_id = plan.root_id();
+        create_partial_internal::<true>(plan, root_id)
     }
 
     /// Create a new borrowing Partial from a shape.
@@ -43,6 +52,15 @@ impl Partial<'static, false> {
     #[inline]
     pub fn alloc_owned<T: Facet<'static>>() -> Result<Self, AllocError> {
         TypePlan::<T>::build()?.partial_owned()
+    }
+
+    /// Create a new owned Partial from a prebuilt TypePlanCore.
+    ///
+    /// This is useful when callers manage their own plan caching.
+    #[inline]
+    pub fn alloc_owned_with_plan(plan: Arc<TypePlanCore>) -> Result<Self, AllocError> {
+        let root_id = plan.root_id();
+        create_partial_internal::<false>(plan, root_id)
     }
 
     /// Create a new owned Partial from a shape.
@@ -204,7 +222,7 @@ fn create_partial_internal<'facet, const BORROW: bool>(
 /// # Safety
 /// The caller must ensure the returned pointer is used correctly.
 unsafe fn alloc_layout(layout: core::alloc::Layout) -> Result<PtrUninit, AllocError> {
-    use ::alloc::alloc::{alloc, handle_alloc_error};
+    use alloc::alloc::{alloc, handle_alloc_error};
 
     if layout.size() == 0 {
         // For ZSTs, use NonNull::dangling() aligned properly

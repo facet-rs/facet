@@ -49,6 +49,7 @@ mod evidence;
 mod parser;
 mod serializer;
 mod solver;
+mod type_plan_cache;
 mod visitor;
 
 #[cfg(feature = "jit")]
