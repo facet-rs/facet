@@ -637,12 +637,17 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                                 quote! { #field_ident: #typ }
                             })
                             .collect();
+                        // Handle empty fields case explicitly (e.g., Variant())
+                        let struct_fields = if fields_with_types.is_empty() {
+                            quote! { _phantom: #phantom_data }
+                        } else {
+                            quote! { #(#fields_with_types),*, _phantom: #phantom_data }
+                        };
                         shadow_defs.push(quote! {
                             #[repr(C)]
                             #[allow(non_snake_case, dead_code)]
                             struct #shadow_struct_name #bgp_with_bounds #where_clauses {
-                                #(#fields_with_types),* ,
-                                _phantom: #phantom_data
+                                #struct_fields
                             }
                         });
                         let field_defs: Vec<TokenStream> = fields
