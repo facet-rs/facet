@@ -807,7 +807,7 @@ impl<'a, W: PostcardWriter<'a>> FormatSerializer for PostcardSerializer<'a, W> {
             let mapped = unsafe { (adapter.serialize)(value.data()) };
             let mapped_peek = unsafe { Peek::unchecked_new(mapped.ptr, mapped.shape) };
             let mut bytes = Vec::new();
-            let mut mapped_serializer = PostcardSerializer::new(&mut bytes);
+            let mut mapped_serializer = PostcardSerializer::new(CopyWriter::new(&mut bytes));
             serialize_root(&mut mapped_serializer, mapped_peek).map_err(map_format_error)?;
             self.write_bytes(&bytes)?;
             return Ok(true);
