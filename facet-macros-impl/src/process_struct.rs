@@ -1188,6 +1188,7 @@ pub(crate) fn gen_field_from_pfield(
             };
             quote! {
                 𝟋Some(𝟋DS::Custom({
+                    #[allow(clippy::forget_non_drop)]
                     unsafe fn __default(__ptr: #facet_crate::PtrUninit) -> #facet_crate::PtrMut {
                         // Helper function to get shape from a value via type inference
                         #[inline]
