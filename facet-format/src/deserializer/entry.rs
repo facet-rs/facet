@@ -240,16 +240,17 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     };
 
                     let adapter = *adapter;
+                    #[allow(unsafe_code)]
                     let wip = unsafe {
                         wip.set_from_function(move |target| {
                             match (adapter.deserialize)(input, target) {
                                 Ok(_) => Ok(()),
-                                Err(message) => {
-                                    let operation: &'static str =
-                                        format!("opaque adapter deserialize failed: {message}")
-                                            .leak();
-                                    Err(ReflectErrorKind::OperationFailed { shape, operation })
-                                }
+                                Err(message) => Err(ReflectErrorKind::OperationFailedOwned {
+                                    shape,
+                                    operation: format!(
+                                        "opaque adapter deserialize failed: {message}"
+                                    ),
+                                }),
                             }
                         })?
                     };

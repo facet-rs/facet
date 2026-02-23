@@ -157,6 +157,15 @@ pub enum ReflectErrorKind {
         operation: &'static str,
     },
 
+    #[cfg(feature = "alloc")]
+    /// An operation failed for a given shape with an owned operation message.
+    OperationFailedOwned {
+        /// The shape of the value for which the operation failed.
+        shape: &'static Shape,
+        /// The operation failure message.
+        operation: alloc::string::String,
+    },
+
     /// Failed to parse a string value into the target type
     ParseFailed {
         /// The shape we were trying to parse into.
@@ -351,6 +360,10 @@ impl core::fmt::Display for ReflectErrorKind {
                 "{shape} does not implement characteristic {characteristic:?}",
             ),
             ReflectErrorKind::OperationFailed { shape, operation } => {
+                write!(f, "Operation failed on shape {shape}: {operation}")
+            }
+            #[cfg(feature = "alloc")]
+            ReflectErrorKind::OperationFailedOwned { shape, operation } => {
                 write!(f, "Operation failed on shape {shape}: {operation}")
             }
             ReflectErrorKind::ParseFailed { shape, input } => {

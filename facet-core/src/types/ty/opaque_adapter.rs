@@ -32,7 +32,7 @@ pub enum OpaqueDeserialize<'de> {
 #[cfg(feature = "alloc")]
 pub trait FacetOpaqueAdapter {
     /// Adapter-specific deserialize error type.
-    type Error;
+    type Error: core::fmt::Display;
 
     /// Typed outgoing value seen by `serialize_map`.
     type SendValue<'a>;
