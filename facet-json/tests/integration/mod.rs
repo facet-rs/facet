@@ -13,6 +13,7 @@ mod issue_1904;
 mod issue_2004;
 mod issue_2007;
 mod issue_2010;
+mod issue_2059;
 mod jit_deserialize;
 mod list_deferred_processing;
 mod metadata_container_flatten_map;

@@ -138,8 +138,6 @@ fn build_nested_with_invariants() -> Result<(), IPanic> {
     partial = partial.set_field("y", 20i32)?;
     partial = partial.end()?;
     let result = partial.build();
-    // This should succeed because Container itself has no invariants,
-    // only Point does, and we're not checking nested invariants yet
-    assert!(result.is_ok());
+    assert!(result.is_err());
     Ok(())
 }
