@@ -214,9 +214,15 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
         Ok(())
     }
 
-    /// Converts this `Poke` into a read-only `Peek`.
+    /// Borrows this `Poke` as a read-only `Peek`.
     #[inline]
     pub fn as_peek(&self) -> crate::Peek<'_, 'facet> {
+        unsafe { crate::Peek::unchecked_new(self.data.as_const(), self.shape) }
+    }
+
+    /// Consumes this `Poke`, returning a read-only `Peek` with the same `'mem` lifetime.
+    #[inline]
+    pub fn into_peek(self) -> crate::Peek<'mem, 'facet> {
         unsafe { crate::Peek::unchecked_new(self.data.as_const(), self.shape) }
     }
 
