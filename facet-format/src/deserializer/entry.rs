@@ -239,7 +239,6 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         }
                     };
 
-                    let shape = shape;
                     let adapter = *adapter;
                     let wip = unsafe {
                         wip.set_from_function(move |target| {
