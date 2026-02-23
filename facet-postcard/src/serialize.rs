@@ -10,7 +10,9 @@
 
 extern crate alloc;
 
+use alloc::borrow::Cow;
 use alloc::vec::Vec;
+use core::marker::PhantomData;
 
 use facet_core::{Def, ScalarType, Shape};
 use facet_format::{
@@ -91,6 +93,185 @@ impl Writer for Vec<u8> {
     }
 }
 
+/// A segment in a postcard scatter plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Segment<'a> {
+    /// Bytes stored in [`ScatterPlan::staging`].
+    Staged { offset: usize, len: usize },
+    /// Bytes borrowed directly from the source value memory.
+    Reference { bytes: &'a [u8] },
+}
+
+/// A scatter/gather postcard serialization plan.
+#[derive(Debug, Clone)]
+pub struct ScatterPlan<'a> {
+    staging: Vec<u8>,
+    segments: Vec<Segment<'a>>,
+    total_size: usize,
+}
+
+impl<'a> ScatterPlan<'a> {
+    /// Returns the exact serialized size in bytes.
+    pub const fn total_size(&self) -> usize {
+        self.total_size
+    }
+
+    /// Returns the staged structural bytes.
+    pub fn staging(&self) -> &[u8] {
+        &self.staging
+    }
+
+    /// Returns the ordered segments that form the serialized output.
+    pub fn segments(&self) -> &[Segment<'a>] {
+        &self.segments
+    }
+
+    /// Writes the full serialized output into `dest`.
+    ///
+    /// `dest` must be exactly [`Self::total_size`] bytes long.
+    pub fn write_into(&self, dest: &mut [u8]) -> Result<(), SerializeError> {
+        if dest.len() != self.total_size {
+            return Err(SerializeError::Custom(alloc::format!(
+                "destination length mismatch: expected {}, got {}",
+                self.total_size,
+                dest.len()
+            )));
+        }
+
+        let mut cursor = 0usize;
+        for segment in &self.segments {
+            match segment {
+                Segment::Staged { offset, len } => {
+                    let src = &self.staging[*offset..*offset + *len];
+                    dest[cursor..cursor + *len].copy_from_slice(src);
+                    cursor += *len;
+                }
+                Segment::Reference { bytes } => {
+                    dest[cursor..cursor + bytes.len()].copy_from_slice(bytes);
+                    cursor += bytes.len();
+                }
+            }
+        }
+
+        debug_assert_eq!(cursor, self.total_size);
+        Ok(())
+    }
+}
+
+struct ScatterBuilder<'a> {
+    staging: Vec<u8>,
+    segments: Vec<Segment<'a>>,
+    total_size: usize,
+}
+
+impl<'a> ScatterBuilder<'a> {
+    const fn new() -> Self {
+        Self {
+            staging: Vec::new(),
+            segments: Vec::new(),
+            total_size: 0,
+        }
+    }
+
+    fn finish(self) -> ScatterPlan<'a> {
+        ScatterPlan {
+            staging: self.staging,
+            segments: self.segments,
+            total_size: self.total_size,
+        }
+    }
+
+    fn push_staged_segment(&mut self, offset: usize, len: usize) {
+        if len == 0 {
+            return;
+        }
+
+        if let Some(Segment::Staged {
+            offset: prev_offset,
+            len: prev_len,
+        }) = self.segments.last_mut()
+            && *prev_offset + *prev_len == offset
+        {
+            *prev_len += len;
+            return;
+        }
+
+        self.segments.push(Segment::Staged { offset, len });
+    }
+
+    fn push_reference_segment(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+
+        // SAFETY: All calls to `write_referenced_bytes` are restricted to paths that
+        // receive bytes borrowed from the source value (`Peek` traversal inputs),
+        // never temporary buffers created during formatting.
+        #[allow(unsafe_code)]
+        let bytes: &'a [u8] = unsafe { core::mem::transmute(bytes) };
+        self.total_size += bytes.len();
+        self.segments.push(Segment::Reference { bytes });
+    }
+}
+
+impl Writer for ScatterBuilder<'_> {
+    fn write_byte(&mut self, byte: u8) -> Result<(), SerializeError> {
+        let offset = self.staging.len();
+        self.staging.push(byte);
+        self.total_size += 1;
+        self.push_staged_segment(offset, 1);
+        Ok(())
+    }
+
+    fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), SerializeError> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let offset = self.staging.len();
+        self.staging.extend_from_slice(bytes);
+        self.total_size += bytes.len();
+        self.push_staged_segment(offset, bytes.len());
+        Ok(())
+    }
+}
+
+struct CopyWriter<'a, W: Writer + ?Sized> {
+    inner: &'a mut W,
+}
+
+impl<'a, W: Writer + ?Sized> CopyWriter<'a, W> {
+    const fn new(inner: &'a mut W) -> Self {
+        Self { inner }
+    }
+}
+
+impl<W: Writer + ?Sized> Writer for CopyWriter<'_, W> {
+    fn write_byte(&mut self, byte: u8) -> Result<(), SerializeError> {
+        self.inner.write_byte(byte)
+    }
+
+    fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), SerializeError> {
+        self.inner.write_bytes(bytes)
+    }
+}
+
+trait PostcardWriter<'a>: Writer {
+    fn write_referenced_bytes(&mut self, bytes: &[u8]) -> Result<(), SerializeError>;
+}
+
+impl<'a, W: Writer + ?Sized> PostcardWriter<'a> for CopyWriter<'_, W> {
+    fn write_referenced_bytes(&mut self, bytes: &[u8]) -> Result<(), SerializeError> {
+        self.inner.write_bytes(bytes)
+    }
+}
+
+impl<'a> PostcardWriter<'a> for ScatterBuilder<'a> {
+    fn write_referenced_bytes(&mut self, bytes: &[u8]) -> Result<(), SerializeError> {
+        self.push_reference_segment(bytes);
+        Ok(())
+    }
+}
+
 /// Serializes any Facet type to postcard bytes.
 ///
 /// # Example
@@ -160,7 +341,7 @@ where
     W: Writer,
 {
     let peek = Peek::new(value);
-    let mut serializer = PostcardSerializer::new(writer);
+    let mut serializer = PostcardSerializer::new(CopyWriter::new(writer));
     serialize_root(&mut serializer, peek).map_err(map_format_error)
 }
 
@@ -187,9 +368,29 @@ where
 /// ```
 pub fn peek_to_vec(peek: Peek<'_, '_>) -> Result<Vec<u8>, SerializeError> {
     let mut buffer = Vec::new();
-    let mut serializer = PostcardSerializer::new(&mut buffer);
+    let mut serializer = PostcardSerializer::new(CopyWriter::new(&mut buffer));
     serialize_root(&mut serializer, peek).map_err(map_format_error)?;
     Ok(buffer)
+}
+
+/// Serializes a value into a scatter plan.
+///
+/// Structural bytes are staged in an internal buffer while blob payloads are
+/// referenced directly from the source value memory.
+pub fn to_scatter_plan<'a, T>(value: &'a T) -> Result<ScatterPlan<'a>, SerializeError>
+where
+    T: facet_core::Facet<'a> + ?Sized,
+{
+    peek_to_scatter_plan(Peek::new(value))
+}
+
+/// Serializes a [`Peek`] into a scatter plan.
+pub fn peek_to_scatter_plan<'input, 'facet>(
+    peek: Peek<'input, 'facet>,
+) -> Result<ScatterPlan<'input>, SerializeError> {
+    let mut serializer = PostcardSerializer::new(ScatterBuilder::new());
+    serialize_root(&mut serializer, peek).map_err(map_format_error)?;
+    Ok(serializer.into_writer().finish())
 }
 
 /// Serializes a dynamic value (like `facet_value::Value`) to postcard bytes using
@@ -242,7 +443,7 @@ where
 {
     let mut buffer = Vec::new();
     let peek = Peek::new(value);
-    let mut serializer = PostcardSerializer::new(&mut buffer);
+    let mut serializer = PostcardSerializer::new(CopyWriter::new(&mut buffer));
     serialize_value_with_shape(&mut serializer, peek, target_shape).map_err(map_format_error)?;
     Ok(buffer)
 }
@@ -257,28 +458,59 @@ fn map_format_error(error: FormatSerializeError<SerializeError>) -> SerializeErr
 }
 
 struct PostcardSerializer<'a, W> {
-    writer: &'a mut W,
+    writer: W,
+    _marker: PhantomData<&'a ()>,
 }
 
 impl<'a, W> PostcardSerializer<'a, W> {
-    const fn new(writer: &'a mut W) -> Self {
-        Self { writer }
+    const fn new(writer: W) -> Self {
+        Self {
+            writer,
+            _marker: PhantomData,
+        }
+    }
+
+    fn into_writer(self) -> W {
+        self.writer
     }
 
     fn write_str(&mut self, s: &str) -> Result<(), SerializeError>
     where
         W: Writer,
     {
-        write_varint(s.len() as u64, self.writer)?;
+        write_varint(s.len() as u64, &mut self.writer)?;
         self.writer.write_bytes(s.as_bytes())
+    }
+
+    fn write_str_borrowed(&mut self, s: &str) -> Result<(), SerializeError>
+    where
+        W: PostcardWriter<'a>,
+    {
+        write_varint(s.len() as u64, &mut self.writer)?;
+        self.writer.write_referenced_bytes(s.as_bytes())
     }
 
     fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), SerializeError>
     where
         W: Writer,
     {
-        write_varint(bytes.len() as u64, self.writer)?;
+        write_varint(bytes.len() as u64, &mut self.writer)?;
         self.writer.write_bytes(bytes)
+    }
+
+    fn write_bytes_borrowed(&mut self, bytes: &[u8]) -> Result<(), SerializeError>
+    where
+        W: PostcardWriter<'a>,
+    {
+        write_varint(bytes.len() as u64, &mut self.writer)?;
+        self.writer.write_referenced_bytes(bytes)
+    }
+
+    fn write_byte_array_borrowed(&mut self, bytes: &[u8]) -> Result<(), SerializeError>
+    where
+        W: PostcardWriter<'a>,
+    {
+        self.writer.write_referenced_bytes(bytes)
     }
 
     fn write_dynamic_tag(&mut self, tag: DynamicValueTag) -> Result<(), SerializeError>
@@ -301,7 +533,7 @@ impl<'a, W> PostcardSerializer<'a, W> {
     }
 }
 
-impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
+impl<'a, W: PostcardWriter<'a>> FormatSerializer for PostcardSerializer<'a, W> {
     type Error = SerializeError;
 
     fn begin_struct(&mut self) -> Result<(), Self::Error> {
@@ -336,13 +568,19 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
                 let s = c.encode_utf8(&mut buf);
                 self.write_str(s)
             }
-            facet_format::ScalarValue::I64(n) => write_varint_signed(n, self.writer),
-            facet_format::ScalarValue::U64(n) => write_varint(n, self.writer),
-            facet_format::ScalarValue::I128(n) => write_varint_signed_i128(n, self.writer),
-            facet_format::ScalarValue::U128(n) => write_varint_u128(n, self.writer),
+            facet_format::ScalarValue::I64(n) => write_varint_signed(n, &mut self.writer),
+            facet_format::ScalarValue::U64(n) => write_varint(n, &mut self.writer),
+            facet_format::ScalarValue::I128(n) => write_varint_signed_i128(n, &mut self.writer),
+            facet_format::ScalarValue::U128(n) => write_varint_u128(n, &mut self.writer),
             facet_format::ScalarValue::F64(n) => self.writer.write_bytes(&n.to_le_bytes()),
-            facet_format::ScalarValue::Str(s) => self.write_str(&s),
-            facet_format::ScalarValue::Bytes(bytes) => self.write_bytes(&bytes),
+            facet_format::ScalarValue::Str(s) => match s {
+                Cow::Borrowed(s) => self.write_str_borrowed(s),
+                Cow::Owned(s) => self.write_str(&s),
+            },
+            facet_format::ScalarValue::Bytes(bytes) => match bytes {
+                Cow::Borrowed(bytes) => self.write_bytes_borrowed(bytes),
+                Cow::Owned(bytes) => self.write_bytes(&bytes),
+            },
         }
     }
 
@@ -371,11 +609,11 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
     }
 
     fn begin_seq_with_len(&mut self, len: usize) -> Result<(), Self::Error> {
-        write_varint(len as u64, self.writer)
+        write_varint(len as u64, &mut self.writer)
     }
 
     fn begin_map_with_len(&mut self, len: usize) -> Result<(), Self::Error> {
-        write_varint(len as u64, self.writer)
+        write_varint(len as u64, &mut self.writer)
     }
 
     fn end_map(&mut self) -> Result<(), Self::Error> {
@@ -407,7 +645,7 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
                 let s = value
                     .as_str()
                     .ok_or_else(|| SerializeError::Custom("Failed to get string value".into()))?;
-                self.write_str(s)
+                self.write_str_borrowed(s)
             }
             ScalarType::F32 => {
                 let v = *value.get::<f32>().map_err(|e| {
@@ -431,31 +669,31 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
                 let v = *value.get::<u16>().map_err(|e| {
                     SerializeError::Custom(alloc::format!("Failed to get u16: {}", e))
                 })?;
-                write_varint(v as u64, self.writer)
+                write_varint(v as u64, &mut self.writer)
             }
             ScalarType::U32 => {
                 let v = *value.get::<u32>().map_err(|e| {
                     SerializeError::Custom(alloc::format!("Failed to get u32: {}", e))
                 })?;
-                write_varint(v as u64, self.writer)
+                write_varint(v as u64, &mut self.writer)
             }
             ScalarType::U64 => {
                 let v = *value.get::<u64>().map_err(|e| {
                     SerializeError::Custom(alloc::format!("Failed to get u64: {}", e))
                 })?;
-                write_varint(v, self.writer)
+                write_varint(v, &mut self.writer)
             }
             ScalarType::U128 => {
                 let v = *value.get::<u128>().map_err(|e| {
                     SerializeError::Custom(alloc::format!("Failed to get u128: {}", e))
                 })?;
-                write_varint_u128(v, self.writer)
+                write_varint_u128(v, &mut self.writer)
             }
             ScalarType::USize => {
                 let v = *value.get::<usize>().map_err(|e| {
                     SerializeError::Custom(alloc::format!("Failed to get usize: {}", e))
                 })?;
-                write_varint(v as u64, self.writer)
+                write_varint(v as u64, &mut self.writer)
             }
             ScalarType::I8 => {
                 let v = *value.get::<i8>().map_err(|e| {
@@ -467,31 +705,31 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
                 let v = *value.get::<i16>().map_err(|e| {
                     SerializeError::Custom(alloc::format!("Failed to get i16: {}", e))
                 })?;
-                write_varint_signed(v as i64, self.writer)
+                write_varint_signed(v as i64, &mut self.writer)
             }
             ScalarType::I32 => {
                 let v = *value.get::<i32>().map_err(|e| {
                     SerializeError::Custom(alloc::format!("Failed to get i32: {}", e))
                 })?;
-                write_varint_signed(v as i64, self.writer)
+                write_varint_signed(v as i64, &mut self.writer)
             }
             ScalarType::I64 => {
                 let v = *value.get::<i64>().map_err(|e| {
                     SerializeError::Custom(alloc::format!("Failed to get i64: {}", e))
                 })?;
-                write_varint_signed(v, self.writer)
+                write_varint_signed(v, &mut self.writer)
             }
             ScalarType::I128 => {
                 let v = *value.get::<i128>().map_err(|e| {
                     SerializeError::Custom(alloc::format!("Failed to get i128: {}", e))
                 })?;
-                write_varint_signed_i128(v, self.writer)
+                write_varint_signed_i128(v, &mut self.writer)
             }
             ScalarType::ISize => {
                 let v = *value.get::<isize>().map_err(|e| {
                     SerializeError::Custom(alloc::format!("Failed to get isize: {}", e))
                 })?;
-                write_varint_signed(v as i64, self.writer)
+                write_varint_signed(v as i64, &mut self.writer)
             }
             #[cfg(feature = "net")]
             ScalarType::SocketAddr => {
@@ -541,18 +779,18 @@ impl<W: Writer> FormatSerializer for PostcardSerializer<'_, W> {
         variant_index: usize,
         _variant_name: &'static str,
     ) -> Result<(), Self::Error> {
-        write_varint(variant_index as u64, self.writer)
+        write_varint(variant_index as u64, &mut self.writer)
     }
 
     fn serialize_byte_sequence(&mut self, bytes: &[u8]) -> Result<bool, Self::Error> {
         // Postcard stores byte sequences as varint length + raw bytes
-        self.write_bytes(bytes)?;
+        self.write_bytes_borrowed(bytes)?;
         Ok(true)
     }
 
     fn serialize_byte_array(&mut self, bytes: &[u8]) -> Result<bool, Self::Error> {
         // Arrays have no length prefix - just raw bytes
-        self.writer.write_bytes(bytes)?;
+        self.write_byte_array_borrowed(bytes)?;
         Ok(true)
     }
 
