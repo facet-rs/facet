@@ -425,6 +425,7 @@ pub mod builtin {
             type_name: None,
             proxy: None,
             format_proxies: &[],
+            opaque_adapter: None,
             variance: crate::VarianceDesc::BIVARIANT,
             flags: crate::ShapeFlags::empty(),
             tag: None,

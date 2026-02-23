@@ -232,6 +232,11 @@ pub struct Shape {
     #[cfg(feature = "alloc")]
     pub format_proxies: &'static [crate::FormatProxy],
 
+    /// Container-level opaque adapter for custom opaque serialization/deserialization.
+    /// Set by `#[facet(opaque = AdapterType)]` on the container.
+    #[cfg(feature = "alloc")]
+    pub opaque_adapter: Option<&'static crate::OpaqueAdapterDef>,
+
     /// Declarative variance description for this type.
     ///
     /// Describes how this type's variance is computed from its dependencies.
@@ -608,6 +613,13 @@ impl Shape {
     #[inline]
     pub fn has_any_proxy(&self) -> bool {
         self.proxy.is_some() || !self.format_proxies.is_empty()
+    }
+
+    /// Returns true if this shape has a container-level opaque adapter.
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub const fn has_opaque_adapter(&self) -> bool {
+        self.opaque_adapter.is_some()
     }
 
     /// Compute the combined variance of this type over all its lifetime parameters.

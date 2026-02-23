@@ -1,9 +1,9 @@
 use alloc::alloc::Layout;
 
 use crate::{
-    Attr, ConstParam, ConstTypeId, DeclId, Def, FormatProxy, MarkerTraits, ProxyDef, Shape,
-    ShapeFlags, ShapeLayout, Type, TypeNameFn, TypeOps, TypeOpsDirect, TypeOpsIndirect, TypeParam,
-    VTableDirect, VTableErased, VTableIndirect, VarianceDesc,
+    Attr, ConstParam, ConstTypeId, DeclId, Def, FormatProxy, MarkerTraits, OpaqueAdapterDef,
+    ProxyDef, Shape, ShapeFlags, ShapeLayout, Type, TypeNameFn, TypeOps, TypeOpsDirect,
+    TypeOpsIndirect, TypeParam, VTableDirect, VTableErased, VTableIndirect, VarianceDesc,
 };
 
 /// Builder for creating [`Shape`] instances.
@@ -45,6 +45,7 @@ const EMPTY_VESSEL: Shape = Shape {
     type_name: None,
     proxy: None,
     format_proxies: &[],
+    opaque_adapter: None,
     // Default to bivariant - types with no lifetime parameters impose no
     // constraints on lifetimes. Types that need specific variance must set it explicitly.
     variance: VarianceDesc::BIVARIANT,
@@ -358,6 +359,13 @@ impl ShapeBuilder {
     #[inline]
     pub const fn format_proxies(mut self, proxies: &'static [FormatProxy]) -> Self {
         self.shape.format_proxies = proxies;
+        self
+    }
+
+    /// Set the container-level opaque adapter for custom opaque serde.
+    #[inline]
+    pub const fn opaque_adapter(mut self, adapter: &'static OpaqueAdapterDef) -> Self {
+        self.shape.opaque_adapter = Some(adapter);
         self
     }
 

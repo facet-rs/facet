@@ -1470,6 +1470,22 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         PStructKind::TupleStruct { fields } => fields,
         PStructKind::UnitStruct => &[],
     };
+
+    // MVP validation: adapter form is container-only for now.
+    for field in fields {
+        if let Some(attr) = field
+            .attrs
+            .facet
+            .iter()
+            .find(|a| a.is_builtin() && a.key_str() == "opaque" && !a.args.is_empty())
+        {
+            let span = attr.key.span();
+            return quote_spanned! { span =>
+                compile_error!("`#[facet(opaque = ...)]` is container-level only for now");
+            };
+        }
+    }
+
     for field in fields {
         for attr in &field.attrs.facet {
             if let Some(phantom) = phantom_attr_use(attr, &facet_crate) {
@@ -1826,6 +1842,9 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 // - where: compile-time directive for custom generic bounds
                 if attr.is_builtin() {
                     let key = attr.key_str();
+                    if key == "opaque" && !attr.args.is_empty() {
+                        return false;
+                    }
                     !matches!(
                         key.as_str(),
                         "invariants"
@@ -1978,6 +1997,90 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             };
 
             (proxy_impl, proxy_ref)
+        } else {
+            (quote! {}, quote! {})
+        }
+    };
+
+    // Container-level opaque adapter from PStruct.
+    let (opaque_adapter_inherent_impl, opaque_adapter_call) = {
+        if let Some(attr) = ps
+            .container
+            .attrs
+            .facet
+            .iter()
+            .find(|a| a.is_builtin() && a.key_str() == "opaque" && !a.args.is_empty())
+        {
+            let adapter_type = &attr.args;
+            let struct_type = &struct_name_ident;
+            let bgp_display = ps.container.bgp.display_without_bounds();
+            let helper_bgp = ps
+                .container
+                .bgp
+                .with_lifetime(LifetimeName(format_ident!("ʄ")));
+            let bgp_def_for_helper = helper_bgp.display_with_bounds();
+
+            let adapter_where = {
+                let additional_clauses = quote! { #adapter_type: #facet_crate::FacetOpaqueAdapter };
+                if where_clauses.is_empty() {
+                    quote! { where #additional_clauses }
+                } else {
+                    quote! { #where_clauses, #additional_clauses }
+                }
+            };
+
+            let adapter_impl = quote! {
+                #[doc(hidden)]
+                impl #bgp_def_for_helper #struct_type #bgp_display
+                #adapter_where
+                {
+                    #[doc(hidden)]
+                    fn __facet_opaque_adapter_assert_send_type(
+                        value: &Self,
+                    ) -> &<#adapter_type as #facet_crate::FacetOpaqueAdapter>::SendValue<'ʄ> {
+                        value
+                    }
+
+                    #[doc(hidden)]
+                    fn __facet_opaque_adapter_assert_recv_type(
+                        value: <#adapter_type as #facet_crate::FacetOpaqueAdapter>::RecvValue<'ʄ>,
+                    ) -> Self {
+                        value
+                    }
+
+                    #[doc(hidden)]
+                    unsafe fn __facet_opaque_adapter_serialize(
+                        value_ptr: #facet_crate::PtrConst,
+                    ) -> #facet_crate::OpaqueSerialize {
+                        let value: &Self = value_ptr.get();
+                        let send_value = <Self>::__facet_opaque_adapter_assert_send_type(value);
+                        <#adapter_type as #facet_crate::FacetOpaqueAdapter>::serialize_map(send_value)
+                    }
+
+                    #[doc(hidden)]
+                    unsafe fn __facet_opaque_adapter_deserialize<'de>(
+                        input: #facet_crate::OpaqueDeserialize<'de>,
+                        value_ptr: #facet_crate::PtrUninit,
+                    ) -> ::core::result::Result<#facet_crate::PtrMut, #facet_crate::𝟋::𝟋Str> {
+                        extern crate alloc as __alloc;
+                        let value =
+                            <#adapter_type as #facet_crate::FacetOpaqueAdapter>::deserialize_build(input)
+                                .map_err(|e| __alloc::string::ToString::to_string(&e))?;
+                        #facet_crate::𝟋::𝟋Ok(value_ptr.put(value))
+                    }
+                }
+            };
+
+            let adapter_ref = quote! {
+                .opaque_adapter(&const {
+                    #facet_crate::OpaqueAdapterDef {
+                        serialize: <Self>::__facet_opaque_adapter_serialize,
+                        deserialize: <Self>::__facet_opaque_adapter_deserialize,
+                    }
+                })
+            };
+
+            (adapter_impl, adapter_ref)
         } else {
             (quote! {}, quote! {})
         }
@@ -2348,6 +2451,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     #attributes_call
                     #type_tag_call
                     #proxy_call
+                    #opaque_adapter_call
                     #format_proxies_call
                     #inner_call
                     #variance_call
@@ -2385,6 +2489,9 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
         // Proxy inherent impl (outside the Facet impl so generic params are in scope)
         #proxy_inherent_impl
+
+        // Opaque adapter inherent impl
+        #opaque_adapter_inherent_impl
 
         // Format-specific proxy inherent impls
         #format_proxies_inherent_impl

@@ -8,6 +8,9 @@ pub use field::*;
 mod proxy;
 pub use proxy::*;
 
+mod opaque_adapter;
+pub use opaque_adapter::*;
+
 mod struct_;
 pub use struct_::*;
 
