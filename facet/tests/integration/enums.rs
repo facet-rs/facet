@@ -410,4 +410,63 @@ fn enum_with_multiple_generics_c() {
     }
 }
 
-// testing
+// Regression test for https://github.com/facet-rs/facet/issues/1991
+#[test]
+fn enum_with_empty_tuple_variant_repr_c() {
+    #[derive(Debug, Facet)]
+    #[repr(C)]
+    #[allow(dead_code)]
+    enum EmptyTupleEnum {
+        Unit,
+        EmptyTuple(),
+        NonEmpty(u32),
+    }
+
+    let shape = EmptyTupleEnum::SHAPE;
+    assert_eq!(format!("{shape}"), "EmptyTupleEnum");
+
+    if let Type::User(UserType::Enum(enum_def)) = shape.ty {
+        assert_eq!(enum_def.variants.len(), 3);
+
+        assert_eq!(enum_def.variants[0].name, "Unit");
+        assert_eq!(enum_def.variants[0].data.fields.len(), 0);
+
+        assert_eq!(enum_def.variants[1].name, "EmptyTuple");
+        assert_eq!(enum_def.variants[1].data.fields.len(), 0);
+
+        assert_eq!(enum_def.variants[2].name, "NonEmpty");
+        assert_eq!(enum_def.variants[2].data.fields.len(), 1);
+    } else {
+        panic!("Expected Enum definition");
+    }
+}
+
+#[test]
+fn enum_with_empty_tuple_variant_repr_u8() {
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum EmptyTupleEnumU8 {
+        Unit,
+        EmptyTuple(),
+        NonEmpty(u32),
+    }
+
+    let shape = EmptyTupleEnumU8::SHAPE;
+    assert_eq!(format!("{shape}"), "EmptyTupleEnumU8");
+
+    if let Type::User(UserType::Enum(enum_def)) = shape.ty {
+        assert_eq!(enum_def.variants.len(), 3);
+
+        assert_eq!(enum_def.variants[0].name, "Unit");
+        assert_eq!(enum_def.variants[0].data.fields.len(), 0);
+
+        assert_eq!(enum_def.variants[1].name, "EmptyTuple");
+        assert_eq!(enum_def.variants[1].data.fields.len(), 0);
+
+        assert_eq!(enum_def.variants[2].name, "NonEmpty");
+        assert_eq!(enum_def.variants[2].data.fields.len(), 1);
+    } else {
+        panic!("Expected Enum definition");
+    }
+}
