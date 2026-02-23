@@ -10,6 +10,7 @@ tarpaulin-report.html
 *long-type-*.txt
 .ignore.rs
 **/.claude/settings.local.json
+**/.claude/worktrees
 *.sw[op]
 .handoffs
 
