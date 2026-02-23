@@ -128,10 +128,10 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use facet_core::{Facet, Shape};
-use facet_reflect::{HeapValue, Partial, Span, TypePlan};
+use facet_reflect::{HeapValue, Partial, Span};
 use facet_solver::{KeyResult, Schema, Solver};
 
-use crate::{FormatParser, ParseEvent};
+use crate::{FormatParser, ParseEvent, type_plan_cache::cached_type_plan_arc};
 
 mod error;
 pub use entry::MetaSource;
@@ -282,8 +282,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
     where
         T: Facet<'input>,
     {
-        let plan = TypePlan::<T>::build()?;
-        let wip = plan.partial()?;
+        let wip = Partial::alloc_with_plan(cached_type_plan_arc::<T>()?)?;
         let partial = self.deserialize_into(wip, MetaSource::FromEvents)?;
         // SpanGuard must cover build() and materialize() which can fail with ReflectError.
         // Created AFTER deserialize_into so last_span points to the final token.
@@ -309,8 +308,7 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, true> {
     where
         T: Facet<'input>,
     {
-        let plan = TypePlan::<T>::build()?;
-        let wip = plan.partial()?;
+        let wip = Partial::alloc_with_plan(cached_type_plan_arc::<T>()?)?;
         let wip = wip.begin_deferred()?;
         let partial = self.deserialize_into(wip, MetaSource::FromEvents)?;
 
@@ -329,12 +327,12 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     where
         T: Facet<'static>,
     {
-        let plan = TypePlan::<T>::build()?;
-        // SAFETY: partial_owned produces Partial<'static, false>, but deserialize_into
+        let wip = Partial::alloc_owned_with_plan(cached_type_plan_arc::<T>()?)?;
+        // SAFETY: alloc_owned_with_plan produces Partial<'static, false>, but deserialize_into
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe.
         #[allow(unsafe_code)]
-        let wip: Partial<'input, false> = unsafe { core::mem::transmute(plan.partial_owned()?) };
+        let wip: Partial<'input, false> = unsafe { core::mem::transmute(wip) };
 
         let partial = self.deserialize_into(wip, MetaSource::FromEvents)?;
 
@@ -368,12 +366,12 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     where
         T: Facet<'static>,
     {
-        let plan = TypePlan::<T>::build()?;
-        // SAFETY: partial_owned produces Partial<'static, false>, but deserialize_into
+        let wip = Partial::alloc_owned_with_plan(cached_type_plan_arc::<T>()?)?;
+        // SAFETY: alloc_owned_with_plan produces Partial<'static, false>, but deserialize_into
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe.
         #[allow(unsafe_code)]
-        let wip: Partial<'input, false> = unsafe { core::mem::transmute(plan.partial_owned()?) };
+        let wip: Partial<'input, false> = unsafe { core::mem::transmute(wip) };
         let wip = wip.begin_deferred()?;
         let partial = self.deserialize_into(wip, MetaSource::FromEvents)?;
 
@@ -405,12 +403,12 @@ impl<'parser, 'input> FormatDeserializer<'parser, 'input, false> {
     where
         T: Facet<'static>,
     {
-        let plan = TypePlan::<T>::build()?;
-        // SAFETY: partial_owned produces Partial<'static, false>, but deserialize_into
+        let wip = Partial::alloc_owned_with_plan(cached_type_plan_arc::<T>()?)?;
+        // SAFETY: alloc_owned_with_plan produces Partial<'static, false>, but deserialize_into
         // expects 'input. Since BORROW=false means we never borrow from input anyway,
         // this is safe.
         #[allow(unsafe_code)]
-        let wip: Partial<'input, false> = unsafe { core::mem::transmute(plan.partial_owned()?) };
+        let wip: Partial<'input, false> = unsafe { core::mem::transmute(wip) };
 
         let partial = self.deserialize_into_with_shape(wip, source_shape)?;
 

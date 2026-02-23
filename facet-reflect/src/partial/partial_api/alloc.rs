@@ -16,6 +16,15 @@ impl<'facet> Partial<'facet, true> {
         TypePlan::<T>::build()?.partial()
     }
 
+    /// Create a new borrowing Partial from a prebuilt TypePlanCore.
+    ///
+    /// This is useful when callers manage their own plan caching.
+    #[inline]
+    pub fn alloc_with_plan(plan: Arc<TypePlanCore>) -> Result<Self, AllocError> {
+        let root_id = plan.root_id();
+        create_partial_internal::<true>(plan, root_id)
+    }
+
     /// Create a new borrowing Partial from a shape.
     ///
     /// This allocates memory for a value described by the shape and returns a `Partial`
@@ -43,6 +52,15 @@ impl Partial<'static, false> {
     #[inline]
     pub fn alloc_owned<T: Facet<'static>>() -> Result<Self, AllocError> {
         TypePlan::<T>::build()?.partial_owned()
+    }
+
+    /// Create a new owned Partial from a prebuilt TypePlanCore.
+    ///
+    /// This is useful when callers manage their own plan caching.
+    #[inline]
+    pub fn alloc_owned_with_plan(plan: Arc<TypePlanCore>) -> Result<Self, AllocError> {
+        let root_id = plan.root_id();
+        create_partial_internal::<false>(plan, root_id)
     }
 
     /// Create a new owned Partial from a shape.
