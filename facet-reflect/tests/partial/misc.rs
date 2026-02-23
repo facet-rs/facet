@@ -1559,6 +1559,27 @@ fn from_raw_simple_struct() -> Result<(), IPanic> {
 }
 
 #[test]
+fn from_raw_with_shape_simple_struct() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
+
+    let mut slot = MaybeUninit::<Point>::uninit();
+    let ptr = PtrUninit::new(slot.as_mut_ptr().cast::<u8>());
+
+    let mut partial: Partial<'_> = unsafe { Partial::from_raw_with_shape(ptr, Point::SHAPE)? };
+    partial = partial.set_field("x", 10i32)?;
+    partial = partial.set_field("y", 20i32)?;
+    partial.finish_in_place()?;
+
+    let point = unsafe { slot.assume_init() };
+    assert_eq!(point, Point { x: 10, y: 20 });
+    Ok(())
+}
+
+#[test]
 fn from_raw_nested_struct() -> Result<(), IPanic> {
     #[derive(Facet, Debug, PartialEq)]
     struct Inner {

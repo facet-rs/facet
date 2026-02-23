@@ -10,11 +10,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use facet_core::Facet;
 use facet_reflect::{AllocError, TypePlan, TypePlanCore};
 
-type ShapeKey = usize;
-type PlanEntry = Arc<TypePlanCore>;
-
-fn cache() -> &'static Mutex<HashMap<ShapeKey, PlanEntry>> {
-    static PLAN_CACHE: OnceLock<Mutex<HashMap<ShapeKey, PlanEntry>>> = OnceLock::new();
+fn cache() -> &'static Mutex<HashMap<&'static facet_core::Shape, Arc<TypePlanCore>>> {
+    static PLAN_CACHE: OnceLock<Mutex<HashMap<&'static facet_core::Shape, Arc<TypePlanCore>>>> =
+        OnceLock::new();
     PLAN_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -23,15 +21,14 @@ pub(crate) fn cached_type_plan_arc<'facet, T>() -> Result<Arc<TypePlanCore>, All
 where
     T: Facet<'facet>,
 {
-    let shape_key = T::SHAPE as *const _ as usize;
     let mut guard = cache().lock().unwrap_or_else(|poison| poison.into_inner());
 
-    if let Some(plan) = guard.get(&shape_key) {
+    if let Some(plan) = guard.get(&T::SHAPE) {
         return Ok(Arc::clone(plan));
     }
 
     let plan = TypePlan::<T>::build()?.core();
-    guard.insert(shape_key, Arc::clone(&plan));
+    guard.insert(T::SHAPE, Arc::clone(&plan));
     Ok(plan)
 }
 
