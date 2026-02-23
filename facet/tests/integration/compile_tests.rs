@@ -241,3 +241,42 @@ fn test_truthy_unknown_fn() {
 
     run_compilation_test(&test);
 }
+
+/// Test that field-level `#[facet(opaque = ...)]` is rejected.
+#[test]
+#[cfg(not(miri))]
+fn test_opaque_adapter_field_level_rejected() {
+    let test = CompilationTest {
+        name: "opaque_adapter_field_level",
+        source: include_str!("../compile_tests/opaque_adapter_field_level.rs"),
+        expected_errors: &["container-level only for now"],
+    };
+
+    run_compilation_test(&test);
+}
+
+/// Test that adapter SendValue mismatches fail at the generated adapter wiring site.
+#[test]
+#[cfg(not(miri))]
+fn test_opaque_adapter_send_mismatch() {
+    let test = CompilationTest {
+        name: "opaque_adapter_send_mismatch",
+        source: include_str!("../compile_tests/opaque_adapter_send_mismatch.rs"),
+        expected_errors: &["mismatched types", "&u32"],
+    };
+
+    run_compilation_test(&test);
+}
+
+/// Test that adapter RecvValue mismatches fail at the generated adapter wiring site.
+#[test]
+#[cfg(not(miri))]
+fn test_opaque_adapter_recv_mismatch() {
+    let test = CompilationTest {
+        name: "opaque_adapter_recv_mismatch",
+        source: include_str!("../compile_tests/opaque_adapter_recv_mismatch.rs"),
+        expected_errors: &["mismatched types", "BadPayload"],
+    };
+
+    run_compilation_test(&test);
+}

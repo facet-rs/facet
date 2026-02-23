@@ -49,6 +49,8 @@ impl fmt::Debug for Shape {
                 proxy: _,
             #[cfg(feature = "alloc")]
                 format_proxies: _,
+            #[cfg(feature = "alloc")]
+                opaque_adapter: _,
             variance: _,
             flags: _,
             tag: _,

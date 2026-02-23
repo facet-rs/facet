@@ -10,6 +10,7 @@ mod jit_vec_int;
 mod multi_tier;
 mod nested_enum_repr;
 mod no_jit_tier0;
+mod opaque_adapter;
 mod result_jit_diagnostic;
 mod roam_wire;
 mod roundtrip;

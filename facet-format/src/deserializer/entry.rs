@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
-use facet_core::{Def, ScalarType, Shape, StructKind, Type, UserType};
-use facet_reflect::{DeserStrategy, Partial, Span};
+use facet_core::{Def, OpaqueDeserialize, ScalarType, Shape, StructKind, Type, UserType};
+use facet_reflect::{DeserStrategy, Partial, ReflectErrorKind, Span};
 
 use crate::{
     ContainerKind, DeserializeError, DeserializeErrorKind, FieldEvidence, FieldLocationHint,
@@ -210,18 +210,71 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 unreachable!("deser_strategy() should resolve BackRef to target strategy")
             }
 
-            Some(DeserStrategy::OpaquePointer) | Some(DeserStrategy::Opaque) => {
-                // Opaque types/pointers cannot be deserialized from formats without a proxy.
-                // They must have a #[facet(proxy = ...)] attribute to be deserializable.
-                Err(DeserializeErrorKind::Unsupported {
-                    message: format!(
-                        "cannot deserialize opaque type {} - add a proxy to make it deserializable",
-                        shape
-                    )
-                    .into(),
+            Some(DeserStrategy::Opaque) => {
+                if let Some(adapter) = shape.opaque_adapter {
+                    if self.is_non_self_describing() && !self.parser.hint_byte_sequence() {
+                        self.parser.hint_scalar_type(ScalarTypeHint::Bytes);
+                    }
+
+                    let event = self.expect_event("bytes for opaque adapter")?;
+                    let input = match event.kind {
+                        ParseEventKind::Scalar(ScalarValue::Bytes(bytes)) => {
+                            if BORROW {
+                                match bytes {
+                                    Cow::Borrowed(b) => OpaqueDeserialize::Borrowed(b),
+                                    Cow::Owned(v) => OpaqueDeserialize::Owned(v),
+                                }
+                            } else {
+                                OpaqueDeserialize::Owned(bytes.into_owned())
+                            }
+                        }
+                        _ => {
+                            return Err(self.mk_err(
+                                &wip,
+                                DeserializeErrorKind::UnexpectedToken {
+                                    expected: "bytes for opaque adapter",
+                                    got: event.kind_name().into(),
+                                },
+                            ));
+                        }
+                    };
+
+                    let adapter = *adapter;
+                    #[allow(unsafe_code)]
+                    let wip = unsafe {
+                        wip.set_from_function(move |target| {
+                            match (adapter.deserialize)(input, target) {
+                                Ok(_) => Ok(()),
+                                Err(message) => Err(ReflectErrorKind::OperationFailedOwned {
+                                    shape,
+                                    operation: format!(
+                                        "opaque adapter deserialize failed: {message}"
+                                    ),
+                                }),
+                            }
+                        })?
+                    };
+                    Ok(wip)
+                } else {
+                    Err(DeserializeErrorKind::Unsupported {
+                        message: format!(
+                            "cannot deserialize opaque type {} - add a proxy or opaque adapter",
+                            shape
+                        )
+                        .into(),
+                    }
+                    .with_span(self.last_span))
                 }
-                .with_span(self.last_span))
             }
+
+            Some(DeserStrategy::OpaquePointer) => Err(DeserializeErrorKind::Unsupported {
+                message: format!(
+                    "cannot deserialize opaque type {} - add a proxy to make it deserializable",
+                    shape
+                )
+                .into(),
+            }
+            .with_span(self.last_span)),
 
             None => {
                 // This should not happen - TypePlan::build errors at allocation time for

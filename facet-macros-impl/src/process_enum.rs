@@ -152,6 +152,19 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             PVariantKind::Struct { fields } => fields,
         };
         for field in fields {
+            if let Some(attr) = field
+                .attrs
+                .facet
+                .iter()
+                .find(|a| a.is_builtin() && a.key_str() == "opaque" && !a.args.is_empty())
+            {
+                let span = attr.key.span();
+                return quote_spanned! { span =>
+                    compile_error!("`#[facet(opaque = ...)]` is container-level only for now");
+                };
+            }
+        }
+        for field in fields {
             for attr in &field.attrs.facet {
                 if let Some(phantom) = phantom_attr_use(attr, &facet_crate) {
                     phantom_attr_uses.push(phantom);
@@ -284,6 +297,9 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             // - where: compile-time directive for custom generic bounds
             if attr.is_builtin() {
                 let key = attr.key_str();
+                if key == "opaque" && !attr.args.is_empty() {
+                    continue;
+                }
                 if matches!(
                     key.as_str(),
                     "crate"
@@ -450,6 +466,28 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         shape: <#proxy_type as #facet_crate::Facet>::SHAPE,
                         convert_in: __proxy_convert_in,
                         convert_out: __proxy_convert_out,
+                    }
+                })
+            }
+        } else {
+            quote! {}
+        }
+    };
+
+    // Container-level opaque adapter from PEnum.
+    let opaque_adapter_call = {
+        if pe
+            .container
+            .attrs
+            .facet
+            .iter()
+            .any(|a| a.is_builtin() && a.key_str() == "opaque" && !a.args.is_empty())
+        {
+            quote! {
+                .opaque_adapter(&const {
+                    #facet_crate::OpaqueAdapterDef {
+                        serialize: <Self>::__facet_opaque_adapter_serialize,
+                        deserialize: <Self>::__facet_opaque_adapter_deserialize,
                     }
                 })
             }
@@ -1105,6 +1143,77 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         quote! {}
     };
 
+    let opaque_adapter_inherent_impl = {
+        if let Some(attr) = pe
+            .container
+            .attrs
+            .facet
+            .iter()
+            .find(|a| a.is_builtin() && a.key_str() == "opaque" && !a.args.is_empty())
+        {
+            let adapter_type = &attr.args;
+            let enum_type = enum_name;
+            let helper_bgp = pe
+                .container
+                .bgp
+                .with_lifetime(LifetimeName(format_ident!("ʄ")));
+            let bgp_def_for_helper = helper_bgp.display_with_bounds();
+
+            let adapter_where = {
+                let additional_clauses = quote! { #adapter_type: #facet_crate::FacetOpaqueAdapter };
+                if where_clauses.is_empty() {
+                    quote! { where #additional_clauses }
+                } else {
+                    quote! { #where_clauses, #additional_clauses }
+                }
+            };
+
+            quote! {
+                #[doc(hidden)]
+                impl #bgp_def_for_helper #enum_type #bgp_without_bounds
+                #adapter_where
+                {
+                    #[doc(hidden)]
+                    fn __facet_opaque_adapter_assert_send_type(
+                        value: &Self,
+                    ) -> &<#adapter_type as #facet_crate::FacetOpaqueAdapter>::SendValue<'ʄ> {
+                        value
+                    }
+
+                    #[doc(hidden)]
+                    fn __facet_opaque_adapter_assert_recv_type(
+                        value: <#adapter_type as #facet_crate::FacetOpaqueAdapter>::RecvValue<'ʄ>,
+                    ) -> Self {
+                        value
+                    }
+
+                    #[doc(hidden)]
+                    unsafe fn __facet_opaque_adapter_serialize(
+                        value_ptr: #facet_crate::PtrConst,
+                    ) -> #facet_crate::OpaqueSerialize {
+                        let value: &Self = value_ptr.get();
+                        let send_value = <Self>::__facet_opaque_adapter_assert_send_type(value);
+                        <#adapter_type as #facet_crate::FacetOpaqueAdapter>::serialize_map(send_value)
+                    }
+
+                    #[doc(hidden)]
+                    unsafe fn __facet_opaque_adapter_deserialize<'de>(
+                        input: #facet_crate::OpaqueDeserialize<'de>,
+                        value_ptr: #facet_crate::PtrUninit,
+                    ) -> ::core::result::Result<#facet_crate::PtrMut, #facet_crate::𝟋::𝟋Str> {
+                        extern crate alloc as __alloc;
+                        let value =
+                            <#adapter_type as #facet_crate::FacetOpaqueAdapter>::deserialize_build(input)
+                                .map_err(|e| __alloc::string::ToString::to_string(&e))?;
+                        #facet_crate::𝟋::𝟋Ok(value_ptr.put(value))
+                    }
+                }
+            }
+        } else {
+            quote! {}
+        }
+    };
+
     // from_ref / try_from_ref handling - generates try_from function
     // Similar to proxy, we define helper functions in an inherent impl
     let from_ref_inherent_impl = {
@@ -1274,12 +1383,16 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     #is_numeric_call
                     #pod_call
                     #proxy_call
+                    #opaque_adapter_call
                     #variance_call
                     .build()
             };
         }
 
         #static_decl
+
+        // opaque adapter inherent impl
+        #opaque_adapter_inherent_impl
 
         // from_ref inherent impl
         #from_ref_inherent_impl

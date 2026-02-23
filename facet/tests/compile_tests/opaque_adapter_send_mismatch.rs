@@ -1,0 +1,30 @@
+//! Test that opaque adapter SendValue type mismatch points at generated adapter checks.
+
+use facet::{Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst};
+
+#[derive(Facet)]
+#[facet(opaque = BadAdapter)]
+struct BadPayload;
+
+struct BadAdapter;
+
+impl FacetOpaqueAdapter for BadAdapter {
+    type Error = String;
+    type SendValue<'a> = u32;
+    type RecvValue<'de> = BadPayload;
+
+    fn serialize_map(_: &Self::SendValue<'_>) -> OpaqueSerialize {
+        OpaqueSerialize {
+            ptr: PtrConst::new(&0u8 as *const u8),
+            shape: <u8 as Facet>::SHAPE,
+        }
+    }
+
+    fn deserialize_build<'de>(
+        _: OpaqueDeserialize<'de>,
+    ) -> Result<Self::RecvValue<'de>, Self::Error> {
+        Ok(BadPayload)
+    }
+}
+
+fn main() {}
