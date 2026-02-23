@@ -199,7 +199,7 @@ pub(crate) fn build_type_params_call(
                     // ignore for now
                 }
                 GenericParam::Const { .. } => {
-                    // ignore for now
+                    // handled by build_const_params_call
                 }
                 GenericParam::Type { name, .. } => {
                     let name_str = name.to_string();
@@ -218,6 +218,94 @@ pub(crate) fn build_type_params_call(
         quote! {}
     } else {
         quote! { .type_params(&[#(#type_params),*]) }
+    }
+}
+
+/// Build the `.const_params(...)` builder call, returning empty if no supported const params.
+pub(crate) fn build_const_params_call(
+    generics: Option<&GenericParams>,
+    opaque: bool,
+    facet_crate: &TokenStream,
+) -> TokenStream {
+    if opaque {
+        return quote! {};
+    }
+
+    let mut const_params = Vec::new();
+    if let Some(generics) = generics {
+        for p in generics.params.iter() {
+            if let GenericParam::Const { name, typ, .. } = &p.value {
+                let name_str = name.to_string();
+                let typ = typ.to_token_stream().to_string().replace(' ', "");
+                let primitive = typ.rsplit("::").next().unwrap_or(&typ);
+
+                let (kind, value) = match primitive {
+                    "bool" => (
+                        quote! { #facet_crate::ConstParamKind::Bool },
+                        quote! { if #name { 1u64 } else { 0u64 } },
+                    ),
+                    "char" => (
+                        quote! { #facet_crate::ConstParamKind::Char },
+                        quote! { #name as u32 as u64 },
+                    ),
+                    "u8" => (
+                        quote! { #facet_crate::ConstParamKind::U8 },
+                        quote! { #name as u64 },
+                    ),
+                    "u16" => (
+                        quote! { #facet_crate::ConstParamKind::U16 },
+                        quote! { #name as u64 },
+                    ),
+                    "u32" => (
+                        quote! { #facet_crate::ConstParamKind::U32 },
+                        quote! { #name as u64 },
+                    ),
+                    "u64" => (
+                        quote! { #facet_crate::ConstParamKind::U64 },
+                        quote! { #name as u64 },
+                    ),
+                    "usize" => (
+                        quote! { #facet_crate::ConstParamKind::Usize },
+                        quote! { #name as u64 },
+                    ),
+                    "i8" => (
+                        quote! { #facet_crate::ConstParamKind::I8 },
+                        quote! { (#name as i64) as u64 },
+                    ),
+                    "i16" => (
+                        quote! { #facet_crate::ConstParamKind::I16 },
+                        quote! { (#name as i64) as u64 },
+                    ),
+                    "i32" => (
+                        quote! { #facet_crate::ConstParamKind::I32 },
+                        quote! { (#name as i64) as u64 },
+                    ),
+                    "i64" => (
+                        quote! { #facet_crate::ConstParamKind::I64 },
+                        quote! { (#name as i64) as u64 },
+                    ),
+                    "isize" => (
+                        quote! { #facet_crate::ConstParamKind::Isize },
+                        quote! { (#name as i64) as u64 },
+                    ),
+                    _ => continue,
+                };
+
+                const_params.push(quote! {
+                    #facet_crate::ConstParam {
+                        name: #name_str,
+                        value: #value,
+                        kind: #kind,
+                    }
+                });
+            }
+        }
+    }
+
+    if const_params.is_empty() {
+        quote! {}
+    } else {
+        quote! { .const_params(&[#(#const_params),*]) }
     }
 }
 

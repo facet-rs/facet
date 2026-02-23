@@ -1,6 +1,6 @@
 use core::fmt;
 
-use crate::{Def, Shape, ShapeLayout, TypeParam};
+use crate::{ConstParam, Def, Shape, ShapeLayout, TypeParam};
 
 // Helper struct to format the name for display
 impl fmt::Display for Shape {
@@ -38,6 +38,7 @@ impl fmt::Debug for Shape {
             source_line: _,   // omit by default (for debugging)
             source_column: _, // omit by default (for debugging)
             type_params: _,
+            const_params: _,
             doc: _,
             attributes: _,
             type_tag: _,
@@ -65,6 +66,7 @@ impl fmt::Debug for Shape {
                 .field("def", &self.def)
                 .field("type_identifier", &self.type_identifier)
                 .field("type_params", &self.type_params)
+                .field("const_params", &self.const_params)
                 .field("doc", &self.doc)
                 .field("attributes", &self.attributes)
                 .field("type_tag", &self.type_tag)
@@ -103,6 +105,28 @@ impl fmt::Debug for Shape {
                         }
                     }
                     TypeParams(self.type_params)
+                });
+            }
+
+            if !self.const_params.is_empty() {
+                field!("const_params", "{}", {
+                    struct ConstParams<'shape>(&'shape [ConstParam]);
+                    impl core::fmt::Display for ConstParams<'_> {
+                        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                            let mut iter = self.0.iter();
+                            if let Some(first) = iter.next() {
+                                write!(f, "«({}: {:?} = {}", first.name, first.kind, first.value)?;
+                                for next in iter {
+                                    write!(f, ", {}: {:?} = {}", next.name, next.kind, next.value)?;
+                                }
+                                write!(f, ")»")?;
+                            } else {
+                                write!(f, "[]")?;
+                            }
+                            Ok(())
+                        }
+                    }
+                    ConstParams(self.const_params)
                 });
             }
 

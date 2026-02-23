@@ -1762,6 +1762,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     };
 
     let type_params_call = build_type_params_call(parsed.generics.as_ref(), opaque, &facet_crate);
+    let const_params_call = build_const_params_call(parsed.generics.as_ref(), opaque, &facet_crate);
 
     // Static decl removed - the TYPENAME_SHAPE static was redundant since
     // <T as Facet>::SHAPE is already accessible and nobody was using the static
@@ -2340,6 +2341,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     .ty(#ty_field)
                     .def(𝟋Def::Undefined)
                     #type_params_call
+                    #const_params_call
                     #type_name_call
                     #doc_call
                     #attributes_call

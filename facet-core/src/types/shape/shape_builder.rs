@@ -1,8 +1,8 @@
 use alloc::alloc::Layout;
 
 use crate::{
-    Attr, ConstTypeId, DeclId, Def, FormatProxy, MarkerTraits, ProxyDef, Shape, ShapeFlags,
-    ShapeLayout, Type, TypeNameFn, TypeOps, TypeOpsDirect, TypeOpsIndirect, TypeParam,
+    Attr, ConstParam, ConstTypeId, DeclId, Def, FormatProxy, MarkerTraits, ProxyDef, Shape,
+    ShapeFlags, ShapeLayout, Type, TypeNameFn, TypeOps, TypeOpsDirect, TypeOpsIndirect, TypeParam,
     VTableDirect, VTableErased, VTableIndirect, VarianceDesc,
 };
 
@@ -36,6 +36,7 @@ const EMPTY_VESSEL: Shape = Shape {
     source_line: None,
     source_column: None,
     type_params: &[],
+    const_params: &[],
     doc: &[],
     attributes: &[],
     type_tag: None,
@@ -283,6 +284,13 @@ impl ShapeBuilder {
         self
     }
 
+    /// Set the const parameters.
+    #[inline]
+    pub const fn const_params(mut self, const_params: &'static [ConstParam]) -> Self {
+        self.shape.const_params = const_params;
+        self
+    }
+
     /// Set the documentation.
     #[inline]
     pub const fn doc(mut self, doc: &'static [&'static str]) -> Self {
@@ -449,12 +457,12 @@ impl ShapeBuilder {
 
         // Handle decl_id:
         // - If already set (non-zero): use it
-        // - If not set and no type_params: auto-compute from type_identifier
-        // - If not set and has type_params and has module_path: auto-compute from parts
-        // - If not set and has type_params but no module_path: panic
+        // - If not set and no generic params: auto-compute from type_identifier
+        // - If not set and has generic params and has module_path: auto-compute from parts
+        // - If not set and has generic params but no module_path: panic
         let decl_id = if self.shape.decl_id.0 != 0 {
             self.shape.decl_id
-        } else if self.shape.type_params.is_empty() {
+        } else if self.shape.type_params.is_empty() && self.shape.const_params.is_empty() {
             // Non-generic type: auto-compute from type_identifier
             DeclId::new(crate::decl_id_hash(self.shape.type_identifier))
         } else if let Some(module_path) = self.shape.module_path {

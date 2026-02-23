@@ -234,6 +234,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         &pe.container.attrs.custom_bounds,
     );
     let type_params_call = build_type_params_call(parsed.generics.as_ref(), opaque, &facet_crate);
+    let const_params_call = build_const_params_call(parsed.generics.as_ref(), opaque, &facet_crate);
 
     // Container-level docs - returns builder call only if there are doc comments and doc feature is enabled
     #[cfg(feature = "doc")]
@@ -1257,6 +1258,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     .ty(#ty_field)
                     .def(𝟋Def::Undefined)
                     #type_params_call
+                    #const_params_call
                     #type_name_call
                     #doc_call
                     #attributes_call

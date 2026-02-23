@@ -1,4 +1,4 @@
-use facet::{Facet, Type, UserType};
+use facet::{ConstParamKind, Facet, Type, UserType};
 
 #[test]
 fn vec_wrapper() {
@@ -236,6 +236,36 @@ fn type_params_array_f32_12() {
     let t = &shape.type_params[0];
     assert_eq!(t.name, "T");
     assert_eq!(t.shape(), f32::SHAPE);
+    assert_eq!(shape.const_params.len(), 1);
+    let n = &shape.const_params[0];
+    assert_eq!(n.name, "N");
+    assert_eq!(n.kind, ConstParamKind::Usize);
+    assert_eq!(n.value, 12);
+}
+
+#[test]
+fn const_params_derive_struct() {
+    #[derive(Facet)]
+    struct Tx<T: 'static, const N: usize = 16> {
+        _marker: core::marker::PhantomData<T>,
+    }
+
+    let shape0 = Tx::<String, 0>::SHAPE;
+    let shape64 = Tx::<String, 64>::SHAPE;
+
+    assert_eq!(shape0.type_params.len(), 1);
+    assert_eq!(shape0.type_params[0].name, "T");
+    assert_eq!(shape0.type_params[0].shape(), String::SHAPE);
+
+    assert_eq!(shape0.const_params.len(), 1);
+    assert_eq!(shape64.const_params.len(), 1);
+
+    let n0 = &shape0.const_params[0];
+    let n64 = &shape64.const_params[0];
+    assert_eq!(n0.name, "N");
+    assert_eq!(n0.kind, ConstParamKind::Usize);
+    assert_eq!(n0.value, 0);
+    assert_eq!(n64.value, 64);
 }
 
 #[test]
