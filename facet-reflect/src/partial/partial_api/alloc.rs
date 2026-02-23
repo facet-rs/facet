@@ -1,9 +1,9 @@
 use super::*;
 use crate::typeplan::{TypePlan, TypePlanCore, TypePlanNode};
 use crate::{AllocError, AllocatedShape, partial::arena::Idx};
-use alloc::collections::BTreeMap;
-use alloc::sync::Arc;
-use alloc::vec;
+use ::alloc::collections::BTreeMap;
+use ::alloc::sync::Arc;
+use ::alloc::vec;
 use core::marker::PhantomData;
 
 impl<'facet> Partial<'facet, true> {
@@ -222,7 +222,7 @@ fn create_partial_internal<'facet, const BORROW: bool>(
 /// # Safety
 /// The caller must ensure the returned pointer is used correctly.
 unsafe fn alloc_layout(layout: core::alloc::Layout) -> Result<PtrUninit, AllocError> {
-    use alloc::alloc::{alloc, handle_alloc_error};
+    use ::alloc::alloc::{alloc, handle_alloc_error};
 
     if layout.size() == 0 {
         // For ZSTs, use NonNull::dangling() aligned properly
