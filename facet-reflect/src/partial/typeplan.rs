@@ -1794,7 +1794,7 @@ impl TypePlanCore {
             // SAFETY: caller guarantees the shape is valid.
             let plan = unsafe { Self::build_uncached(shape)? };
             guard.insert(shape, Arc::clone(&plan));
-            return Ok(plan);
+            Ok(plan)
         }
 
         #[cfg(not(feature = "std"))]
