@@ -1,4 +1,90 @@
 use super::*;
+use crate::HasFields;
+
+fn validate_invariants_recursive<'mem, 'facet>(
+    value: Peek<'mem, 'facet>,
+    visited: &mut Vec<crate::ValueId>,
+) -> Result<(), (&'static Shape, String)> {
+    let id = value.id();
+    if visited.contains(&id) {
+        return Ok(());
+    }
+    visited.push(id);
+
+    if let Some(result) = unsafe { value.shape().call_invariants(value.data()) }
+        && let Err(message) = result
+    {
+        return Err((value.shape(), message));
+    }
+
+    match value.shape().ty {
+        Type::User(UserType::Struct(_)) => {
+            if let Ok(peek_struct) = value.into_struct() {
+                for (_field, child) in peek_struct.fields() {
+                    validate_invariants_recursive(child, visited)?;
+                }
+            }
+        }
+        Type::User(UserType::Enum(_)) => {
+            if let Ok(peek_enum) = value.into_enum() {
+                for (_field, child) in peek_enum.fields() {
+                    validate_invariants_recursive(child, visited)?;
+                }
+            }
+        }
+        _ => match value.shape().def {
+            Def::List(_) | Def::Array(_) | Def::Slice(_) => {
+                if let Ok(list_like) = value.into_list_like() {
+                    for elem in list_like.iter() {
+                        validate_invariants_recursive(elem, visited)?;
+                    }
+                }
+            }
+            Def::Map(_) => {
+                if let Ok(map) = value.into_map() {
+                    for (key, val) in map.iter() {
+                        validate_invariants_recursive(key, visited)?;
+                        validate_invariants_recursive(val, visited)?;
+                    }
+                }
+            }
+            Def::Set(_) => {
+                if let Ok(set) = value.into_set() {
+                    for elem in set.iter() {
+                        validate_invariants_recursive(elem, visited)?;
+                    }
+                }
+            }
+            Def::Option(_) => {
+                if let Ok(opt) = value.into_option()
+                    && let Some(inner) = opt.value()
+                {
+                    validate_invariants_recursive(inner, visited)?;
+                }
+            }
+            Def::Result(_) => {
+                if let Ok(result) = value.into_result() {
+                    if let Some(ok) = result.ok() {
+                        validate_invariants_recursive(ok, visited)?;
+                    }
+                    if let Some(err) = result.err() {
+                        validate_invariants_recursive(err, visited)?;
+                    }
+                }
+            }
+            Def::Pointer(_) => {
+                if let Ok(ptr) = value.into_pointer()
+                    && let Some(inner) = ptr.borrow_inner()
+                {
+                    validate_invariants_recursive(inner, visited)?;
+                }
+            }
+            _ => {}
+        },
+    }
+
+    Ok(())
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Build
@@ -85,21 +171,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         let frame = self.frames_mut().pop().unwrap();
 
-        // Check invariants if present
-        // Safety: The value is fully initialized at this point (we just checked with require_full_initialization)
+        // Validate invariants on the full value tree (root + nested values).
+        // Safety: the value is fully initialized at this point.
         let value_ptr = unsafe { frame.data.assume_init().as_const() };
-        if let Some(result) = unsafe { frame.allocated.shape().call_invariants(value_ptr) } {
-            match result {
-                Ok(()) => {
-                    // Invariants passed
-                }
-                Err(message) => {
-                    // Put the frame back so Drop can handle cleanup properly
-                    let shape = frame.allocated.shape();
-                    self.frames_mut().push(frame);
-                    return Err(self.err(ReflectErrorKind::UserInvariantFailed { message, shape }));
-                }
-            }
+        let root = unsafe { Peek::unchecked_new(value_ptr, frame.allocated.shape()) };
+        let mut visited = Vec::new();
+        if let Err((shape, message)) = validate_invariants_recursive(root, &mut visited) {
+            // Put the frame back so Drop can handle cleanup properly
+            self.frames_mut().push(frame);
+            return Err(self.err(ReflectErrorKind::UserInvariantFailed { message, shape }));
         }
 
         // Mark as built to prevent Drop from cleaning up the value
@@ -251,21 +331,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         let frame = self.frames_mut().pop().unwrap();
 
-        // Check invariants if present
-        // Safety: The value is fully initialized at this point (we just checked with require_full_initialization)
+        // Validate invariants on the full value tree (root + nested values).
+        // Safety: the value is fully initialized at this point.
         let value_ptr = unsafe { frame.data.assume_init().as_const() };
-        if let Some(result) = unsafe { frame.allocated.shape().call_invariants(value_ptr) } {
-            match result {
-                Ok(()) => {
-                    // Invariants passed
-                }
-                Err(message) => {
-                    // Put the frame back so Drop can handle cleanup properly
-                    let shape = frame.allocated.shape();
-                    self.frames_mut().push(frame);
-                    return Err(self.err(ReflectErrorKind::UserInvariantFailed { message, shape }));
-                }
-            }
+        let root = unsafe { Peek::unchecked_new(value_ptr, frame.allocated.shape()) };
+        let mut visited = Vec::new();
+        if let Err((shape, message)) = validate_invariants_recursive(root, &mut visited) {
+            // Put the frame back so Drop can handle cleanup properly
+            self.frames_mut().push(frame);
+            return Err(self.err(ReflectErrorKind::UserInvariantFailed { message, shape }));
         }
 
         // Mark as built to prevent Drop from cleaning up the now-valid value.
