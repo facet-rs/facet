@@ -3,9 +3,9 @@
 use core::{cmp::Ordering, fmt};
 
 use crate::{
-    ArrayDef, ArrayVTable, Def, Facet, HashProxy, OxPtrConst, OxPtrMut, OxPtrUninit, OxRef,
-    PtrConst, PtrMut, PtrUninit, Shape, ShapeBuilder, Type, TypeNameOpts, TypeOpsIndirect,
-    TypeParam, VTableIndirect, Variance, VarianceDep, VarianceDesc,
+    ArrayDef, ArrayVTable, ConstParam, ConstParamKind, Def, Facet, HashProxy, OxPtrConst, OxPtrMut,
+    OxPtrUninit, OxRef, PtrConst, PtrMut, PtrUninit, Shape, ShapeBuilder, Type, TypeNameOpts,
+    TypeOpsIndirect, TypeParam, VTableIndirect, Variance, VarianceDep, VarianceDesc,
 };
 
 /// Extract the ArrayDef from a shape, returns None if not an array
@@ -281,6 +281,11 @@ where
             .type_params(&[TypeParam {
                 name: "T",
                 shape: T::SHAPE,
+            }])
+            .const_params(&[ConstParam {
+                name: "N",
+                value: N as u64,
+                kind: ConstParamKind::Usize,
             }])
             .inner(T::SHAPE)
             // [T; N] propagates T's variance

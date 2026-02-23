@@ -416,6 +416,7 @@ pub mod builtin {
             ty: crate::Type::User(crate::UserType::Opaque),
             def: crate::Def::Undefined,
             type_params: &[],
+            const_params: &[],
             doc: &[],
             attributes: &[],
             type_tag: None,

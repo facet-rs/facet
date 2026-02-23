@@ -189,6 +189,10 @@ pub struct Shape {
     /// Includes bounds and variance information.
     pub type_params: &'static [TypeParam],
 
+    /// Generic const parameters (e.g. `N` in `[T; N]`).
+    /// These are per-monomorphization values.
+    pub const_params: &'static [ConstParam],
+
     /// Doc comments from the original type definition.
     /// Collected by facet-macros; lines usually start with a space.
     pub doc: &'static [&'static str],
@@ -757,6 +761,51 @@ impl TypeParam {
     pub const fn shape(&self) -> &'static Shape {
         self.shape
     }
+}
+
+/// Value of a reflected const generic parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ConstParam {
+    /// The name of the const parameter (e.g., `N`).
+    pub name: &'static str,
+
+    /// Erased numeric value of the const parameter.
+    ///
+    /// Signed values are stored using Rust's cast semantics
+    /// (two's-complement representation in `u64`).
+    pub value: u64,
+
+    /// Primitive kind of the const parameter.
+    pub kind: ConstParamKind,
+}
+
+/// Primitive kind for reflected const generic parameters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConstParamKind {
+    /// `bool`
+    Bool,
+    /// `char`
+    Char,
+    /// `u8`
+    U8,
+    /// `u16`
+    U16,
+    /// `u32`
+    U32,
+    /// `u64`
+    U64,
+    /// `usize`
+    Usize,
+    /// `i8`
+    I8,
+    /// `i16`
+    I16,
+    /// `i32`
+    I32,
+    /// `i64`
+    I64,
+    /// `isize`
+    Isize,
 }
 
 //////////////////////////////////////////////////////////////////////

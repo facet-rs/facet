@@ -20,6 +20,8 @@ pub struct ShapeLike {
     #[facet(default, skip_unless_truthy)]
     pub type_params: Vec<TypeParamLike>,
     #[facet(default, skip_unless_truthy)]
+    pub const_params: Vec<ConstParamLike>,
+    #[facet(default, skip_unless_truthy)]
     pub doc: Vec<String>,
     #[facet(default, skip_unless_truthy)]
     pub attributes: Vec<AttrLike>,
@@ -40,6 +42,11 @@ impl From<&Shape> for ShapeLike {
             def: (&shape.def).into(),
             type_identifier: shape.type_identifier.to_string(),
             type_params: shape.type_params.iter().map(|item| (item).into()).collect(),
+            const_params: shape
+                .const_params
+                .iter()
+                .map(|item| (item).into())
+                .collect(),
             doc: shape.doc.iter().map(|s| s.to_string()).collect(),
             attributes: shape.attributes.iter().map(|item| (item).into()).collect(),
             type_tag: shape.type_tag.map(|s| s.to_string()),
@@ -61,6 +68,60 @@ impl From<&facet_core::TypeParam> for TypeParamLike {
         Self {
             name: tp.name.to_string(),
             shape: Box::new((tp.shape).into()),
+        }
+    }
+}
+
+#[derive(facet::Facet, Clone)]
+#[repr(C)]
+pub struct ConstParamLike {
+    pub name: String,
+    pub value: u64,
+    pub kind: ConstParamKindLike,
+}
+
+impl From<&facet_core::ConstParam> for ConstParamLike {
+    fn from(cp: &facet_core::ConstParam) -> Self {
+        Self {
+            name: cp.name.to_string(),
+            value: cp.value,
+            kind: cp.kind.into(),
+        }
+    }
+}
+
+#[derive(facet::Facet, Clone)]
+#[repr(C)]
+pub enum ConstParamKindLike {
+    Bool,
+    Char,
+    U8,
+    U16,
+    U32,
+    U64,
+    Usize,
+    I8,
+    I16,
+    I32,
+    I64,
+    Isize,
+}
+
+impl From<facet_core::ConstParamKind> for ConstParamKindLike {
+    fn from(kind: facet_core::ConstParamKind) -> Self {
+        match kind {
+            facet_core::ConstParamKind::Bool => Self::Bool,
+            facet_core::ConstParamKind::Char => Self::Char,
+            facet_core::ConstParamKind::U8 => Self::U8,
+            facet_core::ConstParamKind::U16 => Self::U16,
+            facet_core::ConstParamKind::U32 => Self::U32,
+            facet_core::ConstParamKind::U64 => Self::U64,
+            facet_core::ConstParamKind::Usize => Self::Usize,
+            facet_core::ConstParamKind::I8 => Self::I8,
+            facet_core::ConstParamKind::I16 => Self::I16,
+            facet_core::ConstParamKind::I32 => Self::I32,
+            facet_core::ConstParamKind::I64 => Self::I64,
+            facet_core::ConstParamKind::Isize => Self::Isize,
         }
     }
 }
