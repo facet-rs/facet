@@ -163,6 +163,77 @@ fn deserialize_struct_enum() {
 }
 
 #[test]
+fn deserialize_tuple_enum_with_field_proxy() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct IntAsObject {
+        inner: String,
+    }
+
+    impl TryFrom<IntAsObject> for i32 {
+        type Error = std::num::ParseIntError;
+
+        fn try_from(proxy: IntAsObject) -> Result<Self, Self::Error> {
+            proxy.inner.parse()
+        }
+    }
+
+    impl From<&i32> for IntAsObject {
+        fn from(value: &i32) -> Self {
+            Self {
+                inner: value.to_string(),
+            }
+        }
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    #[repr(u8)]
+    enum Message {
+        Number(#[facet(proxy = IntAsObject)] i32),
+    }
+
+    let v = value!({"Number": {"inner": "42"}});
+    let msg: Message = from_value(v).unwrap();
+    assert_eq!(msg, Message::Number(42));
+}
+
+#[test]
+fn deserialize_struct_enum_with_field_proxy() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct IntAsObject {
+        inner: String,
+    }
+
+    impl TryFrom<IntAsObject> for i32 {
+        type Error = std::num::ParseIntError;
+
+        fn try_from(proxy: IntAsObject) -> Result<Self, Self::Error> {
+            proxy.inner.parse()
+        }
+    }
+
+    impl From<&i32> for IntAsObject {
+        fn from(value: &i32) -> Self {
+            Self {
+                inner: value.to_string(),
+            }
+        }
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    #[repr(u8)]
+    enum Message {
+        Number {
+            #[facet(proxy = IntAsObject)]
+            value: i32,
+        },
+    }
+
+    let v = value!({"Number": {"value": {"inner": "1337"}}});
+    let msg: Message = from_value(v).unwrap();
+    assert_eq!(msg, Message::Number { value: 1337 });
+}
+
+#[test]
 fn deserialize_hashmap() {
     let v = value!({
         "a": 1,

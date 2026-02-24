@@ -33,7 +33,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use facet_core::{
-    Def, Facet, NumericType, PrimitiveType, Shape, StructKind, TextualType, Type, UserType, Variant,
+    Def, Facet, Field, NumericType, PrimitiveType, Shape, StructKind, TextualType, Type, UserType,
+    Variant,
 };
 use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError, TypePlan};
 
@@ -996,9 +997,12 @@ fn deserialize_internally_tagged_enum<'facet>(
         StructKind::Struct => {
             // Struct variant - deserialize fields from the same object (excluding tag)
             for field in variant.data.fields.iter() {
-                if let Some(field_value) = obj.get(field.name) {
+                if let Some(field_value) = obj
+                    .get(field.effective_name())
+                    .or_else(|| field.alias.and_then(|alias| obj.get(alias)))
+                {
                     partial = partial.begin_field(field.name)?;
-                    partial = deserialize_value_into(field_value, partial)?;
+                    partial = deserialize_enum_field_value(field_value, field, partial)?;
                     partial = partial.end()?;
                 }
             }
@@ -1126,8 +1130,9 @@ fn populate_variant_from_value<'facet>(
             if num_fields == 0 {
                 // nothing to populate
             } else if num_fields == 1 {
+                let field = variant.data.fields[0];
                 partial = partial.begin_nth_field(0)?;
-                partial = deserialize_value_into(value, partial)?;
+                partial = deserialize_enum_field_value(value, &field, partial)?;
                 partial = partial.end()?;
             } else {
                 let arr = value.as_array().ok_or_else(|| {
@@ -1147,9 +1152,9 @@ fn populate_variant_from_value<'facet>(
                     }));
                 }
 
-                for (i, item) in arr.iter().enumerate() {
+                for (i, (field, item)) in variant.data.fields.iter().zip(arr.iter()).enumerate() {
                     partial = partial.begin_nth_field(i)?;
-                    partial = deserialize_value_into(item, partial)?;
+                    partial = deserialize_enum_field_value(item, field, partial)?;
                     partial = partial.end()?;
                 }
             }
@@ -1163,11 +1168,45 @@ fn populate_variant_from_value<'facet>(
             })?;
 
             for (field_key, field_val) in inner_obj.iter() {
-                partial = partial.begin_field(field_key.as_str())?;
-                partial = deserialize_value_into(field_val, partial)?;
+                let key = field_key.as_str();
+                let field = variant
+                    .data
+                    .fields
+                    .iter()
+                    .find(|f| f.effective_name() == key || f.alias == Some(key))
+                    .ok_or_else(|| {
+                        ValueError::new(ValueErrorKind::UnknownField {
+                            field: key.to_string(),
+                        })
+                    })?;
+
+                partial = partial.begin_field(field.name)?;
+                partial = deserialize_enum_field_value(field_val, field, partial)?;
                 partial = partial.end()?;
             }
         }
+    }
+
+    Ok(partial)
+}
+
+fn deserialize_enum_field_value<'facet>(
+    value: &Value,
+    field: &Field,
+    mut partial: Partial<'facet, false>,
+) -> Result<Partial<'facet, false>> {
+    #[cfg(feature = "alloc")]
+    if field.proxy_convert_in_fn().is_some() {
+        partial = partial.begin_custom_deserialization()?;
+        partial = deserialize_value_into(value, partial)?;
+        partial = partial.end()?;
+    } else {
+        partial = deserialize_value_into(value, partial)?;
+    }
+
+    #[cfg(not(feature = "alloc"))]
+    {
+        partial = deserialize_value_into(value, partial)?;
     }
 
     Ok(partial)
