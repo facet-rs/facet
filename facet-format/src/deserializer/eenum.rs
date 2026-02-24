@@ -1746,8 +1746,20 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 }
             }
             ParseEventKind::SequenceStart(_) => {
-                // For sequence input, use first tuple variant
-                if let Some((variant, _arity)) = variants_by_format.tuple_variants.first() {
+                let sequence_arity = self.peek_sequence_arity()?;
+                let variant =
+                    variants_by_format
+                        .tuple_variants
+                        .iter()
+                        .find_map(|(variant, arity)| {
+                            if variant_accepts_sequence_arity(variant, *arity, sequence_arity) {
+                                Some(*variant)
+                            } else {
+                                None
+                            }
+                        });
+
+                if let Some(variant) = variant {
                     wip = wip.select_variant_named(variant.effective_name())?;
                     wip = self.deserialize_enum_variant_content(wip)?;
                     return Ok(wip);
@@ -1755,9 +1767,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
                 Err(self.mk_err(
                     &wip,
-                    DeserializeErrorKind::Unsupported {
-                        message: "no tuple variant found for untagged enum with sequence input"
-                            .into(),
+                    DeserializeErrorKind::NoMatchingVariant {
+                        enum_shape: shape,
+                        input_kind: "sequence",
                     },
                 ))
             }
@@ -1769,6 +1781,50 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 },
             )),
         }
+    }
+
+    fn peek_sequence_arity(&mut self) -> Result<usize, DeserializeError> {
+        let save_point = self.save();
+        let result = (|| {
+            let event = self.expect_event("sequence start")?;
+            if !matches!(event.kind, ParseEventKind::SequenceStart(_)) {
+                return Err(DeserializeError {
+                    span: Some(self.last_span),
+                    kind: DeserializeErrorKind::UnexpectedToken {
+                        expected: "sequence start",
+                        got: event.kind_name().into(),
+                    },
+                    path: None,
+                });
+            }
+
+            let mut depth = 1usize;
+            let mut arity = 0usize;
+            while depth > 0 {
+                let event = self.expect_event("sequence item or end")?;
+                match event.kind {
+                    ParseEventKind::SequenceStart(_) | ParseEventKind::StructStart(_) => {
+                        if depth == 1 {
+                            arity += 1;
+                        }
+                        depth += 1;
+                    }
+                    ParseEventKind::SequenceEnd | ParseEventKind::StructEnd => {
+                        depth = depth.saturating_sub(1);
+                    }
+                    ParseEventKind::Scalar(_) | ParseEventKind::VariantTag(_) => {
+                        if depth == 1 {
+                            arity += 1;
+                        }
+                    }
+                    ParseEventKind::FieldKey(_) | ParseEventKind::OrderedField => {}
+                }
+            }
+
+            Ok(arity)
+        })();
+        self.restore(save_point);
+        result
     }
 
     /// Deserialize an `#[facet(other)]` variant that may have `#[facet(tag)]` and `#[facet(content)]` fields.
@@ -1927,4 +1983,46 @@ fn find_tag_discriminant<'a, 'input>(
             Some(ScalarValue::I64(d)) => Some(*d),
             _ => None,
         })
+}
+
+fn variant_accepts_sequence_arity(
+    variant: &'static facet_core::Variant,
+    classified_arity: usize,
+    observed_arity: usize,
+) -> bool {
+    if classified_arity > 0 {
+        return classified_arity == observed_arity;
+    }
+
+    if let Some(expected_arity) = infer_fixed_sequence_arity_for_variant(variant) {
+        return expected_arity == observed_arity;
+    }
+
+    true
+}
+
+fn infer_fixed_sequence_arity_for_variant(variant: &'static facet_core::Variant) -> Option<usize> {
+    if variant.data.fields.len() != 1 {
+        return None;
+    }
+
+    let mut shape = variant.data.fields[0].shape();
+    while let Def::Pointer(pointer_def) = shape.def {
+        shape = pointer_def.pointee()?;
+    }
+
+    match shape.def {
+        Def::Array(array_def) => Some(array_def.n),
+        _ => match shape.ty {
+            Type::User(UserType::Struct(struct_type))
+                if matches!(
+                    struct_type.kind,
+                    StructKind::Tuple | StructKind::TupleStruct
+                ) =>
+            {
+                Some(struct_type.fields.len())
+            }
+            _ => None,
+        },
+    }
 }

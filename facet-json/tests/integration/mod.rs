@@ -11,6 +11,7 @@ mod issue_1852;
 mod issue_1896;
 mod issue_1900;
 mod issue_1904;
+mod issue_1987;
 mod issue_1989;
 mod issue_1990;
 mod issue_2004;
