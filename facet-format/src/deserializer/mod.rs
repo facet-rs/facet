@@ -129,7 +129,7 @@ use std::sync::Arc;
 
 use facet_core::{Facet, Shape};
 use facet_reflect::{HeapValue, Partial, Span};
-use facet_solver::{KeyResult, Schema, Solver};
+use facet_solver::{FieldInfo, KeyResult, SatisfyResult, Schema, Solver};
 
 use crate::{FormatParser, ParseEvent, type_plan_cache::cached_type_plan_arc};
 
@@ -656,6 +656,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let mut depth = 0i32;
         let mut in_struct = false;
         let mut expecting_value = false;
+        let mut pending_ambiguous: Option<(String, Vec<(&FieldInfo, u64)>)> = None;
 
         let result = loop {
             let event = self.next_event_opt().map_err(|e| {
@@ -670,6 +671,20 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 self.restore(save_point);
                 return Ok(None);
             };
+
+            if expecting_value && depth == 1 && in_struct {
+                expecting_value = false;
+                if let Some((key, fields)) = pending_ambiguous.take()
+                    && let crate::ParseEventKind::Scalar(scalar) = &event.kind
+                {
+                    let satisfied_shapes = select_best_ambiguous_scalar_shapes(scalar, &fields);
+                    match solver.satisfy_at_path(&[key.as_str()], &satisfied_shapes) {
+                        SatisfyResult::Solved(handle) => break Some(handle),
+                        SatisfyResult::NoMatch => break None,
+                        SatisfyResult::Continue => {}
+                    }
+                }
+            }
 
             match event.kind {
                 crate::ParseEventKind::StructStart(_) => {
@@ -699,9 +714,12 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                                 KeyResult::Solved(handle) => {
                                     break Some(handle);
                                 }
-                                KeyResult::Unknown
-                                | KeyResult::Unambiguous { .. }
-                                | KeyResult::Ambiguous { .. } => {}
+                                KeyResult::Ambiguous { fields } => {
+                                    pending_ambiguous = Some((name.to_string(), fields));
+                                }
+                                KeyResult::Unknown | KeyResult::Unambiguous { .. } => {
+                                    pending_ambiguous = None;
+                                }
                             }
                         }
                         expecting_value = true;
@@ -744,4 +762,55 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             kind,
         }
     }
+}
+
+fn select_best_ambiguous_scalar_shapes(
+    scalar: &crate::ScalarValue<'_>,
+    fields: &[(&FieldInfo, u64)],
+) -> Vec<&'static Shape> {
+    let mut matches: Vec<(&'static Shape, u8, u64)> = Vec::new();
+    let mut best_quality: Option<u8> = None;
+
+    for (field, score) in fields {
+        let Some(quality) =
+            crate::deserializer::scalar_matches::scalar_match_quality(scalar, field.value_shape)
+        else {
+            continue;
+        };
+
+        match best_quality {
+            Some(best) if quality > best => continue,
+            Some(best) if quality < best => {
+                matches.clear();
+                best_quality = Some(quality);
+            }
+            None => {
+                best_quality = Some(quality);
+            }
+            _ => {}
+        }
+
+        if !matches.iter().any(|(shape, _, existing_score)| {
+            core::ptr::eq(*shape, field.value_shape) && *existing_score == *score
+        }) {
+            matches.push((field.value_shape, quality, *score));
+        }
+    }
+
+    let Some(best_quality) = best_quality else {
+        return Vec::new();
+    };
+
+    let best_specificity = matches
+        .iter()
+        .filter(|(_, quality, _)| *quality == best_quality)
+        .map(|(_, _, score)| *score)
+        .min()
+        .unwrap_or(u64::MAX);
+
+    matches
+        .into_iter()
+        .filter(|(_, quality, score)| *quality == best_quality && *score == best_specificity)
+        .map(|(shape, _, _)| shape)
+        .collect()
 }

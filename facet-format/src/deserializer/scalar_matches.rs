@@ -129,3 +129,77 @@ pub(crate) fn scalar_matches_shape(
         }
     }
 }
+
+/// Return how strong a scalar-to-shape match is.
+///
+/// - `0`: direct type match (preferred)
+/// - `1`: coercive/parsed match (fallback)
+///
+/// `None` means the scalar cannot be deserialized into the shape.
+pub(crate) fn scalar_match_quality(
+    scalar: &ScalarValue<'_>,
+    shape: &'static facet_core::Shape,
+) -> Option<u8> {
+    if !scalar_matches_shape(scalar, shape) {
+        return None;
+    }
+
+    if is_exact_scalar_match(scalar, shape) {
+        Some(0)
+    } else {
+        Some(1)
+    }
+}
+
+fn is_exact_scalar_match(scalar: &ScalarValue<'_>, shape: &'static facet_core::Shape) -> bool {
+    use facet_core::ScalarType;
+
+    let scalar_type = shape.scalar_type();
+
+    match scalar {
+        ScalarValue::Bool(_) => matches!(scalar_type, Some(ScalarType::Bool)),
+        ScalarValue::Char(_) => matches!(scalar_type, Some(ScalarType::Char)),
+        ScalarValue::I64(_) | ScalarValue::U64(_) | ScalarValue::U128(_) | ScalarValue::I128(_) => {
+            matches!(
+                scalar_type,
+                Some(
+                    ScalarType::U8
+                        | ScalarType::U16
+                        | ScalarType::U32
+                        | ScalarType::U64
+                        | ScalarType::U128
+                        | ScalarType::USize
+                        | ScalarType::I8
+                        | ScalarType::I16
+                        | ScalarType::I32
+                        | ScalarType::I64
+                        | ScalarType::I128
+                        | ScalarType::ISize
+                )
+            )
+        }
+        ScalarValue::F64(_) => matches!(scalar_type, Some(ScalarType::F32 | ScalarType::F64)),
+        ScalarValue::Str(_) => {
+            if matches!(scalar_type, Some(ScalarType::Str | ScalarType::Char)) {
+                return true;
+            }
+
+            let type_id = shape.type_identifier;
+            if type_id == "String"
+                || type_id.ends_with("::String")
+                || type_id.contains("Cow<str")
+                || type_id.contains("Cow<'_, str")
+            {
+                return true;
+            }
+
+            false
+        }
+        ScalarValue::Null => {
+            matches!(scalar_type, Some(ScalarType::Unit))
+                || (scalar_type.is_none() && matches!(shape.def, Def::Option(_)))
+        }
+        ScalarValue::Unit => matches!(scalar_type, Some(ScalarType::Unit)),
+        ScalarValue::Bytes(_) => false,
+    }
+}
