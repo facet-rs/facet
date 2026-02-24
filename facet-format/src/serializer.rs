@@ -1048,6 +1048,40 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                     continue;
                 }
 
+                // Flattened externally-tagged enum fields should contribute exactly one
+                // key/value pair to the parent object. `field_item.effective_name()` is
+                // already the active variant key for flattened enum fields.
+                if field_item.flattened
+                    && {
+                        let shape = field_value.shape();
+                        shape.get_tag_attr().is_none() && shape.get_content_attr().is_none()
+                    }
+                    && let Ok(enum_peek) = field_value.into_enum()
+                {
+                    if field_mode == StructFieldMode::Named {
+                        self.serializer
+                            .field_key(field_item.effective_name())
+                            .map_err(SerializeError::Backend)?;
+                    }
+
+                    let variant = enum_peek
+                        .active_variant()
+                        .map_err(|e| SerializeError::Unsupported(Cow::Owned(e.to_string())))?;
+
+                    self.push(PathSegment::Variant(Cow::Owned(
+                        field_item.effective_name().to_string(),
+                    )));
+                    if variant.data.kind == StructKind::Unit {
+                        self.serializer
+                            .serialize_none()
+                            .map_err(SerializeError::Backend)?;
+                    } else {
+                        self.serialize_variant_after_tag(enum_peek, variant)?;
+                    }
+                    self.pop();
+                    continue;
+                }
+
                 let key_written = self
                     .serializer
                     .field_metadata_with_value(&field_item, field_value)
@@ -1576,7 +1610,14 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                         .ok_or(SerializeError::Internal(Cow::Borrowed(
                             "variant reported 1 field but field(0) returned None",
                         )))?;
-                    self.serialize_impl(inner)?;
+                    if let Some(field_def) = variant.data.fields.first()
+                        && let Some(proxy_def) =
+                            field_def.effective_proxy(self.serializer.format_namespace())
+                    {
+                        self.serialize_via_proxy(inner, proxy_def)?;
+                    } else {
+                        self.serialize_impl(inner)?;
+                    }
                 } else {
                     self.serializer
                         .begin_seq_after_tag()
@@ -1593,7 +1634,14 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                                 "variant field missing while iterating tuple fields",
                             )))?;
                         self.push(PathSegment::Index(idx));
-                        self.serialize_impl(inner)?;
+                        if let Some(field_def) = variant.data.fields.get(idx)
+                            && let Some(proxy_def) =
+                                field_def.effective_proxy(self.serializer.format_namespace())
+                        {
+                            self.serialize_via_proxy(inner, proxy_def)?;
+                        } else {
+                            self.serialize_impl(inner)?;
+                        }
                         self.pop();
                     }
                     self.serializer.end_seq().map_err(SerializeError::Backend)?;
