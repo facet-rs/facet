@@ -1707,7 +1707,7 @@ pub unsafe extern "C" fn jit_deserialize_list_by_shape(
         }
 
         // Push element to Vec
-        let elem_ptr = facet_core::PtrConst::new(elem_ptr);
+        let elem_ptr = facet_core::PtrMut::new(elem_ptr);
         unsafe { push_fn(out_mut, elem_ptr) };
     }
 

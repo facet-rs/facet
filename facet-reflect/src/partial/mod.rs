@@ -1354,7 +1354,7 @@ impl Frame {
             rope.drain_into(|element_ptr| {
                 push_fn(
                     facet_core::PtrMut::new(list_ptr.as_mut_byte_ptr()),
-                    facet_core::PtrConst::new(element_ptr.as_ptr()),
+                    facet_core::PtrMut::new(element_ptr.as_ptr()),
                 );
             });
         }
