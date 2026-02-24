@@ -70,8 +70,11 @@ pub struct OxPtrConst {
 
 impl OxPtrConst {
     /// Create a new OxPtrConst from a pointer and shape.
+    ///
+    /// # Safety
+    /// `ptr` must point to data actually described by `shape`.
     #[inline]
-    pub const fn new(ptr: PtrConst, shape: &'static Shape) -> Self {
+    pub const unsafe fn new(ptr: PtrConst, shape: &'static Shape) -> Self {
         Self { ptr, shape }
     }
 
@@ -116,8 +119,11 @@ pub struct OxPtrMut {
 
 impl OxPtrMut {
     /// Create a new OxPtrMut from a pointer and shape.
+    ///
+    /// # Safety
+    /// `ptr` must point to data actually described by `shape`.
     #[inline]
-    pub const fn new(ptr: PtrMut, shape: &'static Shape) -> Self {
+    pub const unsafe fn new(ptr: PtrMut, shape: &'static Shape) -> Self {
         Self { ptr, shape }
     }
 

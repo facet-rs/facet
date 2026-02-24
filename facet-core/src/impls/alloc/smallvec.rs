@@ -481,9 +481,9 @@ mod tests {
         let ptr2 = PtrConst::new(&sv2 as *const _ as *const u8);
         let ptr3 = PtrConst::new(&sv3 as *const _ as *const u8);
 
-        let ox1 = OxPtrConst::new(ptr1, shape);
-        let ox2 = OxPtrConst::new(ptr2, shape);
-        let ox3 = OxPtrConst::new(ptr3, shape);
+        let ox1 = unsafe { OxPtrConst::new(ptr1, shape) };
+        let ox2 = unsafe { OxPtrConst::new(ptr2, shape) };
+        let ox3 = unsafe { OxPtrConst::new(ptr3, shape) };
 
         let result = unsafe { smallvec_partial_eq_erased(ox1, ox2) };
         assert_eq!(result, Some(true));
