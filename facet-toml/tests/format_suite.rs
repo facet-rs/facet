@@ -117,8 +117,11 @@ impl FormatSuite for TomlSlice {
 
     fn attr_default_struct() -> CaseSpec {
         // message is missing, should use String::default() (empty string)
-        // TOML requires deferred mode to handle missing fields with defaults
-        CaseSpec::skip("struct-level defaults require deferred deserialization mode")
+        CaseSpec::from_str(indoc!(
+            r#"
+            count = 123
+        "#
+        ))
     }
 
     fn attr_default_function() -> CaseSpec {
