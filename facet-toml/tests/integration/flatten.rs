@@ -150,3 +150,50 @@ fn flatten_with_single_key_works() {
     assert_eq!(result.item.len(), 1);
     assert_eq!(result.item[0].nested_item.extra.len(), 1);
 }
+
+#[derive(Facet, Debug, PartialEq)]
+struct MultiFlattenServiceConfig {
+    name: String,
+    #[facet(flatten)]
+    auth: MultiFlattenAuthMethod,
+    #[facet(flatten)]
+    transport: MultiFlattenTransport,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+enum MultiFlattenAuthMethod {
+    Password { password: String },
+    Token { token: String },
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+enum MultiFlattenTransport {
+    Tcp { port: u16 },
+    Unix { path: String },
+}
+
+#[test]
+fn flatten_multiple_enums_resolves_all_table_headers() {
+    let toml = r#"
+name = "service"
+
+[Password]
+password = "secret"
+
+[Tcp]
+port = 8080
+"#;
+
+    let config: MultiFlattenServiceConfig = facet_toml::from_str(toml).unwrap();
+    assert_eq!(config.name, "service");
+    assert!(matches!(
+        config.auth,
+        MultiFlattenAuthMethod::Password { password } if password == "secret"
+    ));
+    assert!(matches!(
+        config.transport,
+        MultiFlattenTransport::Tcp { port } if port == 8080
+    ));
+}
