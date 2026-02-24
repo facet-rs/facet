@@ -14,7 +14,9 @@ unsafe impl<'facet, T: 'static> Facet<'facet> for Opaque<T> {
 // wrappers so borrowed fields can stay tied to the active Facet lifetime.
 unsafe impl<'facet, T: 'facet> Facet<'facet> for OpaqueBorrow<'facet, T> {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<OpaqueBorrow<'facet, T>>("Opaque")
+        // Reuse Opaque<T>'s shape identity for compatibility with APIs/tests that
+        // set field-level opaque values via Opaque<T>.
+        Shape::builder_for_sized::<Opaque<T>>("Opaque")
             .variance(VarianceDesc::INVARIANT)
             .build()
     };
