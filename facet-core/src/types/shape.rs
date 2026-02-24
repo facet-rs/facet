@@ -842,7 +842,7 @@ impl Shape {
             }
             VTableErased::Indirect(vt) => {
                 let debug_fn = vt.debug?;
-                let ox = crate::OxPtrConst::new(ptr, self);
+                let ox = unsafe { crate::OxPtrConst::new(ptr, self) };
                 unsafe { debug_fn(ox, f) }
             }
         }
@@ -865,7 +865,7 @@ impl Shape {
             }
             VTableErased::Indirect(vt) => {
                 let display_fn = vt.display?;
-                let ox = crate::OxPtrConst::new(ptr, self);
+                let ox = unsafe { crate::OxPtrConst::new(ptr, self) };
                 unsafe { display_fn(ox, f) }
             }
         }
@@ -889,7 +889,7 @@ impl Shape {
             }
             VTableErased::Indirect(vt) => {
                 let hash_fn = vt.hash?;
-                let ox = crate::OxPtrConst::new(ptr, self);
+                let ox = unsafe { crate::OxPtrConst::new(ptr, self) };
                 unsafe { hash_fn(ox, hasher) }
             }
         }
@@ -912,8 +912,8 @@ impl Shape {
             }
             VTableErased::Indirect(vt) => {
                 let eq_fn = vt.partial_eq?;
-                let ox_a = crate::OxPtrConst::new(a, self);
-                let ox_b = crate::OxPtrConst::new(b, self);
+                let ox_a = unsafe { crate::OxPtrConst::new(a, self) };
+                let ox_b = unsafe { crate::OxPtrConst::new(b, self) };
                 unsafe { eq_fn(ox_a, ox_b) }
             }
         }
@@ -936,8 +936,8 @@ impl Shape {
             }
             VTableErased::Indirect(vt) => {
                 let cmp_fn = vt.partial_cmp?;
-                let ox_a = crate::OxPtrConst::new(a, self);
-                let ox_b = crate::OxPtrConst::new(b, self);
+                let ox_a = unsafe { crate::OxPtrConst::new(a, self) };
+                let ox_b = unsafe { crate::OxPtrConst::new(b, self) };
                 unsafe { cmp_fn(ox_a, ox_b) }
             }
         }
@@ -960,8 +960,8 @@ impl Shape {
             }
             VTableErased::Indirect(vt) => {
                 let cmp_fn = vt.cmp?;
-                let ox_a = crate::OxPtrConst::new(a, self);
-                let ox_b = crate::OxPtrConst::new(b, self);
+                let ox_a = unsafe { crate::OxPtrConst::new(a, self) };
+                let ox_b = unsafe { crate::OxPtrConst::new(b, self) };
                 unsafe { cmp_fn(ox_a, ox_b) }
             }
         }
@@ -978,7 +978,7 @@ impl Shape {
                 unsafe { (ops.drop_in_place)(ptr.as_mut_byte_ptr() as *mut ()) };
             }
             TypeOps::Indirect(ops) => {
-                let ox = crate::OxPtrMut::new(ptr, self);
+                let ox = unsafe { crate::OxPtrMut::new(ptr, self) };
                 unsafe { (ops.drop_in_place)(ox) };
             }
         }
@@ -1023,7 +1023,7 @@ impl Shape {
             }
             VTableErased::Indirect(vt) => {
                 let invariants_fn = vt.invariants?;
-                let ox = crate::OxPtrConst::new(ptr, self);
+                let ox = unsafe { crate::OxPtrConst::new(ptr, self) };
                 unsafe { invariants_fn(ox) }
             }
         }
@@ -1118,7 +1118,7 @@ impl Shape {
             }
             VTableErased::Indirect(vt) => {
                 let try_borrow_fn = vt.try_borrow_inner?;
-                let ox = crate::OxPtrConst::new(ptr, self);
+                let ox = unsafe { crate::OxPtrConst::new(ptr, self) };
                 unsafe { try_borrow_fn(ox) }
             }
         }
@@ -1147,8 +1147,8 @@ impl Shape {
             }
             TypeOps::Indirect(ops) => {
                 let clone_fn = ops.clone_into?;
-                let ox_src = crate::OxPtrConst::new(src, self);
-                let ox_dst = crate::OxPtrMut::new(dst, self);
+                let ox_src = unsafe { crate::OxPtrConst::new(src, self) };
+                let ox_dst = unsafe { crate::OxPtrMut::new(dst, self) };
                 unsafe { clone_fn(ox_src, ox_dst) };
             }
         }
