@@ -85,6 +85,9 @@ enum ParserState {
 pub struct PostcardParser<'de> {
     input: &'de [u8],
     pos: usize,
+    max_collection_elements: u64,
+    #[cfg(feature = "jit")]
+    allow_jit: bool,
     /// Stack of parser states for nested structures.
     state_stack: Vec<ParserState>,
     /// Peeked event (for `peek_event`).
@@ -122,9 +125,17 @@ struct OpaqueScalarHint {
 impl<'de> PostcardParser<'de> {
     /// Create a new postcard parser from input bytes.
     pub const fn new(input: &'de [u8]) -> Self {
+        Self::with_limits(input, DEFAULT_MAX_COLLECTION_ELEMENTS)
+    }
+
+    /// Create a new postcard parser with custom safety limits.
+    pub const fn with_limits(input: &'de [u8], max_collection_elements: u64) -> Self {
         Self {
             input,
             pos: 0,
+            max_collection_elements,
+            #[cfg(feature = "jit")]
+            allow_jit: max_collection_elements == DEFAULT_MAX_COLLECTION_ELEMENTS,
             state_stack: Vec::new(),
             peeked: None,
             pending_struct_fields: None,
@@ -173,7 +184,7 @@ impl<'de> PostcardParser<'de> {
     }
 
     fn validate_collection_count(&self, count: u64) -> Result<(), ParseError> {
-        if count <= DEFAULT_MAX_COLLECTION_ELEMENTS {
+        if count <= self.max_collection_elements {
             return Ok(());
         }
 
@@ -182,7 +193,7 @@ impl<'de> PostcardParser<'de> {
             DeserializeErrorKind::InvalidValue {
                 message: format!(
                     "collection length {} exceeds maximum {}",
-                    count, DEFAULT_MAX_COLLECTION_ELEMENTS
+                    count, self.max_collection_elements
                 )
                 .into(),
             },
@@ -1173,6 +1184,10 @@ impl<'de> facet_format::FormatJitParser<'de> for PostcardParser<'de> {
     }
 
     fn jit_pos(&self) -> Option<usize> {
+        if !self.allow_jit {
+            return None;
+        }
+
         // Only return position if no peeked event (clean state)
         if self.peeked.is_some() {
             None

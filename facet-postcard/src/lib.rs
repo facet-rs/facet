@@ -19,7 +19,7 @@
 //!
 //! # Deserialization
 //!
-//! There are three deserialization functions:
+//! There is a configurable [`Deserializer`] API plus convenience functions:
 //!
 //! - [`from_slice`]: Deserializes into owned types (`T: Facet<'static>`)
 //! - [`from_slice_borrowed`]: Deserializes with zero-copy borrowing from the input buffer
@@ -79,6 +79,160 @@ pub use facet_format::DeserializeError;
 /// dynamic arrays/objects) and is enforced in both Tier-0 and Tier-2 JIT paths.
 pub const DEFAULT_MAX_COLLECTION_ELEMENTS: u64 = 1 << 24; // 16,777,216
 
+/// Deserialization safety/configuration options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeserializeConfig {
+    max_collection_elements: u64,
+}
+
+impl Default for DeserializeConfig {
+    fn default() -> Self {
+        Self {
+            max_collection_elements: DEFAULT_MAX_COLLECTION_ELEMENTS,
+        }
+    }
+}
+
+impl DeserializeConfig {
+    /// Create default deserialization settings.
+    pub const fn new() -> Self {
+        Self {
+            max_collection_elements: DEFAULT_MAX_COLLECTION_ELEMENTS,
+        }
+    }
+
+    /// Set the maximum number of elements permitted in any decoded collection.
+    pub const fn max_collection_elements(mut self, max_collection_elements: u64) -> Self {
+        self.max_collection_elements = max_collection_elements;
+        self
+    }
+
+    /// Get the configured maximum number of collection elements.
+    pub const fn get_max_collection_elements(self) -> u64 {
+        self.max_collection_elements
+    }
+}
+
+/// Builder-style postcard deserializer.
+///
+/// This single API supports all current entry points:
+/// typed owned/borrowed deserialization, shape-based value deserialization,
+/// and deserialization into existing `Partial` values.
+#[derive(Debug, Clone, Copy)]
+pub struct Deserializer<'input> {
+    input: &'input [u8],
+    config: DeserializeConfig,
+}
+
+impl<'input> Deserializer<'input> {
+    /// Create a deserializer for a postcard byte slice with default settings.
+    pub const fn new(input: &'input [u8]) -> Self {
+        Self {
+            input,
+            config: DeserializeConfig::new(),
+        }
+    }
+
+    /// Create a deserializer with explicit settings.
+    pub const fn with_config(input: &'input [u8], config: DeserializeConfig) -> Self {
+        Self { input, config }
+    }
+
+    /// Replace all deserialization settings.
+    pub const fn config(mut self, config: DeserializeConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    /// Configure the maximum collection element count.
+    pub const fn max_collection_elements(mut self, max_collection_elements: u64) -> Self {
+        self.config = self.config.max_collection_elements(max_collection_elements);
+        self
+    }
+
+    fn parser(self) -> PostcardParser<'input> {
+        PostcardParser::with_limits(self.input, self.config.get_max_collection_elements())
+    }
+
+    /// Deserialize into an owned typed value.
+    pub fn deserialize<T>(self) -> Result<T, DeserializeError>
+    where
+        T: facet_core::Facet<'static>,
+    {
+        use facet_format::FormatDeserializer;
+        let mut parser = self.parser();
+        let mut de = FormatDeserializer::new_owned(&mut parser);
+        de.deserialize()
+    }
+
+    /// Deserialize into a borrowed typed value.
+    pub fn deserialize_borrowed<'facet, T>(self) -> Result<T, DeserializeError>
+    where
+        T: facet_core::Facet<'facet>,
+        'input: 'facet,
+    {
+        use facet_format::FormatDeserializer;
+        let mut parser = self.parser();
+        let mut de = FormatDeserializer::new(&mut parser);
+        de.deserialize()
+    }
+
+    /// Deserialize into a dynamic `Value` using a runtime shape.
+    pub fn deserialize_with_shape(
+        self,
+        source_shape: &'static facet_core::Shape,
+    ) -> Result<facet_value::Value, DeserializeError> {
+        use facet_format::FormatDeserializer;
+        let mut parser = self.parser();
+        let mut de = FormatDeserializer::new_owned(&mut parser);
+        de.deserialize_with_shape(source_shape)
+    }
+
+    /// Deserialize into an existing owned `Partial`.
+    pub fn deserialize_into<'facet>(
+        self,
+        partial: facet_reflect::Partial<'facet, false>,
+    ) -> Result<facet_reflect::Partial<'facet, false>, DeserializeError> {
+        use facet_format::{FormatDeserializer, MetaSource};
+        let mut parser = self.parser();
+        let mut de = FormatDeserializer::new_owned(&mut parser);
+
+        #[allow(unsafe_code)]
+        let partial: facet_reflect::Partial<'_, false> = unsafe {
+            core::mem::transmute::<
+                facet_reflect::Partial<'facet, false>,
+                facet_reflect::Partial<'_, false>,
+            >(partial)
+        };
+
+        let partial = de.deserialize_into(partial, MetaSource::FromEvents)?;
+
+        #[allow(unsafe_code)]
+        let partial: facet_reflect::Partial<'facet, false> = unsafe {
+            core::mem::transmute::<
+                facet_reflect::Partial<'_, false>,
+                facet_reflect::Partial<'facet, false>,
+            >(partial)
+        };
+
+        Ok(partial)
+    }
+
+    /// Deserialize into an existing borrowed `Partial`.
+    pub fn deserialize_into_borrowed<'facet>(
+        self,
+        partial: facet_reflect::Partial<'facet, true>,
+    ) -> Result<facet_reflect::Partial<'facet, true>, DeserializeError>
+    where
+        'input: 'facet,
+    {
+        use facet_format::{FormatDeserializer, MetaSource};
+        let mut parser = self.parser();
+        let mut de = FormatDeserializer::new(&mut parser);
+        de.deserialize_into(partial, MetaSource::FromEvents)
+    }
+}
+
 /// Deserialize a value from postcard bytes into an owned type.
 ///
 /// This is the recommended default for most use cases. The input does not need
@@ -111,10 +265,7 @@ pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError>
 where
     T: facet_core::Facet<'static>,
 {
-    use facet_format::FormatDeserializer;
-    let mut parser = PostcardParser::new(input);
-    let mut de = FormatDeserializer::new_owned(&mut parser);
-    de.deserialize()
+    Deserializer::new(input).deserialize()
 }
 
 /// Deserialize a value from postcard bytes, allowing zero-copy borrowing.
@@ -149,10 +300,7 @@ where
     T: facet_core::Facet<'facet>,
     'input: 'facet,
 {
-    use facet_format::FormatDeserializer;
-    let mut parser = PostcardParser::new(input);
-    let mut de = FormatDeserializer::new(&mut parser);
-    de.deserialize()
+    Deserializer::new(input).deserialize_borrowed()
 }
 
 /// Deserialize postcard bytes into an existing Partial.
@@ -189,34 +337,7 @@ pub fn from_slice_into<'facet>(
     input: &[u8],
     partial: facet_reflect::Partial<'facet, false>,
 ) -> Result<facet_reflect::Partial<'facet, false>, DeserializeError> {
-    use facet_format::{FormatDeserializer, MetaSource};
-    let mut parser = PostcardParser::new(input);
-    let mut de = FormatDeserializer::new_owned(&mut parser);
-
-    // SAFETY: The deserializer expects Partial<'input, false> where 'input is the
-    // lifetime of the postcard bytes. Since BORROW=false, no data is borrowed from the
-    // input, so the actual 'facet lifetime of the Partial is independent of 'input.
-    // We transmute to satisfy the type system, then transmute back after deserialization.
-    #[allow(unsafe_code)]
-    let partial: facet_reflect::Partial<'_, false> = unsafe {
-        core::mem::transmute::<
-            facet_reflect::Partial<'facet, false>,
-            facet_reflect::Partial<'_, false>,
-        >(partial)
-    };
-
-    let partial = de.deserialize_into(partial, MetaSource::FromEvents)?;
-
-    // SAFETY: Same reasoning - no borrowed data since BORROW=false.
-    #[allow(unsafe_code)]
-    let partial: facet_reflect::Partial<'facet, false> = unsafe {
-        core::mem::transmute::<
-            facet_reflect::Partial<'_, false>,
-            facet_reflect::Partial<'facet, false>,
-        >(partial)
-    };
-
-    Ok(partial)
+    Deserializer::new(input).deserialize_into(partial)
 }
 
 /// Deserialize postcard bytes into an existing Partial, allowing zero-copy borrowing.
@@ -256,8 +377,5 @@ pub fn from_slice_into_borrowed<'input, 'facet>(
 where
     'input: 'facet,
 {
-    use facet_format::{FormatDeserializer, MetaSource};
-    let mut parser = PostcardParser::new(input);
-    let mut de = FormatDeserializer::new(&mut parser);
-    de.deserialize_into(partial, MetaSource::FromEvents)
+    Deserializer::new(input).deserialize_into_borrowed(partial)
 }
