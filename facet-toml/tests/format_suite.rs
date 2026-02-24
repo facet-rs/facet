@@ -364,8 +364,10 @@ impl FormatSuite for TomlSlice {
     }
 
     fn flatten_multiple_enums() -> CaseSpec {
-        // Multiple flattened enums require solver support that isn't working properly
-        CaseSpec::skip("multiple flattened enums solver not supported")
+        CaseSpec::from_str(
+            "name = \"service\"\n\n[Password]\npassword = \"secret\"\n\n[Tcp]\nport = 8080",
+        )
+        .without_roundtrip("serialization of flattened enums not yet supported")
     }
 
     // -- Scalar cases --
