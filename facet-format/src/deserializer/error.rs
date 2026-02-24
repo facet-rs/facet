@@ -419,7 +419,7 @@ pub enum DeserializeErrorKind {
     /// ```
     CannotBorrow {
         /// Description of why borrowing failed.
-        reason: &'static str,
+        reason: Cow<'static, str>,
     },
 
     // ============================================================
