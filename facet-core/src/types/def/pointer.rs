@@ -223,7 +223,10 @@ pub type SliceBuilderNewFn = fn() -> PtrMut;
 ///
 /// Item must point to a valid value of type `U` and must be initialized.
 /// Function is infallible as it uses the global allocator.
-pub type SliceBuilderPushFn = unsafe fn(builder: PtrMut, item: PtrConst);
+/// `item` is moved out of (with [`core::ptr::read`]) — it should be deallocated afterwards
+/// but NOT dropped.
+/// Note: `item` must be PtrMut (not PtrConst) because ownership is transferred.
+pub type SliceBuilderPushFn = unsafe fn(builder: PtrMut, item: PtrMut);
 
 /// Converts a slice builder into a pointer. This takes ownership of the builder
 /// and frees the backing storage.
