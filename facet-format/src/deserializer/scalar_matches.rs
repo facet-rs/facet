@@ -95,16 +95,20 @@ pub(crate) fn scalar_matches_shape(
             // This enables untagged enums to correctly match string values like "4.625"
             // to the appropriate variant (f64 vs i64).
             // See #1615 for discussion of this double-parse pattern.
+            const PARSE_PROBE_SIZE: usize = 128;
+            #[repr(align(64))]
+            struct ParseProbeStorage([u8; PARSE_PROBE_SIZE]);
             #[allow(unsafe_code)]
             if shape.vtable.has_parse()
-                && shape
-                    .layout
-                    .sized_layout()
-                    .is_ok_and(|layout| layout.size() <= 128)
+                && shape.layout.sized_layout().is_ok_and(|layout| {
+                    layout.size() <= PARSE_PROBE_SIZE
+                        && layout.align() <= core::mem::align_of::<ParseProbeStorage>()
+                })
             {
                 // Attempt to parse - this is a probe, not the actual deserialization
-                let mut temp = [0u8; 128];
-                let temp_ptr = facet_core::PtrUninit::new(temp.as_mut_ptr());
+                let mut temp = core::mem::MaybeUninit::<ParseProbeStorage>::uninit();
+                let temp_bytes_ptr = unsafe { core::ptr::addr_of_mut!((*temp.as_mut_ptr()).0) };
+                let temp_ptr = facet_core::PtrUninit::new(temp_bytes_ptr.cast::<u8>());
                 // SAFETY: temp buffer is properly aligned and sized for this shape
                 if let Some(Ok(())) = unsafe { shape.call_parse(s.as_ref(), temp_ptr) } {
                     // Parse succeeded - drop the temp value
