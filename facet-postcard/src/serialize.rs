@@ -288,9 +288,9 @@ impl<'a> PostcardWriter<'a> for ScatterBuilder<'a> {
 /// let point = Point { x: 10, y: 20 };
 /// let bytes = to_vec(&point).unwrap();
 /// ```
-pub fn to_vec<T>(value: &T) -> Result<Vec<u8>, SerializeError>
+pub fn to_vec<'facet, T>(value: &T) -> Result<Vec<u8>, SerializeError>
 where
-    T: facet_core::Facet<'static>,
+    T: facet_core::Facet<'facet>,
 {
     let mut buffer = Vec::new();
     to_writer_fallible(value, &mut buffer)?;
@@ -335,9 +335,9 @@ where
 /// let mut writer = CustomWriter { buffer: Vec::new() };
 /// to_writer_fallible(&point, &mut writer).unwrap();
 /// ```
-pub fn to_writer_fallible<T, W>(value: &T, writer: &mut W) -> Result<(), SerializeError>
+pub fn to_writer_fallible<'facet, T, W>(value: &T, writer: &mut W) -> Result<(), SerializeError>
 where
-    T: facet_core::Facet<'static>,
+    T: facet_core::Facet<'facet>,
     W: Writer,
 {
     let peek = Peek::new(value);
@@ -434,12 +434,12 @@ pub fn peek_to_scatter_plan<'input, 'facet>(
 /// Returns an error if:
 /// - The value is not a dynamic value type
 /// - The value's structure doesn't match the target shape
-pub fn to_vec_with_shape<T>(
+pub fn to_vec_with_shape<'facet, T>(
     value: &T,
     target_shape: &'static Shape,
 ) -> Result<Vec<u8>, SerializeError>
 where
-    T: facet_core::Facet<'static>,
+    T: facet_core::Facet<'facet>,
 {
     let mut buffer = Vec::new();
     let peek = Peek::new(value);
