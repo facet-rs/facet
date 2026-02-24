@@ -1052,9 +1052,8 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                 // key/value pair to the parent object. `field_item.effective_name()` is
                 // already the active variant key for flattened enum fields.
                 if field_item.flattened
-                    && let Some(field) = field_item.field
                     && {
-                        let shape = field.shape();
+                        let shape = field_value.shape();
                         shape.get_tag_attr().is_none() && shape.get_content_attr().is_none()
                     }
                     && let Ok(enum_peek) = field_value.into_enum()
