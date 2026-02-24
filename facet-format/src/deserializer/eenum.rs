@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use facet_core::{Characteristic, Def, Field, StructKind, Type, UserType};
+use facet_core::{Def, Field, StructKind, Type, UserType};
 use facet_reflect::Partial;
 use facet_solver::VariantsByFormat;
 
@@ -564,10 +564,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                     }
 
                     let field_has_default = field.has_default();
-                    let field_type_has_default = field.shape().is(Characteristic::Default);
                     let field_is_option = matches!(field.shape().def, Def::Option(_));
 
-                    if field_has_default || field_type_has_default {
+                    if field_has_default {
                         wip = wip.set_nth_field_to_default(idx)?;
                     } else if field_is_option {
                         wip = wip.begin_nth_field(idx)?.set_default()?.end()?;
@@ -1110,10 +1109,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             }
 
             let field_has_default = field.has_default();
-            let field_type_has_default = field.shape().is(Characteristic::Default);
             let field_is_option = matches!(field.shape().def, Def::Option(_));
 
-            if field_has_default || field_type_has_default {
+            if field_has_default {
                 wip = wip.set_nth_field_to_default(idx)?;
             } else if field_is_option {
                 wip = wip.begin_nth_field(idx)?.set_default()?.end()?;
@@ -1531,10 +1529,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         }
 
                         let field_has_default = field.has_default();
-                        let field_type_has_default = field.shape().is(Characteristic::Default);
                         let field_is_option = matches!(field.shape().def, Def::Option(_));
 
-                        if field_has_default || field_type_has_default {
+                        if field_has_default {
                             wip = wip.set_nth_field_to_default(idx)?;
                         } else if field_is_option {
                             wip = wip.begin_nth_field(idx)?.set_default()?.end()?;
