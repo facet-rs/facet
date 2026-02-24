@@ -732,10 +732,10 @@ pub(crate) fn gen_field_from_pfield(
     let is_recursive = field.attrs.has_builtin("recursive_type");
 
     // Generate the shape expression directly using the field type
-    // For opaque fields, wrap in Opaque<T>
+    // For opaque fields, wrap in OpaqueBorrow<'_, T>
     // NOTE: Uses short alias from `use #facet_crate::𝟋::*` in the enclosing const block
     let shape_expr = if field.attrs.has_builtin("opaque") {
-        quote! { <#facet_crate::Opaque<#field_type> as 𝟋Fct>::SHAPE }
+        quote! { <#facet_crate::OpaqueBorrow<'_, #field_type> as 𝟋Fct>::SHAPE }
     } else {
         quote! { <#field_type as 𝟋Fct>::SHAPE }
     };
@@ -868,14 +868,14 @@ pub(crate) fn gen_field_from_pfield(
                     // Use args directly to preserve spans for IDE hover/navigation
                     let proxy_type = &attr.args;
                     // Generate a full ProxyDef with convert functions for field-level proxy
-                    // If the field is also marked as opaque, we need to unwrap Opaque<T> to get T
+                    // If the field is also marked as opaque, we need to unwrap OpaqueBorrow<'_, T> to get T
                     let is_opaque = field.attrs.has_builtin("opaque");
                     let convert_out_impl = if is_opaque {
                         quote! {
-                            // Field is opaque, so field_ptr points to Opaque<T>, not T
-                            // Opaque<T> is #[repr(transparent)] with a single field T
-                            // So we can safely get &T by getting &Opaque<T>.0
-                            let opaque_ref: &#facet_crate::Opaque<#field_type> = field_ptr.get();
+                            // Field is opaque, so field_ptr points to OpaqueBorrow<'_, T>, not T
+                            // OpaqueBorrow<'_, T> is #[repr(transparent)] over T
+                            // So we can safely get &T by getting &OpaqueBorrow<'_, T>.0
+                            let opaque_ref: &#facet_crate::OpaqueBorrow<'_, #field_type> = field_ptr.get();
                             let field_ref: &#field_type = &opaque_ref.0;
                             match <#proxy_type as ::core::convert::TryFrom<&#field_type>>::try_from(field_ref) {
                                 𝟋Ok(proxy) => 𝟋Ok(proxy_ptr.put(proxy)),
@@ -942,14 +942,14 @@ pub(crate) fn gen_field_from_pfield(
             if key == "proxy" {
                 // Format-specific proxy: #[facet(xml::proxy = ProxyType)]
                 let proxy_type = &attr.args;
-                // If the field is also marked as opaque, we need to unwrap Opaque<T> to get T
+                // If the field is also marked as opaque, we need to unwrap OpaqueBorrow<'_, T> to get T
                 let is_opaque = field.attrs.has_builtin("opaque");
                 let convert_out_impl = if is_opaque {
                     quote! {
-                        // Field is opaque, so field_ptr points to Opaque<T>, not T
-                        // Opaque<T> is #[repr(transparent)] with a single field T
-                        // So we can safely get &T by getting &Opaque<T>.0
-                        let opaque_ref: &#facet_crate::Opaque<#field_type> = field_ptr.get();
+                        // Field is opaque, so field_ptr points to OpaqueBorrow<'_, T>, not T
+                        // OpaqueBorrow<'_, T> is #[repr(transparent)] over T
+                        // So we can safely get &T by getting &OpaqueBorrow<'_, T>.0
+                        let opaque_ref: &#facet_crate::OpaqueBorrow<'_, #field_type> = field_ptr.get();
                         let field_ref: &#field_type = &opaque_ref.0;
                         match <#proxy_type as ::core::convert::TryFrom<&#field_type>>::try_from(field_ref) {
                             𝟋Ok(proxy) => 𝟋Ok(proxy_ptr.put(proxy)),
@@ -1099,8 +1099,8 @@ pub(crate) fn gen_field_from_pfield(
         // Recursive types need a closure to break the cycle
         quote! { 𝟋ShpR(|| #shape_expr) }
     } else if is_opaque {
-        // Opaque fields use Opaque<T> wrapper
-        quote! { 𝟋ShpR(𝟋shp::<#facet_crate::Opaque<#field_type>>) }
+        // Opaque fields use OpaqueBorrow<'_, T> wrapper
+        quote! { 𝟋ShpR(𝟋shp::<#facet_crate::OpaqueBorrow<'_, #field_type>>) }
     } else {
         // Normal fields use shape_of::<T> which is monomorphized per type
         quote! { 𝟋ShpR(𝟋shp::<#field_type>) }
@@ -1134,7 +1134,7 @@ pub(crate) fn gen_field_from_pfield(
     let default_expr = match &default_value {
         Some(DefaultKind::FromTrait) => {
             // When a field has 'opaque' attribute, the field shape doesn't have Default vtable
-            // because Opaque<T> doesn't expose T's vtable. Instead, generate a custom default
+            // because OpaqueBorrow<'_, T> doesn't expose T's vtable. Instead, generate a custom default
             // function. Special case: Option<T> always defaults to None regardless of T's traits.
             if field.attrs.has_builtin("opaque") {
                 // Check if the field type looks like Option<...>
@@ -2317,7 +2317,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         let inner_shape_val = if let Some(inner_field) = &inner_field {
             let ty = &inner_field.ty;
             if inner_field.attrs.has_builtin("opaque") {
-                quote! { <#facet_crate::Opaque<#ty> as #facet_crate::Facet>::SHAPE }
+                quote! { <#facet_crate::OpaqueBorrow<'_, #ty> as #facet_crate::Facet>::SHAPE }
             } else {
                 quote! { <#ty as #facet_crate::Facet>::SHAPE }
             }

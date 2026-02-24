@@ -488,6 +488,32 @@ fn opaque_arc() {
     }
 }
 
+#[allow(dead_code)]
+struct OpaqueBorrowedNotFacet;
+
+#[derive(Facet)]
+struct OpaqueBorrowed<'a> {
+    #[facet(opaque)]
+    inner: &'a OpaqueBorrowedNotFacet,
+}
+
+#[test]
+fn opaque_borrowed_reference() {
+    let value = OpaqueBorrowedNotFacet;
+    let wrapped = OpaqueBorrowed { inner: &value };
+
+    let shape = OpaqueBorrowed::SHAPE;
+    match shape.ty {
+        Type::User(UserType::Struct(sk)) => {
+            assert_eq!(sk.fields.len(), 1);
+            assert_eq!(format!("{}", sk.fields[0].shape()), "Opaque");
+        }
+        _ => unreachable!(),
+    }
+
+    assert!(core::ptr::eq(wrapped.inner, &value));
+}
+
 #[test]
 fn enum_rename_all_snake_case() {
     #[derive(Debug, Facet)]

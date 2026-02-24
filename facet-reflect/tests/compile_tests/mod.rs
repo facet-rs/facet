@@ -346,19 +346,6 @@ fn test_poke_opaque_insufficient_lifetime() {
     run_compilation_test(&test);
 }
 
-/// Opaque fields currently require 'static.
-#[test]
-#[cfg(not(miri))]
-fn test_poke_opaque_borrowed_non_facet() {
-    let test = CompilationTest {
-        name: "opaque_borrowed_non_facet",
-        source: include_str!("fixtures/opaque_borrowed_non_facet.rs"),
-        expected_errors: &["lifetime may not live long enough"],
-    };
-
-    run_compilation_test(&test);
-}
-
 /// Soundness test for GitHub issue #1663
 ///
 /// Before the fix, Partial::alloc_shape() was safe but accepted untrusted shapes,

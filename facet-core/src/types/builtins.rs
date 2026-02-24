@@ -46,9 +46,31 @@ use core::{marker::PhantomData, ptr::NonNull};
 #[repr(transparent)]
 pub struct Opaque<T: ?Sized>(pub T);
 
+/// Lifetime-aware wrapper used for field-level `#[facet(opaque)]`.
+///
+/// This lets derive-generated shapes describe borrowed opaque fields without
+/// requiring `'static`, while still tying the wrapper to the active `Facet`
+/// lifetime.
+#[repr(transparent)]
+pub struct OpaqueBorrow<'facet, T>(pub T, pub(crate) PhantomData<fn(&'facet ()) -> &'facet ()>);
+
 impl<T: Default> Default for Opaque<T> {
     fn default() -> Self {
         Opaque(T::default())
+    }
+}
+
+impl<'facet, T> OpaqueBorrow<'facet, T> {
+    /// Creates a new lifetime-aware opaque wrapper.
+    #[inline]
+    pub const fn new(value: T) -> Self {
+        Self(value, PhantomData)
+    }
+}
+
+impl<'facet, T: Default> Default for OpaqueBorrow<'facet, T> {
+    fn default() -> Self {
+        Self(T::default(), PhantomData)
     }
 }
 
