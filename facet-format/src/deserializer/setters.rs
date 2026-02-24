@@ -313,9 +313,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             facet_dessert::DessertError::CannotBorrow { message } => DeserializeError {
                 span: None,
                 path: None,
-                kind: DeserializeErrorKind::CannotBorrow {
-                    reason: message.into_owned().leak(),
-                },
+                kind: DeserializeErrorKind::CannotBorrow { reason: message },
             },
         })
     }
@@ -341,9 +339,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             facet_dessert::DessertError::CannotBorrow { message } => DeserializeError {
                 span: None,
                 path: None,
-                kind: DeserializeErrorKind::CannotBorrow {
-                    reason: message.into_owned().leak(),
-                },
+                kind: DeserializeErrorKind::CannotBorrow { reason: message },
             },
         })
     }
