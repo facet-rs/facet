@@ -860,6 +860,29 @@ fn test_root_struct_deserialize_container_defaults() {
     );
 }
 
+#[test]
+fn test_root_struct_deserialize_container_defaults_partial_fields() {
+    #[derive(Debug, Facet, PartialEq, Default)]
+    #[facet(default)]
+    struct Root {
+        count: i32,
+        message: String,
+    }
+
+    assert_eq!(
+        facet_toml::from_str::<Root>(
+            r#"
+            count = 123
+            "#
+        )
+        .unwrap(),
+        Root {
+            count: 123,
+            message: String::default(),
+        },
+    );
+}
+
 // ============================================================================
 // IP address tests
 // ============================================================================
