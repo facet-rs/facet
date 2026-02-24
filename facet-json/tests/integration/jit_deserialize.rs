@@ -4,6 +4,7 @@ use facet::Facet;
 use facet_format::jit;
 use facet_json::JsonParser;
 use facet_testhelpers::test;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(feature = "jit")]
 use facet_json::JsonJitFormat;
@@ -1338,6 +1339,50 @@ fn test_flatten_option_struct_absent() {
 // These tests verify that duplicate JSON keys properly drop old values before
 // overwriting with new values, preventing memory leaks for owned types
 // (String, Vec, HashMap, enum payloads). JSON semantics: "last wins".
+
+static TIER1_DUPLICATE_DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Debug, PartialEq, Facet)]
+struct DropTrackedValue {
+    value: String,
+}
+
+impl Drop for DropTrackedValue {
+    fn drop(&mut self) {
+        TIER1_DUPLICATE_DROP_COUNT.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[derive(Debug, PartialEq, Facet)]
+struct Tier1DupNested {
+    item: DropTrackedValue,
+}
+
+#[test]
+#[cfg(feature = "jit")]
+fn test_tier1_duplicate_key_drops_old_value_before_overwrite() {
+    // Force Tier-1 path (event-based JIT), not Tier-2 format JIT.
+    assert!(jit::is_jit_compatible::<Tier1DupNested>());
+    TIER1_DUPLICATE_DROP_COUNT.store(0, Ordering::Relaxed);
+
+    let json = br#"{"item":{"value":"first"},"item":{"value":"second"}}"#;
+    let mut parser = JsonParser::<false>::new(json);
+    let result = jit::try_deserialize::<Tier1DupNested, JsonParser<'_>>(&mut parser);
+    assert!(
+        result.is_some(),
+        "Tier-1 JIT should attempt deserialization"
+    );
+    let parsed = result.unwrap().expect("Tier-1 JIT should succeed");
+    assert_eq!(parsed.item.value, "second");
+
+    // One drop for overwritten "first", one drop when final value is dropped.
+    drop(parsed);
+    assert_eq!(
+        TIER1_DUPLICATE_DROP_COUNT.load(Ordering::Relaxed),
+        2,
+        "Tier-1 duplicate handling should drop previous owned values"
+    );
+}
 
 #[derive(Debug, PartialEq, Facet)]
 struct DupString {
