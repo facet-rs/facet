@@ -284,6 +284,9 @@ impl<'de, T: Facet<'de>, P: FormatJitParser<'de>> CompiledFormatDeserializer<T, 
 
         // Create scratch space for error reporting
         let mut scratch = JitScratch::default();
+        if let Some(max) = parser.jit_max_collection_elements() {
+            scratch.max_collection_elements = max;
+        }
 
         // Call the compiled function
         // Signature: fn(input_ptr, len, pos, out, scratch) -> isize

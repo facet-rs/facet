@@ -4,10 +4,10 @@
 //! a `&'static Shape` at runtime, without requiring a concrete Rust type.
 
 use facet_core::Shape;
-use facet_format::{DeserializeError, FormatDeserializer};
+use facet_format::DeserializeError;
 use facet_value::Value;
 
-use crate::parser::PostcardParser;
+use crate::Deserializer;
 
 /// Deserialize postcard bytes into a `Value` using shape information.
 ///
@@ -36,9 +36,7 @@ pub fn from_slice_with_shape(
     input: &[u8],
     source_shape: &'static Shape,
 ) -> Result<Value, DeserializeError> {
-    let mut parser = PostcardParser::new(input);
-    let mut de = FormatDeserializer::new_owned(&mut parser);
-    de.deserialize_with_shape(source_shape)
+    Deserializer::new(input).deserialize_with_shape(source_shape)
 }
 
 #[cfg(test)]

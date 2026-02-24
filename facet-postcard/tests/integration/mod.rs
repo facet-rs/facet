@@ -1,6 +1,7 @@
 mod cow_enum;
 mod cross_compat;
 mod external_types;
+mod issue_1285;
 mod issue_1453;
 mod issue_1474;
 mod issue_2027;

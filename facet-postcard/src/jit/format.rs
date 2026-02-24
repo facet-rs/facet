@@ -7,8 +7,9 @@
 //! encoding rather than delimiters, so "end" detection is state-based.
 
 use facet_format::jit::{
-    AbiParam, BlockArg, FunctionBuilder, InstBuilder, IntCC, JITBuilder, JITModule, JitCursor,
-    JitFormat, JitStringValue, MemFlags, StructEncoding, Value, types,
+    AbiParam, BlockArg, FunctionBuilder, InstBuilder, IntCC,
+    JIT_SCRATCH_MAX_COLLECTION_ELEMENTS_OFFSET, JITBuilder, JITModule, JitCursor, JitFormat,
+    JitStringValue, MemFlags, StructEncoding, Value, types,
 };
 
 use super::helpers;
@@ -715,13 +716,31 @@ impl JitFormat for PostcardJitFormat {
         // Read the varint and store the count in state_ptr.
         let (count, err) = Self::emit_varint_decode(builder, cursor);
 
+        // Guard against pathological collection lengths to avoid unbounded allocation.
+        let max_count = builder.ins().load(
+            types::I64,
+            MemFlags::trusted(),
+            cursor.scratch_ptr,
+            JIT_SCRATCH_MAX_COLLECTION_ELEMENTS_OFFSET,
+        );
+        let count_ok = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThanOrEqual, count, max_count);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        let too_large_err = builder
+            .ins()
+            .iconst(types::I32, error::COLLECTION_TOO_LARGE as i64);
+        let limit_err = builder.ins().select(count_ok, zero_i32, too_large_err);
+        let decode_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+        let final_err = builder.ins().select(decode_ok, limit_err, err);
+
         // Store count to state_ptr (only meaningful if err == 0, but always store)
         builder
             .ins()
             .store(MemFlags::trusted(), count, state_ptr, 0);
 
         // Return (count, err) so the compiler can use count for preallocation
-        (count, err)
+        (count, final_err)
     }
 
     fn emit_seq_is_end(
@@ -899,13 +918,31 @@ impl JitFormat for PostcardJitFormat {
         // Read the length varint and store it in state_ptr for tracking remaining entries.
         let (count, err) = Self::emit_varint_decode(builder, cursor);
 
+        // Guard against pathological map lengths.
+        let max_count = builder.ins().load(
+            types::I64,
+            MemFlags::trusted(),
+            cursor.scratch_ptr,
+            JIT_SCRATCH_MAX_COLLECTION_ELEMENTS_OFFSET,
+        );
+        let count_ok = builder
+            .ins()
+            .icmp(IntCC::UnsignedLessThanOrEqual, count, max_count);
+        let zero_i32 = builder.ins().iconst(types::I32, 0);
+        let too_large_err = builder
+            .ins()
+            .iconst(types::I32, error::COLLECTION_TOO_LARGE as i64);
+        let limit_err = builder.ins().select(count_ok, zero_i32, too_large_err);
+        let decode_ok = builder.ins().icmp_imm(IntCC::Equal, err, 0);
+        let final_err = builder.ins().select(decode_ok, limit_err, err);
+
         // Store count to state_ptr (8 bytes for u64)
         builder
             .ins()
             .store(MemFlags::trusted(), count, state_ptr, 0);
 
         // Return error code
-        err
+        final_err
     }
 
     fn emit_map_is_end(

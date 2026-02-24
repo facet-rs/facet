@@ -92,6 +92,8 @@ pub mod codes {
     pub const UNSUPPORTED_OPAQUE_TYPE: i32 = -107;
     /// Unexpected end of input (for fixed-length reads)
     pub const UNEXPECTED_END_OF_INPUT: i32 = -108;
+    /// Collection length exceeds configured safety limit
+    pub const COLLECTION_TOO_LARGE: i32 = -109;
     /// Unsupported operation (triggers fallback)
     pub const UNSUPPORTED: i32 = -1;
 }
@@ -109,6 +111,7 @@ impl PostcardError {
                 "invalid Option discriminant (expected 0x00 or 0x01)".to_string()
             }
             codes::INVALID_ENUM_DISCRIMINANT => "invalid enum variant discriminant".to_string(),
+            codes::COLLECTION_TOO_LARGE => "collection length exceeds maximum".to_string(),
             codes::UNSUPPORTED => "unsupported operation".to_string(),
             _ => format!("unknown error code {}", code),
         };
