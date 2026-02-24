@@ -73,11 +73,11 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {
         #[cfg(feature = "stacker")]
         {
-            return stacker::maybe_grow(
+            stacker::maybe_grow(
                 DESERIALIZE_STACK_RED_ZONE,
                 DESERIALIZE_STACK_SEGMENT,
                 || self.deserialize_into_inner(wip, meta),
-            );
+            )
         }
 
         #[cfg(not(feature = "stacker"))]
