@@ -335,6 +335,7 @@ fn register_helpers(builder: &mut JITBuilder) {
     builder.symbol("jit_write_f64", helpers::jit_write_f64 as *const u8);
     builder.symbol("jit_write_bool", helpers::jit_write_bool as *const u8);
     builder.symbol("jit_write_string", helpers::jit_write_string as *const u8);
+    builder.symbol("jit_drop_in_place", helpers::jit_drop_in_place as *const u8);
     builder.symbol("jit_memcpy", helpers::jit_memcpy as *const u8);
     builder.symbol(
         "jit_write_error_string",
@@ -834,30 +835,31 @@ fn compile_deserializer(
         eprintln!("[JIT DEBUG] ----------------------------------------");
     }
 
-    // Extract field info for code generation
-    // Track required fields (non-Option) for bitmask validation
+    // Extract field info for code generation.
+    // Track:
+    // - `required_bit_index` for missing-required validation
+    // - `seen_bit_index` (real struct field index) for duplicate handling/cleanup
     let mut required_bit_counter = 0usize;
-    let fields: Vec<FieldCodegenInfo> = struct_def
-        .fields
-        .iter()
-        .filter_map(|f| {
-            let write_kind = WriteKind::from_shape(f.shape())?;
-            let is_required = !matches!(write_kind, WriteKind::Option(_));
-            let required_bit_index = if is_required {
-                let idx = required_bit_counter;
-                required_bit_counter += 1;
-                Some(idx)
-            } else {
-                None
-            };
-            Some(FieldCodegenInfo {
-                name: f.effective_name(),
-                offset: f.offset,
-                write_kind,
-                required_bit_index,
-            })
-        })
-        .collect();
+    let mut fields: Vec<FieldCodegenInfo> = Vec::with_capacity(struct_def.fields.len());
+    for (field_index, f) in struct_def.fields.iter().enumerate() {
+        let write_kind = WriteKind::from_shape(f.shape())?;
+        let is_required = !matches!(write_kind, WriteKind::Option(_));
+        let required_bit_index = if is_required {
+            let idx = required_bit_counter;
+            required_bit_counter += 1;
+            Some(idx)
+        } else {
+            None
+        };
+        fields.push(FieldCodegenInfo {
+            name: f.effective_name(),
+            offset: f.offset,
+            shape: f.shape(),
+            write_kind,
+            seen_bit_index: field_index,
+            required_bit_index,
+        });
+    }
 
     // DEBUG: Log the extracted fields
     #[cfg(debug_assertions)]
@@ -881,6 +883,16 @@ fn compile_deserializer(
         jit_debug!(
             "[Tier-2 JIT] Too many required fields ({} >= 64, max 63 for u64 bitmask)",
             required_bit_counter
+        );
+        return None;
+    }
+
+    // `ctx.fields_seen` is a u64 indexed by *field index*.
+    // Keep Tier-1 limited to at most 63 fields so tracking never overflows.
+    if fields.len() >= 64 {
+        jit_debug!(
+            "[Tier-1 JIT] Too many fields ({} >= 64, max 63 for u64 field-seen bitmask)",
+            fields.len()
         );
         return None;
     }
@@ -1106,6 +1118,13 @@ fn compile_deserializer(
         s
     };
 
+    let sig_drop_in_place = {
+        let mut s = make_c_sig(module);
+        s.params.push(AbiParam::new(pointer_type)); // shape_ptr: *const Shape
+        s.params.push(AbiParam::new(pointer_type)); // ptr: *mut u8
+        s
+    };
+
     let sig_vec_init_with_capacity = {
         let mut s = make_c_sig(module);
         s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
@@ -1212,6 +1231,9 @@ fn compile_deserializer(
             &sig_option_init_some_from_value,
         )
         .ok()?;
+    let drop_in_place_id = module
+        .declare_function("jit_drop_in_place", Linkage::Import, &sig_drop_in_place)
+        .ok()?;
     let vec_init_with_capacity_id = module
         .declare_function(
             "jit_vec_init_with_capacity",
@@ -1261,6 +1283,7 @@ fn compile_deserializer(
         let option_init_none_ref = module.declare_func_in_func(option_init_none_id, builder.func);
         let option_init_some_from_value_ref =
             module.declare_func_in_func(option_init_some_from_value_id, builder.func);
+        let drop_in_place_ref = module.declare_func_in_func(drop_in_place_id, builder.func);
         let _vec_init_with_capacity_ref =
             module.declare_func_in_func(vec_init_with_capacity_id, builder.func);
         let _vec_push_ref = module.declare_func_in_func(vec_push_id, builder.func);
@@ -1282,6 +1305,10 @@ fn compile_deserializer(
         let required_fields_seen = builder.declare_var(types::I64);
         let zero_i64 = builder.ins().iconst(types::I64, 0);
         builder.def_var(required_fields_seen, zero_i64);
+        // Track all fields initialized so far (bit index == struct field index).
+        // Used for duplicate-key drop-before-overwrite and error cleanup.
+        let fields_seen = builder.declare_var(types::I64);
+        builder.def_var(fields_seen, zero_i64);
 
         // Allocate stack slot for RawEvent
         let raw_event_slot = builder.create_sized_stack_slot(StackSlotData::new(
@@ -1448,6 +1475,7 @@ fn compile_deserializer(
                 }
             })
             .collect();
+        let set_seen_blocks: Vec<Block> = fields.iter().map(|_| builder.create_block()).collect();
 
         // Track compare blocks for sealing
         let mut compare_blocks: Vec<Block> = Vec::new();
@@ -1512,10 +1540,39 @@ fn compile_deserializer(
                 field.name, field.offset
             );
 
-            // Determine the target block after successfully writing this field
-            // For required fields, go through set_bit_block to mark the field as seen
-            // For optional fields, go directly to after_field
-            let continue_target = set_bit_blocks[i].unwrap_or(after_field);
+            // Determine the target block after successfully writing this field.
+            // All fields go through set_seen_blocks to update `fields_seen`.
+            let continue_target = set_seen_blocks[i];
+
+            // Duplicate-key handling: if this field was already initialized, drop the old value
+            // before writing the new one (JSON "last wins" semantics without leaks).
+            let already_seen_mask = builder
+                .ins()
+                .iconst(types::I64, 1i64 << field.seen_bit_index);
+            let current_seen = builder.use_var(fields_seen);
+            let already_seen_bits = builder.ins().band(current_seen, already_seen_mask);
+            let already_seen = builder
+                .ins()
+                .icmp_imm(IntCC::NotEqual, already_seen_bits, 0);
+            let drop_old_value = builder.create_block();
+            let after_drop_old = builder.create_block();
+            builder
+                .ins()
+                .brif(already_seen, drop_old_value, &[], after_drop_old, &[]);
+
+            builder.switch_to_block(drop_old_value);
+            let field_ptr_for_drop = builder.ins().iadd(out_ptr, offset_val);
+            let field_shape_ptr = builder
+                .ins()
+                .iconst(pointer_type, field.shape as *const Shape as usize as i64);
+            builder
+                .ins()
+                .call(drop_in_place_ref, &[field_shape_ptr, field_ptr_for_drop]);
+            builder.ins().jump(after_drop_old, &[]);
+            builder.seal_block(drop_old_value);
+
+            builder.switch_to_block(after_drop_old);
+            builder.seal_block(after_drop_old);
 
             // Handle field based on type
             match field.write_kind {
@@ -1599,7 +1656,7 @@ fn compile_deserializer(
                         .ins()
                         .call(option_init_none_ref, &[field_ptr, init_none_fn_val]);
 
-                    builder.ins().jump(after_field, &[]);
+                    builder.ins().jump(continue_target, &[]);
 
                     // Handle Some case: deserialize inner value, init to Some
                     builder.switch_to_block(handle_some_block);
@@ -1880,7 +1937,7 @@ fn compile_deserializer(
                         &[field_ptr, value_ptr, init_some_fn_val],
                     );
 
-                    builder.ins().jump(after_field, &[]);
+                    builder.ins().jump(continue_target, &[]);
                     builder.seal_block(check_null_block);
                     builder.seal_block(handle_none_block);
                     builder.seal_block(handle_some_block);
@@ -2174,7 +2231,24 @@ fn compile_deserializer(
             }
         }
 
-        // Generate set_bit_blocks: OR in the required bit and jump to after_field
+        // Generate set_seen_blocks: mark field initialized, then route to required-bit update.
+        for (i, field) in fields.iter().enumerate() {
+            let set_seen_block = set_seen_blocks[i];
+            builder.switch_to_block(set_seen_block);
+            let current = builder.use_var(fields_seen);
+            let bit = builder
+                .ins()
+                .iconst(types::I64, 1i64 << field.seen_bit_index);
+            let updated = builder.ins().bor(current, bit);
+            builder.def_var(fields_seen, updated);
+            if let Some(set_bit_block) = set_bit_blocks[i] {
+                builder.ins().jump(set_bit_block, &[]);
+            } else {
+                builder.ins().jump(after_field, &[]);
+            }
+        }
+
+        // Generate set_bit_blocks: OR in required-field bit and jump to after_field.
         for (i, field) in fields.iter().enumerate() {
             if let Some(bit_index) = field.required_bit_index {
                 let set_bit_block = set_bit_blocks[i].unwrap();
@@ -2221,7 +2295,7 @@ fn compile_deserializer(
             // Missing field error: store seen mask and return ERR_MISSING_REQUIRED_FIELD
             builder.switch_to_block(missing_field_error);
             // Store the fields_seen mask to ctx for cleanup of partially-initialized struct
-            let seen_for_error = builder.use_var(required_fields_seen);
+            let seen_for_error = builder.use_var(fields_seen);
             builder.ins().store(
                 MemFlags::trusted(),
                 seen_for_error,
@@ -2249,7 +2323,7 @@ fn compile_deserializer(
         // Error block: store seen mask for cleanup and return error
         builder.switch_to_block(error_block);
         // Store the fields_seen mask to ctx for cleanup of partially-initialized struct
-        let seen_for_cleanup = builder.use_var(required_fields_seen);
+        let seen_for_cleanup = builder.use_var(fields_seen);
         builder.ins().store(
             MemFlags::trusted(),
             seen_for_cleanup,
@@ -2278,6 +2352,9 @@ fn compile_deserializer(
         for block in set_bit_blocks.iter().flatten() {
             builder.seal_block(*block);
         }
+        for block in &set_seen_blocks {
+            builder.seal_block(*block);
+        }
 
         builder.finalize();
     }
@@ -2294,8 +2371,12 @@ struct FieldCodegenInfo {
     name: &'static str,
     /// Byte offset in the struct
     offset: usize,
+    /// Field shape metadata (for duplicate drop-in-place)
+    shape: &'static Shape,
     /// Type of write operation needed
     write_kind: WriteKind,
+    /// Index in the field-seen bitmask (matches real struct field index)
+    seen_bit_index: usize,
     /// Index in the required-field bitmask (None if optional)
     required_bit_index: Option<usize>,
 }
