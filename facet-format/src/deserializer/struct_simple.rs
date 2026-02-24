@@ -33,7 +33,26 @@ fn lookup_field<const BORROW: bool>(
 
 impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BORROW> {
     /// Deserialize a struct without flattened fields (simple case).
+    #[inline(never)]
     pub(crate) fn deserialize_struct_simple(
+        &mut self,
+        wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        #[cfg(feature = "stacker")]
+        {
+            return stacker::maybe_grow(1024 * 1024, 8 * 1024 * 1024, || {
+                self.deserialize_struct_simple_inner(wip)
+            });
+        }
+
+        #[cfg(not(feature = "stacker"))]
+        {
+            self.deserialize_struct_simple_inner(wip)
+        }
+    }
+
+    #[inline(never)]
+    fn deserialize_struct_simple_inner(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError> {

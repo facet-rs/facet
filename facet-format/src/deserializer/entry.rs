@@ -8,6 +8,11 @@ use crate::{
     FormatDeserializer, ParseEventKind, ScalarTypeHint, ScalarValue, SpanGuard, ValueMeta,
 };
 
+#[cfg(feature = "stacker")]
+const DESERIALIZE_STACK_RED_ZONE: usize = 8 * 1024 * 1024;
+#[cfg(feature = "stacker")]
+const DESERIALIZE_STACK_SEGMENT: usize = 32 * 1024 * 1024;
+
 /// Specifies where metadata should come from during deserialization.
 #[derive(Debug, Clone, Default)]
 pub enum MetaSource<'a> {
@@ -60,7 +65,29 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     /// The `meta` parameter specifies where metadata should come from:
     /// - `MetaSource::Explicit(meta)` - use provided metadata from outer context
     /// - `MetaSource::FromEvents` - read fresh metadata from the events being parsed
+    #[inline(never)]
     pub fn deserialize_into(
+        &mut self,
+        wip: Partial<'input, BORROW>,
+        meta: MetaSource<'input>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        #[cfg(feature = "stacker")]
+        {
+            return stacker::maybe_grow(
+                DESERIALIZE_STACK_RED_ZONE,
+                DESERIALIZE_STACK_SEGMENT,
+                || self.deserialize_into_inner(wip, meta),
+            );
+        }
+
+        #[cfg(not(feature = "stacker"))]
+        {
+            self.deserialize_into_inner(wip, meta)
+        }
+    }
+
+    #[inline(never)]
+    fn deserialize_into_inner(
         &mut self,
         wip: Partial<'input, BORROW>,
         meta: MetaSource<'input>,
