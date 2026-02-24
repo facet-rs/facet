@@ -83,8 +83,10 @@ fast = ["lexical-parse", "dep:itoa", "dep:zmij"]
 lexical-parse = ["dep:lexical-parse-float", "dep:lexical-parse-integer"]
 std = []
 jit = ["facet-format/jit"]
+ci = ["stacker"] # CI feature enables stack growth for deep deserialization tests
 net = ["facet-format/net", "facet-core/net"]
 tracing = ["dep:tracing", "facet-format/tracing", "facet-reflect/tracing"]
+stacker = ["facet-format/stacker"]
 
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util", "dep:mime"]
