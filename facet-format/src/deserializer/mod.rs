@@ -764,9 +764,9 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
     }
 }
 
-fn select_best_ambiguous_scalar_shapes<'a>(
+fn select_best_ambiguous_scalar_shapes(
     scalar: &crate::ScalarValue<'_>,
-    fields: &[(&'a FieldInfo, u64)],
+    fields: &[(&FieldInfo, u64)],
 ) -> Vec<&'static Shape> {
     let mut matches: Vec<(&'static Shape, u8, u64)> = Vec::new();
     let mut best_quality: Option<u8> = None;
