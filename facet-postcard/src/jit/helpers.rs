@@ -34,6 +34,7 @@
 //! byte-level parsing by JIT-compiled code.
 
 use super::jit_debug;
+use crate::DEFAULT_MAX_COLLECTION_ELEMENTS;
 
 // =============================================================================
 // Return Types
@@ -143,6 +144,8 @@ pub mod error {
     pub const VARINT_OVERFLOW: i32 = -102;
     /// Sequence underflow (decrement when remaining is 0)
     pub const SEQ_UNDERFLOW: i32 = -103;
+    /// Collection length exceeds configured safety limit
+    pub const COLLECTION_TOO_LARGE: i32 = -109;
     /// Unsupported operation
     pub const UNSUPPORTED: i32 = -1;
 }
@@ -242,6 +245,13 @@ pub unsafe extern "C" fn postcard_jit_seq_begin(
         return PostcardJitPosError {
             new_pos: result.new_pos,
             error: result.error,
+        };
+    }
+
+    if result.value > DEFAULT_MAX_COLLECTION_ELEMENTS {
+        return PostcardJitPosError {
+            new_pos: result.new_pos,
+            error: error::COLLECTION_TOO_LARGE,
         };
     }
 
@@ -478,5 +488,27 @@ mod tests {
         let result = unsafe { postcard_jit_seq_is_end(result.new_pos, &state) };
         assert_eq!(result.error, 0);
         assert!(result.is_end());
+    }
+
+    #[test]
+    fn test_seq_begin_rejects_oversized_length() {
+        let mut encoded = Vec::new();
+        let mut value = DEFAULT_MAX_COLLECTION_ELEMENTS + 1;
+        loop {
+            let mut byte = (value & 0x7F) as u8;
+            value >>= 7;
+            if value != 0 {
+                byte |= 0x80;
+            }
+            encoded.push(byte);
+            if value == 0 {
+                break;
+            }
+        }
+
+        let mut state: u64 = 0;
+        let result =
+            unsafe { postcard_jit_seq_begin(encoded.as_ptr(), encoded.len(), 0, &mut state) };
+        assert_eq!(result.error, error::COLLECTION_TOO_LARGE);
     }
 }

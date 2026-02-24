@@ -73,6 +73,12 @@ pub use shape_deser::from_slice_with_shape;
 // Re-export DeserializeError for convenience
 pub use facet_format::DeserializeError;
 
+/// Default maximum number of elements allowed in a decoded collection.
+///
+/// This limit applies to postcard length-prefixed collections (lists, maps,
+/// dynamic arrays/objects) and is enforced in both Tier-0 and Tier-2 JIT paths.
+pub const DEFAULT_MAX_COLLECTION_ELEMENTS: u64 = 1 << 24; // 16,777,216
+
 /// Deserialize a value from postcard bytes into an owned type.
 ///
 /// This is the recommended default for most use cases. The input does not need

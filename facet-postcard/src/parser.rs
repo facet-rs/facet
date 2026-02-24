@@ -7,6 +7,7 @@
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
+use crate::DEFAULT_MAX_COLLECTION_ELEMENTS;
 use crate::error::codes;
 use facet_format::{
     ContainerKind, DeserializeErrorKind, EnumVariantHint, FieldKey, FieldLocationHint,
@@ -25,6 +26,7 @@ fn error_from_code(code: i32, pos: usize) -> ParseError {
         codes::INVALID_OPTION_DISCRIMINANT => "invalid option discriminant",
         codes::INVALID_ENUM_DISCRIMINANT => "invalid enum discriminant",
         codes::UNSUPPORTED_OPAQUE_TYPE => "unsupported opaque type",
+        codes::COLLECTION_TOO_LARGE => "collection length exceeds maximum",
         codes::UNSUPPORTED => "unsupported operation",
         _ => "unknown error",
     };
@@ -170,6 +172,23 @@ impl<'de> PostcardParser<'de> {
         }
     }
 
+    fn validate_collection_count(&self, count: u64) -> Result<(), ParseError> {
+        if count <= DEFAULT_MAX_COLLECTION_ELEMENTS {
+            return Ok(());
+        }
+
+        Err(ParseError::new(
+            Span::new(self.pos, 1),
+            DeserializeErrorKind::InvalidValue {
+                message: format!(
+                    "collection length {} exceeds maximum {}",
+                    count, DEFAULT_MAX_COLLECTION_ELEMENTS
+                )
+                .into(),
+            },
+        ))
+    }
+
     /// Read a signed varint (ZigZag + LEB128).
     fn read_signed_varint(&mut self) -> Result<i64, ParseError> {
         let unsigned = self.read_varint()?;
@@ -305,6 +324,7 @@ impl<'de> PostcardParser<'de> {
         if self.pending_sequence {
             self.pending_sequence = false;
             let count = self.read_varint()?;
+            self.validate_collection_count(count)?;
             self.state_stack.push(ParserState::InSequence {
                 remaining_elements: count,
             });
@@ -342,6 +362,7 @@ impl<'de> PostcardParser<'de> {
         if self.pending_map {
             self.pending_map = false;
             let count = self.read_varint()?;
+            self.validate_collection_count(count)?;
             self.state_stack.push(ParserState::InMap {
                 remaining_entries: count,
             });
@@ -857,6 +878,7 @@ impl<'de> PostcardParser<'de> {
     /// Begin parsing a sequence, returning the element count.
     pub fn begin_sequence(&mut self) -> Result<u64, ParseError> {
         let count = self.read_varint()?;
+        self.validate_collection_count(count)?;
         self.state_stack.push(ParserState::InSequence {
             remaining_elements: count,
         });
@@ -892,6 +914,7 @@ impl<'de> PostcardParser<'de> {
             6 => self.parse_scalar_with_hint(ScalarTypeHint::Bytes),
             7 => {
                 let count = self.read_varint()?;
+                self.validate_collection_count(count)?;
                 self.state_stack.push(ParserState::InDynamicArray {
                     remaining_elements: count,
                 });
@@ -899,6 +922,7 @@ impl<'de> PostcardParser<'de> {
             }
             8 => {
                 let count = self.read_varint()?;
+                self.validate_collection_count(count)?;
                 self.state_stack.push(ParserState::InDynamicObject {
                     remaining_entries: count,
                     expecting_key: true,
