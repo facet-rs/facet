@@ -35,9 +35,6 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Generate showcases
-        run: cargo xtask showcases
-
       - name: Install dodeca
         run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/bearcove/dodeca/releases/latest/download/dodeca-installer.sh | sh
 
