@@ -86,8 +86,6 @@ pub struct PostcardParser<'de> {
     input: &'de [u8],
     pos: usize,
     max_collection_elements: u64,
-    #[cfg(feature = "jit")]
-    allow_jit: bool,
     /// Stack of parser states for nested structures.
     state_stack: Vec<ParserState>,
     /// Peeked event (for `peek_event`).
@@ -134,8 +132,6 @@ impl<'de> PostcardParser<'de> {
             input,
             pos: 0,
             max_collection_elements,
-            #[cfg(feature = "jit")]
-            allow_jit: max_collection_elements == DEFAULT_MAX_COLLECTION_ELEMENTS,
             state_stack: Vec::new(),
             peeked: None,
             pending_struct_fields: None,
@@ -1184,16 +1180,16 @@ impl<'de> facet_format::FormatJitParser<'de> for PostcardParser<'de> {
     }
 
     fn jit_pos(&self) -> Option<usize> {
-        if !self.allow_jit {
-            return None;
-        }
-
         // Only return position if no peeked event (clean state)
         if self.peeked.is_some() {
             None
         } else {
             Some(self.pos)
         }
+    }
+
+    fn jit_max_collection_elements(&self) -> Option<u64> {
+        Some(self.max_collection_elements)
     }
 
     fn jit_set_pos(&mut self, pos: usize) {

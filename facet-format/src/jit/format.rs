@@ -77,6 +77,8 @@ pub struct JitScratch {
     /// Whether the output was initialized (used for cleanup on error)
     /// 0 = not initialized, 1 = initialized
     pub output_initialized: u8,
+    /// Runtime max collection length used by format-specific Tier-2 guards.
+    pub max_collection_elements: u64,
 
     // String scratch buffer for reuse during parsing.
     // This avoids allocating a new Vec for each escaped string.
@@ -94,6 +96,7 @@ impl Default for JitScratch {
             error_code: 0,
             error_pos: 0,
             output_initialized: 0,
+            max_collection_elements: u64::MAX,
             string_scratch_ptr: std::ptr::null_mut(),
             string_scratch_len: 0,
             string_scratch_cap: 0,
@@ -126,6 +129,10 @@ pub const JIT_SCRATCH_ERROR_POS_OFFSET: i32 = std::mem::offset_of!(JitScratch, e
 /// Offset of `output_initialized` field in `JitScratch`.
 pub const JIT_SCRATCH_OUTPUT_INITIALIZED_OFFSET: i32 =
     std::mem::offset_of!(JitScratch, output_initialized) as i32;
+
+/// Offset of `max_collection_elements` field in `JitScratch`.
+pub const JIT_SCRATCH_MAX_COLLECTION_ELEMENTS_OFFSET: i32 =
+    std::mem::offset_of!(JitScratch, max_collection_elements) as i32;
 
 /// Offset of `string_scratch_ptr` field in `JitScratch`.
 /// Reserved for future JIT code that directly accesses scratch buffer.

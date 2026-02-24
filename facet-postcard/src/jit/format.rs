@@ -7,12 +7,12 @@
 //! encoding rather than delimiters, so "end" detection is state-based.
 
 use facet_format::jit::{
-    AbiParam, BlockArg, FunctionBuilder, InstBuilder, IntCC, JITBuilder, JITModule, JitCursor,
-    JitFormat, JitStringValue, MemFlags, StructEncoding, Value, types,
+    AbiParam, BlockArg, FunctionBuilder, InstBuilder, IntCC,
+    JIT_SCRATCH_MAX_COLLECTION_ELEMENTS_OFFSET, JITBuilder, JITModule, JitCursor, JitFormat,
+    JitStringValue, MemFlags, StructEncoding, Value, types,
 };
 
 use super::helpers;
-use crate::DEFAULT_MAX_COLLECTION_ELEMENTS;
 
 /// Postcard format JIT emitter.
 ///
@@ -717,9 +717,12 @@ impl JitFormat for PostcardJitFormat {
         let (count, err) = Self::emit_varint_decode(builder, cursor);
 
         // Guard against pathological collection lengths to avoid unbounded allocation.
-        let max_count = builder
-            .ins()
-            .iconst(types::I64, DEFAULT_MAX_COLLECTION_ELEMENTS as i64);
+        let max_count = builder.ins().load(
+            types::I64,
+            MemFlags::trusted(),
+            cursor.scratch_ptr,
+            JIT_SCRATCH_MAX_COLLECTION_ELEMENTS_OFFSET,
+        );
         let count_ok = builder
             .ins()
             .icmp(IntCC::UnsignedLessThanOrEqual, count, max_count);
@@ -916,9 +919,12 @@ impl JitFormat for PostcardJitFormat {
         let (count, err) = Self::emit_varint_decode(builder, cursor);
 
         // Guard against pathological map lengths.
-        let max_count = builder
-            .ins()
-            .iconst(types::I64, DEFAULT_MAX_COLLECTION_ELEMENTS as i64);
+        let max_count = builder.ins().load(
+            types::I64,
+            MemFlags::trusted(),
+            cursor.scratch_ptr,
+            JIT_SCRATCH_MAX_COLLECTION_ELEMENTS_OFFSET,
+        );
         let count_ok = builder
             .ins()
             .icmp(IntCC::UnsignedLessThanOrEqual, count, max_count);

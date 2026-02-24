@@ -545,7 +545,10 @@ use facet_core::{ConstTypeId, Facet};
 use crate::{DeserializeError, DeserializeErrorKind, FormatDeserializer, FormatParser};
 
 pub use compiler::CompiledDeserializer;
-pub use format::{JitCursor, JitFormat, JitScratch, JitStringValue, NoFormatJit, StructEncoding};
+pub use format::{
+    JIT_SCRATCH_MAX_COLLECTION_ELEMENTS_OFFSET, JitCursor, JitFormat, JitScratch, JitStringValue,
+    NoFormatJit, StructEncoding,
+};
 pub use format_compiler::CompiledFormatDeserializer;
 
 // Re-export handle getter for performance-critical code

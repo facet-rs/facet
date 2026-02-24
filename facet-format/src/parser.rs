@@ -384,6 +384,16 @@ pub trait FormatJitParser<'de>: FormatParser<'de> {
     /// Return a format JIT emitter instance (usually a ZST).
     fn jit_format(&self) -> Self::FormatJit;
 
+    /// Optional runtime maximum collection length for Tier-2 format JIT.
+    ///
+    /// If provided, format emitters can enforce container-length limits using
+    /// parser-specific runtime configuration (e.g., per-deserializer settings).
+    ///
+    /// Default is `None` (no runtime limit passed to Tier-2).
+    fn jit_max_collection_elements(&self) -> Option<u64> {
+        None
+    }
+
     /// Convert a Tier 2 error (code + position) into `ParseError`.
     fn jit_error(&self, input: &'de [u8], error_pos: usize, error_code: i32) -> ParseError;
 }
