@@ -148,6 +148,55 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             }
         }
 
+        // Generic shared slice references (`&[T]`) can only be borrowed directly when empty.
+        // Non-empty values would require allocating backing storage that outlives the result.
+        if let Def::Pointer(ptr_def) = shape.def
+            && matches!(ptr_def.known, Some(KnownPointer::SharedReference))
+            && let Some(pointee) = ptr_def.pointee()
+            && matches!(pointee.def, Def::Slice(_))
+        {
+            if !BORROW {
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::CannotBorrow {
+                        reason:
+                            "cannot deserialize into &[T] when borrowing is disabled; use Vec<T> instead"
+                                .into(),
+                    },
+                ));
+            }
+
+            if self.is_non_self_describing() {
+                self.parser.hint_sequence();
+            }
+            let event = self.expect_event("sequence for &[T]")?;
+            let _guard = SpanGuard::new(self.last_span);
+            if !matches!(event.kind, ParseEventKind::SequenceStart(_)) {
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::UnexpectedToken {
+                        expected: "sequence start for &[T]",
+                        got: event.kind_name().into(),
+                    },
+                ));
+            }
+
+            let next = self.expect_peek("value")?;
+            if matches!(next.kind, ParseEventKind::SequenceEnd) {
+                self.expect_event("value")?;
+                return wip.set_empty_shared_slice().map_err(Into::into);
+            }
+
+            return Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::CannotBorrow {
+                    reason:
+                        "cannot deserialize non-empty &[T] by borrowing from input; use Vec<T> or a shape-based Partial workflow"
+                            .into(),
+                },
+            ));
+        }
+
         // Regular smart pointer (Box, Arc, Rc)
         let _guard = SpanGuard::new(self.last_span);
         wip = wip.begin_smart_ptr()?;

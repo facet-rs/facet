@@ -1,10 +1,59 @@
 use super::*;
-use facet_core::{Def, DynDateTimeKind, NumericType, PrimitiveType, Type};
+use facet_core::{Def, DynDateTimeKind, KnownPointer, NumericType, PrimitiveType, Type};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // `Set` and set helpers
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
+    /// Set a shared slice reference (`&[T]`) to an empty slice without knowing `T` at compile time.
+    ///
+    /// This writes a valid wide reference with len=0 and a suitably aligned dangling data pointer.
+    pub fn set_empty_shared_slice(mut self) -> Result<Self, ReflectError> {
+        let shape = self.frames().last().unwrap().allocated.shape();
+        let align = match shape.def {
+            Def::Pointer(ptr_def)
+                if matches!(ptr_def.known, Some(KnownPointer::SharedReference)) =>
+            {
+                let Some(pointee) = ptr_def.pointee() else {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                        shape,
+                        operation: "shared reference pointer missing pointee shape",
+                    }));
+                };
+                let Def::Slice(slice_def) = pointee.def else {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                        shape,
+                        operation: "set_empty_shared_slice requires a slice pointee",
+                    }));
+                };
+                slice_def
+                    .t
+                    .layout
+                    .sized_layout()
+                    .map_or(1, |l| l.align().max(1))
+            }
+            _ => {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
+                    shape,
+                    operation: "set_empty_shared_slice requires a shared slice reference",
+                }));
+            }
+        };
+
+        let fr = self.frames_mut().last_mut().unwrap();
+        fr.deinit_for_replace();
+
+        // For len=0, any non-null aligned pointer is valid.
+        let data_ptr = align as *const u8 as usize;
+        unsafe {
+            let dst = fr.data.as_mut_byte_ptr() as *mut [usize; 2];
+            core::ptr::write(dst, [data_ptr, 0]);
+            fr.mark_as_init();
+        }
+
+        Ok(self)
+    }
+
     /// Sets a value wholesale into the current frame.
     ///
     /// If the current frame was already initialized, the previous value is
