@@ -1,8 +1,8 @@
 use super::*;
 use crate::HasFields;
-use hashbrown::{HashMap, HashSet};
 #[cfg(feature = "std")]
-use std::cell::RefCell;
+use core::cell::RefCell;
+use hashbrown::{HashMap, HashSet};
 
 #[cfg(feature = "std")]
 thread_local! {
