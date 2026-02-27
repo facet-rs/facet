@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use facet_core::{Def, Facet, KnownPointer, PtrConst, PtrMut, Shape, Type, UserType};
+use facet_core::{Def, Facet, PtrConst, PtrMut, Shape, Type, UserType};
 use facet_path::{Path, PathAccessError, PathStep};
 
 use crate::{ReflectError, ReflectErrorKind, peek::VariantError};
@@ -238,11 +238,9 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
     /// - `Variant` — verify enum variant matches, then allow `Field` access
     /// - `Index` — list/array element access
     /// - `OptionSome` — navigate into `Some(T)` or return `OptionIsNone`
-    /// - `Deref` — pointer descent when mutable deref is supported
-    /// - `Inner` — inner-value descent via `try_borrow_inner`
     ///
-    /// `MapKey`, `MapValue`, and `Proxy` are currently not supported for
-    /// mutable access and return
+    /// `MapKey`, `MapValue`, `Deref`, `Inner`, and `Proxy` are currently not
+    /// supported for mutable access and return
     /// [`PathAccessError::MissingTarget`].
     ///
     /// # Errors
@@ -473,36 +471,12 @@ fn apply_step_mut(
         }
 
         PathStep::Deref => {
-            if let Def::Pointer(def) = shape.def {
-                let borrow_fn = def.vtable.borrow_fn.ok_or(PathAccessError::MissingTarget {
+            if matches!(shape.def, Def::Pointer(_)) {
+                Err(PathAccessError::MissingTarget {
                     step,
                     step_index,
                     shape,
-                })?;
-
-                let known = def.known.ok_or(PathAccessError::MissingTarget {
-                    step,
-                    step_index,
-                    shape,
-                })?;
-                // Only descend mutably through pointer kinds that guarantee unique
-                // ownership at this point. Shared pointers (Rc/Arc/&T) expose only
-                // shared borrows through the vtable and are treated as unsupported.
-                if !matches!(known, KnownPointer::Box | KnownPointer::ExclusiveReference) {
-                    return Err(PathAccessError::MissingTarget {
-                        step,
-                        step_index,
-                        shape,
-                    });
-                }
-
-                let pointee_shape = def.pointee.ok_or(PathAccessError::MissingTarget {
-                    step,
-                    step_index,
-                    shape,
-                })?;
-                let pointee_ptr = unsafe { borrow_fn(data.as_const()) };
-                Ok((unsafe { pointee_ptr.into_mut() }, pointee_shape))
+                })
             } else {
                 Err(PathAccessError::WrongStepKind {
                     step,
@@ -512,23 +486,11 @@ fn apply_step_mut(
             }
         }
 
-        PathStep::Inner => {
-            let inner_shape = shape.inner.ok_or(PathAccessError::MissingTarget {
-                step,
-                step_index,
-                shape,
-            })?;
-
-            let result = unsafe { shape.call_try_borrow_inner(data.as_const()) };
-            match result {
-                Some(Ok(inner_data)) => Ok((inner_data, inner_shape)),
-                _ => Err(PathAccessError::MissingTarget {
-                    step,
-                    step_index,
-                    shape,
-                }),
-            }
-        }
+        PathStep::Inner => Err(PathAccessError::MissingTarget {
+            step,
+            step_index,
+            shape,
+        }),
 
         PathStep::Proxy => Err(PathAccessError::MissingTarget {
             step,

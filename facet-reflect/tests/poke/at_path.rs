@@ -262,9 +262,11 @@ fn at_path_mut_deref_unsupported() {
     let mut path = Path::new(<Box<i32> as Facet>::SHAPE);
     path.push(PathStep::Deref);
 
-    let mut inner_poke = poke.at_path_mut(&path).unwrap();
-    inner_poke.set(99i32).unwrap();
-    assert_eq!(*val, 99);
+    let err = poke.at_path_mut(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        PathAccessError::MissingTarget { step_index: 0, .. }
+    ));
 }
 
 #[test]
@@ -338,16 +340,18 @@ fn at_path_mut_deref_shared_reference_missing_target() {
 }
 
 #[test]
-fn at_path_mut_inner_supported_for_nonzero() {
+fn at_path_mut_inner_missing_target() {
     let mut val = NonZeroU32::new(7).unwrap();
     let poke = Poke::new(&mut val);
 
     let mut path = Path::new(<NonZeroU32 as Facet>::SHAPE);
     path.push(PathStep::Inner);
 
-    let mut inner_poke = poke.at_path_mut(&path).unwrap();
-    inner_poke.set(11u32).unwrap();
-    assert_eq!(val.get(), 11);
+    let err = poke.at_path_mut(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        PathAccessError::MissingTarget { step_index: 0, .. }
+    ));
 }
 
 #[test]
