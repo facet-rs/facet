@@ -1,7 +1,7 @@
 use super::*;
 use crate::HasFields;
+use core::cell::RefCell;
 use hashbrown::{HashMap, HashSet};
-use std::cell::RefCell;
 
 thread_local! {
     static INVARIANT_SUBTREE_CACHE: RefCell<HashMap<facet_core::ConstTypeId, bool>> =
