@@ -192,8 +192,13 @@ unsafe fn option_is_some<T>(option: PtrConst) -> bool {
     unsafe { option.get::<Option<T>>().is_some() }
 }
 
+/// Check if `Option<T>` is Some (C ABI wrapper for vtable callbacks)
+unsafe extern "C" fn option_is_some_vtable<T>(option: PtrConst) -> bool {
+    unsafe { option_is_some::<T>(option) }
+}
+
 /// Get the value from `Option<T>` if present
-unsafe fn option_get_value<T>(option: PtrConst) -> Option<PtrConst> {
+unsafe extern "C" fn option_get_value<T>(option: PtrConst) -> Option<PtrConst> {
     unsafe {
         option
             .get::<Option<T>>()
@@ -203,17 +208,20 @@ unsafe fn option_get_value<T>(option: PtrConst) -> Option<PtrConst> {
 }
 
 /// Initialize `Option<T>` with Some(value)
-unsafe fn option_init_some<T>(option: crate::PtrUninit, value: crate::PtrMut) -> crate::PtrMut {
+unsafe extern "C" fn option_init_some<T>(
+    option: crate::PtrUninit,
+    value: crate::PtrMut,
+) -> crate::PtrMut {
     unsafe { option.put(Option::Some(value.read::<T>())) }
 }
 
 /// Initialize `Option<T>` with None
-unsafe fn option_init_none<T>(option: crate::PtrUninit) -> crate::PtrMut {
+unsafe extern "C" fn option_init_none<T>(option: crate::PtrUninit) -> crate::PtrMut {
     unsafe { option.put(<Option<T>>::None) }
 }
 
 /// Replace `Option<T>` with a new value
-unsafe fn option_replace_with<T>(option: crate::PtrMut, value: Option<crate::PtrMut>) {
+unsafe extern "C" fn option_replace_with<T>(option: crate::PtrMut, value: Option<crate::PtrMut>) {
     unsafe {
         let option = option.as_mut::<Option<T>>();
         match value {
@@ -231,7 +239,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
     const SHAPE: &'static Shape = &const {
         const fn build_option_vtable<T>() -> OptionVTable {
             OptionVTable::builder()
-                .is_some(option_is_some::<T>)
+                .is_some(option_is_some_vtable::<T>)
                 .get_value(option_get_value::<T>)
                 .init_some(option_init_some::<T>)
                 .init_none(option_init_none::<T>)

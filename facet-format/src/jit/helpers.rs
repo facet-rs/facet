@@ -900,8 +900,7 @@ pub unsafe extern "C" fn jit_deserialize_nested(
 /// - `init_none_fn` must be a valid OptionInitNoneFn from the Option's vtable
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_option_init_none(out: *mut u8, init_none_fn: *const u8) {
-    // OptionInitNoneFn uses Rust ABI, not extern "C" - matters on Windows x64
-    type InitNoneFn = unsafe fn(facet_core::PtrUninit) -> facet_core::PtrMut;
+    type InitNoneFn = unsafe extern "C" fn(facet_core::PtrUninit) -> facet_core::PtrMut;
     let func: InitNoneFn = unsafe { std::mem::transmute(init_none_fn) };
     unsafe { func(facet_core::PtrUninit::new(out)) };
 }
@@ -919,9 +918,8 @@ pub unsafe extern "C" fn jit_option_init_some_from_value(
     init_some_fn: *const u8,
 ) {
     // Call init_some(option, value_ptr)
-    // OptionInitSomeFn uses Rust ABI, not extern "C" - matters on Windows x64
     use facet_core::{PtrMut, PtrUninit};
-    type InitSomeFn = unsafe fn(PtrUninit, PtrMut) -> facet_core::PtrMut;
+    type InitSomeFn = unsafe extern "C" fn(PtrUninit, PtrMut) -> facet_core::PtrMut;
     let init_some: InitSomeFn = unsafe { std::mem::transmute(init_some_fn) };
     unsafe { init_some(PtrUninit::new(out), PtrMut::new(value_ptr)) };
 }

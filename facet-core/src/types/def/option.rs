@@ -29,14 +29,14 @@ impl OptionDef {
 /// # Safety
 ///
 /// The `option` parameter must point to aligned, initialized memory of the correct type.
-pub type OptionIsSomeFn = unsafe fn(option: PtrConst) -> bool;
+pub type OptionIsSomeFn = unsafe extern "C" fn(option: PtrConst) -> bool;
 
 /// Get the value contained in an option, if present
 ///
 /// # Safety
 ///
 /// The `option` parameter must point to aligned, initialized memory of the correct type.
-pub type OptionGetValueFn = unsafe fn(option: PtrConst) -> Option<PtrConst>;
+pub type OptionGetValueFn = unsafe extern "C" fn(option: PtrConst) -> Option<PtrConst>;
 
 /// Initialize an option with Some(value)
 ///
@@ -48,7 +48,7 @@ pub type OptionGetValueFn = unsafe fn(option: PtrConst) -> Option<PtrConst>;
 /// with [`core::mem::forget`]) but NOT dropped.
 /// Note: `value` must be PtrMut (not PtrConst) because ownership is transferred and the value
 /// may be dropped later, which requires mutable access.
-pub type OptionInitSomeFn = unsafe fn(option: PtrUninit, value: PtrMut) -> PtrMut;
+pub type OptionInitSomeFn = unsafe extern "C" fn(option: PtrUninit, value: PtrMut) -> PtrMut;
 
 /// Initialize an option with None
 ///
@@ -56,7 +56,7 @@ pub type OptionInitSomeFn = unsafe fn(option: PtrUninit, value: PtrMut) -> PtrMu
 ///
 /// The `option` parameter must point to uninitialized memory of sufficient size.
 /// The function must properly initialize the memory.
-pub type OptionInitNoneFn = unsafe fn(option: PtrUninit) -> PtrMut;
+pub type OptionInitNoneFn = unsafe extern "C" fn(option: PtrUninit) -> PtrMut;
 
 /// Replace an existing option with a new value
 ///
@@ -68,7 +68,7 @@ pub type OptionInitNoneFn = unsafe fn(option: PtrUninit) -> PtrMut;
 /// it should be deallocated afterwards but NOT dropped.
 /// Note: `value` must be PtrMut (not PtrConst) because ownership is transferred and the value
 /// may be dropped later, which requires mutable access.
-pub type OptionReplaceWithFn = unsafe fn(option: PtrMut, value: Option<PtrMut>);
+pub type OptionReplaceWithFn = unsafe extern "C" fn(option: PtrMut, value: Option<PtrMut>);
 
 vtable_def! {
     /// Virtual table for `Option<T>`
