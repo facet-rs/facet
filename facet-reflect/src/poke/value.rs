@@ -237,12 +237,12 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
     /// - `Field` — struct fields and enum variant fields (after `Variant`)
     /// - `Variant` — verify enum variant matches, then allow `Field` access
     /// - `Index` — list/array element access
-    /// - `MapKey` / `MapValue` — map entry key/value access by entry index
     /// - `OptionSome` — navigate into `Some(T)` or return `OptionIsNone`
     /// - `Deref` — pointer descent when mutable deref is supported
     /// - `Inner` — inner-value descent via `try_borrow_inner`
     ///
-    /// `Proxy` is currently not supported for mutable access and returns
+    /// `MapKey`, `MapValue`, and `Proxy` are currently not supported for
+    /// mutable access and return
     /// [`PathAccessError::MissingTarget`].
     ///
     /// # Errors
@@ -456,133 +456,12 @@ fn apply_step_mut(
             }
         }
 
-        PathStep::MapKey(entry_idx) => {
-            let entry_idx = entry_idx as usize;
-            if let Def::Map(def) = shape.def {
-                let len = unsafe { (def.vtable.len)(data.as_const()) };
-                if entry_idx >= len {
-                    return Err(PathAccessError::IndexOutOfBounds {
-                        step,
-                        step_index,
-                        shape,
-                        index: entry_idx,
-                        bound: len,
-                    });
-                }
-
-                let iter_init = def.vtable.iter_vtable.init_with_value.ok_or(
-                    PathAccessError::WrongStepKind {
-                        step,
-                        step_index,
-                        shape,
-                    },
-                )?;
-                let iter = unsafe { iter_init(data.as_const()) };
-
-                struct IterGuard {
-                    iter: PtrMut,
-                    dealloc: unsafe fn(PtrMut),
-                }
-                impl Drop for IterGuard {
-                    fn drop(&mut self) {
-                        unsafe { (self.dealloc)(self.iter) }
-                    }
-                }
-
-                let guard = IterGuard {
-                    iter,
-                    dealloc: def.vtable.iter_vtable.dealloc,
-                };
-
-                for i in 0..=entry_idx {
-                    let (key_ptr, _) = unsafe { (def.vtable.iter_vtable.next)(guard.iter) }.ok_or(
-                        PathAccessError::IndexOutOfBounds {
-                            step,
-                            step_index,
-                            shape,
-                            index: entry_idx,
-                            bound: len,
-                        },
-                    )?;
-                    if i == entry_idx {
-                        return Ok((unsafe { key_ptr.into_mut() }, def.k()));
-                    }
-                }
-
-                Err(PathAccessError::IndexOutOfBounds {
+        PathStep::MapKey(_) | PathStep::MapValue(_) => {
+            if matches!(shape.def, Def::Map(_)) {
+                Err(PathAccessError::MissingTarget {
                     step,
                     step_index,
                     shape,
-                    index: entry_idx,
-                    bound: len,
-                })
-            } else {
-                Err(PathAccessError::WrongStepKind {
-                    step,
-                    step_index,
-                    shape,
-                })
-            }
-        }
-
-        PathStep::MapValue(entry_idx) => {
-            let entry_idx = entry_idx as usize;
-            if let Def::Map(def) = shape.def {
-                let len = unsafe { (def.vtable.len)(data.as_const()) };
-                if entry_idx >= len {
-                    return Err(PathAccessError::IndexOutOfBounds {
-                        step,
-                        step_index,
-                        shape,
-                        index: entry_idx,
-                        bound: len,
-                    });
-                }
-
-                let iter_init = def.vtable.iter_vtable.init_with_value.ok_or(
-                    PathAccessError::WrongStepKind {
-                        step,
-                        step_index,
-                        shape,
-                    },
-                )?;
-                let iter = unsafe { iter_init(data.as_const()) };
-
-                struct IterGuard {
-                    iter: PtrMut,
-                    dealloc: unsafe fn(PtrMut),
-                }
-                impl Drop for IterGuard {
-                    fn drop(&mut self) {
-                        unsafe { (self.dealloc)(self.iter) }
-                    }
-                }
-
-                let guard = IterGuard {
-                    iter,
-                    dealloc: def.vtable.iter_vtable.dealloc,
-                };
-
-                for i in 0..=entry_idx {
-                    let (_, value_ptr) = unsafe { (def.vtable.iter_vtable.next)(guard.iter) }
-                        .ok_or(PathAccessError::IndexOutOfBounds {
-                            step,
-                            step_index,
-                            shape,
-                            index: entry_idx,
-                            bound: len,
-                        })?;
-                    if i == entry_idx {
-                        return Ok((unsafe { value_ptr.into_mut() }, def.v()));
-                    }
-                }
-
-                Err(PathAccessError::IndexOutOfBounds {
-                    step,
-                    step_index,
-                    shape,
-                    index: entry_idx,
-                    bound: len,
                 })
             } else {
                 Err(PathAccessError::WrongStepKind {

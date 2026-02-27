@@ -278,9 +278,11 @@ fn at_path_mut_map_value() {
     path.push(PathStep::Field(0));
     path.push(PathStep::MapValue(0));
 
-    let mut value_poke = poke.at_path_mut(&path).unwrap();
-    value_poke.set(77i32).unwrap();
-    assert_eq!(val.map.values().next().copied(), Some(77));
+    let err = poke.at_path_mut(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        PathAccessError::MissingTarget { step_index: 1, .. }
+    ));
 }
 
 #[test]
@@ -294,9 +296,11 @@ fn at_path_mut_map_key() {
     path.push(PathStep::Field(0));
     path.push(PathStep::MapKey(0));
 
-    let mut key_poke = poke.at_path_mut(&path).unwrap();
-    key_poke.set("z".to_string()).unwrap();
-    assert_eq!(val.map.len(), 1);
+    let err = poke.at_path_mut(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        PathAccessError::MissingTarget { step_index: 1, .. }
+    ));
 }
 
 #[test]
@@ -313,12 +317,7 @@ fn at_path_mut_map_entry_out_of_bounds() {
     let err = poke.at_path_mut(&path).unwrap_err();
     assert!(matches!(
         err,
-        PathAccessError::IndexOutOfBounds {
-            step_index: 1,
-            index: 8,
-            bound: 1,
-            ..
-        }
+        PathAccessError::MissingTarget { step_index: 1, .. }
     ));
 }
 
