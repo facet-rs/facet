@@ -361,6 +361,38 @@ impl PrettyPrinter {
                 }
             }
 
+            (Def::Result(_), _) => {
+                let result = value.into_result().unwrap();
+                self.write_type_name(f, &value)?;
+                if result.is_ok() {
+                    self.write_punctuation(f, " Ok(")?;
+                    if let Some(ok_val) = result.ok() {
+                        self.format_peek_internal_(
+                            ok_val,
+                            f,
+                            visited,
+                            format_depth,
+                            type_depth + 1,
+                            short,
+                        )?;
+                    }
+                    self.write_punctuation(f, ")")?;
+                } else {
+                    self.write_punctuation(f, " Err(")?;
+                    if let Some(err_val) = result.err() {
+                        self.format_peek_internal_(
+                            err_val,
+                            f,
+                            visited,
+                            format_depth,
+                            type_depth + 1,
+                            short,
+                        )?;
+                    }
+                    self.write_punctuation(f, ")")?;
+                }
+            }
+
             (_, Type::Pointer(PointerType::Raw(_) | PointerType::Function(_))) => {
                 self.write_type_name(f, &value)?;
                 let addr = unsafe { value.data().read::<*const ()>() };
@@ -1590,6 +1622,39 @@ impl PrettyPrinter {
                     write!(out, ")")?;
                 } else {
                     write!(out, "None")?;
+                }
+            }
+            (Def::Result(_), _) => {
+                let result = value.into_result().unwrap();
+                write!(out, "{}", shape)?;
+                if result.is_ok() {
+                    write!(out, " Ok(")?;
+                    if let Some(ok_val) = result.ok() {
+                        self.format_unified(
+                            ok_val,
+                            out,
+                            visited,
+                            format_depth,
+                            type_depth + 1,
+                            short,
+                            current_path.clone(),
+                        )?;
+                    }
+                    write!(out, ")")?;
+                } else {
+                    write!(out, " Err(")?;
+                    if let Some(err_val) = result.err() {
+                        self.format_unified(
+                            err_val,
+                            out,
+                            visited,
+                            format_depth,
+                            type_depth + 1,
+                            short,
+                            current_path.clone(),
+                        )?;
+                    }
+                    write!(out, ")")?;
                 }
             }
             (

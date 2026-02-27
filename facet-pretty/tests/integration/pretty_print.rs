@@ -201,6 +201,15 @@ fn test_map() {
     "#);
 }
 
+#[test]
+fn test_result() {
+    let printer = PrettyPrinter::new().with_colors(false.into());
+    let val = Result::<i32, String>::Ok(42);
+    assert_snapshot!(printer.format(&val), @"Result<i32, String> Ok(42)");
+    let val = Result::<i32, String>::Err("error".to_string());
+    assert_snapshot!(printer.format(&val), @"Result<i32, String> Err(\"error\")");
+}
+
 /// Multiple fields pointing to the same interned static string should NOT be flagged as cycles.
 /// This is a regression test for a bug where sibling fields with the same pointer were
 /// incorrectly detected as cycles.
