@@ -154,42 +154,60 @@ fn test_tuple() {
 #[test]
 fn test_str() {
     let printer = PrettyPrinter::new().with_colors(false.into());
-    assert_snapshot!(printer.format(&"hello"));
+    assert_snapshot!(printer.format(&"hello"), @"\"hello\"");
 }
 
 #[test]
 fn test_vec_u8() {
     let printer = PrettyPrinter::new().with_colors(false.into());
     let bytes = vec![1u8, 2u8, 3u8, 4u8];
-    assert_snapshot!(printer.format(&bytes));
+    assert_snapshot!(printer.format(&bytes), @"
+    Vec<u8> [
+       01 02 03 04
+    ]
+    ");
 }
 
 #[test]
 fn test_byte_slice() {
     let printer = PrettyPrinter::new().with_colors(false.into());
     let bytes = [1, 2, 3, 4];
-    assert_snapshot!(printer.format(&bytes[..]));
+    assert_snapshot!(printer.format(&bytes[..]), @"[i32] [1, 2, 3, 4]");
 }
 
 #[test]
 fn test_vec_u32() {
     let printer = PrettyPrinter::new().with_colors(false.into());
     let nums = vec![1u32, 2u32, 3u32, 4u32];
-    assert_snapshot!(printer.format(&nums));
+    assert_snapshot!(printer.format(&nums), @"Vec<u32> [1, 2, 3, 4]");
 }
 
 #[test]
 fn test_u32_slice() {
     let printer = PrettyPrinter::new().with_colors(false.into());
     let nums = [1u32, 2u32, 3u32, 4u32];
-    assert_snapshot!(printer.format(&nums[..]));
+    assert_snapshot!(printer.format(&nums[..]), @"[u32] [1, 2, 3, 4]");
 }
 
 #[test]
 fn test_map() {
     let printer = PrettyPrinter::new().with_colors(false.into());
     let map = BTreeMap::from([("abc", 1), ("def", 2)]);
-    assert_snapshot!(printer.format(&map));
+    assert_snapshot!(printer.format(&map), @r#"
+    BTreeMap<&str, i32> [
+      "abc" => 1,
+      "def" => 2,
+    ]
+    "#);
+}
+
+#[test]
+fn test_result() {
+    let printer = PrettyPrinter::new().with_colors(false.into());
+    let val = Result::<i32, String>::Ok(42);
+    assert_snapshot!(printer.format(&val), @"Result<i32, String> Ok(42)");
+    let val = Result::<i32, String>::Err("error".to_string());
+    assert_snapshot!(printer.format(&val), @"Result<i32, String> Err(\"error\")");
 }
 
 /// Multiple fields pointing to the same interned static string should NOT be flagged as cycles.
@@ -208,5 +226,10 @@ fn test_shared_static_str_not_cycle() {
         b: "same",
     };
     let printer = PrettyPrinter::new().with_colors(false.into());
-    assert_snapshot!(printer.format(&val));
+    assert_snapshot!(printer.format(&val), @r#"
+    MultipleStaticStr {
+      a: "same",
+      b: "same",
+    }
+    "#);
 }
