@@ -147,12 +147,15 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
             unsafe {
                 // Use the vtable's get_value function to get a pointer to the inner T
-                // get_value takes PtrConst and returns Option<PtrConst>
+                // get_value returns null when the option is None.
                 let option_ptr = PtrConst::new(frame.data.as_byte_ptr());
-                let inner_ptr_opt = (option_vtable.get_value)(option_ptr);
-                let inner_ptr = inner_ptr_opt.expect("Option should be Some when re-entering");
+                let inner_ptr = (option_vtable.get_value)(option_ptr);
+                assert!(
+                    !inner_ptr.is_null(),
+                    "Option should be Some when re-entering"
+                );
                 // Convert PtrConst to *mut for PtrUninit::new
-                PtrUninit::new(inner_ptr.as_byte_ptr() as *mut u8)
+                PtrUninit::new(inner_ptr as *mut u8)
             }
         } else {
             // Allocate memory for the inner value

@@ -464,8 +464,12 @@ fn apply_step_mut(
                 // Option is Some — get the inner value pointer.
                 // Use get_value to find the PtrConst, then compute the offset
                 // from the Option base to construct a PtrMut.
-                let inner_ptr_const = unsafe { (option_def.vtable.get_value)(data.as_const()) }
-                    .expect("is_some was true but get_value returned None");
+                let inner_raw_ptr = unsafe { (option_def.vtable.get_value)(data.as_const()) };
+                assert!(
+                    !inner_raw_ptr.is_null(),
+                    "is_some was true but get_value returned null"
+                );
+                let inner_ptr_const = facet_core::PtrConst::new_sized(inner_raw_ptr);
                 // Compute offset from option base to inner value
                 let offset = unsafe {
                     inner_ptr_const

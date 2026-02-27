@@ -35,6 +35,16 @@ fn option_type_name(
     Ok(())
 }
 
+#[inline]
+unsafe fn option_get_value_ptr(def: &OptionDef, ptr: PtrConst) -> Option<PtrConst> {
+    let raw = unsafe { (def.vtable.get_value)(ptr) };
+    if raw.is_null() {
+        None
+    } else {
+        Some(PtrConst::new_sized(raw))
+    }
+}
+
 /// Display for `Option<T>` - delegates to inner T's display if available
 unsafe fn option_display(
     ox: OxPtrConst,
@@ -46,7 +56,7 @@ unsafe fn option_display(
 
     if unsafe { (def.vtable.is_some)(ptr) } {
         // Get the inner value using the vtable
-        let inner_ptr = unsafe { (def.vtable.get_value)(ptr)? };
+        let inner_ptr = unsafe { option_get_value_ptr(def, ptr)? };
         // Delegate to inner type's display
         unsafe { def.t.call_display(inner_ptr, f) }
     } else {
@@ -67,7 +77,7 @@ unsafe fn option_debug(
         // Get the inner value using the vtable
         // SAFETY: is_some returned true, so get_value returns a valid pointer.
         // The caller guarantees the OxPtrConst points to a valid Option.
-        let inner_ptr = unsafe { (def.vtable.get_value)(ptr)? };
+        let inner_ptr = unsafe { option_get_value_ptr(def, ptr)? };
         let inner_ox = unsafe { OxRef::new(inner_ptr, def.t) };
         Some(f.debug_tuple("Some").field(&inner_ox).finish())
     } else {
@@ -84,7 +94,7 @@ unsafe fn option_hash(ox: OxPtrConst, hasher: &mut HashProxy<'_>) -> Option<()> 
     use core::hash::Hash;
     if unsafe { (def.vtable.is_some)(ptr) } {
         1u8.hash(hasher);
-        let inner_ptr = unsafe { (def.vtable.get_value)(ptr)? };
+        let inner_ptr = unsafe { option_get_value_ptr(def, ptr)? };
         unsafe { def.t.call_hash(inner_ptr, hasher)? };
     } else {
         0u8.hash(hasher);
@@ -105,8 +115,8 @@ unsafe fn option_partial_eq(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
     Some(match (a_is_some, b_is_some) {
         (false, false) => true,
         (true, true) => {
-            let a_inner = unsafe { (def.vtable.get_value)(a_ptr)? };
-            let b_inner = unsafe { (def.vtable.get_value)(b_ptr)? };
+            let a_inner = unsafe { option_get_value_ptr(def, a_ptr)? };
+            let b_inner = unsafe { option_get_value_ptr(def, b_ptr)? };
             unsafe { def.t.call_partial_eq(a_inner, b_inner)? }
         }
         _ => false,
@@ -128,8 +138,8 @@ unsafe fn option_partial_cmp(a: OxPtrConst, b: OxPtrConst) -> Option<Option<Orde
         (false, true) => Some(Ordering::Less),
         (true, false) => Some(Ordering::Greater),
         (true, true) => {
-            let a_inner = unsafe { (def.vtable.get_value)(a_ptr)? };
-            let b_inner = unsafe { (def.vtable.get_value)(b_ptr)? };
+            let a_inner = unsafe { option_get_value_ptr(def, a_ptr)? };
+            let b_inner = unsafe { option_get_value_ptr(def, b_ptr)? };
             unsafe { def.t.call_partial_cmp(a_inner, b_inner)? }
         }
     })
@@ -150,8 +160,8 @@ unsafe fn option_cmp(a: OxPtrConst, b: OxPtrConst) -> Option<Ordering> {
         (false, true) => Ordering::Less,
         (true, false) => Ordering::Greater,
         (true, true) => {
-            let a_inner = unsafe { (def.vtable.get_value)(a_ptr)? };
-            let b_inner = unsafe { (def.vtable.get_value)(b_ptr)? };
+            let a_inner = unsafe { option_get_value_ptr(def, a_ptr)? };
+            let b_inner = unsafe { option_get_value_ptr(def, b_ptr)? };
             unsafe { def.t.call_cmp(a_inner, b_inner)? }
         }
     })
@@ -178,7 +188,7 @@ unsafe fn option_drop(ox: OxPtrMut) {
 unsafe fn option_drop_inner(ptr: crate::PtrMut, def: &OptionDef) {
     // Use the replace_with vtable function to replace Some with None.
     // This properly handles the drop of the inner value.
-    unsafe { (def.vtable.replace_with)(ptr, None) };
+    unsafe { (def.vtable.replace_with)(ptr, core::ptr::null_mut()) };
 }
 
 /// Default for `Option<T>` - always None (no `T::Default` requirement)
@@ -198,12 +208,12 @@ unsafe extern "C" fn option_is_some_vtable<T>(option: PtrConst) -> bool {
 }
 
 /// Get the value from `Option<T>` if present
-unsafe extern "C" fn option_get_value<T>(option: PtrConst) -> Option<PtrConst> {
+unsafe extern "C" fn option_get_value<T>(option: PtrConst) -> *const u8 {
     unsafe {
         option
             .get::<Option<T>>()
             .as_ref()
-            .map(|t| PtrConst::new(t as *const T))
+            .map_or(core::ptr::null(), |t| t as *const T as *const u8)
     }
 }
 
@@ -221,17 +231,14 @@ unsafe extern "C" fn option_init_none<T>(option: crate::PtrUninit) -> crate::Ptr
 }
 
 /// Replace `Option<T>` with a new value
-unsafe extern "C" fn option_replace_with<T>(option: crate::PtrMut, value: Option<crate::PtrMut>) {
+unsafe extern "C" fn option_replace_with<T>(option: crate::PtrMut, value: *mut u8) {
     unsafe {
         let option = option.as_mut::<Option<T>>();
-        match value {
-            Some(value) => {
-                option.replace(value.read::<T>());
-            }
-            None => {
-                option.take();
-            }
-        };
+        if value.is_null() {
+            option.take();
+        } else {
+            option.replace(crate::PtrMut::new_sized(value).read::<T>());
+        }
     }
 }
 

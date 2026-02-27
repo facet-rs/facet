@@ -31,12 +31,13 @@ impl OptionDef {
 /// The `option` parameter must point to aligned, initialized memory of the correct type.
 pub type OptionIsSomeFn = unsafe extern "C" fn(option: PtrConst) -> bool;
 
-/// Get the value contained in an option, if present
+/// Get the value contained in an option, if present.
+/// Returns null if the option is `None`.
 ///
 /// # Safety
 ///
 /// The `option` parameter must point to aligned, initialized memory of the correct type.
-pub type OptionGetValueFn = unsafe extern "C" fn(option: PtrConst) -> Option<PtrConst>;
+pub type OptionGetValueFn = unsafe extern "C" fn(option: PtrConst) -> *const u8;
 
 /// Initialize an option with Some(value)
 ///
@@ -58,7 +59,8 @@ pub type OptionInitSomeFn = unsafe extern "C" fn(option: PtrUninit, value: PtrMu
 /// The function must properly initialize the memory.
 pub type OptionInitNoneFn = unsafe extern "C" fn(option: PtrUninit) -> PtrMut;
 
-/// Replace an existing option with a new value
+/// Replace an existing option with a new value.
+/// Pass a null pointer to set the option to `None`.
 ///
 /// # Safety
 ///
@@ -68,7 +70,7 @@ pub type OptionInitNoneFn = unsafe extern "C" fn(option: PtrUninit) -> PtrMut;
 /// it should be deallocated afterwards but NOT dropped.
 /// Note: `value` must be PtrMut (not PtrConst) because ownership is transferred and the value
 /// may be dropped later, which requires mutable access.
-pub type OptionReplaceWithFn = unsafe extern "C" fn(option: PtrMut, value: Option<PtrMut>);
+pub type OptionReplaceWithFn = unsafe extern "C" fn(option: PtrMut, value: *mut u8);
 
 vtable_def! {
     /// Virtual table for `Option<T>`
