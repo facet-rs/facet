@@ -1,6 +1,0 @@
----
-source: facet-pretty/tests/pretty_print.rs
-assertion_line: 171
-expression: "printer.format(&bytes[..])"
----
-[i32] [1, 2, 3, 4]
