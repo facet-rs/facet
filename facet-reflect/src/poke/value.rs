@@ -266,10 +266,11 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
     /// - `Field` — struct fields and enum variant fields (after `Variant`)
     /// - `Variant` — verify enum variant matches, then allow `Field` access
     /// - `Index` — list/array element access
+    /// - `OptionSome` — navigate into `Some(T)` or return `OptionIsNone`
     ///
-    /// Steps like `MapKey`, `MapValue`, `OptionSome`, `Deref`, `Inner`, and
-    /// `Proxy` are not supported for mutable access and will return
-    /// [`PathAccessError::WrongStepKind`].
+    /// `MapKey`, `MapValue`, `Deref`, `Inner`, and `Proxy` are currently not
+    /// supported for mutable access and return
+    /// [`PathAccessError::MissingTarget`].
     ///
     /// # Errors
     ///
@@ -482,11 +483,45 @@ fn apply_step_mut(
             }
         }
 
-        PathStep::MapKey(_)
-        | PathStep::MapValue(_)
-        | PathStep::Deref
-        | PathStep::Inner
-        | PathStep::Proxy => Err(PathAccessError::WrongStepKind {
+        PathStep::MapKey(_) | PathStep::MapValue(_) => {
+            if matches!(shape.def, Def::Map(_)) {
+                Err(PathAccessError::MissingTarget {
+                    step,
+                    step_index,
+                    shape,
+                })
+            } else {
+                Err(PathAccessError::WrongStepKind {
+                    step,
+                    step_index,
+                    shape,
+                })
+            }
+        }
+
+        PathStep::Deref => {
+            if matches!(shape.def, Def::Pointer(_)) {
+                Err(PathAccessError::MissingTarget {
+                    step,
+                    step_index,
+                    shape,
+                })
+            } else {
+                Err(PathAccessError::WrongStepKind {
+                    step,
+                    step_index,
+                    shape,
+                })
+            }
+        }
+
+        PathStep::Inner => Err(PathAccessError::MissingTarget {
+            step,
+            step_index,
+            shape,
+        }),
+
+        PathStep::Proxy => Err(PathAccessError::MissingTarget {
             step,
             step_index,
             shape,

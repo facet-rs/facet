@@ -1,3 +1,5 @@
+use core::num::NonZeroU32;
+
 use facet::Facet;
 use facet_path::{Path, PathAccessError, PathStep};
 use facet_reflect::Poke;
@@ -15,6 +17,11 @@ struct Outer {
     name: String,
     inner: Inner,
     items: Vec<i32>,
+}
+
+#[derive(Facet, Debug)]
+struct WithMap {
+    map: std::collections::HashMap<String, i32>,
 }
 
 #[derive(Facet, Debug, PartialEq)]
@@ -256,5 +263,108 @@ fn at_path_mut_deref_unsupported() {
     path.push(PathStep::Deref);
 
     let err = poke.at_path_mut(&path).unwrap_err();
-    assert!(matches!(err, PathAccessError::WrongStepKind { .. }));
+    assert!(matches!(
+        err,
+        PathAccessError::MissingTarget { step_index: 0, .. }
+    ));
+}
+
+#[test]
+fn at_path_mut_map_value() {
+    let mut map = std::collections::HashMap::new();
+    map.insert("a".to_string(), 10);
+    let mut val = WithMap { map };
+    let poke = Poke::new(&mut val);
+
+    let mut path = Path::new(<WithMap as Facet>::SHAPE);
+    path.push(PathStep::Field(0));
+    path.push(PathStep::MapValue(0));
+
+    let err = poke.at_path_mut(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        PathAccessError::MissingTarget { step_index: 1, .. }
+    ));
+}
+
+#[test]
+fn at_path_mut_map_key() {
+    let mut map = std::collections::HashMap::new();
+    map.insert("a".to_string(), 10);
+    let mut val = WithMap { map };
+    let poke = Poke::new(&mut val);
+
+    let mut path = Path::new(<WithMap as Facet>::SHAPE);
+    path.push(PathStep::Field(0));
+    path.push(PathStep::MapKey(0));
+
+    let err = poke.at_path_mut(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        PathAccessError::MissingTarget { step_index: 1, .. }
+    ));
+}
+
+#[test]
+fn at_path_mut_map_entry_out_of_bounds() {
+    let mut map = std::collections::HashMap::new();
+    map.insert("a".to_string(), 10);
+    let mut val = WithMap { map };
+    let poke = Poke::new(&mut val);
+
+    let mut path = Path::new(<WithMap as Facet>::SHAPE);
+    path.push(PathStep::Field(0));
+    path.push(PathStep::MapValue(8));
+
+    let err = poke.at_path_mut(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        PathAccessError::MissingTarget { step_index: 1, .. }
+    ));
+}
+
+#[test]
+fn at_path_mut_deref_shared_reference_missing_target() {
+    let inner = 42i32;
+    let mut val = &inner;
+    let poke = Poke::new(&mut val);
+
+    let mut path = Path::new(<&i32 as Facet>::SHAPE);
+    path.push(PathStep::Deref);
+
+    let err = poke.at_path_mut(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        PathAccessError::MissingTarget { step_index: 0, .. }
+    ));
+}
+
+#[test]
+fn at_path_mut_inner_missing_target() {
+    let mut val = NonZeroU32::new(7).unwrap();
+    let poke = Poke::new(&mut val);
+
+    let mut path = Path::new(<NonZeroU32 as Facet>::SHAPE);
+    path.push(PathStep::Inner);
+
+    let err = poke.at_path_mut(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        PathAccessError::MissingTarget { step_index: 0, .. }
+    ));
+}
+
+#[test]
+fn at_path_mut_proxy_missing_target() {
+    let mut val = 42i32;
+    let poke = Poke::new(&mut val);
+
+    let mut path = Path::new(<i32 as Facet>::SHAPE);
+    path.push(PathStep::Proxy);
+
+    let err = poke.at_path_mut(&path).unwrap_err();
+    assert!(matches!(
+        err,
+        PathAccessError::MissingTarget { step_index: 0, .. }
+    ));
 }
