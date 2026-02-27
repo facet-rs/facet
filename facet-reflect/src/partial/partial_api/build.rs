@@ -96,11 +96,11 @@ fn validate_invariants_recursive<'mem, 'facet>(
         }
         _ => match value.shape().def {
             Def::List(_) | Def::Array(_) | Def::Slice(_) => {
-                if let Ok(list_like) = value.into_list_like() {
-                    if shape_subtree_has_invariants(list_like.def.t(), shape_cache) {
-                        for elem in list_like.iter() {
-                            validate_invariants_recursive(elem, visited, shape_cache)?;
-                        }
+                if let Ok(list_like) = value.into_list_like()
+                    && shape_subtree_has_invariants(list_like.def.t(), shape_cache)
+                {
+                    for elem in list_like.iter() {
+                        validate_invariants_recursive(elem, visited, shape_cache)?;
                     }
                 }
             }
@@ -122,11 +122,11 @@ fn validate_invariants_recursive<'mem, 'facet>(
                 }
             }
             Def::Set(_) => {
-                if let Ok(set) = value.into_set() {
-                    if shape_subtree_has_invariants(set.def().t(), shape_cache) {
-                        for elem in set.iter() {
-                            validate_invariants_recursive(elem, visited, shape_cache)?;
-                        }
+                if let Ok(set) = value.into_set()
+                    && shape_subtree_has_invariants(set.def().t(), shape_cache)
+                {
+                    for elem in set.iter() {
+                        validate_invariants_recursive(elem, visited, shape_cache)?;
                     }
                 }
             }
