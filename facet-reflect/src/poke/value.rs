@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use facet_core::{Def, Facet, PtrConst, PtrMut, Shape, Type, UserType};
+use facet_core::{Def, Facet, KnownPointer, PtrConst, PtrMut, Shape, Type, UserType};
 use facet_path::{Path, PathAccessError, PathStep};
 
 use crate::{ReflectError, ReflectErrorKind, peek::VariantError};
@@ -237,10 +237,13 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
     /// - `Field` — struct fields and enum variant fields (after `Variant`)
     /// - `Variant` — verify enum variant matches, then allow `Field` access
     /// - `Index` — list/array element access
+    /// - `MapKey` / `MapValue` — map entry key/value access by entry index
+    /// - `OptionSome` — navigate into `Some(T)` or return `OptionIsNone`
+    /// - `Deref` — pointer descent when mutable deref is supported
+    /// - `Inner` — inner-value descent via `try_borrow_inner`
     ///
-    /// Steps like `MapKey`, `MapValue`, `OptionSome`, `Deref`, `Inner`, and
-    /// `Proxy` are not supported for mutable access and will return
-    /// [`PathAccessError::WrongStepKind`].
+    /// `Proxy` is currently not supported for mutable access and returns
+    /// [`PathAccessError::MissingTarget`].
     ///
     /// # Errors
     ///
@@ -453,11 +456,202 @@ fn apply_step_mut(
             }
         }
 
-        PathStep::MapKey(_)
-        | PathStep::MapValue(_)
-        | PathStep::Deref
-        | PathStep::Inner
-        | PathStep::Proxy => Err(PathAccessError::WrongStepKind {
+        PathStep::MapKey(entry_idx) => {
+            let entry_idx = entry_idx as usize;
+            if let Def::Map(def) = shape.def {
+                let len = unsafe { (def.vtable.len)(data.as_const()) };
+                if entry_idx >= len {
+                    return Err(PathAccessError::IndexOutOfBounds {
+                        step,
+                        step_index,
+                        shape,
+                        index: entry_idx,
+                        bound: len,
+                    });
+                }
+
+                let iter_init = def.vtable.iter_vtable.init_with_value.ok_or(
+                    PathAccessError::WrongStepKind {
+                        step,
+                        step_index,
+                        shape,
+                    },
+                )?;
+                let iter = unsafe { iter_init(data.as_const()) };
+
+                struct IterGuard {
+                    iter: PtrMut,
+                    dealloc: unsafe fn(PtrMut),
+                }
+                impl Drop for IterGuard {
+                    fn drop(&mut self) {
+                        unsafe { (self.dealloc)(self.iter) }
+                    }
+                }
+
+                let guard = IterGuard {
+                    iter,
+                    dealloc: def.vtable.iter_vtable.dealloc,
+                };
+
+                for i in 0..=entry_idx {
+                    let (key_ptr, _) = unsafe { (def.vtable.iter_vtable.next)(guard.iter) }.ok_or(
+                        PathAccessError::IndexOutOfBounds {
+                            step,
+                            step_index,
+                            shape,
+                            index: entry_idx,
+                            bound: len,
+                        },
+                    )?;
+                    if i == entry_idx {
+                        return Ok((unsafe { key_ptr.into_mut() }, def.k()));
+                    }
+                }
+
+                Err(PathAccessError::IndexOutOfBounds {
+                    step,
+                    step_index,
+                    shape,
+                    index: entry_idx,
+                    bound: len,
+                })
+            } else {
+                Err(PathAccessError::WrongStepKind {
+                    step,
+                    step_index,
+                    shape,
+                })
+            }
+        }
+
+        PathStep::MapValue(entry_idx) => {
+            let entry_idx = entry_idx as usize;
+            if let Def::Map(def) = shape.def {
+                let len = unsafe { (def.vtable.len)(data.as_const()) };
+                if entry_idx >= len {
+                    return Err(PathAccessError::IndexOutOfBounds {
+                        step,
+                        step_index,
+                        shape,
+                        index: entry_idx,
+                        bound: len,
+                    });
+                }
+
+                let iter_init = def.vtable.iter_vtable.init_with_value.ok_or(
+                    PathAccessError::WrongStepKind {
+                        step,
+                        step_index,
+                        shape,
+                    },
+                )?;
+                let iter = unsafe { iter_init(data.as_const()) };
+
+                struct IterGuard {
+                    iter: PtrMut,
+                    dealloc: unsafe fn(PtrMut),
+                }
+                impl Drop for IterGuard {
+                    fn drop(&mut self) {
+                        unsafe { (self.dealloc)(self.iter) }
+                    }
+                }
+
+                let guard = IterGuard {
+                    iter,
+                    dealloc: def.vtable.iter_vtable.dealloc,
+                };
+
+                for i in 0..=entry_idx {
+                    let (_, value_ptr) = unsafe { (def.vtable.iter_vtable.next)(guard.iter) }
+                        .ok_or(PathAccessError::IndexOutOfBounds {
+                            step,
+                            step_index,
+                            shape,
+                            index: entry_idx,
+                            bound: len,
+                        })?;
+                    if i == entry_idx {
+                        return Ok((unsafe { value_ptr.into_mut() }, def.v()));
+                    }
+                }
+
+                Err(PathAccessError::IndexOutOfBounds {
+                    step,
+                    step_index,
+                    shape,
+                    index: entry_idx,
+                    bound: len,
+                })
+            } else {
+                Err(PathAccessError::WrongStepKind {
+                    step,
+                    step_index,
+                    shape,
+                })
+            }
+        }
+
+        PathStep::Deref => {
+            if let Def::Pointer(def) = shape.def {
+                let borrow_fn = def.vtable.borrow_fn.ok_or(PathAccessError::MissingTarget {
+                    step,
+                    step_index,
+                    shape,
+                })?;
+
+                let known = def.known.ok_or(PathAccessError::MissingTarget {
+                    step,
+                    step_index,
+                    shape,
+                })?;
+                // Only descend mutably through pointer kinds that guarantee unique
+                // ownership at this point. Shared pointers (Rc/Arc/&T) expose only
+                // shared borrows through the vtable and are treated as unsupported.
+                if !matches!(known, KnownPointer::Box | KnownPointer::ExclusiveReference) {
+                    return Err(PathAccessError::MissingTarget {
+                        step,
+                        step_index,
+                        shape,
+                    });
+                }
+
+                let pointee_shape = def.pointee.ok_or(PathAccessError::MissingTarget {
+                    step,
+                    step_index,
+                    shape,
+                })?;
+                let pointee_ptr = unsafe { borrow_fn(data.as_const()) };
+                Ok((unsafe { pointee_ptr.into_mut() }, pointee_shape))
+            } else {
+                Err(PathAccessError::WrongStepKind {
+                    step,
+                    step_index,
+                    shape,
+                })
+            }
+        }
+
+        PathStep::Inner => {
+            let inner_shape = shape.inner.ok_or(PathAccessError::MissingTarget {
+                step,
+                step_index,
+                shape,
+            })?;
+
+            let result = unsafe { shape.call_try_borrow_inner(data.as_const()) };
+            match result {
+                Some(Ok(inner_data)) => Ok((inner_data, inner_shape)),
+                _ => Err(PathAccessError::MissingTarget {
+                    step,
+                    step_index,
+                    shape,
+                }),
+            }
+        }
+
+        PathStep::Proxy => Err(PathAccessError::MissingTarget {
             step,
             step_index,
             shape,
