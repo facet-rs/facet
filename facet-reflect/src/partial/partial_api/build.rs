@@ -1,11 +1,25 @@
 use super::*;
 use crate::HasFields;
+#[cfg(feature = "std")]
+use core::cell::RefCell;
 use hashbrown::{HashMap, HashSet};
+
+#[cfg(feature = "std")]
+thread_local! {
+    static INVARIANT_SUBTREE_CACHE: RefCell<HashMap<facet_core::ConstTypeId, bool>> =
+        RefCell::new(HashMap::new());
+}
 
 fn shape_subtree_has_invariants(
     shape: &'static Shape,
     cache: &mut HashMap<facet_core::ConstTypeId, Option<bool>>,
 ) -> bool {
+    #[cfg(feature = "std")]
+    if let Some(cached) = INVARIANT_SUBTREE_CACHE.with(|memo| memo.borrow().get(&shape.id).copied())
+    {
+        return cached;
+    }
+
     if let Some(cached) = cache.get(&shape.id) {
         // `None` means we're currently evaluating this shape in a recursive cycle.
         // Returning false here breaks recursion; direct invariants are checked before descent.
@@ -51,6 +65,10 @@ fn shape_subtree_has_invariants(
         }
     };
 
+    #[cfg(feature = "std")]
+    INVARIANT_SUBTREE_CACHE.with(|memo| {
+        memo.borrow_mut().insert(shape.id, has_invariants);
+    });
     cache.insert(shape.id, Some(has_invariants));
     has_invariants
 }
