@@ -342,8 +342,16 @@ impl SchemaContext {
 
             // Signed integers
             "i8" => (Some(SchemaType::Integer.into()), Some(i8::MIN as i64), None),
-            "i16" => (Some(SchemaType::Integer.into()), Some(i16::MIN as i64), None),
-            "i32" => (Some(SchemaType::Integer.into()), Some(i32::MIN as i64), None),
+            "i16" => (
+                Some(SchemaType::Integer.into()),
+                Some(i16::MIN as i64),
+                None,
+            ),
+            "i32" => (
+                Some(SchemaType::Integer.into()),
+                Some(i32::MIN as i64),
+                None,
+            ),
             "i64" => (Some(SchemaType::Integer.into()), Some(i64::MIN), None),
             "i128" => (Some(SchemaType::Integer.into()), Some(i64::MIN), None),
             "isize" => (Some(SchemaType::Integer.into()), Some(i64::MIN), None),
