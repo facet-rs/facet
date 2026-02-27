@@ -1,15 +1,73 @@
 use super::*;
 use crate::HasFields;
+use hashbrown::{HashMap, HashSet};
+
+fn shape_subtree_has_invariants(
+    shape: &'static Shape,
+    cache: &mut HashMap<facet_core::ConstTypeId, Option<bool>>,
+) -> bool {
+    if let Some(cached) = cache.get(&shape.id) {
+        // `None` means we're currently evaluating this shape in a recursive cycle.
+        // Returning false here breaks recursion; direct invariants are checked before descent.
+        return cached.unwrap_or(false);
+    }
+
+    cache.insert(shape.id, None);
+
+    let has_invariants = if shape.vtable.has_invariants() {
+        true
+    } else {
+        match shape.ty {
+            Type::User(UserType::Struct(struct_ty)) => struct_ty
+                .fields
+                .iter()
+                .any(|field| shape_subtree_has_invariants(field.shape.get(), cache)),
+            Type::User(UserType::Enum(enum_ty)) => enum_ty.variants.iter().any(|variant| {
+                variant
+                    .data
+                    .fields
+                    .iter()
+                    .any(|field| shape_subtree_has_invariants(field.shape.get(), cache))
+            }),
+            _ => match shape.def {
+                Def::List(list) => shape_subtree_has_invariants(list.t(), cache),
+                Def::Array(array) => shape_subtree_has_invariants(array.t(), cache),
+                Def::Slice(slice) => shape_subtree_has_invariants(slice.t(), cache),
+                Def::Map(map) => {
+                    shape_subtree_has_invariants(map.k(), cache)
+                        || shape_subtree_has_invariants(map.v(), cache)
+                }
+                Def::Set(set) => shape_subtree_has_invariants(set.t(), cache),
+                Def::Option(opt) => shape_subtree_has_invariants(opt.t(), cache),
+                Def::Result(result) => {
+                    shape_subtree_has_invariants(result.t(), cache)
+                        || shape_subtree_has_invariants(result.e(), cache)
+                }
+                Def::Pointer(ptr) => ptr
+                    .pointee()
+                    .is_some_and(|pointee| shape_subtree_has_invariants(pointee, cache)),
+                _ => false,
+            },
+        }
+    };
+
+    cache.insert(shape.id, Some(has_invariants));
+    has_invariants
+}
 
 fn validate_invariants_recursive<'mem, 'facet>(
     value: Peek<'mem, 'facet>,
-    visited: &mut Vec<crate::ValueId>,
+    visited: &mut HashSet<crate::ValueId>,
+    shape_cache: &mut HashMap<facet_core::ConstTypeId, Option<bool>>,
 ) -> Result<(), (&'static Shape, String)> {
-    let id = value.id();
-    if visited.contains(&id) {
+    if !shape_subtree_has_invariants(value.shape(), shape_cache) {
         return Ok(());
     }
-    visited.push(id);
+
+    let id = value.id();
+    if !visited.insert(id) {
+        return Ok(());
+    }
 
     if let Some(result) = unsafe { value.shape().call_invariants(value.data()) }
         && let Err(message) = result
@@ -20,63 +78,82 @@ fn validate_invariants_recursive<'mem, 'facet>(
     match value.shape().ty {
         Type::User(UserType::Struct(_)) => {
             if let Ok(peek_struct) = value.into_struct() {
-                for (_field, child) in peek_struct.fields() {
-                    validate_invariants_recursive(child, visited)?;
+                for (field, child) in peek_struct.fields() {
+                    if shape_subtree_has_invariants(field.shape.get(), shape_cache) {
+                        validate_invariants_recursive(child, visited, shape_cache)?;
+                    }
                 }
             }
         }
         Type::User(UserType::Enum(_)) => {
             if let Ok(peek_enum) = value.into_enum() {
-                for (_field, child) in peek_enum.fields() {
-                    validate_invariants_recursive(child, visited)?;
+                for (field, child) in peek_enum.fields() {
+                    if shape_subtree_has_invariants(field.shape.get(), shape_cache) {
+                        validate_invariants_recursive(child, visited, shape_cache)?;
+                    }
                 }
             }
         }
         _ => match value.shape().def {
             Def::List(_) | Def::Array(_) | Def::Slice(_) => {
                 if let Ok(list_like) = value.into_list_like() {
-                    for elem in list_like.iter() {
-                        validate_invariants_recursive(elem, visited)?;
+                    if shape_subtree_has_invariants(list_like.def.t(), shape_cache) {
+                        for elem in list_like.iter() {
+                            validate_invariants_recursive(elem, visited, shape_cache)?;
+                        }
                     }
                 }
             }
             Def::Map(_) => {
                 if let Ok(map) = value.into_map() {
-                    for (key, val) in map.iter() {
-                        validate_invariants_recursive(key, visited)?;
-                        validate_invariants_recursive(val, visited)?;
+                    let def = map.def();
+                    let key_has_invariants = shape_subtree_has_invariants(def.k(), shape_cache);
+                    let value_has_invariants = shape_subtree_has_invariants(def.v(), shape_cache);
+                    if key_has_invariants || value_has_invariants {
+                        for (key, val) in map.iter() {
+                            if key_has_invariants {
+                                validate_invariants_recursive(key, visited, shape_cache)?;
+                            }
+                            if value_has_invariants {
+                                validate_invariants_recursive(val, visited, shape_cache)?;
+                            }
+                        }
                     }
                 }
             }
             Def::Set(_) => {
                 if let Ok(set) = value.into_set() {
-                    for elem in set.iter() {
-                        validate_invariants_recursive(elem, visited)?;
+                    if shape_subtree_has_invariants(set.def().t(), shape_cache) {
+                        for elem in set.iter() {
+                            validate_invariants_recursive(elem, visited, shape_cache)?;
+                        }
                     }
                 }
             }
             Def::Option(_) => {
                 if let Ok(opt) = value.into_option()
                     && let Some(inner) = opt.value()
+                    && shape_subtree_has_invariants(inner.shape(), shape_cache)
                 {
-                    validate_invariants_recursive(inner, visited)?;
+                    validate_invariants_recursive(inner, visited, shape_cache)?;
                 }
             }
             Def::Result(_) => {
                 if let Ok(result) = value.into_result() {
                     if let Some(ok) = result.ok() {
-                        validate_invariants_recursive(ok, visited)?;
+                        validate_invariants_recursive(ok, visited, shape_cache)?;
                     }
                     if let Some(err) = result.err() {
-                        validate_invariants_recursive(err, visited)?;
+                        validate_invariants_recursive(err, visited, shape_cache)?;
                     }
                 }
             }
             Def::Pointer(_) => {
                 if let Ok(ptr) = value.into_pointer()
                     && let Some(inner) = ptr.borrow_inner()
+                    && shape_subtree_has_invariants(inner.shape(), shape_cache)
                 {
-                    validate_invariants_recursive(inner, visited)?;
+                    validate_invariants_recursive(inner, visited, shape_cache)?;
                 }
             }
             _ => {}
@@ -175,8 +252,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Safety: the value is fully initialized at this point.
         let value_ptr = unsafe { frame.data.assume_init().as_const() };
         let root = unsafe { Peek::unchecked_new(value_ptr, frame.allocated.shape()) };
-        let mut visited = Vec::new();
-        if let Err((shape, message)) = validate_invariants_recursive(root, &mut visited) {
+        let mut visited = HashSet::new();
+        let mut shape_cache = HashMap::new();
+        if let Err((shape, message)) =
+            validate_invariants_recursive(root, &mut visited, &mut shape_cache)
+        {
             // Put the frame back so Drop can handle cleanup properly
             self.frames_mut().push(frame);
             return Err(self.err(ReflectErrorKind::UserInvariantFailed { message, shape }));
@@ -335,8 +415,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Safety: the value is fully initialized at this point.
         let value_ptr = unsafe { frame.data.assume_init().as_const() };
         let root = unsafe { Peek::unchecked_new(value_ptr, frame.allocated.shape()) };
-        let mut visited = Vec::new();
-        if let Err((shape, message)) = validate_invariants_recursive(root, &mut visited) {
+        let mut visited = HashSet::new();
+        let mut shape_cache = HashMap::new();
+        if let Err((shape, message)) =
+            validate_invariants_recursive(root, &mut visited, &mut shape_cache)
+        {
             // Put the frame back so Drop can handle cleanup properly
             self.frames_mut().push(frame);
             return Err(self.err(ReflectErrorKind::UserInvariantFailed { message, shape }));
