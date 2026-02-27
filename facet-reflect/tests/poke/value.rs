@@ -1,5 +1,15 @@
-use facet::Facet;
+use facet::{Facet, Variance};
 use facet_reflect::{Poke, ReflectErrorKind};
+
+#[derive(Debug, Facet)]
+struct Borrowed<'a> {
+    data: &'a str,
+}
+
+#[derive(Debug, Facet)]
+struct WithMutPtr {
+    ptr: *mut i32,
+}
 
 #[test]
 fn poke_pod_struct() {
@@ -127,4 +137,40 @@ fn poke_as_peek() {
 
     let peek = poke.as_peek();
     assert_eq!(peek.shape(), Point::SHAPE);
+}
+
+#[test]
+fn poke_variance_query() {
+    let mut borrowed = Borrowed { data: "hello" };
+    let poke = Poke::new(&mut borrowed);
+    assert_eq!(poke.variance(), Variance::Covariant);
+
+    let mut with_ptr = WithMutPtr {
+        ptr: std::ptr::null_mut(),
+    };
+    let poke = Poke::new(&mut with_ptr);
+    assert_eq!(poke.variance(), Variance::Invariant);
+}
+
+#[test]
+fn poke_try_reborrow_covariant() {
+    static DATA: &str = "hello";
+    let mut borrowed: Borrowed<'static> = Borrowed { data: DATA };
+    let mut poke: Poke<'_, 'static> = Poke::new(&mut borrowed);
+
+    let mut reborrowed = poke.try_reborrow().expect("Borrowed is covariant");
+    reborrowed.set(Borrowed { data: "world" }).unwrap();
+
+    assert_eq!(borrowed.data, "world");
+}
+
+#[test]
+fn poke_try_reborrow_invariant_returns_none() {
+    let mut with_ptr = WithMutPtr {
+        ptr: std::ptr::null_mut(),
+    };
+    let mut poke: Poke<'_, 'static> = Poke::new(&mut with_ptr);
+
+    let result: Option<Poke<'_, '_>> = poke.try_reborrow();
+    assert!(result.is_none());
 }

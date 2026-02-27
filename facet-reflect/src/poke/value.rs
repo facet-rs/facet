@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 
-use facet_core::{Def, Facet, PtrConst, PtrMut, Shape, Type, UserType};
+use facet_core::{Def, Facet, PtrConst, PtrMut, Shape, Type, UserType, Variance};
 use facet_path::{Path, PathAccessError, PathStep};
 
 use crate::{ReflectError, ReflectErrorKind, peek::VariantError};
@@ -106,6 +106,35 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
     #[inline(always)]
     pub const fn data_mut(&mut self) -> PtrMut {
         self.data
+    }
+
+    /// Returns the computed variance of the underlying type.
+    #[inline]
+    pub fn variance(&self) -> Variance {
+        self.shape.computed_variance()
+    }
+
+    /// Attempts to reborrow this mutable view as an owned `Poke`.
+    ///
+    /// This is useful when only `&mut Poke` is available (e.g. through `DerefMut`)
+    /// but an API requires ownership of `Poke`.
+    ///
+    /// Returns `Some` if the underlying type can shrink the `'facet` lifetime
+    /// (covariant or bivariant), or `None` otherwise.
+    #[inline]
+    pub fn try_reborrow<'shorter>(&mut self) -> Option<Poke<'_, 'shorter>>
+    where
+        'facet: 'shorter,
+    {
+        if self.variance().can_shrink() {
+            Some(Poke {
+                data: self.data,
+                shape: self.shape,
+                _marker: PhantomData,
+            })
+        } else {
+            None
+        }
     }
 
     /// Returns true if this value is a struct.

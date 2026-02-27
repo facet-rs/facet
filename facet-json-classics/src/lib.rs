@@ -17,7 +17,10 @@ fn decompress(compressed: &[u8]) -> Vec<u8> {
 ///
 /// Contains event/performance data with many nested structs, hashmaps, and arrays.
 pub static CITM_CATALOG: LazyLock<String> = LazyLock::new(|| {
-    let compressed = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/citm_catalog.json.br"));
+    let compressed = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fixtures/citm_catalog.json.br"
+    ));
     String::from_utf8(decompress(compressed)).expect("citm_catalog.json should be valid UTF-8")
 });
 
@@ -25,7 +28,10 @@ pub static CITM_CATALOG: LazyLock<String> = LazyLock::new(|| {
 ///
 /// Contains tweet data with nested user objects, entities, and optional fields.
 pub static TWITTER: LazyLock<String> = LazyLock::new(|| {
-    let compressed = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/twitter.json.br"));
+    let compressed = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fixtures/twitter.json.br"
+    ));
     String::from_utf8(decompress(compressed)).expect("twitter.json should be valid UTF-8")
 });
 
@@ -33,6 +39,9 @@ pub static TWITTER: LazyLock<String> = LazyLock::new(|| {
 ///
 /// Contains deeply nested arrays of floating-point coordinates.
 pub static CANADA: LazyLock<String> = LazyLock::new(|| {
-    let compressed = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/canada.json.br"));
+    let compressed = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fixtures/canada.json.br"
+    ));
     String::from_utf8(decompress(compressed)).expect("canada.json should be valid UTF-8")
 });
