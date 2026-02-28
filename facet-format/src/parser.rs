@@ -179,6 +179,17 @@ pub trait FormatParser<'de> {
         false
     }
 
+    /// Hint to the parser that all remaining input bytes should be consumed as a byte slice.
+    ///
+    /// This is used by formats like postcard for trailing opaque payloads where the
+    /// field boundary is "until end of input" rather than a length prefix.
+    ///
+    /// If handled, the parser should emit `Scalar(Bytes(...))` and advance to EOF.
+    /// Returns `true` if handled, `false` to use normal deserialization behavior.
+    fn hint_remaining_byte_sequence(&mut self) -> bool {
+        false
+    }
+
     /// Hint to the parser that a fixed-size array is expected.
     ///
     /// For non-self-describing formats, this tells the parser the array length

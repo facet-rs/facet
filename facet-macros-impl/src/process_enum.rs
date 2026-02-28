@@ -132,6 +132,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     // Collect phantom use statements for IDE hover support on attribute names.
     // These link attribute spans to their facet::builtin::Attr variants.
     let mut phantom_attr_uses: Vec<TokenStream> = Vec::new();
+    let mut postcard_trailing_shape_checks: Vec<TokenStream> = Vec::new();
     // Container-level attributes
     for attr in &pe.container.attrs.facet {
         if let Some(phantom) = phantom_attr_use(attr, &facet_crate) {
@@ -151,6 +152,46 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             PVariantKind::Tuple { fields } => fields,
             PVariantKind::Struct { fields } => fields,
         };
+        for (idx, field) in fields.iter().enumerate() {
+            for attr in &field.attrs.facet {
+                if attr.is_builtin() {
+                    continue;
+                }
+                let Some(ns) = attr.ns.as_ref() else {
+                    continue;
+                };
+                if ns.to_string() != "postcard" || attr.key_str() != "trailing" {
+                    continue;
+                }
+                if !attr.args.is_empty() {
+                    let span = attr.key.span();
+                    return quote_spanned! { span =>
+                        compile_error!("`#[facet(postcard::trailing)]` does not accept arguments");
+                    };
+                }
+                if field.attrs.has_builtin("flatten") {
+                    let span = attr.key.span();
+                    return quote_spanned! { span =>
+                        compile_error!("`#[facet(postcard::trailing)]` is not supported on flattened fields");
+                    };
+                }
+                if idx + 1 != fields.len() {
+                    let span = attr.key.span();
+                    return quote_spanned! { span =>
+                        compile_error!("`#[facet(postcard::trailing)]` requires this field to be the last field in its container");
+                    };
+                }
+                if !field.attrs.has_builtin("opaque") {
+                    let span = attr.key.span();
+                    let field_type = &field.ty;
+                    postcard_trailing_shape_checks.push(quote_spanned! { span =>
+                        if !<#field_type as #facet_crate::Facet<'ʄ>>::SHAPE.has_opaque_adapter() {
+                            panic!("`#[facet(postcard::trailing)]` requires an opaque field (`#[facet(opaque)]`) or a field type with `#[facet(opaque = ...)]`");
+                        }
+                    });
+                }
+            }
+        }
         for field in fields {
             if let Some(attr) = field
                 .attrs
@@ -1361,6 +1402,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         unsafe impl #bgp_def #facet_crate::Facet<'ʄ> for #enum_name #bgp_without_bounds #where_clauses {
             const SHAPE: &'static #facet_crate::Shape = &const {
                 use #facet_crate::𝟋::*;
+                #(#postcard_trailing_shape_checks)*
                 #(#shadow_struct_defs)*
                 #fields
                 𝟋ShpB::for_sized::<Self>(#enum_name_str)

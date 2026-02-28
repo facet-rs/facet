@@ -1471,6 +1471,48 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         PStructKind::UnitStruct => &[],
     };
 
+    let mut postcard_trailing_shape_checks: Vec<TokenStream> = Vec::new();
+    for (idx, field) in fields.iter().enumerate() {
+        for attr in &field.attrs.facet {
+            if attr.is_builtin() {
+                continue;
+            }
+            let Some(ns) = attr.ns.as_ref() else {
+                continue;
+            };
+            if ns.to_string() != "postcard" || attr.key_str() != "trailing" {
+                continue;
+            }
+            if !attr.args.is_empty() {
+                let span = attr.key.span();
+                return quote_spanned! { span =>
+                    compile_error!("`#[facet(postcard::trailing)]` does not accept arguments");
+                };
+            }
+            if field.attrs.has_builtin("flatten") {
+                let span = attr.key.span();
+                return quote_spanned! { span =>
+                    compile_error!("`#[facet(postcard::trailing)]` is not supported on flattened fields");
+                };
+            }
+            if idx + 1 != fields.len() {
+                let span = attr.key.span();
+                return quote_spanned! { span =>
+                    compile_error!("`#[facet(postcard::trailing)]` requires this field to be the last field in its container");
+                };
+            }
+            if !field.attrs.has_builtin("opaque") {
+                let span = attr.key.span();
+                let field_type = &field.ty;
+                postcard_trailing_shape_checks.push(quote_spanned! { span =>
+                    if !<#field_type as #facet_crate::Facet<'ʄ>>::SHAPE.has_opaque_adapter() {
+                        panic!("`#[facet(postcard::trailing)]` requires an opaque field (`#[facet(opaque)]`) or a field type with `#[facet(opaque = ...)]`");
+                    }
+                });
+            }
+        }
+    }
+
     // MVP validation: adapter form is container-only for now.
     for field in fields {
         if let Some(attr) = field
@@ -2435,6 +2477,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
             const __SHAPE_DATA: #facet_crate::Shape = {
                 use #facet_crate::𝟋::*;
+
+                #(#postcard_trailing_shape_checks)*
 
                 𝟋ShpB::for_sized::<Self>(#struct_name_str)
                     .module_path(::core::module_path!())

@@ -73,6 +73,18 @@ pub use shape_deser::from_slice_with_shape;
 // Re-export DeserializeError for convenience
 pub use facet_format::DeserializeError;
 
+// Postcard-specific facet attributes.
+facet::define_attr_grammar! {
+    ns "postcard";
+    crate_path ::facet_postcard;
+
+    pub enum Attr {
+        /// Marks an opaque field as trailing in postcard, so its mapped payload
+        /// is serialized without an outer byte-sequence length wrapper.
+        Trailing,
+    }
+}
+
 /// Default maximum number of elements allowed in a decoded collection.
 ///
 /// This limit applies to postcard length-prefixed collections (lists, maps,

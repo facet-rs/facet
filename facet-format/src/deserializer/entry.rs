@@ -239,11 +239,29 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
             Some(DeserStrategy::Opaque) => {
                 if let Some(adapter) = shape.opaque_adapter {
-                    if self.is_non_self_describing() && !self.parser.hint_byte_sequence() {
-                        self.parser.hint_scalar_type(ScalarTypeHint::Bytes);
+                    let trailing_postcard = self.parser.format_namespace() == Some("postcard")
+                        && wip
+                            .current_field()
+                            .or_else(|| wip.parent_field())
+                            .is_some_and(|f| f.has_attr(Some("postcard"), "trailing"));
+
+                    if self.is_non_self_describing() {
+                        let handled = if trailing_postcard {
+                            self.parser.hint_remaining_byte_sequence()
+                        } else {
+                            self.parser.hint_byte_sequence()
+                        };
+                        if !handled {
+                            self.parser.hint_scalar_type(ScalarTypeHint::Bytes);
+                        }
                     }
 
-                    let event = self.expect_event("bytes for opaque adapter")?;
+                    let expected = if trailing_postcard {
+                        "remaining bytes for trailing opaque adapter"
+                    } else {
+                        "bytes for opaque adapter"
+                    };
+                    let event = self.expect_event(expected)?;
                     let input = match event.kind {
                         ParseEventKind::Scalar(ScalarValue::Bytes(bytes)) => {
                             if BORROW {
@@ -259,7 +277,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                             return Err(self.mk_err(
                                 &wip,
                                 DeserializeErrorKind::UnexpectedToken {
-                                    expected: "bytes for opaque adapter",
+                                    expected,
                                     got: event.kind_name().into(),
                                 },
                             ));

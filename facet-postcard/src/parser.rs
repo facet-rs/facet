@@ -98,6 +98,8 @@ pub struct PostcardParser<'de> {
     pending_sequence: bool,
     /// Pending byte sequence flag from `hint_byte_sequence`.
     pending_byte_sequence: bool,
+    /// Pending remaining-bytes flag from `hint_remaining_byte_sequence`.
+    pending_remaining_bytes: bool,
     /// Pending fixed-size array length from `hint_array`.
     pending_array: Option<usize>,
     /// Pending option flag from `hint_option`.
@@ -138,6 +140,7 @@ impl<'de> PostcardParser<'de> {
             pending_scalar_type: None,
             pending_sequence: false,
             pending_byte_sequence: false,
+            pending_remaining_bytes: false,
             pending_array: None,
             pending_option: false,
             pending_enum: None,
@@ -320,6 +323,18 @@ impl<'de> PostcardParser<'de> {
         // Check if we have a pending opaque scalar hint (format-specific binary encoding)
         if let Some(opaque) = self.pending_opaque.take() {
             return self.parse_opaque_scalar(opaque);
+        }
+
+        // Check if we have a pending trailing bytes hint (consume rest of input as bytes)
+        if self.pending_remaining_bytes {
+            self.pending_remaining_bytes = false;
+            let bytes = &self.input[self.pos..];
+            self.pos = self.input.len();
+            return Ok(
+                self.event(ParseEventKind::Scalar(ScalarValue::Bytes(Cow::Borrowed(
+                    bytes,
+                )))),
+            );
         }
 
         // Check if we have a pending scalar type hint
@@ -986,6 +1001,10 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
         Some(Span::new(self.pos, 1))
     }
 
+    fn format_namespace(&self) -> Option<&'static str> {
+        Some("postcard")
+    }
+
     fn save(&mut self) -> SavePoint {
         // Postcard doesn't support save/restore (non-self-describing format)
         // The solver can't work with positional formats anyway
@@ -1048,6 +1067,18 @@ impl<'de> FormatParser<'de> for PostcardParser<'de> {
             self.peeked = None;
         }
         true // Postcard supports bulk byte reading
+    }
+
+    fn hint_remaining_byte_sequence(&mut self) -> bool {
+        self.pending_remaining_bytes = true;
+        if self
+            .peeked
+            .as_ref()
+            .is_some_and(|e| matches!(e.kind, ParseEventKind::OrderedField))
+        {
+            self.peeked = None;
+        }
+        true
     }
 
     fn hint_array(&mut self, len: usize) {
