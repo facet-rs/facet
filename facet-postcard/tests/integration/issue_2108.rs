@@ -1,5 +1,4 @@
 use facet::{Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst};
-use facet_postcard as postcard;
 use facet_postcard::{Segment, from_slice, from_slice_borrowed, to_scatter_plan, to_vec};
 
 #[derive(Debug, Facet)]
@@ -41,7 +40,7 @@ impl FacetOpaqueAdapter for PayloadAdapter {
 #[derive(Debug, Facet)]
 struct FramedTrailing<'a> {
     id: u8,
-    #[facet(postcard::trailing)]
+    #[facet(trailing)]
     payload: Payload<'a>,
 }
 

@@ -142,6 +142,50 @@ pub(crate) fn phantom_attr_use(
     Some(quote! { { use #facet_crate::builtin::Attr::#variant_ident as _; } })
 }
 
+pub(crate) fn collect_trailing_shape_checks(
+    fields: &[PStructField],
+    facet_crate: &TokenStream,
+) -> std::result::Result<Vec<TokenStream>, TokenStream> {
+    let mut trailing_shape_checks = Vec::new();
+
+    for (idx, field) in fields.iter().enumerate() {
+        for attr in &field.attrs.facet {
+            if !attr.is_builtin() || attr.key != "trailing" {
+                continue;
+            }
+            if !attr.args.is_empty() {
+                let span = attr.key.span();
+                return Err(quote_spanned! { span =>
+                    compile_error!("`#[facet(trailing)]` does not accept arguments");
+                });
+            }
+            if field.attrs.has_builtin("flatten") {
+                let span = attr.key.span();
+                return Err(quote_spanned! { span =>
+                    compile_error!("`#[facet(trailing)]` is not supported on flattened fields");
+                });
+            }
+            if idx + 1 != fields.len() {
+                let span = attr.key.span();
+                return Err(quote_spanned! { span =>
+                    compile_error!("`#[facet(trailing)]` requires this field to be the last field in its container");
+                });
+            }
+            if !field.attrs.has_builtin("opaque") {
+                let span = attr.key.span();
+                let field_type = &field.ty;
+                trailing_shape_checks.push(quote_spanned! { span =>
+                    if !<#field_type as #facet_crate::Facet<'ʄ>>::SHAPE.has_opaque_adapter() {
+                        panic!("`#[facet(trailing)]` requires an opaque field (`#[facet(opaque)]`) or a field type with `#[facet(opaque = ...)]`");
+                    }
+                });
+            }
+        }
+    }
+
+    Ok(trailing_shape_checks)
+}
+
 /// Generates the vtable for a type based on trait sources.
 ///
 /// Uses a layered approach for each trait:
@@ -1471,47 +1515,10 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         PStructKind::UnitStruct => &[],
     };
 
-    let mut postcard_trailing_shape_checks: Vec<TokenStream> = Vec::new();
-    for (idx, field) in fields.iter().enumerate() {
-        for attr in &field.attrs.facet {
-            if attr.is_builtin() {
-                continue;
-            }
-            let Some(ns) = attr.ns.as_ref() else {
-                continue;
-            };
-            if *ns != "postcard" || attr.key_str() != "trailing" {
-                continue;
-            }
-            if !attr.args.is_empty() {
-                let span = attr.key.span();
-                return quote_spanned! { span =>
-                    compile_error!("`#[facet(postcard::trailing)]` does not accept arguments");
-                };
-            }
-            if field.attrs.has_builtin("flatten") {
-                let span = attr.key.span();
-                return quote_spanned! { span =>
-                    compile_error!("`#[facet(postcard::trailing)]` is not supported on flattened fields");
-                };
-            }
-            if idx + 1 != fields.len() {
-                let span = attr.key.span();
-                return quote_spanned! { span =>
-                    compile_error!("`#[facet(postcard::trailing)]` requires this field to be the last field in its container");
-                };
-            }
-            if !field.attrs.has_builtin("opaque") {
-                let span = attr.key.span();
-                let field_type = &field.ty;
-                postcard_trailing_shape_checks.push(quote_spanned! { span =>
-                    if !<#field_type as #facet_crate::Facet<'ʄ>>::SHAPE.has_opaque_adapter() {
-                        panic!("`#[facet(postcard::trailing)]` requires an opaque field (`#[facet(opaque)]`) or a field type with `#[facet(opaque = ...)]`");
-                    }
-                });
-            }
-        }
-    }
+    let trailing_shape_checks = match collect_trailing_shape_checks(fields, &facet_crate) {
+        Ok(checks) => checks,
+        Err(err) => return err,
+    };
 
     // MVP validation: adapter form is container-only for now.
     for field in fields {
@@ -2478,7 +2485,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             const __SHAPE_DATA: #facet_crate::Shape = {
                 use #facet_crate::𝟋::*;
 
-                #(#postcard_trailing_shape_checks)*
+                #(#trailing_shape_checks)*
 
                 𝟋ShpB::for_sized::<Self>(#struct_name_str)
                     .module_path(::core::module_path!())

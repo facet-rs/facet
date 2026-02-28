@@ -239,14 +239,12 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
 
             Some(DeserStrategy::Opaque) => {
                 if let Some(adapter) = shape.opaque_adapter {
-                    let trailing_postcard = self.parser.format_namespace() == Some("postcard")
-                        && wip
-                            .current_field()
-                            .or_else(|| wip.parent_field())
-                            .is_some_and(|f| f.has_attr(Some("postcard"), "trailing"));
+                    let trailing_opaque = wip
+                        .nearest_field()
+                        .is_some_and(|f| f.has_builtin_attr("trailing"));
 
                     if self.is_non_self_describing() {
-                        let handled = if trailing_postcard {
+                        let handled = if trailing_opaque {
                             self.parser.hint_remaining_byte_sequence()
                         } else {
                             self.parser.hint_byte_sequence()
@@ -256,7 +254,7 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         }
                     }
 
-                    let expected = if trailing_postcard {
+                    let expected = if trailing_opaque {
                         "remaining bytes for trailing opaque adapter"
                     } else {
                         "bytes for opaque adapter"

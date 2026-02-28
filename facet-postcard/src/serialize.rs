@@ -457,8 +457,8 @@ fn map_format_error(error: FormatSerializeError<SerializeError>) -> SerializeErr
     }
 }
 
-fn has_postcard_trailing_attr(field: Option<&facet_core::Field>) -> bool {
-    field.is_some_and(|f| f.has_attr(Some("postcard"), "trailing"))
+fn has_trailing_attr(field: Option<&facet_core::Field>) -> bool {
+    field.is_some_and(|f| f.has_builtin_attr("trailing"))
 }
 
 struct PostcardSerializer<'a, W> {
@@ -819,7 +819,7 @@ impl<'a, W: PostcardWriter<'a>> FormatSerializer for PostcardSerializer<'a, W> {
         if let Some(adapter) = shape.opaque_adapter {
             let mapped = unsafe { (adapter.serialize)(value.data()) };
             let mapped_peek = unsafe { Peek::unchecked_new(mapped.ptr, mapped.shape) };
-            if has_postcard_trailing_attr(field) {
+            if has_trailing_attr(field) {
                 // Trailing opaque fields stream mapped payload directly (no outer length framing),
                 // preserving scatter-gather references for borrowed bytes.
                 serialize_root(self, mapped_peek).map_err(map_format_error)?;

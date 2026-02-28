@@ -2844,6 +2844,14 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         self.frames().last().and_then(|f| f.get_field())
     }
 
+    /// Gets the nearest active field when nested wrapper frames are involved.
+    ///
+    /// This walks frames from innermost to outermost and returns the first frame
+    /// that currently points at a struct/enum field.
+    pub fn nearest_field(&self) -> Option<&Field> {
+        self.frames().iter().rev().find_map(|f| f.get_field())
+    }
+
     /// Returns a const pointer to the current frame's data.
     ///
     /// This is useful for validation - after deserializing a field value,
