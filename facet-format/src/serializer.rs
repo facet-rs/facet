@@ -973,6 +973,9 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
     ) -> Result<(), SerializeError<S::Error>> {
         let kind = struct_.ty().kind;
         let field_mode = self.serializer.struct_field_mode();
+        self.serializer
+            .struct_metadata(shape)
+            .map_err(SerializeError::Backend)?;
 
         if kind == StructKind::Tuple || kind == StructKind::TupleStruct {
             let fields: alloc::vec::Vec<_> = struct_.fields_for_binary_serialize().collect();
@@ -993,9 +996,6 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                 self.serializer.end_seq().map_err(SerializeError::Backend)?;
             }
         } else {
-            self.serializer
-                .struct_metadata(shape)
-                .map_err(SerializeError::Backend)?;
             self.serializer
                 .begin_struct()
                 .map_err(SerializeError::Backend)?;
