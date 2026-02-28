@@ -1,12 +1,27 @@
 # facet
 
+<!-- cargo-reedme: start -->
+
+<!-- cargo-reedme: info-start
+
+    Do not edit this region by hand
+    ===============================
+
+    This region was generated from Rust documentation comments by `cargo-reedme` using this command:
+
+        cargo +nightly reedme --package facet
+
+    for more info: https://github.com/nik-rev/cargo-reedme
+
+cargo-reedme: info-end -->
+
 [![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
 [![crates.io](https://img.shields.io/crates/v/facet.svg)](https://crates.io/crates/facet)
 [![documentation](https://docs.rs/facet/badge.svg)](https://docs.rs/facet)
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-facet provides reflection for Rust: it gives types a [`SHAPE`](Facet::SHAPE) associated
+facet provides reflection for Rust: it gives types a [`SHAPE`](https://docs.rs/facet/latest/facet/trait.Facet.html#associatedconstant.SHAPE) associated
 const with details on the layout, fields, doc comments, attributes, etc.
 
 It can be used for many things, from (de)serialization to pretty-printing,
@@ -20,11 +35,11 @@ See <https://facet.rs> for details.
 The main `facet` crate re-exports symbols from:
 
 - [facet-core](https://github.com/facet-rs/facet/tree/main/facet-core), which defines the main components:
-  - The [`Facet`] trait and implementations for foreign types (mostly `libstd`)
-  - The [`Shape`] struct along with various vtables and the whole [`Def`] tree
-  - Type-erased pointer helpers like [`PtrUninit`], [`PtrConst`], and [`Opaque`]
+  - The [`Facet`](https://docs.rs/facet_core/latest/facet_core/trait.Facet.html) trait and implementations for foreign types (mostly `libstd`)
+  - The [`Shape`](https://docs.rs/facet_core/latest/facet_core/types/shape/struct.Shape.html) struct along with various vtables and the whole [`Def`](https://docs.rs/facet_core/latest/facet_core/types/def/enum.Def.html) tree
+  - Type-erased pointer helpers like [`PtrUninit`](https://docs.rs/facet_core/latest/facet_core/types/ptr/struct.PtrUninit.html), [`PtrConst`](https://docs.rs/facet_core/latest/facet_core/types/ptr/struct.PtrConst.html), and [`Opaque`](https://docs.rs/facet_core/latest/facet_core/types/builtins/struct.Opaque.html)
   - Autoderef specialization trick needed for `facet-macros`
-- [facet-macros](https://github.com/facet-rs/facet/tree/main/facet-macros), which implements the [`Facet`] derive attribute as a fast/light proc macro powered by [unsynn](https://docs.rs/unsynn)
+- [facet-macros](https://github.com/facet-rs/facet/tree/main/facet-macros), which implements the [`Facet`](https://docs.rs/facet_core/latest/facet_core/trait.Facet.html) derive attribute as a fast/light proc macro powered by [unsynn](https://docs.rs/unsynn)
 
 For struct manipulation and reflection, we have:
 
@@ -96,7 +111,7 @@ Thanks to all individual sponsors:
     </picture>
 </a> </p>
 
-...along with corporate sponsors:
+…along with corporate sponsors:
 
 <p> <a href="https://aws.amazon.com">
 <picture>
@@ -115,7 +130,7 @@ Thanks to all individual sponsors:
 </picture>
 </a> </p>
 
-...without whom this work could not exist.
+…without whom this work could not exist.
 
 ## Special thanks
 
@@ -129,3 +144,5 @@ Licensed under either of:
 - MIT license ([LICENSE-MIT](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
 
 at your option.
+
+<!-- cargo-reedme: end -->
