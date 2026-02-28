@@ -56,13 +56,16 @@ unsafe fn rc_debug<'a, T: Facet<'a>>(
 }
 
 /// Borrow function for PointerVTable
-unsafe fn rc_borrow_fn<T>(this: PtrConst) -> PtrConst {
+unsafe extern "C" fn rc_borrow_fn<T>(this: PtrConst) -> PtrConst {
     let ptr = unsafe { Rc::<T>::as_ptr(this.get()) };
     PtrConst::new(ptr)
 }
 
 /// New into function for PointerVTable
-unsafe fn rc_new_into_fn<'a, 'ptr, T: Facet<'a>>(this: PtrUninit, ptr: PtrMut) -> PtrMut {
+unsafe extern "C" fn rc_new_into_fn<'a, 'ptr, T: Facet<'a>>(
+    this: PtrUninit,
+    ptr: PtrMut,
+) -> PtrMut {
     let t = unsafe { ptr.read::<T>() };
     let rc = Rc::new(t);
     unsafe { this.put(rc) }
@@ -185,7 +188,7 @@ unsafe fn rc_str_debug(
 }
 
 /// Borrow function for `Rc<str>`
-unsafe fn rc_str_borrow_fn(this: PtrConst) -> PtrConst {
+unsafe extern "C" fn rc_str_borrow_fn(this: PtrConst) -> PtrConst {
     unsafe {
         let concrete = this.get::<Rc<str>>();
         let s: &str = concrete;
@@ -327,7 +330,7 @@ unsafe fn rc_slice_debug<'a, U: Facet<'a>>(
 }
 
 /// Borrow function for `Rc<[U]>`
-unsafe fn rc_slice_borrow_fn<U>(this: PtrConst) -> PtrConst {
+unsafe extern "C" fn rc_slice_borrow_fn<U>(this: PtrConst) -> PtrConst {
     unsafe {
         let concrete = this.get::<Rc<[U]>>();
         let s: &[U] = concrete;

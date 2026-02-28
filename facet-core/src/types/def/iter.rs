@@ -5,7 +5,7 @@ use crate::{PtrConst, PtrMut};
 /// # Safety
 ///
 /// The `value` parameter must point to aligned, initialized memory of the correct type.
-pub type IterInitWithValueFn = unsafe fn(value: PtrConst) -> PtrMut;
+pub type IterInitWithValueFn = unsafe extern "C" fn(value: PtrConst) -> PtrMut;
 
 /// Advance the iterator, returning the next value from the iterator
 ///
@@ -27,14 +27,26 @@ pub type IterNextBackFn<T> = unsafe fn(iter: PtrMut) -> Option<<T as IterItem>::
 /// # Safety
 ///
 /// The `iter` parameter must point to aligned, initialized memory of the correct type.
-pub type IterSizeHintFn = unsafe fn(iter: PtrMut) -> Option<(usize, Option<usize>)>;
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub struct IterSizeHint {
+    /// Lower bound on remaining items.
+    pub lower: usize,
+    /// Upper bound on remaining items when `has_upper` is true.
+    pub upper: usize,
+    /// Whether `upper` contains a real upper bound.
+    pub has_upper: bool,
+}
+
+/// Return size hint bounds for an iterator in an FFI-safe form.
+pub type IterSizeHintFn = unsafe extern "C" fn(iter: PtrMut) -> IterSizeHint;
 
 /// Deallocate the iterator
 ///
 /// # Safety
 ///
 /// The `iter` parameter must point to aligned, initialized memory of the correct type.
-pub type IterDeallocFn = unsafe fn(iter: PtrMut);
+pub type IterDeallocFn = unsafe extern "C" fn(iter: PtrMut);
 
 /// VTable for an iterator
 #[derive(Clone, Copy, Debug)]

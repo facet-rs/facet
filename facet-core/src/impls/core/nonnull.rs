@@ -69,7 +69,7 @@ const NONNULL_VTABLE: VTableIndirect = VTableIndirect {
 };
 
 // Named function for borrow_fn
-unsafe fn borrow_fn<'a, T: Facet<'a>>(this: PtrConst) -> PtrConst {
+unsafe extern "C" fn borrow_fn<'a, T: Facet<'a>>(this: PtrConst) -> PtrConst {
     unsafe {
         let ptr = this.get::<NonNull<T>>();
         PtrConst::new(ptr.as_ptr())
@@ -77,7 +77,7 @@ unsafe fn borrow_fn<'a, T: Facet<'a>>(this: PtrConst) -> PtrConst {
 }
 
 // Named function for new_into_fn
-unsafe fn new_into_fn<'a, 'ptr, T: Facet<'a>>(this: PtrUninit, ptr: PtrMut) -> PtrMut {
+unsafe extern "C" fn new_into_fn<'a, 'ptr, T: Facet<'a>>(this: PtrUninit, ptr: PtrMut) -> PtrMut {
     unsafe {
         let raw_ptr = ptr.read::<*mut T>();
         let non_null = core::ptr::NonNull::new_unchecked(raw_ptr);

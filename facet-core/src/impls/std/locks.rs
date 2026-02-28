@@ -31,7 +31,7 @@ fn type_name_mutex<'a, T: Facet<'a>>(
     Ok(())
 }
 
-unsafe fn mutex_new_into<T>(this: PtrUninit, value: PtrMut) -> PtrMut {
+unsafe extern "C" fn mutex_new_into<T>(this: PtrUninit, value: PtrMut) -> PtrMut {
     unsafe {
         let t = value.read::<T>();
         this.put(Mutex::<T>::new(t))
@@ -147,7 +147,7 @@ fn type_name_rwlock<'a, T: Facet<'a>>(
     Ok(())
 }
 
-unsafe fn rwlock_new_into<T>(this: PtrUninit, value: PtrMut) -> PtrMut {
+unsafe extern "C" fn rwlock_new_into<T>(this: PtrUninit, value: PtrMut) -> PtrMut {
     unsafe {
         let t = value.read::<T>();
         this.put(RwLock::<T>::new(t))
@@ -304,7 +304,7 @@ unsafe fn mutex_guard_drop<T>(ox: OxPtrMut) {
     }
 }
 
-unsafe fn mutex_guard_borrow<'a, T: Facet<'a>>(opaque: PtrConst) -> PtrConst {
+unsafe extern "C" fn mutex_guard_borrow<'a, T: Facet<'a>>(opaque: PtrConst) -> PtrConst {
     unsafe {
         let guard = &*opaque.as_ptr::<MutexGuard<'_, T>>();
         PtrConst::new(NonNull::from(&**guard).as_ptr())
@@ -379,7 +379,7 @@ unsafe fn rwlock_read_guard_drop<T>(ox: OxPtrMut) {
     }
 }
 
-unsafe fn rwlock_read_guard_borrow<'a, T: Facet<'a>>(opaque: PtrConst) -> PtrConst {
+unsafe extern "C" fn rwlock_read_guard_borrow<'a, T: Facet<'a>>(opaque: PtrConst) -> PtrConst {
     unsafe {
         let guard = &*opaque.as_ptr::<RwLockReadGuard<'_, T>>();
         PtrConst::new(NonNull::from(&**guard).as_ptr())
@@ -454,7 +454,7 @@ unsafe fn rwlock_write_guard_drop<T>(ox: OxPtrMut) {
     }
 }
 
-unsafe fn rwlock_write_guard_borrow<'a, T: Facet<'a>>(opaque: PtrConst) -> PtrConst {
+unsafe extern "C" fn rwlock_write_guard_borrow<'a, T: Facet<'a>>(opaque: PtrConst) -> PtrConst {
     unsafe {
         let guard = &*opaque.as_ptr::<RwLockWriteGuard<'_, T>>();
         PtrConst::new(NonNull::from(&**guard).as_ptr())
@@ -525,7 +525,7 @@ fn type_name_oncelock<'a, T: Facet<'a>>(
     Ok(())
 }
 
-unsafe fn oncelock_new_into<T>(this: PtrUninit, value: PtrMut) -> PtrMut {
+unsafe extern "C" fn oncelock_new_into<T>(this: PtrUninit, value: PtrMut) -> PtrMut {
     unsafe {
         let t = value.read::<T>();
         let lock = OnceLock::new();
@@ -636,7 +636,9 @@ unsafe fn lazylock_drop<T, F>(ox: OxPtrMut) {
 }
 
 /// Borrow access to LazyLock - always succeeds (forces initialization)
-unsafe fn lazylock_borrow<'a, T: Facet<'a>, F: FnOnce() -> T>(opaque: PtrConst) -> PtrConst {
+unsafe extern "C" fn lazylock_borrow<'a, T: Facet<'a>, F: FnOnce() -> T>(
+    opaque: PtrConst,
+) -> PtrConst {
     unsafe {
         let lock = opaque.get::<LazyLock<T, F>>();
         let data = LazyLock::force(lock);

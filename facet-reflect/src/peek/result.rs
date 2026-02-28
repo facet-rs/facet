@@ -39,8 +39,15 @@ impl<'mem, 'facet> PeekResult<'mem, 'facet> {
     #[inline]
     pub fn ok(self) -> Option<crate::Peek<'mem, 'facet>> {
         unsafe {
-            (self.vtable().get_ok)(self.value.data())
-                .map(|inner_data| crate::Peek::unchecked_new(inner_data, self.def.t()))
+            let inner_data = (self.vtable().get_ok)(self.value.data());
+            if inner_data.is_null() {
+                None
+            } else {
+                Some(crate::Peek::unchecked_new(
+                    facet_core::PtrConst::new_sized(inner_data),
+                    self.def.t(),
+                ))
+            }
         }
     }
 
@@ -48,8 +55,15 @@ impl<'mem, 'facet> PeekResult<'mem, 'facet> {
     #[inline]
     pub fn err(self) -> Option<crate::Peek<'mem, 'facet>> {
         unsafe {
-            (self.vtable().get_err)(self.value.data())
-                .map(|inner_data| crate::Peek::unchecked_new(inner_data, self.def.e()))
+            let inner_data = (self.vtable().get_err)(self.value.data());
+            if inner_data.is_null() {
+                None
+            } else {
+                Some(crate::Peek::unchecked_new(
+                    facet_core::PtrConst::new_sized(inner_data),
+                    self.def.e(),
+                ))
+            }
         }
     }
 }

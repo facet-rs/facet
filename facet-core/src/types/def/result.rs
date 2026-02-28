@@ -37,21 +37,21 @@ impl ResultDef {
 /// # Safety
 ///
 /// The `result` parameter must point to aligned, initialized memory of the correct type.
-pub type ResultIsOkFn = unsafe fn(result: PtrConst) -> bool;
+pub type ResultIsOkFn = unsafe extern "C" fn(result: PtrConst) -> bool;
 
 /// Get the Ok value contained in a result, if present
 ///
 /// # Safety
 ///
 /// The `result` parameter must point to aligned, initialized memory of the correct type.
-pub type ResultGetOkFn = unsafe fn(result: PtrConst) -> Option<PtrConst>;
+pub type ResultGetOkFn = unsafe extern "C" fn(result: PtrConst) -> *const u8;
 
 /// Get the Err value contained in a result, if present
 ///
 /// # Safety
 ///
 /// The `result` parameter must point to aligned, initialized memory of the correct type.
-pub type ResultGetErrFn = unsafe fn(result: PtrConst) -> Option<PtrConst>;
+pub type ResultGetErrFn = unsafe extern "C" fn(result: PtrConst) -> *const u8;
 
 /// Initialize a result with Ok(value)
 ///
@@ -63,7 +63,7 @@ pub type ResultGetErrFn = unsafe fn(result: PtrConst) -> Option<PtrConst>;
 /// with [`core::mem::forget`]) but NOT dropped.
 /// Note: `value` must be PtrMut (not PtrConst) because ownership is transferred and the value
 /// may be dropped later, which requires mutable access.
-pub type ResultInitOkFn = unsafe fn(result: PtrUninit, value: PtrMut) -> PtrMut;
+pub type ResultInitOkFn = unsafe extern "C" fn(result: PtrUninit, value: PtrMut) -> PtrMut;
 
 /// Initialize a result with Err(value)
 ///
@@ -75,7 +75,7 @@ pub type ResultInitOkFn = unsafe fn(result: PtrUninit, value: PtrMut) -> PtrMut;
 /// with [`core::mem::forget`]) but NOT dropped.
 /// Note: `value` must be PtrMut (not PtrConst) because ownership is transferred and the value
 /// may be dropped later, which requires mutable access.
-pub type ResultInitErrFn = unsafe fn(result: PtrUninit, value: PtrMut) -> PtrMut;
+pub type ResultInitErrFn = unsafe extern "C" fn(result: PtrUninit, value: PtrMut) -> PtrMut;
 
 vtable_def! {
     /// Virtual table for `Result<T, E>`

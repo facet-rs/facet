@@ -101,7 +101,8 @@ impl ListDef {
 ///
 /// The `list` parameter must point to uninitialized memory of sufficient size.
 /// The function must properly initialize the memory.
-pub type ListInitInPlaceWithCapacityFn = unsafe fn(list: PtrUninit, capacity: usize) -> PtrMut;
+pub type ListInitInPlaceWithCapacityFn =
+    unsafe extern "C" fn(list: PtrUninit, capacity: usize) -> PtrMut;
 
 /// Push an item to the list
 ///
@@ -112,7 +113,7 @@ pub type ListInitInPlaceWithCapacityFn = unsafe fn(list: PtrUninit, capacity: us
 /// with [`core::mem::forget`]) but NOT dropped.
 /// Note: `item` must be PtrMut (not PtrConst) because ownership is transferred and the value
 /// may be dropped later, which requires mutable access.
-pub type ListPushFn = unsafe fn(list: PtrMut, item: PtrMut);
+pub type ListPushFn = unsafe extern "C" fn(list: PtrMut, item: PtrMut);
 // FIXME: this forces allocating item separately, copying it, and then dropping it — it's not great.
 
 /// Get the number of items in the list
@@ -120,7 +121,7 @@ pub type ListPushFn = unsafe fn(list: PtrMut, item: PtrMut);
 /// # Safety
 ///
 /// The `list` parameter must point to aligned, initialized memory of the correct type.
-pub type ListLenFn = unsafe fn(list: PtrConst) -> usize;
+pub type ListLenFn = unsafe extern "C" fn(list: PtrConst) -> usize;
 
 /// Get pointer to the element at `index` in the list, or `None` if the
 /// index is out of bounds.
@@ -151,14 +152,14 @@ pub type ListGetMutFn =
 /// # Safety
 ///
 /// The `list` parameter must point to aligned, initialized memory of the correct type.
-pub type ListAsPtrFn = unsafe fn(list: PtrConst) -> PtrConst;
+pub type ListAsPtrFn = unsafe extern "C" fn(list: PtrConst) -> PtrConst;
 
 /// Get mutable pointer to the data buffer of the list.
 ///
 /// # Safety
 ///
 /// The `list` parameter must point to aligned, initialized memory of the correct type.
-pub type ListAsMutPtrFn = unsafe fn(list: PtrMut) -> PtrMut;
+pub type ListAsMutPtrFn = unsafe extern "C" fn(list: PtrMut) -> PtrMut;
 
 /// Set the length of a list (for direct-fill operations).
 ///
@@ -168,7 +169,7 @@ pub type ListAsMutPtrFn = unsafe fn(list: PtrMut) -> PtrMut;
 /// - The new length must not exceed the list's capacity.
 /// - All elements at indices `0..new_len` must be properly initialized.
 /// - For types that are not `Copy`, the caller must ensure no double-drops occur.
-pub type ListSetLenFn = unsafe fn(list: PtrMut, len: usize);
+pub type ListSetLenFn = unsafe extern "C" fn(list: PtrMut, len: usize);
 
 /// Get raw mutable pointer to the data buffer as `*mut u8`.
 ///
@@ -178,7 +179,7 @@ pub type ListSetLenFn = unsafe fn(list: PtrMut, len: usize);
 /// # Safety
 ///
 /// The `list` parameter must point to aligned, initialized memory of the correct type.
-pub type ListAsMutPtrTypedFn = unsafe fn(list: PtrMut) -> *mut u8;
+pub type ListAsMutPtrTypedFn = unsafe extern "C" fn(list: PtrMut) -> *mut u8;
 
 /// Reserve capacity for at least `additional` more elements.
 ///
@@ -188,14 +189,14 @@ pub type ListAsMutPtrTypedFn = unsafe fn(list: PtrMut) -> *mut u8;
 /// # Safety
 ///
 /// The `list` parameter must point to aligned, initialized memory of the correct type.
-pub type ListReserveFn = unsafe fn(list: PtrMut, additional: usize);
+pub type ListReserveFn = unsafe extern "C" fn(list: PtrMut, additional: usize);
 
 /// Get the current capacity of the list.
 ///
 /// # Safety
 ///
 /// The `list` parameter must point to aligned, initialized memory of the correct type.
-pub type ListCapacityFn = unsafe fn(list: PtrConst) -> usize;
+pub type ListCapacityFn = unsafe extern "C" fn(list: PtrConst) -> usize;
 
 //////////////////////////////////////////////////////////////////////
 // ListTypeOps - Per-type operations that must be monomorphized

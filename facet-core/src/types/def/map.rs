@@ -37,7 +37,8 @@ impl MapDef {
 ///
 /// The `map` parameter must point to uninitialized memory of sufficient size.
 /// The function must properly initialize the memory.
-pub type MapInitInPlaceWithCapacityFn = unsafe fn(map: PtrUninit, capacity: usize) -> PtrMut;
+pub type MapInitInPlaceWithCapacityFn =
+    unsafe extern "C" fn(map: PtrUninit, capacity: usize) -> PtrMut;
 
 /// Insert a key-value pair into the map
 ///
@@ -46,28 +47,28 @@ pub type MapInitInPlaceWithCapacityFn = unsafe fn(map: PtrUninit, capacity: usiz
 /// The `map` parameter must point to aligned, initialized memory of the correct type.
 /// `key` and `value` are moved out of (with [`core::ptr::read`]) — they should be deallocated
 /// afterwards (e.g. with [`core::mem::forget`]) but NOT dropped.
-pub type MapInsertFn = unsafe fn(map: PtrMut, key: PtrMut, value: PtrMut);
+pub type MapInsertFn = unsafe extern "C" fn(map: PtrMut, key: PtrMut, value: PtrMut);
 
 /// Get the number of entries in the map
 ///
 /// # Safety
 ///
 /// The `map` parameter must point to aligned, initialized memory of the correct type.
-pub type MapLenFn = unsafe fn(map: PtrConst) -> usize;
+pub type MapLenFn = unsafe extern "C" fn(map: PtrConst) -> usize;
 
 /// Check if the map contains a key
 ///
 /// # Safety
 ///
 /// The `map` parameter must point to aligned, initialized memory of the correct type.
-pub type MapContainsKeyFn = unsafe fn(map: PtrConst, key: PtrConst) -> bool;
+pub type MapContainsKeyFn = unsafe extern "C" fn(map: PtrConst, key: PtrConst) -> bool;
 
 /// Get pointer to a value for a given key, returns None if not found
 ///
 /// # Safety
 ///
 /// The `map` parameter must point to aligned, initialized memory of the correct type.
-pub type MapGetValuePtrFn = unsafe fn(map: PtrConst, key: PtrConst) -> Option<PtrConst>;
+pub type MapGetValuePtrFn = unsafe extern "C" fn(map: PtrConst, key: PtrConst) -> *const u8;
 
 /// Build a map from a contiguous slice of (K, V) pairs.
 ///
@@ -80,7 +81,8 @@ pub type MapGetValuePtrFn = unsafe fn(map: PtrConst, key: PtrConst) -> Option<Pt
 /// - `pairs_ptr` must point to `count` contiguous (K, V) tuples, properly aligned.
 /// - Keys and values are moved out via `ptr::read` - the memory should be deallocated
 ///   but not dropped afterwards.
-pub type MapFromPairSliceFn = unsafe fn(map: PtrUninit, pairs_ptr: *mut u8, count: usize) -> PtrMut;
+pub type MapFromPairSliceFn =
+    unsafe extern "C" fn(map: PtrUninit, pairs_ptr: *mut u8, count: usize) -> PtrMut;
 
 vtable_def! {
     /// Virtual table for a Map<K, V>

@@ -30,7 +30,8 @@ impl SetDef {
 ///
 /// The `set` parameter must point to uninitialized memory of sufficient size.
 /// The function must properly initialize the memory.
-pub type SetInitInPlaceWithCapacityFn = unsafe fn(set: PtrUninit, capacity: usize) -> PtrMut;
+pub type SetInitInPlaceWithCapacityFn =
+    unsafe extern "C" fn(set: PtrUninit, capacity: usize) -> PtrMut;
 
 /// Insert a value in the set if not already contained, returning true
 /// if the value wasn't present before
@@ -40,21 +41,21 @@ pub type SetInitInPlaceWithCapacityFn = unsafe fn(set: PtrUninit, capacity: usiz
 /// The `set` parameter must point to aligned, initialized memory of the correct type.
 /// `value` is moved out of (with [`core::ptr::read`]) — it should be deallocated afterwards (e.g.
 /// with [`core::mem::forget`]) but NOT dropped.
-pub type SetInsertFn = unsafe fn(set: PtrMut, value: PtrMut) -> bool;
+pub type SetInsertFn = unsafe extern "C" fn(set: PtrMut, value: PtrMut) -> bool;
 
 /// Get the number of values in the set
 ///
 /// # Safety
 ///
 /// The `set` parameter must point to aligned, initialized memory of the correct type.
-pub type SetLenFn = unsafe fn(set: PtrConst) -> usize;
+pub type SetLenFn = unsafe extern "C" fn(set: PtrConst) -> usize;
 
 /// Check if the set contains a value
 ///
 /// # Safety
 ///
 /// The `set` parameter must point to aligned, initialized memory of the correct type.
-pub type SetContainsFn = unsafe fn(set: PtrConst, value: PtrConst) -> bool;
+pub type SetContainsFn = unsafe extern "C" fn(set: PtrConst, value: PtrConst) -> bool;
 
 /// Build a set from a contiguous slice of elements.
 ///
@@ -67,7 +68,8 @@ pub type SetContainsFn = unsafe fn(set: PtrConst, value: PtrConst) -> bool;
 /// - `elements_ptr` must point to `count` consecutive initialized elements
 /// - Each element has size `T::SHAPE.layout.size()` (the element stride)
 /// - After this call, the elements have been moved into the set and should NOT be dropped
-pub type SetFromSliceFn = unsafe fn(set: PtrUninit, elements_ptr: *mut u8, count: usize) -> PtrMut;
+pub type SetFromSliceFn =
+    unsafe extern "C" fn(set: PtrUninit, elements_ptr: *mut u8, count: usize) -> PtrMut;
 
 vtable_def! {
     /// Virtual table for a `Set<T>`

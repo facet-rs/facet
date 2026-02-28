@@ -168,7 +168,7 @@ unsafe fn smallvec_cmp_erased(ox_a: OxPtrConst, ox_b: OxPtrConst) -> Option<core
 
 type SmallVecIterator<'mem, T> = core::slice::Iter<'mem, T>;
 
-unsafe fn smallvec_len<A: Array>(ptr: PtrConst) -> usize {
+unsafe extern "C" fn smallvec_len<A: Array>(ptr: PtrConst) -> usize {
     unsafe { ptr.get::<SmallVec<A>>().len() }
 }
 
@@ -196,28 +196,28 @@ unsafe fn smallvec_get_mut<A: Array>(
     }
 }
 
-unsafe fn smallvec_as_ptr<A: Array>(ptr: PtrConst) -> PtrConst {
+unsafe extern "C" fn smallvec_as_ptr<A: Array>(ptr: PtrConst) -> PtrConst {
     unsafe {
         let sv = ptr.get::<SmallVec<A>>();
         PtrConst::new(sv.as_ptr() as *const u8)
     }
 }
 
-unsafe fn smallvec_as_mut_ptr<A: Array>(ptr: PtrMut) -> PtrMut {
+unsafe extern "C" fn smallvec_as_mut_ptr<A: Array>(ptr: PtrMut) -> PtrMut {
     unsafe {
         let sv = ptr.as_mut::<SmallVec<A>>();
         PtrMut::new(sv.as_mut_ptr() as *mut u8)
     }
 }
 
-unsafe fn smallvec_init_in_place_with_capacity<A: Array>(
+unsafe extern "C" fn smallvec_init_in_place_with_capacity<A: Array>(
     uninit: PtrUninit,
     capacity: usize,
 ) -> PtrMut {
     unsafe { uninit.put(SmallVec::<A>::with_capacity(capacity)) }
 }
 
-unsafe fn smallvec_push<A: Array>(ptr: PtrMut, item: PtrMut) {
+unsafe extern "C" fn smallvec_push<A: Array>(ptr: PtrMut, item: PtrMut) {
     unsafe {
         let sv = ptr.as_mut::<SmallVec<A>>();
         let item = item.read::<A::Item>();
@@ -231,7 +231,7 @@ unsafe fn smallvec_push<A: Array>(ptr: PtrMut, item: PtrMut) {
 /// - `ptr` must point to an initialized `SmallVec<A>`
 /// - `len` must not exceed the SmallVec's capacity
 /// - All elements at indices `0..len` must be properly initialized
-unsafe fn smallvec_set_len<A: Array>(ptr: PtrMut, len: usize) {
+unsafe extern "C" fn smallvec_set_len<A: Array>(ptr: PtrMut, len: usize) {
     unsafe {
         let sv = ptr.as_mut::<SmallVec<A>>();
         sv.set_len(len);
@@ -242,7 +242,7 @@ unsafe fn smallvec_set_len<A: Array>(ptr: PtrMut, len: usize) {
 ///
 /// # Safety
 /// - `ptr` must point to an initialized `SmallVec<A>`
-unsafe fn smallvec_as_mut_ptr_typed<A: Array>(ptr: PtrMut) -> *mut u8 {
+unsafe extern "C" fn smallvec_as_mut_ptr_typed<A: Array>(ptr: PtrMut) -> *mut u8 {
     unsafe {
         let sv = ptr.as_mut::<SmallVec<A>>();
         sv.as_mut_ptr() as *mut u8
@@ -253,7 +253,7 @@ unsafe fn smallvec_as_mut_ptr_typed<A: Array>(ptr: PtrMut) -> *mut u8 {
 ///
 /// # Safety
 /// - `ptr` must point to an initialized `SmallVec<A>`
-unsafe fn smallvec_reserve<A: Array>(ptr: PtrMut, additional: usize) {
+unsafe extern "C" fn smallvec_reserve<A: Array>(ptr: PtrMut, additional: usize) {
     unsafe {
         let sv = ptr.as_mut::<SmallVec<A>>();
         sv.reserve(additional);
@@ -264,14 +264,14 @@ unsafe fn smallvec_reserve<A: Array>(ptr: PtrMut, additional: usize) {
 ///
 /// # Safety
 /// - `ptr` must point to an initialized `SmallVec<A>`
-unsafe fn smallvec_capacity<A: Array>(ptr: PtrConst) -> usize {
+unsafe extern "C" fn smallvec_capacity<A: Array>(ptr: PtrConst) -> usize {
     unsafe {
         let sv = ptr.get::<SmallVec<A>>();
         sv.capacity()
     }
 }
 
-unsafe fn smallvec_iter_init<A: Array>(ptr: PtrConst) -> PtrMut {
+unsafe extern "C" fn smallvec_iter_init<A: Array>(ptr: PtrConst) -> PtrMut {
     unsafe {
         let sv = ptr.get::<SmallVec<A>>();
         let iter: SmallVecIterator<A::Item> = sv.iter();
@@ -304,7 +304,7 @@ where
     }
 }
 
-unsafe fn smallvec_iter_dealloc<A: Array>(iter_ptr: PtrMut) {
+unsafe extern "C" fn smallvec_iter_dealloc<A: Array>(iter_ptr: PtrMut) {
     unsafe {
         drop(Box::from_raw(
             iter_ptr.as_ptr::<SmallVecIterator<'_, A::Item>>()

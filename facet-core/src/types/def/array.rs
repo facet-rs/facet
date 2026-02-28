@@ -31,14 +31,14 @@ impl ArrayDef {
 /// # Safety
 ///
 /// The `array` parameter must point to aligned, initialized memory of the correct type.
-pub type ArrayAsPtrFn = unsafe fn(array: PtrConst) -> PtrConst;
+pub type ArrayAsPtrFn = unsafe extern "C" fn(array: PtrConst) -> PtrConst;
 
 /// Get mutable pointer to the data buffer of the array.
 ///
 /// # Safety
 ///
 /// The `array` parameter must point to aligned, initialized memory of the correct type.
-pub type ArrayAsMutPtrFn = unsafe fn(array: PtrMut) -> PtrMut;
+pub type ArrayAsMutPtrFn = unsafe extern "C" fn(array: PtrMut) -> PtrMut;
 
 vtable_def! {
     /// Virtual table for an array

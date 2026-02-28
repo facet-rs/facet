@@ -13,7 +13,7 @@ use crate::{
 
 type HashMapIterator<'mem, K, V> = std::collections::hash_map::Iter<'mem, K, V>;
 
-unsafe fn hashmap_init_in_place_with_capacity<K, V, S: Default + BuildHasher>(
+unsafe extern "C" fn hashmap_init_in_place_with_capacity<K, V, S: Default + BuildHasher>(
     uninit: PtrUninit,
     capacity: usize,
 ) -> PtrMut {
@@ -25,36 +25,49 @@ unsafe fn hashmap_init_in_place_with_capacity<K, V, S: Default + BuildHasher>(
     }
 }
 
-unsafe fn hashmap_insert<K: Eq + core::hash::Hash, V>(ptr: PtrMut, key: PtrMut, value: PtrMut) {
+unsafe extern "C" fn hashmap_insert<K: Eq + core::hash::Hash, V>(
+    ptr: PtrMut,
+    key: PtrMut,
+    value: PtrMut,
+) {
     let map = unsafe { ptr.as_mut::<HashMap<K, V>>() };
     let key = unsafe { key.read::<K>() };
     let value = unsafe { value.read::<V>() };
     map.insert(key, value);
 }
 
-unsafe fn hashmap_len<K, V>(ptr: PtrConst) -> usize {
+unsafe extern "C" fn hashmap_len<K, V>(ptr: PtrConst) -> usize {
     unsafe { ptr.get::<HashMap<K, V>>().len() }
 }
 
-unsafe fn hashmap_contains_key<K: Eq + core::hash::Hash, V>(ptr: PtrConst, key: PtrConst) -> bool {
+unsafe extern "C" fn hashmap_contains_key<K: Eq + core::hash::Hash, V>(
+    ptr: PtrConst,
+    key: PtrConst,
+) -> bool {
     unsafe { ptr.get::<HashMap<K, V>>().contains_key(key.get()) }
 }
 
-unsafe fn hashmap_get_value_ptr<K: Eq + core::hash::Hash, V>(
+unsafe extern "C" fn hashmap_get_value_ptr<K: Eq + core::hash::Hash, V>(
     ptr: PtrConst,
     key: PtrConst,
-) -> Option<PtrConst> {
+) -> *const u8 {
     unsafe {
         ptr.get::<HashMap<K, V>>()
             .get(key.get())
-            .map(|v| PtrConst::new(NonNull::from(v).as_ptr()))
+            .map_or(core::ptr::null(), |v| {
+                NonNull::from(v).as_ptr() as *const u8
+            })
     }
 }
 
 /// Build a HashMap from a contiguous slice of (K, V) pairs.
 ///
 /// This uses `from_iter` with known capacity to avoid rehashing.
-unsafe fn hashmap_from_pair_slice<K: Eq + core::hash::Hash, V, S: Default + BuildHasher>(
+unsafe extern "C" fn hashmap_from_pair_slice<
+    K: Eq + core::hash::Hash,
+    V,
+    S: Default + BuildHasher,
+>(
     uninit: PtrUninit,
     pairs_ptr: *mut u8,
     count: usize,
@@ -71,7 +84,7 @@ unsafe fn hashmap_from_pair_slice<K: Eq + core::hash::Hash, V, S: Default + Buil
     unsafe { uninit.put(map) }
 }
 
-unsafe fn hashmap_iter_init<K, V>(ptr: PtrConst) -> PtrMut {
+unsafe extern "C" fn hashmap_iter_init<K, V>(ptr: PtrConst) -> PtrMut {
     unsafe {
         let map = ptr.get::<HashMap<K, V>>();
         let iter: HashMapIterator<'_, K, V> = map.iter();
@@ -98,7 +111,7 @@ unsafe fn hashmap_iter_next<K, V>(iter_ptr: PtrMut) -> Option<(PtrConst, PtrCons
     }
 }
 
-unsafe fn hashmap_iter_dealloc<K, V>(iter_ptr: PtrMut) {
+unsafe extern "C" fn hashmap_iter_dealloc<K, V>(iter_ptr: PtrMut) {
     unsafe {
         drop(Box::from_raw(
             iter_ptr.as_ptr::<HashMapIterator<'_, K, V>>() as *mut HashMapIterator<'_, K, V>,

@@ -130,7 +130,7 @@ where
 ///
 /// # Safety
 /// `this` must point to a valid Cow<'_, T> value
-unsafe fn cow_borrow<T: ?Sized + ToOwned + 'static>(this: PtrConst) -> PtrConst
+unsafe extern "C" fn cow_borrow<T: ?Sized + ToOwned + 'static>(this: PtrConst) -> PtrConst
 where
     T::Owned: 'static,
 {
@@ -142,7 +142,10 @@ where
 }
 
 /// Create a new `Cow<T>` from a borrowed value
-unsafe fn cow_new_into<T: ?Sized + ToOwned + 'static>(this: PtrUninit, ptr: PtrMut) -> PtrMut
+unsafe extern "C" fn cow_new_into<T: ?Sized + ToOwned + 'static>(
+    this: PtrUninit,
+    ptr: PtrMut,
+) -> PtrMut
 where
     T::Owned: 'static,
 {

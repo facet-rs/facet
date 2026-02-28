@@ -28,7 +28,7 @@ use crate::{
 
 type IdHashMapIterator<'mem, T> = iddqd::id_hash_map::Iter<'mem, T>;
 
-unsafe fn id_hash_map_init_in_place_with_capacity<
+unsafe extern "C" fn id_hash_map_init_in_place_with_capacity<
     T: IdHashItem,
     S: Clone + Default + BuildHasher,
 >(
@@ -43,7 +43,7 @@ unsafe fn id_hash_map_init_in_place_with_capacity<
     }
 }
 
-unsafe fn id_hash_map_insert<T: IdHashItem, S: Clone + BuildHasher>(
+unsafe extern "C" fn id_hash_map_insert<T: IdHashItem, S: Clone + BuildHasher>(
     ptr: PtrMut,
     value: PtrMut,
 ) -> bool {
@@ -53,11 +53,13 @@ unsafe fn id_hash_map_insert<T: IdHashItem, S: Clone + BuildHasher>(
     map.insert_overwrite(value).is_none()
 }
 
-unsafe fn id_hash_map_len<T: IdHashItem, S: Clone + BuildHasher>(ptr: PtrConst) -> usize {
+unsafe extern "C" fn id_hash_map_len<T: IdHashItem, S: Clone + BuildHasher>(
+    ptr: PtrConst,
+) -> usize {
     unsafe { ptr.get::<IdHashMap<T, S>>().len() }
 }
 
-unsafe fn id_hash_map_contains<T: IdHashItem, S: Clone + BuildHasher>(
+unsafe extern "C" fn id_hash_map_contains<T: IdHashItem, S: Clone + BuildHasher>(
     ptr: PtrConst,
     value: PtrConst,
 ) -> bool {
@@ -67,7 +69,9 @@ unsafe fn id_hash_map_contains<T: IdHashItem, S: Clone + BuildHasher>(
     map.contains_key(&key)
 }
 
-unsafe fn id_hash_map_iter_init<T: IdHashItem, S: Clone + BuildHasher>(ptr: PtrConst) -> PtrMut {
+unsafe extern "C" fn id_hash_map_iter_init<T: IdHashItem, S: Clone + BuildHasher>(
+    ptr: PtrConst,
+) -> PtrMut {
     unsafe {
         let map = ptr.get::<IdHashMap<T, S>>();
         let iter = map.iter();
@@ -83,7 +87,7 @@ unsafe fn id_hash_map_iter_next<T: IdHashItem + 'static>(iter_ptr: PtrMut) -> Op
     }
 }
 
-unsafe fn id_hash_map_iter_dealloc<T: IdHashItem + 'static>(iter_ptr: PtrMut) {
+unsafe extern "C" fn id_hash_map_iter_dealloc<T: IdHashItem + 'static>(iter_ptr: PtrMut) {
     unsafe {
         drop(Box::from_raw(
             iter_ptr.as_ptr::<IdHashMapIterator<'_, T>>() as *mut IdHashMapIterator<'_, T>
@@ -184,7 +188,7 @@ where
 type IdOrdMapIterator<'mem, T> = iddqd::id_ord_map::Iter<'mem, T>;
 
 #[cfg(feature = "std")]
-unsafe fn id_ord_map_init_in_place_with_capacity<T: IdOrdItem>(
+unsafe extern "C" fn id_ord_map_init_in_place_with_capacity<T: IdOrdItem>(
     uninit: PtrUninit,
     capacity: usize,
 ) -> PtrMut {
@@ -192,19 +196,19 @@ unsafe fn id_ord_map_init_in_place_with_capacity<T: IdOrdItem>(
 }
 
 #[cfg(feature = "std")]
-unsafe fn id_ord_map_insert<T: IdOrdItem>(ptr: PtrMut, value: PtrMut) -> bool {
+unsafe extern "C" fn id_ord_map_insert<T: IdOrdItem>(ptr: PtrMut, value: PtrMut) -> bool {
     let map = unsafe { ptr.as_mut::<IdOrdMap<T>>() };
     let value = unsafe { value.read::<T>() };
     map.insert_overwrite(value).is_none()
 }
 
 #[cfg(feature = "std")]
-unsafe fn id_ord_map_len<T: IdOrdItem>(ptr: PtrConst) -> usize {
+unsafe extern "C" fn id_ord_map_len<T: IdOrdItem>(ptr: PtrConst) -> usize {
     unsafe { ptr.get::<IdOrdMap<T>>().len() }
 }
 
 #[cfg(feature = "std")]
-unsafe fn id_ord_map_contains<T: IdOrdItem>(ptr: PtrConst, value: PtrConst) -> bool {
+unsafe extern "C" fn id_ord_map_contains<T: IdOrdItem>(ptr: PtrConst, value: PtrConst) -> bool {
     let map = unsafe { ptr.get::<IdOrdMap<T>>() };
     let value = unsafe { value.get::<T>() };
     let key = value.key();
@@ -212,7 +216,7 @@ unsafe fn id_ord_map_contains<T: IdOrdItem>(ptr: PtrConst, value: PtrConst) -> b
 }
 
 #[cfg(feature = "std")]
-unsafe fn id_ord_map_iter_init<T: IdOrdItem>(ptr: PtrConst) -> PtrMut {
+unsafe extern "C" fn id_ord_map_iter_init<T: IdOrdItem>(ptr: PtrConst) -> PtrMut {
     unsafe {
         let map = ptr.get::<IdOrdMap<T>>();
         let iter = map.iter();
@@ -230,7 +234,7 @@ unsafe fn id_ord_map_iter_next<T: IdOrdItem + 'static>(iter_ptr: PtrMut) -> Opti
 }
 
 #[cfg(feature = "std")]
-unsafe fn id_ord_map_iter_dealloc<T: IdOrdItem + 'static>(iter_ptr: PtrMut) {
+unsafe extern "C" fn id_ord_map_iter_dealloc<T: IdOrdItem + 'static>(iter_ptr: PtrMut) {
     unsafe {
         drop(Box::from_raw(
             iter_ptr.as_ptr::<IdOrdMapIterator<'_, T>>() as *mut IdOrdMapIterator<'_, T>
@@ -326,7 +330,7 @@ where
 
 type BiHashMapIterator<'mem, T> = iddqd::bi_hash_map::Iter<'mem, T>;
 
-unsafe fn bi_hash_map_init_in_place_with_capacity<
+unsafe extern "C" fn bi_hash_map_init_in_place_with_capacity<
     T: BiHashItem,
     S: Clone + Default + BuildHasher,
 >(
@@ -341,7 +345,7 @@ unsafe fn bi_hash_map_init_in_place_with_capacity<
     }
 }
 
-unsafe fn bi_hash_map_insert<T: BiHashItem, S: Clone + BuildHasher>(
+unsafe extern "C" fn bi_hash_map_insert<T: BiHashItem, S: Clone + BuildHasher>(
     ptr: PtrMut,
     value: PtrMut,
 ) -> bool {
@@ -351,11 +355,13 @@ unsafe fn bi_hash_map_insert<T: BiHashItem, S: Clone + BuildHasher>(
     map.insert_overwrite(value).is_empty()
 }
 
-unsafe fn bi_hash_map_len<T: BiHashItem, S: Clone + BuildHasher>(ptr: PtrConst) -> usize {
+unsafe extern "C" fn bi_hash_map_len<T: BiHashItem, S: Clone + BuildHasher>(
+    ptr: PtrConst,
+) -> usize {
     unsafe { ptr.get::<BiHashMap<T, S>>().len() }
 }
 
-unsafe fn bi_hash_map_contains<T: BiHashItem, S: Clone + BuildHasher>(
+unsafe extern "C" fn bi_hash_map_contains<T: BiHashItem, S: Clone + BuildHasher>(
     ptr: PtrConst,
     value: PtrConst,
 ) -> bool {
@@ -366,7 +372,9 @@ unsafe fn bi_hash_map_contains<T: BiHashItem, S: Clone + BuildHasher>(
     map.contains_key_unique(&key1, &key2)
 }
 
-unsafe fn bi_hash_map_iter_init<T: BiHashItem, S: Clone + BuildHasher>(ptr: PtrConst) -> PtrMut {
+unsafe extern "C" fn bi_hash_map_iter_init<T: BiHashItem, S: Clone + BuildHasher>(
+    ptr: PtrConst,
+) -> PtrMut {
     unsafe {
         let map = ptr.get::<BiHashMap<T, S>>();
         let iter = map.iter();
@@ -382,7 +390,7 @@ unsafe fn bi_hash_map_iter_next<T: BiHashItem + 'static>(iter_ptr: PtrMut) -> Op
     }
 }
 
-unsafe fn bi_hash_map_iter_dealloc<T: BiHashItem + 'static>(iter_ptr: PtrMut) {
+unsafe extern "C" fn bi_hash_map_iter_dealloc<T: BiHashItem + 'static>(iter_ptr: PtrMut) {
     unsafe {
         drop(Box::from_raw(
             iter_ptr.as_ptr::<BiHashMapIterator<'_, T>>() as *mut BiHashMapIterator<'_, T>
@@ -481,7 +489,7 @@ where
 
 type TriHashMapIterator<'mem, T> = iddqd::tri_hash_map::Iter<'mem, T>;
 
-unsafe fn tri_hash_map_init_in_place_with_capacity<
+unsafe extern "C" fn tri_hash_map_init_in_place_with_capacity<
     T: TriHashItem,
     S: Clone + Default + BuildHasher,
 >(
@@ -496,7 +504,7 @@ unsafe fn tri_hash_map_init_in_place_with_capacity<
     }
 }
 
-unsafe fn tri_hash_map_insert<T: TriHashItem, S: Clone + BuildHasher>(
+unsafe extern "C" fn tri_hash_map_insert<T: TriHashItem, S: Clone + BuildHasher>(
     ptr: PtrMut,
     value: PtrMut,
 ) -> bool {
@@ -506,11 +514,13 @@ unsafe fn tri_hash_map_insert<T: TriHashItem, S: Clone + BuildHasher>(
     map.insert_overwrite(value).is_empty()
 }
 
-unsafe fn tri_hash_map_len<T: TriHashItem, S: Clone + BuildHasher>(ptr: PtrConst) -> usize {
+unsafe extern "C" fn tri_hash_map_len<T: TriHashItem, S: Clone + BuildHasher>(
+    ptr: PtrConst,
+) -> usize {
     unsafe { ptr.get::<TriHashMap<T, S>>().len() }
 }
 
-unsafe fn tri_hash_map_contains<T: TriHashItem, S: Clone + BuildHasher>(
+unsafe extern "C" fn tri_hash_map_contains<T: TriHashItem, S: Clone + BuildHasher>(
     ptr: PtrConst,
     value: PtrConst,
 ) -> bool {
@@ -522,7 +532,9 @@ unsafe fn tri_hash_map_contains<T: TriHashItem, S: Clone + BuildHasher>(
     map.contains_key_unique(&key1, &key2, &key3)
 }
 
-unsafe fn tri_hash_map_iter_init<T: TriHashItem, S: Clone + BuildHasher>(ptr: PtrConst) -> PtrMut {
+unsafe extern "C" fn tri_hash_map_iter_init<T: TriHashItem, S: Clone + BuildHasher>(
+    ptr: PtrConst,
+) -> PtrMut {
     unsafe {
         let map = ptr.get::<TriHashMap<T, S>>();
         let iter = map.iter();
@@ -538,7 +550,7 @@ unsafe fn tri_hash_map_iter_next<T: TriHashItem + 'static>(iter_ptr: PtrMut) -> 
     }
 }
 
-unsafe fn tri_hash_map_iter_dealloc<T: TriHashItem + 'static>(iter_ptr: PtrMut) {
+unsafe extern "C" fn tri_hash_map_iter_dealloc<T: TriHashItem + 'static>(iter_ptr: PtrMut) {
     unsafe {
         drop(Box::from_raw(
             iter_ptr.as_ptr::<TriHashMapIterator<'_, T>>() as *mut TriHashMapIterator<'_, T>,

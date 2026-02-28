@@ -27,7 +27,7 @@ fn bytes_debug(bytes: &Bytes, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Re
         .finish()
 }
 
-unsafe fn bytes_len(ptr: PtrConst) -> usize {
+unsafe extern "C" fn bytes_len(ptr: PtrConst) -> usize {
     unsafe { ptr.get::<Bytes>().len() }
 }
 
@@ -39,14 +39,14 @@ unsafe fn bytes_get(ptr: PtrConst, index: usize, _shape: &'static Shape) -> Opti
     }
 }
 
-unsafe fn bytes_as_ptr(ptr: PtrConst) -> PtrConst {
+unsafe extern "C" fn bytes_as_ptr(ptr: PtrConst) -> PtrConst {
     unsafe {
         let bytes: &Bytes = ptr.get::<Bytes>();
         PtrConst::new(NonNull::new_unchecked(bytes.as_ptr() as *mut u8).as_ptr() as *const ())
     }
 }
 
-unsafe fn bytes_iter_init(ptr: PtrConst) -> PtrMut {
+unsafe extern "C" fn bytes_iter_init(ptr: PtrConst) -> PtrMut {
     unsafe {
         let bytes = ptr.get::<Bytes>();
         let iter: BytesIterator = bytes.iter();
@@ -73,7 +73,7 @@ unsafe fn bytes_iter_next_back(iter_ptr: PtrMut) -> Option<PtrConst> {
     }
 }
 
-unsafe fn bytes_iter_dealloc(iter_ptr: PtrMut) {
+unsafe extern "C" fn bytes_iter_dealloc(iter_ptr: PtrMut) {
     unsafe {
         drop(Box::from_raw(
             iter_ptr.as_ptr::<BytesIterator<'_>>() as *mut BytesIterator<'_>
@@ -164,7 +164,7 @@ fn bytes_mut_debug(bytes: &BytesMut, f: &mut core::fmt::Formatter<'_>) -> core::
         .finish()
 }
 
-unsafe fn bytes_mut_len(ptr: PtrConst) -> usize {
+unsafe extern "C" fn bytes_mut_len(ptr: PtrConst) -> usize {
     unsafe { ptr.get::<BytesMut>().len() }
 }
 
@@ -184,25 +184,28 @@ unsafe fn bytes_mut_get_mut(ptr: PtrMut, index: usize, _shape: &'static Shape) -
     }
 }
 
-unsafe fn bytes_mut_as_ptr(ptr: PtrConst) -> PtrConst {
+unsafe extern "C" fn bytes_mut_as_ptr(ptr: PtrConst) -> PtrConst {
     unsafe {
         let bytes = ptr.get::<BytesMut>();
         PtrConst::new(NonNull::new_unchecked(bytes.as_ptr() as *mut u8).as_ptr() as *const ())
     }
 }
 
-unsafe fn bytes_mut_as_mut_ptr(ptr: PtrMut) -> PtrMut {
+unsafe extern "C" fn bytes_mut_as_mut_ptr(ptr: PtrMut) -> PtrMut {
     unsafe {
         let bytes = ptr.as_mut::<BytesMut>();
         PtrMut::new(NonNull::new_unchecked(bytes.as_mut_ptr()).as_ptr() as *mut ())
     }
 }
 
-unsafe fn bytes_mut_init_in_place_with_capacity(data: PtrUninit, capacity: usize) -> PtrMut {
+unsafe extern "C" fn bytes_mut_init_in_place_with_capacity(
+    data: PtrUninit,
+    capacity: usize,
+) -> PtrMut {
     unsafe { data.put(BytesMut::with_capacity(capacity)) }
 }
 
-unsafe fn bytes_mut_push(ptr: PtrMut, item: PtrMut) {
+unsafe extern "C" fn bytes_mut_push(ptr: PtrMut, item: PtrMut) {
     unsafe {
         let bytes = ptr.as_mut::<BytesMut>();
         let item = item.read::<u8>();
@@ -210,7 +213,7 @@ unsafe fn bytes_mut_push(ptr: PtrMut, item: PtrMut) {
     }
 }
 
-unsafe fn bytes_mut_iter_init(ptr: PtrConst) -> PtrMut {
+unsafe extern "C" fn bytes_mut_iter_init(ptr: PtrConst) -> PtrMut {
     unsafe {
         let bytes = ptr.get::<BytesMut>();
         let iter: BytesIterator = bytes.iter();

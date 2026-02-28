@@ -14,7 +14,7 @@ use crate::{
 
 type IndexMapIterator<'mem, K, V> = indexmap::map::Iter<'mem, K, V>;
 
-unsafe fn indexmap_init_in_place_with_capacity<K, V, S: Default + BuildHasher>(
+unsafe extern "C" fn indexmap_init_in_place_with_capacity<K, V, S: Default + BuildHasher>(
     uninit: PtrUninit,
     capacity: usize,
 ) -> PtrMut {
@@ -26,7 +26,7 @@ unsafe fn indexmap_init_in_place_with_capacity<K, V, S: Default + BuildHasher>(
     }
 }
 
-unsafe fn indexmap_insert<K: Eq + core::hash::Hash, V, S: BuildHasher>(
+unsafe extern "C" fn indexmap_insert<K: Eq + core::hash::Hash, V, S: BuildHasher>(
     ptr: PtrMut,
     key: PtrMut,
     value: PtrMut,
@@ -37,29 +37,31 @@ unsafe fn indexmap_insert<K: Eq + core::hash::Hash, V, S: BuildHasher>(
     map.insert(key, value);
 }
 
-unsafe fn indexmap_len<K, V, S>(ptr: PtrConst) -> usize {
+unsafe extern "C" fn indexmap_len<K, V, S>(ptr: PtrConst) -> usize {
     unsafe { ptr.get::<IndexMap<K, V, S>>().len() }
 }
 
-unsafe fn indexmap_contains_key<K: Eq + core::hash::Hash, V, S: BuildHasher>(
+unsafe extern "C" fn indexmap_contains_key<K: Eq + core::hash::Hash, V, S: BuildHasher>(
     ptr: PtrConst,
     key: PtrConst,
 ) -> bool {
     unsafe { ptr.get::<IndexMap<K, V, S>>().contains_key(key.get::<K>()) }
 }
 
-unsafe fn indexmap_get_value_ptr<K: Eq + core::hash::Hash, V, S: BuildHasher>(
+unsafe extern "C" fn indexmap_get_value_ptr<K: Eq + core::hash::Hash, V, S: BuildHasher>(
     ptr: PtrConst,
     key: PtrConst,
-) -> Option<PtrConst> {
+) -> *const u8 {
     unsafe {
         ptr.get::<IndexMap<K, V, S>>()
             .get(key.get::<K>())
-            .map(|v| PtrConst::new(NonNull::from(v).as_ptr()))
+            .map_or(core::ptr::null(), |v| {
+                NonNull::from(v).as_ptr() as *const u8
+            })
     }
 }
 
-unsafe fn indexmap_iter_init<K, V, S>(ptr: PtrConst) -> PtrMut {
+unsafe extern "C" fn indexmap_iter_init<K, V, S>(ptr: PtrConst) -> PtrMut {
     unsafe {
         let map = ptr.get::<IndexMap<K, V, S>>();
         let iter: IndexMapIterator<'_, K, V> = map.iter();
@@ -80,7 +82,7 @@ unsafe fn indexmap_iter_next<K, V>(iter_ptr: PtrMut) -> Option<(PtrConst, PtrCon
     }
 }
 
-unsafe fn indexmap_iter_dealloc<K, V>(iter_ptr: PtrMut) {
+unsafe extern "C" fn indexmap_iter_dealloc<K, V>(iter_ptr: PtrMut) {
     unsafe {
         drop(Box::from_raw(
             iter_ptr.as_ptr::<IndexMapIterator<'_, K, V>>() as *mut IndexMapIterator<'_, K, V>,
@@ -102,7 +104,11 @@ unsafe fn indexmap_default<K, V, S: Default + BuildHasher>(ox: OxPtrUninit) -> b
 }
 
 /// Build an IndexMap from a contiguous slice of (K, V) pairs.
-unsafe fn indexmap_from_pair_slice<K: Eq + core::hash::Hash, V, S: Default + BuildHasher>(
+unsafe extern "C" fn indexmap_from_pair_slice<
+    K: Eq + core::hash::Hash,
+    V,
+    S: Default + BuildHasher,
+>(
     uninit: PtrUninit,
     pairs_ptr: *mut u8,
     count: usize,
