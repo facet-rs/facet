@@ -1480,7 +1480,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             let Some(ns) = attr.ns.as_ref() else {
                 continue;
             };
-            if ns.to_string() != "postcard" || attr.key_str() != "trailing" {
+            if *ns != "postcard" || attr.key_str() != "trailing" {
                 continue;
             }
             if !attr.args.is_empty() {
