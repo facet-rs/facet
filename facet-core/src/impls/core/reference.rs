@@ -212,7 +212,7 @@ static REF_MUT_TYPE_OPS: TypeOpsIndirect = TypeOpsIndirect {
 };
 
 /// Borrow function for &T - dereferences to get inner pointer
-unsafe fn ref_borrow<T: ?Sized>(this: PtrConst) -> PtrConst {
+unsafe extern "C" fn ref_borrow<T: ?Sized>(this: PtrConst) -> PtrConst {
     let ptr: &&T = unsafe { this.get::<&T>() };
     let ptr: &T = ptr;
     // Don't cast to *const u8 - that loses metadata for wide pointers like &str
@@ -220,7 +220,7 @@ unsafe fn ref_borrow<T: ?Sized>(this: PtrConst) -> PtrConst {
 }
 
 /// Borrow function for &mut T - dereferences to get inner pointer
-unsafe fn ref_mut_borrow<T: ?Sized>(this: PtrConst) -> PtrConst {
+unsafe extern "C" fn ref_mut_borrow<T: ?Sized>(this: PtrConst) -> PtrConst {
     let ptr: &&mut T = unsafe { this.get::<&mut T>() };
     let ptr: &T = ptr;
     // Don't cast to *const u8 - that loses metadata for wide pointers like &str

@@ -11,7 +11,7 @@ use crate::{
 
 type HashSetIterator<'mem, T> = std::collections::hash_set::Iter<'mem, T>;
 
-unsafe fn hashset_init_in_place_with_capacity<T, S: Default + BuildHasher>(
+unsafe extern "C" fn hashset_init_in_place_with_capacity<T, S: Default + BuildHasher>(
     uninit: PtrUninit,
     capacity: usize,
 ) -> PtrMut {
@@ -23,7 +23,10 @@ unsafe fn hashset_init_in_place_with_capacity<T, S: Default + BuildHasher>(
     }
 }
 
-unsafe fn hashset_insert<T: Eq + core::hash::Hash + 'static>(ptr: PtrMut, item: PtrMut) -> bool {
+unsafe extern "C" fn hashset_insert<T: Eq + core::hash::Hash + 'static>(
+    ptr: PtrMut,
+    item: PtrMut,
+) -> bool {
     unsafe {
         let set = ptr.as_mut::<HashSet<T>>();
         let item = item.read::<T>();
@@ -31,18 +34,18 @@ unsafe fn hashset_insert<T: Eq + core::hash::Hash + 'static>(ptr: PtrMut, item: 
     }
 }
 
-unsafe fn hashset_len<T: 'static>(ptr: PtrConst) -> usize {
+unsafe extern "C" fn hashset_len<T: 'static>(ptr: PtrConst) -> usize {
     unsafe { ptr.get::<HashSet<T>>().len() }
 }
 
-unsafe fn hashset_contains<T: Eq + core::hash::Hash + 'static>(
+unsafe extern "C" fn hashset_contains<T: Eq + core::hash::Hash + 'static>(
     ptr: PtrConst,
     item: PtrConst,
 ) -> bool {
     unsafe { ptr.get::<HashSet<T>>().contains(item.get()) }
 }
 
-unsafe fn hashset_iter_init<T: 'static>(ptr: PtrConst) -> PtrMut {
+unsafe extern "C" fn hashset_iter_init<T: 'static>(ptr: PtrConst) -> PtrMut {
     unsafe {
         let set = ptr.get::<HashSet<T>>();
         let iter: HashSetIterator<'_, T> = set.iter();
@@ -58,7 +61,7 @@ unsafe fn hashset_iter_next<T: 'static>(iter_ptr: PtrMut) -> Option<PtrConst> {
     }
 }
 
-unsafe fn hashset_iter_dealloc<T>(iter_ptr: PtrMut) {
+unsafe extern "C" fn hashset_iter_dealloc<T>(iter_ptr: PtrMut) {
     unsafe {
         drop(Box::from_raw(
             iter_ptr.as_ptr::<HashSetIterator<'_, T>>() as *mut HashSetIterator<'_, T>
@@ -72,7 +75,7 @@ unsafe fn hashset_iter_dealloc<T>(iter_ptr: PtrMut) {
 /// - `set` must point to uninitialized memory
 /// - `elements_ptr` must point to `count` consecutive initialized T values
 /// - Elements are moved out and should not be dropped by caller
-unsafe fn hashset_from_slice<
+unsafe extern "C" fn hashset_from_slice<
     T: Eq + core::hash::Hash + 'static,
     S: Default + BuildHasher + 'static,
 >(

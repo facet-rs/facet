@@ -45,7 +45,7 @@ fn type_name_weak<'a, T: Facet<'a>>(
 }
 
 // Pointer VTable functions for Arc<T>
-unsafe fn arc_borrow<'a, T: Facet<'a>>(this: PtrConst) -> PtrConst {
+unsafe extern "C" fn arc_borrow<'a, T: Facet<'a>>(this: PtrConst) -> PtrConst {
     unsafe {
         let arc_ptr = this.as_ptr::<Arc<T>>();
         let ptr = &**arc_ptr;
@@ -53,7 +53,7 @@ unsafe fn arc_borrow<'a, T: Facet<'a>>(this: PtrConst) -> PtrConst {
     }
 }
 
-unsafe fn arc_new_into<'a, 'src, T: Facet<'a>>(this: PtrUninit, ptr: PtrMut) -> PtrMut {
+unsafe extern "C" fn arc_new_into<'a, 'src, T: Facet<'a>>(this: PtrUninit, ptr: PtrMut) -> PtrMut {
     unsafe {
         let t = ptr.read::<T>();
         let arc = Arc::new(t);
@@ -66,7 +66,7 @@ unsafe fn arc_downgrade_into<'a, 'src, T: Facet<'a>>(strong: PtrMut, weak: PtrUn
 }
 
 // Arc<str> specific functions
-unsafe fn arc_str_borrow(this: PtrConst) -> PtrConst {
+unsafe extern "C" fn arc_str_borrow(this: PtrConst) -> PtrConst {
     unsafe {
         let concrete = this.get::<Arc<str>>();
         let s: &str = concrete;
@@ -79,7 +79,7 @@ unsafe fn arc_str_downgrade_into(strong: PtrMut, weak: PtrUninit) -> PtrMut {
 }
 
 // Arc<[U]> specific functions
-unsafe fn arc_slice_borrow<'a, U: Facet<'a>>(this: PtrConst) -> PtrConst {
+unsafe extern "C" fn arc_slice_borrow<'a, U: Facet<'a>>(this: PtrConst) -> PtrConst {
     unsafe {
         let concrete = this.get::<Arc<[U]>>();
         let s: &[U] = concrete;

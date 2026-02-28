@@ -17,6 +17,26 @@ const fn get_result_def(shape: &'static Shape) -> Option<&'static ResultDef> {
     }
 }
 
+#[inline]
+unsafe fn result_get_ok_ptr(def: &ResultDef, ptr: PtrConst) -> Option<PtrConst> {
+    let raw = unsafe { (def.vtable.get_ok)(ptr) };
+    if raw.is_null() {
+        None
+    } else {
+        Some(PtrConst::new_sized(raw))
+    }
+}
+
+#[inline]
+unsafe fn result_get_err_ptr(def: &ResultDef, ptr: PtrConst) -> Option<PtrConst> {
+    let raw = unsafe { (def.vtable.get_err)(ptr) };
+    if raw.is_null() {
+        None
+    } else {
+        Some(PtrConst::new_sized(raw))
+    }
+}
+
 fn result_type_name(
     shape: &'static Shape,
     f: &mut core::fmt::Formatter<'_>,
@@ -51,12 +71,12 @@ unsafe fn result_debug(
     if unsafe { (def.vtable.is_ok)(ptr) } {
         // SAFETY: is_ok returned true, so get_ok returns a valid pointer.
         // The caller guarantees the OxPtrConst points to a valid Result.
-        let ok_ptr = unsafe { (def.vtable.get_ok)(ptr)? };
+        let ok_ptr = unsafe { result_get_ok_ptr(def, ptr)? };
         let ok_ox = unsafe { OxRef::new(ok_ptr, def.t) };
         Some(f.debug_tuple("Ok").field(&ok_ox).finish())
     } else {
         // SAFETY: is_ok returned false, so get_err returns a valid pointer.
-        let err_ptr = unsafe { (def.vtable.get_err)(ptr)? };
+        let err_ptr = unsafe { result_get_err_ptr(def, ptr)? };
         let err_ox = unsafe { OxRef::new(err_ptr, def.e) };
         Some(f.debug_tuple("Err").field(&err_ox).finish())
     }
@@ -71,11 +91,11 @@ unsafe fn result_hash(ox: OxPtrConst, hasher: &mut HashProxy<'_>) -> Option<()> 
     use core::hash::Hash;
     if unsafe { (def.vtable.is_ok)(ptr) } {
         0u8.hash(hasher);
-        let ok_ptr = unsafe { (def.vtable.get_ok)(ptr)? };
+        let ok_ptr = unsafe { result_get_ok_ptr(def, ptr)? };
         unsafe { def.t.call_hash(ok_ptr, hasher)? };
     } else {
         1u8.hash(hasher);
-        let err_ptr = unsafe { (def.vtable.get_err)(ptr)? };
+        let err_ptr = unsafe { result_get_err_ptr(def, ptr)? };
         unsafe { def.e.call_hash(err_ptr, hasher)? };
     }
     Some(())
@@ -93,13 +113,13 @@ unsafe fn result_partial_eq(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
 
     Some(match (a_is_ok, b_is_ok) {
         (true, true) => {
-            let a_ok = unsafe { (def.vtable.get_ok)(a_ptr)? };
-            let b_ok = unsafe { (def.vtable.get_ok)(b_ptr)? };
+            let a_ok = unsafe { result_get_ok_ptr(def, a_ptr)? };
+            let b_ok = unsafe { result_get_ok_ptr(def, b_ptr)? };
             unsafe { def.t.call_partial_eq(a_ok, b_ok)? }
         }
         (false, false) => {
-            let a_err = unsafe { (def.vtable.get_err)(a_ptr)? };
-            let b_err = unsafe { (def.vtable.get_err)(b_ptr)? };
+            let a_err = unsafe { result_get_err_ptr(def, a_ptr)? };
+            let b_err = unsafe { result_get_err_ptr(def, b_ptr)? };
             unsafe { def.e.call_partial_eq(a_err, b_err)? }
         }
         _ => false,
@@ -118,13 +138,13 @@ unsafe fn result_partial_cmp(a: OxPtrConst, b: OxPtrConst) -> Option<Option<Orde
 
     Some(match (a_is_ok, b_is_ok) {
         (true, true) => {
-            let a_ok = unsafe { (def.vtable.get_ok)(a_ptr)? };
-            let b_ok = unsafe { (def.vtable.get_ok)(b_ptr)? };
+            let a_ok = unsafe { result_get_ok_ptr(def, a_ptr)? };
+            let b_ok = unsafe { result_get_ok_ptr(def, b_ptr)? };
             unsafe { def.t.call_partial_cmp(a_ok, b_ok)? }
         }
         (false, false) => {
-            let a_err = unsafe { (def.vtable.get_err)(a_ptr)? };
-            let b_err = unsafe { (def.vtable.get_err)(b_ptr)? };
+            let a_err = unsafe { result_get_err_ptr(def, a_ptr)? };
+            let b_err = unsafe { result_get_err_ptr(def, b_ptr)? };
             unsafe { def.e.call_partial_cmp(a_err, b_err)? }
         }
         // Ok is greater than Err (following std::cmp::Ord for Result)
@@ -145,13 +165,13 @@ unsafe fn result_cmp(a: OxPtrConst, b: OxPtrConst) -> Option<Ordering> {
 
     Some(match (a_is_ok, b_is_ok) {
         (true, true) => {
-            let a_ok = unsafe { (def.vtable.get_ok)(a_ptr)? };
-            let b_ok = unsafe { (def.vtable.get_ok)(b_ptr)? };
+            let a_ok = unsafe { result_get_ok_ptr(def, a_ptr)? };
+            let b_ok = unsafe { result_get_ok_ptr(def, b_ptr)? };
             unsafe { def.t.call_cmp(a_ok, b_ok)? }
         }
         (false, false) => {
-            let a_err = unsafe { (def.vtable.get_err)(a_ptr)? };
-            let b_err = unsafe { (def.vtable.get_err)(b_ptr)? };
+            let a_err = unsafe { result_get_err_ptr(def, a_ptr)? };
+            let b_err = unsafe { result_get_err_ptr(def, b_ptr)? };
             unsafe { def.e.call_cmp(a_err, b_err)? }
         }
         // Ok is greater than Err (following std::cmp::Ord for Result)
@@ -169,13 +189,13 @@ unsafe fn result_drop(ox: OxPtrMut) {
     let ptr = ox.ptr();
 
     if unsafe { (def.vtable.is_ok)(ptr.as_const()) } {
-        let Some(ok_ptr) = (unsafe { (def.vtable.get_ok)(ptr.as_const()) }) else {
+        let Some(ok_ptr) = (unsafe { result_get_ok_ptr(def, ptr.as_const()) }) else {
             return;
         };
         let ok_ptr_mut = PtrMut::new(ok_ptr.as_byte_ptr() as *mut u8);
         unsafe { def.t.call_drop_in_place(ok_ptr_mut) };
     } else {
-        let Some(err_ptr) = (unsafe { (def.vtable.get_err)(ptr.as_const()) }) else {
+        let Some(err_ptr) = (unsafe { result_get_err_ptr(def, ptr.as_const()) }) else {
             return;
         };
         let err_ptr_mut = PtrMut::new(err_ptr.as_byte_ptr() as *mut u8);
@@ -208,39 +228,39 @@ static RESULT_TYPE_OPS: TypeOpsIndirect = TypeOpsIndirect {
 };
 
 /// Check if Result<T, E> is Ok
-unsafe fn result_is_ok<T, E>(result: PtrConst) -> bool {
+unsafe extern "C" fn result_is_ok<T, E>(result: PtrConst) -> bool {
     unsafe { result.get::<Result<T, E>>().is_ok() }
 }
 
 /// Get the Ok value from Result<T, E> if present
-unsafe fn result_get_ok<T, E>(result: PtrConst) -> Option<PtrConst> {
+unsafe extern "C" fn result_get_ok<T, E>(result: PtrConst) -> *const u8 {
     unsafe {
         result
             .get::<Result<T, E>>()
             .as_ref()
             .ok()
-            .map(|t| PtrConst::new(t as *const T))
+            .map_or(core::ptr::null(), |t| t as *const T as *const u8)
     }
 }
 
 /// Get the Err value from Result<T, E> if present
-unsafe fn result_get_err<T, E>(result: PtrConst) -> Option<PtrConst> {
+unsafe extern "C" fn result_get_err<T, E>(result: PtrConst) -> *const u8 {
     unsafe {
         result
             .get::<Result<T, E>>()
             .as_ref()
             .err()
-            .map(|e| PtrConst::new(e as *const E))
+            .map_or(core::ptr::null(), |e| e as *const E as *const u8)
     }
 }
 
 /// Initialize Result<T, E> with Ok(value)
-unsafe fn result_init_ok<T, E>(result: crate::PtrUninit, value: PtrMut) -> PtrMut {
+unsafe extern "C" fn result_init_ok<T, E>(result: crate::PtrUninit, value: PtrMut) -> PtrMut {
     unsafe { result.put(Result::<T, E>::Ok(value.read::<T>())) }
 }
 
 /// Initialize Result<T, E> with Err(value)
-unsafe fn result_init_err<T, E>(result: crate::PtrUninit, value: PtrMut) -> PtrMut {
+unsafe extern "C" fn result_init_err<T, E>(result: crate::PtrUninit, value: PtrMut) -> PtrMut {
     unsafe { result.put(Result::<T, E>::Err(value.read::<E>())) }
 }
 

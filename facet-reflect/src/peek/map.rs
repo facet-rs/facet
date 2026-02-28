@@ -127,11 +127,11 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
     ) -> Result<Option<Peek<'mem, 'facet>>, ReflectError> {
         if self.def.k() == key.shape {
             return Ok(unsafe {
-                let Some(value_ptr) =
-                    (self.def.vtable.get_value_ptr)(self.value.data(), key.data())
-                else {
+                let value_ptr = (self.def.vtable.get_value_ptr)(self.value.data(), key.data());
+                if value_ptr.is_null() {
                     return Ok(None);
-                };
+                }
+                let value_ptr = facet_core::PtrConst::new_sized(value_ptr);
                 Some(Peek::unchecked_new(value_ptr, self.def.v()))
             });
         }

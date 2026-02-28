@@ -32,7 +32,7 @@ fn type_name_mutex<'a, T: Facet<'a>>(
     Ok(())
 }
 
-unsafe fn mutex_new_into<R: RawMutex, T>(this: PtrUninit, value: PtrMut) -> PtrMut {
+unsafe extern "C" fn mutex_new_into<R: RawMutex, T>(this: PtrUninit, value: PtrMut) -> PtrMut {
     unsafe {
         let t = value.read::<T>();
         this.put(Mutex::<R, T>::new(t))
@@ -145,7 +145,7 @@ fn type_name_rwlock<'a, T: Facet<'a>>(
     Ok(())
 }
 
-unsafe fn rwlock_new_into<R: RawRwLock, T>(this: PtrUninit, value: PtrMut) -> PtrMut {
+unsafe extern "C" fn rwlock_new_into<R: RawRwLock, T>(this: PtrUninit, value: PtrMut) -> PtrMut {
     unsafe {
         let t = value.read::<T>();
         this.put(RwLock::<R, T>::new(t))
@@ -290,7 +290,7 @@ fn type_name_mutex_guard<'a, T: Facet<'a>>(
     Ok(())
 }
 
-unsafe fn mutex_guard_borrow<'a, R: RawMutex, T: Facet<'a>>(this: PtrConst) -> PtrConst {
+unsafe extern "C" fn mutex_guard_borrow<'a, R: RawMutex, T: Facet<'a>>(this: PtrConst) -> PtrConst {
     unsafe {
         let guard = this.get::<MutexGuard<'_, R, T>>();
         let data: &T = guard;
@@ -370,7 +370,9 @@ fn type_name_rwlock_read_guard<'a, T: Facet<'a>>(
     Ok(())
 }
 
-unsafe fn rwlock_read_guard_borrow<'a, R: RawRwLock, T: Facet<'a>>(this: PtrConst) -> PtrConst {
+unsafe extern "C" fn rwlock_read_guard_borrow<'a, R: RawRwLock, T: Facet<'a>>(
+    this: PtrConst,
+) -> PtrConst {
     unsafe {
         let guard = this.get::<RwLockReadGuard<'_, R, T>>();
         let data: &T = guard;
@@ -450,7 +452,9 @@ fn type_name_rwlock_write_guard<'a, T: Facet<'a>>(
     Ok(())
 }
 
-unsafe fn rwlock_write_guard_borrow<'a, R: RawRwLock, T: Facet<'a>>(this: PtrConst) -> PtrConst {
+unsafe extern "C" fn rwlock_write_guard_borrow<'a, R: RawRwLock, T: Facet<'a>>(
+    this: PtrConst,
+) -> PtrConst {
     unsafe {
         let guard = this.get::<RwLockWriteGuard<'_, R, T>>();
         let data: &T = guard;

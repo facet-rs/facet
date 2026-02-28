@@ -8,14 +8,14 @@ use crate::{
 
 type BTreeMapIterator<'mem, K, V> = alloc::collections::btree_map::Iter<'mem, K, V>;
 
-unsafe fn btreemap_init_in_place_with_capacity<K, V>(
+unsafe extern "C" fn btreemap_init_in_place_with_capacity<K, V>(
     uninit: PtrUninit,
     _capacity: usize,
 ) -> PtrMut {
     unsafe { uninit.put(BTreeMap::<K, V>::new()) }
 }
 
-unsafe fn btreemap_insert<K: Eq + Ord + 'static, V: 'static>(
+unsafe extern "C" fn btreemap_insert<K: Eq + Ord + 'static, V: 'static>(
     ptr: PtrMut,
     key: PtrMut,
     value: PtrMut,
@@ -28,29 +28,29 @@ unsafe fn btreemap_insert<K: Eq + Ord + 'static, V: 'static>(
     }
 }
 
-unsafe fn btreemap_len<K: 'static, V: 'static>(ptr: PtrConst) -> usize {
+unsafe extern "C" fn btreemap_len<K: 'static, V: 'static>(ptr: PtrConst) -> usize {
     unsafe { ptr.get::<BTreeMap<K, V>>().len() }
 }
 
-unsafe fn btreemap_contains_key<K: Eq + Ord + 'static, V: 'static>(
+unsafe extern "C" fn btreemap_contains_key<K: Eq + Ord + 'static, V: 'static>(
     ptr: PtrConst,
     key: PtrConst,
 ) -> bool {
     unsafe { ptr.get::<BTreeMap<K, V>>().contains_key(key.get()) }
 }
 
-unsafe fn btreemap_get_value_ptr<K: Eq + Ord + 'static, V: 'static>(
+unsafe extern "C" fn btreemap_get_value_ptr<K: Eq + Ord + 'static, V: 'static>(
     ptr: PtrConst,
     key: PtrConst,
-) -> Option<PtrConst> {
+) -> *const u8 {
     unsafe {
         ptr.get::<BTreeMap<K, V>>()
             .get(key.get())
-            .map(|v| PtrConst::new(v as *const V))
+            .map_or(core::ptr::null(), |v| v as *const V as *const u8)
     }
 }
 
-unsafe fn btreemap_iter_init<K: 'static, V: 'static>(ptr: PtrConst) -> PtrMut {
+unsafe extern "C" fn btreemap_iter_init<K: 'static, V: 'static>(ptr: PtrConst) -> PtrMut {
     unsafe {
         let map = ptr.get::<BTreeMap<K, V>>();
         let iter: BTreeMapIterator<'_, K, V> = map.iter();
@@ -87,7 +87,7 @@ unsafe fn btreemap_iter_next_back<K: 'static, V: 'static>(
     }
 }
 
-unsafe fn btreemap_iter_dealloc<K, V>(iter_ptr: PtrMut) {
+unsafe extern "C" fn btreemap_iter_dealloc<K, V>(iter_ptr: PtrMut) {
     unsafe {
         drop(Box::from_raw(
             iter_ptr.as_ptr::<BTreeMapIterator<'_, K, V>>() as *mut BTreeMapIterator<'_, K, V>,
@@ -96,7 +96,7 @@ unsafe fn btreemap_iter_dealloc<K, V>(iter_ptr: PtrMut) {
 }
 
 /// Build a BTreeMap from a contiguous slice of (K, V) pairs.
-unsafe fn btreemap_from_pair_slice<K: Eq + Ord + 'static, V: 'static>(
+unsafe extern "C" fn btreemap_from_pair_slice<K: Eq + Ord + 'static, V: 'static>(
     uninit: PtrUninit,
     pairs_ptr: *mut u8,
     count: usize,

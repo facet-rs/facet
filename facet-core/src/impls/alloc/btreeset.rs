@@ -11,11 +11,14 @@ use crate::{
 
 type BTreeSetIterator<'mem, T> = alloc::collections::btree_set::Iter<'mem, T>;
 
-unsafe fn btreeset_init_in_place_with_capacity<T>(uninit: PtrUninit, _capacity: usize) -> PtrMut {
+unsafe extern "C" fn btreeset_init_in_place_with_capacity<T>(
+    uninit: PtrUninit,
+    _capacity: usize,
+) -> PtrMut {
     unsafe { uninit.put(BTreeSet::<T>::new()) }
 }
 
-unsafe fn btreeset_insert<T: Eq + Ord + 'static>(ptr: PtrMut, item: PtrMut) -> bool {
+unsafe extern "C" fn btreeset_insert<T: Eq + Ord + 'static>(ptr: PtrMut, item: PtrMut) -> bool {
     unsafe {
         let set = ptr.as_mut::<BTreeSet<T>>();
         let item = item.read::<T>();
@@ -23,15 +26,18 @@ unsafe fn btreeset_insert<T: Eq + Ord + 'static>(ptr: PtrMut, item: PtrMut) -> b
     }
 }
 
-unsafe fn btreeset_len<T: 'static>(ptr: PtrConst) -> usize {
+unsafe extern "C" fn btreeset_len<T: 'static>(ptr: PtrConst) -> usize {
     unsafe { ptr.get::<BTreeSet<T>>().len() }
 }
 
-unsafe fn btreeset_contains<T: Eq + Ord + 'static>(ptr: PtrConst, item: PtrConst) -> bool {
+unsafe extern "C" fn btreeset_contains<T: Eq + Ord + 'static>(
+    ptr: PtrConst,
+    item: PtrConst,
+) -> bool {
     unsafe { ptr.get::<BTreeSet<T>>().contains(item.get()) }
 }
 
-unsafe fn btreeset_iter_init<T: 'static>(ptr: PtrConst) -> PtrMut {
+unsafe extern "C" fn btreeset_iter_init<T: 'static>(ptr: PtrConst) -> PtrMut {
     unsafe {
         let set = ptr.get::<BTreeSet<T>>();
         let iter: BTreeSetIterator<'_, T> = set.iter();
@@ -56,7 +62,7 @@ unsafe fn btreeset_iter_next_back<T: 'static>(iter_ptr: PtrMut) -> Option<PtrCon
     }
 }
 
-unsafe fn btreeset_iter_dealloc<T>(iter_ptr: PtrMut) {
+unsafe extern "C" fn btreeset_iter_dealloc<T>(iter_ptr: PtrMut) {
     unsafe {
         drop(Box::from_raw(
             iter_ptr.as_ptr::<BTreeSetIterator<'_, T>>() as *mut BTreeSetIterator<'_, T>
@@ -70,7 +76,7 @@ unsafe fn btreeset_iter_dealloc<T>(iter_ptr: PtrMut) {
 /// - `set` must point to uninitialized memory
 /// - `elements_ptr` must point to `count` consecutive initialized T values
 /// - Elements are moved out and should not be dropped by caller
-unsafe fn btreeset_from_slice<T: Eq + Ord + 'static>(
+unsafe extern "C" fn btreeset_from_slice<T: Eq + Ord + 'static>(
     set: PtrUninit,
     elements_ptr: *mut u8,
     count: usize,

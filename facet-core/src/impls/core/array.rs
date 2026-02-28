@@ -244,13 +244,13 @@ const ARRAY_VTABLE: VTableIndirect = VTableIndirect {
 };
 
 /// Get pointer to array data buffer
-unsafe fn array_as_ptr<T, const N: usize>(ptr: PtrConst) -> PtrConst {
+unsafe extern "C" fn array_as_ptr<T, const N: usize>(ptr: PtrConst) -> PtrConst {
     let array = unsafe { ptr.get::<[T; N]>() };
     PtrConst::new(array.as_ptr() as *const u8)
 }
 
 /// Get mutable pointer to array data buffer
-unsafe fn array_as_mut_ptr<T, const N: usize>(ptr: PtrMut) -> PtrMut {
+unsafe extern "C" fn array_as_mut_ptr<T, const N: usize>(ptr: PtrMut) -> PtrMut {
     let array = unsafe { ptr.as_mut::<[T; N]>() };
     PtrMut::new(array.as_mut_ptr() as *mut u8)
 }

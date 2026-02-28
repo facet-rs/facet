@@ -108,7 +108,7 @@ pub type DowngradeIntoFn = unsafe fn(strong: PtrMut, weak: PtrUninit) -> PtrMut;
 /// # Safety
 ///
 /// `this` must be a valid strong pointer (like [`alloc::sync::Arc`] or [`alloc::rc::Rc`]).
-pub type BorrowFn = unsafe fn(this: PtrConst) -> PtrConst;
+pub type BorrowFn = unsafe extern "C" fn(this: PtrConst) -> PtrConst;
 
 /// Creates a new pointer wrapping the given value.
 ///
@@ -127,7 +127,7 @@ pub type BorrowFn = unsafe fn(this: PtrConst) -> PtrConst;
 ///
 /// `ptr` is moved out of (with [`core::ptr::read`]) — it should be deallocated afterwards (e.g.
 /// with [`core::mem::forget`]) but NOT dropped).
-pub type NewIntoFn = unsafe fn(this: PtrUninit, ptr: PtrMut) -> PtrMut;
+pub type NewIntoFn = unsafe extern "C" fn(this: PtrUninit, ptr: PtrMut) -> PtrMut;
 
 /// Type-erased result of locking a mutex-like or reader-writer lock pointer.
 ///

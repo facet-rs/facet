@@ -29,21 +29,21 @@ impl SliceDef {
 /// # Safety
 ///
 /// The `slice` parameter must point to aligned, initialized memory of the correct type.
-pub type SliceLenFn = unsafe fn(slice: PtrConst) -> usize;
+pub type SliceLenFn = unsafe extern "C" fn(slice: PtrConst) -> usize;
 
 /// Get pointer to the data buffer of the slice
 ///
 /// # Safety
 ///
 /// The `slice` parameter must point to aligned, initialized memory of the correct type.
-pub type SliceAsPtrFn = unsafe fn(slice: PtrConst) -> PtrConst;
+pub type SliceAsPtrFn = unsafe extern "C" fn(slice: PtrConst) -> PtrConst;
 
 /// Get mutable pointer to the data buffer of the slice
 ///
 /// # Safety
 ///
 /// The `slice` parameter must point to aligned, initialized memory of the correct type.
-pub type SliceAsMutPtrFn = unsafe fn(slice: PtrMut) -> PtrMut;
+pub type SliceAsMutPtrFn = unsafe extern "C" fn(slice: PtrMut) -> PtrMut;
 
 /// Virtual table for a slice-like type (like `Vec<T>`,
 /// but also `HashSet<T>`, etc.)

@@ -2,21 +2,21 @@ use core::cmp::Ordering;
 
 use crate::{OxPtrConst, *};
 
-unsafe fn slice_len<T>(ptr: PtrConst) -> usize {
+unsafe extern "C" fn slice_len<T>(ptr: PtrConst) -> usize {
     unsafe {
         let slice = ptr.get::<[T]>();
         slice.len()
     }
 }
 
-unsafe fn slice_as_ptr<T>(ptr: PtrConst) -> PtrConst {
+unsafe extern "C" fn slice_as_ptr<T>(ptr: PtrConst) -> PtrConst {
     unsafe {
         let slice = ptr.get::<[T]>();
         PtrConst::new(slice.as_ptr())
     }
 }
 
-unsafe fn slice_as_mut_ptr<T>(ptr: PtrMut) -> PtrMut {
+unsafe extern "C" fn slice_as_mut_ptr<T>(ptr: PtrMut) -> PtrMut {
     unsafe {
         let slice = ptr.as_mut::<[T]>();
         PtrMut::new(slice.as_mut_ptr())

@@ -57,7 +57,7 @@ const _: () = {
 };
 
 /// Type-erased len implementation - works for any `Vec<T>`
-unsafe fn vec_len_erased(ptr: PtrConst) -> usize {
+unsafe extern "C" fn vec_len_erased(ptr: PtrConst) -> usize {
     unsafe {
         let layout = ptr.as_byte_ptr() as *const VecLayout;
         (*layout).len
@@ -120,7 +120,7 @@ static VEC_LIST_VTABLE: ListVTable = ListVTable {
 };
 
 /// Type-erased as_ptr implementation - works for any `Vec<T>`
-unsafe fn vec_as_ptr_erased(ptr: PtrConst) -> PtrConst {
+unsafe extern "C" fn vec_as_ptr_erased(ptr: PtrConst) -> PtrConst {
     unsafe {
         let layout = ptr.as_byte_ptr() as *const VecLayout;
         PtrConst::new((*layout).ptr)
@@ -128,7 +128,7 @@ unsafe fn vec_as_ptr_erased(ptr: PtrConst) -> PtrConst {
 }
 
 /// Type-erased as_mut_ptr implementation - works for any `Vec<T>`
-unsafe fn vec_as_mut_ptr_erased(ptr: PtrMut) -> PtrMut {
+unsafe extern "C" fn vec_as_mut_ptr_erased(ptr: PtrMut) -> PtrMut {
     unsafe {
         let layout = ptr.as_byte_ptr() as *const VecLayout;
         PtrMut::new((*layout).ptr)
@@ -282,11 +282,14 @@ unsafe fn vec_cmp_erased(ox_a: OxPtrConst, ox_b: OxPtrConst) -> Option<core::cmp
 
 type VecIterator<'mem, T> = core::slice::Iter<'mem, T>;
 
-unsafe fn vec_init_in_place_with_capacity<T>(uninit: PtrUninit, capacity: usize) -> PtrMut {
+unsafe extern "C" fn vec_init_in_place_with_capacity<T>(
+    uninit: PtrUninit,
+    capacity: usize,
+) -> PtrMut {
     unsafe { uninit.put(Vec::<T>::with_capacity(capacity)) }
 }
 
-unsafe fn vec_push<T>(ptr: PtrMut, item: PtrMut) {
+unsafe extern "C" fn vec_push<T>(ptr: PtrMut, item: PtrMut) {
     unsafe {
         let vec = ptr.as_mut::<Vec<T>>();
         let item = item.read::<T>();
@@ -300,7 +303,7 @@ unsafe fn vec_push<T>(ptr: PtrMut, item: PtrMut) {
 /// - `ptr` must point to an initialized `Vec<T>`
 /// - `len` must not exceed the Vec's capacity
 /// - All elements at indices `0..len` must be properly initialized
-unsafe fn vec_set_len<T>(ptr: PtrMut, len: usize) {
+unsafe extern "C" fn vec_set_len<T>(ptr: PtrMut, len: usize) {
     unsafe {
         let vec = ptr.as_mut::<Vec<T>>();
         vec.set_len(len);
@@ -311,7 +314,7 @@ unsafe fn vec_set_len<T>(ptr: PtrMut, len: usize) {
 ///
 /// # Safety
 /// - `ptr` must point to an initialized `Vec<T>`
-unsafe fn vec_as_mut_ptr_typed<T>(ptr: PtrMut) -> *mut u8 {
+unsafe extern "C" fn vec_as_mut_ptr_typed<T>(ptr: PtrMut) -> *mut u8 {
     unsafe {
         let vec = ptr.as_mut::<Vec<T>>();
         vec.as_mut_ptr() as *mut u8
@@ -322,7 +325,7 @@ unsafe fn vec_as_mut_ptr_typed<T>(ptr: PtrMut) -> *mut u8 {
 ///
 /// # Safety
 /// - `ptr` must point to an initialized `Vec<T>`
-unsafe fn vec_reserve<T>(ptr: PtrMut, additional: usize) {
+unsafe extern "C" fn vec_reserve<T>(ptr: PtrMut, additional: usize) {
     unsafe {
         let vec = ptr.as_mut::<Vec<T>>();
         vec.reserve(additional);
@@ -333,14 +336,14 @@ unsafe fn vec_reserve<T>(ptr: PtrMut, additional: usize) {
 ///
 /// # Safety
 /// - `ptr` must point to an initialized `Vec<T>`
-unsafe fn vec_capacity<T>(ptr: PtrConst) -> usize {
+unsafe extern "C" fn vec_capacity<T>(ptr: PtrConst) -> usize {
     unsafe {
         let vec = ptr.get::<Vec<T>>();
         vec.capacity()
     }
 }
 
-unsafe fn vec_iter_init<T>(ptr: PtrConst) -> PtrMut {
+unsafe extern "C" fn vec_iter_init<T>(ptr: PtrConst) -> PtrMut {
     unsafe {
         let vec = ptr.get::<Vec<T>>();
         let iter: VecIterator<T> = vec.iter();
@@ -371,7 +374,7 @@ unsafe fn vec_iter_next_back<T>(iter_ptr: PtrMut) -> Option<PtrConst> {
     }
 }
 
-unsafe fn vec_iter_dealloc<T>(iter_ptr: PtrMut) {
+unsafe extern "C" fn vec_iter_dealloc<T>(iter_ptr: PtrMut) {
     unsafe {
         drop(Box::from_raw(
             iter_ptr.as_ptr::<VecIterator<'_, T>>() as *mut VecIterator<'_, T>

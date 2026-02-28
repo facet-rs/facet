@@ -30,7 +30,7 @@ unsafe fn try_from(
 }
 
 // Named function for borrow_fn (sized types)
-unsafe fn borrow_fn<'a, T: Facet<'a>>(this: PtrConst) -> PtrConst {
+unsafe extern "C" fn borrow_fn<'a, T: Facet<'a>>(this: PtrConst) -> PtrConst {
     unsafe {
         let concrete = this.get::<Box<T>>();
         let t: &T = concrete.as_ref();
@@ -39,7 +39,7 @@ unsafe fn borrow_fn<'a, T: Facet<'a>>(this: PtrConst) -> PtrConst {
 }
 
 // Named function for new_into_fn (sized types)
-unsafe fn new_into_fn<'a, 'src, T: Facet<'a>>(this: PtrUninit, ptr: PtrMut) -> PtrMut {
+unsafe extern "C" fn new_into_fn<'a, 'src, T: Facet<'a>>(this: PtrUninit, ptr: PtrMut) -> PtrMut {
     unsafe { try_from(ptr.as_const(), T::SHAPE, this).unwrap() }
 }
 
@@ -123,7 +123,7 @@ unsafe fn box_slice_drop<U>(ox: OxPtrMut) {
 }
 
 // Borrow function for Box<[U]>
-unsafe fn box_slice_borrow<'a, U: Facet<'a>>(this: PtrConst) -> PtrConst {
+unsafe extern "C" fn box_slice_borrow<'a, U: Facet<'a>>(this: PtrConst) -> PtrConst {
     unsafe {
         let concrete = this.get::<Box<[U]>>();
         let slice: &[U] = concrete.as_ref();
@@ -181,7 +181,7 @@ unsafe fn box_str_drop(ox: OxPtrMut) {
 }
 
 // Borrow function for Box<str>
-unsafe fn box_str_borrow(this: PtrConst) -> PtrConst {
+unsafe extern "C" fn box_str_borrow(this: PtrConst) -> PtrConst {
     unsafe {
         let concrete = this.get::<Box<str>>();
         let s: &str = concrete;
