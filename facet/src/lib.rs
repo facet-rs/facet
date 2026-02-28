@@ -101,6 +101,15 @@ pub mod builtin {
             #[storage(flag)]
             Flatten,
 
+            /// Marks an opaque payload field as structurally trailing in its container.
+            ///
+            /// This enables formats that support it to treat the field as "remaining bytes"
+            /// instead of requiring an outer length frame.
+            ///
+            /// Usage: `#[facet(trailing)]`
+            #[target(field)]
+            Trailing,
+
             /// Marks a field as a child node (for hierarchical formats like XML).
             ///
             /// Usage: `#[facet(child)]`

@@ -457,6 +457,10 @@ fn map_format_error(error: FormatSerializeError<SerializeError>) -> SerializeErr
     }
 }
 
+fn has_trailing_attr(field: Option<&facet_core::Field>) -> bool {
+    field.is_some_and(|f| f.has_builtin_attr("trailing"))
+}
+
 struct PostcardSerializer<'a, W> {
     writer: W,
     _marker: PhantomData<&'a ()>,
@@ -799,6 +803,15 @@ impl<'a, W: PostcardWriter<'a>> FormatSerializer for PostcardSerializer<'a, W> {
         shape: &'static facet_core::Shape,
         value: Peek<'_, '_>,
     ) -> Result<bool, Self::Error> {
+        self.serialize_opaque_scalar_with_field(None, shape, value)
+    }
+
+    fn serialize_opaque_scalar_with_field(
+        &mut self,
+        field: Option<&facet_core::Field>,
+        shape: &'static facet_core::Shape,
+        value: Peek<'_, '_>,
+    ) -> Result<bool, Self::Error> {
         if value.scalar_type().is_some() {
             return Ok(false);
         }
@@ -806,10 +819,16 @@ impl<'a, W: PostcardWriter<'a>> FormatSerializer for PostcardSerializer<'a, W> {
         if let Some(adapter) = shape.opaque_adapter {
             let mapped = unsafe { (adapter.serialize)(value.data()) };
             let mapped_peek = unsafe { Peek::unchecked_new(mapped.ptr, mapped.shape) };
-            let mut bytes = Vec::new();
-            let mut mapped_serializer = PostcardSerializer::new(CopyWriter::new(&mut bytes));
-            serialize_root(&mut mapped_serializer, mapped_peek).map_err(map_format_error)?;
-            self.write_bytes(&bytes)?;
+            if has_trailing_attr(field) {
+                // Trailing opaque fields stream mapped payload directly (no outer length framing),
+                // preserving scatter-gather references for borrowed bytes.
+                serialize_root(self, mapped_peek).map_err(map_format_error)?;
+            } else {
+                let mut bytes = Vec::new();
+                let mut mapped_serializer = PostcardSerializer::new(CopyWriter::new(&mut bytes));
+                serialize_root(&mut mapped_serializer, mapped_peek).map_err(map_format_error)?;
+                self.write_bytes(&bytes)?;
+            }
             return Ok(true);
         }
 

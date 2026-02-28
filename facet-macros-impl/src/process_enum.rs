@@ -1,7 +1,7 @@
 use super::*;
 use crate::process_struct::{
-    TraitSources, gen_field_from_pfield, gen_trait_bounds, gen_type_ops, gen_vtable,
-    phantom_attr_use,
+    TraitSources, collect_trailing_shape_checks, gen_field_from_pfield, gen_trait_bounds,
+    gen_type_ops, gen_vtable, phantom_attr_use,
 };
 use proc_macro2::Literal;
 use quote::{format_ident, quote, quote_spanned};
@@ -132,6 +132,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     // Collect phantom use statements for IDE hover support on attribute names.
     // These link attribute spans to their facet::builtin::Attr variants.
     let mut phantom_attr_uses: Vec<TokenStream> = Vec::new();
+    let mut trailing_shape_checks: Vec<TokenStream> = Vec::new();
     // Container-level attributes
     for attr in &pe.container.attrs.facet {
         if let Some(phantom) = phantom_attr_use(attr, &facet_crate) {
@@ -151,6 +152,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             PVariantKind::Tuple { fields } => fields,
             PVariantKind::Struct { fields } => fields,
         };
+        match collect_trailing_shape_checks(fields, &facet_crate) {
+            Ok(checks) => trailing_shape_checks.extend(checks),
+            Err(err) => return err,
+        }
         for field in fields {
             if let Some(attr) = field
                 .attrs
@@ -1361,6 +1366,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         unsafe impl #bgp_def #facet_crate::Facet<'ʄ> for #enum_name #bgp_without_bounds #where_clauses {
             const SHAPE: &'static #facet_crate::Shape = &const {
                 use #facet_crate::𝟋::*;
+                #(#trailing_shape_checks)*
                 #(#shadow_struct_defs)*
                 #fields
                 𝟋ShpB::for_sized::<Self>(#enum_name_str)

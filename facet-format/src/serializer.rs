@@ -287,6 +287,19 @@ pub trait FormatSerializer {
         Ok(false)
     }
 
+    /// Serialize an opaque scalar with optional field context.
+    ///
+    /// Backends can use field attributes to customize behavior. The default
+    /// implementation forwards to `serialize_opaque_scalar` for compatibility.
+    fn serialize_opaque_scalar_with_field(
+        &mut self,
+        _field: Option<&facet_core::Field>,
+        shape: &'static facet_core::Shape,
+        value: Peek<'_, '_>,
+    ) -> Result<bool, Self::Error> {
+        self.serialize_opaque_scalar(shape, value)
+    }
+
     /// Emit a dynamic value type tag.
     ///
     /// Formats that use [`DynamicValueEncoding::Tagged`] should override this.
@@ -602,6 +615,7 @@ impl core::fmt::Display for PathSegment {
 pub struct SerializeContext<'s, S: FormatSerializer> {
     serializer: &'s mut S,
     path: alloc::vec::Vec<PathSegment>,
+    current_field: Option<facet_core::Field>,
 }
 
 impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
@@ -610,7 +624,20 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
         Self {
             serializer,
             path: alloc::vec::Vec::new(),
+            current_field: None,
         }
+    }
+
+    fn with_field_context<T>(
+        &mut self,
+        field: Option<facet_core::Field>,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let prev = self.current_field;
+        self.current_field = field;
+        let out = f(self);
+        self.current_field = prev;
+        out
     }
 
     /// Push a path segment onto the context.
@@ -681,7 +708,7 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
 
         if self
             .serializer
-            .serialize_opaque_scalar(value.shape(), value)
+            .serialize_opaque_scalar_with_field(self.current_field.as_ref(), value.shape(), value)
             .map_err(SerializeError::Backend)?
         {
             return Ok(());
@@ -922,6 +949,23 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
         Err(self.unsupported_error(value.shape(), "unsupported value kind for serialization"))
     }
 
+    fn serialize_field_value<'mem, 'facet>(
+        &mut self,
+        field_item: &facet_reflect::FieldItem,
+        field_value: Peek<'mem, 'facet>,
+    ) -> Result<(), SerializeError<S::Error>> {
+        self.with_field_context(field_item.field, |this| {
+            if let Some(proxy_def) = field_item
+                .field
+                .and_then(|f| f.effective_proxy(this.serializer.format_namespace()))
+            {
+                this.serialize_via_proxy(field_value, proxy_def)
+            } else {
+                this.serialize_impl(field_value)
+            }
+        })
+    }
+
     fn serialize_struct<'mem, 'facet>(
         &mut self,
         shape: &'static Shape,
@@ -936,28 +980,14 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
 
             if is_transparent {
                 let (field_item, field_value) = &fields[0];
-                if let Some(proxy_def) = field_item
-                    .field
-                    .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
-                {
-                    self.serialize_via_proxy(*field_value, proxy_def)?;
-                } else {
-                    self.serialize_impl(*field_value)?;
-                }
+                self.serialize_field_value(field_item, *field_value)?;
             } else {
                 self.serializer
                     .begin_seq()
                     .map_err(SerializeError::Backend)?;
                 for (idx, (field_item, field_value)) in fields.into_iter().enumerate() {
                     self.push(PathSegment::Index(idx));
-                    if let Some(proxy_def) = field_item
-                        .field
-                        .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
-                    {
-                        self.serialize_via_proxy(field_value, proxy_def)?;
-                    } else {
-                        self.serialize_impl(field_value)?;
-                    }
+                    self.serialize_field_value(&field_item, field_value)?;
                     self.pop();
                 }
                 self.serializer.end_seq().map_err(SerializeError::Backend)?;
@@ -1007,14 +1037,7 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                             self.push(PathSegment::Field(Cow::Owned(
                                 inner_item.effective_name().to_string(),
                             )));
-                            if let Some(proxy_def) = inner_item
-                                .field
-                                .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
-                            {
-                                self.serialize_via_proxy(inner_value, proxy_def)?;
-                            } else {
-                                self.serialize_impl(inner_value)?;
-                            }
+                            self.serialize_field_value(&inner_item, inner_value)?;
                             self.pop();
                         }
                     } else if let Ok(enum_peek) = field_value.into_enum() {
@@ -1027,14 +1050,7 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                             self.push(PathSegment::Field(Cow::Owned(
                                 inner_item.effective_name().to_string(),
                             )));
-                            if let Some(proxy_def) = inner_item
-                                .field
-                                .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
-                            {
-                                self.serialize_via_proxy(inner_value, proxy_def)?;
-                            } else {
-                                self.serialize_impl(inner_value)?;
-                            }
+                            self.serialize_field_value(&inner_item, inner_value)?;
                             self.pop();
                         }
                     } else if matches!(field_value.shape().ty, Type::Primitive(_)) {
@@ -1099,14 +1115,7 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                 self.push(PathSegment::Field(Cow::Owned(
                     field_item.effective_name().to_string(),
                 )));
-                if let Some(proxy_def) = field_item
-                    .field
-                    .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
-                {
-                    self.serialize_via_proxy(field_value, proxy_def)?;
-                } else {
-                    self.serialize_impl(field_value)?;
-                }
+                self.serialize_field_value(&field_item, field_value)?;
                 self.pop();
             }
             self.serializer
@@ -1186,14 +1195,7 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                         enum_.fields_for_binary_serialize().enumerate()
                     {
                         self.push(PathSegment::Index(idx));
-                        if let Some(proxy_def) = field_item
-                            .field
-                            .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
-                        {
-                            self.serialize_via_proxy(field_value, proxy_def)?;
-                        } else {
-                            self.serialize_impl(field_value)?;
-                        }
+                        self.serialize_field_value(&field_item, field_value)?;
                         self.pop();
                     }
                     Ok(())
@@ -1279,14 +1281,7 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                             self.push(PathSegment::Field(Cow::Owned(
                                 field_item.effective_name().to_string(),
                             )));
-                            if let Some(proxy_def) = field_item
-                                .field
-                                .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
-                            {
-                                self.serialize_via_proxy(field_value, proxy_def)?;
-                            } else {
-                                self.serialize_impl(field_value)?;
-                            }
+                            self.serialize_field_value(&field_item, field_value)?;
                             self.pop();
                         }
                     }
@@ -1364,13 +1359,7 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                                     self.push(PathSegment::Field(Cow::Owned(
                                         field_item.effective_name().to_string(),
                                     )));
-                                    if let Some(proxy_def) = field_item.field.and_then(|f| {
-                                        f.effective_proxy(self.serializer.format_namespace())
-                                    }) {
-                                        self.serialize_via_proxy(field_value, proxy_def)?;
-                                    } else {
-                                        self.serialize_impl(field_value)?;
-                                    }
+                                    self.serialize_field_value(&field_item, field_value)?;
                                     self.pop();
                                 }
                             }
@@ -1470,14 +1459,7 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                     self.push(PathSegment::Field(Cow::Owned(
                         field_item.effective_name().to_string(),
                     )));
-                    if let Some(proxy_def) = field_item
-                        .field
-                        .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
-                    {
-                        self.serialize_via_proxy(field_value, proxy_def)?;
-                    } else {
-                        self.serialize_impl(field_value)?;
-                    }
+                    self.serialize_field_value(&field_item, field_value)?;
                     self.pop();
                 }
                 self.serializer
@@ -1499,7 +1481,8 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                         .ok_or(SerializeError::Internal(Cow::Borrowed(
                             "variant reported 1 field but field(0) returned None",
                         )))?;
-                    self.serialize_impl(inner)?;
+                    let field_def = variant.data.fields.first().copied();
+                    self.with_field_context(field_def, |this| this.serialize_impl(inner))?;
                 } else {
                     self.serializer
                         .begin_seq()
@@ -1516,7 +1499,8 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                                 "variant field missing while iterating tuple fields",
                             )))?;
                         self.push(PathSegment::Index(idx));
-                        self.serialize_impl(inner)?;
+                        let field_def = variant.data.fields.get(idx).copied();
+                        self.with_field_context(field_def, |this| this.serialize_impl(inner))?;
                         self.pop();
                     }
                     self.serializer.end_seq().map_err(SerializeError::Backend)?;
@@ -1610,13 +1594,17 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                         .ok_or(SerializeError::Internal(Cow::Borrowed(
                             "variant reported 1 field but field(0) returned None",
                         )))?;
-                    if let Some(field_def) = variant.data.fields.first()
+                    if let Some(field_def) = variant.data.fields.first().copied()
                         && let Some(proxy_def) =
                             field_def.effective_proxy(self.serializer.format_namespace())
                     {
-                        self.serialize_via_proxy(inner, proxy_def)?;
+                        self.with_field_context(Some(field_def), |this| {
+                            this.serialize_via_proxy(inner, proxy_def)
+                        })?;
                     } else {
-                        self.serialize_impl(inner)?;
+                        self.with_field_context(variant.data.fields.first().copied(), |this| {
+                            this.serialize_impl(inner)
+                        })?;
                     }
                 } else {
                     self.serializer
@@ -1634,13 +1622,18 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                                 "variant field missing while iterating tuple fields",
                             )))?;
                         self.push(PathSegment::Index(idx));
-                        if let Some(field_def) = variant.data.fields.get(idx)
+                        if let Some(field_def) = variant.data.fields.get(idx).copied()
                             && let Some(proxy_def) =
                                 field_def.effective_proxy(self.serializer.format_namespace())
                         {
-                            self.serialize_via_proxy(inner, proxy_def)?;
+                            self.with_field_context(Some(field_def), |this| {
+                                this.serialize_via_proxy(inner, proxy_def)
+                            })?;
                         } else {
-                            self.serialize_impl(inner)?;
+                            self.with_field_context(
+                                variant.data.fields.get(idx).copied(),
+                                |this| this.serialize_impl(inner),
+                            )?;
                         }
                         self.pop();
                     }
@@ -1693,14 +1686,7 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                     self.push(PathSegment::Field(Cow::Owned(
                         field_item.effective_name().to_string(),
                     )));
-                    if let Some(proxy_def) = field_item
-                        .field
-                        .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
-                    {
-                        self.serialize_via_proxy(field_value, proxy_def)?;
-                    } else {
-                        self.serialize_impl(field_value)?;
-                    }
+                    self.serialize_field_value(&field_item, field_value)?;
                     self.pop();
                 }
                 self.serializer
@@ -1743,13 +1729,17 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                         .ok_or(SerializeError::Internal(Cow::Borrowed(
                             "variant reported 1 field but field(0) returned None",
                         )))?;
-                    if let Some(field_def) = variant.data.fields.first()
+                    if let Some(field_def) = variant.data.fields.first().copied()
                         && let Some(proxy_def) =
                             field_def.effective_proxy(self.serializer.format_namespace())
                     {
-                        self.serialize_via_proxy(inner, proxy_def)?;
+                        self.with_field_context(Some(field_def), |this| {
+                            this.serialize_via_proxy(inner, proxy_def)
+                        })?;
                     } else {
-                        self.serialize_impl(inner)?;
+                        self.with_field_context(variant.data.fields.first().copied(), |this| {
+                            this.serialize_impl(inner)
+                        })?;
                     }
                 } else {
                     self.serializer
@@ -1767,13 +1757,18 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                                 "variant field missing while iterating tuple fields",
                             )))?;
                         self.push(PathSegment::Index(idx));
-                        if let Some(field_def) = variant.data.fields.get(idx)
+                        if let Some(field_def) = variant.data.fields.get(idx).copied()
                             && let Some(proxy_def) =
                                 field_def.effective_proxy(self.serializer.format_namespace())
                         {
-                            self.serialize_via_proxy(inner, proxy_def)?;
+                            self.with_field_context(Some(field_def), |this| {
+                                this.serialize_via_proxy(inner, proxy_def)
+                            })?;
                         } else {
-                            self.serialize_impl(inner)?;
+                            self.with_field_context(
+                                variant.data.fields.get(idx).copied(),
+                                |this| this.serialize_impl(inner),
+                            )?;
                         }
                         self.pop();
                     }
@@ -1814,14 +1809,7 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                     self.push(PathSegment::Field(Cow::Owned(
                         field_item.effective_name().to_string(),
                     )));
-                    if let Some(proxy_def) = field_item
-                        .field
-                        .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
-                    {
-                        self.serialize_via_proxy(field_value, proxy_def)?;
-                    } else {
-                        self.serialize_impl(field_value)?;
-                    }
+                    self.serialize_field_value(&field_item, field_value)?;
                     self.pop();
                 }
                 self.serializer
@@ -1859,7 +1847,8 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                         .ok_or(SerializeError::Internal(Cow::Borrowed(
                             "variant reported 1 field but field(0) returned None",
                         )))?;
-                    self.serialize_impl(inner)
+                    let field_def = variant.data.fields.first().copied();
+                    self.with_field_context(field_def, |this| this.serialize_impl(inner))
                 } else {
                     self.serializer
                         .begin_seq()
@@ -1876,7 +1865,8 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                                 "variant field missing while iterating tuple fields",
                             )))?;
                         self.push(PathSegment::Index(idx));
-                        self.serialize_impl(inner)?;
+                        let field_def = variant.data.fields.get(idx).copied();
+                        self.with_field_context(field_def, |this| this.serialize_impl(inner))?;
                         self.pop();
                     }
                     self.serializer.end_seq().map_err(SerializeError::Backend)?;
@@ -1905,14 +1895,7 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                     self.push(PathSegment::Field(Cow::Owned(
                         field_item.effective_name().to_string(),
                     )));
-                    if let Some(proxy_def) = field_item
-                        .field
-                        .and_then(|f| f.effective_proxy(self.serializer.format_namespace()))
-                    {
-                        self.serialize_via_proxy(field_value, proxy_def)?;
-                    } else {
-                        self.serialize_impl(field_value)?;
-                    }
+                    self.serialize_field_value(&field_item, field_value)?;
                     self.pop();
                 }
                 self.serializer
