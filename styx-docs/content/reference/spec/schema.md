@@ -38,7 +38,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ## Schema file structure
 
-> r[schema.file]
+> schema[schema.file]
 > A schema file has three top-level keys: `meta` (required), `imports` (optional), and `schema` (required).
 >
 > ```styx
@@ -60,7 +60,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > }
 > ```
 
-> r[schema.meta.version]
+> schema[schema.meta.version]
 > The `version` field in schema metadata MUST use datever format: `YYYY-MM-DD` (ISO 8601 date).
 > This enables simple chronological ordering of schema versions.
 >
@@ -71,13 +71,13 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > }
 > ```
 
-> r[schema.root]
+> schema[schema.root]
 > Inside `schema`, the key `@` defines the expected structure of the document root.
 > Other keys define named types that can be referenced with `@TypeName`.
 
 ## Imports
 
-> r[schema.imports]
+> schema[schema.imports]
 > The `imports` block maps namespace prefixes to external schema locations (URLs or paths).
 > Paths are resolved relative to the importing schema file.
 > Imported types are referenced as `@namespace.TypeName`.
@@ -103,7 +103,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ## Schema declaration in documents
 
-> r[schema.declaration]
+> schema[schema.declaration]
 > A document MAY declare its schema using the `@schema` tag at the document root.
 > The value is either a URL/path string (external reference) or an inline schema object.
 > Inline schemas use a simplified form: only the `schema` block is required; `meta` and `imports` are optional.
@@ -128,7 +128,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ## Types and constraints
 
-> r[schema.type]
+> schema[schema.type]
 > A tagged unit denotes a type constraint.
 >
 > ```styx
@@ -138,7 +138,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 >
 > Since unit payloads are implicit, `@int` is shorthand for `@int@` — which makes Styx schemas valid Styx.
 
-> r[schema.literal]
+> schema[schema.literal]
 > A scalar denotes a literal value constraint. The unit value `@` is also a literal constraint.
 >
 > ```styx
@@ -150,7 +150,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ### Standard types
 
-> r[schema.type.primitives]
+> schema[schema.type.primitives]
 > These tags are built-in type constraints:
 >
 > | Type | Description |
@@ -167,10 +167,10 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ### Type constraints
 
-> r[schema.constraints]
+> schema[schema.constraints]
 > Scalar types can have constraints specified in an object payload.
 
-> r[schema.constraints.string]
+> schema[schema.constraints.string]
 > `@string` accepts optional constraints:
 >
 > | Constraint | Description |
@@ -179,7 +179,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > | `maxLen` | maximum length (inclusive) |
 > | `pattern` | ECMAScript regular expression the string must match |
 >
-> r[schema.constraints.string.pattern]
+> schema[schema.constraints.string.pattern]
 > The `pattern` constraint uses ECMAScript (JavaScript) regular expression syntax as defined in ECMA-262.
 > The pattern is implicitly anchored — it must match the entire string, not just a substring.
 > Implementations SHOULD support at minimum the common subset: character classes, quantifiers,
@@ -190,7 +190,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > slug @string{pattern "^[a-z0-9-]+$"}
 > ```
 
-> r[schema.constraints.int]
+> schema[schema.constraints.int]
 > `@int` accepts optional constraints:
 >
 > | Constraint | Description |
@@ -203,7 +203,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > age @int{min 0}
 > ```
 
-> r[schema.constraints.float]
+> schema[schema.constraints.float]
 > `@float` accepts optional constraints:
 >
 > | Constraint | Description |
@@ -216,7 +216,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > temperature @float{min -273.15}
 > ```
 >
-> r[schema.constraints.float.syntax]
+> schema[schema.constraints.float.syntax]
 > Float values use JSON number syntax: an optional minus sign, integer digits, optional decimal fraction,
 > and optional exponent. `NaN`, `Infinity`, and `-Infinity` are NOT valid float values.
 >
@@ -231,7 +231,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ### Optional fields
 
-> r[schema.optional]
+> schema[schema.optional]
 > `@optional(@T)` matches either a value of type `@T` or absence of a value.
 > Absence means the field key is not present in the object (it does not mean the field value is `@`).
 >
@@ -244,7 +244,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ### Default values
 
-> r[schema.default]
+> schema[schema.default]
 > `@default(value @T)` specifies a default value for optional fields.
 > If the field is absent, validation treats it as if the default value were present.
 > The first element is the default value, the second is the type constraint.
@@ -260,13 +260,13 @@ that is, any tagged unit value like `@string` or `@MyType`.
 >
 > Note: `@default` implies the field is optional. Using `@optional(@default(...))` is redundant.
 >
-> r[schema.default.validation]
+> schema[schema.default.validation]
 > The default value MUST satisfy all validation rules of its type constraint.
 > A schema with an invalid default value (e.g., `@default(0 @int{min 1})`) is itself invalid.
 
 ### Deprecation
 
-> r[schema.deprecated]
+> schema[schema.deprecated]
 > `@deprecated("reason" @T)` marks a field as deprecated.
 > Validation produces a warning (not an error) when deprecated fields are used.
 > The first element is the deprecation message, the second is the type constraint.
@@ -283,7 +283,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ### Objects
 
-> r[schema.object]
+> schema[schema.object]
 > `@object{...}` defines an object schema mapping field names (scalars) to schemas.
 > By default, object schemas are **closed**: keys not mentioned in the schema are forbidden.
 >
@@ -312,7 +312,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ### Unions
 
-> r[schema.union]
+> schema[schema.union]
 > `@union(...)` matches if the value matches any of the listed types.
 >
 > ```styx
@@ -322,7 +322,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ### Sequences
 
-> r[schema.sequence]
+> schema[schema.sequence]
 > `@seq(@T)` defines a sequence schema where every element matches type `@T`.
 >
 > ```styx
@@ -336,7 +336,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ### Tuples
 
-> r[schema.tuple]
+> schema[schema.tuple]
 > `@tuple(@A @B @C ...)` defines a fixed-length sequence where each position has a distinct type.
 > Unlike `@seq` which is homogeneous (all elements same type), `@tuple` is heterogeneous.
 >
@@ -346,7 +346,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > range @tuple(@float @float)       // (min, max)
 > ```
 >
-> r[schema.tuple.validation]
+> schema[schema.tuple.validation]
 > Validation checks that:
 > - The value is a sequence
 > - The sequence has exactly the expected number of elements
@@ -354,7 +354,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ### Maps
 
-> r[schema.map]
+> schema[schema.map]
 > `@map(@K @V)` matches an object where all keys match `@K` and all values match `@V`.
 > `@map(@V)` is shorthand for `@map(@string @V)`.
 >
@@ -363,16 +363,16 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > ports @map(@int)               // string → int
 > ```
 >
-> r[schema.map.keys]
+> schema[schema.map.keys]
 > Valid key types are scalar types that can be parsed from the key's text representation:
 > `@string`, `@int`, and `@bool`.
 > Non-scalar key types (objects, sequences) are not allowed.
-> Key uniqueness is determined by the parsed key value per `r[entry.key-equality]` in the parser spec,
+> Key uniqueness is determined by the parsed key value per `schema[entry.key-equality]` in the parser spec,
 > not by the typed interpretation — `"1"` and `"01"` are distinct keys even if both parse as integer 1.
 
 ## Named types
 
-> r[schema.type.definition]
+> schema[schema.type.definition]
 > Named types are defined inside the `schema` block. Use `@TypeName` to reference them.
 > By convention, named types use PascalCase (e.g., `TlsConfig`, `UserProfile`).
 > This is not enforced but aids readability and distinguishes user types from built-in types.
@@ -390,7 +390,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ### Recursive types
 
-> r[schema.type.recursive]
+> schema[schema.type.recursive]
 > Recursive types are allowed. A type may reference itself directly or indirectly.
 >
 > ```styx
@@ -402,7 +402,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ### Flatten
 
-> r[schema.flatten]
+> schema[schema.flatten]
 > `@flatten(@Type)` inlines fields from another type into the current object.
 > The document is flat; deserialization reconstructs the nested structure.
 >
@@ -417,7 +417,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 >
 > Document: `name Alice, email alice@example.com, permissions (read write)`
 >
-> r[schema.flatten.constraints]
+> schema[schema.flatten.constraints]
 > The argument to `@flatten` MUST be a named object type or a type alias to an object.
 > Flattening unions or primitives is not allowed.
 > If flattened fields conflict with explicitly declared fields in the same object, validation MUST fail.
@@ -425,7 +425,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ### Enums
 
-> r[schema.enum]
+> schema[schema.enum]
 > `@enum{...}` defines valid variant names and their payloads.
 > Unlike other composite types that use sequence payloads (`@union(...)`, `@map(...)`),
 > `@enum` uses an object payload because variants have names.
@@ -442,7 +442,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ### Value constraints (one-of)
 
-> r[schema.one-of]
+> schema[schema.one-of]
 > `@one-of(@type (value1 value2 ...))` constrains values to a finite set.
 > The first element is the base type, the remaining elements are allowed values.
 >
@@ -452,12 +452,12 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > method @one-of(@string (GET POST PUT DELETE PATCH))
 > ```
 >
-> r[schema.one-of.validation]
+> schema[schema.one-of.validation]
 > Validation first checks that the value matches the base type, then checks that
 > the value is one of the allowed values. Error messages include typo suggestions
 > when the value is close to an allowed value.
 >
-> r[schema.one-of.any-type]
+> schema[schema.one-of.any-type]
 > While `@one-of` is most commonly used with `@string`, it works with any base type:
 >
 > ```styx
@@ -467,11 +467,11 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 ## Validation
 
-> r[schema.validation]
+> schema[schema.validation]
 > Schema validation checks that a document conforms to a schema.
 > Validation produces a list of errors and warnings; an empty error list means the document is valid.
 >
-> r[schema.validation.errors]
+> schema[schema.validation.errors]
 > Validation errors MUST include:
 > - The path to the invalid value (e.g., `server.port`)
 > - The expected constraint (e.g., `@int{min 1, max 65535}`)
@@ -485,7 +485,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 > - **Literal mismatch**: value doesn't match a literal constraint
 > - **Union failure**: value doesn't match any variant in a union
 >
-> r[schema.validation.warnings]
+> schema[schema.validation.warnings]
 > Validation warnings are non-fatal issues:
 > - **Deprecated field**: a field marked with `@deprecated` is present
 
@@ -493,7 +493,7 @@ that is, any tagged unit value like `@string` or `@MyType`.
 
 The schema for Styx schema files.
 
-> r[schema.meta.wildcard]
+> schema[schema.meta.wildcard]
 > In the meta schema, the unit value `@` is used as a wildcard meaning "any type reference" —
 > that is, any tagged unit value like `@string` or `@MyType`.
 > This is a semantic convention for the meta schema; it leverages the fact that `@` (unit) is a valid

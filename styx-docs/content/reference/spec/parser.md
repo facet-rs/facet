@@ -9,7 +9,7 @@ The parser converts Styx source text into a document tree.
 
 ## Comments
 
-> r[comment.line]
+> parser[comment.line]
 > Line comments start with `//` and extend to the end of the line.
 > Comments MUST either start at the beginning of the file or be preceded by whitespace.
 >
@@ -19,7 +19,7 @@ The parser converts Styx source text into a document tree.
 > url https://example.com  // the :// is not a comment
 > ```
 
-> r[comment.doc]
+> parser[comment.doc]
 > Doc comments start with `///` and attach to the following entry.
 > Consecutive doc comment lines are concatenated.
 > A doc comment not followed by an entry (blank line or EOF) is an error.
@@ -52,14 +52,14 @@ Scalars are opaque text. The parser assigns no type information.
 
 ### Bare scalars
 
-> r[scalar.bare.chars]
+> parser[scalar.bare.chars]
 > A bare scalar starts with a character that is NOT:
 > whitespace, `{`, `}`, `(`, `)`, `,`, `"`, `=`, `@`, or `>`.
 >
 > After the first character, `@` and `=` are allowed but `>` is still forbidden.
 > This allows URLs with `@` (like `user@host` or `crate:pkg@2`) and query strings with `=`.
 
-> r[scalar.bare.termination]
+> parser[scalar.bare.termination]
 > A bare scalar is terminated by any forbidden character or end of input.
 >
 > ```styx
@@ -68,11 +68,11 @@ Scalars are opaque text. The parser assigns no type information.
 
 ### Quoted scalars
 
-> r[scalar.quoted.escapes]
+> parser[scalar.quoted.escapes]
 > Quoted scalars use `"..."` and support escape sequences:
 > `\\`, `\"`, `\n`, `\r`, `\t`, `\uXXXX`, `\u{X...}`.
 
-> r[scalar.quoted.newline]
+> parser[scalar.quoted.newline]
 > The `\n` escape sequence always produces a single LF character (U+000A), regardless of platform.
 > Use `\r\n` explicitly if CRLF is needed.
 >
@@ -83,7 +83,7 @@ Scalars are opaque text. The parser assigns no type information.
 
 ### Raw scalars
 
-> r[scalar.raw.syntax]
+> parser[scalar.raw.syntax]
 > Raw scalars use `r#"..."#` syntax. The number of `#` must match.
 > Content is literal — escape sequences are not processed.
 >
@@ -93,7 +93,7 @@ Scalars are opaque text. The parser assigns no type information.
 
 ### Heredoc scalars
 
-> r[scalar.heredoc.syntax]
+> parser[scalar.heredoc.syntax]
 > Heredocs start with `<<DELIMITER` and end with the delimiter on its own line.
 > The delimiter MUST match `[A-Z][A-Z0-9_]*` and not exceed 16 characters.
 > The closing delimiter line MAY be indented; that indentation is stripped from content lines.
@@ -104,7 +104,7 @@ Scalars are opaque text. The parser assigns no type information.
 >   BASH
 > ```
 
-> r[scalar.heredoc.invalid]
+> parser[scalar.heredoc.invalid]
 > A `<<` sequence that is NOT immediately followed by an uppercase letter is a parse error.
 > This includes `<<` followed by lowercase letters, digits, whitespace, or end of input.
 >
@@ -116,7 +116,7 @@ Scalars are opaque text. The parser assigns no type information.
 >
 > Note: A single `<` not followed by another `<` is valid as part of a bare scalar.
 
-> r[scalar.heredoc.lang]
+> parser[scalar.heredoc.lang]
 > A heredoc MAY include a language hint after the delimiter, separated by a comma.
 > The language hint MUST match `[a-z][a-z0-9_.-]*` (lowercase identifiers).
 > The language hint is metadata and does not affect the scalar content.
@@ -135,7 +135,7 @@ Scalars are opaque text. The parser assigns no type information.
 
 ## Unit
 
-> r[value.unit]
+> parser[value.unit]
 > The token `@` not followed by an identifier is the unit value.
 >
 > ```styx
@@ -146,11 +146,11 @@ Scalars are opaque text. The parser assigns no type information.
 
 A tag labels a value with an identifier.
 
-> r[tag.syntax]
+> parser[tag.syntax]
 > A tag MUST match the pattern `@[A-Za-z_][A-Za-z0-9_-]*`.
 > Note: dots are NOT allowed in tag names (they are path separators in keys).
 
-> r[tag.payload]
+> parser[tag.payload]
 > A tag MAY be immediately followed (no whitespace) by a payload:
 >
 > | Follows `@tag` | Result |
@@ -172,7 +172,7 @@ A tag labels a value with an identifier.
 
 ## Sequences
 
-> r[sequence.syntax]
+> parser[sequence.syntax]
 > Sequences use `(` `)` delimiters. Empty sequences `()` are valid.
 > Elements are separated by whitespace (spaces, tabs, or newlines).
 > Commas are NOT allowed.
@@ -186,21 +186,21 @@ A tag labels a value with an identifier.
 > )
 > ```
 
-> r[sequence.elements]
+> parser[sequence.elements]
 > Elements may be any atom type.
 
 ## Objects
 
 Objects are ordered collections of entries.
 
-> r[object.syntax]
+> parser[object.syntax]
 > Objects use `{` `}` delimiters. Empty objects `{}` are valid.
 
 ### Entries
 
 An **entry** consists of a key and an optional value.
 
-> r[entry.structure]
+> parser[entry.structure]
 > An entry has exactly one key and at most one value:
 >
 > - **1 atom**: the atom is the key, the value is implicit unit (`@`)
@@ -213,7 +213,7 @@ An **entry** consists of a key and an optional value.
 > config @object{}         // config = @object{}
 > ```
 
-> r[entry.whitespace]
+> parser[entry.whitespace]
 > A bare scalar key MUST be separated from a following `{` or `(` by whitespace.
 > This prevents visual confusion with tag syntax (e.g., `@tag{...}`).
 >
@@ -230,7 +230,7 @@ An **entry** consists of a key and an optional value.
 > Note: Quoted scalars, raw scalars, and tags do not have this restriction
 > since they have clear delimiters. `@tag{}` is a tagged object (one atom).
 
-> r[entry.toomany]
+> parser[entry.toomany]
 > An entry with more than two atoms is a parse error.
 >
 > ```styx,bad
@@ -249,7 +249,7 @@ An **entry** consists of a key and an optional value.
 > Hint: did you mean `@tag{}`? Whitespace is not allowed between a tag and its payload.
 > ```
 
-> r[entry.keys]
+> parser[entry.keys]
 > A key is a dotted path of one or more segments. Each segment may be:
 > - A bare key (like bare scalar but `.` terminates it)
 > - A quoted scalar
@@ -277,7 +277,7 @@ An **entry** consists of a key and an optional value.
 > value
 > ```
 
-> r[entry.path]
+> parser[entry.path]
 > A dotted key defines a nested path. Each segment separated by `.` becomes
 > a key in a nested object chain. The value is placed at the innermost level.
 >
@@ -306,7 +306,7 @@ An **entry** consists of a key and an optional value.
 > "a.b".c value            // "a.b" { c value }
 > ```
 
-> r[entry.path.sibling]
+> parser[entry.path.sibling]
 > Sibling dotted paths (paths sharing a common prefix) are allowed as long as
 > they appear contiguously. Moving to a different key at any level closes the
 > previous sibling path and all its descendants.
@@ -318,7 +318,7 @@ An **entry** consists of a key and an optional value.
 > foo.baz value3           // foo still open, foo.bar now closed
 > ```
 
-> r[entry.path.reopen]
+> parser[entry.path.reopen]
 > Reopening a closed path is an error. A path is closed when a sibling path
 > at the same level receives an entry.
 >
@@ -338,7 +338,7 @@ An **entry** consists of a key and an optional value.
 > This rule enables streaming deserialization: once a different sibling appears,
 > the previous subtree is complete and can be finalized without buffering.
 
-> r[entry.key-equality]
+> parser[entry.key-equality]
 > To detect duplicate keys, the parser MUST compare keys by their parsed value:
 >
 > - **Scalar keys** compare equal if their contents are exactly equal after parsing
@@ -348,7 +348,7 @@ An **entry** consists of a key and an optional value.
 
 ### Separators
 
-> r[object.separators]
+> parser[object.separators]
 > Entries are separated by newlines, commas, or both. Duplicate keys are forbidden.
 >
 > ```styx
@@ -365,7 +365,7 @@ An **entry** consists of a key and an optional value.
 
 Attribute syntax is shorthand for inline object entries.
 
-> r[attr.syntax]
+> parser[attr.syntax]
 > Attribute syntax `key>value` creates an object entry.
 > The `>` has no spaces around it.
 > Attribute keys MUST be bare scalars.
@@ -382,14 +382,14 @@ Attribute syntax is shorthand for inline object entries.
 > }
 > ```
 
-> r[attr.values]
+> parser[attr.values]
 > Attribute values may be bare scalars, quoted scalars, sequences, or objects.
 >
 > ```styx
 > config name>app tags>(web prod) opts>{verbose true}
 > ```
 
-> r[attr.atom]
+> parser[attr.atom]
 > Multiple attributes combine into a single object atom.
 >
 > ```compare
@@ -399,7 +399,7 @@ Attribute syntax is shorthand for inline object entries.
 > {host localhost, port 8080}
 > ```
 
-> r[entry.path.attributes]
+> parser[entry.path.attributes]
 > Dotted paths compose naturally with attribute syntax.
 >
 > ```compare
@@ -422,9 +422,9 @@ Attribute syntax is shorthand for inline object entries.
 
 A Styx document is an object. Top-level entries do not require braces.
 
-> r[document.root]
+> parser[document.root]
 > The parser MUST interpret top-level entries as entries of an implicit root object.
-> Root entries follow the same separator rules as block objects: newlines or commas (see `r[object.separators]`).
+> Root entries follow the same separator rules as block objects: newlines or commas (see `parser[object.separators]`).
 > If the document starts with `{`, it MUST be parsed as a single explicit block object.
 >
 > ```compare

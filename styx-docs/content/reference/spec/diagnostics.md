@@ -23,7 +23,7 @@ NN | source line
    = help: suggested fix
 ```
 
-> r[diagnostic.format]
+> diag[diagnostic.format]
 > A diagnostic SHOULD include:
 >
 > - **Level**: `error`, `warning`, or `note`
@@ -35,7 +35,7 @@ NN | source line
 > Secondary locations (e.g., "first defined here") use `------` underlines.
 > Primary locations (the actual error site) use `^^^^^` underlines.
 
-> r[diagnostic.actionable]
+> diag[diagnostic.actionable]
 > Error messages SHOULD be actionable. When a fix is known, the diagnostic
 > SHOULD show the corrected code, not just describe the problem.
 >
@@ -60,7 +60,7 @@ NN | source line
 
 ### Unexpected token
 
-> r[diagnostic.parser.unexpected]
+> diag[diagnostic.parser.unexpected]
 > When the parser encounters an unexpected token, the message SHOULD identify
 > what was found and what was expected.
 >
@@ -74,7 +74,7 @@ NN | source line
 
 ### Unclosed delimiter
 
-> r[diagnostic.parser.unclosed]
+> diag[diagnostic.parser.unclosed]
 > When a delimiter is not closed, the message SHOULD show where the opening
 > delimiter was and where the parser expected the closing delimiter.
 >
@@ -93,7 +93,7 @@ NN | source line
 
 ### Invalid escape sequence
 
-> r[diagnostic.parser.escape]
+> diag[diagnostic.parser.escape]
 > When a quoted scalar contains an invalid escape sequence, the message SHOULD
 > identify the specific invalid escape.
 >
@@ -109,7 +109,7 @@ NN | source line
 
 ### Unterminated string
 
-> r[diagnostic.parser.unterminated-string]
+> diag[diagnostic.parser.unterminated-string]
 > When a quoted scalar is not terminated, the message SHOULD show where the
 > string started.
 >
@@ -126,7 +126,7 @@ NN | source line
 
 ### Unterminated heredoc
 
-> r[diagnostic.parser.unterminated-heredoc]
+> diag[diagnostic.parser.unterminated-heredoc]
 > When a heredoc is not terminated, the message SHOULD show the expected
 > delimiter and where the heredoc started.
 >
@@ -143,7 +143,7 @@ NN | source line
 
 ### Heredoc delimiter too long
 
-> r[diagnostic.parser.heredoc-delimiter-length]
+> diag[diagnostic.parser.heredoc-delimiter-length]
 > When a heredoc delimiter exceeds 16 characters, the message SHOULD state
 > the limit.
 >
@@ -159,7 +159,7 @@ NN | source line
 
 ### Heredoc indentation error
 
-> r[diagnostic.parser.heredoc-indent]
+> diag[diagnostic.parser.heredoc-indent]
 > When a heredoc content line is less indented than the closing delimiter,
 > the message SHOULD show both locations.
 >
@@ -178,7 +178,7 @@ NN | source line
 
 ### Comment without preceding whitespace
 
-> r[diagnostic.parser.comment-whitespace]
+> diag[diagnostic.parser.comment-whitespace]
 > When `//` appears without preceding whitespace (making it part of a scalar),
 > the parser cannot distinguish user intent. If subsequent parsing fails, the
 > message SHOULD note the potential comment issue.
@@ -196,7 +196,7 @@ NN | source line
 
 ### Duplicate key
 
-> r[diagnostic.parser.duplicate-key]
+> diag[diagnostic.parser.duplicate-key]
 > When a key appears twice in the same object, the message SHOULD show both
 > locations.
 >
@@ -213,7 +213,7 @@ NN | source line
 
 ### Mixed separators
 
-> r[diagnostic.parser.mixed-separators]
+> diag[diagnostic.parser.mixed-separators]
 > When an object mixes comma and newline separators, the message SHOULD
 > identify both styles and suggest picking one.
 >
@@ -238,7 +238,7 @@ NN | source line
 
 ### Comma in sequence
 
-> r[diagnostic.parser.sequence-comma]
+> diag[diagnostic.parser.sequence-comma]
 > When a comma appears in a sequence, the message SHOULD explain that
 > sequences use whitespace separation.
 >
@@ -254,7 +254,7 @@ NN | source line
 
 ### Attribute object in sequence
 
-> r[diagnostic.parser.attr-in-sequence]
+> diag[diagnostic.parser.attr-in-sequence]
 > When an attribute object appears as a direct sequence element, the message
 > SHOULD explain the ambiguity and suggest block form.
 >
@@ -271,7 +271,7 @@ NN | source line
 
 ### Trailing content after root
 
-> r[diagnostic.parser.trailing-content]
+> diag[diagnostic.parser.trailing-content]
 > When content appears after a closed root object, the message SHOULD note
 > that explicit root objects cannot have siblings.
 >
@@ -292,7 +292,7 @@ NN | source line
 
 ### Too many atoms in entry
 
-> r[diagnostic.parser.toomany]
+> diag[diagnostic.parser.toomany]
 > When an entry contains more than two atoms, the message SHOULD identify
 > the unexpected atom and suggest common fixes like removing whitespace
 > between a tag and its payload.
@@ -309,7 +309,7 @@ NN | source line
 
 ### Reopened path
 
-> r[diagnostic.parser.reopened-path]
+> diag[diagnostic.parser.reopened-path]
 > When a path is reopened after being closed by a sibling, the message
 > SHOULD show where the sibling closed the path.
 >
@@ -325,7 +325,7 @@ NN | source line
 
 ### Nesting into terminal value
 
-> r[diagnostic.parser.nest-into-terminal]
+> diag[diagnostic.parser.nest-into-terminal]
 > When attempting to add children to a path that already has a terminal
 > value (scalar, sequence, tag, or unit), the message SHOULD show the
 > terminal value.
@@ -342,7 +342,7 @@ NN | source line
 
 ### Missing whitespace before block
 
-> r[diagnostic.parser.missing-whitespace]
+> diag[diagnostic.parser.missing-whitespace]
 > When a bare key is followed immediately by `{` or `(` without whitespace,
 > the message SHOULD suggest adding whitespace to distinguish from tag syntax.
 >
@@ -360,7 +360,7 @@ NN | source line
 
 ### Invalid value for type
 
-> r[diagnostic.deser.invalid-value]
+> diag[diagnostic.deser.invalid-value]
 > When a scalar cannot be interpreted as the target type, the message SHOULD
 > identify the expected type, explain what's wrong, and provide helpful
 > guidance. This covers all scalar parsing failures: type mismatches, overflow,
@@ -415,7 +415,7 @@ NN | source line
 
 ### Enum not a tagged value
 
-> r[diagnostic.deser.enum-invalid]
+> diag[diagnostic.deser.enum-invalid]
 > When deserializing an enum and the value is not a valid tagged value, the
 > message SHOULD explain enum representation.
 >
@@ -434,7 +434,7 @@ NN | source line
 
 ### Unknown enum variant
 
-> r[diagnostic.deser.unknown-variant]
+> diag[diagnostic.deser.unknown-variant]
 > When an enum variant name doesn't match any defined variant, the message
 > SHOULD list the valid variants.
 >
@@ -450,7 +450,7 @@ NN | source line
 
 ### Missing required field
 
-> r[diagnostic.deser.missing-field]
+> diag[diagnostic.deser.missing-field]
 > When a required field is missing during deserialization, the message SHOULD
 > identify the field and the containing object.
 >
@@ -468,7 +468,7 @@ NN | source line
 
 ### Unknown field
 
-> r[diagnostic.deser.unknown-field]
+> diag[diagnostic.deser.unknown-field]
 > When a field is present but not expected by the target type, the message
 > SHOULD suggest similar field names if available.
 >
@@ -485,7 +485,7 @@ NN | source line
 
 ### Expected object, found scalar
 
-> r[diagnostic.deser.expected-object]
+> diag[diagnostic.deser.expected-object]
 > When an object is expected but a scalar is found.
 >
 > ```
@@ -500,7 +500,7 @@ NN | source line
 
 ### Expected sequence, found scalar
 
-> r[diagnostic.deser.expected-sequence]
+> diag[diagnostic.deser.expected-sequence]
 > When a sequence is expected but a scalar is found.
 >
 > ```
