@@ -148,7 +148,7 @@ fn build_deserialize_error_report<'a>(
         DeserializeErrorKind::CannotBorrow { reason } => {
             Report::build(ReportKind::Error, (filename, 0..1))
                 .with_config(config)
-                .with_message(*reason)
+                .with_message(reason)
         }
 
         // Unexpected token (from parser)
