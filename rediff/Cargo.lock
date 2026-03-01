@@ -1049,7 +1049,7 @@ dependencies = [
 
 [[package]]
 name = "rediff"
-version = "1.0.0"
+version = "0.44.0"
 dependencies = [
  "confusables",
  "facet",
