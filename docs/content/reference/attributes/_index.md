@@ -739,6 +739,28 @@ enum Message {
 
 This pattern is useful for sharing common fields across enum variants while keeping the JSON structure flat.
 
+### `trailing`
+
+Mark an opaque field as structurally trailing in its container. Formats that support trailing payloads can treat this field as "remaining bytes" rather than requiring an outer length frame.
+
+```rust,noexec
+#[derive(Facet)]
+struct Packet {
+    tag: u8,
+    len: u16,
+    #[facet(trailing)]
+    #[facet(opaque)]
+    payload: Vec<u8>,
+}
+```
+
+`#[facet(trailing)]` is checked at compile time and must satisfy all of these rules:
+
+1. It does not accept arguments (`#[facet(trailing)]`, not `#[facet(trailing = ...)]`).
+2. The field must be the last field in its container.
+3. The field cannot also be `#[facet(flatten)]`.
+4. The field must be opaque, either directly (`#[facet(opaque)]`) or via its field type.
+
 ### `child`
 
 Mark a field as a child node for hierarchical formats like  XML.
