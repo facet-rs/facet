@@ -269,6 +269,51 @@ which keeps `Poke::get_mut` sound.
 
 **When `assert_same!` encounters an opaque type**, it returns `Sameness::Opaque` — you cannot structurally compare opaque values.
 
+#### Opaque adapter (`#[facet(opaque = AdapterType)]`)
+
+For container-level opaque types, you can provide an adapter instead of using `proxy`. This gives explicit control over how opaque bytes are mapped during serialization and deserialization.
+
+```rust,noexec
+use facet::{Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst};
+
+#[derive(Facet)]
+#[facet(opaque = PayloadAdapter)]
+struct Payload<'a>(&'a [u8]);
+
+struct PayloadAdapter;
+
+impl FacetOpaqueAdapter for PayloadAdapter {
+    type Error = String;
+    type SendValue<'a> = Payload<'a>;
+    type RecvValue<'de> = Payload<'de>;
+
+    fn serialize_map(value: &Self::SendValue<'_>) -> OpaqueSerialize {
+        OpaqueSerialize {
+            ptr: PtrConst::new(&value.0 as *const &[u8]),
+            shape: <&[u8] as Facet>::SHAPE,
+        }
+    }
+
+    fn deserialize_build<'de>(
+        input: OpaqueDeserialize<'de>,
+    ) -> Result<Self::RecvValue<'de>, Self::Error> {
+        Ok(match input {
+            OpaqueDeserialize::Borrowed(bytes) => Payload(bytes),
+            OpaqueDeserialize::Owned(_) => {
+                return Err("expected borrowed bytes".to_string());
+            }
+        })
+    }
+}
+```
+
+Rules and notes:
+
+1. `#[facet(opaque = ...)]` is currently container-level only (not supported on fields).
+2. The adapter type must implement `FacetOpaqueAdapter`.
+3. This is an alternative to `proxy` for opaque values.
+4. `#[facet(trailing)]` accepts either a field marked `#[facet(opaque)]` or a field type whose shape has a container-level opaque adapter.
+
 ### `pod`
 
 Mark a type as Plain Old Data. POD types have no invariants — any combination of valid field values produces a valid instance. This enables safe mutation through reflection.
@@ -738,6 +783,27 @@ enum Message {
 ```
 
 This pattern is useful for sharing common fields across enum variants while keeping the JSON structure flat.
+
+### `trailing`
+
+Mark an opaque field as structurally trailing in its container. Formats that support trailing payloads can treat this field as "remaining bytes" rather than requiring an outer length frame.
+
+```rust,noexec
+#[derive(Facet)]
+struct Packet {
+    tag: u8,
+    len: u16,
+    #[facet(opaque, trailing)]
+    payload: Vec<u8>,
+}
+```
+
+`#[facet(trailing)]` is checked at compile time and must satisfy all of these rules:
+
+1. It does not accept arguments (`#[facet(trailing)]`, not `#[facet(trailing = ...)]`).
+2. The field must be the last field in its container.
+3. The field cannot also be `#[facet(flatten)]`.
+4. The field must be opaque, either directly (`#[facet(opaque)]`) or via its field type.
 
 ### `child`
 
