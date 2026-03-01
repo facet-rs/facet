@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.0](https://github.com/facet-rs/facet/compare/facet-core-v0.43.2...facet-core-v0.44.0) - 2026-03-01
+
+### Added
+
+- add plan-agnostic opaque adapter MVP ([#2068](https://github.com/facet-rs/facet/pull/2068)) ([#2074](https://github.com/facet-rs/facet/pull/2074))
+- *(facet-args)* layered config with provenance tracking and beautiful config dump ([#1907](https://github.com/facet-rs/facet/pull/1907))
+- *(facet)* add #[facet(cow)] attribute for cow-like enum semantics ([#1898](https://github.com/facet-rs/facet/pull/1898))
+
+### Fixed
+
+- *(core)* make ownership transfer explicit in list/slice push vtables ([#2088](https://github.com/facet-rs/facet/pull/2088))
+- *(core)* print generic params in Shape display for Option/Result ([#2038](https://github.com/facet-rs/facet/pull/2038))
+- *(facet)* make cow enums serialize/deserialize transparently ([#1901](https://github.com/facet-rs/facet/pull/1901))
+- remove unnecessary `T: 'static` bound from Vec impl ([#1894](https://github.com/facet-rs/facet/pull/1894))
+
+### Other
+
+- Make OptionVTable callbacks extern "C" and FFI-safe ([#2106](https://github.com/facet-rs/facet/pull/2106))
+- Allow borrowed #[facet(opaque)] fields safely ([#2087](https://github.com/facet-rs/facet/pull/2087))
+- Make OxPtrConst/OxPtrMut constructor invariants explicit ([#2080](https://github.com/facet-rs/facet/pull/2080))
+- Expose const generic parameters via Shape reflection ([#2061](https://github.com/facet-rs/facet/pull/2061))
+- don't allocate ZSTs ([#2013](https://github.com/facet-rs/facet/pull/2013))
+- use UserType::Enum always ([#2006](https://github.com/facet-rs/facet/pull/2006))
+- Consolidate trame design (née facet-reflect2) ([#1992](https://github.com/facet-rs/facet/pull/1992))
+- More ops, more fuzzing (+ a drive-by serialization fix) ([#1984](https://github.com/facet-rs/facet/pull/1984))
+- Refactor TypePlan to 32-bit arena indices, eliminate Box::leak, add benchmark infrastructure ([#1968](https://github.com/facet-rs/facet/pull/1968))
+- eliminate type_identifier usage ([#1965](https://github.com/facet-rs/facet/pull/1965))
+- Re-enable specialization-based auto-detection as default ([#1919](https://github.com/facet-rs/facet/pull/1919))
+- Add Facet implementations for jiff::civil::Date and jiff::civil::Time ([#1911](https://github.com/facet-rs/facet/pull/1911))
+
 ## [0.43.2](https://github.com/facet-rs/facet/compare/facet-core-v0.43.1...facet-core-v0.43.2) - 2026-01-23
 
 ### Added
