@@ -1,6 +1,6 @@
 [package]
 name = "rediff"
-version = "1.0.0"
+version = "0.44.0"
 edition = "2024"
 rust-version = "1.90.0"
 authors = ["Amos Wenger <amos@bearcove.eu>"]
@@ -23,10 +23,10 @@ tracing = ["dep:tracing"]
 
 [dependencies]
 # Core facet dependencies
-facet = { version = "0.43", git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-core = { version = "0.43", git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-pretty = { version = "0.43", git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-reflect = { version = "0.43", git = "https://github.com/facet-rs/facet", branch = "main" }
+facet = { version = "0.44" }
+facet-core = { version = "0.44" }
+facet-pretty = { version = "0.44" }
+facet-reflect = { version = "0.44" }
 
 # From facet-diff-core
 confusables = "0.1"
@@ -38,7 +38,7 @@ unicode-width = "0.2"
 tracing = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
-facet = { version = "0.43", git = "https://github.com/facet-rs/facet", branch = "main", features = [
+facet = { version = "0.44", features = [
   "all-impls",
 ] }
 tracing = "0.1"
