@@ -41,7 +41,7 @@ pub fn generate_completions_for_shape(
     generate_completions_for_schema(&schema, shell, program_name)
 }
 
-/// Generate shell completion script from a [Schema].
+/// Generate shell completion script from a schema.
 pub fn generate_completions_for_schema(
     schema: &Schema,
     shell: Shell,
