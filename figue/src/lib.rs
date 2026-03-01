@@ -164,7 +164,7 @@ mod macros;
 
 pub(crate) mod builder;
 pub(crate) mod color;
-pub(crate) mod completions;
+pub mod completions;
 pub(crate) mod config_format;
 pub(crate) mod config_value;
 pub(crate) mod config_value_parser;
@@ -194,7 +194,7 @@ use facet_core::Facet;
 // PUBLIC INTERFACE
 // ==========================================
 
-pub use crate::completions::Shell;
+pub use crate::completions::{Shell, generate_completions_for_shape};
 pub use builder::builder;
 pub use config_format::{ConfigFormat, ConfigFormatError, JsonFormat};
 pub use config_value::ConfigValue;

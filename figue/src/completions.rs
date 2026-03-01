@@ -25,7 +25,7 @@ pub enum Shell {
 ///
 /// This is a convenience function that builds a Schema internally.
 /// If you already have a Schema, use [generate_completions_for_schema] instead.
-pub(crate) fn generate_completions_for_shape(
+pub fn generate_completions_for_shape(
     shape: &'static facet_core::Shape,
     shell: Shell,
     program_name: &str,
