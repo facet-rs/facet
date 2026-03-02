@@ -24,7 +24,13 @@ private final class CapturingConnection: RoamConnection, @unchecked Sendable {
 
     private let recorder = CallRecorder()
 
-    func call(methodId: UInt64, payload _: Data, timeout: TimeInterval?) async throws -> Data {
+    func call(
+        methodId: UInt64,
+        metadata _: [MetadataEntryV7],
+        payload _: Data,
+        channels _: [UInt64],
+        timeout: TimeInterval?
+    ) async throws -> Data {
         await recorder.append(methodId: methodId, timeout: timeout)
         return Data([0] + encodeString("ok"))
     }

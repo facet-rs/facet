@@ -6,7 +6,7 @@
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 
 use crate::Region;
@@ -24,7 +24,7 @@ pub enum FileCleanup {
 
 /// File-backed memory-mapped region for cross-process shared memory.
 ///
-/// shm[impl shm.file.mmap-posix]
+/// r[impl shm.file]
 pub struct MmapRegion {
     /// Pointer to the mapped memory
     ptr: *mut u8,
@@ -45,8 +45,8 @@ impl MmapRegion {
     /// This creates the file, truncates it to the given size, and maps it
     /// into memory with `MAP_SHARED`. The file is created with permissions 0666.
     ///
-    /// shm[impl shm.file.create]
-    /// shm[impl shm.file.permissions]
+    /// r[impl shm.file.create]
+    /// r[impl shm.file.permissions]
     pub fn create(path: &Path, size: usize, cleanup: FileCleanup) -> io::Result<Self> {
         if size == 0 {
             return Err(io::Error::new(
@@ -114,7 +114,7 @@ impl MmapRegion {
     /// This opens the file and maps it into memory with `MAP_SHARED`.
     /// The file size determines the mapping size.
     ///
-    /// shm[impl shm.file.attach]
+    /// r[impl shm.file.attach]
     pub fn attach(path: &Path) -> io::Result<Self> {
         // Open existing file for read/write
         let file = OpenOptions::new()
@@ -160,6 +160,51 @@ impl MmapRegion {
             path: path.to_path_buf(),
             owns_file: false, // Attached regions don't own the file
         })
+    }
+
+    /// Attach to a memory-mapped region from a file descriptor.
+    ///
+    /// This is used on the receiver side after receiving an fd via SCM_RIGHTS.
+    /// The fd is mmap'd with MAP_SHARED at the given size.
+    pub fn attach_fd(fd: OwnedFd, size: usize) -> io::Result<Self> {
+        if size == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "size must be > 0",
+            ));
+        }
+
+        let raw_fd = fd.as_raw_fd();
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                raw_fd,
+                0,
+            )
+        };
+
+        if ptr == libc::MAP_FAILED {
+            return Err(io::Error::last_os_error());
+        }
+
+        // Convert OwnedFd to File so we keep it alive for the mapping's lifetime
+        let file = unsafe { File::from_raw_fd(fd.into_raw_fd()) };
+
+        Ok(Self {
+            ptr: ptr as *mut u8,
+            len: size,
+            file,
+            path: PathBuf::new(),
+            owns_file: false,
+        })
+    }
+
+    /// Get the raw file descriptor of the backing file.
+    pub fn as_raw_fd(&self) -> RawFd {
+        self.file.as_raw_fd()
     }
 
     /// Get a `Region` view of this mmap.
@@ -211,7 +256,7 @@ impl MmapRegion {
     /// Returns an error if the new size is smaller than current size (shrinking
     /// is not supported), or if the underlying file/mmap operations fail.
     ///
-    /// shm[impl shm.varslot.extents]
+    /// r[impl shm.varslot.extents]
     pub fn resize(&mut self, new_size: usize) -> io::Result<()> {
         if new_size < self.len {
             return Err(io::Error::new(
@@ -226,14 +271,9 @@ impl MmapRegion {
         // 1. Grow the backing file
         self.file.set_len(new_size as u64)?;
 
-        // 2. Unmap old region
-        let unmap_result = unsafe { libc::munmap(self.ptr as *mut libc::c_void, self.len) };
-        if unmap_result != 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        // 3. Map new region (larger)
-        let ptr = unsafe {
+        // 2. Map new region before tearing down the old one, so that a
+        //    failure here leaves self in a valid state.
+        let new_ptr = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
                 new_size,
@@ -244,11 +284,14 @@ impl MmapRegion {
             )
         };
 
-        if ptr == libc::MAP_FAILED {
+        if new_ptr == libc::MAP_FAILED {
             return Err(io::Error::last_os_error());
         }
 
-        self.ptr = ptr as *mut u8;
+        // 3. New mapping is live — now it is safe to release the old one.
+        unsafe { libc::munmap(self.ptr as *mut libc::c_void, self.len) };
+
+        self.ptr = new_ptr as *mut u8;
         self.len = new_size;
         Ok(())
     }
@@ -280,7 +323,7 @@ impl Drop for MmapRegion {
         }
 
         // Delete the file if we own it
-        // shm[impl shm.file.cleanup]
+        // r[impl shm.file.cleanup]
         if self.owns_file {
             let _ = std::fs::remove_file(&self.path);
         }

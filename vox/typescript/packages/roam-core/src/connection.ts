@@ -9,11 +9,18 @@
 
 import {
   type Hello,
+  type HelloYourself,
+  type Message,
   type MetadataEntry,
-  helloV5,
-  helloV6,
+  helloV7,
+  helloYourself,
+  parityEven,
+  parityOdd,
+  messagePing,
   messageHello,
-  messageGoodbye,
+  messageHelloYourself,
+  messagePong,
+  messageProtocolError,
   messageRequest,
   messageResponse,
   messageAccept,
@@ -28,8 +35,15 @@ import {
   ChannelIdAllocator,
   ChannelError,
   Role,
+  Tx,
+  Rx,
+  createServerTx,
+  createServerRx,
   type TaskMessage,
   type TaskSender,
+  type MethodDescriptor,
+  type ServiceDescriptor,
+  type RoamCall,
 } from "./channeling/index.ts";
 import { type MessageTransport } from "./transport.ts";
 import type { Caller, CallerRequest } from "./caller.ts";
@@ -37,7 +51,7 @@ import { MiddlewareCaller } from "./caller.ts";
 import type { ClientMiddleware } from "./middleware.ts";
 import { clientMetadataToEntries } from "./metadata.ts";
 import { encodeWithSchema, decodeWithSchema } from "@bearcove/roam-postcard";
-import { tryDecodeRpcResult } from "@bearcove/roam-wire";
+import { RpcError, RpcErrorCode } from "@bearcove/roam-wire";
 
 // Note: Role is exported from streaming/index.ts in roam-core's main export
 
@@ -49,6 +63,21 @@ export interface Negotiated {
   initialCredit: number;
   /** Maximum concurrent in-flight requests (min of both peers). */
   maxConcurrentRequests: number;
+}
+
+/** Optional proactive protocol keepalive settings. */
+export interface KeepaliveConfig {
+  pingIntervalMs: number;
+  pongTimeoutMs: number;
+}
+
+interface KeepaliveRuntime {
+  pingIntervalMs: number;
+  pongTimeoutMs: number;
+  nextPingAtMs: number;
+  waitingPongNonce: bigint | null;
+  pongDeadlineMs: number;
+  nextPingNonce: bigint;
 }
 
 /** Error during connection handling. */
@@ -79,7 +108,11 @@ export class ConnectionError extends Error {
   }
 }
 
-/** Trait for dispatching RPC requests to a service. */
+function msgTag(msg: Message): Message["payload"]["tag"] {
+  return msg.payload.tag;
+}
+
+/** Trait for dispatching RPC requests to a service (simple non-channeling mode). */
 export interface ServiceDispatcher {
   /**
    * Dispatch an RPC request and return the response payload.
@@ -94,37 +127,68 @@ export interface ServiceDispatcher {
 }
 
 /**
- * Channel-aware service dispatcher.
+ * Channel-aware service dispatcher using service descriptors.
  *
- * Unlike ServiceDispatcher which returns a response directly, this interface
- * sends responses (and channel Data/Close messages) via a TaskSender callback.
- * This ensures proper ordering: all Data/Close messages are sent before Response.
+ * The runtime handles all arg decoding and response encoding using the
+ * descriptor's schemas. Generated dispatchers only do routing and call
+ * handler methods with pre-decoded args.
  */
 export interface ChannelingDispatcher {
+  /** Return the service descriptor for schema-driven dispatch. */
+  getDescriptor(): ServiceDescriptor;
+
   /**
-   * Dispatch a request that may involve channels.
+   * Dispatch a decoded request to the appropriate handler method.
    *
-   * The dispatcher is responsible for:
-   * - Looking up the method by method_id
-   * - Deserializing arguments from payload
-   * - Creating Rx/Tx handles for channel arguments using the registry
-   * - Calling the service method
-   * - Sending Data/Close messages for any Tx channels via taskSender
-   * - Sending the Response message via taskSender when done
+   * Called by the runtime after:
+   * - Finding the method in the descriptor by ID
+   * - Decoding args with the method's args tuple schema
+   * - Binding any channel args (Tx/Rx) using the registry
+   * - Creating a RoamCall for the response
    *
-   * @param methodId - The method ID to dispatch
-   * @param payload - The request payload
-   * @param requestId - The request ID for the response
-   * @param registry - Channel registry for binding channel arguments
-   * @param taskSender - Callback to send TaskMessage (Data/Close/Response)
+   * @param method - The matched method descriptor
+   * @param args - Pre-decoded argument values (channels already bound)
+   * @param call - Interface for sending the response
    */
-  dispatch(
-    methodId: bigint,
-    payload: Uint8Array,
-    requestId: bigint,
-    registry: ChannelRegistry,
-    taskSender: TaskSender,
-  ): Promise<void>;
+  dispatch(method: MethodDescriptor, args: unknown[], call: RoamCall): Promise<void>;
+}
+
+/** Implementation of RoamCall that encodes responses using a method descriptor. */
+class RoamCallImpl implements RoamCall {
+  private responded = false;
+
+  constructor(
+    private readonly method: MethodDescriptor,
+    private readonly requestId: bigint,
+    private readonly taskSender: TaskSender,
+  ) {}
+
+  reply(value: unknown): void {
+    if (this.responded) return;
+    this.responded = true;
+    const payload = encodeWithSchema({ tag: "Ok", value }, this.method.result);
+    this.taskSender({ kind: "response", requestId: this.requestId, payload });
+  }
+
+  replyErr(error: unknown): void {
+    if (this.responded) return;
+    this.responded = true;
+    const payload = encodeWithSchema(
+      { tag: "Err", value: { tag: "User", value: error } },
+      this.method.result,
+    );
+    this.taskSender({ kind: "response", requestId: this.requestId, payload });
+  }
+
+  replyInternalError(): void {
+    if (this.responded) return;
+    this.responded = true;
+    const payload = encodeWithSchema(
+      { tag: "Err", value: { tag: "InvalidPayload" } },
+      this.method.result,
+    );
+    this.taskSender({ kind: "response", requestId: this.requestId, payload });
+  }
 }
 
 /**
@@ -159,6 +223,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
   >();
   private messagePumpRunning = false;
   private messagePumpPromise: Promise<void> | null = null;
+  private keepalive: KeepaliveConfig | null;
 
   /**
    * Optional interceptor to add metadata to outgoing requests.
@@ -172,6 +237,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     negotiated: Negotiated,
     ourHello: Hello,
     acceptConnections: boolean = false,
+    keepalive: KeepaliveConfig | null = null,
   ) {
     this.io = io;
     this._role = role;
@@ -180,6 +246,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     this.channelAllocator = new ChannelIdAllocator(role);
     this.channelRegistry = new ChannelRegistry();
     this._acceptConnections = acceptConnections;
+    this.keepalive = keepalive;
   }
 
   /** Get the underlying transport. */
@@ -221,7 +288,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
    */
   async goodbye(ruleId: string): Promise<ConnectionError> {
     try {
-      await this.io.send(encodeMessage(messageGoodbye(ruleId)));
+      await this.io.send(encodeMessage(messageProtocolError(ruleId)));
     } catch {
       // Ignore send errors when closing
     }
@@ -235,9 +302,9 @@ export class Connection<T extends MessageTransport = MessageTransport> {
    * Returns the rule ID if validation fails.
    */
   validateChannelId(channelId: bigint): string | null {
-    // r[impl channeling.id.zero-reserved] - Channel ID 0 is reserved.
+    // r[impl rpc.channel.allocation] - Channel ID 0 is reserved.
     if (channelId === 0n) {
-      return "channeling.id.zero-reserved";
+      return "rpc.channel.allocation";
     }
 
     // r[impl channeling.unknown] - Unknown channel IDs are connection errors.
@@ -284,6 +351,78 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     return null;
   }
 
+  private failPendingRequests(error: ConnectionError): void {
+    for (const [, pending] of this.pendingRequests) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pendingRequests.clear();
+  }
+
+  private makeKeepaliveRuntime(): KeepaliveRuntime | null {
+    if (!this.keepalive) {
+      return null;
+    }
+    if (this.keepalive.pingIntervalMs <= 0 || this.keepalive.pongTimeoutMs <= 0) {
+      return null;
+    }
+    const now = Date.now();
+    return {
+      pingIntervalMs: this.keepalive.pingIntervalMs,
+      pongTimeoutMs: this.keepalive.pongTimeoutMs,
+      nextPingAtMs: now + this.keepalive.pingIntervalMs,
+      waitingPongNonce: null,
+      pongDeadlineMs: 0,
+      nextPingNonce: 1n,
+    };
+  }
+
+  private handleKeepalivePong(nonce: bigint, runtime: KeepaliveRuntime | null): void {
+    if (!runtime) {
+      return;
+    }
+    if (runtime.waitingPongNonce !== nonce) {
+      return;
+    }
+    runtime.waitingPongNonce = null;
+    runtime.pongDeadlineMs = 0;
+    runtime.nextPingAtMs = Date.now() + runtime.pingIntervalMs;
+  }
+
+  private async handleKeepaliveTick(runtime: KeepaliveRuntime | null): Promise<boolean> {
+    if (!runtime) {
+      return true;
+    }
+    const now = Date.now();
+
+    if (runtime.waitingPongNonce !== null) {
+      if (now >= runtime.pongDeadlineMs) {
+        this.failPendingRequests(ConnectionError.closed());
+        this.io.close();
+        return false;
+      }
+      return true;
+    }
+
+    if (now < runtime.nextPingAtMs) {
+      return true;
+    }
+
+    const nonce = runtime.nextPingNonce;
+    try {
+      await this.io.send(encodeMessage(messagePing(nonce)));
+    } catch {
+      this.failPendingRequests(ConnectionError.closed());
+      this.io.close();
+      return false;
+    }
+    runtime.waitingPongNonce = nonce;
+    runtime.pongDeadlineMs = now + runtime.pongTimeoutMs;
+    runtime.nextPingAtMs = now + runtime.pingIntervalMs;
+    runtime.nextPingNonce = nonce + 1n;
+    return true;
+  }
+
   /**
    * Start the message pump if not already running.
    * The pump receives messages and routes responses to pending requests.
@@ -293,8 +432,12 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     this.messagePumpRunning = true;
 
     this.messagePumpPromise = (async () => {
+      const keepaliveRuntime = this.makeKeepaliveRuntime();
       try {
         while (this.pendingRequests.size > 0) {
+          if (!(await this.handleKeepaliveTick(keepaliveRuntime))) {
+            return;
+          }
           const data = await this.io.recvTimeout(100); // Short timeout to check for new requests
           if (!data) {
             // No message received, but keep running if there are pending requests
@@ -303,48 +446,59 @@ export class Connection<T extends MessageTransport = MessageTransport> {
 
           // Parse message using wire codec
           const result = decodeMessage(data);
-          const msg = result.value;
+          const msg = result.value as any;
 
-          if (msg.tag === "Goodbye") {
+          if (msgTag(msg) === "ConnectionClose" || msgTag(msg) === "ProtocolError") {
             // Reject all pending requests
-            const error = ConnectionError.closed();
-            for (const [, pending] of this.pendingRequests) {
-              clearTimeout(pending.timer);
-              pending.reject(error);
-            }
-            this.pendingRequests.clear();
+            this.failPendingRequests(ConnectionError.closed());
             return;
           }
 
+          if (msgTag(msg) === "Ping") {
+            await this.io.send(encodeMessage(messagePong(msg.payload.value.nonce)));
+            continue;
+          }
+
+          if (msgTag(msg) === "Pong") {
+            if (msg.connection_id === 0n) {
+              this.handleKeepalivePong(msg.payload.value.nonce, keepaliveRuntime);
+            }
+            continue;
+          }
+
           // Handle channel messages
-          if (msg.tag === "Data") {
+          if (msgTag(msg) === "ChannelMessage" && msg.payload.value.body.tag === "Item") {
             try {
-              this.channelRegistry.routeData(msg.channelId, msg.payload);
+              this.channelRegistry.routeData(
+                msg.payload.value.id,
+                msg.payload.value.body.value.item,
+              );
             } catch {
               // Ignore channel errors - connection still valid
             }
             continue;
           }
 
-          if (msg.tag === "Close") {
-            if (this.channelRegistry.contains(msg.channelId)) {
-              this.channelRegistry.close(msg.channelId);
+          if (msgTag(msg) === "ChannelMessage" && msg.payload.value.body.tag === "Close") {
+            if (this.channelRegistry.contains(msg.payload.value.id)) {
+              this.channelRegistry.close(msg.payload.value.id);
             }
             continue;
           }
 
-          if (msg.tag === "Credit") {
+          if (msgTag(msg) === "ChannelMessage" && msg.payload.value.body.tag === "GrantCredit") {
             // Flow control, currently ignored
             continue;
           }
 
-          if (msg.tag === "Response") {
+          if (msgTag(msg) === "RequestMessage" && msg.payload.value.body.tag === "Response") {
             // Route response to the correct pending request
-            const pending = this.pendingRequests.get(msg.requestId);
+            const requestId = msg.payload.value.id;
+            const pending = this.pendingRequests.get(requestId);
             if (pending) {
               clearTimeout(pending.timer);
-              this.pendingRequests.delete(msg.requestId);
-              pending.resolve(msg.payload);
+              this.pendingRequests.delete(requestId);
+              pending.resolve(msg.payload.value.body.value.ret);
             }
             // Ignore responses for unknown request IDs (already timed out?)
             continue;
@@ -352,6 +506,8 @@ export class Connection<T extends MessageTransport = MessageTransport> {
 
           // Ignore other messages (Hello after handshake, Reset, etc.)
         }
+      } catch {
+        this.failPendingRequests(ConnectionError.closed());
       } finally {
         this.messagePumpRunning = false;
         this.messagePumpPromise = null;
@@ -482,15 +638,23 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     let pendingRecv: Promise<
       { kind: "message"; payload: Uint8Array | null } | { kind: "error"; error: unknown }
     > | null = null;
+    const keepaliveRuntime = this.makeKeepaliveRuntime();
+    const recvTimeoutMs = keepaliveRuntime
+      ? Math.max(1, Math.min(100, Math.floor(keepaliveRuntime.pingIntervalMs)))
+      : 30000;
 
     while (true) {
+      if (!(await this.handleKeepaliveTick(keepaliveRuntime))) {
+        throw ConnectionError.closed();
+      }
+
       // Flush any pending task messages from handlers
       await flushTaskQueue();
 
       // Start receiving if we don't have a pending receive
       if (!pendingRecv) {
         pendingRecv = this.io
-          .recvTimeout(30000)
+          .recvTimeout(recvTimeoutMs)
           .then((payload) => ({ kind: "message" as const, payload }))
           .catch((error) => ({ kind: "error" as const, error }));
       }
@@ -530,6 +694,9 @@ export class Connection<T extends MessageTransport = MessageTransport> {
 
       const payload = recvResult.payload;
       if (!payload) {
+        if (keepaliveRuntime) {
+          continue;
+        }
         // Connection closed - wait for all in-flight handlers to complete
         await Promise.all(inFlightHandlers);
         await flushTaskQueue();
@@ -537,7 +704,12 @@ export class Connection<T extends MessageTransport = MessageTransport> {
       }
 
       try {
-        const handlerPromise = this.handleChannelingMessage(payload, dispatcher, taskSender);
+        const handlerPromise = this.handleChannelingMessage(
+          payload,
+          dispatcher,
+          taskSender,
+          keepaliveRuntime,
+        );
 
         // If this returned a handler promise, track it
         if (handlerPromise) {
@@ -570,160 +742,188 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     payload: Uint8Array,
     dispatcher: ChannelingDispatcher,
     taskSender: TaskSender,
+    keepaliveRuntime: KeepaliveRuntime | null,
   ): Promise<void> | undefined {
     // Parse message using wire codec
     const result = decodeMessage(payload);
-    const msg = result.value;
+    const msg = result.value as any;
+    const tag = msgTag(msg);
 
-    if (msg.tag === "Hello") {
+    if (tag === "Hello") {
       return undefined; // Duplicate Hello after exchange - ignore
     }
 
-    // r[impl message.connect.initiate] - Handle Connect requests for virtual connections.
-    if (msg.tag === "Connect") {
-      // r[impl core.conn.accept-required] - Accept or reject the connection request.
+    if (tag === "Ping") {
+      this.io.send(encodeMessage(messagePong(msg.payload.value.nonce)));
+      return undefined;
+    }
+
+    if (tag === "Pong") {
+      if (msg.connection_id === 0n) {
+        this.handleKeepalivePong(msg.payload.value.nonce, keepaliveRuntime);
+      }
+      return undefined;
+    }
+
+    if (tag === "ConnectionOpen") {
+      const connId = msg.connection_id;
       if (this._acceptConnections) {
-        // r[impl core.conn.id-allocation] - Allocate a new connection ID.
-        const connId = this.nextConnId++;
         this.virtualConnections.add(connId);
-        // r[impl message.accept.response] - Send Accept with new conn_id.
-        const acceptMsg = messageAccept(msg.requestId, connId, []);
+        const acceptMsg = messageAccept(
+          connId,
+          msg.payload.value.connection_settings,
+          [],
+        );
         this.io.send(encodeMessage(acceptMsg));
       } else {
-        // r[impl message.reject.response] - Reject since not listening.
-        const rejectMsg = messageReject(msg.requestId, "not listening", []);
+        const rejectMsg = messageReject(connId, []);
         this.io.send(encodeMessage(rejectMsg));
       }
       return undefined;
     }
 
-    // Accept and Reject are responses to our Connect requests - ignore in server mode
-    if (msg.tag === "Accept" || msg.tag === "Reject") {
+    if (tag === "ConnectionAccept" || tag === "ConnectionReject") {
       return undefined;
     }
 
-    if (msg.tag === "Goodbye") {
-      // r[impl message.goodbye.connection-zero] - Goodbye on conn 0 closes entire link.
-      if (msg.connId === 0n) {
+    if (tag === "ConnectionClose" || tag === "ProtocolError") {
+      if (tag === "ProtocolError" || msg.connection_id === 0n) {
         throw ConnectionError.closed();
       }
-      // r[impl core.conn.lifecycle] - Close virtual connection if it exists.
-      // r[impl core.conn.independence] - Ignore Goodbye on unknown connection.
-      if (this.virtualConnections.has(msg.connId)) {
-        this.virtualConnections.delete(msg.connId);
+      if (this.virtualConnections.has(msg.connection_id)) {
+        this.virtualConnections.delete(msg.connection_id);
       }
-      // Ignore Goodbye on unknown connection IDs
       return undefined;
     }
 
-    if (msg.tag === "Request") {
-      // r[impl flow.call.payload-limit] - Validate payload size
-      const payloadViolation = this.validatePayloadSize(msg.payload.length);
-      if (payloadViolation) {
-        throw ConnectionError.protocol({
-          ruleId: payloadViolation,
-          context: "payload exceeds max size",
-        });
-      }
-
-      // Dispatch with channeling support - return the promise, don't await it!
-      // This allows the handler to run concurrently while we continue receiving messages.
-      return dispatcher.dispatch(
-        msg.methodId,
-        msg.payload,
-        msg.requestId,
-        this.channelRegistry,
-        taskSender,
-      );
-    }
-
-    // Handle other message types (Data, Close, etc.) synchronously
-    if (msg.tag === "Response") {
-      return undefined;
-    }
-
-    if (msg.tag === "Data") {
-      if (msg.channelId === 0n) {
-        // Can't send goodbye synchronously - throw protocol error
-        throw ConnectionError.protocol({
-          ruleId: "channeling.id.zero-reserved",
-          context: "channel ID 0 is reserved",
-        });
-      }
-      try {
-        this.channelRegistry.routeData(msg.channelId, msg.payload);
-      } catch (e) {
-        if (e instanceof ChannelError) {
-          if (e.kind === "unknown") {
-            throw ConnectionError.protocol({
-              ruleId: "channeling.unknown",
-              context: "unknown channel ID",
-            });
-          }
-          if (e.kind === "dataAfterClose") {
-            throw ConnectionError.protocol({
-              ruleId: "channeling.data-after-close",
-              context: "data after close",
-            });
-          }
+    if (tag === "RequestMessage") {
+      const request = msg.payload.value;
+      if (request.body.tag === "Call") {
+        const payloadViolation = this.validatePayloadSize(request.body.value.args.length);
+        if (payloadViolation) {
+          throw ConnectionError.protocol({
+            ruleId: payloadViolation,
+            context: "payload exceeds max size",
+          });
         }
-        throw e;
+
+        const methodId = request.body.value.method_id;
+        const rawPayload = request.body.value.args;
+        const requestId = request.id;
+        const descriptor = dispatcher.getDescriptor();
+        const method = descriptor.methods.find((m) => m.id === methodId);
+
+        if (!method) {
+          // r[impl call.error.unknown-method]
+          taskSender({
+            kind: "response",
+            requestId,
+            payload: new Uint8Array([0x01, 0x01]),
+          });
+          return undefined;
+        }
+
+        // Decode args using the method's tuple schema
+        let rawArgs: unknown[];
+        let decodeEnd: number;
+        try {
+          const decoded = decodeWithSchema(rawPayload, 0, method.args);
+          rawArgs = decoded.value as unknown[];
+          decodeEnd = decoded.next;
+        } catch {
+          // r[impl call.error.invalid-payload]
+          taskSender({
+            kind: "response",
+            requestId,
+            payload: new Uint8Array([0x01, 0x02]),
+          });
+          return undefined;
+        }
+
+        if (decodeEnd !== rawPayload.length) {
+          // Trailing bytes in args
+          taskSender({
+            kind: "response",
+            requestId,
+            payload: new Uint8Array([0x01, 0x02]),
+          });
+          return undefined;
+        }
+
+        // Bind channel args using channel IDs from Request.channels (declaration order)
+        // r[impl call.request.channels.schema-driven] - Channel IDs from Request.channels, not payload.
+        const requestChannels = request.body.value.channels as bigint[];
+        let channelIdx = 0;
+        const args: unknown[] = rawArgs.map((raw, i) => {
+          const argSchema = method.args.elements[i];
+          if (argSchema.kind === "tx") {
+            const channelId = requestChannels[channelIdx++];
+            return createServerTx(channelId, taskSender, (v: unknown) =>
+              encodeWithSchema(v, argSchema.element),
+            );
+          } else if (argSchema.kind === "rx") {
+            const channelId = requestChannels[channelIdx++];
+            const receiver = this.channelRegistry.registerIncoming(channelId);
+            return createServerRx(channelId, receiver, (b: Uint8Array) =>
+              decodeWithSchema(b, 0, argSchema.element).value,
+            );
+          }
+          return raw;
+        });
+
+        const call = new RoamCallImpl(method, requestId, taskSender);
+        return dispatcher.dispatch(method, args, call);
       }
       return undefined;
     }
 
-    if (msg.tag === "Close") {
-      if (msg.channelId === 0n) {
+    if (tag === "ChannelMessage") {
+      const channelId = msg.payload.value.id;
+      const body = msg.payload.value.body;
+      if (channelId === 0n) {
         throw ConnectionError.protocol({
-          ruleId: "channeling.id.zero-reserved",
+          ruleId: "rpc.channel.allocation",
           context: "channel ID 0 is reserved",
         });
       }
-      if (!this.channelRegistry.contains(msg.channelId)) {
+
+      if (body.tag === "Item") {
+        try {
+          this.channelRegistry.routeData(channelId, body.value.item);
+        } catch (e) {
+          if (e instanceof ChannelError) {
+            if (e.kind === "unknown") {
+              throw ConnectionError.protocol({
+                ruleId: "channeling.unknown",
+                context: "unknown channel ID",
+              });
+            }
+            if (e.kind === "dataAfterClose") {
+              throw ConnectionError.protocol({
+                ruleId: "channeling.data-after-close",
+                context: "data after close",
+              });
+            }
+          }
+          throw e;
+        }
+        return undefined;
+      }
+
+      if (!this.channelRegistry.contains(channelId)) {
         throw ConnectionError.protocol({
           ruleId: "channeling.unknown",
           context: "unknown channel ID",
         });
       }
-      this.channelRegistry.close(msg.channelId);
-      return undefined;
-    }
 
-    if (msg.tag === "Reset") {
-      if (msg.channelId === 0n) {
-        throw ConnectionError.protocol({
-          ruleId: "channeling.id.zero-reserved",
-          context: "channel ID 0 is reserved",
-        });
-      }
-      if (!this.channelRegistry.contains(msg.channelId)) {
-        throw ConnectionError.protocol({
-          ruleId: "channeling.unknown",
-          context: "unknown channel ID",
-        });
-      }
-      // TODO: Signal error to Rx<T> instead of clean close
-      this.channelRegistry.close(msg.channelId);
-      return undefined;
-    }
-
-    if (msg.tag === "Credit") {
-      if (msg.channelId === 0n) {
-        throw ConnectionError.protocol({
-          ruleId: "channeling.id.zero-reserved",
-          context: "channel ID 0 is reserved",
-        });
-      }
-      if (!this.channelRegistry.contains(msg.channelId)) {
-        throw ConnectionError.protocol({
-          ruleId: "channeling.unknown",
-          context: "unknown channel ID",
-        });
+      if (body.tag === "Close" || body.tag === "Reset") {
+        this.channelRegistry.close(channelId);
       }
       return undefined;
     }
 
-    return undefined; // Unknown message type - ignore
+    return undefined;
   }
 
   /**
@@ -739,10 +939,19 @@ export class Connection<T extends MessageTransport = MessageTransport> {
    * r[impl call.pipelining.independence] - Each request handled independently.
    */
   async run(dispatcher: ServiceDispatcher): Promise<void> {
+    const keepaliveRuntime = this.makeKeepaliveRuntime();
+    const recvTimeoutMs = keepaliveRuntime
+      ? Math.max(1, Math.min(100, Math.floor(keepaliveRuntime.pingIntervalMs)))
+      : 30000;
+
     while (true) {
+      if (!(await this.handleKeepaliveTick(keepaliveRuntime))) {
+        throw ConnectionError.closed();
+      }
+
       let payload: Uint8Array | null;
       try {
-        payload = await this.io.recvTimeout(30000);
+        payload = await this.io.recvTimeout(recvTimeoutMs);
       } catch (e) {
         // r[impl message.hello.unknown-version] - Reject unknown Hello versions.
         // Check for unknown Hello variant: [Message::Hello=0][Hello::unknown=1+]
@@ -754,11 +963,14 @@ export class Connection<T extends MessageTransport = MessageTransport> {
       }
 
       if (!payload) {
+        if (keepaliveRuntime) {
+          continue;
+        }
         return; // Connection closed or timeout
       }
 
       try {
-        await this.handleMessage(payload, dispatcher);
+        await this.handleMessage(payload, dispatcher, keepaliveRuntime);
       } catch (e) {
         if (e instanceof ConnectionError) throw e;
         // r[impl message.decode-error] - send goodbye on decode failure
@@ -767,56 +979,79 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     }
   }
 
-  private async handleMessage(payload: Uint8Array, dispatcher: ServiceDispatcher): Promise<void> {
+  private async handleMessage(
+    payload: Uint8Array,
+    dispatcher: ServiceDispatcher,
+    keepaliveRuntime: KeepaliveRuntime | null,
+  ): Promise<void> {
     // Parse message using wire codec
     const result = decodeMessage(payload);
-    const msg = result.value;
+    const msg = result.value as any;
 
-    if (msg.tag === "Hello") {
+    const tag = msgTag(msg);
+
+    if (tag === "Hello") {
       // Duplicate Hello after exchange - ignore
       return;
     }
 
-    if (msg.tag === "Goodbye") {
+    if (tag === "Ping") {
+      await this.io.send(encodeMessage(messagePong(msg.payload.value.nonce)));
+      return;
+    }
+
+    if (tag === "Pong") {
+      if (msg.connection_id === 0n) {
+        this.handleKeepalivePong(msg.payload.value.nonce, keepaliveRuntime);
+      }
+      return;
+    }
+
+    if (tag === "ConnectionClose" || tag === "ProtocolError") {
       // Peer sent Goodbye, connection closing
       throw ConnectionError.closed();
     }
 
-    if (msg.tag === "Request") {
+    if (tag === "RequestMessage" && msg.payload.value.body.tag === "Call") {
+      const request = msg.payload.value;
       // r[impl flow.call.payload-limit] - enforce negotiated max payload size
-      const payloadViolation = this.validatePayloadSize(msg.payload.length);
+      const payloadViolation = this.validatePayloadSize(request.body.value.args.length);
       if (payloadViolation) {
         throw await this.goodbye(payloadViolation);
       }
 
       // Dispatch to service
-      const responsePayload = await dispatcher.dispatchRpc(msg.methodId, msg.payload);
+      const responsePayload = await dispatcher.dispatchRpc(
+        request.body.value.method_id,
+        request.body.value.args,
+      );
 
       // r[impl core.call] - Callee sends Response for caller's Request.
       // r[impl core.call.request-id] - Response has same request_id.
       // r[impl call.complete] - Send Response with matching request_id.
       // r[impl call.lifecycle.single-response] - Exactly one Response per Request.
-      await this.io.send(encodeMessage(messageResponse(msg.requestId, responsePayload)));
+      await this.io.send(encodeMessage(messageResponse(request.id, responsePayload)));
 
       // Flush any outgoing channel data that handlers may have queued
       await this.flushOutgoing();
       return;
     }
 
-    if (msg.tag === "Response") {
+    if (tag === "RequestMessage" && msg.payload.value.body.tag === "Response") {
       // Server doesn't expect Response in basic mode - skip
       return;
     }
 
-    if (msg.tag === "Data") {
-      // r[impl channeling.id.zero-reserved] - Channel ID 0 is reserved.
-      if (msg.channelId === 0n) {
-        throw await this.goodbye("channeling.id.zero-reserved");
+    if (tag === "ChannelMessage" && msg.payload.value.body.tag === "Item") {
+      const channelId = msg.payload.value.id;
+      // r[impl rpc.channel.allocation] - Channel ID 0 is reserved.
+      if (channelId === 0n) {
+        throw await this.goodbye("rpc.channel.allocation");
       }
 
       // r[impl channeling.data] - Route Data to registered channel.
       try {
-        this.channelRegistry.routeData(msg.channelId, msg.payload);
+        this.channelRegistry.routeData(channelId, msg.payload.value.body.value.item);
       } catch (e) {
         if (e instanceof ChannelError) {
           if (e.kind === "unknown") {
@@ -833,45 +1068,48 @@ export class Connection<T extends MessageTransport = MessageTransport> {
       return;
     }
 
-    if (msg.tag === "Close") {
-      // r[impl channeling.id.zero-reserved] - Channel ID 0 is reserved.
-      if (msg.channelId === 0n) {
-        throw await this.goodbye("channeling.id.zero-reserved");
+    if (tag === "ChannelMessage" && msg.payload.value.body.tag === "Close") {
+      const channelId = msg.payload.value.id;
+      // r[impl rpc.channel.allocation] - Channel ID 0 is reserved.
+      if (channelId === 0n) {
+        throw await this.goodbye("rpc.channel.allocation");
       }
 
       // r[impl channeling.close] - Close the channel.
-      if (!this.channelRegistry.contains(msg.channelId)) {
+      if (!this.channelRegistry.contains(channelId)) {
         throw await this.goodbye("channeling.unknown");
       }
-      this.channelRegistry.close(msg.channelId);
+      this.channelRegistry.close(channelId);
       return;
     }
 
-    if (msg.tag === "Reset") {
-      // r[impl channeling.id.zero-reserved] - Channel ID 0 is reserved.
-      if (msg.channelId === 0n) {
-        throw await this.goodbye("channeling.id.zero-reserved");
+    if (tag === "ChannelMessage" && msg.payload.value.body.tag === "Reset") {
+      const channelId = msg.payload.value.id;
+      // r[impl rpc.channel.allocation] - Channel ID 0 is reserved.
+      if (channelId === 0n) {
+        throw await this.goodbye("rpc.channel.allocation");
       }
 
       // r[impl channeling.reset] - Forcefully terminate channel.
       // For now, treat same as Close.
       // TODO: Signal error to Rx<T> instead of clean close.
-      if (!this.channelRegistry.contains(msg.channelId)) {
+      if (!this.channelRegistry.contains(channelId)) {
         throw await this.goodbye("channeling.unknown");
       }
-      this.channelRegistry.close(msg.channelId);
+      this.channelRegistry.close(channelId);
       return;
     }
 
-    if (msg.tag === "Credit") {
-      // r[impl channeling.id.zero-reserved] - Channel ID 0 is reserved.
-      if (msg.channelId === 0n) {
-        throw await this.goodbye("channeling.id.zero-reserved");
+    if (tag === "ChannelMessage" && msg.payload.value.body.tag === "GrantCredit") {
+      const channelId = msg.payload.value.id;
+      // r[impl rpc.channel.allocation] - Channel ID 0 is reserved.
+      if (channelId === 0n) {
+        throw await this.goodbye("rpc.channel.allocation");
       }
 
       // TODO: Implement flow control.
       // For now, validate channel exists but ignore credit.
-      if (!this.channelRegistry.contains(msg.channelId)) {
+      if (!this.channelRegistry.contains(channelId)) {
         throw await this.goodbye("channeling.unknown");
       }
       return;
@@ -885,6 +1123,8 @@ export class Connection<T extends MessageTransport = MessageTransport> {
 export interface HelloExchangeOptions {
   /** Whether to accept incoming virtual connections. Default: false. */
   acceptConnections?: boolean;
+  /** Optional proactive keepalive config. Default: disabled. */
+  keepalive?: KeepaliveConfig;
 }
 
 /**
@@ -898,22 +1138,37 @@ export async function helloExchangeInitiator<T extends MessageTransport>(
   ourHello: Hello,
   options: HelloExchangeOptions = {},
 ): Promise<Connection<T>> {
-  // Send our Hello immediately
-  await io.send(encodeMessage(messageHello(ourHello)));
+  const hello: Hello = {
+    ...ourHello,
+    connection_settings: {
+      ...ourHello.connection_settings,
+      parity: parityOdd(),
+    },
+  };
 
-  // Wait for peer Hello
-  const peerHello = await waitForPeerHello(io, ourHello);
+  // Send our Hello immediately
+  await io.send(encodeMessage(messageHello(hello)));
+
+  // Wait for peer HelloYourself
+  const peerHelloYourself = await waitForPeerHelloYourself(io);
 
   const negotiated: Negotiated = {
-    maxPayloadSize: Math.min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),
-    initialCredit: Math.min(ourHello.initialChannelCredit, peerHello.initialChannelCredit),
+    maxPayloadSize: 1024 * 1024,
+    initialCredit: 64 * 1024,
     maxConcurrentRequests: Math.min(
-      ourHello.tag === "V5" || ourHello.tag === "V6" ? ourHello.maxConcurrentRequests : 0xffffffff,
-      peerHello.tag === "V5" || peerHello.tag === "V6" ? peerHello.maxConcurrentRequests : 0xffffffff,
+      hello.connection_settings.max_concurrent_requests,
+      peerHelloYourself.connection_settings.max_concurrent_requests,
     ),
   };
 
-  return new Connection(io, Role.Initiator, negotiated, ourHello, options.acceptConnections);
+  return new Connection(
+    io,
+    Role.Initiator,
+    negotiated,
+    hello,
+    options.acceptConnections,
+    options.keepalive ?? null,
+  );
 }
 
 /**
@@ -927,28 +1182,41 @@ export async function helloExchangeAcceptor<T extends MessageTransport>(
   ourHello: Hello,
   options: HelloExchangeOptions = {},
 ): Promise<Connection<T>> {
+  const hello: Hello = {
+    ...ourHello,
+    connection_settings: {
+      ...ourHello.connection_settings,
+      parity: parityEven(),
+    },
+  };
+
   // Wait for peer Hello
-  const peerHello = await waitForPeerHello(io, ourHello);
+  const peerHello = await waitForPeerHello(io);
 
   const negotiated: Negotiated = {
-    maxPayloadSize: Math.min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),
-    initialCredit: Math.min(ourHello.initialChannelCredit, peerHello.initialChannelCredit),
+    maxPayloadSize: 1024 * 1024,
+    initialCredit: 64 * 1024,
     maxConcurrentRequests: Math.min(
-      ourHello.tag === "V5" || ourHello.tag === "V6" ? ourHello.maxConcurrentRequests : 0xffffffff,
-      peerHello.tag === "V5" || peerHello.tag === "V6" ? peerHello.maxConcurrentRequests : 0xffffffff,
+      hello.connection_settings.max_concurrent_requests,
+      peerHello.connection_settings.max_concurrent_requests,
     ),
   };
 
-  // Send our Hello
-  await io.send(encodeMessage(messageHello(ourHello)));
+  // Send HelloYourself
+  const hy = helloYourself(parityEven(), hello.connection_settings.max_concurrent_requests);
+  await io.send(encodeMessage(messageHelloYourself(hy)));
 
-  return new Connection(io, Role.Acceptor, negotiated, ourHello, options.acceptConnections);
+  return new Connection(
+    io,
+    Role.Acceptor,
+    negotiated,
+    hello,
+    options.acceptConnections,
+    options.keepalive ?? null,
+  );
 }
 
-async function waitForPeerHello<T extends MessageTransport>(
-  io: T,
-  _ourHello: Hello,
-): Promise<Hello> {
+async function waitForPeerHello<T extends MessageTransport>(io: T): Promise<Hello> {
   while (true) {
     let payload: Uint8Array | null;
     try {
@@ -956,8 +1224,8 @@ async function waitForPeerHello<T extends MessageTransport>(
     } catch {
       // r[impl message.hello.unknown-version] - Reject unknown Hello versions.
       const raw = io.lastDecoded;
-      if (raw.length >= 2 && raw[0] === 0x00 && raw[1] > 0x05) {
-        await io.send(encodeMessage(messageGoodbye("message.hello.unknown-version")));
+      if (raw.length >= 2 && raw[1] > 0x07) {
+        await io.send(encodeMessage(messageProtocolError("message.hello.unknown-version")));
         io.close();
         throw ConnectionError.protocol({
           ruleId: "message.hello.unknown-version",
@@ -977,23 +1245,14 @@ async function waitForPeerHello<T extends MessageTransport>(
     try {
       result = decodeMessage(payload);
     } catch {
-      // Check if this is an unknown Hello variant: [Message::Hello=0][Hello::unknown=1+]
-      if (payload.length >= 2 && payload[0] === 0x00 && payload[1] > 0x04) {
-        await io.send(encodeMessage(messageGoodbye("message.hello.unknown-version")));
-        io.close();
-        throw ConnectionError.protocol({
-          ruleId: "message.hello.unknown-version",
-          context: "unknown Hello variant",
-        });
-      }
       throw ConnectionError.io("failed to decode message");
     }
-    const msg = result.value;
+    const msg = result.value as any;
 
-    if (msg.tag === "Hello") {
+    if (msgTag(msg) === "Hello") {
       // r[impl message.hello.unknown-version] - reject unknown Hello versions
-      if (msg.value.tag !== "V4" && msg.value.tag !== "V5" && msg.value.tag !== "V6") {
-        await io.send(encodeMessage(messageGoodbye("message.hello.unknown-version")));
+      if (msg.payload.value.version !== 7) {
+        await io.send(encodeMessage(messageProtocolError("message.hello.unknown-version")));
         io.close();
         throw ConnectionError.protocol({
           ruleId: "message.hello.unknown-version",
@@ -1001,11 +1260,11 @@ async function waitForPeerHello<T extends MessageTransport>(
         });
       }
 
-      return msg.value;
+      return msg.payload.value;
     }
 
     // Received non-Hello before Hello exchange completed
-    await io.send(encodeMessage(messageGoodbye("message.hello.ordering")));
+    await io.send(encodeMessage(messageProtocolError("message.hello.ordering")));
     io.close();
     throw ConnectionError.protocol({
       ruleId: "message.hello.ordering",
@@ -1014,9 +1273,46 @@ async function waitForPeerHello<T extends MessageTransport>(
   }
 }
 
-/** Default Hello message (V6). */
+async function waitForPeerHelloYourself<T extends MessageTransport>(
+  io: T,
+): Promise<HelloYourself> {
+  while (true) {
+    let payload: Uint8Array | null;
+    try {
+      payload = await io.recvTimeout(5000);
+    } catch {
+      throw ConnectionError.io("failed to receive peer HelloYourself");
+    }
+
+    if (!payload) {
+      throw ConnectionError.closed();
+    }
+
+    let result;
+    try {
+      result = decodeMessage(payload);
+    } catch {
+      throw ConnectionError.io("failed to decode message");
+    }
+    const msg = result.value as any;
+
+    if (msgTag(msg) === "HelloYourself") {
+      return msg.payload.value;
+    }
+
+    // Received unexpected message before HelloYourself
+    await io.send(encodeMessage(messageProtocolError("message.hello.ordering")));
+    io.close();
+    throw ConnectionError.protocol({
+      ruleId: "message.hello.ordering",
+      context: "received non-HelloYourself before Hello exchange",
+    });
+  }
+}
+
+/** Default Hello message (V7). */
 export function defaultHello(): Hello {
-  return helloV6(1024 * 1024, 64 * 1024, 64);
+  return helloV7(parityOdd(), 64);
 }
 
 /**
@@ -1032,18 +1328,12 @@ export class ConnectionCaller<T extends MessageTransport = MessageTransport> imp
   }
 
   async call(request: CallerRequest): Promise<unknown> {
-    // Encode the payload using the schema
-    const argNames = Object.keys(request.args);
-    let payload: Uint8Array;
-    if (argNames.length === 0) {
-      payload = new Uint8Array(0);
-    } else if (argNames.length === 1) {
-      payload = encodeWithSchema(request.args[argNames[0]], request.schema.args[0]);
-    } else {
-      // Multiple args: encode as tuple
-      const values = argNames.map((name) => request.args[name]);
-      payload = encodeWithSchema(values, { kind: "tuple", elements: request.schema.args });
-    }
+    // Encode args using the method's tuple schema
+    const values = Object.values(request.args);
+    const payload =
+      values.length === 0
+        ? new Uint8Array(0)
+        : encodeWithSchema(values, request.descriptor.args);
 
     // Convert metadata to wire format entries
     const metadataEntries = request.metadata ? clientMetadataToEntries(request.metadata) : [];
@@ -1069,21 +1359,36 @@ export class ConnectionCaller<T extends MessageTransport = MessageTransport> imp
     // Send request with metadata
     await this.conn["io"].send(
       encodeMessage(
-        messageRequest(requestId, request.methodId, payload, metadataEntries, channels),
+        messageRequest(requestId, request.descriptor.id, payload, metadataEntries, channels),
       ),
     );
 
     // Flush outgoing channels
     await this.conn.flushOutgoing();
 
-    // Wait for response and decode
+    // Wait for response and decode full Result<T, RoamError<E>> using descriptor.result schema
     const responsePayload = await responsePromise;
-    const rpcResult = tryDecodeRpcResult(responsePayload);
-    if (rpcResult.ok) {
-      const decoded = decodeWithSchema(responsePayload, rpcResult.offset, request.schema.returns);
+    const decoded = decodeWithSchema(responsePayload, 0, request.descriptor.result).value as {
+      tag: string;
+      value?: unknown;
+    };
+
+    if (decoded.tag === "Ok") {
       return decoded.value;
     } else {
-      throw rpcResult.error;
+      const err = decoded.value as { tag: string; value?: unknown };
+      switch (err.tag) {
+        case "User":
+          throw new RpcError(RpcErrorCode.USER, null, err.value);
+        case "UnknownMethod":
+          throw new RpcError(RpcErrorCode.UNKNOWN_METHOD);
+        case "InvalidPayload":
+          throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
+        case "Cancelled":
+          throw new RpcError(RpcErrorCode.CANCELLED);
+        default:
+          throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
+      }
     }
   }
 

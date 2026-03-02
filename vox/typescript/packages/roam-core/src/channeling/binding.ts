@@ -1,6 +1,7 @@
 // Runtime channel binder.
 //
 // Walks argument structures using schemas to find and bind Tx/Rx channels.
+// Uses encodeWithSchema/decodeWithSchema for element serialization.
 
 import type { Schema } from "./schema.ts";
 import {
@@ -13,20 +14,7 @@ import type { ChannelIdAllocator } from "./allocator.ts";
 import type { ChannelRegistry } from "./registry.ts";
 import { Tx } from "./tx.ts";
 import { Rx } from "./rx.ts";
-
-/**
- * Serializers for binding channels.
- *
- * When a channel is bound, we need to know how to serialize (for Tx)
- * or deserialize (for Rx) the element type. These are provided by
- * the generated code.
- */
-export interface BindingSerializers {
-  /** Get a serializer for Tx<T> given the element schema. */
-  getTxSerializer(elementSchema: Schema): (value: unknown) => Uint8Array;
-  /** Get a deserializer for Rx<T> given the element schema. */
-  getRxDeserializer(elementSchema: Schema): (bytes: Uint8Array) => unknown;
-}
+import { encodeWithSchema, decodeWithSchema } from "@bearcove/roam-postcard";
 
 /**
  * Bind all Tx/Rx channels found in the arguments.
@@ -44,7 +32,6 @@ export interface BindingSerializers {
  * @param args - The actual argument values
  * @param allocator - Allocator for channel IDs
  * @param registry - Registry to bind channels to
- * @param serializers - Serializers for Tx/Rx element types
  * @returns Channel IDs in declaration order
  */
 export function bindChannels(
@@ -52,11 +39,10 @@ export function bindChannels(
   args: unknown[],
   allocator: ChannelIdAllocator,
   registry: ChannelRegistry,
-  serializers: BindingSerializers,
 ): bigint[] {
   const channelIds: bigint[] = [];
   for (let i = 0; i < schemas.length; i++) {
-    bindValue(schemas[i], args[i], allocator, registry, serializers, channelIds);
+    bindValue(schemas[i], args[i], allocator, registry, channelIds);
   }
   return channelIds;
 }
@@ -69,7 +55,6 @@ function bindValue(
   value: unknown,
   allocator: ChannelIdAllocator,
   registry: ChannelRegistry,
-  serializers: BindingSerializers,
   channelIds: bigint[],
 ): void {
   switch (schema.kind) {
@@ -96,6 +81,7 @@ function bindValue(
       const tx = value as Tx<unknown>;
       if (!tx.isBound) {
         const channelId = allocator.next();
+        const elementSchema = schema.element;
 
         // Just set the channel ID on Tx (for wire encoding)
         // Don't register as outgoing - client doesn't send on this channel
@@ -103,8 +89,9 @@ function bindValue(
 
         // Bind the paired Rx for receiving (this is what client reads from)
         if (tx._pair && !tx._pair.isBound) {
-          const deserialize = serializers.getRxDeserializer(schema.element);
-          tx._pair.bind(channelId, registry, deserialize);
+          tx._pair.bind(channelId, registry, (b: Uint8Array) =>
+            decodeWithSchema(b, 0, elementSchema).value,
+          );
         }
       }
       // Collect channel ID for Request.channels field
@@ -118,13 +105,14 @@ function bindValue(
       const rx = value as Rx<unknown>;
       if (!rx.isBound) {
         const channelId = allocator.next();
-        const deserialize = serializers.getRxDeserializer(schema.element);
-        rx.bind(channelId, registry, deserialize);
+        const elementSchema = schema.element;
+        rx.bind(channelId, registry, (b: Uint8Array) =>
+          decodeWithSchema(b, 0, elementSchema).value,
+        );
 
         // Bind the paired Tx for sending (this is what client writes to)
         if (rx._pair && !rx._pair.isBound) {
-          const txSerialize = serializers.getTxSerializer(schema.element);
-          rx._pair.bind(channelId, registry, txSerialize);
+          rx._pair.bind(channelId, registry, (v: unknown) => encodeWithSchema(v, elementSchema));
         }
       }
       // Collect channel ID for Request.channels field
@@ -138,7 +126,7 @@ function bindValue(
       // nested in the map. we should check that before iterating the entire vec...
       const arr = value as unknown[];
       for (const item of arr) {
-        bindValue(schema.element, item, allocator, registry, serializers, channelIds);
+        bindValue(schema.element, item, allocator, registry, channelIds);
       }
       return;
     }
@@ -148,7 +136,7 @@ function bindValue(
       // whether there's even a _possibility_ of there being a Tx/Rx
       // nested in the option
       if (value !== null && value !== undefined) {
-        bindValue(schema.inner, value, allocator, registry, serializers, channelIds);
+        bindValue(schema.inner, value, allocator, registry, channelIds);
       }
       return;
     }
@@ -159,8 +147,8 @@ function bindValue(
       // whether there's even a _possibility_ of there being a Tx/Rx
       // nested in the map. we should check that before iterating the entire map...
       for (const [k, v] of map) {
-        bindValue(schema.key, k, allocator, registry, serializers, channelIds);
-        bindValue(schema.value, v, allocator, registry, serializers, channelIds);
+        bindValue(schema.key, k, allocator, registry, channelIds);
+        bindValue(schema.value, v, allocator, registry, channelIds);
       }
       return;
     }
@@ -172,7 +160,7 @@ function bindValue(
       const obj = value as Record<string, unknown>;
       for (const [fieldName, fieldSchema] of Object.entries(schema.fields)) {
         if (fieldName in obj) {
-          bindValue(fieldSchema, obj[fieldName], allocator, registry, serializers, channelIds);
+          bindValue(fieldSchema, obj[fieldName], allocator, registry, channelIds);
         }
       }
       return;
@@ -197,7 +185,7 @@ function bindValue(
         if (fieldValue !== undefined) {
           const fieldSchemas = getVariantFieldSchemas(variant);
           if (fieldSchemas.length === 1) {
-            bindValue(fieldSchemas[0], fieldValue, allocator, registry, serializers, channelIds);
+            bindValue(fieldSchemas[0], fieldValue, allocator, registry, channelIds);
           }
         }
       } else {
@@ -210,7 +198,7 @@ function bindValue(
           for (let i = 0; i < fieldSchemas.length; i++) {
             const fieldValue = enumVal[fieldNames[i]];
             if (fieldValue !== undefined) {
-              bindValue(fieldSchemas[i], fieldValue, allocator, registry, serializers, channelIds);
+              bindValue(fieldSchemas[i], fieldValue, allocator, registry, channelIds);
             }
           }
         } else if (fieldSchemas.length > 0) {
@@ -218,14 +206,7 @@ function bindValue(
           const tupleValues = enumVal.values as unknown[] | undefined;
           if (tupleValues) {
             for (let i = 0; i < fieldSchemas.length; i++) {
-              bindValue(
-                fieldSchemas[i],
-                tupleValues[i],
-                allocator,
-                registry,
-                serializers,
-                channelIds,
-              );
+              bindValue(fieldSchemas[i], tupleValues[i], allocator, registry, channelIds);
             }
           }
         }
@@ -237,7 +218,7 @@ function bindValue(
       // Tuple: array of values matching schema.elements
       const arr = value as unknown[];
       for (let i = 0; i < schema.elements.length; i++) {
-        bindValue(schema.elements[i], arr[i], allocator, registry, serializers, channelIds);
+        bindValue(schema.elements[i], arr[i], allocator, registry, channelIds);
       }
       return;
     }

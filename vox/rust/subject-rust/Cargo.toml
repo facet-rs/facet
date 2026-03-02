@@ -12,10 +12,15 @@ description = "Rust subject binary for the compliance suite"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-roam = { path = "../roam" }
-roam-stream = { path = "../roam-stream" }
+roam = { workspace = true }
+roam-core = { workspace = true }
+roam-local = { path = "../roam-local" }
+roam-shm = { path = "../roam-shm" }
+roam-stream = { workspace = true }
+roam-types = { workspace = true }
+shm-primitives = { workspace = true }
 spec-proto = { path = "../../spec/spec-proto" }
-tokio = { workspace = true, features = ["rt"] }
-moire.workspace = true
+tokio = { workspace = true, features = ["rt", "net"] }
+moire = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

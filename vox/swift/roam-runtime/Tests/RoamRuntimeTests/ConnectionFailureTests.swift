@@ -7,57 +7,86 @@ private enum TestTransportError: Error {
     case sendFailed
 }
 
+private enum AsyncTestError: Error {
+    case timedOut
+}
+
 private let peepsMethodNameMetadataKey = "moire.method_name"
 private let peepsRequestEntityIdMetadataKey = "moire.request_entity_id"
 private let peepsConnectionCorrelationIdMetadataKey = "moire.connection_correlation_id"
 
 private enum InboundEvent: Sendable {
-    case message(Message)
+    case message(MessageV7)
     case closed
 }
 
 private actor ScriptedTransport: MessageTransport {
-    private var sentMessages: [Message] = []
+    private var sentMessages: [MessageV7] = []
     private var inboundQueue: [InboundEvent] = []
     private var recvWaiters: [CheckedContinuation<InboundEvent, Never>] = []
 
     private var failNextRequestSend = false
     private let autoRespondRequestCount: Int
     private let dropAfterRequestCount: Int?
+    private let autoRespondPing: Bool
     private var requestSends = 0
     private var didClose = false
 
-    init(autoRespondRequestCount: Int = 0, dropAfterRequestCount: Int? = nil) {
+    init(
+        autoRespondRequestCount: Int = 0,
+        dropAfterRequestCount: Int? = nil,
+        autoRespondPing: Bool = false,
+        initialMessage: MessageV7? = .helloYourself(
+            HelloYourselfV7(
+                connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
+                metadata: []
+            ))
+    ) {
         self.autoRespondRequestCount = autoRespondRequestCount
         self.dropAfterRequestCount = dropAfterRequestCount
-        inboundQueue.append(.message(.hello(defaultHello())))
+        self.autoRespondPing = autoRespondPing
+        if let initialMessage {
+            inboundQueue.append(.message(initialMessage))
+        }
     }
 
     func setFailNextRequestSend() {
         failNextRequestSend = true
     }
 
-    func enqueueMessage(_ message: Message) {
+    func enqueueMessage(_ message: MessageV7) {
         enqueueInbound(.message(message))
     }
 
-    func sent() -> [Message] {
+    func sent() -> [MessageV7] {
         sentMessages
     }
 
     func sentRequestIds() -> [UInt64] {
         sentMessages.compactMap { message in
-            if case .request(_, let requestId, _, _, _, _) = message {
-                return requestId
+            if case .requestMessage(let request) = message.payload,
+                case .call = request.body
+            {
+                return request.id
             }
             return nil
         }
     }
 
-    func send(_ message: Message) async throws {
+    func send(_ message: MessageV7) async throws {
         sentMessages.append(message)
 
-        if case .request(_, let requestId, _, _, _, _) = message {
+        if case .ping(let ping) = message.payload {
+            if autoRespondPing {
+                enqueueInbound(.message(.pong(.init(nonce: ping.nonce))))
+            }
+            return
+        }
+
+        if case .requestMessage(let request) = message.payload,
+            case .call = request.body
+        {
+            let requestId = request.id
             if failNextRequestSend {
                 failNextRequestSend = false
                 throw TestTransportError.sendFailed
@@ -79,7 +108,7 @@ private actor ScriptedTransport: MessageTransport {
         }
     }
 
-    func recv() async throws -> Message? {
+    func recv() async throws -> MessageV7? {
         let event: InboundEvent
         if !inboundQueue.isEmpty {
             event = inboundQueue.removeFirst()
@@ -159,7 +188,7 @@ private struct ImmediateResponseDispatcher: ServiceDispatcher {
     }
 }
 
-private func metadataString(_ metadata: [MetadataEntry], key: String) -> String? {
+private func metadataString(_ metadata: [MetadataEntryV7], key: String) -> String? {
     for entry in metadata where entry.key == key {
         if case .string(let value) = entry.value {
             return value
@@ -176,7 +205,14 @@ private func awaitHasCancel(
     let timeout = Duration.milliseconds(Int64(timeoutMs))
     while ContinuousClock.now - start < timeout {
         let sent = await transport.sent()
-        if sent.contains(where: { if case .cancel = $0 { true } else { false } }) {
+        if sent.contains(where: { message in
+            if case .requestMessage(let request) = message.payload,
+                case .cancel = request.body
+            {
+                return true
+            }
+            return false
+        }) {
             return true
         }
         try? await Task.sleep(nanoseconds: 5_000_000)
@@ -201,7 +237,7 @@ private func awaitRequestId(
     return nil
 }
 
-private func awaitGoodbyeReason(
+private func awaitProtocolReason(
     _ transport: ScriptedTransport,
     timeoutMs: UInt64 = 1_000
 ) async -> String? {
@@ -210,8 +246,8 @@ private func awaitGoodbyeReason(
     while ContinuousClock.now - start < timeout {
         let sent = await transport.sent()
         for msg in sent {
-            if case .goodbye(_, let reason) = msg {
-                return reason
+            if case .protocolError(let err) = msg.payload {
+                return err.description
             }
         }
         try? await Task.sleep(nanoseconds: 5_000_000)
@@ -259,6 +295,44 @@ private func isProtocolViolation(_ error: Error, rule: String) -> Bool {
     return false
 }
 
+private func awaitSentPingNonce(
+    _ transport: ScriptedTransport,
+    timeoutMs: UInt64 = 1_000
+) async -> UInt64? {
+    let start = ContinuousClock.now
+    let timeout = Duration.milliseconds(Int64(timeoutMs))
+    while ContinuousClock.now - start < timeout {
+        let sent = await transport.sent()
+        for message in sent {
+            if case .ping(let ping) = message.payload {
+                return ping.nonce
+            }
+        }
+        try? await Task.sleep(nanoseconds: 5_000_000)
+    }
+    return nil
+}
+
+private func awaitTaskResult<T: Sendable>(
+    _ task: Task<T, Error>,
+    timeoutMs: UInt64 = 1_000
+) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask {
+            try await task.value
+        }
+        group.addTask {
+            try await Task.sleep(nanoseconds: timeoutMs * 1_000_000)
+            throw AsyncTestError.timedOut
+        }
+        guard let result = try await group.next() else {
+            throw AsyncTestError.timedOut
+        }
+        group.cancelAll()
+        return result
+    }
+}
+
 struct ConnectionFailureTests {
     @Test func initiatorHelloCarriesConnectionCorrelationMetadata() async throws {
         let transport = ScriptedTransport()
@@ -272,14 +346,11 @@ struct ConnectionFailureTests {
             Issue.record("expected hello to be sent")
             return
         }
-        guard case .hello(let hello) = first else {
+        guard case .hello(let hello) = first.payload else {
             Issue.record("expected first sent message to be hello")
             return
         }
-        guard case .v6(_, _, _, let metadata) = hello else {
-            Issue.record("expected v6 hello")
-            return
-        }
+        let metadata = hello.metadata
 
         let correlationId = metadataString(metadata, key: peepsConnectionCorrelationIdMetadataKey)
         #expect(correlationId != nil)
@@ -287,12 +358,18 @@ struct ConnectionFailureTests {
     }
 
     @Test func serverResponsePreservesPeepsRequestMetadata() async throws {
-        let transport = ScriptedTransport()
+        let transport = ScriptedTransport(
+            initialMessage: .hello(
+                HelloV7(
+                    version: 7,
+                    connectionSettings: ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: 64),
+                    metadata: []
+                )))
         let (_, driver) = try await establishAcceptor(
             transport: transport,
             dispatcher: ImmediateResponseDispatcher()
         )
-        let driverTask = Task {
+        let driverTask: Task<Void, Error> = Task {
             try await driver.run()
         }
         defer {
@@ -308,9 +385,17 @@ struct ConnectionFailureTests {
                 requestId: 77,
                 methodId: 42,
                 metadata: [
-                    (key: peepsMethodNameMetadataKey, value: .string("DemoRpc.test"), flags: 0),
-                    (key: peepsRequestEntityIdMetadataKey, value: .string("request:abc"), flags: 0),
-                    (key: "unrelated", value: .string("keep_out"), flags: 0),
+                    MetadataEntryV7(
+                        key: peepsMethodNameMetadataKey,
+                        value: .string("DemoRpc.test"),
+                        flags: 0
+                    ),
+                    MetadataEntryV7(
+                        key: peepsRequestEntityIdMetadataKey,
+                        value: .string("request:abc"),
+                        flags: 0
+                    ),
+                    MetadataEntryV7(key: "unrelated", value: .string("keep_out"), flags: 0),
                 ],
                 channels: [],
                 payload: []
@@ -319,14 +404,15 @@ struct ConnectionFailureTests {
 
         let start = ContinuousClock.now
         let timeout = Duration.milliseconds(1_000)
-        var responseMetadata: [MetadataEntry]? = nil
+        var responseMetadata: [MetadataEntryV7]? = nil
         while ContinuousClock.now - start < timeout {
             let sent = await transport.sent()
             for message in sent {
-                if case .response(_, let requestId, let metadata, _, _) = message,
-                    requestId == 77
+                if case .requestMessage(let request) = message.payload,
+                    case .response(let response) = request.body,
+                    request.id == 77
                 {
-                    responseMetadata = metadata
+                    responseMetadata = response.metadata
                     break
                 }
             }
@@ -497,8 +583,8 @@ struct ConnectionFailureTests {
             #expect(isProtocolViolation(error, rule: "call.lifecycle.unknown-request-id"))
         }
 
-        let goodbyeReason = await awaitGoodbyeReason(transport)
-        #expect(goodbyeReason == "call.lifecycle.unknown-request-id")
+        let protocolReason = await awaitProtocolReason(transport)
+        #expect(protocolReason == "call.lifecycle.unknown-request-id")
     }
 
     @Test func lateResponseAfterTimeoutTriggersProtocolViolation() async throws {
@@ -576,7 +662,7 @@ struct ConnectionFailureTests {
             try await driverTask.value
             Issue.record("expected protocol violation")
         } catch {
-            #expect(isProtocolViolation(error, rule: "channeling.id.zero-reserved"))
+            #expect(isProtocolViolation(error, rule: "rpc.channel.allocation"))
         }
     }
 
@@ -643,5 +729,104 @@ struct ConnectionFailureTests {
         #expect(successCount > 0)
         #expect(closedCount > 0)
         #expect(timeoutCount == 0)
+    }
+
+    @Test func keepalivePingPongHealthyPath() async throws {
+        let transport = ScriptedTransport(autoRespondPing: true)
+        let (handle, driver) = try await establishInitiator(
+            transport: transport,
+            dispatcher: NoopDispatcher(),
+            keepalive: DriverKeepaliveConfig(pingInterval: 0.02, pongTimeout: 0.05)
+        )
+        let driverTask = Task {
+            try await driver.run()
+        }
+        defer {
+            Task {
+                try? await transport.close()
+            }
+            driverTask.cancel()
+        }
+
+        let firstPing = await awaitSentPingNonce(transport, timeoutMs: 1_000)
+        #expect(firstPing != nil)
+
+        let callTask: Task<[UInt8], Error> = Task {
+            try await handle.callRaw(methodId: 99, payload: [1, 2], timeout: 1.0)
+        }
+        guard let requestId = await awaitRequestId(transport, index: 0) else {
+            Issue.record("expected outbound request")
+            return
+        }
+        await transport.enqueueMessage(
+            .response(connId: 0, requestId: requestId, metadata: [], channels: [], payload: [0x42])
+        )
+
+        let response = try await awaitTaskResult(callTask, timeoutMs: 1_000)
+        #expect(response == [0x42])
+    }
+
+    @Test func keepaliveMissingPongClosesDriver() async throws {
+        let transport = ScriptedTransport()
+        let (_, driver) = try await establishInitiator(
+            transport: transport,
+            dispatcher: NoopDispatcher(),
+            keepalive: DriverKeepaliveConfig(pingInterval: 0.02, pongTimeout: 0.05)
+        )
+        let driverTask: Task<Void, Error> = Task {
+            try await driver.run()
+        }
+        defer {
+            driverTask.cancel()
+            Task {
+                try? await transport.close()
+            }
+        }
+
+        let firstPing = await awaitSentPingNonce(transport, timeoutMs: 1_000)
+        #expect(firstPing != nil)
+
+        do {
+            _ = try await awaitTaskResult(driverTask, timeoutMs: 1_000)
+            Issue.record("expected connection closed")
+        } catch {
+            #expect(isConnectionClosed(error))
+        }
+    }
+
+    @Test func keepaliveFailureFailsPendingCall() async throws {
+        let transport = ScriptedTransport()
+        let (handle, driver) = try await establishInitiator(
+            transport: transport,
+            dispatcher: NoopDispatcher(),
+            keepalive: DriverKeepaliveConfig(pingInterval: 0.02, pongTimeout: 0.05)
+        )
+        let driverTask: Task<Void, Error> = Task {
+            try await driver.run()
+        }
+        defer {
+            driverTask.cancel()
+            Task {
+                try? await transport.close()
+            }
+        }
+
+        let callTask: Task<[UInt8], Error> = Task {
+            try await handle.callRaw(methodId: 123, payload: [9], timeout: TimeInterval?.none)
+        }
+
+        do {
+            _ = try await awaitTaskResult(callTask, timeoutMs: 1_000)
+            Issue.record("expected connection closed")
+        } catch {
+            #expect(isConnectionClosed(error))
+        }
+
+        do {
+            _ = try await awaitTaskResult(driverTask, timeoutMs: 1_000)
+            Issue.record("expected driver shutdown")
+        } catch {
+            #expect(isConnectionClosed(error))
+        }
     }
 }

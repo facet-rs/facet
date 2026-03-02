@@ -1,0 +1,124 @@
+---
+source: rust/roam-macros-core/src/lib.rs
+assertion_line: 748
+expression: "generate(quote!\n{\n    trait Calc\n    { async fn div(&self, a: f64, b: f64) -> Result<f64, DivError>; }\n})"
+---
+#[allow(non_snake_case, clippy::all)]
+pub fn calc_service_descriptor() -> &'static ::roam::session::ServiceDescriptor {
+    static DESCRIPTOR: std::sync::OnceLock<&'static ::roam::session::ServiceDescriptor> =
+        std::sync::OnceLock::new();
+    DESCRIPTOR.get_or_init(|| {
+        let methods: Vec<&'static ::roam::session::MethodDescriptor> =
+            vec![::roam::hash::method_descriptor::<
+                (f64, f64),
+                Result<f64, DivError>,
+            >("Calc", "div", &["a", "b"], None)];
+        Box::leak(Box::new(::roam::session::ServiceDescriptor {
+            service_name: "Calc",
+            methods: Box::leak(methods.into_boxed_slice()),
+            doc: None,
+        }))
+    })
+}
+pub trait Calc
+where
+    Self: Send + Sync,
+{
+    fn div(
+        &self,
+        a: f64,
+        b: f64,
+    ) -> impl std::future::Future<Output = Result<f64, DivError>> + Send;
+}
+#[doc = r" Dispatcher for this service."]
+#[doc = r""]
+#[doc = r" Wraps a handler and implements [`#roam::Handler`] by routing incoming"]
+#[doc = r" calls to the appropriate trait method by method ID."]
+#[derive(Clone)]
+pub struct CalcDispatcher<H> {
+    handler: H,
+}
+impl<H> CalcDispatcher<H>
+where
+    H: Calc + Clone + Send + Sync + 'static,
+{
+    #[doc = r" Create a new dispatcher wrapping the given handler."]
+    pub fn new(handler: H) -> Self {
+        Self { handler }
+    }
+}
+impl<H, R> ::roam::Handler<R> for CalcDispatcher<H>
+where
+    H: Calc + Clone + Send + Sync + 'static,
+    R: ::roam::ReplySink,
+{
+    async fn handle(&self, call: ::roam::SelfRef<::roam::RequestCall<'static>>, reply: R) {
+        let method_id = call.method_id;
+        let args_bytes = match &call.args {
+            ::roam::Payload::Incoming(bytes) => bytes,
+            _ => {
+                reply
+                    .send_error(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)
+                    .await;
+                return;
+            }
+        };
+        if method_id == calc_service_descriptor().methods[0usize].id {
+            let args: (f64, f64) = match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
+                Ok(v) => v,
+                Err(_) => {
+                    reply
+                        .send_error(
+                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload,
+                        )
+                        .await;
+                    return;
+                }
+            };
+            let (a, b) = args;
+            let result = self.handler.div(a, b).await;
+            let sink_call = ::roam::SinkCall::new(reply);
+            ::roam::Call::<f64, DivError>::reply(sink_call, result).await;
+            return;
+        }
+        reply
+            .send_error(::roam::RoamError::<::core::convert::Infallible>::UnknownMethod)
+            .await;
+    }
+}
+#[doc = "Client for the `Calc` service.\n\nGeneric over any [`Caller`](:: roam::Caller) implementation."]
+#[derive(Clone)]
+pub struct CalcClient<C: ::roam::Caller> {
+    caller: C,
+}
+impl<C: ::roam::Caller> CalcClient<C> {
+    #[doc = r" Create a new client wrapping the given caller."]
+    pub fn new(caller: C) -> Self {
+        Self { caller }
+    }
+    pub async fn div(&self, a: f64, b: f64) -> Result<f64, ::roam::RoamError<DivError>> {
+        let method_id = calc_service_descriptor().methods[0usize].id;
+        let args = (a, b);
+        let channels = vec![];
+        let req = ::roam::RequestCall {
+            method_id,
+            args: ::roam::Payload::outgoing(&args),
+            channels,
+            metadata: Default::default(),
+        };
+        let response = self.caller.call(req).await.map_err(|e| match e {
+            ::roam::RoamError::UnknownMethod => ::roam::RoamError::<DivError>::UnknownMethod,
+            ::roam::RoamError::InvalidPayload => ::roam::RoamError::<DivError>::InvalidPayload,
+            ::roam::RoamError::Cancelled => ::roam::RoamError::<DivError>::Cancelled,
+            ::roam::RoamError::User(never) => match never {},
+        })?;
+        let ret_bytes = match &response.ret {
+            ::roam::Payload::Incoming(bytes) => bytes,
+            _ => return Err(::roam::RoamError::<DivError>::InvalidPayload),
+        };
+        let result: Result<f64, ::roam::RoamError<DivError>> =
+            ::roam::facet_postcard::from_slice(ret_bytes)
+                .map_err(|_| ::roam::RoamError::<DivError>::InvalidPayload)?;
+        result
+    }
+}

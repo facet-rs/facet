@@ -1,0 +1,25 @@
+[package]
+name = "roam-afl"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+afl = "0.15"
+roam = { path = "../../rust/roam" }
+roam-core = { path = "../../rust/roam-core" }
+roam-types = { path = "../../rust/roam-types" }
+spec-proto = { path = "../../spec/spec-proto" }
+tokio = { version = "1", features = ["rt", "time", "macros"] }
+
+[[bin]]
+name = "protocol_decode"
+path = "src/bin/protocol_decode.rs"
+
+[[bin]]
+name = "testbed_mem_session"
+path = "src/bin/testbed_mem_session.rs"
+
+[[bin]]
+name = "protocol_decode_repro"
+path = "src/bin/protocol_decode_repro.rs"

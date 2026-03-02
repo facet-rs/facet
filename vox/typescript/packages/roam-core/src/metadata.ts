@@ -20,6 +20,8 @@ interface MetadataEntryInternal {
   flags: bigint;
 }
 
+
+
 /**
  * Client-side metadata storage with flag support.
  *
@@ -105,7 +107,7 @@ export class ClientMetadata {
   }
 
   /**
-   * Iterate over entries as [key, value, flags] tuples.
+  * Iterate over entries as [key, value, flags] tuples.
    */
   *[Symbol.iterator](): Iterator<[string, ClientMetadataValue, bigint]> {
     for (const [key, entry] of this.entries) {
@@ -134,7 +136,7 @@ export class ClientMetadata {
       } else {
         wireValue = metadataBytes(entry.value);
       }
-      result.push([key, wireValue, entry.flags]);
+      result.push({ key, value: wireValue, flags: entry.flags });
     }
     return result;
   }
@@ -144,8 +146,8 @@ export class ClientMetadata {
    */
   static fromWireEntries(entries: MetadataEntry[]): ClientMetadata {
     const meta = new ClientMetadata();
-    for (const [key, value, flags] of entries) {
-      meta.setWithFlags(key, value.value, flags);
+    for (const entry of entries) {
+      meta.setWithFlags(entry.key, entry.value.value, entry.flags);
     }
     return meta;
   }

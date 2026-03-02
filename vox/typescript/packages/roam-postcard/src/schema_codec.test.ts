@@ -454,20 +454,58 @@ describe("wire protocol types", () => {
 // ============================================================================
 
 describe("streaming types (tx/rx)", () => {
-  it("encodes tx as channel id", () => {
+  it("encodes tx as zero bytes (channel ids are carried out-of-band)", () => {
     const schema: Schema = { kind: "tx", element: { kind: "i32" } };
-    const value = { channelId: 42n };
-    const encoded = encodeWithSchema(value, schema);
+    const encoded = encodeWithSchema({ channelId: 42n }, schema);
+    expect(encoded.length).toBe(0);
     const decoded = decodeWithSchema(encoded, 0, schema);
-    expect((decoded.value as { channelId: bigint }).channelId).toBe(42n);
+    expect(decoded.value).toEqual({});
   });
 
-  it("encodes rx as channel id", () => {
+  it("encodes rx as zero bytes (channel ids are carried out-of-band)", () => {
     const schema: Schema = { kind: "rx", element: { kind: "string" } };
-    const value = { channelId: 123n };
-    const encoded = encodeWithSchema(value, schema);
+    const encoded = encodeWithSchema({ channelId: 123n }, schema);
+    expect(encoded.length).toBe(0);
     const decoded = decodeWithSchema(encoded, 0, schema);
-    expect((decoded.value as { channelId: bigint }).channelId).toBe(123n);
+    expect(decoded.value).toEqual({});
+  });
+});
+
+// ============================================================================
+// Trailing Bytes Tests
+// ============================================================================
+
+describe("trailing bytes schema", () => {
+  it("encodes trailing bytes without outer length prefix", () => {
+    const schema: Schema = {
+      kind: "struct",
+      fields: {
+        id: { kind: "u8" },
+        payload: { kind: "bytes", trailing: true },
+      },
+    };
+
+    const value = { id: 7, payload: new Uint8Array([2, 0xab, 0xcd]) };
+    const encoded = encodeWithSchema(value, schema);
+    expect(Array.from(encoded)).toEqual([7, 2, 0xab, 0xcd]);
+  });
+
+  it("decodes trailing bytes as remaining input", () => {
+    const schema: Schema = {
+      kind: "struct",
+      fields: {
+        id: { kind: "u8" },
+        payload: { kind: "bytes", trailing: true },
+      },
+    };
+
+    const encoded = new Uint8Array([7, 2, 0xab, 0xcd]);
+    const decoded = decodeWithSchema(encoded, 0, schema);
+    expect(decoded.next).toBe(encoded.length);
+    expect(decoded.value).toEqual({
+      id: 7,
+      payload: new Uint8Array([2, 0xab, 0xcd]),
+    });
   });
 });
 

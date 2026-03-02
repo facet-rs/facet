@@ -1,76 +1,53 @@
-//! roam - High-performance RPC framework
+//! Roam — Rust-native RPC where traits are the schema.
 //!
-//! This crate provides a unified API for the roam RPC protocol.
-//! Users should depend on this crate rather than the individual component crates.
+//! This is the facade crate. It re-exports everything needed by both
+//! hand-written code and `#[roam::service]` macro-generated code.
 
-#![deny(unsafe_code)]
-
-// Macro hygiene: Allow `::roam::` paths to work both externally and internally.
-// When used in tests within this workspace, `::roam::` would normally
-// fail because it would look for a `roam` module within `roam`. This
-// self-referential module makes `::roam::session::...` etc. work everywhere.
-#[doc(hidden)]
-pub mod roam {
-    pub use crate::*;
-}
-
-// Re-export the service macro
+// Re-export the proc macro
 pub use roam_service_macros::service;
 
-// Re-export session types for macro-generated code
-pub use roam_session as session;
-
-// Re-export Context at top level for convenience
-pub use roam_session::Context;
-
-// Re-export streaming types for user-facing API
-pub use roam_session::{
-    ChannelError, ChannelId, ChannelIdAllocator, ChannelRegistry, DriverMessage, ReceiverSlot,
-    Role, Rx, RxError, SenderSlot, Tx, TxError, channel,
-};
-
-// Re-export tunnel types for byte stream bridging
-pub use roam_session::{Tunnel, tunnel_pair};
-
-#[cfg(not(target_arch = "wasm32"))]
-pub use roam_session::{
-    DEFAULT_TUNNEL_CHUNK_SIZE, pump_read_to_tx, pump_rx_to_write, tunnel_stream,
-};
-
-// Re-export schema types
-pub use roam_schema as schema;
-
-// Re-export hash utilities
-pub use roam_hash as hash;
-
-// Re-export wire types for macro-generated code
-pub use roam_wire as wire;
-
-// Re-export facet for derive macros in service types
+// Re-export facet (generated code uses `roam::facet::Facet`)
 pub use facet;
 
-// Re-export facet_core for macro-generated code that needs PtrConst
-pub use facet_core;
+// Re-export facet-postcard (generated code uses `roam::facet_postcard::from_slice_borrowed`)
+pub use facet_postcard;
 
-// Re-export facet-pretty for macro-generated logging
-pub use facet_pretty;
-pub use facet_pretty::PrettyPrinter;
+// Re-export roam-hash (generated code uses `roam::hash::method_descriptor`)
+pub use roam_hash as hash;
 
-// Re-export tracing for macro-generated logging
-pub use tracing;
+// Re-export roam-types items used by generated code
+pub use roam_types::{
+    // Traits
+    Call,
+    Caller,
+    // Descriptors
+    ChannelId,
+    Handler,
+    MethodDescriptor,
+    MethodId,
+    // Types
+    Payload,
+    ReplySink,
+    RequestCall,
+    RequestResponse,
+    ResponseParts,
+    RoamError,
+    RpcPlan,
+    Rx,
+    SelfRef,
+    ServiceDescriptor,
+    SinkCall,
+    // Channels
+    Tx,
+    // Channels
+    channel,
+};
 
-/// Private module for proc-macro re-exports. Not part of the public API.
-#[doc(hidden)]
-pub mod __private {
-    pub use facet_postcard;
-}
+// Channel binding is only available on non-wasm32 targets
+#[cfg(not(target_arch = "wasm32"))]
+pub use roam_types::{bind_channels_callee_args, bind_channels_caller_args};
 
-/// Prelude module for convenient imports.
-///
-/// ```ignore
-/// use roam::prelude::*;
-/// ```
-pub mod prelude {
-    pub use crate::service;
-    pub use facet::Facet;
+// Re-export the session module (generated code uses `roam::session::ServiceDescriptor`)
+pub mod session {
+    pub use roam_types::{MethodDescriptor, ServiceDescriptor};
 }

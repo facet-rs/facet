@@ -7,13 +7,14 @@
     "CSS": {
       "format_on_save": "off",
     },
+    "TypeScript": { "format_on_save": "off" },
   },
   "file_types": {
     "Jinja": ["**/*.html", "**/*.jinja", "**/*.jinja2", "**/*.j2"],
   },
   "lsp": {
     "rust-analyzer": {
-      "initialization_options": { "cargo": { "features": ["diagnostics"] } },
+      "initialization_options": { "cargo": {} },
     },
     "vscode-css-language-server": {
       "settings": {

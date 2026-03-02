@@ -3,7 +3,7 @@
 // Provides a clean interface for making RPC calls that supports
 // middleware composition via the with() method.
 
-import type { ChannelIdAllocator, ChannelRegistry, MethodSchema } from "./channeling/index.ts";
+import type { ChannelIdAllocator, ChannelRegistry, MethodDescriptor } from "./channeling/index.ts";
 import type {
   ClientMiddleware,
   ClientContext,
@@ -21,24 +21,21 @@ import { ClientMetadata } from "./metadata.ts";
  */
 export interface CallerRequest {
   /**
-   * Method ID (hash) for wire protocol.
-   */
-  methodId: bigint;
-
-  /**
    * Fully qualified method name (e.g., "Testbed.echo").
    */
   method: string;
 
   /**
-   * Method arguments as a record.
+   * Method arguments as a record (used by middleware for inspection).
    */
   args: Record<string, unknown>;
 
   /**
-   * Method schema for encoding args and decoding response.
+   * Method descriptor for encoding args (descriptor.args) and decoding
+   * the full Result<T, RoamError<E>> response (descriptor.result).
+   * The method ID is descriptor.id.
    */
-  schema: MethodSchema;
+  descriptor: MethodDescriptor;
 
   /**
    * Channel IDs for streaming arguments.

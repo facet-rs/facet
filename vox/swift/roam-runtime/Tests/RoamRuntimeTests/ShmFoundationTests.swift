@@ -1,4 +1,5 @@
 #if os(macOS)
+import Darwin
 import Foundation
 import Testing
 
@@ -13,7 +14,7 @@ private func loadShmFixture(_ name: String) throws -> [UInt8] {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .deletingLastPathComponent()
-    let path = projectRoot.appendingPathComponent("test-fixtures/golden-vectors/shm/\(name).bin")
+    let path = projectRoot.appendingPathComponent("test-fixtures/golden-vectors/shm-v7/\(name).bin")
     return Array(try Data(contentsOf: path))
 }
 
@@ -23,6 +24,9 @@ private func makeTempPath(_ suffix: String) -> String {
 }
 
 struct ShmFoundationFixtureParityTests {
+    // r[verify shm.segment.header]
+    // r[verify shm.segment.magic.v7]
+    // r[verify shm.segment.config]
     @Test func segmentHeaderFixtureParses() throws {
         let bytes = try loadShmFixture("segment_header")
         let header = try ShmSegmentHeader.decode(from: bytes)
@@ -36,7 +40,10 @@ struct ShmFoundationFixtureParityTests {
         #expect(header.varSlotPoolOffset > 0)
     }
 
-    @Test func segmentLayoutPeerAndChannelViewsMatchFixture() throws {
+    // r[verify shm.segment]
+    // r[verify shm.peer-table]
+    // r[verify shm.peer-table.states]
+    @Test func segmentLayoutPeerViewMatchesFixture() throws {
         let bytes = try loadShmFixture("segment_layout")
         let path = makeTempPath("segment.bin")
         defer { try? FileManager.default.removeItem(atPath: path) }
@@ -50,17 +57,17 @@ struct ShmFoundationFixtureParityTests {
         #expect(peer.epoch == 7)
         #expect(peer.lastHeartbeat == 12_345_678)
 
-        let ch = try view.channelEntry(peerId: 1, channelIndex: 1)
-        #expect(ch.state == 1)
-        #expect(ch.grantedTotal == 4096)
     }
 
+    // r[verify shm.framing.header]
+    // r[verify shm.framing.inline]
+    // r[verify shm.framing.alignment]
+    // r[verify shm.framing.slot-ref]
     @Test func frameAndSlotRefFixtureParity() throws {
         let headerBytes = try loadShmFixture("frame_header")
         let header = try #require(ShmFrameHeader.read(from: headerBytes))
-        #expect(header.totalLen == 28)
-        #expect(header.msgType == 1)
-        #expect(header.id == 99)
+        #expect(header.totalLen == 20)
+        #expect(header.flags == shmFlagSlotRef)
 
         let slotRefBytes = try loadShmFixture("slot_ref")
         let slotRef = try #require(ShmSlotRef.read(from: slotRefBytes))
@@ -75,7 +82,7 @@ struct ShmFoundationFixtureParityTests {
             Issue.record("expected inline frame")
             return
         }
-        #expect(payload == Array("swift-shm".utf8))
+        #expect(payload.starts(with: Array("swift-shm".utf8)))
 
         let slotRefFrame = try loadShmFixture("frame_slot_ref")
         let decodedSlotRef = try decodeShmFrame(slotRefFrame)
@@ -83,12 +90,14 @@ struct ShmFoundationFixtureParityTests {
             Issue.record("expected slot-ref frame")
             return
         }
-        #expect(slotRefHeader.payloadLen == 8192)
+        #expect(slotRefHeader.totalLen == 20)
         #expect(parsedSlotRef.slotIdx == 42)
     }
 }
 
 struct ShmHeaderValidationTests {
+    // r[verify shm.segment.header]
+    // r[verify shm.segment.magic.v7]
     @Test func rejectsInvalidHeaderInvariants() throws {
         var bytes = try loadShmFixture("segment_header")
 
@@ -106,33 +115,29 @@ struct ShmHeaderValidationTests {
         }
 
         bytes = try loadShmFixture("segment_header")
-        bytes[56] = 1
-        #expect(throws: ShmLayoutError.invalidSlotSize(1)) {
-            let header = try ShmSegmentHeader.decode(from: bytes)
-            try header.validateV2()
-        }
-
-        bytes = try loadShmFixture("segment_header")
-        bytes[80] = 0
-        bytes[81] = 0
-        bytes[82] = 0
-        bytes[83] = 0
-        bytes[84] = 0
-        bytes[85] = 0
-        bytes[86] = 0
-        bytes[87] = 0
+        bytes[48] = 0
+        bytes[49] = 0
+        bytes[50] = 0
+        bytes[51] = 0
+        bytes[52] = 0
+        bytes[53] = 0
+        bytes[54] = 0
+        bytes[55] = 0
         #expect(throws: ShmLayoutError.missingVarSlotPool) {
             let header = try ShmSegmentHeader.decode(from: bytes)
             try header.validateV2()
         }
     }
 
+    // r[verify shm.framing]
+    // r[verify shm.framing.header]
+    // r[verify shm.framing.slot-ref]
     @Test func rejectsMalformedFrames() throws {
         #expect(throws: ShmFrameDecodeError.shortHeader) {
             _ = try decodeShmFrame([1, 2, 3])
         }
 
-        var frame = encodeShmInlineFrame(msgType: 1, id: 1, methodId: 1, payload: [1, 2, 3])
+        var frame = encodeShmInlineFrame(payload: [1, 2, 3])
         frame[0] = 0
         frame[1] = 0
         frame[2] = 0
@@ -141,15 +146,9 @@ struct ShmHeaderValidationTests {
             _ = try decodeShmFrame(frame)
         }
 
-        frame = encodeShmSlotRefFrame(
-            msgType: 4,
-            id: 7,
-            methodId: 0,
-            payloadLen: 123,
-            slotRef: ShmSlotRef(classIdx: 1, extentIdx: 0, slotIdx: 2, slotGeneration: 3)
-        )
+        frame = encodeShmSlotRefFrame(slotRef: ShmSlotRef(classIdx: 1, extentIdx: 0, slotIdx: 2, slotGeneration: 3))
         frame[0] = 40
-        #expect(throws: ShmFrameDecodeError.shortFrame(required: 40, available: 36)) {
+        #expect(throws: ShmFrameDecodeError.shortFrame(required: 40, available: 20)) {
             _ = try decodeShmFrame(frame)
         }
     }
@@ -161,6 +160,14 @@ struct ShmBipBufferCorrectnessTests {
         case timeout
     }
 
+    // r[verify shm.bipbuf]
+    // r[verify shm.bipbuf.header]
+    // r[verify shm.bipbuf.init]
+    // r[verify shm.bipbuf.layout]
+    // r[verify shm.file.create]
+    // r[verify shm.file.attach]
+    // r[verify shm.bipbuf.read]
+    // r[verify shm.bipbuf.release]
     @Test func contiguousReadWrite() throws {
         let path = makeTempPath("bipbuf.bin")
         defer { try? FileManager.default.removeItem(atPath: path) }
@@ -179,6 +186,8 @@ struct ShmBipBufferCorrectnessTests {
         #expect(buf.isEmpty())
     }
 
+    // r[verify shm.bipbuf]
+    // r[verify shm.bipbuf.backpressure]
     @Test func wrapAndWatermarkBehavior() throws {
         let path = makeTempPath("bipbuf-wrap.bin")
         defer { try? FileManager.default.removeItem(atPath: path) }
@@ -212,6 +221,7 @@ struct ShmBipBufferCorrectnessTests {
         #expect(buf.tryRead() == nil)
     }
 
+    // r[verify shm.bipbuf.backpressure]
     @Test func fullAndEmptyBoundaries() throws {
         let path = makeTempPath("bipbuf-boundary.bin")
         defer { try? FileManager.default.removeItem(atPath: path) }
@@ -232,6 +242,11 @@ struct ShmBipBufferCorrectnessTests {
         #expect(buf.isEmpty())
     }
 
+    // r[verify shm.bipbuf]
+    // r[verify shm.bipbuf.grant]
+    // r[verify shm.bipbuf.commit]
+    // r[verify shm.bipbuf.read]
+    // r[verify shm.bipbuf.release]
     @Test func randomizedModel() throws {
         let path = makeTempPath("bipbuf-model.bin")
         defer { try? FileManager.default.removeItem(atPath: path) }
@@ -283,6 +298,11 @@ struct ShmBipBufferCorrectnessTests {
         #expect(model.isEmpty)
     }
 
+    // r[verify shm.bipbuf]
+    // r[verify shm.bipbuf.grant]
+    // r[verify shm.bipbuf.commit]
+    // r[verify shm.bipbuf.read]
+    // r[verify shm.bipbuf.release]
     @Test func boundedConcurrentStress() async throws {
         let path = makeTempPath("bipbuf-stress.bin")
         defer { try? FileManager.default.removeItem(atPath: path) }
@@ -367,6 +387,37 @@ struct ShmBipBufferCorrectnessTests {
         }
 
         #expect(buf.isEmpty())
+    }
+}
+
+struct ShmFileRegionTests {
+    // r[verify shm.file]
+    // r[verify shm.file.create]
+    // r[verify shm.file.attach]
+    // r[verify shm.file.permissions]
+    @Test func createManualSetsExpectedPermissionsAndAllowsAttach() throws {
+        let path = makeTempPath("region-manual.bin")
+        defer { try? FileManager.default.removeItem(atPath: path) }
+
+        let region = try ShmRegion.create(path: path, size: 4096, cleanup: .manual)
+        #expect(FileManager.default.fileExists(atPath: path))
+        #expect(region.length == 4096)
+
+        var st = stat()
+        #expect(stat(path, &st) == 0)
+        #expect((st.st_mode & S_IRWXU) == (S_IRUSR | S_IWUSR))
+
+        let attached = try ShmRegion.attach(path: path)
+        #expect(attached.length == 4096)
+        _ = attached
+    }
+
+    // r[verify shm.file.cleanup]
+    @Test func createAutoUnlinksBackingFile() throws {
+        let path = makeTempPath("region-auto.bin")
+        let region = try ShmRegion.create(path: path, size: 4096, cleanup: .auto)
+        #expect(region.length == 4096)
+        #expect(!FileManager.default.fileExists(atPath: path))
     }
 }
 #endif

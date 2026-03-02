@@ -155,8 +155,8 @@ let client = DownstreamClient::new(caller);
 ## Project Structure
 
 ```
-rust/           # Rust implementation (roam, roam-wire, roam-session, etc.)
-typescript/     # TypeScript packages (roam-core, roam-tcp, roam-ws)
+rust/           # Rust implementation
+typescript/     # TypeScript packages
 swift/          # Swift packages
 spec/           # Compliance test suite
 docs/           # Specifications

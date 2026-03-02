@@ -1,0 +1,41 @@
+[package]
+name = "shm-primitives-async"
+description = "Async OS-level control primitives for shared memory IPC (doorbell and mmap control)"
+keywords = ["shared-memory", "ipc", "async", "doorbell"]
+categories = ["concurrency", "network-programming"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
+[dependencies]
+libc = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
+
+[target.'cfg(unix)'.dependencies]
+tokio = { workspace = true, features = ["net", "rt"] }
+
+[target.'cfg(windows)'.dependencies]
+tokio = { workspace = true, features = ["net", "rt"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Memory",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+]}
+
+[dev-dependencies]
+tempfile = "3"

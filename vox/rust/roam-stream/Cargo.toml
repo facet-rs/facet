@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Stream transport layer for roam RPC - works with TCP, Unix sockets, or any async byte stream"
+description = "Byte-stream transport (TCP, Unix, stdio) for roam — length-prefix framing over AsyncRead/AsyncWrite"
 
 [package.metadata]
 
@@ -13,19 +13,13 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 default = []
-diagnostics = ["roam-session/diagnostics"]
+diagnostics = []
 
 [dependencies]
-facet.workspace = true
-tokio = { workspace = true, features = ["net", "io-util", "rt", "time", "sync"] }
-roam-wire.workspace = true
-roam-session.workspace = true
-facet-postcard.workspace = true
-facet-reflect.workspace = true
 moire.workspace = true
+roam-types.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "io-std", "rt", "sync"] }
 
 [dev-dependencies]
-spec-proto = { path = "../../spec/spec-proto" }
-roam = { path = "../roam" }
+tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-once_cell = "1"

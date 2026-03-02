@@ -1,52 +1,59 @@
 import Foundation
 
-public let shmFrameHeaderSize = 24
+// r[impl shm.framing.header]
+public let shmFrameHeaderSize = 8
+// r[impl shm.framing.slot-ref]
 public let shmSlotRefSize = 12
-public let shmSlotRefFrameSize = 36
+// r[impl shm.framing.slot-ref]
+public let shmSlotRefFrameSize = 20
+// r[impl shm.framing.mmap-ref]
+public let shmMmapRefSize = 24
+// r[impl shm.framing.mmap-ref]
+public let shmMmapRefFrameSize = 32
+// r[impl shm.framing.threshold]
 public let shmDefaultInlineThreshold: UInt32 = 256
+// r[impl shm.framing.flags]
 public let shmFlagSlotRef: UInt8 = 0x01
+// r[impl shm.framing.flags]
+public let shmFlagMmapRef: UInt8 = 0x02
 
 public enum ShmFrameDecodeError: Error, Equatable {
     case shortHeader
     case shortFrame(required: Int, available: Int)
     case invalidTotalLength(UInt32)
-    case inlineLengthMismatch(totalLen: UInt32, payloadLen: UInt32)
-    case invalidSlotRefFrameLength(UInt32)
+    case invalidFlags(UInt8)
     case shortSlotRef
+    case shortMmapRef
 }
 
 public struct ShmFrameHeader: Sendable, Equatable {
     public var totalLen: UInt32
-    public var msgType: UInt8
     public var flags: UInt8
-    public var id: UInt32
-    public var methodId: UInt64
-    public var payloadLen: UInt32
+    /// For inline frames: the actual payload length (without padding).
+    /// Zero means "unknown" (legacy writer); reader uses `totalLen - 8`.
+    public var inlinePayloadLen: UInt16
 
-    public init(totalLen: UInt32, msgType: UInt8, flags: UInt8, id: UInt32, methodId: UInt64, payloadLen: UInt32)
-    {
+    public init(totalLen: UInt32, flags: UInt8, inlinePayloadLen: UInt16 = 0) {
         self.totalLen = totalLen
-        self.msgType = msgType
         self.flags = flags
-        self.id = id
-        self.methodId = methodId
-        self.payloadLen = payloadLen
+        self.inlinePayloadLen = inlinePayloadLen
     }
 
     public var hasSlotRef: Bool {
         flags & shmFlagSlotRef != 0
     }
 
+    public var hasMmapRef: Bool {
+        flags & shmFlagMmapRef != 0
+    }
+
     public func write(to buffer: inout [UInt8]) {
         precondition(buffer.count >= shmFrameHeaderSize)
         writeU32LE(totalLen, to: &buffer, at: 0)
-        buffer[4] = msgType
-        buffer[5] = flags
-        buffer[6] = 0
-        buffer[7] = 0
-        writeU32LE(id, to: &buffer, at: 8)
-        writeU64LE(methodId, to: &buffer, at: 12)
-        writeU32LE(payloadLen, to: &buffer, at: 20)
+        buffer[4] = flags
+        buffer[5] = 0  // reserved
+        buffer[6] = UInt8(truncatingIfNeeded: inlinePayloadLen)
+        buffer[7] = UInt8(truncatingIfNeeded: inlinePayloadLen >> 8)
     }
 
     public static func read(from buffer: [UInt8]) -> ShmFrameHeader? {
@@ -56,11 +63,8 @@ public struct ShmFrameHeader: Sendable, Equatable {
 
         return ShmFrameHeader(
             totalLen: readU32LE(from: buffer, at: 0),
-            msgType: buffer[4],
-            flags: buffer[5],
-            id: readU32LE(from: buffer, at: 8),
-            methodId: readU64LE(from: buffer, at: 12),
-            payloadLen: readU32LE(from: buffer, at: 20)
+            flags: buffer[4],
+            inlinePayloadLen: UInt16(buffer[6]) | (UInt16(buffer[7]) << 8)
         )
     }
 }
@@ -101,60 +105,55 @@ public struct ShmSlotRef: Sendable, Equatable {
     }
 }
 
+public struct ShmMmapRef: Sendable, Equatable {
+    public var mapId: UInt32
+    public var mapGeneration: UInt32
+    public var mapOffset: UInt64
+    public var payloadLen: UInt32
+
+    public init(mapId: UInt32, mapGeneration: UInt32, mapOffset: UInt64, payloadLen: UInt32) {
+        self.mapId = mapId
+        self.mapGeneration = mapGeneration
+        self.mapOffset = mapOffset
+        self.payloadLen = payloadLen
+    }
+}
+
 public enum ShmDecodedFrame: Sendable, Equatable {
     case inline(header: ShmFrameHeader, payload: [UInt8])
     case slotRef(header: ShmFrameHeader, slotRef: ShmSlotRef)
+    case mmapRef(header: ShmFrameHeader, mmapRef: ShmMmapRef)
 }
 
 @inline(__always)
+// r[impl shm.framing.inline]
+// r[impl shm.framing.alignment]
 public func shmInlineFrameSize(payloadLen: UInt32) -> UInt32 {
     (UInt32(shmFrameHeaderSize) + payloadLen + 3) & ~3
 }
 
 @inline(__always)
+// r[impl shm.framing.threshold]
 public func shmShouldInline(payloadLen: UInt32, threshold: UInt32) -> Bool {
     UInt32(shmFrameHeaderSize) + payloadLen <= threshold
 }
 
-public func encodeShmInlineFrame(
-    msgType: UInt8,
-    id: UInt32,
-    methodId: UInt64,
-    payload: [UInt8]
-) -> [UInt8] {
+// r[impl shm.framing.inline]
+public func encodeShmInlineFrame(payload: [UInt8]) -> [UInt8] {
     let payloadLen = UInt32(payload.count)
     let totalLen = shmInlineFrameSize(payloadLen: payloadLen)
     var bytes = [UInt8](repeating: 0, count: Int(totalLen))
 
-    let header = ShmFrameHeader(
-        totalLen: totalLen,
-        msgType: msgType,
-        flags: 0,
-        id: id,
-        methodId: methodId,
-        payloadLen: payloadLen
-    )
+    let header = ShmFrameHeader(totalLen: totalLen, flags: 0, inlinePayloadLen: UInt16(payload.count))
     header.write(to: &bytes)
     bytes.replaceSubrange(shmFrameHeaderSize..<(shmFrameHeaderSize + payload.count), with: payload)
     return bytes
 }
 
-public func encodeShmSlotRefFrame(
-    msgType: UInt8,
-    id: UInt32,
-    methodId: UInt64,
-    payloadLen: UInt32,
-    slotRef: ShmSlotRef
-) -> [UInt8] {
+// r[impl shm.framing.slot-ref]
+public func encodeShmSlotRefFrame(slotRef: ShmSlotRef) -> [UInt8] {
     var bytes = [UInt8](repeating: 0, count: shmSlotRefFrameSize)
-    let header = ShmFrameHeader(
-        totalLen: UInt32(shmSlotRefFrameSize),
-        msgType: msgType,
-        flags: shmFlagSlotRef,
-        id: id,
-        methodId: methodId,
-        payloadLen: payloadLen
-    )
+    let header = ShmFrameHeader(totalLen: UInt32(shmSlotRefFrameSize), flags: shmFlagSlotRef)
     header.write(to: &bytes)
 
     var slotRefBuf = [UInt8](repeating: 0, count: shmSlotRefSize)
@@ -163,6 +162,22 @@ public func encodeShmSlotRefFrame(
     return bytes
 }
 
+// r[impl shm.framing.mmap-ref]
+public func encodeShmMmapRefFrame(mmapRef: ShmMmapRef) -> [UInt8] {
+    var bytes = [UInt8](repeating: 0, count: shmMmapRefFrameSize)
+    let header = ShmFrameHeader(totalLen: UInt32(shmMmapRefFrameSize), flags: shmFlagMmapRef)
+    header.write(to: &bytes)
+
+    writeU32LE(mmapRef.mapId, to: &bytes, at: shmFrameHeaderSize)
+    writeU32LE(mmapRef.mapGeneration, to: &bytes, at: shmFrameHeaderSize + 4)
+    writeU64LE(mmapRef.mapOffset, to: &bytes, at: shmFrameHeaderSize + 8)
+    writeU32LE(mmapRef.payloadLen, to: &bytes, at: shmFrameHeaderSize + 16)
+    writeU32LE(0, to: &bytes, at: shmFrameHeaderSize + 20) // reserved
+    return bytes
+}
+
+// r[impl shm.framing]
+// r[impl shm.framing.flags]
 public func decodeShmFrame(_ frame: [UInt8]) throws -> ShmDecodedFrame {
     guard frame.count >= shmFrameHeaderSize else {
         throw ShmFrameDecodeError.shortHeader
@@ -177,9 +192,13 @@ public func decodeShmFrame(_ frame: [UInt8]) throws -> ShmDecodedFrame {
         throw ShmFrameDecodeError.shortFrame(required: Int(header.totalLen), available: frame.count)
     }
 
+    if header.hasSlotRef && header.hasMmapRef {
+        throw ShmFrameDecodeError.invalidFlags(header.flags)
+    }
+
     if header.hasSlotRef {
         guard header.totalLen == UInt32(shmSlotRefFrameSize) else {
-            throw ShmFrameDecodeError.invalidSlotRefFrameLength(header.totalLen)
+            throw ShmFrameDecodeError.invalidTotalLength(header.totalLen)
         }
         let start = shmFrameHeaderSize
         let end = start + shmSlotRefSize
@@ -192,15 +211,38 @@ public func decodeShmFrame(_ frame: [UInt8]) throws -> ShmDecodedFrame {
         return .slotRef(header: header, slotRef: slotRef)
     }
 
-    let expectedLen = shmInlineFrameSize(payloadLen: header.payloadLen)
-    guard expectedLen == header.totalLen else {
-        throw ShmFrameDecodeError.inlineLengthMismatch(totalLen: header.totalLen, payloadLen: header.payloadLen)
+    if header.hasMmapRef {
+        guard header.totalLen == UInt32(shmMmapRefFrameSize) else {
+            throw ShmFrameDecodeError.invalidTotalLength(header.totalLen)
+        }
+        let start = shmFrameHeaderSize
+        let end = start + shmMmapRefSize
+        guard end <= frame.count else {
+            throw ShmFrameDecodeError.shortMmapRef
+        }
+        let mmapRef = ShmMmapRef(
+            mapId: readU32LE(from: frame, at: start),
+            mapGeneration: readU32LE(from: frame, at: start + 4),
+            mapOffset: readU64LE(from: frame, at: start + 8),
+            payloadLen: readU32LE(from: frame, at: start + 16)
+        )
+        return .mmapRef(header: header, mmapRef: mmapRef)
     }
 
     let payloadStart = shmFrameHeaderSize
-    let payloadEnd = payloadStart + Int(header.payloadLen)
-    guard payloadEnd <= frame.count else {
-        throw ShmFrameDecodeError.shortFrame(required: payloadEnd, available: frame.count)
+    let frameEnd = Int(header.totalLen)
+    guard frameEnd <= frame.count else {
+        throw ShmFrameDecodeError.shortFrame(required: frameEnd, available: frame.count)
+    }
+
+    // Use inlinePayloadLen to strip alignment padding when available.
+    let payloadEnd: Int
+    if header.inlinePayloadLen > 0 {
+        let exact = payloadStart + Int(header.inlinePayloadLen)
+        payloadEnd = min(exact, frameEnd)
+    } else {
+        // Legacy writer — include padding.
+        payloadEnd = frameEnd
     }
 
     return .inline(header: header, payload: Array(frame[payloadStart..<payloadEnd]))

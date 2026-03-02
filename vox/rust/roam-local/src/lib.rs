@@ -90,11 +90,10 @@ pub fn path_to_pipe_name(path: impl AsRef<std::path::Path>) -> std::path::PathBu
     path.as_ref().to_path_buf()
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn test_unix_roundtrip() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};

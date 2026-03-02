@@ -13,7 +13,7 @@ public protocol RoamConnection: Sendable {
     /// Make a raw RPC call.
     func call(
         methodId: UInt64,
-        metadata: [MetadataEntry],
+        metadata: [MetadataEntryV7],
         payload: Data,
         channels: [UInt64],
         timeout: TimeInterval?
@@ -46,7 +46,7 @@ public extension RoamConnection {
 
     func call(
         methodId: UInt64,
-        metadata: [MetadataEntry],
+        metadata: [MetadataEntryV7],
         payload: Data,
         timeout: TimeInterval?
     ) async throws -> Data {
@@ -58,6 +58,21 @@ public extension RoamConnection {
             timeout: timeout
         )
     }
+
+    func call(
+        methodId: UInt64,
+        payload: Data,
+        channels: [UInt64],
+        timeout: TimeInterval?
+    ) async throws -> Data {
+        try await call(
+            methodId: methodId,
+            metadata: [],
+            payload: payload,
+            channels: channels,
+            timeout: timeout
+        )
+    }
 }
 
 // MARK: - ConnectionHandle RoamConnection Conformance
@@ -65,7 +80,7 @@ public extension RoamConnection {
 extension ConnectionHandle: RoamConnection {
     public func call(
         methodId: UInt64,
-        metadata: [MetadataEntry],
+        metadata: [MetadataEntryV7],
         payload: Data,
         channels: [UInt64],
         timeout: TimeInterval?
@@ -95,10 +110,10 @@ extension ConnectionHandle: RoamConnection {
 
 /// Errors that can occur during roam operations.
 ///
-/// r[impl core.error.roam-error] - RoamError represents call-level errors.
-/// r[impl core.error.call-vs-connection] - Call errors don't terminate connection.
-/// r[impl call.error.roam-error] - RoamError variants for different error types.
-/// r[impl call.error.user] - User errors propagate through RoamError.
+/// r[impl rpc.fallible.roam-error] - RoamError represents call-level errors.
+/// r[impl rpc.error.scope] - Call errors don't terminate connection.
+/// r[impl rpc.fallible] - RoamError variants for different error types.
+/// r[impl rpc.fallible.caller-signature] - User errors propagate through RoamError.
 public enum RoamError: Error {
     case unknownMethod
     case notImplemented
@@ -123,14 +138,14 @@ public func encodeResultOkUnit() -> [UInt8] {
 
 /// Encode an unknown method error.
 ///
-/// r[impl call.error.unknown-method] - UnknownMethod when method_id not recognized.
+/// r[impl rpc.unknown-method] - UnknownMethod when method_id not recognized.
 public func encodeUnknownMethodError() -> [UInt8] {
     [1, 1]  // Err discriminant + UnknownMethod variant
 }
 
 /// Encode an invalid payload error.
 ///
-/// r[impl call.error.invalid-payload] - InvalidPayload when payload fails to decode.
+/// r[impl rpc.error.scope] - InvalidPayload when payload fails to decode.
 public func encodeInvalidPayloadError() -> [UInt8] {
     [1, 2]  // Err discriminant + InvalidPayload variant
 }

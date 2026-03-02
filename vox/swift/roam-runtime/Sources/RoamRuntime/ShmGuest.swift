@@ -2,8 +2,11 @@ import Foundation
 import CRoamShmFfi
 #if os(macOS)
 import Darwin
+#elseif os(Linux)
+import Glibc
 #endif
 
+// r[impl shm.peer-table.states]
 public enum ShmPeerState: UInt32, Sendable {
     case empty = 0
     case attached = 1
@@ -11,12 +14,14 @@ public enum ShmPeerState: UInt32, Sendable {
     case reserved = 3
 }
 
+// r[impl shm.varslot.slot-meta]
 public enum ShmSlotState: UInt32, Sendable {
     case free = 0
     case allocated = 1
     case inFlight = 2
 }
 
+// r[impl shm.varslot.classes]
 public struct ShmVarSlotClass: Sendable, Equatable {
     public let slotSize: UInt32
     public let count: UInt32
@@ -49,25 +54,35 @@ public enum ShmVarSlotFreeError: Error, Equatable {
     case ffiError
 }
 
-public final class ShmVarSlotPool: @unchecked Sendable {
-    private static let sizeClassHeaderSize = 64
+public enum ShmVarSlotPoolError: Error, Equatable {
+    case attachFailed
+}
 
+// r[impl shm.varslot]
+// r[impl shm.varslot.allocate]
+// r[impl shm.varslot.free]
+// r[impl shm.varslot.selection]
+// r[impl shm.varslot.freelist]
+public final class ShmVarSlotPool: @unchecked Sendable {
     private let pool: OpaquePointer
     private var region: ShmRegion
 
-    public init(region: ShmRegion, baseOffset: Int, classes: [ShmVarSlotClass]) {
+    public init(region: ShmRegion, baseOffset: Int, classes: [ShmVarSlotClass]) throws {
         self.region = region
 
         let ffiClasses = classes.map { RoamSizeClass(slot_size: $0.slotSize, count: $0.count) }
-        self.pool = ffiClasses.withUnsafeBufferPointer { buf in
+        guard let pool = ffiClasses.withUnsafeBufferPointer({ buf in
             roam_var_slot_pool_attach(
                 region.basePointer().assumingMemoryBound(to: UInt8.self),
                 UInt(region.length),
                 UInt64(baseOffset),
                 buf.baseAddress,
                 UInt(buf.count)
-            )!
+            )
+        }) else {
+            throw ShmVarSlotPoolError.attachFailed
         }
+        self.pool = pool
     }
 
     deinit {
@@ -79,27 +94,6 @@ public final class ShmVarSlotPool: @unchecked Sendable {
         return ffiClasses.withUnsafeBufferPointer { buf in
             Int(roam_var_slot_pool_calculate_size(buf.baseAddress, UInt(buf.count)))
         }
-    }
-
-    public static func loadClasses(region: ShmRegion, header: ShmSegmentHeader) throws -> [ShmVarSlotClass] {
-        let base = Int(header.varSlotPoolOffset)
-        let numClasses = Int(header.numVarSlotClasses)
-        guard numClasses > 0 else {
-            return []
-        }
-
-        var classes: [ShmVarSlotClass] = []
-        classes.reserveCapacity(numClasses)
-
-        for idx in 0..<numClasses {
-            let classOffset = base + idx * sizeClassHeaderSize
-            let bytes = Array(try region.mutableBytes(at: classOffset, count: sizeClassHeaderSize))
-            let slotSize = readU32LE(bytes, 0)
-            let count = readU32LE(bytes, 4)
-            classes.append(ShmVarSlotClass(slotSize: slotSize, count: count))
-        }
-
-        return classes
     }
 
     public func updateRegion(_ region: ShmRegion) {
@@ -115,6 +109,7 @@ public final class ShmVarSlotPool: @unchecked Sendable {
         roam_var_slot_pool_init(pool)
     }
 
+    // r[impl shm.varslot.allocate]
     public func alloc(size: UInt32, owner: UInt8) -> ShmVarSlotHandle? {
         var out = RoamVarSlotHandle(class_idx: 0, extent_idx: 0, slot_idx: 0, generation: 0)
         let result = roam_var_slot_pool_alloc(pool, size, owner, &out)
@@ -136,6 +131,7 @@ public final class ShmVarSlotPool: @unchecked Sendable {
         }
     }
 
+    // r[impl shm.varslot.free]
     public func free(_ handle: ShmVarSlotHandle) throws {
         let result = roam_var_slot_pool_free(pool, toFfi(handle))
         if result != 0 {
@@ -182,7 +178,7 @@ public final class ShmVarSlotPool: @unchecked Sendable {
     }
 }
 
-#if os(macOS)
+#if os(macOS) || os(Linux)
 public enum ShmDoorbellWaitResult: Sendable, Equatable {
     case signaled
     case timeout
@@ -195,6 +191,9 @@ public enum ShmDoorbellError: Error, Equatable {
     case unsupportedPlatform
 }
 
+// r[impl shm.signal.doorbell]
+// r[impl shm.signal.doorbell.signal]
+// r[impl shm.signal.doorbell.wait]
 public final class ShmDoorbell: @unchecked Sendable {
     public let fd: Int32
     private let ownsFd: Bool
@@ -212,9 +211,10 @@ public final class ShmDoorbell: @unchecked Sendable {
 
     public func signal() throws {
         var byte: UInt8 = 1
+        let flags = Int32(MSG_DONTWAIT | MSG_NOSIGNAL)
         while true {
             let written = withUnsafePointer(to: &byte) { ptr in
-                send(fd, ptr, 1, MSG_DONTWAIT)
+                send(fd, ptr, 1, flags)
             }
             if written == 1 {
                 return
@@ -234,29 +234,47 @@ public final class ShmDoorbell: @unchecked Sendable {
         }
     }
 
-    public func drain() {
+    private func drainForWait() throws -> ShmDoorbellWaitResult? {
         var buf = [UInt8](repeating: 0, count: 64)
+        var drained = false
         while true {
             let n = buf.withUnsafeMutableBytes { raw in
-                recv(fd, raw.baseAddress, raw.count, MSG_DONTWAIT)
+                recv(fd, raw.baseAddress, raw.count, Int32(MSG_DONTWAIT))
             }
             if n > 0 {
+                drained = true
                 continue
             }
             if n == 0 {
-                return
+                return drained ? .signaled : .peerDead
             }
             if errno == EINTR {
                 continue
             }
             if errno == EAGAIN || errno == EWOULDBLOCK {
-                return
+                return drained ? .signaled : nil
             }
-            return
+            if errno == ECONNRESET || errno == ENOTCONN || errno == EPIPE {
+                return drained ? .signaled : .peerDead
+            }
+            throw ShmDoorbellError.waitFailed(errno: errno)
+        }
+    }
+
+    @discardableResult
+    public func drain() -> Bool {
+        do {
+            return try drainForWait() == .signaled
+        } catch {
+            return false
         }
     }
 
     public func wait(timeoutMs: Int32? = nil) throws -> ShmDoorbellWaitResult {
+        if let immediate = try drainForWait() {
+            return immediate
+        }
+
         var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
         let timeout = timeoutMs ?? -1
 
@@ -265,14 +283,14 @@ public final class ShmDoorbell: @unchecked Sendable {
                 poll(ptr, 1, timeout)
             }
             if n > 0 {
+                if let result = try drainForWait() {
+                    return result
+                }
                 if (pfd.revents & Int16(POLLHUP | POLLERR | POLLNVAL)) != 0 {
+                    // r[impl shm.signal.doorbell.death]
                     return .peerDead
                 }
-                if (pfd.revents & Int16(POLLIN)) != 0 {
-                    drain()
-                    return .signaled
-                }
-                return .timeout
+                continue
             }
             if n == 0 {
                 return .timeout
@@ -317,15 +335,9 @@ public final class ShmDoorbell: @unchecked Sendable {
 #endif
 
 public struct ShmGuestFrame: Sendable, Equatable {
-    public let msgType: UInt8
-    public let id: UInt32
-    public let methodId: UInt64
     public let payload: [UInt8]
 
-    public init(msgType: UInt8, id: UInt32, methodId: UInt64, payload: [UInt8]) {
-        self.msgType = msgType
-        self.id = id
-        self.methodId = methodId
+    public init(payload: [UInt8]) {
         self.payload = payload
     }
 }
@@ -336,6 +348,7 @@ public enum ShmGuestAttachError: Error, Equatable {
     case hostGoodbye
     case invalidTicketPeer(UInt8)
     case slotNotReserved
+    case missingVarSlotClasses
     case unsupportedVersion(UInt32)
 }
 
@@ -345,6 +358,9 @@ public enum ShmGuestSendError: Error, Equatable {
     case ringFull
     case slotExhausted
     case slotError
+    case mmapAllocationFailed
+    case mmapUnavailable
+    case mmapControlError(errno: Int32)
     case doorbellPeerDead
 }
 
@@ -354,6 +370,67 @@ public enum ShmGuestReceiveError: Error, Equatable {
     case payloadTooLarge
 }
 
+private struct OutboundMmapRegion {
+    let region: ShmRegion
+    let mapId: UInt32
+    let mapGeneration: UInt32
+    let mappingLength: Int
+    var nextOffset: Int
+}
+
+// r[impl shm.mmap.attach]
+// r[impl shm.mmap.bounds]
+// r[impl shm.mmap.aba]
+public final class ShmMmapAttachments: @unchecked Sendable {
+    private let raw: OpaquePointer
+
+    public init?(controlFd: Int32) {
+        guard controlFd >= 0, let raw = roam_mmap_attachments_create(controlFd) else {
+            return nil
+        }
+        self.raw = raw
+    }
+
+    deinit {
+        roam_mmap_attachments_destroy(raw)
+    }
+
+    public func drainControl() -> Bool {
+        roam_mmap_attachments_drain_control(raw) >= 0
+    }
+
+    public func resolve(mmapRef: ShmMmapRef) -> [UInt8]? {
+        var ptr: UnsafePointer<UInt8>?
+        let rc = roam_mmap_attachments_resolve_ptr(
+            raw,
+            mmapRef.mapId,
+            mmapRef.mapGeneration,
+            mmapRef.mapOffset,
+            mmapRef.payloadLen,
+            &ptr
+        )
+        guard rc == 0, let ptr else {
+            return nil
+        }
+        return Array(UnsafeBufferPointer(start: ptr, count: Int(mmapRef.payloadLen)))
+    }
+}
+
+// r[impl shm.guest.attach]
+// r[impl shm.guest.detach]
+// r[impl shm.host.goodbye]
+// r[impl shm.architecture]
+// r[impl shm.signal]
+// r[impl shm.topology]
+// r[impl shm.topology.peer-id]
+// r[impl shm.topology.max-guests]
+// r[impl shm.topology.communication]
+// r[impl shm.topology.bidirectional]
+// r[impl shm.framing.threshold]
+// r[impl zerocopy.send.shm]
+// r[impl zerocopy.recv.shm.inline]
+// r[impl zerocopy.recv.shm.slotref]
+// r[impl zerocopy.recv.shm.mmap]
 public final class ShmGuestRuntime: @unchecked Sendable {
     public let peerId: UInt8
     public private(set) var region: ShmRegion
@@ -363,13 +440,17 @@ public final class ShmGuestRuntime: @unchecked Sendable {
     private var hostToGuest: ShmBipBuffer
     private var slotPool: ShmVarSlotPool
     private let doorbell: ShmDoorbell?
+    private let mmapAttachments: ShmMmapAttachments?
+    private let mmapControlFd: Int32
+    private let maxVarSlotPayload: UInt32
+    private var nextMmapId: UInt32 = 1
+    private var outboundMmapRegion: OutboundMmapRegion?
+    private var retiredOutboundMmapRegions: [ShmRegion] = []
     private var fatalError = false
 
-    public static func attach(path: String) throws -> ShmGuestRuntime {
-        let region = try ShmRegion.attach(path: path)
-        return try attach(region: region, ticket: nil)
-    }
-
+    // r[impl shm.guest.attach]
+    // r[impl shm.guest.attach-failure]
+    /// Attach to an SHM segment, discovering var slot classes from the segment itself.
     public static func attach(ticket: ShmBootstrapTicket) throws -> ShmGuestRuntime {
         let region: ShmRegion
         if ticket.shmFd >= 0 {
@@ -377,19 +458,57 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         } else {
             region = try ShmRegion.attach(path: ticket.hubPath)
         }
-        return try attach(region: region, ticket: ticket)
+        let classes = try discoverClasses(from: region)
+        return try attach(region: region, ticket: ticket, classes: classes)
     }
 
-    private static func attach(region: ShmRegion, ticket: ShmBootstrapTicket?) throws -> ShmGuestRuntime {
+    // r[impl shm.guest.attach]
+    // r[impl shm.guest.attach-failure]
+    /// Attach to an SHM segment by path, discovering var slot classes from segment metadata.
+    public static func attach(path: String) throws -> ShmGuestRuntime {
+        let region = try ShmRegion.attach(path: path)
+        let classes = try discoverClasses(from: region)
+        return try attach(region: region, ticket: nil, classes: classes)
+    }
+
+    private static func discoverClasses(from region: ShmRegion) throws -> [ShmVarSlotClass] {
+        let view = try ShmSegmentView(region: region)
+        let header = view.header
+        let numClasses = Int(header.numVarSlotClasses)
+        guard numClasses > 0 else {
+            throw ShmGuestAttachError.missingVarSlotClasses
+        }
+        var classes: [ShmVarSlotClass] = []
+        for i in 0..<numClasses {
+            // SizeClassHeader layout: slot_size: u32 at offset 0, slot_count: u32 at offset 4, rest padding
+            let offset = Int(header.varSlotPoolOffset) + i * 64
+            let rawBuf = try region.mutableBytes(at: offset, count: 8)
+            let bytes = Array(rawBuf)
+            let slotSize = readU32LE(bytes, 0)
+            let slotCount = readU32LE(bytes, 4)
+            classes.append(ShmVarSlotClass(slotSize: slotSize, count: slotCount))
+        }
+        return classes
+    }
+
+    // r[impl shm.guest.attach]
+    // r[impl shm.guest.attach-failure]
+    private static func attach(
+        region: ShmRegion,
+        ticket: ShmBootstrapTicket?,
+        classes: [ShmVarSlotClass]
+    ) throws -> ShmGuestRuntime {
         let view = try ShmSegmentView(region: region)
         let header = view.header
 
         if header.hostGoodbye != 0 {
             throw ShmGuestAttachError.hostGoodbye
         }
+        if classes.isEmpty {
+            throw ShmGuestAttachError.missingVarSlotClasses
+        }
 
-        let classes = try ShmVarSlotPool.loadClasses(region: region, header: header)
-        let pool = ShmVarSlotPool(region: region, baseOffset: Int(header.varSlotPoolOffset), classes: classes)
+        let pool = try ShmVarSlotPool(region: region, baseOffset: Int(header.varSlotPoolOffset), classes: classes)
 
         let chosenPeerId: UInt8
         if let ticket {
@@ -427,6 +546,15 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         let g2h = try ShmBipBuffer.attach(region: region, headerOffset: ringOffset)
         let h2g = try ShmBipBuffer.attach(region: region, headerOffset: ringOffset + shmBipbufHeaderSize + Int(g2h.capacity))
         let doorbell = ticket.map { ShmDoorbell(fd: $0.doorbellFd) }
+        let mmapControlFd = ticket?.mmapControlFd ?? -1
+        let mmapAttachments: ShmMmapAttachments?
+        if mmapControlFd >= 0 {
+            mmapAttachments = ShmMmapAttachments(controlFd: mmapControlFd)
+        } else {
+            mmapAttachments = nil
+        }
+        let maxSlotSize = classes.map(\.slotSize).max() ?? 0
+        let maxVarSlotPayload = maxSlotSize >= 4 ? maxSlotSize - 4 : 0
 
         return ShmGuestRuntime(
             peerId: chosenPeerId,
@@ -435,7 +563,10 @@ public final class ShmGuestRuntime: @unchecked Sendable {
             guestToHost: g2h,
             hostToGuest: h2g,
             slotPool: pool,
-            doorbell: doorbell
+            doorbell: doorbell,
+            mmapAttachments: mmapAttachments,
+            mmapControlFd: mmapControlFd,
+            maxVarSlotPayload: maxVarSlotPayload
         )
     }
 
@@ -446,7 +577,10 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         guestToHost: ShmBipBuffer,
         hostToGuest: ShmBipBuffer,
         slotPool: ShmVarSlotPool,
-        doorbell: ShmDoorbell?
+        doorbell: ShmDoorbell?,
+        mmapAttachments: ShmMmapAttachments?,
+        mmapControlFd: Int32,
+        maxVarSlotPayload: UInt32
     ) {
         self.peerId = peerId
         self.region = region
@@ -455,9 +589,21 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         self.hostToGuest = hostToGuest
         self.slotPool = slotPool
         self.doorbell = doorbell
+        self.mmapAttachments = mmapAttachments
+        self.mmapControlFd = mmapControlFd
+        self.maxVarSlotPayload = maxVarSlotPayload
     }
 
+    // r[impl zerocopy.send.shm]
+    // r[impl shm.signal.doorbell.integration]
+    // r[impl shm.signal.doorbell.optional]
+    // r[impl shm.framing.inline]
+    // r[impl shm.framing.slot-ref]
+    // r[impl shm.framing.threshold]
+    // r[impl shm.varslot.extents.notification]
     public func send(frame: ShmGuestFrame) throws {
+        _ = try checkRemap()
+
         if fatalError || hostGoodbyeFlag() {
             throw ShmGuestSendError.hostGoodbye
         }
@@ -470,12 +616,7 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         let threshold = header.inlineThreshold == 0 ? shmDefaultInlineThreshold : header.inlineThreshold
 
         if shmShouldInline(payloadLen: payloadLen, threshold: threshold) {
-            let bytes = encodeShmInlineFrame(
-                msgType: frame.msgType,
-                id: frame.id,
-                methodId: frame.methodId,
-                payload: frame.payload
-            )
+            let bytes = encodeShmInlineFrame(payload: frame.payload)
 
             if let grant = try guestToHost.tryGrant(UInt32(bytes.count)) {
                 grant.copyBytes(from: bytes)
@@ -487,7 +628,20 @@ public final class ShmGuestRuntime: @unchecked Sendable {
             throw ShmGuestSendError.ringFull
         }
 
-        guard let handle = slotPool.alloc(size: payloadLen, owner: peerId) else {
+        let slotPayloadLen = payloadLen &+ 4
+        guard slotPayloadLen >= payloadLen else {
+            throw ShmGuestSendError.payloadTooLarge
+        }
+        if payloadLen <= maxVarSlotPayload {
+            try sendViaSlot(frame, payloadLen: payloadLen, slotPayloadLen: slotPayloadLen)
+            return
+        }
+
+        try sendViaMmap(frame, payloadLen: payloadLen)
+    }
+
+    private func sendViaSlot(_ frame: ShmGuestFrame, payloadLen: UInt32, slotPayloadLen: UInt32) throws {
+        guard let handle = slotPool.alloc(size: slotPayloadLen, owner: peerId) else {
             throw ShmGuestSendError.slotExhausted
         }
 
@@ -498,7 +652,8 @@ public final class ShmGuestRuntime: @unchecked Sendable {
 
         frame.payload.withUnsafeBytes { raw in
             if let base = raw.baseAddress {
-                memcpy(payloadPtr, base, raw.count)
+                payloadPtr.storeBytes(of: payloadLen.littleEndian, as: UInt32.self)
+                memcpy(payloadPtr.advanced(by: 4), base, raw.count)
             }
         }
 
@@ -510,10 +665,6 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         }
 
         let slotFrame = encodeShmSlotRefFrame(
-            msgType: frame.msgType,
-            id: frame.id,
-            methodId: frame.methodId,
-            payloadLen: payloadLen,
             slotRef: ShmSlotRef(
                 classIdx: handle.classIdx,
                 extentIdx: handle.extentIdx,
@@ -533,7 +684,105 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         throw ShmGuestSendError.ringFull
     }
 
+    private func sendViaMmap(_ frame: ShmGuestFrame, payloadLen: UInt32) throws {
+        guard mmapControlFd >= 0 else {
+            throw ShmGuestSendError.mmapUnavailable
+        }
+
+        let frameSize = UInt32(shmFrameHeaderSize + shmMmapRefSize)
+        guard let grant = try guestToHost.tryGrant(frameSize) else {
+            throw ShmGuestSendError.ringFull
+        }
+
+        let payloadCount = Int(payloadLen)
+        let allocation = try allocateOutboundMmapSlice(payloadCount: payloadCount)
+
+        frame.payload.withUnsafeBytes { raw in
+            if let base = raw.baseAddress {
+                memcpy(allocation.region.basePointer().advanced(by: allocation.mapOffset), base, raw.count)
+            }
+        }
+
+        let mmapFrame = encodeShmMmapRefFrame(
+            mmapRef: ShmMmapRef(
+                mapId: allocation.mapId,
+                mapGeneration: allocation.mapGeneration,
+                mapOffset: UInt64(allocation.mapOffset),
+                payloadLen: payloadLen
+            )
+        )
+        grant.copyBytes(from: mmapFrame)
+        try guestToHost.commit(UInt32(mmapFrame.count))
+        try doorbell?.signal()
+    }
+
+    private func allocateMmapId() -> UInt32 {
+        let mapId = nextMmapId
+        nextMmapId &+= 1
+        if nextMmapId == 0 {
+            nextMmapId = 1
+        }
+        return mapId
+    }
+
+    private func allocateOutboundMmapSlice(payloadCount: Int) throws
+        -> (region: ShmRegion, mapId: UInt32, mapGeneration: UInt32, mapOffset: Int)
+    {
+        if var active = outboundMmapRegion, active.nextOffset + payloadCount <= active.mappingLength {
+            let offset = active.nextOffset
+            active.nextOffset += payloadCount
+            outboundMmapRegion = active
+            return (active.region, active.mapId, active.mapGeneration, offset)
+        }
+
+        let pageSize = max(Int(getpagesize()), 4096)
+        let minRegionSize = 4 * 1024 * 1024
+        let regionSize = alignUp(max(payloadCount, minRegionSize), pageSize)
+        let mmapPath = "\(NSTemporaryDirectory())roam-swift-mmap-\(UUID().uuidString).bin"
+        let region: ShmRegion
+        do {
+            region = try ShmRegion.create(path: mmapPath, size: regionSize, cleanup: .auto)
+        } catch {
+            throw ShmGuestSendError.mmapAllocationFailed
+        }
+
+        let mapId = allocateMmapId()
+        let mapGeneration: UInt32 = 1
+        let sendRc = roam_mmap_control_send(
+            mmapControlFd,
+            region.rawFd,
+            mapId,
+            mapGeneration,
+            UInt64(regionSize)
+        )
+        guard sendRc == 0 else {
+            throw ShmGuestSendError.mmapControlError(errno: errno)
+        }
+
+        if let previous = outboundMmapRegion {
+            retiredOutboundMmapRegions.append(previous.region)
+        }
+        outboundMmapRegion = OutboundMmapRegion(
+            region: region,
+            mapId: mapId,
+            mapGeneration: mapGeneration,
+            mappingLength: regionSize,
+            nextOffset: payloadCount
+        )
+        return (region, mapId, mapGeneration, 0)
+    }
+
+    // r[impl zerocopy.recv.shm.inline]
+    // r[impl zerocopy.recv.shm.slotref]
+    // r[impl shm.signal.doorbell.integration]
+    // r[impl shm.signal.doorbell.optional]
+    // r[impl shm.framing.inline]
+    // r[impl shm.framing.slot-ref]
+    // r[impl shm.varslot.extents]
+    // r[impl shm.varslot.extents.notification]
     public func receive() throws -> ShmGuestFrame? {
+        _ = try checkRemap()
+
         if fatalError || hostGoodbyeFlag() {
             return nil
         }
@@ -554,7 +803,7 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         switch decoded {
         case .inline(let header, let payload):
             try hostToGuest.release(header.totalLen)
-            return ShmGuestFrame(msgType: header.msgType, id: header.id, methodId: header.methodId, payload: payload)
+            return ShmGuestFrame(payload: payload)
 
         case .slotRef(let header, let slotRef):
             let handle = ShmVarSlotHandle(
@@ -568,7 +817,7 @@ public final class ShmGuestRuntime: @unchecked Sendable {
                 fatalError = true
                 throw ShmGuestReceiveError.slotError
             }
-            if header.payloadLen > clsSize {
+            if clsSize < 4 {
                 fatalError = true
                 throw ShmGuestReceiveError.payloadTooLarge
             }
@@ -578,9 +827,17 @@ public final class ShmGuestRuntime: @unchecked Sendable {
                 throw ShmGuestReceiveError.slotError
             }
 
+            let slotBytes = UnsafeRawBufferPointer(start: UnsafeRawPointer(payloadPtr), count: Int(clsSize))
+            let payloadLen = readU32LE(Array(slotBytes.prefix(4)), 0)
+            if payloadLen > clsSize - 4 {
+                fatalError = true
+                throw ShmGuestReceiveError.payloadTooLarge
+            }
             let payload = Array(
-                UnsafeRawBufferPointer(start: UnsafeRawPointer(payloadPtr), count: Int(header.payloadLen))
-            )
+                UnsafeRawBufferPointer(
+                    start: UnsafeRawPointer(payloadPtr.advanced(by: 4)),
+                    count: Int(payloadLen)
+                ))
 
             do {
                 try slotPool.free(handle)
@@ -592,12 +849,27 @@ public final class ShmGuestRuntime: @unchecked Sendable {
             try hostToGuest.release(header.totalLen)
             try doorbell?.signal()
 
-            return ShmGuestFrame(msgType: header.msgType, id: header.id, methodId: header.methodId, payload: payload)
+            return ShmGuestFrame(payload: payload)
+        case .mmapRef(let header, let mmapRef):
+            guard mmapRef.payloadLen <= self.header.maxPayloadSize else {
+                fatalError = true
+                throw ShmGuestReceiveError.payloadTooLarge
+            }
+            guard let mmapAttachments, mmapAttachments.drainControl(),
+                  let payload = mmapAttachments.resolve(mmapRef: mmapRef)
+            else {
+                fatalError = true
+                throw ShmGuestReceiveError.malformedFrame
+            }
+            try hostToGuest.release(header.totalLen)
+            try doorbell?.signal()
+            return ShmGuestFrame(payload: payload)
         }
     }
 
     public func checkRemap() throws -> Bool {
-        let currentSizePtr = try region.pointer(at: 88)
+        let currentSizeOffset = header.version == 7 ? 72 : 88
+        let currentSizePtr = try region.pointer(at: currentSizeOffset)
         let currentSize = Int(atomicLoadU64Acquire(UnsafeRawPointer(currentSizePtr)))
         if currentSize <= region.length {
             return false
@@ -616,6 +888,7 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         return true
     }
 
+    // r[impl shm.guest.detach]
     public func detach() {
         if let statePtr = try? peerStatePointer() {
             atomicStoreU32Release(statePtr, ShmPeerState.goodbye.rawValue)
@@ -636,7 +909,11 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         guard let doorbell else {
             return nil
         }
-        return try doorbell.wait(timeoutMs: timeoutMs)
+        let result = try doorbell.wait(timeoutMs: timeoutMs)
+        if result == .signaled {
+            _ = try checkRemap()
+        }
+        return result
     }
 
     public func peerState() throws -> ShmPeerState {
@@ -646,7 +923,8 @@ public final class ShmGuestRuntime: @unchecked Sendable {
     }
 
     private func hostGoodbyeFlag() -> Bool {
-        guard let ptr = try? region.pointer(at: 68) else {
+        let hostGoodbyeOffset = header.version == 7 ? 64 : 68
+        guard let ptr = try? region.pointer(at: hostGoodbyeOffset) else {
             return true
         }
         return atomicLoadU32Acquire(UnsafeRawPointer(ptr)) != 0
@@ -665,4 +943,9 @@ private func readU32LE(_ bytes: [UInt8], _ at: Int) -> UInt32 {
         | (UInt32(bytes[at + 1]) << 8)
         | (UInt32(bytes[at + 2]) << 16)
         | (UInt32(bytes[at + 3]) << 24)
+}
+
+@inline(__always)
+private func alignUp(_ value: Int, _ alignment: Int) -> Int {
+    ((value + alignment - 1) / alignment) * alignment
 }

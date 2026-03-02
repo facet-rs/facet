@@ -1,7 +1,12 @@
+#if os(macOS) || os(Linux)
 #if os(macOS)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 
+// r[impl shm.file.cleanup]
 public enum ShmFileCleanup: Sendable {
     case manual
     case auto
@@ -21,6 +26,11 @@ public enum ShmRegionError: Error, Equatable {
     case emptyFile
 }
 
+// r[impl shm.file]
+// r[impl shm.file.create]
+// r[impl shm.file.attach]
+// r[impl shm.file.cleanup]
+// r[impl shm.file.permissions]
 public final class ShmRegion: @unchecked Sendable {
     public let path: String
     public private(set) var length: Int
@@ -53,6 +63,9 @@ public final class ShmRegion: @unchecked Sendable {
         }
     }
 
+    // r[impl shm.file.create]
+    // r[impl shm.file.permissions]
+    // r[impl shm.file.cleanup]
     public static func create(path: String, size: Int, cleanup: ShmFileCleanup) throws -> ShmRegion {
         guard size > 0 else {
             throw ShmRegionError.invalidSize
@@ -96,6 +109,7 @@ public final class ShmRegion: @unchecked Sendable {
         )
     }
 
+    // r[impl shm.file.attach]
     public static func attach(path: String) throws -> ShmRegion {
         let fd = open(path, O_RDWR)
         guard fd >= 0 else {
@@ -104,6 +118,7 @@ public final class ShmRegion: @unchecked Sendable {
         return try attach(fd: fd, pathHint: path)
     }
 
+    // r[impl shm.file.attach]
     public static func attach(fd: Int32, pathHint: String = "<fd>") throws -> ShmRegion {
         guard fd >= 0 else {
             throw ShmRegionError.openFailed(errno: EBADF)
@@ -172,6 +187,11 @@ public final class ShmRegion: @unchecked Sendable {
     }
 
     @inline(__always)
+    public var rawFd: Int32 {
+        fd
+    }
+
+    @inline(__always)
     public func pointer(at offset: Int) throws -> UnsafeMutableRawPointer {
         guard offset >= 0, offset < length else {
             throw ShmRegionError.invalidOffset
@@ -191,6 +211,7 @@ public final class ShmRegion: @unchecked Sendable {
 #else
 import Foundation
 
+// Stub for platforms without POSIX mmap support (e.g. Windows, WASI).
 public enum ShmFileCleanup: Sendable {
     case manual
     case auto
@@ -225,6 +246,7 @@ public final class ShmRegion: @unchecked Sendable {
     public func basePointer() -> UnsafeMutableRawPointer {
         UnsafeMutableRawPointer(bitPattern: 1)!
     }
+    public var rawFd: Int32 { -1 }
     public func pointer(at offset: Int) throws -> UnsafeMutableRawPointer {
         throw ShmRegionError.unsupportedPlatform
     }

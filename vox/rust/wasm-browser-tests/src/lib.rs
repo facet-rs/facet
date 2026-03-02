@@ -7,8 +7,9 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use roam_session::{CallError, HandshakeConfig, NoDispatcher, RoamError, initiate_framed};
-use roam_websocket::WsTransport;
+use roam_core::{BareConduit, Driver, initiator};
+use roam_types::{MessageFamily, Parity};
+use roam_websocket::WsLink;
 use spec_proto::{Color, LookupError, MathError, Message, Point, Rectangle, Shape, TestbedClient};
 use wasm_bindgen::prelude::*;
 
@@ -73,8 +74,8 @@ pub async fn run_tests(ws_url: &str) -> TestResults {
 
     console_log!("Connecting to {ws_url}...");
 
-    let transport = match WsTransport::connect(ws_url).await {
-        Ok(t) => t,
+    let link = match WsLink::connect(ws_url).await {
+        Ok(l) => l,
         Err(e) => {
             console_error!("Failed to connect: {e:?}");
             results.push(TestResult {
@@ -86,32 +87,35 @@ pub async fn run_tests(ws_url: &str) -> TestResults {
         }
     };
 
-    console_log!("Connected! Performing hello exchange...");
+    console_log!("Connected! Performing handshake...");
 
-    let (handle, _incoming, driver) =
-        match initiate_framed(transport, HandshakeConfig::default(), NoDispatcher).await {
-            Ok(result) => result,
-            Err(e) => {
-                console_error!("Hello exchange failed: {e:?}");
-                results.push(TestResult {
-                    name: "hello_exchange".into(),
-                    passed: false,
-                    error: Some(format!("{e:?}")),
-                });
-                return TestResults { results };
-            }
-        };
-
-    console_log!("Hello exchange complete.");
-
-    // Spawn the driver to process messages
-    wasm_bindgen_futures::spawn_local(async move {
-        if let Err(e) = driver.run().await {
-            console_error!("Driver error: {e:?}");
+    let conduit = BareConduit::<MessageFamily, _>::new(link);
+    let (mut session, handle, _sh) = match initiator(conduit).establish().await {
+        Ok(result) => result,
+        Err(e) => {
+            console_error!("Handshake failed: {e:?}");
+            results.push(TestResult {
+                name: "handshake".into(),
+                passed: false,
+                error: Some(format!("{e:?}")),
+            });
+            return TestResults { results };
         }
+    };
+
+    console_log!("Handshake complete.");
+
+    let mut driver = Driver::new(handle, (), Parity::Odd);
+    let caller = driver.caller();
+
+    wasm_bindgen_futures::spawn_local(async move {
+        session.run().await;
+    });
+    wasm_bindgen_futures::spawn_local(async move {
+        driver.run().await;
     });
 
-    let client = TestbedClient::new(handle);
+    let client = TestbedClient::new(caller);
 
     // Run echo tests
     run_echo_tests(&client, &mut results).await;
@@ -129,7 +133,10 @@ pub async fn run_tests(ws_url: &str) -> TestResults {
     TestResults { results }
 }
 
-async fn run_echo_tests(client: &TestbedClient, results: &mut Vec<TestResult>) {
+async fn run_echo_tests(
+    client: &TestbedClient<impl roam_types::Caller>,
+    results: &mut Vec<TestResult>,
+) {
     // Test: echo
     console_log!("Testing echo...");
     match client.echo("Hello from Rust Wasm!".into()).await {
@@ -144,7 +151,10 @@ async fn run_echo_tests(client: &TestbedClient, results: &mut Vec<TestResult>) {
             results.push(TestResult {
                 name: "echo".into(),
                 passed: false,
-                error: Some(format!("expected 'Hello from Rust Wasm!', got '{result}'")),
+                error: Some(format!(
+                    "expected 'Hello from Rust Wasm!', got '{}'",
+                    result
+                )),
             });
         }
         Err(e) => {
@@ -171,7 +181,7 @@ async fn run_echo_tests(client: &TestbedClient, results: &mut Vec<TestResult>) {
             results.push(TestResult {
                 name: "reverse".into(),
                 passed: false,
-                error: Some(format!("expected 'olleH', got '{result}'")),
+                error: Some(format!("expected 'olleH', got '{}'", result)),
             });
         }
         Err(e) => {
@@ -185,7 +195,10 @@ async fn run_echo_tests(client: &TestbedClient, results: &mut Vec<TestResult>) {
     }
 }
 
-async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>) {
+async fn run_complex_tests(
+    client: &TestbedClient<impl roam_types::Caller>,
+    results: &mut Vec<TestResult>,
+) {
     // Test: echo_point
     console_log!("Testing echo_point...");
     let point = Point { x: 42, y: -17 };
@@ -201,7 +214,7 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
             results.push(TestResult {
                 name: "echo_point".into(),
                 passed: false,
-                error: Some(format!("expected {point:?}, got {result:?}")),
+                error: Some(format!("expected {point:?}, got {:?}", result)),
             });
         }
         Err(e) => {
@@ -219,10 +232,10 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
         .create_person("Alice".into(), 30, Some("alice@example.com".into()))
         .await
     {
-        Ok(person)
-            if person.name == "Alice"
-                && person.age == 30
-                && person.email.as_deref() == Some("alice@example.com") =>
+        Ok(result)
+            if result.name == "Alice"
+                && result.age == 30
+                && result.email.as_deref() == Some("alice@example.com") =>
         {
             results.push(TestResult {
                 name: "create_person".into(),
@@ -230,11 +243,11 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
                 error: None,
             });
         }
-        Ok(person) => {
+        Ok(result) => {
             results.push(TestResult {
                 name: "create_person".into(),
                 passed: false,
-                error: Some(format!("unexpected person: {person:?}")),
+                error: Some(format!("unexpected person: {:?}", result)),
             });
         }
         Err(e) => {
@@ -254,18 +267,18 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
         label: None,
     };
     match client.rectangle_area(rect).await {
-        Ok(area) if (area - 50.0).abs() < 0.001 => {
+        Ok(result) if (result - 50.0).abs() < 0.001 => {
             results.push(TestResult {
                 name: "rectangle_area".into(),
                 passed: true,
                 error: None,
             });
         }
-        Ok(area) => {
+        Ok(result) => {
             results.push(TestResult {
                 name: "rectangle_area".into(),
                 passed: false,
-                error: Some(format!("expected 50.0, got {area}")),
+                error: Some(format!("expected 50.0, got {}", result)),
             });
         }
         Err(e) => {
@@ -280,7 +293,7 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
     // Test: parse_color
     console_log!("Testing parse_color...");
     match client.parse_color("red".into()).await {
-        Ok(Some(Color::Red)) => {
+        Ok(result) if matches!(result, Some(Color::Red)) => {
             results.push(TestResult {
                 name: "parse_color".into(),
                 passed: true,
@@ -291,7 +304,7 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
             results.push(TestResult {
                 name: "parse_color".into(),
                 passed: false,
-                error: Some(format!("expected Some(Red), got {result:?}")),
+                error: Some(format!("expected Some(Red), got {:?}", result)),
             });
         }
         Err(e) => {
@@ -306,20 +319,21 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
     // Test: shape_area (Circle)
     console_log!("Testing shape_area (Circle)...");
     match client.shape_area(Shape::Circle { radius: 2.0 }).await {
-        Ok(area) if (area - std::f64::consts::PI * 4.0).abs() < 0.001 => {
+        Ok(result) if (result - std::f64::consts::PI * 4.0).abs() < 0.001 => {
             results.push(TestResult {
                 name: "shape_area_circle".into(),
                 passed: true,
                 error: None,
             });
         }
-        Ok(area) => {
+        Ok(result) => {
             results.push(TestResult {
                 name: "shape_area_circle".into(),
                 passed: false,
                 error: Some(format!(
-                    "expected {}, got {area}",
-                    std::f64::consts::PI * 4.0
+                    "expected {}, got {}",
+                    std::f64::consts::PI * 4.0,
+                    result
                 )),
             });
         }
@@ -341,18 +355,18 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
         })
         .await
     {
-        Ok(area) if (area - 12.0).abs() < 0.001 => {
+        Ok(result) if (result - 12.0).abs() < 0.001 => {
             results.push(TestResult {
                 name: "shape_area_rectangle".into(),
                 passed: true,
                 error: None,
             });
         }
-        Ok(area) => {
+        Ok(result) => {
             results.push(TestResult {
                 name: "shape_area_rectangle".into(),
                 passed: false,
-                error: Some(format!("expected 12.0, got {area}")),
+                error: Some(format!("expected 12.0, got {}", result)),
             });
         }
         Err(e) => {
@@ -367,11 +381,11 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
     // Test: get_points
     console_log!("Testing get_points...");
     match client.get_points(3).await {
-        Ok(points)
-            if points.len() == 3
-                && points[0] == Point { x: 0, y: 0 }
-                && points[1] == Point { x: 1, y: 2 }
-                && points[2] == Point { x: 2, y: 4 } =>
+        Ok(result)
+            if result.len() == 3
+                && result[0] == Point { x: 0, y: 0 }
+                && result[1] == Point { x: 1, y: 2 }
+                && result[2] == Point { x: 2, y: 4 } =>
         {
             results.push(TestResult {
                 name: "get_points".into(),
@@ -379,11 +393,11 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
                 error: None,
             });
         }
-        Ok(points) => {
+        Ok(result) => {
             results.push(TestResult {
                 name: "get_points".into(),
                 passed: false,
-                error: Some(format!("unexpected points: {points:?}")),
+                error: Some(format!("unexpected points: {:?}", result)),
             });
         }
         Err(e) => {
@@ -398,7 +412,7 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
     // Test: swap_pair
     console_log!("Testing swap_pair...");
     match client.swap_pair((42, "hello".into())).await {
-        Ok((s, n)) if s == "hello" && n == 42 => {
+        Ok(result) if result.0 == "hello" && result.1 == 42 => {
             results.push(TestResult {
                 name: "swap_pair".into(),
                 passed: true,
@@ -409,7 +423,7 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
             results.push(TestResult {
                 name: "swap_pair".into(),
                 passed: false,
-                error: Some(format!("expected (\"hello\", 42), got {result:?}")),
+                error: Some(format!("expected (\"hello\", 42), got {:?}", result)),
             });
         }
         Err(e) => {
@@ -424,7 +438,7 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
     // Test: process_message (Text)
     console_log!("Testing process_message (Text)...");
     match client.process_message(Message::Text("hello".into())).await {
-        Ok(Message::Text(s)) if s == "Processed: hello" => {
+        Ok(result) if matches!(&result, Message::Text(s) if s == "Processed: hello") => {
             results.push(TestResult {
                 name: "process_message_text".into(),
                 passed: true,
@@ -436,7 +450,8 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
                 name: "process_message_text".into(),
                 passed: false,
                 error: Some(format!(
-                    "expected Text(\"Processed: hello\"), got {result:?}"
+                    "expected Text(\"Processed: hello\"), got {:?}",
+                    result
                 )),
             });
         }
@@ -452,7 +467,7 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
     // Test: process_message (Number)
     console_log!("Testing process_message (Number)...");
     match client.process_message(Message::Number(21)).await {
-        Ok(Message::Number(n)) if n == 42 => {
+        Ok(result) if matches!(&result, Message::Number(n) if *n == 42) => {
             results.push(TestResult {
                 name: "process_message_number".into(),
                 passed: true,
@@ -463,7 +478,7 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
             results.push(TestResult {
                 name: "process_message_number".into(),
                 passed: false,
-                error: Some(format!("expected Number(42), got {result:?}")),
+                error: Some(format!("expected Number(42), got {:?}", result)),
             });
         }
         Err(e) => {
@@ -476,11 +491,14 @@ async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>
     }
 }
 
-async fn run_fallible_tests(client: &TestbedClient, results: &mut Vec<TestResult>) {
+async fn run_fallible_tests(
+    client: &TestbedClient<impl roam_types::Caller>,
+    results: &mut Vec<TestResult>,
+) {
     // Test: divide (success)
     console_log!("Testing divide (success)...");
     match client.divide(10, 2).await {
-        Ok(5) => {
+        Ok(result) if result == 5 => {
             results.push(TestResult {
                 name: "divide_success".into(),
                 passed: true,
@@ -491,7 +509,7 @@ async fn run_fallible_tests(client: &TestbedClient, results: &mut Vec<TestResult
             results.push(TestResult {
                 name: "divide_success".into(),
                 passed: false,
-                error: Some(format!("expected 5, got {result:?}")),
+                error: Some(format!("expected 5, got {:?}", result)),
             });
         }
         Err(e) => {
@@ -504,10 +522,9 @@ async fn run_fallible_tests(client: &TestbedClient, results: &mut Vec<TestResult
     }
 
     // Test: divide (error - division by zero)
-    // User errors come back as CallError::Roam(RoamError::User(E))
     console_log!("Testing divide (error)...");
     match client.divide(10, 0).await {
-        Err(CallError::Roam(RoamError::User(MathError::DivisionByZero))) => {
+        Err(roam_types::RoamError::User(MathError::DivisionByZero)) => {
             results.push(TestResult {
                 name: "divide_error".into(),
                 passed: true,
@@ -518,7 +535,10 @@ async fn run_fallible_tests(client: &TestbedClient, results: &mut Vec<TestResult
             results.push(TestResult {
                 name: "divide_error".into(),
                 passed: false,
-                error: Some(format!("expected DivisionByZero error, got Ok({result:?})")),
+                error: Some(format!(
+                    "expected DivisionByZero error, got Ok({:?})",
+                    result
+                )),
             });
         }
         Err(e) => {
@@ -533,10 +553,10 @@ async fn run_fallible_tests(client: &TestbedClient, results: &mut Vec<TestResult
     // Test: lookup (success)
     console_log!("Testing lookup (success)...");
     match client.lookup(1).await {
-        Ok(person)
-            if person.name == "Alice"
-                && person.age == 30
-                && person.email.as_deref() == Some("alice@example.com") =>
+        Ok(result)
+            if result.name == "Alice"
+                && result.age == 30
+                && result.email.as_deref() == Some("alice@example.com") =>
         {
             results.push(TestResult {
                 name: "lookup_success".into(),
@@ -544,11 +564,11 @@ async fn run_fallible_tests(client: &TestbedClient, results: &mut Vec<TestResult
                 error: None,
             });
         }
-        Ok(person) => {
+        Ok(result) => {
             results.push(TestResult {
                 name: "lookup_success".into(),
                 passed: false,
-                error: Some(format!("unexpected person: {person:?}")),
+                error: Some(format!("unexpected person: {:?}", result)),
             });
         }
         Err(e) => {
@@ -563,7 +583,7 @@ async fn run_fallible_tests(client: &TestbedClient, results: &mut Vec<TestResult
     // Test: lookup (error - not found)
     console_log!("Testing lookup (error)...");
     match client.lookup(999).await {
-        Err(CallError::Roam(RoamError::User(LookupError::NotFound))) => {
+        Err(roam_types::RoamError::User(LookupError::NotFound)) => {
             results.push(TestResult {
                 name: "lookup_error".into(),
                 passed: true,
@@ -574,7 +594,7 @@ async fn run_fallible_tests(client: &TestbedClient, results: &mut Vec<TestResult
             results.push(TestResult {
                 name: "lookup_error".into(),
                 passed: false,
-                error: Some(format!("expected NotFound error, got Ok({result:?})")),
+                error: Some(format!("expected NotFound error, got Ok({:?})", result)),
             });
         }
         Err(e) => {

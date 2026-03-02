@@ -15,23 +15,9 @@ import type {
   MathError,
   LookupError,
 } from "@bearcove/roam-generated/testbed.ts";
-import {
-  testbed_channelingHandlers,
-  TestbedClient,
-  type ChannelingMethodHandler,
-} from "@bearcove/roam-generated/testbed.ts";
+import { TestbedClient, TestbedDispatcher } from "@bearcove/roam-generated/testbed.ts";
 import { Server } from "@bearcove/roam-tcp";
-import {
-  type ChannelingDispatcher,
-  type ChannelRegistry,
-  type TaskSender,
-  type Tx,
-  type Rx,
-  channel,
-  encodeResultErr,
-  encodeUnknownMethod,
-  ConnectionError,
-} from "@bearcove/roam-core";
+import { type Tx, type Rx, channel, ConnectionError } from "@bearcove/roam-core";
 
 // Service implementation
 class TestbedService implements TestbedHandler {
@@ -144,7 +130,7 @@ class TestbedService implements TestbedHandler {
       case "Number":
         return { tag: "Number", value: msg.value * 2n };
       case "Data":
-        return msg;
+        return { tag: "Data", value: msg.value.toReversed() };
     }
   }
 
@@ -161,36 +147,6 @@ class TestbedService implements TestbedHandler {
   }
 }
 
-// Channeling dispatcher that uses the generated channeling handlers
-class TestbedChannelingDispatcher implements ChannelingDispatcher {
-  private service = new TestbedService();
-  private handlers: Map<bigint, ChannelingMethodHandler<TestbedHandler>>;
-
-  constructor() {
-    this.handlers = testbed_channelingHandlers;
-  }
-
-  async dispatch(
-    methodId: bigint,
-    payload: Uint8Array,
-    requestId: bigint,
-    registry: ChannelRegistry,
-    taskSender: TaskSender,
-  ): Promise<void> {
-    const handler = this.handlers.get(methodId);
-    if (!handler) {
-      // Unknown method - send error response
-      taskSender({
-        kind: "response",
-        requestId,
-        payload: encodeResultErr(encodeUnknownMethod()),
-      });
-      return;
-    }
-
-    await handler(this.service, payload, requestId, registry, taskSender);
-  }
-}
 
 async function runServer() {
   const addr = process.env.PEER_ADDR;
@@ -206,7 +162,7 @@ async function runServer() {
   const conn = await server.connect(addr, { acceptConnections });
 
   try {
-    await conn.runChanneling(new TestbedChannelingDispatcher());
+    await conn.runChanneling(new TestbedDispatcher(new TestbedService()));
   } catch (e) {
     if (e instanceof ConnectionError && e.kind === "closed") {
       // Clean shutdown

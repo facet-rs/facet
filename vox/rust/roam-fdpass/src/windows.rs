@@ -178,9 +178,11 @@ mod tests {
 
     #[test]
     fn test_protocol_info_size() {
-        // Sanity check - WSAPROTOCOL_INFOW should be a fixed size
-        assert!(PROTOCOL_INFO_SIZE > 0);
-        assert!(PROTOCOL_INFO_SIZE < 1024); // Should be around 628 bytes
+        const {
+            // Sanity check - WSAPROTOCOL_INFOW should be a fixed size
+            assert!(PROTOCOL_INFO_SIZE > 0);
+            assert!(PROTOCOL_INFO_SIZE < 1024); // Should be around 628 bytes
+        }
     }
 
     #[test]

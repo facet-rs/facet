@@ -4,6 +4,12 @@ This directory is for the new TypeScript implementation and tooling.
 
 Legacy TypeScript code lives in `typescript-legacy/`.
 
+## Package boundaries
+
+Public API curation and package-layering rules for workspace packages are documented in:
+
+- `typescript/packages/API_SURFACE.md`
+
 ## Subject
 
 The compliance suite runs a per-language **subject** (implementation under test) via `SUBJECT_CMD`.

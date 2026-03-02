@@ -1,9 +1,8 @@
 [package]
 name = "shm-primitives"
-description = "Lock-free primitives for shared memory IPC: SPSC ring buffers and Treiber stack slab allocators"
+description = "Lock-free primitives for shared memory IPC: BipBuffer, slot metadata, and OS-level doorbell/mmap"
 keywords = ["lock-free", "shared-memory", "ipc", "ring-buffer"]
 categories = ["concurrency", "memory-management"]
-readme = "README.md"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,34 +14,28 @@ repository.workspace = true
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
-
 [features]
 default = []
 
 [dependencies]
 libc = { workspace = true }
-tracing = { workspace = true }
-tokio = { workspace = true, features = ["rt"] }
-
-[target.'cfg(unix)'.dependencies]
-tokio = { workspace = true, features = ["net", "rt"] }
 
 [target.'cfg(windows)'.dependencies]
-tokio = { workspace = true, features = ["net", "rt"] }
 windows-sys = { version = "0.61", features = [
-    "Win32_Foundation",
-    "Win32_System_Memory",
-    "Win32_Storage_FileSystem",
-    "Win32_Security",
-    "Win32_System_IO",
-    "Win32_System_Pipes",
-    "Win32_System_Threading",
-]}
+  "Win32_Foundation",
+  "Win32_System_Memory",
+  "Win32_Storage_FileSystem",
+  "Win32_Security",
+  "Win32_System_IO",
+  "Win32_System_Pipes",
+  "Win32_System_Threading",
+] }
 
 [target.'cfg(loom)'.dependencies]
 loom = { version = "0.7" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
 [dev-dependencies]
 tempfile = "3"

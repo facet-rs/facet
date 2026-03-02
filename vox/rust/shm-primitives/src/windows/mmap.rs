@@ -37,7 +37,7 @@ pub enum FileCleanup {
 
 /// File-backed memory-mapped region for cross-process shared memory.
 ///
-/// shm[impl shm.file.mmap-windows]
+/// r[impl shm.file.mmap-windows]
 pub struct MmapRegion {
     /// Pointer to the mapped memory
     ptr: *mut u8,
@@ -59,7 +59,7 @@ impl MmapRegion {
     /// This creates the file, truncates it to the given size, and maps it
     /// into memory. The file is created with default permissions.
     ///
-    /// shm[impl shm.file.create]
+    /// r[impl shm.file.create]
     pub fn create(path: &Path, size: usize, cleanup: FileCleanup) -> io::Result<Self> {
         if size == 0 {
             return Err(io::Error::new(
@@ -162,7 +162,7 @@ impl MmapRegion {
     /// This opens the file and maps it into memory.
     /// The file size determines the mapping size.
     ///
-    /// shm[impl shm.file.attach]
+    /// r[impl shm.file.attach]
     pub fn attach(path: &Path) -> io::Result<Self> {
         // Open existing file for read/write
         let file = OpenOptions::new()
@@ -269,7 +269,7 @@ impl MmapRegion {
     /// Returns an error if the new size is smaller than current size (shrinking
     /// is not supported), or if the underlying file/mmap operations fail.
     ///
-    /// shm[impl shm.varslot.extents]
+    /// r[impl shm.varslot.extents]
     pub fn resize(&mut self, new_size: usize) -> io::Result<()> {
         if new_size < self.len {
             return Err(io::Error::new(
@@ -281,25 +281,13 @@ impl MmapRegion {
             return Ok(()); // No change needed
         }
 
-        // 1. Unmap old view
-        let unmap_result = unsafe {
-            UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
-                Value: self.ptr as *mut _,
-            })
-        };
-        if unmap_result == 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        // 2. Close old mapping handle
-        unsafe { CloseHandle(self.mapping_handle) };
-
-        // 3. Grow the backing file
+        // 1. Grow the backing file first.
         self.file.set_len(new_size as u64)?;
 
-        // 4. Create new mapping
+        // 2. Create new mapping and view before releasing the old ones, so
+        //    that any failure here leaves self in a valid state.
         let file_handle = self.file.as_raw_handle() as HANDLE;
-        let mapping_handle = unsafe {
+        let new_mapping = unsafe {
             CreateFileMappingW(
                 file_handle,
                 std::ptr::null(),
@@ -310,21 +298,28 @@ impl MmapRegion {
             )
         };
 
-        if mapping_handle.is_null() {
+        if new_mapping.is_null() {
             return Err(io::Error::last_os_error());
         }
 
-        // 5. Map new view
-        let ptr = unsafe { MapViewOfFile(mapping_handle, FILE_MAP_ALL_ACCESS, 0, 0, new_size) };
+        let new_view = unsafe { MapViewOfFile(new_mapping, FILE_MAP_ALL_ACCESS, 0, 0, new_size) };
 
-        if ptr.Value.is_null() {
-            unsafe { CloseHandle(mapping_handle) };
+        if new_view.Value.is_null() {
+            unsafe { CloseHandle(new_mapping) };
             return Err(io::Error::last_os_error());
         }
 
-        self.ptr = ptr.Value as *mut u8;
+        // 3. New mapping is live — now it is safe to release the old ones.
+        unsafe {
+            UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
+                Value: self.ptr as *mut _,
+            });
+            CloseHandle(self.mapping_handle);
+        }
+
+        self.ptr = new_view.Value as *mut u8;
         self.len = new_size;
-        self.mapping_handle = mapping_handle;
+        self.mapping_handle = new_mapping;
         Ok(())
     }
 
@@ -358,7 +353,7 @@ impl Drop for MmapRegion {
         }
 
         // Delete the file if we own it
-        // shm[impl shm.file.cleanup]
+        // r[impl shm.file.cleanup]
         if self.owns_file {
             let _ = std::fs::remove_file(&self.path);
         }

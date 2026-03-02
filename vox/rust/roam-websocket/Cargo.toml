@@ -4,10 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "WebSocket transport layer for roam RPC"
-
-[package.metadata.cargo-shear]
-ignored = ["getrandom"]
+description = "WebSocket transport for roam — message-framed Link over tungstenite"
 
 [package.metadata]
 
@@ -15,20 +12,14 @@ ignored = ["getrandom"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-roam-session.workspace = true
-facet-postcard.workspace = true
+roam-types.workspace = true
 
-# Native dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-roam-stream.workspace = true
-tokio = { workspace = true, features = ["net", "io-util", "rt", "time", "sync"] }
+tokio = { workspace = true, features = ["net", "rt", "sync"] }
 tokio-tungstenite.workspace = true
-futures-util = { version = "0.3", default-features = false, features = ["sink"] }
-moire.workspace = true
+futures-util.workspace = true
 
-# WASM dependencies
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-roam-wire.workspace = true
 wasm-bindgen = "0.2"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = [
@@ -37,12 +28,10 @@ web-sys = { version = "0.3", features = [
   "MessageEvent",
   "CloseEvent",
   "ErrorEvent",
-  "console",
 ] }
 futures-channel = "0.3"
-futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 getrandom = { version = "0.3", features = ["wasm_js"] }
-
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

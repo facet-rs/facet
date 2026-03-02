@@ -1,0 +1,128 @@
+---
+source: rust/roam-macros-core/src/lib.rs
+assertion_line: 755
+expression: "generate(quote! { trait Ping { async fn ping(&self) -> u64; } })"
+---
+#[allow(non_snake_case, clippy::all)]
+pub fn ping_service_descriptor() -> &'static ::roam::session::ServiceDescriptor {
+    static DESCRIPTOR: std::sync::OnceLock<&'static ::roam::session::ServiceDescriptor> =
+        std::sync::OnceLock::new();
+    DESCRIPTOR.get_or_init(|| {
+        let methods: Vec<&'static ::roam::session::MethodDescriptor> =
+            vec![::roam::hash::method_descriptor::<(), u64>(
+                "Ping",
+                "ping",
+                &[],
+                None,
+            )];
+        Box::leak(Box::new(::roam::session::ServiceDescriptor {
+            service_name: "Ping",
+            methods: Box::leak(methods.into_boxed_slice()),
+            doc: None,
+        }))
+    })
+}
+pub trait Ping
+where
+    Self: Send + Sync,
+{
+    fn ping(&self) -> impl std::future::Future<Output = u64> + Send;
+}
+#[doc = r" Dispatcher for this service."]
+#[doc = r""]
+#[doc = r" Wraps a handler and implements [`#roam::Handler`] by routing incoming"]
+#[doc = r" calls to the appropriate trait method by method ID."]
+#[derive(Clone)]
+pub struct PingDispatcher<H> {
+    handler: H,
+}
+impl<H> PingDispatcher<H>
+where
+    H: Ping + Clone + Send + Sync + 'static,
+{
+    #[doc = r" Create a new dispatcher wrapping the given handler."]
+    pub fn new(handler: H) -> Self {
+        Self { handler }
+    }
+}
+impl<H, R> ::roam::Handler<R> for PingDispatcher<H>
+where
+    H: Ping + Clone + Send + Sync + 'static,
+    R: ::roam::ReplySink,
+{
+    async fn handle(&self, call: ::roam::SelfRef<::roam::RequestCall<'static>>, reply: R) {
+        let method_id = call.method_id;
+        let args_bytes = match &call.args {
+            ::roam::Payload::Incoming(bytes) => bytes,
+            _ => {
+                reply
+                    .send_error(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)
+                    .await;
+                return;
+            }
+        };
+        if method_id == ping_service_descriptor().methods[0usize].id {
+            let args: () = match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
+                Ok(v) => v,
+                Err(_) => {
+                    reply
+                        .send_error(
+                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload,
+                        )
+                        .await;
+                    return;
+                }
+            };
+            let () = args;
+            let value = self.handler.ping().await;
+            let sink_call = ::roam::SinkCall::new(reply);
+            ::roam::Call::<u64, ::core::convert::Infallible>::ok(sink_call, value).await;
+            return;
+        }
+        reply
+            .send_error(::roam::RoamError::<::core::convert::Infallible>::UnknownMethod)
+            .await;
+    }
+}
+#[doc = "Client for the `Ping` service.\n\nGeneric over any [`Caller`](:: roam::Caller) implementation."]
+#[derive(Clone)]
+pub struct PingClient<C: ::roam::Caller> {
+    caller: C,
+}
+impl<C: ::roam::Caller> PingClient<C> {
+    #[doc = r" Create a new client wrapping the given caller."]
+    pub fn new(caller: C) -> Self {
+        Self { caller }
+    }
+    pub async fn ping(&self) -> Result<u64, ::roam::RoamError> {
+        let method_id = ping_service_descriptor().methods[0usize].id;
+        let args = ();
+        let channels = vec![];
+        let req = ::roam::RequestCall {
+            method_id,
+            args: ::roam::Payload::outgoing(&args),
+            channels,
+            metadata: Default::default(),
+        };
+        let response = self.caller.call(req).await.map_err(|e| match e {
+            ::roam::RoamError::UnknownMethod => {
+                ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
+            }
+            ::roam::RoamError::InvalidPayload => {
+                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+            }
+            ::roam::RoamError::Cancelled => {
+                ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+            }
+            ::roam::RoamError::User(never) => match never {},
+        })?;
+        let ret_bytes = match &response.ret {
+            ::roam::Payload::Incoming(bytes) => bytes,
+            _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
+        };
+        let result: Result<u64, ::roam::RoamError<::core::convert::Infallible>> =
+            ::roam::facet_postcard::from_slice(ret_bytes)
+                .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
+        result
+    }
+}

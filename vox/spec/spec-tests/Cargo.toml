@@ -6,51 +6,25 @@ license = "MIT OR Apache-2.0"
 publish = false
 description = "Compliance tests for the canonical roam spec in docs/content/"
 
-# =============================================================================
-# IMPORTANT: No roam runtime dependencies allowed!
-#
-# This crate tests implementations against the wire protocol spec. We
-# intentionally avoid roam runtime types (Rx, Tx, Dispatcher, Connection, etc.)
-# to ensure we're testing the wire format, not roam-against-roam.
-#
-# Allowed exceptions (spec-level crates only):
-#   - roam-wire: Wire protocol message types (Hello, Request, Response, etc.)
-#   - roam-hash: Method ID computation (blake3 hashing of MethodDetail)
-#   - roam-schema: Type descriptors for method signatures
-#
-# NOT allowed (runtime crates):
-#   - roam, roam-stream, roam-websocket, roam-session, etc.
-#
-# Note: spec-proto depends on roam for the #[service] macro, but we only use
-# its generated method_id functions and type definitions, not runtime features.
-# =============================================================================
-
 [dependencies]
-roam-wire = { path = "../../rust/roam-wire" }
+roam = { workspace = true }
+roam-core = { workspace = true }
+roam-local = { path = "../../rust/roam-local" }
+roam-shm = { path = "../../rust/roam-shm" }
+roam-stream = { workspace = true }
+roam-types = { workspace = true }
+shm-primitives = { workspace = true }
 spec-proto = { path = "../spec-proto" }
-facet.workspace = true
-facet-postcard.workspace = true
+moire = { workspace = true }
 tokio = { workspace = true, features = [
   "rt-multi-thread",
   "net",
-  "io-util",
   "time",
   "process",
-  "macros",
 ] }
+tempfile = "3.23"
 
 [dev-dependencies]
-roam-hash = { path = "../../rust/roam-hash" }
-roam-schema = { path = "../../rust/roam-schema" }
-
-[[bin]]
-name = "tcp-echo-server"
-path = "src/bin/tcp_echo_server.rs"
-
-[[bin]]
-name = "tcp-echo-client"
-path = "src/bin/tcp_echo_client.rs"
-
-[[bin]]
-name = "cross-language-test"
-path = "src/bin/cross_language_test.rs"
+facet-postcard.workspace = true
+shm-primitives-async.workspace = true
+libc.workspace = true

@@ -1,9 +1,11 @@
 //! TypeScript client generation.
 //!
 //! Generates client interface and implementation for making RPC calls.
+//! The client uses the service descriptor for schema-driven encode/decode —
+//! no serialization code is generated here.
 
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
-use roam_schema::{ServiceDetail, ShapeKind, classify_shape, is_rx, is_tx};
+use roam_types::{ServiceDescriptor, ShapeKind, classify_shape, is_rx, is_tx};
 
 use super::types::{ts_type_client_arg, ts_type_client_return};
 
@@ -16,10 +18,8 @@ fn format_doc_comment(doc: &str, indent: &str) -> String {
     }
 
     if lines.len() == 1 {
-        // Single line: /** doc */
         format!("{}/** {} */\n", indent, lines[0].trim())
     } else {
-        // Multi-line: proper JSDoc format
         let mut out = format!("{}/**\n", indent);
         for line in lines {
             let trimmed = line.trim();
@@ -36,17 +36,16 @@ fn format_doc_comment(doc: &str, indent: &str) -> String {
 
 /// Generate caller interface (for making calls to the service).
 ///
-/// r[impl channeling.caller-pov] - Caller uses Tx for args, Rx for returns.
-pub fn generate_caller_interface(service: &ServiceDetail) -> String {
+/// r[impl rpc.channel.binding] - Caller binds channels in args.
+pub fn generate_caller_interface(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
-    let service_name = service.name.to_upper_camel_case();
+    let service_name = service.service_name.to_upper_camel_case();
 
     out.push_str(&format!("// Caller interface for {service_name}\n"));
     out.push_str(&format!("export interface {service_name}Caller {{\n"));
 
-    for method in &service.methods {
+    for method in service.methods {
         let method_name = method.method_name.to_lower_camel_case();
-        // Caller args: Tx stays Tx, Rx stays Rx
         let args = method
             .args
             .iter()
@@ -54,13 +53,12 @@ pub fn generate_caller_interface(service: &ServiceDetail) -> String {
                 format!(
                     "{}: {}",
                     a.name.to_lower_camel_case(),
-                    ts_type_client_arg(a.ty)
+                    ts_type_client_arg(a.shape)
                 )
             })
             .collect::<Vec<_>>()
             .join(", ");
-        // Caller returns - CallBuilder for fluent API with metadata support
-        let ret_ty = ts_type_client_return(method.return_type);
+        let ret_ty = ts_type_client_return(method.return_shape);
 
         if let Some(doc) = &method.doc {
             out.push_str(&format_doc_comment(doc, "  "));
@@ -74,16 +72,17 @@ pub fn generate_caller_interface(service: &ServiceDetail) -> String {
     out
 }
 
-/// Generate client implementation (for making calls to the service).
+/// Generate client implementation.
 ///
-/// Uses schema-driven encoding/decoding via `encodeWithSchema`/`decodeWithSchema`.
-/// Returns CallBuilder for fluent metadata API.
-pub fn generate_client_impl(service: &ServiceDetail) -> String {
-    use crate::render::hex_u64;
-
+/// Each method:
+/// 1. Looks up its `MethodDescriptor` from the service descriptor by index
+/// 2. Binds any channel args (via `bindChannels` if streaming)
+/// 3. Calls `caller.call({ method, args, descriptor, ... })`
+/// 4. The runtime encodes/decodes using the descriptor's schemas
+pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
-    let service_name = service.name.to_upper_camel_case();
-    let service_name_lower = service.name.to_lower_camel_case();
+    let service_name = service.service_name.to_upper_camel_case();
+    let service_name_lower = service.service_name.to_lower_camel_case();
 
     out.push_str(&format!("// Client implementation for {service_name}\n"));
     out.push_str(&format!(
@@ -94,14 +93,11 @@ pub fn generate_client_impl(service: &ServiceDetail) -> String {
     out.push_str("    this.caller = caller;\n");
     out.push_str("  }\n\n");
 
-    for method in &service.methods {
+    for (method_idx, method) in service.methods.iter().enumerate() {
         let method_name = method.method_name.to_lower_camel_case();
-        let id = crate::method_id(method);
 
-        // Check if this method has channel args (Tx or Rx)
-        let has_streaming_args = method.args.iter().any(|a| is_tx(a.ty) || is_rx(a.ty));
+        let has_streaming_args = method.args.iter().any(|a| is_tx(a.shape) || is_rx(a.shape));
 
-        // Build args list
         let args = method
             .args
             .iter()
@@ -109,16 +105,14 @@ pub fn generate_client_impl(service: &ServiceDetail) -> String {
                 format!(
                     "{}: {}",
                     a.name.to_lower_camel_case(),
-                    ts_type_client_arg(a.ty)
+                    ts_type_client_arg(a.shape)
                 )
             })
             .collect::<Vec<_>>()
             .join(", ");
 
-        // Return type
-        let ret_ty = ts_type_client_return(method.return_type);
+        let ret_ty = ts_type_client_return(method.return_shape);
 
-        // Build args record for CallRequest
         let args_record = if method.args.is_empty() {
             "{}".to_string()
         } else {
@@ -137,12 +131,12 @@ pub fn generate_client_impl(service: &ServiceDetail) -> String {
             "  {method_name}({args}): CallBuilder<{ret_ty}> {{\n"
         ));
 
-        // Get schema reference
+        // Get the method descriptor by index (known at codegen time)
         out.push_str(&format!(
-            "    const schema = {service_name_lower}_schemas.{method_name};\n"
+            "    const descriptor = {service_name_lower}_descriptor.methods[{method_idx}];\n"
         ));
 
-        // If method has channel args, bind channels first (outside the executor)
+        // Bind channel args if streaming
         if has_streaming_args {
             let arg_names: Vec<_> = method
                 .args
@@ -151,65 +145,58 @@ pub fn generate_client_impl(service: &ServiceDetail) -> String {
                 .collect();
             out.push_str("    // Bind any Tx/Rx channels in arguments and collect channel IDs\n");
             out.push_str(&format!(
-                "    const channels = bindChannels(\n      schema.args,\n      [{}],\n      this.caller.getChannelAllocator(),\n      this.caller.getChannelRegistry(),\n      {service_name_lower}_serializers,\n    );\n",
+                "    const channels = bindChannels(\n      descriptor.args.elements,\n      [{}],\n      this.caller.getChannelAllocator(),\n      this.caller.getChannelRegistry(),\n    );\n",
                 arg_names.join(", ")
             ));
         }
 
-        // Start CallBuilder with executor function
         out.push_str("    return new CallBuilder(async (metadata) => {\n");
 
-        // Check if this method returns Result<T, E>
-        let is_fallible = matches!(classify_shape(method.return_type), ShapeKind::Result { .. });
+        let is_fallible = matches!(
+            classify_shape(method.return_shape),
+            ShapeKind::Result { .. }
+        );
 
         if is_fallible {
-            // Fallible method: caller.call() throws RpcError on user errors
-            // We need to catch and decode the error payload
             out.push_str("      try {\n");
-            out.push_str("        const response = await this.caller.call({\n");
-            out.push_str(&format!("          methodId: {}n,\n", hex_u64(id)));
+            out.push_str("        const value = await this.caller.call({\n");
             out.push_str(&format!(
                 "          method: \"{}.{}\",\n",
                 service_name, method_name
             ));
             out.push_str(&format!("          args: {},\n", args_record));
-            out.push_str("          schema,\n");
+            out.push_str("          descriptor,\n");
             if has_streaming_args {
                 out.push_str("          channels,\n");
             }
             out.push_str("          metadata,\n");
             out.push_str("        });\n");
             out.push_str(&format!(
-                "        return {{ ok: true, value: response }} as {ret_ty};\n"
+                "        return {{ ok: true, value }} as {ret_ty};\n"
             ));
             out.push_str("      } catch (e) {\n");
-            out.push_str("        if (e instanceof RpcError && e.isUserError() && e.payload && schema.error) {\n");
-            out.push_str(
-                "          const error = decodeWithSchema(e.payload, 0, schema.error).value;\n",
-            );
+            out.push_str("        if (e instanceof RpcError && e.isUserError()) {\n");
             out.push_str(&format!(
-                "          return {{ ok: false, error }} as {ret_ty};\n"
+                "          return {{ ok: false, error: e.userError }} as {ret_ty};\n"
             ));
             out.push_str("        }\n");
             out.push_str("        throw e;\n");
             out.push_str("      }\n");
             out.push_str("    });\n");
         } else {
-            // Infallible method: no error handling needed
-            out.push_str("      const response = await this.caller.call({\n");
-            out.push_str(&format!("        methodId: {}n,\n", hex_u64(id)));
+            out.push_str("      const value = await this.caller.call({\n");
             out.push_str(&format!(
                 "        method: \"{}.{}\",\n",
                 service_name, method_name
             ));
             out.push_str(&format!("        args: {},\n", args_record));
-            out.push_str("        schema,\n");
+            out.push_str("        descriptor,\n");
             if has_streaming_args {
                 out.push_str("        channels,\n");
             }
             out.push_str("        metadata,\n");
             out.push_str("      });\n");
-            out.push_str(&format!("      return response as {ret_ty};\n"));
+            out.push_str(&format!("      return value as {ret_ty};\n"));
             out.push_str("    });\n");
         }
 
@@ -221,10 +208,8 @@ pub fn generate_client_impl(service: &ServiceDetail) -> String {
 }
 
 /// Generate a connect() helper function for WebSocket connections.
-pub fn generate_connect_function(service: &ServiceDetail) -> String {
-    use heck::ToUpperCamelCase;
-
-    let service_name = service.name.to_upper_camel_case();
+pub fn generate_connect_function(service: &ServiceDescriptor) -> String {
+    let service_name = service.service_name.to_upper_camel_case();
 
     let mut out = String::new();
     out.push_str(&format!(
@@ -248,7 +233,7 @@ pub fn generate_connect_function(service: &ServiceDetail) -> String {
 }
 
 /// Generate complete client code (interface + implementation + connect helper).
-pub fn generate_client(service: &ServiceDetail) -> String {
+pub fn generate_client(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
     out.push_str(&generate_caller_interface(service));
     out.push_str(&generate_client_impl(service));

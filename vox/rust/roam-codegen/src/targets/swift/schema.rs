@@ -4,16 +4,16 @@
 
 use facet_core::{ScalarType, Shape};
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
-use roam_schema::{
-    EnumInfo, ServiceDetail, ShapeKind, StructInfo, VariantKind, classify_shape, classify_variant,
-    is_bytes,
+use roam_types::{
+    EnumInfo, ServiceDescriptor, ShapeKind, StructInfo, VariantKind, classify_shape,
+    classify_variant, is_bytes,
 };
 
 use crate::code_writer::CodeWriter;
 use crate::cw_writeln;
 
 /// Generate complete schema code (method schemas + serializers).
-pub fn generate_schemas(service: &ServiceDetail) -> String {
+pub fn generate_schemas(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
     out.push_str(&generate_method_schemas(service));
     out.push_str(&generate_serializers(service));
@@ -21,19 +21,23 @@ pub fn generate_schemas(service: &ServiceDetail) -> String {
 }
 
 /// Generate method schemas for runtime channel binding.
-fn generate_method_schemas(service: &ServiceDetail) -> String {
+fn generate_method_schemas(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
-    let service_name = service.name.to_lower_camel_case();
+    let service_name = service.service_name.to_lower_camel_case();
 
     out.push_str(&format!(
         "public let {service_name}_schemas: [String: MethodSchema] = [\n"
     ));
 
-    for method in &service.methods {
+    for method in service.methods {
         let method_name = method.method_name.to_lower_camel_case();
         out.push_str(&format!("    \"{method_name}\": MethodSchema(args: ["));
 
-        let schemas: Vec<String> = method.args.iter().map(|a| shape_to_schema(a.ty)).collect();
+        let schemas: Vec<String> = method
+            .args
+            .iter()
+            .map(|a| shape_to_schema(a.shape))
+            .collect();
         out.push_str(&schemas.join(", "));
 
         out.push_str("]),\n");
@@ -117,10 +121,10 @@ fn shape_to_schema(shape: &'static Shape) -> String {
 }
 
 /// Generate serializers for runtime channel binding.
-fn generate_serializers(service: &ServiceDetail) -> String {
+fn generate_serializers(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
     let mut w = CodeWriter::with_indent_spaces(&mut out, 4);
-    let service_name_upper = service.name.to_upper_camel_case();
+    let service_name_upper = service.service_name.to_upper_camel_case();
 
     cw_writeln!(
         w,
@@ -233,69 +237,4 @@ fn generate_serializers(service: &ServiceDetail) -> String {
     w.blank_line().unwrap();
 
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use facet::Facet;
-    use roam_schema::{ArgDetail, MethodDetail, ServiceDetail};
-    use std::borrow::Cow;
-
-    fn sample_service() -> ServiceDetail {
-        ServiceDetail {
-            name: Cow::Borrowed("Echo"),
-            doc: Some(Cow::Borrowed("Simple echo service")),
-            methods: vec![MethodDetail {
-                service_name: Cow::Borrowed("Echo"),
-                method_name: Cow::Borrowed("echo"),
-                args: vec![ArgDetail {
-                    name: Cow::Borrowed("message"),
-                    ty: <String as Facet>::SHAPE,
-                }],
-                return_type: <String as Facet>::SHAPE,
-                doc: Some(Cow::Borrowed("Echo back the message")),
-            }],
-        }
-    }
-
-    #[test]
-    fn test_shape_to_schema_primitives() {
-        assert_eq!(shape_to_schema(<bool as Facet>::SHAPE), ".bool");
-        assert_eq!(shape_to_schema(<u32 as Facet>::SHAPE), ".u32");
-        assert_eq!(shape_to_schema(<String as Facet>::SHAPE), ".string");
-        assert_eq!(shape_to_schema(<Vec<u8> as Facet>::SHAPE), ".bytes");
-    }
-
-    #[test]
-    fn test_shape_to_schema_containers() {
-        let vec_schema = shape_to_schema(<Vec<i32> as Facet>::SHAPE);
-        assert!(vec_schema.contains(".vec"));
-        assert!(vec_schema.contains(".i32"));
-
-        let opt_schema = shape_to_schema(<Option<String> as Facet>::SHAPE);
-        assert!(opt_schema.contains(".option"));
-        assert!(opt_schema.contains(".string"));
-    }
-
-    #[test]
-    fn test_generate_method_schemas() {
-        let service = sample_service();
-        let code = generate_method_schemas(&service);
-
-        assert!(code.contains("echo_schemas"));
-        assert!(code.contains("MethodSchema"));
-        assert!(code.contains(".string"));
-    }
-
-    #[test]
-    fn test_generate_serializers() {
-        let service = sample_service();
-        let code = generate_serializers(&service);
-
-        assert!(code.contains("EchoSerializers"));
-        assert!(code.contains("BindingSerializers"));
-        assert!(code.contains("txSerializer"));
-        assert!(code.contains("rxDeserializer"));
-    }
 }

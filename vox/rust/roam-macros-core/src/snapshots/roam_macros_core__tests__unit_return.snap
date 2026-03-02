@@ -1,0 +1,128 @@
+---
+source: rust/roam-macros-core/src/lib.rs
+assertion_line: 762
+expression: "generate(quote! { trait Notifier { async fn notify(&self, msg: String); } })"
+---
+#[allow(non_snake_case, clippy::all)]
+pub fn notifier_service_descriptor() -> &'static ::roam::session::ServiceDescriptor {
+    static DESCRIPTOR: std::sync::OnceLock<&'static ::roam::session::ServiceDescriptor> =
+        std::sync::OnceLock::new();
+    DESCRIPTOR.get_or_init(|| {
+        let methods: Vec<&'static ::roam::session::MethodDescriptor> =
+            vec![::roam::hash::method_descriptor::<(String,), ()>(
+                "Notifier",
+                "notify",
+                &["msg"],
+                None,
+            )];
+        Box::leak(Box::new(::roam::session::ServiceDescriptor {
+            service_name: "Notifier",
+            methods: Box::leak(methods.into_boxed_slice()),
+            doc: None,
+        }))
+    })
+}
+pub trait Notifier
+where
+    Self: Send + Sync,
+{
+    fn notify(&self, msg: String) -> impl std::future::Future<Output = ()> + Send;
+}
+#[doc = r" Dispatcher for this service."]
+#[doc = r""]
+#[doc = r" Wraps a handler and implements [`#roam::Handler`] by routing incoming"]
+#[doc = r" calls to the appropriate trait method by method ID."]
+#[derive(Clone)]
+pub struct NotifierDispatcher<H> {
+    handler: H,
+}
+impl<H> NotifierDispatcher<H>
+where
+    H: Notifier + Clone + Send + Sync + 'static,
+{
+    #[doc = r" Create a new dispatcher wrapping the given handler."]
+    pub fn new(handler: H) -> Self {
+        Self { handler }
+    }
+}
+impl<H, R> ::roam::Handler<R> for NotifierDispatcher<H>
+where
+    H: Notifier + Clone + Send + Sync + 'static,
+    R: ::roam::ReplySink,
+{
+    async fn handle(&self, call: ::roam::SelfRef<::roam::RequestCall<'static>>, reply: R) {
+        let method_id = call.method_id;
+        let args_bytes = match &call.args {
+            ::roam::Payload::Incoming(bytes) => bytes,
+            _ => {
+                reply
+                    .send_error(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)
+                    .await;
+                return;
+            }
+        };
+        if method_id == notifier_service_descriptor().methods[0usize].id {
+            let args: (String,) = match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
+                Ok(v) => v,
+                Err(_) => {
+                    reply
+                        .send_error(
+                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload,
+                        )
+                        .await;
+                    return;
+                }
+            };
+            let (msg,) = args;
+            let value = self.handler.notify(msg).await;
+            let sink_call = ::roam::SinkCall::new(reply);
+            ::roam::Call::<(), ::core::convert::Infallible>::ok(sink_call, value).await;
+            return;
+        }
+        reply
+            .send_error(::roam::RoamError::<::core::convert::Infallible>::UnknownMethod)
+            .await;
+    }
+}
+#[doc = "Client for the `Notifier` service.\n\nGeneric over any [`Caller`](:: roam::Caller) implementation."]
+#[derive(Clone)]
+pub struct NotifierClient<C: ::roam::Caller> {
+    caller: C,
+}
+impl<C: ::roam::Caller> NotifierClient<C> {
+    #[doc = r" Create a new client wrapping the given caller."]
+    pub fn new(caller: C) -> Self {
+        Self { caller }
+    }
+    pub async fn notify(&self, msg: String) -> Result<(), ::roam::RoamError> {
+        let method_id = notifier_service_descriptor().methods[0usize].id;
+        let args = (msg,);
+        let channels = vec![];
+        let req = ::roam::RequestCall {
+            method_id,
+            args: ::roam::Payload::outgoing(&args),
+            channels,
+            metadata: Default::default(),
+        };
+        let response = self.caller.call(req).await.map_err(|e| match e {
+            ::roam::RoamError::UnknownMethod => {
+                ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
+            }
+            ::roam::RoamError::InvalidPayload => {
+                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+            }
+            ::roam::RoamError::Cancelled => {
+                ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+            }
+            ::roam::RoamError::User(never) => match never {},
+        })?;
+        let ret_bytes = match &response.ret {
+            ::roam::Payload::Incoming(bytes) => bytes,
+            _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
+        };
+        let result: Result<(), ::roam::RoamError<::core::convert::Infallible>> =
+            ::roam::facet_postcard::from_slice(ret_bytes)
+                .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
+        result
+    }
+}

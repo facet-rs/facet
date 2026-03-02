@@ -5,33 +5,10 @@
 export { LengthPrefixedFramed } from "./framing.ts";
 export { Server, type ConnectOptions } from "./transport.ts";
 
-// Re-export Connection and protocol types from core
+// Re-export only the minimal connection surface needed by TCP consumers.
 export {
   Connection,
   type Negotiated,
   ConnectionError,
-  helloExchangeAcceptor,
-  helloExchangeInitiator,
   type HelloExchangeOptions,
-  type ServiceDispatcher,
-  type ChannelingDispatcher,
-  defaultHello,
-} from "@bearcove/roam-core";
-
-// Re-export channel types from core for convenience
-export {
-  type ChannelId,
-  Role,
-  ChannelError,
-  ChannelIdAllocator,
-  ChannelRegistry,
-  OutgoingSender,
-  Tx,
-  Rx,
-  createServerTx,
-  createServerRx,
-  type OutgoingMessage,
-  type OutgoingPoll,
-  type TaskMessage,
-  type TaskSender,
 } from "@bearcove/roam-core";

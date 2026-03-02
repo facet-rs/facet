@@ -9,14 +9,14 @@ use std::collections::HashSet;
 
 use facet_core::{ScalarType, Shape};
 use heck::ToLowerCamelCase;
-use roam_schema::{
-    EnumInfo, ServiceDetail, ShapeKind, StructInfo, VariantKind, classify_shape, classify_variant,
-    is_bytes, is_rx, is_tx,
+use roam_types::{
+    EnumInfo, RpcPlan, ServiceDescriptor, ShapeKind, StructInfo, VariantKind, classify_shape,
+    classify_variant, is_bytes, is_rx, is_tx,
 };
 
 /// Collect all named types (structs and enums with a name) from a service.
 /// Returns a vector of (name, Shape) pairs in dependency order.
-pub fn collect_named_types(service: &ServiceDetail) -> Vec<(String, &'static Shape)> {
+pub fn collect_named_types(service: &ServiceDescriptor) -> Vec<(String, &'static Shape)> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut types = Vec::new();
 
@@ -85,11 +85,11 @@ pub fn collect_named_types(service: &ServiceDetail) -> Vec<(String, &'static Sha
         }
     }
 
-    for method in &service.methods {
-        for arg in &method.args {
-            visit(arg.ty, &mut seen, &mut types);
+    for method in service.methods {
+        for arg in method.args {
+            visit(arg.shape, &mut seen, &mut types);
         }
-        visit(method.return_type, &mut seen, &mut types);
+        visit(method.return_shape, &mut seen, &mut types);
     }
 
     types
@@ -277,9 +277,8 @@ pub fn swift_type_client_arg(shape: &'static Shape) -> String {
 
 /// Convert Shape to Swift type string for client returns.
 pub fn swift_type_client_return(shape: &'static Shape) -> String {
+    assert_no_channels_in_return_shape(shape);
     match classify_shape(shape) {
-        ShapeKind::Tx { inner } => format!("UnboundTx<{}>", swift_type_base(inner)),
-        ShapeKind::Rx { inner } => format!("UnboundRx<{}>", swift_type_base(inner)),
         ShapeKind::Scalar(ScalarType::Unit) => "Void".into(),
         ShapeKind::Tuple { elements: [] } => "Void".into(),
         _ => swift_type_base(shape),
@@ -297,9 +296,8 @@ pub fn swift_type_server_arg(shape: &'static Shape) -> String {
 
 /// Convert Shape to Swift type string for server returns.
 pub fn swift_type_server_return(shape: &'static Shape) -> String {
+    assert_no_channels_in_return_shape(shape);
     match classify_shape(shape) {
-        ShapeKind::Tx { inner } => format!("Tx<{}>", swift_type_base(inner)),
-        ShapeKind::Rx { inner } => format!("Rx<{}>", swift_type_base(inner)),
         ShapeKind::Scalar(ScalarType::Unit) => "Void".into(),
         ShapeKind::Tuple { elements: [] } => "Void".into(),
         _ => swift_type_base(shape),
@@ -318,26 +316,9 @@ pub fn format_doc(doc: &str, indent: &str) -> String {
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use facet::Facet;
-
-    #[test]
-    fn test_swift_type_base_primitives() {
-        assert_eq!(swift_type_base(<bool as Facet>::SHAPE), "Bool");
-        assert_eq!(swift_type_base(<u32 as Facet>::SHAPE), "UInt32");
-        assert_eq!(swift_type_base(<i64 as Facet>::SHAPE), "Int64");
-        assert_eq!(swift_type_base(<f32 as Facet>::SHAPE), "Float");
-        assert_eq!(swift_type_base(<f64 as Facet>::SHAPE), "Double");
-        assert_eq!(swift_type_base(<String as Facet>::SHAPE), "String");
-        assert_eq!(swift_type_base(<Vec<u8> as Facet>::SHAPE), "Data");
-        assert_eq!(swift_type_base(<() as Facet>::SHAPE), "Void");
-    }
-
-    #[test]
-    fn test_swift_type_base_containers() {
-        assert_eq!(swift_type_base(<Vec<i32> as Facet>::SHAPE), "[Int32]");
-        assert_eq!(swift_type_base(<Option<String> as Facet>::SHAPE), "String?");
-    }
+fn assert_no_channels_in_return_shape(shape: &'static Shape) {
+    assert!(
+        RpcPlan::for_shape(shape).channel_locations.is_empty(),
+        "channels are not allowed in return types"
+    );
 }

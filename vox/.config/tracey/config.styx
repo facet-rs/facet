@@ -3,136 +3,16 @@
 specs (
     {
         name roam
-        prefix r
-        include (docs/content/spec/**/*.md)
+        include (docs/content/spec/*.md)
         impls (
             {
                 name rust
-                include (
-                    rust/**/*.rs
-                    spec/**/*.rs
-                )
-                exclude (
-                    target/**
-                    rust/roam-hash/**
-                    rust/roam-wire/**
-                )
+                include (rust/**/*.rs)
+                exclude (rust-legacy/**/*.rs)
             }
             {
                 name swift
-                include (swift/**/*.swift)
-            }
-            {
-                name typescript
-                include (
-                    typescript/**/*.ts
-                    typescript/**/*.js
-                )
-            }
-            {
-                name go
-                include (go/**/*.go)
-            }
-            {
-                name java
-                include (java/**/*.java)
-            }
-            {
-                name python
-                include (python/**/*.py)
-            }
-        )
-    }
-
-    {
-        name shm
-        prefix shm
-        include (docs/content/shm-spec/**/*.md)
-        impls (
-            {
-                name rust
-                include (
-                    crates/**/*.rs
-                    rust/**/*.rs
-                )
-                exclude (target/**)
-            }
-        )
-    }
-
-    {
-        name rust
-        prefix rs
-        include (docs/content/rust-spec/**/*.md)
-        impls (
-            {
-                name rust
-                include (
-                    crates/**/*.rs
-                    rust/**/*.rs
-                )
-                exclude (target/**)
-            }
-        )
-    }
-
-    {
-        name multistream
-        prefix r
-        include (docs/content/multistream-spec/**/*.md)
-        impls (
-            {
-                name rust
-                include (rust/**/*.rs)
-                exclude (target/**)
-            }
-        )
-    }
-
-    {
-        name reconnect
-        prefix r
-        include (docs/content/reconnecting-client-spec/**/*.md)
-        impls (
-            {
-                name rust
-                include (
-                    rust/**/*.rs
-                    crates/**/*.rs
-                )
-                exclude (target/**)
-            }
-        )
-    }
-
-    {
-        name http
-        prefix r
-        include (docs/content/http-spec/**/*.md)
-        impls (
-            {
-                name rust
-                include (rust/**/*.rs)
-                exclude (target/**)
-            }
-            {
-                name typescript
-                include (
-                    typescript/**/*.ts
-                    typescript/**/*.js
-                )
-            }
-            {
-                name go
-                include (go/**/*.go)
-            }
-            {
-                name java
-                include (java/**/*.java)
-            }
-            {
-                name python
-                include (python/**/*.py)
+                include (swift/roam-runtime/**/*.swift)
             }
         )
     }

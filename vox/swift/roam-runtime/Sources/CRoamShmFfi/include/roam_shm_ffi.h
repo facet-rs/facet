@@ -8,6 +8,11 @@
 #include <stddef.h>
 
 /**
+ * Guest-side mmap attachments resolved by (map_id, map_generation).
+ */
+typedef struct RoamMmapAttachments RoamMmapAttachments;
+
+/**
  * Opaque wrapper around the Rust VarSlotPool (heap-allocated, Box'd).
  */
 typedef struct RoamVarSlotPool RoamVarSlotPool;
@@ -30,20 +35,51 @@ typedef struct RoamVarSlotHandle {
   uint32_t generation;
 } RoamVarSlotHandle;
 
+typedef struct RoamShmBootstrapResponseInfo {
+  uint8_t status;
+  uint32_t peer_id;
+  uint16_t payload_len;
+} RoamShmBootstrapResponseInfo;
+
 uint32_t roam_bipbuf_header_size(void);
 
 /**
  * Initialize a BipBuffer header. The caller must provide a zeroed 128-byte
  * region at `header_ptr` followed by `capacity` bytes of data space.
+ *
+ * # Safety
+ *
+ * `header_ptr` must point to a valid, zeroed, 128-byte-aligned region followed
+ * by at least `capacity` bytes of writable data space.
  */
 void roam_bipbuf_init(void *header_ptr, uint32_t capacity);
 
+/**
+ * # Safety
+ *
+ * `header_ptr` must point to a valid, initialized `BipBufHeader`.
+ */
 uint32_t roam_bipbuf_capacity(const void *header_ptr);
 
+/**
+ * # Safety
+ *
+ * `header_ptr` must point to a valid, initialized `BipBufHeader`.
+ */
 uint32_t roam_bipbuf_load_write_acquire(const void *header_ptr);
 
+/**
+ * # Safety
+ *
+ * `header_ptr` must point to a valid, initialized `BipBufHeader`.
+ */
 uint32_t roam_bipbuf_load_read_acquire(const void *header_ptr);
 
+/**
+ * # Safety
+ *
+ * `header_ptr` must point to a valid, initialized `BipBufHeader`.
+ */
 uint32_t roam_bipbuf_load_watermark_acquire(const void *header_ptr);
 
 /**
@@ -52,6 +88,13 @@ uint32_t roam_bipbuf_load_watermark_acquire(const void *header_ptr);
  * Returns 1 on success (offset written to `*out_offset`),
  * 0 if there isn't enough contiguous space (would block),
  * -1 if `len` exceeds the buffer capacity (error).
+ *
+ * # Safety
+ *
+ * - `header_ptr` must point to a valid, initialized `BipBufHeader` followed by
+ *   its data region.
+ * - `out_offset` must be non-null and writable.
+ * - Only one writer may call this concurrently.
  */
 int32_t roam_bipbuf_try_grant(void *header_ptr, uint32_t len, uint32_t *out_offset);
 
@@ -59,6 +102,11 @@ int32_t roam_bipbuf_try_grant(void *header_ptr, uint32_t len, uint32_t *out_offs
  * Commit `len` previously granted bytes, making them visible to the consumer.
  *
  * Returns 0 on success, -1 on overflow.
+ *
+ * # Safety
+ *
+ * - `header_ptr` must point to a valid, initialized `BipBufHeader`.
+ * - `len` must not exceed the previously granted region.
  */
 int32_t roam_bipbuf_commit(void *header_ptr, uint32_t len);
 
@@ -67,6 +115,13 @@ int32_t roam_bipbuf_commit(void *header_ptr, uint32_t len);
  *
  * On success, writes the readable region's offset and length to the out
  * pointers and returns 1. Returns 0 if the buffer is empty.
+ *
+ * # Safety
+ *
+ * - `header_ptr` must point to a valid, initialized `BipBufHeader` followed by
+ *   its data region.
+ * - `out_offset` and `out_len` must be non-null and writable.
+ * - Only one reader may call this concurrently.
  */
 int32_t roam_bipbuf_try_read(void *header_ptr, uint32_t *out_offset, uint32_t *out_len);
 
@@ -74,6 +129,11 @@ int32_t roam_bipbuf_try_read(void *header_ptr, uint32_t *out_offset, uint32_t *o
  * Release `len` bytes from the consumer side.
  *
  * Returns 0 on success, -1 on overflow.
+ *
+ * # Safety
+ *
+ * - `header_ptr` must point to a valid, initialized `BipBufHeader`.
+ * - `len` must not exceed the previously read region.
  */
 int32_t roam_bipbuf_release(void *header_ptr, uint32_t len);
 
@@ -82,6 +142,12 @@ int32_t roam_bipbuf_release(void *header_ptr, uint32_t len);
  *
  * Does NOT initialize the pool — call `roam_var_slot_pool_init` for that.
  * Returns a heap-allocated opaque handle, or null on failure.
+ *
+ * # Safety
+ *
+ * - `region_ptr` must point to a valid shared-memory region of at least
+ *   `region_len` bytes, and must remain valid for the lifetime of the pool.
+ * - `classes` must point to a valid array of `num_classes` `RoamSizeClass` entries.
  */
 struct RoamVarSlotPool *roam_var_slot_pool_attach(uint8_t *region_ptr,
                                                   uintptr_t region_len,
@@ -91,11 +157,22 @@ struct RoamVarSlotPool *roam_var_slot_pool_attach(uint8_t *region_ptr,
 
 /**
  * Initialize all extent-0 slots and free lists. Call once during segment creation.
+ *
+ * # Safety
+ *
+ * `pool` must be a valid pointer returned by `roam_var_slot_pool_attach`.
+ * The underlying region must be writable and large enough for the configured
+ * size classes.
  */
 void roam_var_slot_pool_init(struct RoamVarSlotPool *pool);
 
 /**
  * Update the region pointer after a resize/remap.
+ *
+ * # Safety
+ *
+ * - `pool` must be a valid pointer returned by `roam_var_slot_pool_attach`.
+ * - `region_ptr` must point to a valid region of at least `region_len` bytes.
  */
 void roam_var_slot_pool_update_region(struct RoamVarSlotPool *pool,
                                       uint8_t *region_ptr,
@@ -105,6 +182,11 @@ void roam_var_slot_pool_update_region(struct RoamVarSlotPool *pool,
  * Allocate a slot that can hold `size` bytes.
  *
  * Returns 1 on success (handle written to `*out_handle`), 0 if exhausted.
+ *
+ * # Safety
+ *
+ * - `pool` must be a valid pointer returned by `roam_var_slot_pool_attach`.
+ * - `out_handle` must be non-null and writable.
  */
 int32_t roam_var_slot_pool_alloc(const struct RoamVarSlotPool *pool,
                                  uint32_t size,
@@ -115,6 +197,10 @@ int32_t roam_var_slot_pool_alloc(const struct RoamVarSlotPool *pool,
  * Transition a slot from Allocated to InFlight.
  *
  * Returns 0 on success, -1 on error (generation mismatch or wrong state).
+ *
+ * # Safety
+ *
+ * `pool` must be a valid pointer returned by `roam_var_slot_pool_attach`.
  */
 int32_t roam_var_slot_pool_mark_in_flight(const struct RoamVarSlotPool *pool,
                                           struct RoamVarSlotHandle handle);
@@ -123,6 +209,10 @@ int32_t roam_var_slot_pool_mark_in_flight(const struct RoamVarSlotPool *pool,
  * Free an in-flight slot back to its pool.
  *
  * Returns 0 on success, -1 on error.
+ *
+ * # Safety
+ *
+ * `pool` must be a valid pointer returned by `roam_var_slot_pool_attach`.
  */
 int32_t roam_var_slot_pool_free(const struct RoamVarSlotPool *pool,
                                 struct RoamVarSlotHandle handle);
@@ -131,6 +221,10 @@ int32_t roam_var_slot_pool_free(const struct RoamVarSlotPool *pool,
  * Free an allocated (never sent) slot back to its pool.
  *
  * Returns 0 on success, -1 on error.
+ *
+ * # Safety
+ *
+ * `pool` must be a valid pointer returned by `roam_var_slot_pool_attach`.
  */
 int32_t roam_var_slot_pool_free_allocated(const struct RoamVarSlotPool *pool,
                                           struct RoamVarSlotHandle handle);
@@ -139,6 +233,11 @@ int32_t roam_var_slot_pool_free_allocated(const struct RoamVarSlotPool *pool,
  * Get a pointer to the slot's payload data area.
  *
  * Returns null if the handle is invalid.
+ *
+ * # Safety
+ *
+ * `pool` must be a valid pointer returned by `roam_var_slot_pool_attach`.
+ * The returned pointer is only valid while the pool and its region remain alive.
  */
 uint8_t *roam_var_slot_pool_payload_ptr(const struct RoamVarSlotPool *pool,
                                         struct RoamVarSlotHandle handle);
@@ -147,6 +246,10 @@ uint8_t *roam_var_slot_pool_payload_ptr(const struct RoamVarSlotPool *pool,
  * Get the current state of a slot.
  *
  * Returns 0 = Free, 1 = Allocated, 2 = InFlight, -1 = invalid handle.
+ *
+ * # Safety
+ *
+ * `pool` must be a valid pointer returned by `roam_var_slot_pool_attach`.
  */
 int32_t roam_var_slot_pool_slot_state(const struct RoamVarSlotPool *pool,
                                       struct RoamVarSlotHandle handle);
@@ -155,37 +258,200 @@ int32_t roam_var_slot_pool_slot_state(const struct RoamVarSlotPool *pool,
  * Get the slot size for a given class index.
  *
  * Returns 0 if the class index is out of range.
+ *
+ * # Safety
+ *
+ * `pool` must be a valid pointer returned by `roam_var_slot_pool_attach`.
  */
 uint32_t roam_var_slot_pool_slot_size(const struct RoamVarSlotPool *pool, uint8_t class_idx);
 
 /**
  * Recover all slots owned by a crashed peer.
+ *
+ * # Safety
+ *
+ * `pool` must be a valid pointer returned by `roam_var_slot_pool_attach`.
  */
 void roam_var_slot_pool_recover_peer(const struct RoamVarSlotPool *pool, uint8_t peer_id);
 
 /**
  * Calculate the total size needed for a variable slot pool (extent 0 only).
+ *
+ * # Safety
+ *
+ * `classes` must point to a valid array of `num_classes` `RoamSizeClass` entries.
  */
 uint64_t roam_var_slot_pool_calculate_size(const struct RoamSizeClass *classes,
                                            uintptr_t num_classes);
 
 /**
  * Destroy a VarSlotPool, freeing its heap allocation.
+ *
+ * # Safety
+ *
+ * `pool` must be either null or a valid pointer previously returned by
+ * `roam_var_slot_pool_attach`. After this call, `pool` is dangling and must
+ * not be used again.
  */
 void roam_var_slot_pool_destroy(struct RoamVarSlotPool *pool);
 
+int32_t roam_shm_bootstrap_request_encode(const uint8_t *sid_ptr,
+                                          uintptr_t sid_len,
+                                          uint8_t *out_buf,
+                                          uintptr_t out_buf_len,
+                                          uintptr_t *out_written);
+
+int32_t roam_shm_bootstrap_request_decode(const uint8_t *buf_ptr,
+                                          uintptr_t buf_len,
+                                          const uint8_t **out_sid_ptr,
+                                          uint16_t *out_sid_len);
+
+int32_t roam_shm_bootstrap_response_encode(uint8_t status,
+                                           uint32_t peer_id,
+                                           const uint8_t *payload_ptr,
+                                           uintptr_t payload_len,
+                                           uint8_t *out_buf,
+                                           uintptr_t out_buf_len,
+                                           uintptr_t *out_written);
+
+int32_t roam_shm_bootstrap_response_decode(const uint8_t *buf_ptr,
+                                           uintptr_t buf_len,
+                                           struct RoamShmBootstrapResponseInfo *out_info,
+                                           const uint8_t **out_payload_ptr);
+
+int32_t roam_shm_bootstrap_response_send_unix(int32_t control_fd,
+                                              uint8_t status,
+                                              uint32_t peer_id,
+                                              const uint8_t *payload_ptr,
+                                              uintptr_t payload_len,
+                                              int32_t doorbell_fd,
+                                              int32_t segment_fd,
+                                              int32_t mmap_control_fd);
+
+int32_t roam_shm_bootstrap_response_recv_unix(int32_t control_fd,
+                                              uint8_t *payload_buf,
+                                              uintptr_t payload_buf_len,
+                                              struct RoamShmBootstrapResponseInfo *out_info,
+                                              int32_t *out_doorbell_fd,
+                                              int32_t *out_segment_fd,
+                                              int32_t *out_mmap_control_fd);
+
+uint32_t roam_shm_bootstrap_request_header_size(void);
+
+uint32_t roam_shm_bootstrap_response_header_size(void);
+
+/**
+ * Send one mmap attach message (fd + map metadata) over a Unix control socket.
+ *
+ * Returns 0 on success, -1 on error.
+ */
+int32_t roam_mmap_control_send(int32_t control_fd,
+                               int32_t mapping_fd,
+                               uint32_t map_id,
+                               uint32_t map_generation,
+                               uint64_t mapping_length);
+
+/**
+ * Create a guest-side mmap attachment registry from a control socket fd.
+ *
+ * Returns null on invalid fd or setup failure.
+ */
+struct RoamMmapAttachments *roam_mmap_attachments_create(int32_t control_fd);
+
+/**
+ * Drain all pending mmap attach messages from the control socket.
+ *
+ * Returns number of mappings attached, or -1 on error.
+ *
+ * # Safety
+ *
+ * `attachments` must be a valid pointer returned by `roam_mmap_attachments_create`.
+ */
+int32_t roam_mmap_attachments_drain_control(struct RoamMmapAttachments *attachments);
+
+/**
+ * Resolve an mmap-ref tuple to a direct payload pointer.
+ *
+ * Return codes:
+ * - 0: success
+ * - -1: invalid arguments / internal error
+ * - -2: unknown mapping (map_id, map_generation not attached)
+ * - -3: offset+len overflow
+ * - -4: out of bounds for mapping length
+ *
+ * # Safety
+ *
+ * - `attachments` must be valid and created by `roam_mmap_attachments_create`.
+ * - `out_ptr` must be non-null and writable.
+ */
+int32_t roam_mmap_attachments_resolve_ptr(const struct RoamMmapAttachments *attachments,
+                                          uint32_t map_id,
+                                          uint32_t map_generation,
+                                          uint64_t map_offset,
+                                          uint32_t payload_len,
+                                          const uint8_t **out_ptr);
+
+/**
+ * Destroy mmap attachments and free all attached mapping resources.
+ *
+ * # Safety
+ *
+ * `attachments` must be null or a valid pointer returned by
+ * `roam_mmap_attachments_create`.
+ */
+void roam_mmap_attachments_destroy(struct RoamMmapAttachments *attachments);
+
+/**
+ * # Safety
+ *
+ * `ptr` must point to a naturally-aligned `u32` in valid shared memory.
+ */
 uint32_t roam_atomic_load_u32_acquire(const uint32_t *ptr);
 
+/**
+ * # Safety
+ *
+ * `ptr` must point to a naturally-aligned `u32` in valid shared memory.
+ */
 void roam_atomic_store_u32_release(uint32_t *ptr, uint32_t value);
 
+/**
+ * # Safety
+ *
+ * - `ptr` must point to a naturally-aligned `u32` in valid shared memory.
+ * - `expected` must be non-null and writable (updated with the actual value on
+ *   failure).
+ */
 int32_t roam_atomic_compare_exchange_u32(uint32_t *ptr, uint32_t *expected, uint32_t desired);
 
+/**
+ * # Safety
+ *
+ * `ptr` must point to a naturally-aligned `u32` in valid shared memory.
+ */
 uint32_t roam_atomic_fetch_add_u32(uint32_t *ptr, uint32_t value);
 
+/**
+ * # Safety
+ *
+ * `ptr` must point to a naturally-aligned `u64` in valid shared memory.
+ */
 uint64_t roam_atomic_load_u64_acquire(const uint64_t *ptr);
 
+/**
+ * # Safety
+ *
+ * `ptr` must point to a naturally-aligned `u64` in valid shared memory.
+ */
 void roam_atomic_store_u64_release(uint64_t *ptr, uint64_t value);
 
+/**
+ * # Safety
+ *
+ * - `ptr` must point to a naturally-aligned `u64` in valid shared memory.
+ * - `expected` must be non-null and writable (updated with the actual value on
+ *   failure).
+ */
 int32_t roam_atomic_compare_exchange_u64(uint64_t *ptr, uint64_t *expected, uint64_t desired);
 
 #endif  /* ROAM_SHM_FFI_H */

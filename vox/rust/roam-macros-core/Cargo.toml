@@ -1,0 +1,23 @@
+[package]
+name = "roam-macros-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Code generation core for roam RPC service macros"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+roam-macros-parse.workspace = true
+proc-macro2 = "1"
+quote = "1"
+heck.workspace = true
+facet-cargo-toml.workspace = true
+
+[dev-dependencies]
+insta = "1"

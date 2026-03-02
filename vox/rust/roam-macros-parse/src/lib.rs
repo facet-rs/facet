@@ -221,6 +221,27 @@ impl GenericArgument {
         }
     }
 
+    pub fn has_named_lifetime(&self, name: &str) -> bool {
+        match self {
+            GenericArgument::Lifetime(lifetime) => lifetime.ident == name,
+            GenericArgument::Type(ty) => ty.has_named_lifetime(name),
+        }
+    }
+
+    pub fn has_non_named_lifetime(&self, name: &str) -> bool {
+        match self {
+            GenericArgument::Lifetime(lifetime) => lifetime.ident != name,
+            GenericArgument::Type(ty) => ty.has_non_named_lifetime(name),
+        }
+    }
+
+    pub fn has_elided_reference_lifetime(&self) -> bool {
+        match self {
+            GenericArgument::Lifetime(_) => false,
+            GenericArgument::Type(ty) => ty.has_elided_reference_lifetime(),
+        }
+    }
+
     pub fn contains_channel(&self) -> bool {
         match self {
             GenericArgument::Lifetime(_) => false,
@@ -261,6 +282,62 @@ impl Type {
                 args.iter().any(|t| t.value.has_lifetime())
             }
             Type::Tuple(TypeTuple(group)) => group.content.iter().any(|t| t.value.has_lifetime()),
+            Type::Path(_) => false,
+        }
+    }
+
+    /// Check if type contains the named lifetime anywhere in the tree.
+    pub fn has_named_lifetime(&self, name: &str) -> bool {
+        match self {
+            Type::Reference(TypeRef {
+                lifetime: Some(lifetime),
+                ..
+            }) => lifetime.second == name,
+            Type::Reference(TypeRef { inner, .. }) => inner.has_named_lifetime(name),
+            Type::PathWithGenerics(PathWithGenerics { args, .. }) => {
+                args.iter().any(|t| t.value.has_named_lifetime(name))
+            }
+            Type::Tuple(TypeTuple(group)) => group
+                .content
+                .iter()
+                .any(|t| t.value.has_named_lifetime(name)),
+            Type::Path(_) => false,
+        }
+    }
+
+    /// Check if type contains any named lifetime other than `name`.
+    pub fn has_non_named_lifetime(&self, name: &str) -> bool {
+        match self {
+            Type::Reference(TypeRef {
+                lifetime: Some(lifetime),
+                ..
+            }) => lifetime.second != name,
+            Type::Reference(TypeRef { inner, .. }) => inner.has_non_named_lifetime(name),
+            Type::PathWithGenerics(PathWithGenerics { args, .. }) => {
+                args.iter().any(|t| t.value.has_non_named_lifetime(name))
+            }
+            Type::Tuple(TypeTuple(group)) => group
+                .content
+                .iter()
+                .any(|t| t.value.has_non_named_lifetime(name)),
+            Type::Path(_) => false,
+        }
+    }
+
+    /// Check if type contains any `&T` reference without an explicit lifetime.
+    ///
+    /// We require explicit `'roam` for borrowed RPC return payloads.
+    pub fn has_elided_reference_lifetime(&self) -> bool {
+        match self {
+            Type::Reference(TypeRef { lifetime: None, .. }) => true,
+            Type::Reference(TypeRef { inner, .. }) => inner.has_elided_reference_lifetime(),
+            Type::PathWithGenerics(PathWithGenerics { args, .. }) => {
+                args.iter().any(|t| t.value.has_elided_reference_lifetime())
+            }
+            Type::Tuple(TypeTuple(group)) => group
+                .content
+                .iter()
+                .any(|t| t.value.has_elided_reference_lifetime()),
             Type::Path(_) => false,
         }
     }
@@ -429,4 +506,146 @@ fn collect_doc_string(attrs: &Any<RawAttribute>) -> Option<String> {
 pub fn parse_trait(tokens: &TokenStream2) -> Result<ServiceTrait, unsynn::Error> {
     let mut iter = tokens.clone().to_token_iter();
     ServiceTrait::parse(&mut iter)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(src: &str) -> ServiceTrait {
+        let ts: TokenStream2 = src.parse().expect("tokenstream parse");
+        parse_trait(&ts).expect("trait parse")
+    }
+
+    #[test]
+    fn parse_trait_exposes_docs_methods_and_args() {
+        let trait_def = parse(
+            r#"
+            #[doc = "Calculator service."]
+            pub trait Calculator {
+                #[doc = "Adds two numbers."]
+                async fn add(&self, a: i32, b: i32) -> Result<i64, String>;
+            }
+            "#,
+        );
+
+        assert_eq!(trait_def.name(), "Calculator");
+        assert_eq!(trait_def.doc(), Some("Calculator service.".to_string()));
+
+        let method = trait_def.methods().next().expect("method");
+        assert_eq!(method.name(), "add");
+        assert_eq!(method.doc(), Some("Adds two numbers.".to_string()));
+        assert_eq!(
+            method.args().map(|arg| arg.name()).collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
+
+        let ret = method.return_type();
+        let (ok, err) = method_ok_and_err_types(&ret);
+        assert!(ok.as_result().is_none());
+        assert!(err.is_some());
+    }
+
+    #[test]
+    fn return_type_defaults_to_unit_when_omitted() {
+        let trait_def = parse(
+            r#"
+            trait Svc {
+                async fn ping(&self);
+            }
+            "#,
+        );
+        let method = trait_def.methods().next().expect("method");
+        let ret = method.return_type();
+        match ret {
+            Type::Tuple(TypeTuple(group)) => assert!(group.content.is_empty()),
+            other => panic!(
+                "expected unit tuple return, got {}",
+                other.to_token_stream()
+            ),
+        }
+    }
+
+    #[test]
+    fn method_helpers_detect_generics_and_mut_receiver() {
+        let trait_def = parse(
+            r#"
+            trait Svc {
+                async fn bad<T>(&mut self, value: T) -> T;
+            }
+            "#,
+        );
+        let method = trait_def.methods().next().expect("method");
+        assert!(method.has_generics());
+        assert!(method.is_mut_receiver());
+    }
+
+    #[test]
+    fn type_helpers_detect_result_lifetime_and_channel_nesting() {
+        let trait_def = parse(
+            r#"
+            trait Svc {
+                async fn stream(&self, input: &'static str) -> Result<Option<Tx<Vec<u8>>>, Rx<u32>>;
+            }
+            "#,
+        );
+        let method = trait_def.methods().next().expect("method");
+        let arg = method.args().next().expect("arg");
+        assert!(arg.ty.has_lifetime());
+        assert!(!arg.ty.contains_channel());
+
+        let ret = method.return_type();
+        let (ok, err) = method_ok_and_err_types(&ret);
+        assert!(ok.contains_channel());
+        assert!(err.expect("result err type").contains_channel());
+    }
+
+    #[test]
+    fn type_helpers_detect_named_and_elided_lifetimes() {
+        let trait_def = parse(
+            r#"
+            trait Svc {
+                async fn borrowed(&self) -> Result<&'roam str, Error>;
+                async fn bad_lifetime(&self) -> Result<&'a str, Error>;
+                async fn elided(&self) -> Result<&str, Error>;
+            }
+            "#,
+        );
+        let mut methods = trait_def.methods();
+
+        let borrowed = methods.next().expect("borrowed method").return_type();
+        let (borrowed_ok, _) = method_ok_and_err_types(&borrowed);
+        assert!(borrowed_ok.has_named_lifetime("roam"));
+        assert!(!borrowed_ok.has_non_named_lifetime("roam"));
+        assert!(!borrowed_ok.has_elided_reference_lifetime());
+
+        let bad_lifetime = methods.next().expect("bad_lifetime method").return_type();
+        let (bad_ok, _) = method_ok_and_err_types(&bad_lifetime);
+        assert!(!bad_ok.has_named_lifetime("roam"));
+        assert!(bad_ok.has_non_named_lifetime("roam"));
+        assert!(!bad_ok.has_elided_reference_lifetime());
+
+        let elided = methods.next().expect("elided method").return_type();
+        let (elided_ok, _) = method_ok_and_err_types(&elided);
+        assert!(!elided_ok.has_named_lifetime("roam"));
+        assert!(!elided_ok.has_non_named_lifetime("roam"));
+        assert!(elided_ok.has_elided_reference_lifetime());
+    }
+
+    #[test]
+    fn type_path_last_segment_uses_trailing_segment() {
+        let trait_def = parse(
+            r#"
+            trait Svc {
+                async fn f(&self) -> std::result::Result<u8, u8>;
+            }
+            "#,
+        );
+        let method = trait_def.methods().next().expect("method");
+        let ret = method.return_type();
+        let Type::PathWithGenerics(path_with_generics) = ret else {
+            panic!("expected path with generics");
+        };
+        assert_eq!(path_with_generics.path.last_segment(), "Result");
+    }
 }

@@ -6,10 +6,14 @@ import Darwin
 import Glibc
 #endif
 
+func writeStderr(_ msg: String) {
+    FileHandle.standardError.write(Data(msg.utf8))
+}
+
 func main() -> Int32 {
     let args = CommandLine.arguments
     guard args.count == 3 else {
-        fputs("usage: shm-bootstrap-client <control.sock> <sid>\n", stderr)
+        writeStderr("usage: shm-bootstrap-client <control.sock> <sid>\n")
         return 2
     }
 
@@ -19,11 +23,11 @@ func main() -> Int32 {
     do {
         let ticket = try requestShmBootstrapTicket(controlSocketPath: controlSock, sid: sid)
         if fcntl(ticket.doorbellFd, F_GETFD) == -1 {
-            fputs("invalid received fd\n", stderr)
+            writeStderr("invalid received fd\n")
             return 3
         }
         if fcntl(ticket.shmFd, F_GETFD) == -1 {
-            fputs("invalid received shm fd\n", stderr)
+            writeStderr("invalid received shm fd\n")
             return 3
         }
 
@@ -34,7 +38,7 @@ func main() -> Int32 {
         close(ticket.shmFd)
         return 0
     } catch {
-        fputs("bootstrap failed: \(error)\n", stderr)
+        writeStderr("bootstrap failed: \(error)\n")
         return 1
     }
 }

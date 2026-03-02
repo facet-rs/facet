@@ -1,33 +1,48 @@
 // Roam wire protocol types and utilities
-//
-// This package contains Roam-specific wire protocol types including
-// RPC error handling that follows the RAPACE specification,
-// and wire message types for the protocol.
 
-// ============================================================================
-// RPC Error Types
-// ============================================================================
-
-export { RpcError, RpcErrorCode, decodeRpcResult, decodeUserError, tryDecodeRpcResult, type RpcResult } from "./rpc_error.ts";
-
-// ============================================================================
-// Wire Types
-// ============================================================================
+export {
+  RpcError,
+  RpcErrorCode,
+  decodeUserError,
+} from "./rpc_error.ts";
 
 export type {
-  // Hello
-  HelloV4,
-  HelloV5,
-  HelloV6,
+  Parity,
+  ConnectionSettings,
   Hello,
-  // MetadataValue
+  HelloYourself,
+  ProtocolError,
+  Ping,
+  Pong,
   MetadataValueString,
   MetadataValueBytes,
   MetadataValueU64,
   MetadataValue,
+  MetadataFlagsRepr,
   MetadataEntry,
-  // Message
+  Metadata,
+  ConnectionOpen,
+  ConnectionAccept,
+  ConnectionReject,
+  ConnectionClose,
+  RequestCall,
+  RequestResponse,
+  RequestCancel,
+  RequestBody,
+  RequestMessage,
+  ChannelItem,
+  ChannelClose,
+  ChannelReset,
+  ChannelGrantCredit,
+  ChannelBody,
+  ChannelMessage,
+  MessagePayload,
+  Message,
   MessageHello,
+  MessageHelloYourself,
+  MessageProtocolError,
+  MessagePing,
+  MessagePong,
   MessageConnect,
   MessageAccept,
   MessageReject,
@@ -39,24 +54,24 @@ export type {
   MessageClose,
   MessageReset,
   MessageCredit,
-  Message,
 } from "./types.ts";
 
 export {
-  // Discriminants
-  MessageDiscriminant,
-  MetadataValueDiscriminant,
-  HelloDiscriminant,
-  // Metadata flags
   MetadataFlags,
-  // Factory functions
-  helloV4,
-  helloV5,
-  helloV6,
+  parityOdd,
+  parityEven,
+  connectionSettings,
+  helloV7,
+  helloYourself,
   metadataString,
   metadataBytes,
   metadataU64,
+  metadataEntry,
   messageHello,
+  messageHelloYourself,
+  messageProtocolError,
+  messagePing,
+  messagePong,
   messageConnect,
   messageAccept,
   messageReject,
@@ -70,35 +85,7 @@ export {
   messageCredit,
 } from "./types.ts";
 
-// ============================================================================
-// Wire Schemas
-// ============================================================================
-
 export {
-  HelloSchema,
-  MetadataValueSchema,
-  MetadataEntrySchema,
-  MessageSchema,
-  wireSchemaRegistry,
-  getHelloSchema,
-  getMetadataValueSchema,
-  getMetadataEntrySchema,
-  getMessageSchema,
-} from "./schemas.ts";
-
-// ============================================================================
-// Wire Codec
-// ============================================================================
-
-export {
-  encodeHello,
-  decodeHello,
-  encodeMetadataValue,
-  decodeMetadataValue,
-  encodeMetadataEntry,
-  decodeMetadataEntry,
   encodeMessage,
   decodeMessage,
-  encodeMessages,
-  decodeMessages,
 } from "./codec.ts";

@@ -381,3 +381,5 @@ export {
 // ============================================================================
 
 export { encodeWithSchema, decodeWithSchema } from "./schema_codec.ts";
+
+export { type RoamErrorPayload } from "./result.ts";

@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "pnpm -r run check",
+    "check": "pnpm -r run check && pnpm run check:ts-boundaries",
+    "check:ts-boundaries": "node scripts/check-ts-package-boundaries.mjs",
     "test": "pnpm -r run test",
     "lint": "oxlint typescript"
   },

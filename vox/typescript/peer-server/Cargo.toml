@@ -17,8 +17,8 @@ path = "src/main.rs"
 
 [dependencies]
 roam = { path = "../../rust/roam" }
-roam-stream = { path = "../../rust/roam-stream" }
+roam-core = { path = "../../rust/roam-core" }
+roam-types = { path = "../../rust/roam-types" }
 roam-websocket = { path = "../../rust/roam-websocket" }
 spec-proto = { path = "../../spec/spec-proto" }
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros"] }
-tokio-tungstenite.workspace = true

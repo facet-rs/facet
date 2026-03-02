@@ -1,39 +1,28 @@
 [workspace]
 resolver = "2"
 members = [
-  "rust/roam",
-  "rust/roam-wire",
-  "rust/roam-frame",
-  "rust/roam-session",
-  "rust/roam-hash",
-  "rust/roam-schema",
-  "rust/roam-shm",
-  "rust/roam-shm-ffi",
-  "rust/roam-tracing",
-  "rust/roam-telemetry",
-  "rust/roam-codegen",
-  "rust/roam-macros",
-  "rust/roam-macros-parse",
-  "rust/roam-stream",
-  "rust/roam-memory",
-  "rust/roam-local",
-  "rust/roam-fdpass",
-  "rust/roam-websocket",
-  "rust/roam-http-bridge",
-  "rust/subject-rust",
-  "rust/shm-primitives",
-  "rust/ur-taking-me-with-you",
-  "rust/roam-task-local",
-  # Compliance suite
+  "xtask",
   "spec/spec-proto",
   "spec/spec-tests",
-  # xtask
-  "xtask",
-  # Peer server for TypeScript browser tests
-  "typescript/peer-server",
-  # Wasm browser tests
+  "rust/roam-types",
+  "rust/roam-core",
+  "rust/roam-hash",
+  "rust/roam-stream",
+  "rust/roam-websocket",
+  "rust/roam-local",
+  "rust/roam-fdpass",
+  "rust/roam-shm",
+  "rust/shm-primitives-async",
+  "rust/roam-shm-ffi",
+  "rust/roam-macros-parse",
+  "rust/roam-macros-core",
+  "rust/roam-macros",
+  "rust/roam",
+  "rust/roam-bench",
+  "rust/subject-rust",
+  "rust/roam-codegen",
   "rust/wasm-browser-tests",
-  "rust/roam-miri-test",
+  "typescript/peer-server",
 ]
 exclude = ["fuzz"]
 
@@ -47,46 +36,43 @@ repository = "https://github.com/bearcove/roam"
 [workspace.dependencies]
 # Internal crates
 roam = { path = "rust/roam", version = "3.0.0" }
-roam-frame = { path = "rust/roam-frame", version = "3.0.0" }
+roam-types = { path = "rust/roam-types", version = "3.0.0" }
 roam-hash = { path = "rust/roam-hash", version = "3.0.0" }
 roam-macros-parse = { path = "rust/roam-macros-parse", version = "3.0.0" }
+roam-macros-core = { path = "rust/roam-macros-core", version = "3.0.0" }
 roam-service-macros = { path = "rust/roam-macros", version = "3.0.0" }
-roam-schema = { path = "rust/roam-schema", version = "3.0.0" }
-roam-wire = { path = "rust/roam-wire", version = "3.0.0" }
-roam-session = { path = "rust/roam-session", version = "3.0.0" }
+roam-core = { path = "rust/roam-core", version = "3.0.0" }
 roam-stream = { path = "rust/roam-stream", version = "3.0.0" }
-roam-tracing = { path = "rust/roam-tracing", version = "3.0.0" }
 roam-codegen = { path = "rust/roam-codegen", version = "3.0.0" }
 roam-websocket = { path = "rust/roam-websocket", version = "3.0.0" }
 shm-primitives = { path = "rust/shm-primitives", version = "3.0.0", default-features = false }
+shm-primitives-async = { path = "rust/shm-primitives-async", version = "3.0.0", default-features = false }
 ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "3.0.0" }
-roam-task-local = { path = "rust/roam-task-local", version = "3.0.0" }
 moire = { version = "0.1.0", git = "https://github.com/bearcove/moire", branch = "main" }
 moire-types = { version = "0.1.0", git = "https://github.com/bearcove/moire", branch = "main" }
 
+bitflags = "2.11.0"
+structstruck = "0.5.1"
 bytes = "1"
 blake3 = "1.8"
+heck = "0.5"
 tokio = { version = "1", features = ["sync", "rt", "time", "macros", "io-util"] }
 tokio-tungstenite = "0.26"
 libc = "0.2.180"
 
 # facet ecosystem
-facet = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main", features = [
-  "camino",
-  "reflect",
-] }
-facet-core = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-postcard = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main", features = [
-  "camino",
-] }
-facet-path = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-reflect = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-format = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-pretty = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-json = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-value = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-testhelpers = { version = "0.43.0", git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-cargo-toml = { version = "0.43.0", git = "https://github.com/bearcove/facet-cargo-toml", branch = "main" }
+facet = { version = "0.44.0", features = ["camino", "reflect"] }
+facet-core = { version = "0.44.0" }
+facet-postcard = { version = "0.44.0", features = ["camino"] }
+facet-path = { version = "0.44.0" }
+facet-reflect = { version = "0.44.0" }
+facet-format = { version = "0.44.0" }
+facet-pretty = { version = "0.44.0" }
+facet-json = { version = "0.44.0" }
+facet-value = { version = "0.44.0" }
+facet-testhelpers = { version = "0.44.0" }
+facet-cargo-toml = { version = "0.44.0" }
+facet-error = { version = "0.44.0" }
 
 # Futures utilities
 futures-util = "0.3"
@@ -99,6 +85,22 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 static_assertions = "1.1.0"
 ulid = "1"
+
+smallvec = "1.15.1"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+zerocopy = { version = "0.8", features = ["derive"] }
+
+# Benchmarking
+divan = "0.1"
+tarpc = { version = "0.37", features = ["tokio1", "serde1"] }
+tonic = "0.14"
+prost = "0.14"
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
+serde = { version = "1", features = ["derive"] }
+hyper-util = "0.1"
+tower = "0.5"
+tokio-stream = "0.1"
 
 # [patch."https://github.com/facet-rs/facet"]
 # facet = { path = "../facet/facet" }

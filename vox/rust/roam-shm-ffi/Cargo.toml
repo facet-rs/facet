@@ -16,7 +16,7 @@ crate-type = ["staticlib"]
 
 [dependencies]
 shm-primitives = { workspace = true }
-roam-shm = { path = "../roam-shm" }
+libc = { workspace = true }
 
 [build-dependencies]
 cbindgen = "0.28"

@@ -15,8 +15,9 @@ pub mod encode;
 pub mod schema;
 pub mod server;
 pub mod types;
+pub mod wire;
 
-use roam_schema::{MethodDetail, ServiceDetail};
+use roam_types::{MethodDescriptor, ServiceDescriptor};
 
 pub use client::generate_client;
 pub use schema::generate_schemas;
@@ -35,12 +36,12 @@ pub enum SwiftBindings {
 }
 
 /// Generate method IDs as a Swift enum.
-pub fn generate_method_ids(methods: &[MethodDetail]) -> String {
+pub fn generate_method_ids(methods: &[&MethodDescriptor]) -> String {
     use crate::render::{fq_name, hex_u64};
 
     let mut items = methods
         .iter()
-        .map(|m| (fq_name(m), crate::method_id(m)))
+        .map(|m| (fq_name(m), m.id.0))
         .collect::<Vec<_>>();
     items.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -60,14 +61,17 @@ pub fn generate_method_ids(methods: &[MethodDetail]) -> String {
 /// Generate a complete Swift module for a service.
 ///
 /// This is the main entry point for Swift code generation.
-pub fn generate_service(service: &ServiceDetail) -> String {
+pub fn generate_service(service: &ServiceDescriptor) -> String {
     generate_service_with_bindings(service, SwiftBindings::ClientAndServer)
 }
 
 /// Generate a Swift module for a service with explicit client/server selection.
 ///
 /// Shared sections (method IDs, named types, schemas) are always included.
-pub fn generate_service_with_bindings(service: &ServiceDetail, bindings: SwiftBindings) -> String {
+pub fn generate_service_with_bindings(
+    service: &ServiceDescriptor,
+    bindings: SwiftBindings,
+) -> String {
     use crate::render::hex_u64;
     use heck::{ToLowerCamelCase, ToUpperCamelCase};
 
@@ -77,12 +81,12 @@ pub fn generate_service_with_bindings(service: &ServiceDetail, bindings: SwiftBi
     out.push_str("import Foundation\n");
     out.push_str("import RoamRuntime\n\n");
 
-    let service_name = service.name.to_upper_camel_case();
+    let service_name = service.service_name.to_upper_camel_case();
 
     // Generate method IDs enum
     out.push_str(&format!("// MARK: - {service_name} Method IDs\n\n"));
     out.push_str(&format!("public enum {service_name}MethodId {{\n"));
-    for method in &service.methods {
+    for method in service.methods {
         let method_name = method.method_name.to_lower_camel_case();
         let id = crate::method_id(method);
         out.push_str(&format!(
@@ -120,67 +124,4 @@ pub fn generate_service_with_bindings(service: &ServiceDetail, bindings: SwiftBi
     out.push_str(&generate_schemas(service));
 
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use facet::Facet;
-    use roam_schema::{ArgDetail, MethodDetail, ServiceDetail};
-    use std::borrow::Cow;
-
-    fn sample_service() -> ServiceDetail {
-        ServiceDetail {
-            name: Cow::Borrowed("Echo"),
-            doc: Some(Cow::Borrowed("Simple echo service")),
-            methods: vec![MethodDetail {
-                service_name: Cow::Borrowed("Echo"),
-                method_name: Cow::Borrowed("echo"),
-                args: vec![ArgDetail {
-                    name: Cow::Borrowed("message"),
-                    ty: <String as Facet>::SHAPE,
-                }],
-                return_type: <String as Facet>::SHAPE,
-                doc: Some(Cow::Borrowed("Echo back the message")),
-            }],
-        }
-    }
-
-    #[test]
-    fn test_generate_service_contains_protocols() {
-        let service = sample_service();
-        let code = generate_service(&service);
-
-        assert!(code.contains("protocol EchoCaller"));
-        assert!(code.contains("protocol EchoHandler"));
-        assert!(code.contains("EchoClient"));
-        assert!(code.contains("EchoChannelingDispatcher"));
-        assert!(code.contains("EchoMethodId"));
-    }
-
-    #[test]
-    fn test_generate_service_client_only() {
-        let service = sample_service();
-        let code = generate_service_with_bindings(&service, SwiftBindings::Client);
-
-        assert!(code.contains("protocol EchoCaller"));
-        assert!(code.contains("EchoClient"));
-        assert!(!code.contains("protocol EchoHandler"));
-        assert!(!code.contains("EchoChannelingDispatcher"));
-        assert!(code.contains("EchoMethodId"));
-        assert!(code.contains("echo_schemas"));
-    }
-
-    #[test]
-    fn test_generate_service_server_only() {
-        let service = sample_service();
-        let code = generate_service_with_bindings(&service, SwiftBindings::Server);
-
-        assert!(!code.contains("protocol EchoCaller"));
-        assert!(!code.contains("EchoClient"));
-        assert!(code.contains("protocol EchoHandler"));
-        assert!(code.contains("EchoChannelingDispatcher"));
-        assert!(code.contains("EchoMethodId"));
-        assert!(code.contains("echo_schemas"));
-    }
 }

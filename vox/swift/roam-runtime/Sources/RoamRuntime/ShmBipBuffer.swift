@@ -1,6 +1,7 @@
 import Foundation
 import CRoamShmFfi
 
+// r[impl shm.bipbuf]
 public enum ShmBipBufferError: Error, Equatable {
     case invalidCapacity
     case invalidHeaderOffset
@@ -10,6 +11,7 @@ public enum ShmBipBufferError: Error, Equatable {
     case releaseOverflow
 }
 
+// r[impl shm.bipbuf.header]
 public struct ShmBipBufferHeaderView {
     public static let writeOffset = 0
     public static let watermarkOffset = 4
@@ -17,6 +19,14 @@ public struct ShmBipBufferHeaderView {
     public static let readOffset = 64
 }
 
+// r[impl shm.bipbuf]
+// r[impl shm.bipbuf.init]
+// r[impl shm.bipbuf.layout]
+// r[impl shm.bipbuf.grant]
+// r[impl shm.bipbuf.commit]
+// r[impl shm.bipbuf.read]
+// r[impl shm.bipbuf.release]
+// r[impl shm.bipbuf.backpressure]
 public final class ShmBipBuffer: @unchecked Sendable {
     public let capacity: UInt32
 

@@ -2,36 +2,18 @@
 name = "roam"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "High-performance RPC framework with shared memory transport"
 
 [package.metadata]
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
-[features]
-default = []
-# Enable JIT compilation for faster postcard serialization.
-# This adds cranelift as a dependency, increasing compile time and binary size.
-jit = ["facet-postcard/jit"]
-
 [dependencies]
-# Re-exported crates for macro-generated code
-roam-session.workspace = true
-roam-schema.workspace = true
+roam-types.workspace = true
 roam-hash.workspace = true
-roam-wire.workspace = true
-
-# Proc macros (re-exported as #[roam::service])
 roam-service-macros.workspace = true
-
-# Serialization
 facet.workspace = true
-facet-core.workspace = true
 facet-postcard.workspace = true
-facet-pretty.workspace = true
-
-# Logging (re-exported for macro-generated code)
-tracing.workspace = true

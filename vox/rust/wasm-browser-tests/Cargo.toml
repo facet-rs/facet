@@ -1,7 +1,7 @@
 [package]
 name = "wasm-browser-tests"
-version = "3.0.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 publish = false
 
 [lib]
@@ -10,7 +10,8 @@ crate-type = ["cdylib"]
 # All dependencies are wasm32-only since the entire crate is cfg-gated
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 roam-websocket.workspace = true
-roam-session.workspace = true
+roam-core.workspace = true
+roam-types.workspace = true
 spec-proto = { path = "../../spec/spec-proto" }
 
 wasm-bindgen = "0.2"

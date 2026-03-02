@@ -1,7 +1,11 @@
 import Foundation
+#if os(macOS) || os(Linux)
+import CRoamShmFfi
 #if os(macOS)
-import CRoamShm
 import Darwin
+#else
+import Glibc
+#endif
 #endif
 
 public struct ShmBootstrapTicket: Sendable {
@@ -9,15 +13,24 @@ public struct ShmBootstrapTicket: Sendable {
     public let hubPath: String
     public let doorbellFd: Int32
     public let shmFd: Int32
+    public let mmapControlFd: Int32
 
-    public init(peerId: UInt8, hubPath: String, doorbellFd: Int32, shmFd: Int32 = -1) {
+    public init(
+        peerId: UInt8,
+        hubPath: String,
+        doorbellFd: Int32,
+        shmFd: Int32 = -1,
+        mmapControlFd: Int32 = -1
+    ) {
         self.peerId = peerId
         self.hubPath = hubPath
         self.doorbellFd = doorbellFd
         self.shmFd = shmFd
+        self.mmapControlFd = mmapControlFd
     }
 }
 
+// r[impl shm.spawn]
 public enum ShmBootstrapError: Error {
     case invalidSid
     case unsupportedPlatform
@@ -33,13 +46,12 @@ public enum ShmBootstrapError: Error {
     case missingFileDescriptor
 }
 
-#if os(macOS)
-private let shmBootstrapRequestMagic = [UInt8]("RSH0".utf8)
-private let shmBootstrapResponseMagic = [UInt8]("RSP0".utf8)
-
+#if os(macOS) || os(Linux)
 private let shmBootstrapStatusOK: UInt8 = 0
 private let shmBootstrapStatusError: UInt8 = 1
 
+// r[impl shm.spawn]
+// r[impl shm.spawn.fd-inheritance]
 public func requestShmBootstrapTicket(controlSocketPath: String, sid: String) throws ->
     ShmBootstrapTicket
 {
@@ -47,43 +59,80 @@ public func requestShmBootstrapTicket(controlSocketPath: String, sid: String) th
         throw ShmBootstrapError.invalidSid
     }
 
+    #if os(Linux)
+    let fd = socket(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0)
+    #else
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    #endif
     guard fd >= 0 else {
         throw ShmBootstrapError.socketCreateFailed(errno: errno)
     }
 
     do {
         try connectUnixSocket(fd: fd, path: controlSocketPath)
-        try writeBootstrapRequest(fd: fd, sid: sid)
-        let response = try readBootstrapResponse(fd: fd)
 
-        switch response.status {
+        let sidBytes = [UInt8](sid.utf8)
+        var request = [UInt8](
+            repeating: 0,
+            count: Int(roam_shm_bootstrap_request_header_size()) + sidBytes.count
+        )
+        var requestWritten: UInt = 0
+        let encodeRc = request.withUnsafeMutableBufferPointer { reqBuf in
+            sidBytes.withUnsafeBufferPointer { sidBuf in
+                roam_shm_bootstrap_request_encode(
+                    sidBuf.baseAddress,
+                    UInt(sidBuf.count),
+                    reqBuf.baseAddress,
+                    UInt(reqBuf.count),
+                    &requestWritten
+                )
+            }
+        }
+        guard encodeRc == 0 else {
+            throw ShmBootstrapError.invalidRequestEncoding
+        }
+
+        try writeAll(fd: fd, bytes: Array(request.prefix(Int(requestWritten))))
+
+        let recv = try recvBootstrapResponse(fd: fd)
+        let status = recv.info.status
+
+        switch status {
         case shmBootstrapStatusOK:
-            guard response.peerId != 0 else {
+            guard recv.info.peer_id != 0 else {
+                closeReceivedFds(recv)
                 throw ShmBootstrapError.protocolError("invalid peer_id 0")
             }
-            guard let hubPath = String(bytes: response.payload, encoding: .utf8) else {
+            guard recv.info.peer_id <= UInt32(UInt8.max) else {
+                closeReceivedFds(recv)
+                throw ShmBootstrapError.protocolError("peer_id out of range")
+            }
+            guard let hubPath = String(bytes: recv.payload, encoding: .utf8) else {
+                closeReceivedFds(recv)
                 throw ShmBootstrapError.protocolError("hub path not utf-8")
             }
+            guard recv.doorbellFd >= 0, recv.shmFd >= 0, recv.mmapControlFd >= 0 else {
+                closeReceivedFds(recv)
+                throw ShmBootstrapError.missingFileDescriptor
+            }
 
-            _ = try? writeFdAck(fd: fd)
-            let fds = try recvPassedFds(fd: fd, expected: 2)
-            let doorbellFd = fds[0]
-            let shmFd = fds[1]
             close(fd)
             return ShmBootstrapTicket(
-                peerId: response.peerId,
+                peerId: UInt8(recv.info.peer_id),
                 hubPath: hubPath,
-                doorbellFd: doorbellFd,
-                shmFd: shmFd
+                doorbellFd: recv.doorbellFd,
+                shmFd: recv.shmFd,
+                mmapControlFd: recv.mmapControlFd
             )
 
         case shmBootstrapStatusError:
-            let msg = String(bytes: response.payload, encoding: .utf8) ?? "bootstrap error"
+            closeReceivedFds(recv)
+            let msg = String(bytes: recv.payload, encoding: .utf8) ?? "bootstrap error"
             throw ShmBootstrapError.protocolError(msg)
 
         default:
-            throw ShmBootstrapError.protocolError("unknown bootstrap status \(response.status)")
+            closeReceivedFds(recv)
+            throw ShmBootstrapError.protocolError("unknown bootstrap status \(status)")
         }
     } catch {
         close(fd)
@@ -91,48 +140,77 @@ public func requestShmBootstrapTicket(controlSocketPath: String, sid: String) th
     }
 }
 
-private struct BootstrapResponse {
-    let status: UInt8
-    let peerId: UInt8
+private struct BootstrapRecv {
+    let info: RoamShmBootstrapResponseInfo
     let payload: [UInt8]
+    let doorbellFd: Int32
+    let shmFd: Int32
+    let mmapControlFd: Int32
 }
 
-private func writeBootstrapRequest(fd: Int32, sid: String) throws {
-    let sidBytes = [UInt8](sid.utf8)
-    guard let sidLen = UInt16(exactly: sidBytes.count) else {
-        throw ShmBootstrapError.invalidRequestEncoding
+private func recvBootstrapResponse(fd: Int32) throws -> BootstrapRecv {
+    var payload = [UInt8](repeating: 0, count: Int(UInt16.max))
+    var info = RoamShmBootstrapResponseInfo(status: 0, peer_id: 0, payload_len: 0)
+    var doorbellFd: Int32 = -1
+    var shmFd: Int32 = -1
+    var mmapControlFd: Int32 = -1
+
+    let rc = payload.withUnsafeMutableBufferPointer { buf in
+        withUnsafeMutablePointer(to: &info) { infoPtr in
+            roam_shm_bootstrap_response_recv_unix(
+                fd,
+                buf.baseAddress,
+                UInt(buf.count),
+                infoPtr,
+                &doorbellFd,
+                &shmFd,
+                &mmapControlFd
+            )
+        }
     }
 
-    var out: [UInt8] = []
-    out.reserveCapacity(4 + 2 + sidBytes.count)
-    out.append(contentsOf: shmBootstrapRequestMagic)
-    out.append(UInt8(truncatingIfNeeded: sidLen & 0x00FF))
-    out.append(UInt8(truncatingIfNeeded: (sidLen >> 8) & 0x00FF))
-    out.append(contentsOf: sidBytes)
-
-    try writeAll(fd: fd, bytes: out)
+    switch rc {
+    case 0:
+        let payloadLen = Int(info.payload_len)
+        if payloadLen > payload.count {
+            throw ShmBootstrapError.protocolError("invalid payload length")
+        }
+        return BootstrapRecv(
+            info: info,
+            payload: Array(payload.prefix(payloadLen)),
+            doorbellFd: doorbellFd,
+            shmFd: shmFd,
+            mmapControlFd: mmapControlFd
+        )
+    case -2:
+        throw ShmBootstrapError.protocolError("bootstrap payload too large")
+    default:
+        throw ShmBootstrapError.protocolError("failed to receive bootstrap response")
+    }
 }
 
-private func readBootstrapResponse(fd: Int32) throws -> BootstrapResponse {
-    let magic = try readExactly(fd: fd, count: 4)
-    guard magic == shmBootstrapResponseMagic else {
-        throw ShmBootstrapError.invalidResponseMagic
+private func closeReceivedFds(_ recv: BootstrapRecv) {
+    if recv.doorbellFd >= 0 {
+        close(recv.doorbellFd)
     }
-
-    let status = try readExactly(fd: fd, count: 1)[0]
-    let peerId = try readExactly(fd: fd, count: 1)[0]
-    let lenBytes = try readExactly(fd: fd, count: 2)
-    let payloadLen = Int(UInt16(lenBytes[0]) | (UInt16(lenBytes[1]) << 8))
-    let payload = try readExactly(fd: fd, count: payloadLen)
-
-    return BootstrapResponse(status: status, peerId: peerId, payload: payload)
+    if recv.shmFd >= 0 {
+        close(recv.shmFd)
+    }
+    if recv.mmapControlFd >= 0 {
+        close(recv.mmapControlFd)
+    }
 }
 
 private func connectUnixSocket(fd: Int32, path: String) throws {
+    #if os(macOS)
     let one: Int32 = 1
-    _ = withUnsafePointer(to: one) { ptr in
+    let setNoSigPipeRc = withUnsafePointer(to: one) { ptr in
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, ptr, socklen_t(MemoryLayout<Int32>.size))
     }
+    if setNoSigPipeRc != 0 {
+        throw ShmBootstrapError.connectFailed(errno: errno)
+    }
+    #endif
 
     var addr = sockaddr_un()
     addr.sun_family = sa_family_t(AF_UNIX)
@@ -164,7 +242,7 @@ private func writeAll(fd: Int32, bytes: [UInt8]) throws {
     var offset = 0
     while offset < bytes.count {
         let written = bytes.withUnsafeBytes { rawBuf in
-            send(fd, rawBuf.baseAddress!.advanced(by: offset), bytes.count - offset, 0)
+            send(fd, rawBuf.baseAddress!.advanced(by: offset), bytes.count - offset, Int32(MSG_NOSIGNAL))
         }
         if written < 0 {
             if errno == EINTR {
@@ -179,61 +257,11 @@ private func writeAll(fd: Int32, bytes: [UInt8]) throws {
     }
 }
 
-private func readExactly(fd: Int32, count: Int) throws -> [UInt8] {
-    if count == 0 {
-        return []
-    }
-
-    var out = [UInt8](repeating: 0, count: count)
-    var offset = 0
-
-    while offset < count {
-        let readCount = out.withUnsafeMutableBytes { rawBuf in
-            read(fd, rawBuf.baseAddress!.advanced(by: offset), count - offset)
-        }
-        if readCount < 0 {
-            if errno == EINTR {
-                continue
-            }
-            throw ShmBootstrapError.readFailed(errno: errno)
-        }
-        if readCount == 0 {
-            throw ShmBootstrapError.eof
-        }
-        offset += readCount
-    }
-
-    return out
-}
-
-private func recvPassedFds(fd: Int32, expected: Int) throws -> [Int32] {
-    var out = [Int32](repeating: -1, count: max(expected, 1))
-    while true {
-        let rc = roam_recv_fds(fd, &out, Int32(out.count))
-        if rc > 0 {
-            if rc < expected {
-                throw ShmBootstrapError.missingFileDescriptor
-            }
-            return Array(out.prefix(Int(rc)))
-        }
-        if rc == 0 {
-            throw ShmBootstrapError.missingFileDescriptor
-        }
-        if errno == EINTR {
-            continue
-        }
-        throw ShmBootstrapError.missingFileDescriptor
-    }
-}
-
-private func writeFdAck(fd: Int32) throws {
-    let ack: [UInt8] = [0xA5]
-    try writeAll(fd: fd, bytes: ack)
-}
-
 private func isValidSid(_ sid: String) -> Bool {
     if sid.count == 32 {
-        return sid.unicodeScalars.allSatisfy { CharacterSet(charactersIn: "0123456789abcdefABCDEF").contains($0) }
+        return sid.unicodeScalars.allSatisfy {
+            CharacterSet(charactersIn: "0123456789abcdefABCDEF").contains($0)
+        }
     }
 
     if sid.count == 36 {

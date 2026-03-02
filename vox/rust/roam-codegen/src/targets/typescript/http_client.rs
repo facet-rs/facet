@@ -1,13 +1,13 @@
 //! TypeScript HTTP client generation.
 //!
 //! Generates a fetch()-based HTTP client for calling roam services via the HTTP bridge.
-//! r[bridge.url.methods] - Methods are called via POST /{service}/{method}
-//! r[bridge.request.body] - Arguments are sent as a JSON array
-//! r[bridge.json.channels-forbidden] - Methods with channels throw at runtime
-//! r[bridge.nonce.retry-safe] - Clients retrying requests should use the same nonce
+//! Methods are called via POST /{service}/{method}.
+//! Arguments are sent as a JSON array.
+//! Methods with channels throw at runtime (channels require WebSocket).
+//! Clients retrying requests should use the same nonce.
 
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
-use roam_schema::{ServiceDetail, is_rx, is_tx};
+use roam_types::{ServiceDescriptor, is_rx, is_tx};
 
 use super::types::ts_type;
 
@@ -41,9 +41,9 @@ fn format_doc_comment(doc: &str, indent: &str) -> String {
 /// Generate HTTP client for a service.
 ///
 /// The generated client uses fetch() to call methods via the HTTP bridge.
-pub fn generate_http_client(service: &ServiceDetail) -> String {
+pub fn generate_http_client(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
-    let service_name = service.name.to_upper_camel_case();
+    let service_name = service.service_name.to_upper_camel_case();
 
     // Interface
     out.push_str(&format!(
@@ -51,24 +51,22 @@ pub fn generate_http_client(service: &ServiceDetail) -> String {
     ));
     out.push_str(&format!("export interface {service_name}HttpCaller {{\n"));
 
-    for method in &service.methods {
+    for method in service.methods {
         let method_name = method.method_name.to_lower_camel_case();
-        let has_channels = method.args.iter().any(|a| is_tx(a.ty) || is_rx(a.ty))
-            || is_tx(method.return_type)
-            || is_rx(method.return_type);
+        let has_channels = method.args.iter().any(|a| is_tx(a.shape) || is_rx(a.shape));
 
         // Build args (skip channel types for signature, they'll throw at runtime)
         let args: Vec<String> = method
             .args
             .iter()
-            .filter(|a| !is_tx(a.ty) && !is_rx(a.ty))
-            .map(|a| format!("{}: {}", a.name.to_lower_camel_case(), ts_type(a.ty)))
+            .filter(|a| !is_tx(a.shape) && !is_rx(a.shape))
+            .map(|a| format!("{}: {}", a.name.to_lower_camel_case(), ts_type(a.shape)))
             .collect();
 
         let ret_ty = if has_channels {
             "never".to_string()
         } else {
-            ts_type(method.return_type)
+            ts_type(method.return_shape)
         };
 
         if let Some(doc) = &method.doc {
@@ -126,7 +124,7 @@ pub fn generate_http_client(service: &ServiceDetail) -> String {
     out.push_str("    // r[bridge.url.methods] - POST /{service}/{method}\n");
     out.push_str(&format!(
         "    const url = `${{this.baseUrl}}/{}/${{method}}`;\n",
-        service.name
+        service.service_name
     ));
     out.push_str("    // r[bridge.request.content-type], r[bridge.request.body]\n");
     out.push_str("    const res = await fetchFn(url, {\n");
@@ -162,31 +160,29 @@ pub fn generate_http_client(service: &ServiceDetail) -> String {
     out.push_str("  }\n\n");
 
     // Generate method implementations
-    for method in &service.methods {
+    for method in service.methods {
         let method_name = method.method_name.to_lower_camel_case();
-        let has_channels = method.args.iter().any(|a| is_tx(a.ty) || is_rx(a.ty))
-            || is_tx(method.return_type)
-            || is_rx(method.return_type);
+        let has_channels = method.args.iter().any(|a| is_tx(a.shape) || is_rx(a.shape));
 
         // Build args (skip channel types)
         let args: Vec<String> = method
             .args
             .iter()
-            .filter(|a| !is_tx(a.ty) && !is_rx(a.ty))
-            .map(|a| format!("{}: {}", a.name.to_lower_camel_case(), ts_type(a.ty)))
+            .filter(|a| !is_tx(a.shape) && !is_rx(a.shape))
+            .map(|a| format!("{}: {}", a.name.to_lower_camel_case(), ts_type(a.shape)))
             .collect();
 
         let arg_names: Vec<String> = method
             .args
             .iter()
-            .filter(|a| !is_tx(a.ty) && !is_rx(a.ty))
+            .filter(|a| !is_tx(a.shape) && !is_rx(a.shape))
             .map(|a| a.name.to_lower_camel_case())
             .collect();
 
         let ret_ty = if has_channels {
             "never".to_string()
         } else {
-            ts_type(method.return_type)
+            ts_type(method.return_shape)
         };
 
         out.push_str(&format!(
@@ -195,8 +191,8 @@ pub fn generate_http_client(service: &ServiceDetail) -> String {
         ));
 
         if has_channels {
-            // r[bridge.json.channels-forbidden]
-            out.push_str("    // r[bridge.json.channels-forbidden]\n");
+            // Channel methods are not supported over HTTP bridge
+            out.push_str("    // Channel methods require WebSocket transport\n");
             out.push_str(&format!(
                 "    throw new {service_name}HttpError(\"bridge\", \"Channel methods require WebSocket\");\n"
             ));

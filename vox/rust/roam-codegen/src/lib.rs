@@ -36,7 +36,7 @@
 //! # The Pipeline
 //!
 //! ```text
-//! #[service] trait     →    ServiceDetail    →    roam-codegen    →    .ts, .go, .swift, ...
+//! #[service] trait     →    ServiceDescriptor    →    roam-codegen    →    .ts, .go, .swift, ...
 //!   (your code)            (runtime metadata)     (build script)       (generated code)
 //! ```
 //!
@@ -76,8 +76,8 @@ pub mod code_writer;
 mod render;
 pub mod targets;
 
-use roam_schema::MethodDetail;
+use roam_types::MethodDescriptor;
 
-pub fn method_id(detail: &MethodDetail) -> u64 {
-    roam_hash::method_id_from_detail(detail)
+pub fn method_id(detail: &MethodDescriptor) -> u64 {
+    detail.id.0
 }

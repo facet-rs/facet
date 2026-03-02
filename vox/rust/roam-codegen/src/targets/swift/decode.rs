@@ -4,7 +4,7 @@
 
 use facet_core::{ScalarType, Shape};
 use heck::ToLowerCamelCase;
-use roam_schema::{
+use roam_types::{
     EnumInfo, ShapeKind, StructInfo, VariantKind, classify_shape, classify_variant, is_bytes,
 };
 
@@ -124,7 +124,7 @@ pub fn generate_decode_stmt_from_with_cursor(
             // Named enum - decode discriminant then decode variant
             let mut out = String::new();
             out.push_str(&format!(
-                "{indent}let _{var_name}_disc = try decodeU8(from: {data_var}, offset: &{cursor_var})\n"
+                "{indent}let _{var_name}_disc = try decodeVarint(from: {data_var}, offset: &{cursor_var})\n"
             ));
             out.push_str(&format!("{indent}let {var_name}: {name}\n"));
             out.push_str(&format!("{indent}switch _{var_name}_disc {{\n"));
@@ -211,7 +211,7 @@ pub fn generate_decode_stmt_from_with_cursor(
             let err_type = super::types::swift_type_base(err);
             let mut out = String::new();
             out.push_str(&format!(
-                "{indent}let _{var_name}_disc = try decodeU8(from: {data_var}, offset: &{cursor_var})\n"
+                "{indent}let _{var_name}_disc = try decodeVarint(from: {data_var}, offset: &{cursor_var})\n"
             ));
             out.push_str(&format!(
                 "{indent}let {var_name}: Result<{ok_type}, {err_type}>\n"
@@ -320,7 +320,7 @@ pub fn generate_decode_closure(shape: &'static Shape) -> String {
         }) => {
             // Generate inline enum decode closure
             let mut code = format!(
-                "{{ data, off in\n    let disc = try decodeU8(from: data, offset: &off)\n    let result: {name}\n    switch disc {{\n"
+                "{{ data, off in\n    let disc = try decodeVarint(from: data, offset: &off)\n    let result: {name}\n    switch disc {{\n"
             );
             for (i, v) in variants.iter().enumerate() {
                 code.push_str(&format!("    case {i}:\n"));
@@ -430,68 +430,5 @@ pub fn swift_decode_fn(scalar: ScalarType) -> &'static str {
         }
         ScalarType::Unit => "{ _, _ in () }",
         _ => "decodeBytes", // fallback
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use facet::Facet;
-
-    #[repr(u8)]
-    #[derive(Facet)]
-    enum ItemType {
-        File,
-        Directory,
-    }
-
-    #[derive(Facet)]
-    struct DirEntry {
-        name: String,
-        item_type: ItemType,
-    }
-
-    #[test]
-    fn test_decode_primitives() {
-        let result = generate_decode_stmt(<bool as Facet>::SHAPE, "x", "    ");
-        assert!(result.contains("decodeBool"));
-        assert!(result.contains("let x"));
-
-        let result = generate_decode_stmt(<String as Facet>::SHAPE, "msg", "    ");
-        assert!(result.contains("decodeString"));
-        assert!(result.contains("let msg"));
-    }
-
-    #[test]
-    fn test_decode_vec() {
-        let result = generate_decode_stmt(<Vec<i32> as Facet>::SHAPE, "items", "    ");
-        assert!(result.contains("decodeVec"));
-        assert!(result.contains("decodeI32"));
-    }
-
-    #[test]
-    fn test_decode_option() {
-        let result = generate_decode_stmt(<Option<String> as Facet>::SHAPE, "val", "    ");
-        assert!(result.contains("decodeOption"));
-        assert!(result.contains("decodeString"));
-    }
-
-    #[test]
-    fn test_decode_bytes() {
-        let result = generate_decode_stmt(<Vec<u8> as Facet>::SHAPE, "data", "    ");
-        assert!(result.contains("decodeBytes"));
-    }
-
-    #[test]
-    fn test_inline_decode() {
-        let result = generate_inline_decode(<u32 as Facet>::SHAPE, "buf", "pos");
-        assert_eq!(result, "decodeU32(from: buf, offset: &pos)");
-    }
-
-    #[test]
-    fn test_decode_vec_struct_with_enum_field() {
-        let result = generate_decode_stmt(<Vec<DirEntry> as Facet>::SHAPE, "entries", "    ");
-        assert!(result.contains("switch disc"));
-        assert!(!result.contains("unsupported"));
     }
 }

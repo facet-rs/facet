@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 on:
   push:
@@ -25,6 +25,9 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Install protoc
+        run: sudo apt-get install -y protobuf-compiler
 
       - name: Clippy (xtask)
         run: cargo xtask clippy
@@ -54,6 +57,9 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Install protoc
+        run: sudo apt-get install -y protobuf-compiler
 
       - name: Build docs (xtask)
         run: cargo xtask doc
@@ -122,10 +128,47 @@ jobs:
       - name: Build subject
         run: cargo build -p subject-rust
 
-      - name: Run spec tests
-        run: cargo nextest run -p spec-tests
-        env:
-          SUBJECT_CMD: "./target/debug/subject-rust"
+      - name: Run Rust TCP subject matrix tests
+        run: >
+          cargo nextest run -p spec-tests --test spec_matrix
+          -E 'test(lang_rust_transport_tcp::)'
+
+      - name: Run Rust SHM guest subject matrix tests
+        run: >
+          cargo nextest run -p spec-tests --test spec_matrix
+          -E 'test(lang_rust_transport_shm_guest_mode::)'
+
+      - name: Run Rust binary payload transport matrix (mem/tcp/shm)
+        run: >
+          cargo nextest run -p spec-tests --test spec_matrix
+          -E 'test(lang_rust_to_rust_transport_mem_direction_bidirectional_binary_payload_transport_matrix)
+          | test(lang_rust_to_rust_transport_tcp_direction_bidirectional_binary_payload_transport_matrix)
+          | test(lang_rust_to_rust_transport_shm_direction_bidirectional_binary_payload_transport_matrix)'
+
+  generated-bindings:
+    name: Generated / Bindings Sync
+    runs-on: depot-ubuntu-24.04-4
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Regenerate TypeScript and Swift bindings
+        run: cargo xtask codegen --typescript --swift
+
+      - name: Check generated bindings are committed
+        run: |
+          DRIFT="$(git status --porcelain -- typescript/generated swift/subject/Sources/subject-swift)"
+          if [ -n "$DRIFT" ]; then
+            echo "Generated bindings are out of date. Run: cargo xtask codegen --typescript --swift"
+            echo "$DRIFT"
+            git --no-pager diff -- typescript/generated swift/subject/Sources/subject-swift || true
+            exit 1
+          fi
 
   typescript-conformance:
     name: Conformance / TypeScript
@@ -136,7 +179,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '25'
+          node-version: "25"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -167,10 +210,9 @@ jobs:
       - name: Run TypeScript tests
         run: cd typescript && pnpm test
 
-      - name: Run spec tests
-        run: cargo nextest run -p spec-tests
-        env:
-          SUBJECT_CMD: "node --experimental-transform-types typescript/subject/subject.ts"
+      - name: Run TypeScript TCP subject matrix tests
+        run: >
+          cargo nextest run -p spec-tests --test spec_matrix --run-ignored all -E 'test(lang_typescript_transport_tcp::)'
 
   swift-conformance:
     name: Conformance / Swift
@@ -194,12 +236,36 @@ jobs:
         run: swift build -c release --package-path swift/subject
 
       - name: Run RoamRuntime Swift tests
-        run: swift test -Xlinker -L$(pwd)/target/release
+        run: swift test --no-parallel -Xlinker -L$(pwd)/target/release
 
-      - name: Run spec tests
-        run: cargo nextest run -p spec-tests
-        env:
-          SUBJECT_CMD: "sh swift/subject/subject-swift.sh"
+      - name: Build Swift shm-guest-client
+        run: swift build -c debug --package-path swift/roam-runtime --product shm-guest-client
+
+      - name: Run SHM cross-language guest regression tests (via spec-tests)
+        run: >
+          cargo nextest run -p spec-tests --test spec_matrix
+          -E 'test(lang_swift_to_rust_transport_shm_direction_guest_to_host_cross_language_data_path)
+          | test(lang_swift_to_rust_transport_shm_direction_guest_to_host_cross_language_message_v7)
+          | test(lang_rust_to_swift_transport_shm_direction_host_to_guest_cross_language_mmap_ref_receive)
+          | test(lang_rust_to_swift_transport_shm_direction_host_to_guest_cross_language_cutover_boundaries)
+          | test(lang_swift_to_rust_transport_shm_direction_guest_to_host_cross_language_cutover_boundaries)
+          | test(lang_swift_to_rust_transport_shm_direction_guest_to_host_cross_language_fault_mmap_control_breakage)
+          | test(lang_rust_to_swift_transport_shm_direction_host_to_guest_cross_language_fault_host_goodbye_wake)'
+
+      - name: Run Swift TCP subject matrix tests
+        run: >
+          cargo nextest run -p spec-tests --test spec_matrix --run-ignored all
+          -E 'test(lang_swift_transport_tcp::)'
+
+      - name: Run Swift SHM guest subject matrix tests
+        run: >
+          cargo nextest run -p spec-tests --test spec_matrix --run-ignored all
+          -E 'test(lang_swift_transport_shm_guest_mode::)'
+
+      - name: Run Swift SHM host subject matrix tests
+        run: >
+          cargo nextest run -p spec-tests --test spec_matrix --run-ignored all
+          -E 'test(lang_swift_transport_shm_host_mode::)'
 
   swift-linux:
     name: Conformance / Swift (Linux)
@@ -228,30 +294,17 @@ jobs:
         run: swift build -c release --package-path swift/subject
 
       - name: Run RoamRuntime Swift tests
-        run: swift test -Xlinker -L$(pwd)/target/release
+        run: swift test --no-parallel -Xlinker -L$(pwd)/target/release
 
-      - name: Run spec tests
-        run: cargo nextest run -p spec-tests
-        env:
-          SUBJECT_CMD: "sh swift/subject/subject-swift.sh"
+      - name: Run Swift TCP subject matrix tests
+        run: >
+          cargo nextest run -p spec-tests --test spec_matrix --run-ignored all
+          -E 'test(lang_swift_transport_tcp::)'
 
-  shm-generated-client:
-    name: SHM / Generated Clients
-    runs-on: depot-macos-15
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run SHM cross-language regression tests
-        run: cargo nextest run -p roam-shm --test bootstrap_cross_language
+      - name: Run Swift SHM guest subject matrix tests
+        run: >
+          cargo nextest run -p spec-tests --test spec_matrix --run-ignored all
+          -E 'test(lang_swift_transport_shm_guest_mode::)'
 
   rust-wasm:
     name: Rust / WebAssembly
@@ -282,7 +335,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '25'
+          node-version: "25"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -312,20 +365,25 @@ jobs:
       - name: Run Wasm browser tests
         run: cd typescript/tests/playwright && pnpm exec playwright test wasm.spec.ts
 
-  # rust-windows:
-  #   name: Rust / Windows
-  #   runs-on: depot-windows-2025-16
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #
-  #     - name: Install Rust
-  #       uses: dtolnay/rust-toolchain@stable
-  #
-  #     - name: Cache cargo
-  #       uses: Swatinem/rust-cache@v2
-  #
-  #     - name: Test shm-primitives
-  #       run: cargo test -p shm-primitives
-  #
-  #     - name: Test roam-shm
-  #       run: cargo test -p roam-shm
+  rust-windows:
+    name: Rust / Windows
+    runs-on: depot-windows-2025-32
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build subject
+        run: cargo build -p subject-rust
+
+      - name: Test workspace
+        run: cargo nextest run --workspace

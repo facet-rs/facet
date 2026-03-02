@@ -1,477 +1,509 @@
-// Roam wire protocol types for TypeScript.
-//
-// These types match the Rust definitions in roam-wire/src/lib.rs exactly.
-// The discriminants match the #[repr(u8)] values used in Rust.
+// Roam wire protocol types for TypeScript (canonical v7 model).
 
-// ============================================================================
-// Hello Message
-// ============================================================================
+// Connection settings and handshake
+export type Parity = { tag: "Odd" } | { tag: "Even" };
 
-/**
- * Hello message variant V4.
- */
-export interface HelloV4 {
-  tag: "V4";
-  maxPayloadSize: number;
-  initialChannelCredit: number;
+export interface ConnectionSettings {
+  parity: Parity;
+  max_concurrent_requests: number;
 }
 
-/**
- * Hello message variant V5 (adds request concurrency limit).
- */
-export interface HelloV5 {
-  tag: "V5";
-  maxPayloadSize: number;
-  initialChannelCredit: number;
-  maxConcurrentRequests: number;
+export interface Hello {
+  version: number;
+  connection_settings: ConnectionSettings;
+  metadata: Metadata;
 }
 
-/**
- * Hello message variant V6 (adds metadata for peer identity, etc.).
- */
-export interface HelloV6 {
-  tag: "V6";
-  maxPayloadSize: number;
-  initialChannelCredit: number;
-  maxConcurrentRequests: number;
-  metadata: MetadataEntry[];
+export interface HelloYourself {
+  connection_settings: ConnectionSettings;
+  metadata: Metadata;
 }
 
-/**
- * Hello message for handshake.
- *
- * r[impl message.hello.structure]
- */
-export type Hello = HelloV4 | HelloV5 | HelloV6;
+export interface ProtocolError {
+  description: string;
+}
 
-// ============================================================================
-// MetadataValue
-// ============================================================================
+export interface Ping {
+  nonce: bigint;
+}
 
-/**
- * String metadata value.
- */
+export interface Pong {
+  nonce: bigint;
+}
+
+// Metadata
 export interface MetadataValueString {
   tag: "String";
   value: string;
 }
 
-/**
- * Bytes metadata value.
- */
 export interface MetadataValueBytes {
   tag: "Bytes";
   value: Uint8Array;
 }
 
-/**
- * U64 metadata value.
- */
 export interface MetadataValueU64 {
   tag: "U64";
   value: bigint;
 }
 
-/**
- * Metadata value.
- *
- * r[impl call.metadata.type]
- */
 export type MetadataValue = MetadataValueString | MetadataValueBytes | MetadataValueU64;
 
-/**
- * Metadata flags.
- *
- * r[impl call.metadata.flags]
- */
+export type MetadataFlagsRepr = bigint;
+
 export const MetadataFlags = {
-  /** No special handling. */
   NONE: 0n,
-  /** Value MUST NOT be logged, traced, or included in error messages. */
   SENSITIVE: 1n << 0n,
-  /** Value MUST NOT be forwarded to downstream calls. */
   NO_PROPAGATE: 1n << 1n,
 } as const;
 
-/**
- * A metadata entry is a (key, value, flags) triple.
- *
- * r[impl call.metadata.type] - Metadata is a list of entries.
- * r[impl call.metadata.flags] - Each entry includes flags for handling behavior.
- */
-export type MetadataEntry = [string, MetadataValue, bigint];
-
-// ============================================================================
-// Message
-// ============================================================================
-
-/**
- * Hello message (discriminant = 0).
- * Link control - no conn_id.
- */
-export interface MessageHello {
-  tag: "Hello";
-  value: Hello;
+export interface MetadataEntry {
+  key: string;
+  value: MetadataValue;
+  flags: MetadataFlagsRepr;
 }
 
-/**
- * Connect message (discriminant = 1).
- * Virtual connection control - no conn_id.
- * r[impl message.connect.initiate] - Request a new virtual connection.
- */
-export interface MessageConnect {
-  tag: "Connect";
-  requestId: bigint;
-  metadata: MetadataEntry[];
+export type Metadata = MetadataEntry[];
+
+// Connection control
+export interface ConnectionOpen {
+  connection_settings: ConnectionSettings;
+  metadata: Metadata;
 }
 
-/**
- * Accept message (discriminant = 2).
- * Virtual connection control - no conn_id.
- * r[impl message.accept.response] - Accept a virtual connection request.
- */
-export interface MessageAccept {
-  tag: "Accept";
-  requestId: bigint;
-  connId: bigint;
-  metadata: MetadataEntry[];
+export interface ConnectionAccept {
+  connection_settings: ConnectionSettings;
+  metadata: Metadata;
 }
 
-/**
- * Reject message (discriminant = 3).
- * Virtual connection control - no conn_id.
- * r[impl message.reject.response] - Reject a virtual connection request.
- */
-export interface MessageReject {
-  tag: "Reject";
-  requestId: bigint;
-  reason: string;
-  metadata: MetadataEntry[];
+export interface ConnectionReject {
+  metadata: Metadata;
 }
 
-/**
- * Goodbye message (discriminant = 4).
- * Connection control - scoped to conn_id.
- * r[impl message.goodbye.send] - Close a virtual connection.
- * r[impl message.goodbye.connection-zero] - Goodbye on conn 0 closes entire link.
- */
-export interface MessageGoodbye {
-  tag: "Goodbye";
-  connId: bigint;
-  reason: string;
+export interface ConnectionClose {
+  metadata: Metadata;
 }
 
-/**
- * Request message (discriminant = 5).
- * RPC - scoped to conn_id.
- *
- * r[impl core.metadata] - Request carries metadata key-value pairs.
- * r[impl call.metadata.unknown] - Unknown keys are ignored.
- * r[impl channeling.request.channels] - Channel IDs listed explicitly for proxy support.
- */
-export interface MessageRequest {
-  tag: "Request";
-  connId: bigint;
-  requestId: bigint;
-  methodId: bigint;
-  metadata: MetadataEntry[];
-  /** Channel IDs used by this call, in argument declaration order. */
+// RPC
+export interface RequestCall {
+  method_id: bigint;
+  args: Uint8Array;
   channels: bigint[];
-  payload: Uint8Array;
+  metadata: Metadata;
 }
 
-/**
- * Response message (discriminant = 6).
- * RPC - scoped to conn_id.
- *
- * r[impl core.metadata] - Response carries metadata key-value pairs.
- * r[impl call.metadata.unknown] - Unknown keys are ignored.
- */
-export interface MessageResponse {
-  tag: "Response";
-  connId: bigint;
-  requestId: bigint;
-  metadata: MetadataEntry[];
-  /** Channel IDs for streams in the response, in return type declaration order. */
+export interface RequestResponse {
+  ret: Uint8Array;
   channels: bigint[];
-  payload: Uint8Array;
+  metadata: Metadata;
 }
 
-/**
- * Cancel message (discriminant = 7).
- * RPC - scoped to conn_id.
- *
- * r[impl call.cancel.message] - Cancel message requests callee stop processing.
- * r[impl call.cancel.no-response-required] - Caller should timeout, not wait indefinitely.
- */
-export interface MessageCancel {
-  tag: "Cancel";
-  connId: bigint;
-  requestId: bigint;
+export interface RequestCancel {
+  metadata: Metadata;
 }
 
-/**
- * Data message (discriminant = 8).
- * Channels - scoped to conn_id.
- *
- * r[impl channeling.type] - Tx<T>/Rx<T> encoded as u64 channel ID on wire
- */
-export interface MessageData {
-  tag: "Data";
-  connId: bigint;
-  channelId: bigint;
-  payload: Uint8Array;
+export type RequestBody =
+  | { tag: "Call"; value: RequestCall }
+  | { tag: "Response"; value: RequestResponse }
+  | { tag: "Cancel"; value: RequestCancel };
+
+export interface RequestMessage {
+  id: bigint;
+  body: RequestBody;
 }
 
-/**
- * Close message (discriminant = 9).
- * Channels - scoped to conn_id.
- */
-export interface MessageClose {
-  tag: "Close";
-  connId: bigint;
-  channelId: bigint;
+// Channels
+export interface ChannelItem {
+  item: Uint8Array;
 }
 
-/**
- * Reset message (discriminant = 10).
- * Channels - scoped to conn_id.
- */
-export interface MessageReset {
-  tag: "Reset";
-  connId: bigint;
-  channelId: bigint;
+export interface ChannelClose {
+  metadata: Metadata;
 }
 
-/**
- * Credit message (discriminant = 11).
- * Channels - scoped to conn_id.
- */
-export interface MessageCredit {
-  tag: "Credit";
-  connId: bigint;
-  channelId: bigint;
-  bytes: number;
+export interface ChannelReset {
+  metadata: Metadata;
 }
 
-/**
- * Protocol message.
- *
- * Variant order is wire-significant (postcard enum discriminants).
- */
-export type Message =
-  | MessageHello
-  | MessageConnect
-  | MessageAccept
-  | MessageReject
-  | MessageGoodbye
-  | MessageRequest
-  | MessageResponse
-  | MessageCancel
-  | MessageData
-  | MessageClose
-  | MessageReset
-  | MessageCredit;
+export interface ChannelGrantCredit {
+  additional: number;
+}
 
-// ============================================================================
-// Message Discriminants
-// ============================================================================
+export type ChannelBody =
+  | { tag: "Item"; value: ChannelItem }
+  | { tag: "Close"; value: ChannelClose }
+  | { tag: "Reset"; value: ChannelReset }
+  | { tag: "GrantCredit"; value: ChannelGrantCredit };
 
-/**
- * Wire discriminant values for Message variants.
- * These match the Rust #[repr(u8)] = N values.
- */
+export interface ChannelMessage {
+  id: bigint;
+  body: ChannelBody;
+}
+
+// Top-level message
+export type MessagePayload =
+  | { tag: "Hello"; value: Hello }
+  | { tag: "HelloYourself"; value: HelloYourself }
+  | { tag: "ProtocolError"; value: ProtocolError }
+  | { tag: "Ping"; value: Ping }
+  | { tag: "Pong"; value: Pong }
+  | { tag: "ConnectionOpen"; value: ConnectionOpen }
+  | { tag: "ConnectionAccept"; value: ConnectionAccept }
+  | { tag: "ConnectionReject"; value: ConnectionReject }
+  | { tag: "ConnectionClose"; value: ConnectionClose }
+  | { tag: "RequestMessage"; value: RequestMessage }
+  | { tag: "ChannelMessage"; value: ChannelMessage };
+
+export interface Message {
+  connection_id: bigint;
+  payload: MessagePayload;
+}
+
+export type MessageHello = Message & { payload: { tag: "Hello"; value: Hello } };
+export type MessageHelloYourself = Message & {
+  payload: { tag: "HelloYourself"; value: HelloYourself };
+};
+export type MessageProtocolError = Message & {
+  payload: { tag: "ProtocolError"; value: ProtocolError };
+};
+export type MessagePing = Message & {
+  payload: { tag: "Ping"; value: Ping };
+};
+export type MessagePong = Message & {
+  payload: { tag: "Pong"; value: Pong };
+};
+export type MessageConnect = Message & { payload: { tag: "ConnectionOpen"; value: ConnectionOpen } };
+export type MessageAccept = Message & {
+  payload: { tag: "ConnectionAccept"; value: ConnectionAccept };
+};
+export type MessageReject = Message & {
+  payload: { tag: "ConnectionReject"; value: ConnectionReject };
+};
+export type MessageGoodbye = Message & {
+  payload: { tag: "ConnectionClose"; value: ConnectionClose };
+};
+export type MessageRequest = Message & {
+  payload: { tag: "RequestMessage"; value: { id: bigint; body: { tag: "Call"; value: RequestCall } } };
+};
+export type MessageResponse = Message & {
+  payload: {
+    tag: "RequestMessage";
+    value: { id: bigint; body: { tag: "Response"; value: RequestResponse } };
+  };
+};
+export type MessageCancel = Message & {
+  payload: {
+    tag: "RequestMessage";
+    value: { id: bigint; body: { tag: "Cancel"; value: RequestCancel } };
+  };
+};
+export type MessageData = Message & {
+  payload: { tag: "ChannelMessage"; value: { id: bigint; body: { tag: "Item"; value: ChannelItem } } };
+};
+export type MessageClose = Message & {
+  payload: {
+    tag: "ChannelMessage";
+    value: { id: bigint; body: { tag: "Close"; value: ChannelClose } };
+  };
+};
+export type MessageReset = Message & {
+  payload: {
+    tag: "ChannelMessage";
+    value: { id: bigint; body: { tag: "Reset"; value: ChannelReset } };
+  };
+};
+export type MessageCredit = Message & {
+  payload: {
+    tag: "ChannelMessage";
+    value: { id: bigint; body: { tag: "GrantCredit"; value: ChannelGrantCredit } };
+  };
+};
+
 export const MessageDiscriminant = {
   Hello: 0,
-  Connect: 1,
-  Accept: 2,
-  Reject: 3,
-  Goodbye: 4,
-  Request: 5,
-  Response: 6,
-  Cancel: 7,
-  Data: 8,
-  Close: 9,
-  Reset: 10,
-  Credit: 11,
+  HelloYourself: 1,
+  ProtocolError: 2,
+  ConnectionOpen: 3,
+  ConnectionAccept: 4,
+  ConnectionReject: 5,
+  ConnectionClose: 6,
+  RequestMessage: 7,
+  ChannelMessage: 8,
+  Ping: 9,
+  Pong: 10,
 } as const;
 
-/**
- * Wire discriminant values for MetadataValue variants.
- */
 export const MetadataValueDiscriminant = {
   String: 0,
   Bytes: 1,
   U64: 2,
 } as const;
 
-/**
- * Wire discriminant values for Hello variants.
- */
+
 export const HelloDiscriminant = {
-  V1: 0, // deprecated
-  V2: 1, // deprecated
-  V4: 3,
-  V5: 4,
-  V6: 5,
+  V7: 7,
 } as const;
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/**
- * Create a Hello.V4 message.
- */
-export function helloV4(maxPayloadSize: number, initialChannelCredit: number): HelloV4 {
-  return { tag: "V4", maxPayloadSize, initialChannelCredit };
+// Helpers
+export function parityOdd(): Parity {
+  return { tag: "Odd" };
 }
 
-/**
- * Create a Hello.V5 message.
- */
-export function helloV5(
-  maxPayloadSize: number,
-  initialChannelCredit: number,
+export function parityEven(): Parity {
+  return { tag: "Even" };
+}
+
+export function connectionSettings(parity: Parity, maxConcurrentRequests: number): ConnectionSettings {
+  return {
+    parity,
+    max_concurrent_requests: maxConcurrentRequests,
+  };
+}
+
+export function helloV7(
+  parity: Parity,
   maxConcurrentRequests: number,
-): HelloV5 {
-  return { tag: "V5", maxPayloadSize, initialChannelCredit, maxConcurrentRequests };
+  metadata: Metadata = [],
+): Hello {
+  return {
+    version: 7,
+    connection_settings: connectionSettings(parity, maxConcurrentRequests),
+    metadata,
+  };
 }
 
-/**
- * Create a Hello.V6 message.
- */
-export function helloV6(
-  maxPayloadSize: number,
-  initialChannelCredit: number,
+export function helloYourself(
+  parity: Parity,
   maxConcurrentRequests: number,
-  metadata: MetadataEntry[] = [],
-): HelloV6 {
-  return { tag: "V6", maxPayloadSize, initialChannelCredit, maxConcurrentRequests, metadata };
+  metadata: Metadata = [],
+): HelloYourself {
+  return {
+    connection_settings: connectionSettings(parity, maxConcurrentRequests),
+    metadata,
+  };
 }
 
-/**
- * Create a MetadataValue.String.
- */
 export function metadataString(value: string): MetadataValue {
   return { tag: "String", value };
 }
 
-/**
- * Create a MetadataValue.Bytes.
- */
 export function metadataBytes(value: Uint8Array): MetadataValue {
   return { tag: "Bytes", value };
 }
 
-/**
- * Create a MetadataValue.U64.
- */
 export function metadataU64(value: bigint): MetadataValue {
   return { tag: "U64", value };
 }
 
-/**
- * Create a Message.Hello.
- */
+export function metadataEntry(
+  key: string,
+  value: MetadataValue,
+  flags: MetadataFlagsRepr = MetadataFlags.NONE,
+): MetadataEntry {
+  return { key, value, flags };
+}
+
 export function messageHello(hello: Hello): Message {
-  return { tag: "Hello", value: hello };
+  return { connection_id: 0n, payload: { tag: "Hello", value: hello } };
 }
 
-/**
- * Create a Message.Connect.
- */
-export function messageConnect(requestId: bigint, metadata: MetadataEntry[] = []): Message {
-  return { tag: "Connect", requestId, metadata };
+export function messageHelloYourself(value: HelloYourself): Message {
+  return { connection_id: 0n, payload: { tag: "HelloYourself", value } };
 }
 
-/**
- * Create a Message.Accept.
- */
-export function messageAccept(
-  requestId: bigint,
+export function messageProtocolError(description: string): Message {
+  return {
+    connection_id: 0n,
+    payload: { tag: "ProtocolError", value: { description } },
+  };
+}
+
+export function messagePing(nonce: bigint): Message {
+  return {
+    connection_id: 0n,
+    payload: { tag: "Ping", value: { nonce } },
+  };
+}
+
+export function messagePong(nonce: bigint): Message {
+  return {
+    connection_id: 0n,
+    payload: { tag: "Pong", value: { nonce } },
+  };
+}
+
+export function messageConnect(
   connId: bigint,
-  metadata: MetadataEntry[] = [],
+  connection_settings: ConnectionSettings,
+  metadata: Metadata = [],
 ): Message {
-  return { tag: "Accept", requestId, connId, metadata };
+  return {
+    connection_id: connId,
+    payload: { tag: "ConnectionOpen", value: { connection_settings, metadata } },
+  };
 }
 
-/**
- * Create a Message.Reject.
- */
-export function messageReject(
-  requestId: bigint,
-  reason: string,
-  metadata: MetadataEntry[] = [],
+export function messageAccept(
+  connId: bigint,
+  connection_settings: ConnectionSettings,
+  metadata: Metadata = [],
 ): Message {
-  return { tag: "Reject", requestId, reason, metadata };
+  return {
+    connection_id: connId,
+    payload: { tag: "ConnectionAccept", value: { connection_settings, metadata } },
+  };
 }
 
-/**
- * Create a Message.Goodbye.
- */
-export function messageGoodbye(reason: string, connId: bigint = 0n): Message {
-  return { tag: "Goodbye", connId, reason };
+export function messageReject(connId: bigint, metadata: Metadata = []): Message {
+  return {
+    connection_id: connId,
+    payload: { tag: "ConnectionReject", value: { metadata } },
+  };
 }
 
-/**
- * Create a Message.Request.
- */
+export function messageGoodbye(connId: bigint = 0n, metadata: Metadata = []): Message {
+  return {
+    connection_id: connId,
+    payload: { tag: "ConnectionClose", value: { metadata } },
+  };
+}
+
 export function messageRequest(
   requestId: bigint,
   methodId: bigint,
   payload: Uint8Array,
-  metadata: MetadataEntry[] = [],
+  metadata: Metadata = [],
   channels: bigint[] = [],
   connId: bigint = 0n,
 ): Message {
-  return { tag: "Request", connId, requestId, methodId, metadata, channels, payload };
+  return {
+    connection_id: connId,
+    payload: {
+      tag: "RequestMessage",
+      value: {
+        id: requestId,
+        body: {
+          tag: "Call",
+          value: {
+            method_id: methodId,
+            args: payload,
+            channels,
+            metadata,
+          },
+        },
+      },
+    },
+  };
 }
 
-/**
- * Create a Message.Response.
- */
 export function messageResponse(
   requestId: bigint,
   payload: Uint8Array,
-  metadata: MetadataEntry[] = [],
+  metadata: Metadata = [],
   channels: bigint[] = [],
   connId: bigint = 0n,
 ): Message {
-  return { tag: "Response", connId, requestId, metadata, channels, payload };
+  return {
+    connection_id: connId,
+    payload: {
+      tag: "RequestMessage",
+      value: {
+        id: requestId,
+        body: {
+          tag: "Response",
+          value: {
+            ret: payload,
+            channels,
+            metadata,
+          },
+        },
+      },
+    },
+  };
 }
 
-/**
- * Create a Message.Cancel.
- */
-export function messageCancel(requestId: bigint, connId: bigint = 0n): Message {
-  return { tag: "Cancel", connId, requestId };
+export function messageCancel(
+  requestId: bigint,
+  connId: bigint = 0n,
+  metadata: Metadata = [],
+): Message {
+  return {
+    connection_id: connId,
+    payload: {
+      tag: "RequestMessage",
+      value: {
+        id: requestId,
+        body: {
+          tag: "Cancel",
+          value: {
+            metadata,
+          },
+        },
+      },
+    },
+  };
 }
 
-/**
- * Create a Message.Data.
- */
 export function messageData(channelId: bigint, payload: Uint8Array, connId: bigint = 0n): Message {
-  return { tag: "Data", connId, channelId, payload };
+  return {
+    connection_id: connId,
+    payload: {
+      tag: "ChannelMessage",
+      value: {
+        id: channelId,
+        body: {
+          tag: "Item",
+          value: { item: payload },
+        },
+      },
+    },
+  };
 }
 
-/**
- * Create a Message.Close.
- */
-export function messageClose(channelId: bigint, connId: bigint = 0n): Message {
-  return { tag: "Close", connId, channelId };
+export function messageClose(channelId: bigint, connId: bigint = 0n, metadata: Metadata = []): Message {
+  return {
+    connection_id: connId,
+    payload: {
+      tag: "ChannelMessage",
+      value: {
+        id: channelId,
+        body: {
+          tag: "Close",
+          value: { metadata },
+        },
+      },
+    },
+  };
 }
 
-/**
- * Create a Message.Reset.
- */
-export function messageReset(channelId: bigint, connId: bigint = 0n): Message {
-  return { tag: "Reset", connId, channelId };
+export function messageReset(channelId: bigint, connId: bigint = 0n, metadata: Metadata = []): Message {
+  return {
+    connection_id: connId,
+    payload: {
+      tag: "ChannelMessage",
+      value: {
+        id: channelId,
+        body: {
+          tag: "Reset",
+          value: { metadata },
+        },
+      },
+    },
+  };
 }
 
-/**
- * Create a Message.Credit.
- */
 export function messageCredit(channelId: bigint, bytes: number, connId: bigint = 0n): Message {
-  return { tag: "Credit", connId, channelId, bytes };
+  return {
+    connection_id: connId,
+    payload: {
+      tag: "ChannelMessage",
+      value: {
+        id: channelId,
+        body: {
+          tag: "GrantCredit",
+          value: { additional: bytes },
+        },
+      },
+    },
+  };
 }

@@ -3,12 +3,14 @@ import Darwin
 import Foundation
 import Testing
 import CRoamShm
+import CRoamShmFfi
 
 @testable import RoamRuntime
 
 private struct BootstrapServerHandle {
     let socketPath: String
     let thread: Thread
+    let done: DispatchSemaphore
 }
 
 private func makeUnixListener(path: String) throws -> Int32 {
@@ -131,21 +133,24 @@ private func readExactly(fd: Int32, count: Int) -> [UInt8]? {
 private func startBootstrapServer(
     expectedSid: String,
     responseStatus: UInt8,
-    responsePeerId: UInt8,
+    responsePeerId: UInt32,
     responsePayload: String,
     sendDoorbellFd: Int32?,
-    sendShmFd: Int32?
+    sendShmFd: Int32?,
+    sendMmapControlFd: Int32?
 ) throws -> BootstrapServerHandle {
     let tmp = try XCTUnwrap(tempfile())
     let socketPath = tmp + "/control.sock"
 
     let listener = try makeUnixListener(path: socketPath)
+    let done = DispatchSemaphore(value: 0)
 
     let thread = Thread {
         defer {
             close(listener)
             unlink(socketPath)
             removeTempDir(tmp)
+            done.signal()
         }
 
         var client: Int32
@@ -169,32 +174,26 @@ private func startBootstrapServer(
         }
 
         let payloadBytes = [UInt8](responsePayload.utf8)
-        var response: [UInt8] = []
-        response.append(contentsOf: [UInt8]("RSP0".utf8))
-        response.append(responseStatus)
-        response.append(responsePeerId)
-        response.append(UInt8(truncatingIfNeeded: payloadBytes.count & 0x00FF))
-        response.append(UInt8(truncatingIfNeeded: (payloadBytes.count >> 8) & 0x00FF))
-        response.append(contentsOf: payloadBytes)
-
-        guard writeAll(fd: client, bytes: response) else {
-            return
+        let doorbellFd = sendDoorbellFd ?? -1
+        let shmFd = sendShmFd ?? -1
+        let mmapControlFd = sendMmapControlFd ?? -1
+        let sendRc = payloadBytes.withUnsafeBufferPointer { buf in
+            roam_shm_bootstrap_response_send_unix(
+                client,
+                responseStatus,
+                responsePeerId,
+                buf.baseAddress,
+                UInt(buf.count),
+                doorbellFd,
+                shmFd,
+                mmapControlFd
+            )
         }
-
-        var fdsToSend: [Int32] = []
-        if let fd = sendDoorbellFd {
-            fdsToSend.append(fd)
-        }
-        if let fd = sendShmFd {
-            fdsToSend.append(fd)
-        }
-        if !fdsToSend.isEmpty {
-            _ = sendPassedFds(sock: client, fds: fdsToSend)
-        }
+        guard sendRc == 0 else { return }
     }
     thread.start()
 
-    return BootstrapServerHandle(socketPath: socketPath, thread: thread)
+    return BootstrapServerHandle(socketPath: socketPath, thread: thread, done: done)
 }
 
 private func tempfile() throws -> String {
@@ -221,6 +220,8 @@ private func XCTUnwrap<T>(_ value: T?) throws -> T {
 }
 
 struct ShmBootstrapTests {
+    // r[verify shm.spawn]
+    // r[verify shm.spawn.fd-inheritance]
     @Test func receivesDoorbellFdViaScmRights() throws {
         for _ in 0..<100 {
             let sid = "123e4567-e89b-12d3-a456-426614174000"
@@ -231,6 +232,9 @@ struct ShmBootstrapTests {
             let shmFile = open("/dev/null", O_RDONLY)
             #expect(shmFile >= 0)
             defer { close(shmFile) }
+            let mmapControlFile = open("/dev/null", O_RDONLY)
+            #expect(mmapControlFile >= 0)
+            defer { close(mmapControlFile) }
 
             let server = try startBootstrapServer(
                 expectedSid: sid,
@@ -238,7 +242,8 @@ struct ShmBootstrapTests {
                 responsePeerId: 1,
                 responsePayload: "/tmp/test.shm",
                 sendDoorbellFd: file,
-                sendShmFd: shmFile
+                sendShmFd: shmFile,
+                sendMmapControlFd: mmapControlFile
             )
             defer { server.thread.cancel() }
 
@@ -251,11 +256,16 @@ struct ShmBootstrapTests {
             #expect(flags != -1)
             let shmFlags = fcntl(ticket.shmFd, F_GETFD)
             #expect(shmFlags != -1)
+            let mmapFlags = fcntl(ticket.mmapControlFd, F_GETFD)
+            #expect(mmapFlags != -1)
             close(ticket.doorbellFd)
             close(ticket.shmFd)
+            close(ticket.mmapControlFd)
+            server.done.wait()
         }
     }
 
+    // r[verify shm.spawn.fd-inheritance]
     @Test func failsWhenNoFdIsPassed() throws {
         let sid = "123e4567-e89b-12d3-a456-426614174000"
 
@@ -265,16 +275,17 @@ struct ShmBootstrapTests {
             responsePeerId: 1,
             responsePayload: "/tmp/test.shm",
             sendDoorbellFd: nil,
-            sendShmFd: nil
+            sendShmFd: nil,
+            sendMmapControlFd: nil
         )
-        defer { server.thread.cancel() }
+        defer { server.done.wait() }
 
         do {
             _ = try requestShmBootstrapTicket(controlSocketPath: server.socketPath, sid: sid)
             Issue.record("Expected missingFileDescriptor error")
         } catch let error as ShmBootstrapError {
             switch error {
-            case .missingFileDescriptor:
+            case .missingFileDescriptor, .protocolError:
                 break
             default:
                 Issue.record("Unexpected error: \(error)")
@@ -291,9 +302,10 @@ struct ShmBootstrapTests {
             responsePeerId: 0,
             responsePayload: "sid mismatch",
             sendDoorbellFd: nil,
-            sendShmFd: nil
+            sendShmFd: nil,
+            sendMmapControlFd: nil
         )
-        defer { server.thread.cancel() }
+        defer { server.done.wait() }
 
         do {
             _ = try requestShmBootstrapTicket(controlSocketPath: server.socketPath, sid: sid)

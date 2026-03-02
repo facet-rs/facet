@@ -2,7 +2,7 @@
 
 use facet::Facet;
 use roam::service;
-use roam::session::{Rx, Tx};
+use roam::{Rx, Tx};
 
 /// Testbed service for conformance testing.
 ///
@@ -162,6 +162,6 @@ pub enum LookupError {
     AccessDenied = 1,
 }
 
-pub fn all_services() -> Vec<roam::schema::ServiceDetail> {
-    vec![testbed_service_detail()]
+pub fn all_services() -> Vec<&'static roam::session::ServiceDescriptor> {
+    vec![testbed_service_descriptor()]
 }

@@ -1,18 +1,30 @@
 # Enable experimental features
 experimental = ["setup-scripts"]
 
-[scripts.setup.build-subject-rust]
-command = "cargo build --release -p subject-rust"
-
-[scripts.setup.build-guest-process]
-command = "./scripts/build-roam-shm-test-setup.sh"
-slow-timeout = { period = "60s" }
+[scripts.setup.moire-env]
+command = ['sh', '-c', 'echo "MOIRE_DASHBOARD=127.0.0.1:9119" >> "$NEXTEST_ENV"']
 
 [profile.loom]
 slow-timeout = { period = "10s", terminate-after = 3 }
 
 [profile.patient]
 slow-timeout = { period = "30s", terminate-after = 4 }
+
+[profile.eternal]
+slow-timeout = { period = "3600s", terminate-after = 3600 }
+
+[profile.coverage]
+# Coverage-instrumented binaries are significantly slower, especially over SHM.
+slow-timeout = { period = "30s", terminate-after = 8 }
+fail-fast = false
+status-level = "pass"
+
+[profile.moire]
+slow-timeout = { period = "1h", terminate-after = 24 }
+
+[[profile.moire.scripts]]
+filter = 'all()'
+setup = 'moire-env'
 
 [profile.default]
 # Fail fast - stop on first failure
@@ -23,11 +35,3 @@ status-level = "pass"
 
 # Slow test warning threshold
 slow-timeout = { period = "2s", terminate-after = 2 }
-
-[[profile.default.scripts]]
-filter = "package(spec-tests)"
-setup = "build-subject-rust"
-
-[[profile.default.scripts]]
-filter = "package(roam-shm)"
-setup = "build-guest-process"

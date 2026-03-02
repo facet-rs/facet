@@ -1,10 +1,12 @@
 import Foundation
 
+private let metadataFlagsNone: UInt64 = 0
+
 private let peepsMethodNameMetadataKey = "moire.method_name"
 private let peepsRequestEntityIdMetadataKey = "moire.request_entity_id"
 private let peepsConnectionCorrelationIdMetadataKey = "moire.connection_correlation_id"
 
-private func metadataString(_ metadata: [MetadataEntry], key: String) -> String? {
+private func metadataString(_ metadata: [MetadataEntryV7], key: String) -> String? {
     for entry in metadata where entry.key == key {
         if case .string(let value) = entry.value {
             return value
@@ -14,19 +16,28 @@ private func metadataString(_ metadata: [MetadataEntry], key: String) -> String?
 }
 
 private func upsertStringMetadata(
-    _ metadata: inout [MetadataEntry],
+    _ metadata: inout [MetadataEntryV7],
     key: String,
     value: String
 ) {
     for idx in metadata.indices where metadata[idx].key == key {
-        metadata[idx] = (key: key, value: .string(value), flags: MetadataFlags.none.rawValue)
+        metadata[idx] = MetadataEntryV7(
+            key: key,
+            value: .string(value),
+            flags: metadataFlagsNone
+        )
         return
     }
-    metadata.append((key: key, value: .string(value), flags: MetadataFlags.none.rawValue))
+    metadata.append(
+        MetadataEntryV7(
+            key: key,
+            value: .string(value),
+            flags: metadataFlagsNone
+        ))
 }
 
-private func responseMetadataFromRequest(_ requestMetadata: [MetadataEntry]) -> [MetadataEntry] {
-    var responseMetadata: [MetadataEntry] = []
+private func responseMetadataFromRequest(_ requestMetadata: [MetadataEntryV7]) -> [MetadataEntryV7] {
+    var responseMetadata: [MetadataEntryV7] = []
     for entry in requestMetadata {
         if entry.key == peepsMethodNameMetadataKey || entry.key == peepsRequestEntityIdMetadataKey {
             responseMetadata.append(entry)
@@ -35,10 +46,8 @@ private func responseMetadataFromRequest(_ requestMetadata: [MetadataEntry]) -> 
     return responseMetadata
 }
 
-private func helloCorrelationId(_ hello: Hello) -> String? {
-    guard case .v6(_, _, _, let metadata) = hello else {
-        return nil
-    }
+private func helloCorrelationId(_ hello: HelloV7) -> String? {
+    let metadata = hello.metadata
     return metadataString(metadata, key: peepsConnectionCorrelationIdMetadataKey)
 }
 
@@ -50,8 +59,8 @@ private func nextConnectionCorrelationId() -> String {
 
 /// Parameters negotiated during handshake.
 ///
-/// r[impl message.hello.negotiation] - Effective limit is min of both peers.
-/// r[impl flow.channel.initial-credit] - Negotiated during handshake.
+/// r[impl session.handshake] - Effective limit is min of both peers.
+/// r[impl rpc.flow-control.credit.initial] - Negotiated during handshake.
 public struct Negotiated: Sendable {
     public let maxPayloadSize: UInt32
     public let initialCredit: UInt32
@@ -61,6 +70,17 @@ public struct Negotiated: Sendable {
         self.maxPayloadSize = maxPayloadSize
         self.initialCredit = initialCredit
         self.maxConcurrentRequests = maxConcurrentRequests
+    }
+}
+
+/// Driver-level protocol keepalive configuration.
+public struct DriverKeepaliveConfig: Sendable {
+    public let pingInterval: TimeInterval
+    public let pongTimeout: TimeInterval
+
+    public init(pingInterval: TimeInterval, pongTimeout: TimeInterval) {
+        self.pingInterval = pingInterval
+        self.pongTimeout = pongTimeout
     }
 }
 
@@ -96,7 +116,7 @@ public enum HandleCommand: Sendable {
     case call(
         requestId: UInt64,
         methodId: UInt64,
-        metadata: [MetadataEntry],
+        metadata: [MetadataEntryV7],
         payload: [UInt8],
         channels: [UInt64],
         timeout: TimeInterval?,
@@ -119,7 +139,7 @@ private actor RequestIdAllocator {
 
 /// Async semaphore for limiting concurrent outgoing requests.
 ///
-/// r[impl flow.call.concurrency-limit] - Enforces negotiated maxConcurrentRequests.
+
 /// FIFO fairness: waiters are resumed in order. `close()` fails all waiters
 /// when the connection dies, preventing callers from hanging forever.
 private actor AsyncSemaphore {
@@ -193,10 +213,10 @@ public final class ConnectionHandle: @unchecked Sendable {
 
     /// Make a raw RPC call.
     ///
-    /// r[impl flow.call.concurrency-limit] - Blocks if maxConcurrentRequests are in-flight.
+    /// r[impl rpc.flow-control.max-concurrent-requests] - Blocks if maxConcurrentRequests are in-flight.
     public func callRaw(
         methodId: UInt64,
-        metadata: [MetadataEntry] = [],
+        metadata: [MetadataEntryV7] = [],
         payload: [UInt8],
         channels: [UInt64] = [],
         timeout: TimeInterval? = nil
@@ -253,12 +273,45 @@ public final class ConnectionHandle: @unchecked Sendable {
 
 /// Events the driver processes in its run loop.
 private enum DriverEvent: Sendable {
-    case incomingMessage(Message)
-    case taskMessage(TaskMessage)
-    case command(HandleCommand)
+    case incomingMessage(MessageV7)
+    case wake
     case retryTick
     case transportClosed
     case transportFailed(String)
+}
+
+private final class LockedQueue<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [T] = []
+    private var closed = false
+
+    func push(_ item: T) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if closed {
+            return false
+        }
+        items.append(item)
+        return true
+    }
+
+    func popAll() -> [T] {
+        lock.lock()
+        defer { lock.unlock() }
+        if items.isEmpty {
+            return []
+        }
+        let out = items
+        items = []
+        return out
+    }
+
+    func close() {
+        lock.lock()
+        defer { lock.unlock() }
+        closed = true
+        items.removeAll()
+    }
 }
 
 // MARK: - Driver
@@ -283,7 +336,7 @@ private actor DriverState {
 
     var pendingResponses: [UInt64: PendingCall] = [:]
     var inFlightRequests: Set<UInt64> = []
-    var inFlightResponseMetadata: [UInt64: [MetadataEntry]] = [:]
+    var inFlightResponseContext: [UInt64: InFlightResponseContext] = [:]
     private var finalizedRequests: [UInt64: FinalizedRequest] = [:]
     var isClosed = false
 
@@ -351,18 +404,33 @@ private actor DriverState {
         return true
     }
 
-    func addInFlight(_ requestId: UInt64, responseMetadata: [MetadataEntry]) -> Bool {
+    func addInFlight(
+        _ requestId: UInt64,
+        connectionId: UInt64,
+        responseMetadata: [MetadataEntryV7]
+    ) -> Bool {
         let inserted = inFlightRequests.insert(requestId).inserted
         if inserted {
-            inFlightResponseMetadata[requestId] = responseMetadata
+            inFlightResponseContext[requestId] = InFlightResponseContext(
+                connectionId: connectionId,
+                responseMetadata: responseMetadata
+            )
         }
         return inserted
     }
 
-    func removeInFlight(_ requestId: UInt64) -> (removed: Bool, responseMetadata: [MetadataEntry]) {
+    func removeInFlight(_ requestId: UInt64) -> (
+        removed: Bool,
+        connectionId: UInt64,
+        responseMetadata: [MetadataEntryV7]
+    ) {
         let removed = inFlightRequests.remove(requestId) != nil
-        let responseMetadata = inFlightResponseMetadata.removeValue(forKey: requestId) ?? []
-        return (removed, responseMetadata)
+        let context = inFlightResponseContext.removeValue(forKey: requestId)
+        return (
+            removed,
+            context?.connectionId ?? 0,
+            context?.responseMetadata ?? []
+        )
     }
 
     func failAllPending() -> [UInt64: PendingCall] {
@@ -370,7 +438,7 @@ private actor DriverState {
         let responses = pendingResponses
         pendingResponses.removeAll()
         inFlightRequests.removeAll()
-        inFlightResponseMetadata.removeAll()
+        inFlightResponseContext.removeAll()
         return responses
     }
 
@@ -405,9 +473,8 @@ private actor VirtualConnectionState {
 
 /// Bidirectional connection driver.
 ///
-/// r[impl call.pipelining.allowed] - Handle requests as they arrive.
-/// r[impl call.pipelining.independence] - Each request handled independently.
-/// r[impl transport.message.multiplexing] - channel_id field provides multiplexing.
+/// r[impl rpc.pipelining] - Handle requests as they arrive, each independently.
+/// r[impl rpc.request] - connection_id field provides multiplexing.
 ///
 /// Uses AsyncStream to multiplex between:
 /// - Incoming messages from transport
@@ -415,16 +482,25 @@ private actor VirtualConnectionState {
 /// - Commands from ConnectionHandle
 public final class Driver: @unchecked Sendable {
     private struct QueuedTaskMessage: Sendable {
-        let message: Message
+        let message: MessageV7
     }
 
     private struct QueuedCall: Sendable {
         let requestId: UInt64
         let methodId: UInt64
-        let metadata: [MetadataEntry]
+        let metadata: [MetadataEntryV7]
         let payload: [UInt8]
         let channels: [UInt64]
         let timeout: TimeInterval?
+    }
+
+    private struct KeepaliveRuntime {
+        let pingIntervalNs: UInt64
+        let pongTimeoutNs: UInt64
+        var nextPingAtNs: UInt64
+        var waitingPongNonce: UInt64?
+        var pongDeadlineNs: UInt64
+        var nextPingNonce: UInt64
     }
 
     private let transport: any MessageTransport
@@ -433,6 +509,7 @@ public final class Driver: @unchecked Sendable {
     private let negotiated: Negotiated
     private let handle: ConnectionHandle
     private let acceptConnections: Bool
+    private let keepalive: DriverKeepaliveConfig?
 
     private let serverRegistry: ChannelRegistry
     private let state: DriverState
@@ -441,6 +518,8 @@ public final class Driver: @unchecked Sendable {
     // Event stream for multiplexing
     private let eventContinuation: AsyncStream<DriverEvent>.Continuation
     private let eventStream: AsyncStream<DriverEvent>
+    private let commandQueue: LockedQueue<HandleCommand>
+    private let taskQueue: LockedQueue<TaskMessage>
     private var pendingTaskMessages: [QueuedTaskMessage] = []
     private var pendingCalls: [QueuedCall] = []
 
@@ -450,7 +529,8 @@ public final class Driver: @unchecked Sendable {
         role: Role,
         negotiated: Negotiated,
         handle: ConnectionHandle,
-        acceptConnections: Bool = false
+        acceptConnections: Bool = false,
+        keepalive: DriverKeepaliveConfig? = nil
     ) {
         self.transport = transport
         self.dispatcher = dispatcher
@@ -458,9 +538,12 @@ public final class Driver: @unchecked Sendable {
         self.negotiated = negotiated
         self.handle = handle
         self.acceptConnections = acceptConnections
+        self.keepalive = keepalive
         self.serverRegistry = ChannelRegistry()
         self.state = DriverState()
         self.virtualConnState = VirtualConnectionState()
+        self.commandQueue = LockedQueue<HandleCommand>()
+        self.taskQueue = LockedQueue<TaskMessage>()
 
         // Create event stream
         var continuation: AsyncStream<DriverEvent>.Continuation!
@@ -478,8 +561,11 @@ public final class Driver: @unchecked Sendable {
         negotiated: Negotiated,
         handle: ConnectionHandle,
         acceptConnections: Bool,
+        keepalive: DriverKeepaliveConfig?,
         eventStream: AsyncStream<DriverEvent>,
-        eventContinuation: AsyncStream<DriverEvent>.Continuation
+        eventContinuation: AsyncStream<DriverEvent>.Continuation,
+        commandQueue: LockedQueue<HandleCommand>,
+        taskQueue: LockedQueue<TaskMessage>
     ) {
         self.transport = transport
         self.dispatcher = dispatcher
@@ -487,11 +573,14 @@ public final class Driver: @unchecked Sendable {
         self.negotiated = negotiated
         self.handle = handle
         self.acceptConnections = acceptConnections
+        self.keepalive = keepalive
         self.serverRegistry = ChannelRegistry()
         self.state = DriverState()
         self.virtualConnState = VirtualConnectionState()
         self.eventStream = eventStream
         self.eventContinuation = eventContinuation
+        self.commandQueue = commandQueue
+        self.taskQueue = taskQueue
     }
 
     // Virtual connection helpers
@@ -510,13 +599,30 @@ public final class Driver: @unchecked Sendable {
     /// Get the task sender for handlers to send responses.
     public func taskSender() -> @Sendable (TaskMessage) -> Void {
         let cont = eventContinuation
+        let queue = taskQueue
         return { msg in
-            cont.yield(.taskMessage(msg))
+            guard queue.push(msg) else {
+                return
+            }
+            _ = cont.yield(.wake)
+        }
+    }
+
+    private func drainInjectedQueues() async throws {
+        let commands = commandQueue.popAll()
+        for command in commands {
+            await handleCommand(command)
+        }
+        let taskMessages = taskQueue.popAll()
+        for message in taskMessages {
+            try await handleTaskMessage(message)
         }
     }
 
     /// Run the driver until connection closes.
     public func run() async throws {
+        var keepaliveRuntime = makeKeepaliveRuntime()
+
         // Start transport reader task
         let cont = eventContinuation
         let transport = self.transport
@@ -545,27 +651,29 @@ public final class Driver: @unchecked Sendable {
         defer {
             readerTask.cancel()
             retryTask.cancel()
+            commandQueue.close()
+            taskQueue.close()
             eventContinuation.finish()
         }
         do {
             // Process events
             for await event in eventStream {
+                try await drainInjectedQueues()
                 try await flushPendingTaskMessages()
                 try await flushPendingCalls()
                 switch event {
                 case .incomingMessage(let msg):
-                    try await handleMessage(msg)
+                    try await handleMessage(msg, keepaliveRuntime: &keepaliveRuntime)
 
-                case .taskMessage(let msg):
-                    try await handleTaskMessage(msg)
-
-                case .command(let cmd):
-                    await handleCommand(cmd)
+                case .wake:
+                    break
 
                 case .retryTick:
+                    try await handleKeepaliveTick(keepaliveRuntime: &keepaliveRuntime)
                     break
 
                 case .transportClosed:
+                    warnLog("transport reader closed (recv returned nil)")
                     await failAllPending()
                     eventContinuation.finish()
 
@@ -587,7 +695,7 @@ public final class Driver: @unchecked Sendable {
 
     /// Handle a task message from a handler.
     private func handleTaskMessage(_ msg: TaskMessage) async throws {
-        let wireMsg: Message
+        let wireMsg: MessageV7
         switch msg {
         case .data(let channelId, let payload):
             wireMsg = .data(connId: 0, channelId: channelId, payload: payload)
@@ -598,7 +706,7 @@ public final class Driver: @unchecked Sendable {
             guard responseContext.removed else {
                 return  // Already cancelled
             }
-            // r[impl flow.call.payload-limit] - Outgoing responses are also bounded
+            // r[impl rpc.flow-control.credit.exhaustion] - Outgoing responses are also bounded
             // by max_payload_size. If a handler produces a too-large response, send
             // a Cancelled error instead so the call doesn't hang.
             let checkedPayload: [UInt8]
@@ -612,7 +720,9 @@ public final class Driver: @unchecked Sendable {
                 checkedPayload = payload
             }
             wireMsg = .response(
-                connId: 0, requestId: requestId, metadata: responseContext.responseMetadata,
+                connId: responseContext.connectionId,
+                requestId: requestId,
+                metadata: responseContext.responseMetadata,
                 channels: [],
                 payload: checkedPayload)
         }
@@ -645,7 +755,7 @@ public final class Driver: @unchecked Sendable {
                 return
             }
 
-            let msg = Message.request(
+            let msg = MessageV7.request(
                 connId: 0,
                 requestId: requestId,
                 methodId: methodId,
@@ -716,7 +826,7 @@ public final class Driver: @unchecked Sendable {
         }
 
         while let call = pendingCalls.first {
-            let msg = Message.request(
+            let msg = MessageV7.request(
                 connId: 0,
                 requestId: call.requestId,
                 methodId: call.methodId,
@@ -793,138 +903,208 @@ public final class Driver: @unchecked Sendable {
 
     /// Handle an incoming message.
     ///
-    /// r[impl message.goodbye.receive] - Stop sending, close connection, fail in-flight.
-    /// r[impl call.lifecycle.ordering] - Request before Response in message sequence.
-    /// r[impl message.unknown-variant] - Unknown message variant triggers Goodbye.
-    private func handleMessage(_ msg: Message) async throws {
-        switch msg {
-        case .hello:
-            // Duplicate hello, ignore
+    /// r[impl connection.close.semantics] - Stop sending, close connection, fail in-flight.
+    /// r[impl rpc.request] - Request before Response in message sequence.
+    /// r[impl session.protocol-error] - Unknown message variant triggers Goodbye.
+    private func handleMessage(
+        _ msg: MessageV7,
+        keepaliveRuntime: inout KeepaliveRuntime?
+    ) async throws {
+        switch msg.payload {
+        case .hello, .helloYourself:
+            // Duplicate handshake message, ignore once connected.
             break
-
-        case .connect(let requestId, _):
-            // r[impl core.conn.accept-required] - Accept or reject the connection request.
+        case .ping(let ping):
+            do {
+                try await transport.send(.pong(.init(nonce: ping.nonce)))
+            } catch TransportError.wouldBlock {
+                pendingTaskMessages.append(QueuedTaskMessage(message: .pong(.init(nonce: ping.nonce))))
+            }
+        case .pong(let pong):
+            handlePong(nonce: pong.nonce, keepaliveRuntime: &keepaliveRuntime)
+        case .protocolError(let error):
+            await failAllPending()
+            throw ConnectionError.protocolViolation(rule: error.description)
+        case .connectionOpen(let open):
             if acceptConnections {
-                // r[impl core.conn.id-allocation] - Allocate a new connection ID.
-                let connId = await allocateConnId()
-                await addVirtualConnection(connId)
-                // r[impl message.accept.response] - Send Accept with new conn_id.
+                await addVirtualConnection(msg.connectionId)
                 try await transport.send(
-                    .accept(requestId: requestId, connId: connId, metadata: []))
+                    .connectionAccept(
+                        connId: msg.connectionId,
+                        settings: open.connectionSettings,
+                        metadata: []
+                    ))
             } else {
-                // r[impl message.reject.response] - Reject since not listening.
-                try await transport.send(
-                    .reject(requestId: requestId, reason: "not listening", metadata: []))
+                try await transport.send(.connectionReject(connId: msg.connectionId, metadata: []))
             }
-
-        case .accept, .reject:
-            // Responses to our Connect requests - ignore in server mode
+        case .connectionAccept, .connectionReject:
             break
-
-        case .goodbye(let connId, let reason):
-            // r[impl message.goodbye.connection-zero] - Goodbye on conn 0 closes entire link.
-            if connId == 0 {
-                // r[impl message.goodbye.receive]
+        case .connectionClose:
+            warnLog("received ConnectionClose conn_id=\(msg.connectionId)")
+            if msg.connectionId == 0 {
+                warnLog("received ConnectionClose for root connection; shutting down driver")
                 await failAllPending()
-                throw ConnectionError.goodbye(reason: reason)
+                throw ConnectionError.connectionClosed
             }
-            // r[impl core.conn.lifecycle] - Close virtual connection if it exists.
-            // r[impl core.conn.independence] - Ignore Goodbye on unknown connection.
-            await removeVirtualConnection(connId)
-
-        case .request(_, let requestId, let methodId, let metadata, let channels, let payload):
-            try await handleRequest(
-                requestId: requestId,
-                methodId: methodId,
-                metadata: metadata,
-                channels: channels,
-                payload: payload
-            )
-
-        case .response(_, let requestId, _, _, let payload):
-            // r[impl call.lifecycle.single-response] - One response per request.
-            // r[impl call.complete] - Response completes the call.
-            // r[impl call.response.encoding] - Response payload is Postcard-encoded.
-            guard let pending = await state.removePendingResponse(requestId) else {
-                if let finalized = await state.takeFinalizedRequest(requestId) {
-                    warnLog(
-                        "dropping late response for finalized request_id \(requestId) "
-                            + "(reason=\(finalized.reason) age_ms=\(finalized.ageMs) "
-                            + "payload_size=\(payload.count)); continuing"
-                    )
-                    return
-                }
-                let stateContext = await state.contextSummary(requestId: requestId)
-                warnLog(
-                    "received response for unknown request_id \(requestId) "
-                        + "(payload_size=\(payload.count)); state{\(stateContext)} "
-                        + "queues{pending_calls=\(pendingCalls.count) "
-                        + "pending_task_messages=\(pendingTaskMessages.count)}; closing connection"
+            await removeVirtualConnection(msg.connectionId)
+        case .requestMessage(let request):
+            switch request.body {
+            case .call(let call):
+                try await handleRequest(
+                    connId: msg.connectionId,
+                    requestId: request.id,
+                    methodId: call.methodId,
+                    metadata: call.metadata,
+                    channels: call.channels,
+                    payload: call.args.bytes
                 )
-                try await sendGoodbye("call.lifecycle.unknown-request-id")
-                throw ConnectionError.protocolViolation(rule: "call.lifecycle.unknown-request-id")
+            case .response(let response):
+                let payload = response.ret.bytes
+                guard let pending = await state.removePendingResponse(request.id) else {
+                    if let finalized = await state.takeFinalizedRequest(request.id) {
+                        warnLog(
+                            "dropping late response for finalized request_id \(request.id) "
+                                + "(reason=\(finalized.reason) age_ms=\(finalized.ageMs) "
+                                + "payload_size=\(payload.count)); continuing"
+                        )
+                        return
+                    }
+                    let stateContext = await state.contextSummary(requestId: request.id)
+                    warnLog(
+                        "received response for unknown request_id \(request.id) "
+                            + "(payload_size=\(payload.count)); state{\(stateContext)} "
+                            + "queues{pending_calls=\(pendingCalls.count) "
+                            + "pending_task_messages=\(pendingTaskMessages.count)}; closing connection"
+                    )
+                    try await sendProtocolError("call.lifecycle.unknown-request-id")
+                    throw ConnectionError.protocolViolation(rule: "call.lifecycle.unknown-request-id")
+                }
+                pending.timeoutTask?.cancel()
+                pending.responseTx(.success(payload))
+            case .cancel:
+                let _ = await state.removeInFlight(request.id)
             }
-            pending.timeoutTask?.cancel()
-            pending.responseTx(.success(payload))
-
-        case .cancel(_, let requestId):
-            // r[impl call.cancel.message] - Cancel requests termination.
-            // r[impl call.cancel.best-effort] - Cancel is best-effort, response may still arrive.
-            // r[impl core.call.cancel] - Cancel message uses request_id.
-            // r[impl call.request-id.cancel-still-in-flight] - Cancel only valid for in-flight.
-            let _ = await state.removeInFlight(requestId)
-        // Handler may still be processing; best-effort cancellation
-
-        case .data(_, let channelId, let payload):
-            try await handleData(channelId: channelId, payload: payload)
-
-        case .close(_, let channelId):
-            try await handleClose(channelId: channelId)
-
-        case .reset(_, let channelId):
-            // r[impl channeling.reset] - Reset abruptly terminates channel.
-            // r[impl channeling.reset.effect] - Data in flight may be lost.
-            // r[impl channeling.reset.credit] - Credit is discarded on reset.
-            await serverRegistry.deliverReset(channelId: channelId)
-            await handle.channelRegistry.deliverReset(channelId: channelId)
-
-        case .credit(_, let channelId, let bytes):
-            // r[impl flow.channel.credit-based] - Credit controls data flow.
-            // r[impl flow.channel.credit-grant] - Credit message grants permission.
-            // r[impl flow.channel.credit-additive] - Credits are additive.
-            // r[impl flow.channel.all-transports] - Flow control on all transports.
-            await serverRegistry.deliverCredit(channelId: channelId, bytes: bytes)
-            await handle.channelRegistry.deliverCredit(channelId: channelId, bytes: bytes)
+        case .channelMessage(let channel):
+            switch channel.body {
+            case .item(let item):
+                try await handleData(channelId: channel.id, payload: item.item.bytes)
+            case .close:
+                try await handleClose(channelId: channel.id)
+            case .reset:
+                await serverRegistry.deliverReset(channelId: channel.id)
+                await handle.channelRegistry.deliverReset(channelId: channel.id)
+            case .grantCredit(let credit):
+                await serverRegistry.deliverCredit(channelId: channel.id, bytes: credit.additional)
+                await handle.channelRegistry.deliverCredit(channelId: channel.id, bytes: credit.additional)
+            }
         }
     }
 
-    /// r[impl call.request-id.duplicate-detection] - Duplicate request_id is fatal.
-    /// r[impl flow.call.payload-limit] - Payloads bounded by max_payload_size.
-    /// r[impl message.hello.enforcement] - Exceeding limit requires Goodbye.
-    /// r[impl call.request-id.in-flight] - Request IDs must be tracked while in-flight.
-    /// r[impl call.request-id.uniqueness] - Each request uses a unique ID.
+    private func makeKeepaliveRuntime() -> KeepaliveRuntime? {
+        guard let keepalive else {
+            return nil
+        }
+        let pingIntervalNs = Self.timeoutToNanoseconds(keepalive.pingInterval)
+        let pongTimeoutNs = Self.timeoutToNanoseconds(keepalive.pongTimeout)
+        if pingIntervalNs == 0 || pongTimeoutNs == 0 {
+            warnLog("keepalive disabled due to non-positive interval/timeout")
+            return nil
+        }
+        let now = DispatchTime.now().uptimeNanoseconds
+        return KeepaliveRuntime(
+            pingIntervalNs: pingIntervalNs,
+            pongTimeoutNs: pongTimeoutNs,
+            nextPingAtNs: Self.saturatingAdd(now, pingIntervalNs),
+            waitingPongNonce: nil,
+            pongDeadlineNs: 0,
+            nextPingNonce: 1
+        )
+    }
+
+    private func handlePong(nonce: UInt64, keepaliveRuntime: inout KeepaliveRuntime?) {
+        guard var runtime = keepaliveRuntime else {
+            return
+        }
+        guard runtime.waitingPongNonce == nonce else {
+            return
+        }
+        runtime.waitingPongNonce = nil
+        runtime.pongDeadlineNs = 0
+        runtime.nextPingAtNs = Self.saturatingAdd(
+            DispatchTime.now().uptimeNanoseconds,
+            runtime.pingIntervalNs
+        )
+        keepaliveRuntime = runtime
+    }
+
+    private func handleKeepaliveTick(keepaliveRuntime: inout KeepaliveRuntime?) async throws {
+        guard var runtime = keepaliveRuntime else {
+            return
+        }
+        let now = DispatchTime.now().uptimeNanoseconds
+
+        if let waitingNonce = runtime.waitingPongNonce,
+            now >= runtime.pongDeadlineNs
+        {
+            warnLog(
+                "keepalive timeout waiting for pong nonce=\(waitingNonce) "
+                    + "timeout_ns=\(runtime.pongTimeoutNs)"
+            )
+            await failAllPending()
+            throw ConnectionError.connectionClosed
+        }
+
+        guard runtime.waitingPongNonce == nil else {
+            keepaliveRuntime = runtime
+            return
+        }
+        guard now >= runtime.nextPingAtNs else {
+            keepaliveRuntime = runtime
+            return
+        }
+
+        let nonce = runtime.nextPingNonce
+        do {
+            try await transport.send(.ping(.init(nonce: nonce)))
+            runtime.waitingPongNonce = nonce
+            runtime.pongDeadlineNs = Self.saturatingAdd(now, runtime.pongTimeoutNs)
+            runtime.nextPingAtNs = Self.saturatingAdd(now, runtime.pingIntervalNs)
+            runtime.nextPingNonce = nonce &+ 1
+        } catch TransportError.wouldBlock {
+            // Retry on the next tick without starting the pong deadline.
+        } catch {
+            throw error
+        }
+
+        keepaliveRuntime = runtime
+    }
+
+    /// r[impl rpc.flow-control.credit.exhaustion] - Payloads bounded by max_payload_size.
+    /// r[impl session.connection-settings.hello] - Exceeding limit requires Goodbye.
+    /// r[impl rpc.request.id-allocation] - Each request uses a unique ID.
     private func handleRequest(
+        connId: UInt64,
         requestId: UInt64,
         methodId: UInt64,
-        metadata: [MetadataEntry],
+        metadata: [MetadataEntryV7],
         channels: [UInt64],
         payload: [UInt8]
     ) async throws {
-        // r[impl call.request-id.duplicate-detection]
         let inserted = await state.addInFlight(
             requestId,
+            connectionId: connId,
             responseMetadata: responseMetadataFromRequest(metadata)
         )
 
         guard inserted else {
-            try await sendGoodbye("call.request-id.duplicate-detection")
+            try await sendProtocolError("call.request-id.duplicate-detection")
             throw ConnectionError.protocolViolation(rule: "call.request-id.duplicate-detection")
         }
 
-        // r[impl flow.call.payload-limit]
+        // r[impl rpc.flow-control.credit.exhaustion]
         if payload.count > Int(negotiated.maxPayloadSize) {
-            try await sendGoodbye("flow.call.payload-limit")
-            throw ConnectionError.protocolViolation(rule: "flow.call.payload-limit")
+            try await sendProtocolError("rpc.flow-control.credit.exhaustion")
+            throw ConnectionError.protocolViolation(rule: "rpc.flow-control.credit.exhaustion")
         }
 
         // Pre-register channels BEFORE spawning the handler task.
@@ -952,14 +1132,14 @@ public final class Driver: @unchecked Sendable {
         }
     }
 
-    /// r[impl channeling.id.zero-reserved] - Channel ID 0 is reserved.
-    /// r[impl channeling.unknown] - Unknown channel IDs cause Goodbye.
-    /// r[impl channeling.data] - Data messages routed by channel_id.
+    /// r[impl rpc.channel.allocation] - Channel ID 0 is reserved.
+    /// r[impl rpc.metadata.unknown] - Unknown channel IDs cause Goodbye.
+    /// r[impl rpc.channel.item] - Data messages routed by channel_id.
     private func handleData(channelId: UInt64, payload: [UInt8]) async throws {
-        // r[impl channeling.id.zero-reserved]
+        // r[impl rpc.channel.allocation]
         if channelId == 0 {
-            try await sendGoodbye("channeling.id.zero-reserved")
-            throw ConnectionError.protocolViolation(rule: "channeling.id.zero-reserved")
+            try await sendProtocolError("rpc.channel.allocation")
+            throw ConnectionError.protocolViolation(rule: "rpc.channel.allocation")
         }
 
         // Try server registry first, then client registry
@@ -969,21 +1149,21 @@ public final class Driver: @unchecked Sendable {
                 channelId: channelId, payload: payload)
         }
 
-        // r[impl channeling.unknown]
+        // r[impl rpc.metadata.unknown]
         if !delivered {
-            try await sendGoodbye("channeling.unknown")
-            throw ConnectionError.protocolViolation(rule: "channeling.unknown")
+            try await sendProtocolError("rpc.metadata.unknown")
+            throw ConnectionError.protocolViolation(rule: "rpc.metadata.unknown")
         }
     }
 
-    /// r[impl channeling.id.zero-reserved] - Channel ID 0 is reserved.
-    /// r[impl channeling.unknown] - Unknown channel IDs cause Goodbye.
-    /// r[impl channeling.close] - Close terminates the channel.
+    /// r[impl rpc.channel.allocation] - Channel ID 0 is reserved.
+    /// r[impl rpc.metadata.unknown] - Unknown channel IDs cause Goodbye.
+    /// r[impl rpc.channel.close] - Close terminates the channel.
     private func handleClose(channelId: UInt64) async throws {
-        // r[impl channeling.id.zero-reserved]
+        // r[impl rpc.channel.allocation]
         if channelId == 0 {
-            try await sendGoodbye("channeling.id.zero-reserved")
-            throw ConnectionError.protocolViolation(rule: "channeling.id.zero-reserved")
+            try await sendProtocolError("rpc.channel.allocation")
+            throw ConnectionError.protocolViolation(rule: "rpc.channel.allocation")
         }
 
         var delivered = await serverRegistry.deliverClose(channelId: channelId)
@@ -991,17 +1171,17 @@ public final class Driver: @unchecked Sendable {
             delivered = await handle.channelRegistry.deliverClose(channelId: channelId)
         }
 
-        // r[impl channeling.unknown]
+        // r[impl rpc.metadata.unknown]
         if !delivered {
-            try await sendGoodbye("channeling.unknown")
-            throw ConnectionError.protocolViolation(rule: "channeling.unknown")
+            try await sendProtocolError("rpc.metadata.unknown")
+            throw ConnectionError.protocolViolation(rule: "rpc.metadata.unknown")
         }
     }
 
-    /// r[impl message.goodbye.send] - Send Goodbye with rule ID before closing.
-    /// r[impl core.error.goodbye-reason] - Reason contains violated rule ID.
-    private func sendGoodbye(_ reason: String) async throws {
-        try await transport.send(.goodbye(connId: 0, reason: reason))
+    /// r[impl connection.close.semantics] - Send Goodbye with rule ID before closing.
+    /// r[impl session.protocol-error] - Reason contains violated rule ID.
+    private func sendProtocolError(_ reason: String) async throws {
+        try await transport.send(.protocolError(description: reason))
     }
 
     private func failAllPending() async {
@@ -1027,12 +1207,19 @@ public final class Driver: @unchecked Sendable {
         }
         return UInt64(nanoseconds)
     }
+
+    private static func saturatingAdd(_ lhs: UInt64, _ rhs: UInt64) -> UInt64 {
+        if lhs > UInt64.max - rhs {
+            return UInt64.max
+        }
+        return lhs + rhs
+    }
 }
 
 // MARK: - Connection Errors
 
-/// r[impl core.error.connection] - Connection-level errors terminate the connection.
-/// r[impl call.error.protocol] - Protocol errors are connection-fatal.
+/// r[impl connection] - Connection-level errors terminate the connection.
+/// r[impl session.protocol-error] - Protocol errors are connection-fatal.
 public enum ConnectionError: Error {
     case connectionClosed
     case timeout
@@ -1044,93 +1231,92 @@ public enum ConnectionError: Error {
 
 // MARK: - Establish Connection
 
-/// Establish a SHM guest connection without Hello exchange.
+/// Establish a SHM guest connection as an initiator.
 ///
-/// SHM negotiated values are derived from the segment header at attach time.
+/// SHM is a transport; session establishment still performs the v7
+/// Hello/HelloYourself exchange.
 public func establishShmGuest<D: ServiceDispatcher>(
     transport: ShmGuestTransport,
     dispatcher: D,
     role: Role = .initiator,
-    acceptConnections: Bool = false
-) -> (ConnectionHandle, Driver) {
-    makeDriverAndHandle(
-        transport: transport,
-        dispatcher: dispatcher,
-        role: role,
-        negotiated: transport.negotiated,
-        acceptConnections: acceptConnections
-    )
+    acceptConnections: Bool = false,
+    keepalive: DriverKeepaliveConfig? = nil
+) async throws -> (ConnectionHandle, Driver) {
+    switch role {
+    case .initiator:
+        return try await establishInitiator(
+            transport: transport,
+            dispatcher: dispatcher,
+            acceptConnections: acceptConnections,
+            maxPayloadSize: transport.negotiated.maxPayloadSize,
+            keepalive: keepalive
+        )
+    case .acceptor:
+        return try await establishAcceptor(
+            transport: transport,
+            dispatcher: dispatcher,
+            acceptConnections: acceptConnections,
+            keepalive: keepalive
+        )
+    }
 }
 
 /// Establish a connection as initiator.
 ///
-/// r[impl message.hello.ordering] - Hello is the first message sent.
-/// r[impl message.hello.timing] - Send Hello immediately on connection.
-/// r[impl call.initiate] - Initiator can start calls after Hello exchange.
+/// r[impl session.message] - Hello is the first message sent.
+/// r[impl session.connection-settings] - Send Hello immediately on connection.
+/// r[impl rpc.request] - Initiator can start calls after Hello exchange.
 public func establishInitiator(
     transport: any MessageTransport,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false,
-    maxPayloadSize: UInt32? = nil
+    maxPayloadSize: UInt32? = nil,
+    keepalive: DriverKeepaliveConfig? = nil
 ) async throws -> (ConnectionHandle, Driver) {
+    let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
+    let ourInitialCredit: UInt32 = 64 * 1024
     let ourCorrelationId = nextConnectionCorrelationId()
-    let ourHello: Hello = .v6(
-        maxPayloadSize: maxPayloadSize ?? defaultHello().maxPayloadSize,
-        initialChannelCredit: 64 * 1024,
-        maxConcurrentRequests: 64,
+    let ourHello = HelloV7(
+        version: 7,
+        connectionSettings: ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: 64),
         metadata: [
-            (
+            MetadataEntryV7(
                 key: peepsConnectionCorrelationIdMetadataKey,
                 value: .string(ourCorrelationId),
-                flags: MetadataFlags.none.rawValue
+                flags: metadataFlagsNone
             )
         ]
     )
-    // Send our hello
     try await transport.send(.hello(ourHello))
 
-    // Wait for peer hello - handle decode errors by sending Goodbye
-    let peerHello: Hello
-    do {
-        guard let peerMsg = try await transport.recv(),
-            case .hello(let hello) = peerMsg
-        else {
-            try await transport.send(.goodbye(connId: 0, reason: "handshake.expected-hello"))
-            throw ConnectionError.handshakeFailed("expected Hello")
-        }
-        peerHello = hello
-    } catch let error as WireError {
-        // r[impl message.hello.unknown-version] - Unknown version triggers Goodbye.
-        // r[impl message.decode-error] - Decode errors trigger Goodbye.
-        let reason =
-            error == .unknownHelloVariant
-            ? "message.hello.unknown-version" : "handshake.decode-error"
-        try? await transport.send(.goodbye(connId: 0, reason: reason))
-        throw ConnectionError.handshakeFailed(reason)
+    guard let peerMsg = try await transport.recv() else {
+        try? await transport.send(.protocolError(description: "handshake.expected-hello-yourself"))
+        throw ConnectionError.handshakeFailed("expected HelloYourself")
     }
-    switch peerHello {
-    case .v6:
-        break
-    default:
-        try? await transport.send(.goodbye(connId: 0, reason: "message.hello.unknown-version"))
-        throw ConnectionError.handshakeFailed("message.hello.unknown-version")
+    guard case .helloYourself(let peerHello) = peerMsg.payload else {
+        try? await transport.send(.protocolError(description: "handshake.expected-hello-yourself"))
+        throw ConnectionError.handshakeFailed("expected HelloYourself")
     }
 
-    let peerCorrelationId = helloCorrelationId(peerHello)
+    let peerCorrelationId = metadataString(
+        peerHello.metadata,
+        key: peepsConnectionCorrelationIdMetadataKey
+    )
     let canonicalCorrelationId = ourCorrelationId.isEmpty ? peerCorrelationId : ourCorrelationId
     _ = canonicalCorrelationId
 
     let negotiated = Negotiated(
-        maxPayloadSize: min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),
-        initialCredit: min(ourHello.initialChannelCredit, peerHello.initialChannelCredit),
-        maxConcurrentRequests: min(ourHello.maxConcurrentRequests, peerHello.maxConcurrentRequests)
+        maxPayloadSize: ourMaxPayload,
+        initialCredit: ourInitialCredit,
+        maxConcurrentRequests: min(
+            ourHello.connectionSettings.maxConcurrentRequests,
+            peerHello.connectionSettings.maxConcurrentRequests
+        )
     )
     debugLog(
         "handshake complete: maxPayloadSize=\(negotiated.maxPayloadSize), initialCredit=\(negotiated.initialCredit), maxConcurrentRequests=\(negotiated.maxConcurrentRequests)"
     )
 
-    // Update the transport's frame limit to match the negotiated payload size.
-    // The +64 accounts for message header overhead (conn_id, request_id, metadata, etc.).
     try await transport.setMaxFrameSize(Int(negotiated.maxPayloadSize) + 64)
 
     return makeDriverAndHandle(
@@ -1138,77 +1324,65 @@ public func establishInitiator(
         dispatcher: dispatcher,
         role: .initiator,
         negotiated: negotiated,
-        acceptConnections: acceptConnections
+        acceptConnections: acceptConnections,
+        keepalive: keepalive
     )
 }
 
 /// Establish a connection as acceptor.
 ///
-/// r[impl message.hello.ordering] - Hello is the first message sent.
-/// r[impl message.hello.timing] - Send Hello immediately on connection.
+/// r[impl session.message] - Hello is the first message sent.
+/// r[impl session.connection-settings] - Send Hello immediately on connection.
 public func establishAcceptor(
     transport: any MessageTransport,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false,
-    maxPayloadSize: UInt32? = nil
+    maxPayloadSize: UInt32? = nil,
+    keepalive: DriverKeepaliveConfig? = nil
 ) async throws -> (ConnectionHandle, Driver) {
+    let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
+    let ourInitialCredit: UInt32 = 64 * 1024
     let ourCorrelationId = nextConnectionCorrelationId()
-    let ourHello: Hello = .v6(
-        maxPayloadSize: maxPayloadSize ?? defaultHello().maxPayloadSize,
-        initialChannelCredit: 64 * 1024,
-        maxConcurrentRequests: 64,
+    guard let peerMsg = try await transport.recv() else {
+        throw ConnectionError.handshakeFailed("expected Hello")
+    }
+    guard case .hello(let peerHello) = peerMsg.payload else {
+        try? await transport.send(.protocolError(description: "handshake.expected-hello"))
+        throw ConnectionError.handshakeFailed("expected Hello")
+    }
+    if peerHello.version != 7 {
+        try? await transport.send(.protocolError(description: "message.hello.unknown-version"))
+        throw ConnectionError.handshakeFailed("message.hello.unknown-version")
+    }
+
+    let ourHello = HelloYourselfV7(
+        connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
         metadata: [
-            (
+            MetadataEntryV7(
                 key: peepsConnectionCorrelationIdMetadataKey,
                 value: .string(ourCorrelationId),
-                flags: MetadataFlags.none.rawValue
+                flags: metadataFlagsNone
             )
         ]
     )
-    // Send our hello immediately
-    try await transport.send(.hello(ourHello))
-
-    // Wait for peer hello - handle decode errors by sending Goodbye
-    let peerHello: Hello
-    do {
-        guard let peerMsg = try await transport.recv(),
-            case .hello(let hello) = peerMsg
-        else {
-            try await transport.send(.goodbye(connId: 0, reason: "handshake.expected-hello"))
-            throw ConnectionError.handshakeFailed("expected Hello")
-        }
-        peerHello = hello
-    } catch let error as WireError {
-        // Unknown Hello variant or decode error - send Goodbye per spec
-        let reason =
-            error == .unknownHelloVariant
-            ? "message.hello.unknown-version" : "handshake.decode-error"
-        try? await transport.send(.goodbye(connId: 0, reason: reason))
-        throw ConnectionError.handshakeFailed(reason)
-    }
-    switch peerHello {
-    case .v6:
-        break
-    default:
-        try? await transport.send(.goodbye(connId: 0, reason: "message.hello.unknown-version"))
-        throw ConnectionError.handshakeFailed("message.hello.unknown-version")
-    }
+    try await transport.send(.helloYourself(ourHello))
 
     let peerCorrelationId = helloCorrelationId(peerHello)
     let canonicalCorrelationId = peerCorrelationId ?? ourCorrelationId
     _ = canonicalCorrelationId
 
     let negotiated = Negotiated(
-        maxPayloadSize: min(ourHello.maxPayloadSize, peerHello.maxPayloadSize),
-        initialCredit: min(ourHello.initialChannelCredit, peerHello.initialChannelCredit),
-        maxConcurrentRequests: min(ourHello.maxConcurrentRequests, peerHello.maxConcurrentRequests)
+        maxPayloadSize: ourMaxPayload,
+        initialCredit: ourInitialCredit,
+        maxConcurrentRequests: min(
+            ourHello.connectionSettings.maxConcurrentRequests,
+            peerHello.connectionSettings.maxConcurrentRequests
+        )
     )
     debugLog(
         "handshake complete: maxPayloadSize=\(negotiated.maxPayloadSize), initialCredit=\(negotiated.initialCredit), maxConcurrentRequests=\(negotiated.maxConcurrentRequests)"
     )
 
-    // Update the transport's frame limit to match the negotiated payload size.
-    // The +64 accounts for message header overhead (conn_id, request_id, metadata, etc.).
     try await transport.setMaxFrameSize(Int(negotiated.maxPayloadSize) + 64)
 
     return makeDriverAndHandle(
@@ -1216,7 +1390,8 @@ public func establishAcceptor(
         dispatcher: dispatcher,
         role: .acceptor,
         negotiated: negotiated,
-        acceptConnections: acceptConnections
+        acceptConnections: acceptConnections,
+        keepalive: keepalive
     )
 }
 
@@ -1226,8 +1401,11 @@ func makeDriverAndHandle(
     dispatcher: any ServiceDispatcher,
     role: Role,
     negotiated: Negotiated,
-    acceptConnections: Bool
+    acceptConnections: Bool,
+    keepalive: DriverKeepaliveConfig? = nil
 ) -> (ConnectionHandle, Driver) {
+    let commandQueue = LockedQueue<HandleCommand>()
+    let taskQueue = LockedQueue<TaskMessage>()
     // Create the event stream that will be shared
     var continuation: AsyncStream<DriverEvent>.Continuation!
     let eventStream = AsyncStream<DriverEvent> { cont in
@@ -1238,14 +1416,20 @@ func makeDriverAndHandle(
 
     // Create command sender that uses this continuation
     let commandSender: @Sendable (HandleCommand) -> Bool = { cmd in
-        let result = capturedContinuation.yield(.command(cmd))
+        guard commandQueue.push(cmd) else {
+            return false
+        }
+        let result = capturedContinuation.yield(.wake)
         guard case .terminated = result else {
             return true
         }
         return false
     }
     let taskSender: @Sendable (TaskMessage) -> Bool = { msg in
-        let result = capturedContinuation.yield(.taskMessage(msg))
+        guard taskQueue.push(msg) else {
+            return false
+        }
+        let result = capturedContinuation.yield(.wake)
         guard case .terminated = result else {
             return true
         }
@@ -1268,9 +1452,16 @@ func makeDriverAndHandle(
         negotiated: negotiated,
         handle: handle,
         acceptConnections: acceptConnections,
+        keepalive: keepalive,
         eventStream: eventStream,
-        eventContinuation: continuation
+        eventContinuation: continuation,
+        commandQueue: commandQueue,
+        taskQueue: taskQueue
     )
 
     return (handle, driver)
 }
+    private struct InFlightResponseContext: Sendable {
+        let connectionId: UInt64
+        let responseMetadata: [MetadataEntryV7]
+    }

@@ -3,14 +3,25 @@
 //! Exposes BipBuffer operations, VarSlotPool management, and atomic helpers
 //! through a C ABI so that Swift (and other FFI consumers) can use the Rust
 //! implementations as the single source of truth.
+//!
+//! This crate is Unix-only; on other platforms it compiles to an empty library.
+#![cfg(unix)]
 
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::collections::HashMap;
+use std::sync::Mutex;
 
-use roam_shm::layout::SizeClass;
-use roam_shm::var_slot_pool::{VarSlotHandle, VarSlotPool};
+use shm_primitives::MmapRegion;
 use shm_primitives::Region;
 use shm_primitives::bipbuf::{BIPBUF_HEADER_SIZE, BipBufHeader, BipBufRaw};
+use shm_primitives::bootstrap::{
+    self, BOOTSTRAP_REQUEST_HEADER_LEN, BOOTSTRAP_RESPONSE_HEADER_LEN, BootstrapStatus,
+};
+use shm_primitives::{SizeClassConfig, SlotRef, VarSlotPool};
+use std::io::ErrorKind;
+use std::io::{self, Error};
+use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd, RawFd};
 
 // ─── FFI types ──────────────────────────────────────────────────────────────
 
@@ -30,9 +41,28 @@ pub struct RoamVarSlotHandle {
     pub generation: u32,
 }
 
+/// Key: (class_idx, extent_idx, slot_idx). Value: (generation, refcount, state).
+type SlotStateMap = Mutex<HashMap<(u8, u8, u32), (u32, i32, u8)>>;
+
 /// Opaque wrapper around the Rust VarSlotPool (heap-allocated, Box'd).
 pub struct RoamVarSlotPool {
     inner: VarSlotPool,
+    region_ptr: *mut u8,
+    region_len: usize,
+    base_offset: usize,
+    configs: Vec<SizeClassConfig>,
+    states: SlotStateMap,
+}
+
+#[cfg(unix)]
+struct RoamMmapAttachment {
+    region: MmapRegion,
+}
+
+/// Guest-side mmap attachments resolved by (map_id, map_generation).
+pub struct RoamMmapAttachments {
+    control_fd: RawFd,
+    mappings: Mutex<HashMap<(u32, u32), RoamMmapAttachment>>,
 }
 
 // ─── BipBuf FFI ─────────────────────────────────────────────────────────────
@@ -255,13 +285,24 @@ pub unsafe extern "C" fn roam_var_slot_pool_attach(
 
     let region = unsafe { Region::from_raw(region_ptr, region_len) };
     let ffi_classes = unsafe { core::slice::from_raw_parts(classes, num_classes) };
-    let size_classes: Vec<SizeClass> = ffi_classes
+    let size_classes: Vec<SizeClassConfig> = ffi_classes
         .iter()
-        .map(|c| SizeClass::new(c.slot_size, c.count))
+        .map(|c| SizeClassConfig {
+            slot_size: c.slot_size,
+            slot_count: c.count,
+        })
         .collect();
 
-    let pool = VarSlotPool::new(region, base_offset, size_classes);
-    Box::into_raw(Box::new(RoamVarSlotPool { inner: pool }))
+    let base_offset = base_offset as usize;
+    let pool = unsafe { VarSlotPool::attach(region, base_offset, &size_classes) };
+    Box::into_raw(Box::new(RoamVarSlotPool {
+        inner: pool,
+        region_ptr,
+        region_len,
+        base_offset,
+        configs: size_classes,
+        states: Mutex::new(HashMap::new()),
+    }))
 }
 
 /// Initialize all extent-0 slots and free lists. Call once during segment creation.
@@ -274,7 +315,11 @@ pub unsafe extern "C" fn roam_var_slot_pool_attach(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn roam_var_slot_pool_init(pool: *mut RoamVarSlotPool) {
     let pool = unsafe { &mut *pool };
-    unsafe { pool.inner.init() };
+    let region = unsafe { Region::from_raw(pool.region_ptr, pool.region_len) };
+    pool.inner = unsafe { VarSlotPool::init(region, pool.base_offset, &pool.configs) };
+    if let Ok(mut states) = pool.states.lock() {
+        states.clear();
+    }
 }
 
 /// Update the region pointer after a resize/remap.
@@ -290,8 +335,10 @@ pub unsafe extern "C" fn roam_var_slot_pool_update_region(
     region_len: usize,
 ) {
     let pool = unsafe { &mut *pool };
+    pool.region_ptr = region_ptr;
+    pool.region_len = region_len;
     let region = unsafe { Region::from_raw(region_ptr, region_len) };
-    pool.inner.update_region(region);
+    pool.inner = unsafe { VarSlotPool::attach(region, pool.base_offset, &pool.configs) };
 }
 
 /// Allocate a slot that can hold `size` bytes.
@@ -310,7 +357,7 @@ pub unsafe extern "C" fn roam_var_slot_pool_alloc(
     out_handle: *mut RoamVarSlotHandle,
 ) -> i32 {
     let pool = unsafe { &*pool };
-    match pool.inner.alloc(size, owner) {
+    match pool.inner.allocate(size, owner) {
         Some(h) => {
             unsafe {
                 *out_handle = RoamVarSlotHandle {
@@ -319,6 +366,12 @@ pub unsafe extern "C" fn roam_var_slot_pool_alloc(
                     slot_idx: h.slot_idx,
                     generation: h.generation,
                 };
+            }
+            if let Ok(mut states) = pool.states.lock() {
+                states.insert(
+                    (h.class_idx, h.extent_idx, h.slot_idx),
+                    (h.generation, 1, owner),
+                );
             }
             1
         }
@@ -339,11 +392,15 @@ pub unsafe extern "C" fn roam_var_slot_pool_mark_in_flight(
     handle: RoamVarSlotHandle,
 ) -> i32 {
     let pool = unsafe { &*pool };
-    let h = to_handle(&handle);
-    match pool.inner.mark_in_flight(h) {
-        Ok(()) => 0,
-        Err(_) => -1,
+    if let Ok(mut states) = pool.states.lock()
+        && let Some((generation, state, _)) =
+            states.get_mut(&(handle.class_idx, handle.extent_idx, handle.slot_idx))
+        && *generation == handle.generation
+        && *state == 1
+    {
+        *state = 2;
     }
+    0
 }
 
 /// Free an in-flight slot back to its pool.
@@ -361,7 +418,12 @@ pub unsafe extern "C" fn roam_var_slot_pool_free(
     let pool = unsafe { &*pool };
     let h = to_handle(&handle);
     match pool.inner.free(h) {
-        Ok(()) => 0,
+        Ok(()) => {
+            if let Ok(mut states) = pool.states.lock() {
+                states.remove(&(handle.class_idx, handle.extent_idx, handle.slot_idx));
+            }
+            0
+        }
         Err(_) => -1,
     }
 }
@@ -378,12 +440,7 @@ pub unsafe extern "C" fn roam_var_slot_pool_free_allocated(
     pool: *const RoamVarSlotPool,
     handle: RoamVarSlotHandle,
 ) -> i32 {
-    let pool = unsafe { &*pool };
-    let h = to_handle(&handle);
-    match pool.inner.free_allocated(h) {
-        Ok(()) => 0,
-        Err(_) => -1,
-    }
+    unsafe { roam_var_slot_pool_free(pool, handle) }
 }
 
 /// Get a pointer to the slot's payload data area.
@@ -401,7 +458,10 @@ pub unsafe extern "C" fn roam_var_slot_pool_payload_ptr(
 ) -> *mut u8 {
     let pool = unsafe { &*pool };
     let h = to_handle(&handle);
-    pool.inner.payload_ptr(h).unwrap_or(core::ptr::null_mut())
+    if usize::from(h.class_idx) >= pool.inner.class_count() {
+        return core::ptr::null_mut();
+    }
+    unsafe { pool.inner.slot_data_mut(&h) }.as_mut_ptr()
 }
 
 /// Get the current state of a slot.
@@ -417,11 +477,16 @@ pub unsafe extern "C" fn roam_var_slot_pool_slot_state(
     handle: RoamVarSlotHandle,
 ) -> i32 {
     let pool = unsafe { &*pool };
-    let h = to_handle(&handle);
-    match pool.inner.slot_state(&h) {
-        Some(state) => state as i32,
-        None => -1,
+    if let Ok(states) = pool.states.lock()
+        && let Some((generation, state, _)) =
+            states.get(&(handle.class_idx, handle.extent_idx, handle.slot_idx))
+    {
+        if *generation == handle.generation {
+            return *state;
+        }
+        return -1;
     }
+    0
 }
 
 /// Get the slot size for a given class index.
@@ -437,7 +502,11 @@ pub unsafe extern "C" fn roam_var_slot_pool_slot_size(
     class_idx: u8,
 ) -> u32 {
     let pool = unsafe { &*pool };
-    pool.inner.slot_size(class_idx).unwrap_or(0)
+    let class_idx = usize::from(class_idx);
+    if class_idx >= pool.inner.class_count() {
+        return 0;
+    }
+    pool.inner.slot_size(class_idx)
 }
 
 /// Recover all slots owned by a crashed peer.
@@ -451,7 +520,10 @@ pub unsafe extern "C" fn roam_var_slot_pool_recover_peer(
     peer_id: u8,
 ) {
     let pool = unsafe { &*pool };
-    pool.inner.recover_peer(peer_id);
+    pool.inner.reclaim_peer_slots(peer_id);
+    if let Ok(mut states) = pool.states.lock() {
+        states.retain(|_, (_, _, owner)| *owner != peer_id);
+    }
 }
 
 /// Calculate the total size needed for a variable slot pool (extent 0 only).
@@ -468,11 +540,14 @@ pub unsafe extern "C" fn roam_var_slot_pool_calculate_size(
         return 0;
     }
     let ffi_classes = unsafe { core::slice::from_raw_parts(classes, num_classes) };
-    let size_classes: Vec<SizeClass> = ffi_classes
+    let size_classes: Vec<SizeClassConfig> = ffi_classes
         .iter()
-        .map(|c| SizeClass::new(c.slot_size, c.count))
+        .map(|c| SizeClassConfig {
+            slot_size: c.slot_size,
+            slot_count: c.count,
+        })
         .collect();
-    VarSlotPool::calculate_size(&size_classes)
+    VarSlotPool::required_size(&size_classes) as u64
 }
 
 /// Destroy a VarSlotPool, freeing its heap allocation.
@@ -486,6 +561,772 @@ pub unsafe extern "C" fn roam_var_slot_pool_calculate_size(
 pub unsafe extern "C" fn roam_var_slot_pool_destroy(pool: *mut RoamVarSlotPool) {
     if !pool.is_null() {
         drop(unsafe { Box::from_raw(pool) });
+    }
+}
+
+// ─── bootstrap wire FFI ────────────────────────────────────────────────────
+
+#[repr(C)]
+pub struct RoamShmBootstrapResponseInfo {
+    pub status: u8,
+    pub peer_id: u32,
+    pub payload_len: u16,
+}
+
+/// Encode a bootstrap request frame (`RSH0` + sid length + sid bytes).
+///
+/// Returns:
+/// - 0: success
+/// - -1: invalid arguments
+/// - -2: output buffer too small
+/// - -3: encoding failure
+///
+/// # Safety
+///
+/// - `sid_ptr` must point to `sid_len` readable bytes.
+/// - `out_buf` must point to `out_buf_len` writable bytes.
+/// - `out_written` must be non-null and writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn roam_shm_bootstrap_request_encode(
+    sid_ptr: *const u8,
+    sid_len: usize,
+    out_buf: *mut u8,
+    out_buf_len: usize,
+    out_written: *mut usize,
+) -> i32 {
+    if (sid_len > 0 && sid_ptr.is_null()) || out_buf.is_null() || out_written.is_null() {
+        return -1;
+    }
+
+    let sid = if sid_len == 0 {
+        &[][..]
+    } else {
+        // SAFETY: validated by caller contract and null checks above.
+        unsafe { std::slice::from_raw_parts(sid_ptr, sid_len) }
+    };
+    let frame = match bootstrap::encode_request(sid) {
+        Ok(frame) => frame,
+        Err(_) => return -3,
+    };
+
+    if frame.len() > out_buf_len {
+        return -2;
+    }
+
+    // SAFETY: output buffer is valid for frame.len() bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(frame.as_ptr(), out_buf, frame.len());
+        *out_written = frame.len();
+    }
+    0
+}
+
+/// Decode a bootstrap request frame and expose SID location in the input buffer.
+///
+/// Returns:
+/// - 0: success
+/// - -1: invalid arguments
+/// - -2: malformed request frame
+///
+/// # Safety
+///
+/// - `buf_ptr` must point to `buf_len` readable bytes.
+/// - `out_sid_ptr` and `out_sid_len` must be non-null and writable.
+/// - `out_sid_ptr` points into `buf_ptr`; keep input alive while using it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn roam_shm_bootstrap_request_decode(
+    buf_ptr: *const u8,
+    buf_len: usize,
+    out_sid_ptr: *mut *const u8,
+    out_sid_len: *mut u16,
+) -> i32 {
+    if (buf_len > 0 && buf_ptr.is_null()) || out_sid_ptr.is_null() || out_sid_len.is_null() {
+        return -1;
+    }
+
+    let frame = if buf_len == 0 {
+        &[][..]
+    } else {
+        // SAFETY: validated by caller contract and null checks above.
+        unsafe { std::slice::from_raw_parts(buf_ptr, buf_len) }
+    };
+    let req = match bootstrap::decode_request(frame) {
+        Ok(req) => req,
+        Err(_) => return -2,
+    };
+
+    if req.sid.len() > u16::MAX as usize {
+        return -2;
+    }
+
+    // SAFETY: output pointers are valid and writable.
+    unsafe {
+        *out_sid_ptr = req.sid.as_ptr();
+        *out_sid_len = req.sid.len() as u16;
+    }
+    0
+}
+
+/// Encode a bootstrap response frame (`RSP0` + status + peer + payload length + payload).
+///
+/// Returns:
+/// - 0: success
+/// - -1: invalid arguments
+/// - -2: output buffer too small
+/// - -3: malformed response fields
+///
+/// # Safety
+///
+/// - `payload_ptr` must point to `payload_len` readable bytes when `payload_len > 0`.
+/// - `out_buf` must point to `out_buf_len` writable bytes.
+/// - `out_written` must be non-null and writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn roam_shm_bootstrap_response_encode(
+    status: u8,
+    peer_id: u32,
+    payload_ptr: *const u8,
+    payload_len: usize,
+    out_buf: *mut u8,
+    out_buf_len: usize,
+    out_written: *mut usize,
+) -> i32 {
+    if (payload_len > 0 && payload_ptr.is_null()) || out_buf.is_null() || out_written.is_null() {
+        return -1;
+    }
+
+    let status = match BootstrapStatus::try_from(status) {
+        Ok(status) => status,
+        Err(_) => return -3,
+    };
+    let payload = if payload_len == 0 {
+        &[][..]
+    } else {
+        // SAFETY: validated by caller contract and null checks above.
+        unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) }
+    };
+    let frame = match bootstrap::encode_response(status, peer_id, payload) {
+        Ok(frame) => frame,
+        Err(_) => return -3,
+    };
+
+    if frame.len() > out_buf_len {
+        return -2;
+    }
+
+    // SAFETY: output buffer is valid for frame.len() bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(frame.as_ptr(), out_buf, frame.len());
+        *out_written = frame.len();
+    }
+    0
+}
+
+/// Decode a bootstrap response frame and expose payload location in the input buffer.
+///
+/// Returns:
+/// - 0: success
+/// - -1: invalid arguments
+/// - -2: malformed response frame
+///
+/// # Safety
+///
+/// - `buf_ptr` must point to `buf_len` readable bytes.
+/// - `out_info` and `out_payload_ptr` must be non-null and writable.
+/// - `out_payload_ptr` points into `buf_ptr`; keep input alive while using it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn roam_shm_bootstrap_response_decode(
+    buf_ptr: *const u8,
+    buf_len: usize,
+    out_info: *mut RoamShmBootstrapResponseInfo,
+    out_payload_ptr: *mut *const u8,
+) -> i32 {
+    if (buf_len > 0 && buf_ptr.is_null()) || out_info.is_null() || out_payload_ptr.is_null() {
+        return -1;
+    }
+
+    let frame = if buf_len == 0 {
+        &[][..]
+    } else {
+        // SAFETY: validated by caller contract and null checks above.
+        unsafe { std::slice::from_raw_parts(buf_ptr, buf_len) }
+    };
+    let resp = match bootstrap::decode_response(frame) {
+        Ok(resp) => resp,
+        Err(_) => return -2,
+    };
+
+    if resp.payload.len() > u16::MAX as usize {
+        return -2;
+    }
+
+    // SAFETY: output pointers are valid and writable.
+    unsafe {
+        (*out_info).status = resp.status as u8;
+        (*out_info).peer_id = resp.peer_id;
+        (*out_info).payload_len = resp.payload.len() as u16;
+        *out_payload_ptr = resp.payload.as_ptr();
+    }
+    0
+}
+
+/// Send one bootstrap response on a Unix control socket.
+///
+/// On success status (`0`), `doorbell_fd` and `segment_fd` are required and
+/// `mmap_control_fd` is also required. On error status (`1`), all fd
+/// parameters must be `-1`.
+///
+/// Returns 0 on success, -1 on error.
+///
+/// # Safety
+///
+/// - `control_fd` must be a valid Unix-domain socket descriptor.
+/// - `payload_ptr` must be valid for `payload_len` bytes when `payload_len > 0`.
+/// - Any provided fds must stay valid through the send call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn roam_shm_bootstrap_response_send_unix(
+    control_fd: i32,
+    status: u8,
+    peer_id: u32,
+    payload_ptr: *const u8,
+    payload_len: usize,
+    doorbell_fd: i32,
+    segment_fd: i32,
+    mmap_control_fd: i32,
+) -> i32 {
+    #[cfg(unix)]
+    {
+        if control_fd < 0 || (payload_len > 0 && payload_ptr.is_null()) {
+            return -1;
+        }
+
+        let status = match BootstrapStatus::try_from(status) {
+            Ok(status) => status,
+            Err(_) => return -1,
+        };
+        let payload = if payload_len == 0 {
+            &[][..]
+        } else {
+            // SAFETY: validated by caller contract and null checks above.
+            unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) }
+        };
+
+        let result = if status == BootstrapStatus::Success {
+            if doorbell_fd < 0 || segment_fd < 0 || mmap_control_fd < 0 {
+                return -1;
+            }
+            let fds = bootstrap::BootstrapSuccessFds {
+                doorbell_fd,
+                segment_fd,
+                mmap_control_fd,
+            };
+            bootstrap::send_response_unix(control_fd, status, peer_id, payload, Some(&fds))
+        } else {
+            if doorbell_fd >= 0 || segment_fd >= 0 || mmap_control_fd >= 0 {
+                return -1;
+            }
+            bootstrap::send_response_unix(control_fd, status, peer_id, payload, None)
+        };
+
+        if result.is_ok() { 0 } else { -1 }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (
+            control_fd,
+            status,
+            peer_id,
+            payload_ptr,
+            payload_len,
+            doorbell_fd,
+            segment_fd,
+            mmap_control_fd,
+        );
+        -1
+    }
+}
+
+/// Receive one bootstrap response on a Unix control socket.
+///
+/// `payload_buf` receives the response payload bytes and returned fds become
+/// owned by the caller (`-1` values are used for error responses).
+///
+/// Returns:
+/// - 0: success
+/// - -1: invalid arguments / malformed frame / fd mismatch / io error
+/// - -2: payload buffer too small
+///
+/// # Safety
+///
+/// - `control_fd` must be a valid Unix-domain socket descriptor.
+/// - `payload_buf` must be writable for `payload_buf_len` bytes.
+/// - output pointers must be non-null and writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn roam_shm_bootstrap_response_recv_unix(
+    control_fd: i32,
+    payload_buf: *mut u8,
+    payload_buf_len: usize,
+    out_info: *mut RoamShmBootstrapResponseInfo,
+    out_doorbell_fd: *mut i32,
+    out_segment_fd: *mut i32,
+    out_mmap_control_fd: *mut i32,
+) -> i32 {
+    #[cfg(unix)]
+    {
+        if control_fd < 0
+            || payload_buf.is_null()
+            || out_info.is_null()
+            || out_doorbell_fd.is_null()
+            || out_segment_fd.is_null()
+            || out_mmap_control_fd.is_null()
+        {
+            return -1;
+        }
+
+        let received = match bootstrap::recv_response_unix(control_fd) {
+            Ok(received) => received,
+            Err(_) => return -1,
+        };
+
+        if received.response.payload.len() > payload_buf_len {
+            return -2;
+        }
+
+        // SAFETY: pointers validated above.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                received.response.payload.as_ptr(),
+                payload_buf,
+                received.response.payload.len(),
+            );
+            (*out_info).status = received.response.status as u8;
+            (*out_info).peer_id = received.response.peer_id;
+            (*out_info).payload_len = received.response.payload.len() as u16;
+            *out_doorbell_fd = -1;
+            *out_segment_fd = -1;
+            *out_mmap_control_fd = -1;
+        }
+
+        if let Some(fds) = received.fds {
+            // SAFETY: pointers validated above.
+            unsafe {
+                *out_doorbell_fd = fds.doorbell_fd.into_raw_fd();
+                *out_segment_fd = fds.segment_fd.into_raw_fd();
+                *out_mmap_control_fd = fds.mmap_control_fd.into_raw_fd();
+            }
+        }
+
+        0
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (
+            control_fd,
+            payload_buf,
+            payload_buf_len,
+            out_info,
+            out_doorbell_fd,
+            out_segment_fd,
+            out_mmap_control_fd,
+        );
+        -1
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn roam_shm_bootstrap_request_header_size() -> u32 {
+    BOOTSTRAP_REQUEST_HEADER_LEN as u32
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn roam_shm_bootstrap_response_header_size() -> u32 {
+    BOOTSTRAP_RESPONSE_HEADER_LEN as u32
+}
+
+// ─── mmap attachment FFI ────────────────────────────────────────────────────
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct RoamMmapAttachMessage {
+    map_id: u32,
+    map_generation: u32,
+    mapping_length: u64,
+}
+
+#[cfg(unix)]
+impl RoamMmapAttachMessage {
+    const LEN: usize = 16;
+
+    fn from_le_bytes(buf: [u8; Self::LEN]) -> Self {
+        Self {
+            map_id: u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
+            map_generation: u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]),
+            mapping_length: u64::from_le_bytes([
+                buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
+            ]),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn set_nonblocking(fd: RawFd) -> i32 {
+    // SAFETY: fcntl is thread-safe for querying/modifying fd flags.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return -1;
+    }
+    // SAFETY: same as above.
+    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return -1;
+    }
+    0
+}
+
+#[cfg(unix)]
+fn recv_mmap_attach(fd: RawFd) -> std::io::Result<Option<(OwnedFd, RoamMmapAttachMessage)>> {
+    let mut payload = [0_u8; RoamMmapAttachMessage::LEN];
+    let mut iov = libc::iovec {
+        iov_base: payload.as_mut_ptr().cast(),
+        iov_len: payload.len(),
+    };
+
+    let cmsg_space = unsafe { libc::CMSG_SPACE(core::mem::size_of::<RawFd>() as u32) as usize };
+    let mut control = vec![0_u8; cmsg_space];
+
+    // SAFETY: zeroed msghdr is valid before field initialization.
+    let mut msghdr: libc::msghdr = unsafe { core::mem::zeroed() };
+    msghdr.msg_iov = &mut iov;
+    msghdr.msg_iovlen = 1;
+    msghdr.msg_control = control.as_mut_ptr().cast();
+    msghdr.msg_controllen = control.len() as _;
+
+    // SAFETY: msghdr points to valid buffers for recvmsg.
+    let n = unsafe { libc::recvmsg(fd, &mut msghdr, 0) };
+    if n == 0 {
+        return Ok(None);
+    }
+    if n < 0 {
+        let err = std::io::Error::last_os_error();
+        if err.kind() == ErrorKind::WouldBlock {
+            return Ok(None);
+        }
+        return Err(err);
+    }
+    if n < RoamMmapAttachMessage::LEN as isize {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidData,
+            "short mmap attach payload",
+        ));
+    }
+    if (msghdr.msg_flags & libc::MSG_CTRUNC) != 0 {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidData,
+            "truncated mmap attach control message",
+        ));
+    }
+
+    let mut received_fd: Option<RawFd> = None;
+    // SAFETY: control buffer ownership is local and valid for traversal.
+    unsafe {
+        let mut cmsg = libc::CMSG_FIRSTHDR(&msghdr);
+        while !cmsg.is_null() {
+            if (*cmsg).cmsg_level == libc::SOL_SOCKET && (*cmsg).cmsg_type == libc::SCM_RIGHTS {
+                let cmsg_len = (*cmsg).cmsg_len as usize;
+                let base_len = libc::CMSG_LEN(0) as usize;
+                if cmsg_len >= base_len + core::mem::size_of::<RawFd>() {
+                    let data_ptr = libc::CMSG_DATA(cmsg).cast::<RawFd>();
+                    received_fd = Some(*data_ptr);
+                    break;
+                }
+            }
+            cmsg = libc::CMSG_NXTHDR(&msghdr, cmsg);
+        }
+    }
+
+    let raw_fd = received_fd.ok_or_else(|| {
+        std::io::Error::new(
+            ErrorKind::InvalidData,
+            "missing mmap attach fd in control message",
+        )
+    })?;
+    // SAFETY: recvmsg gives ownership of the received fd to the receiver.
+    let owned_fd = unsafe { OwnedFd::from_raw_fd(raw_fd) };
+    Ok(Some((
+        owned_fd,
+        RoamMmapAttachMessage::from_le_bytes(payload),
+    )))
+}
+
+#[cfg(unix)]
+fn send_mmap_attach(
+    control_fd: RawFd,
+    mapping_fd: RawFd,
+    msg: RoamMmapAttachMessage,
+) -> std::io::Result<()> {
+    let mut payload = [0_u8; RoamMmapAttachMessage::LEN];
+    payload[0..4].copy_from_slice(&msg.map_id.to_le_bytes());
+    payload[4..8].copy_from_slice(&msg.map_generation.to_le_bytes());
+    payload[8..16].copy_from_slice(&msg.mapping_length.to_le_bytes());
+    let mut iov = libc::iovec {
+        iov_base: payload.as_ptr() as *mut libc::c_void,
+        iov_len: payload.len(),
+    };
+
+    let fds = [mapping_fd];
+    let cmsg_space = unsafe { libc::CMSG_SPACE(core::mem::size_of_val(&fds) as u32) as usize };
+    let mut control = vec![0_u8; cmsg_space];
+    let cmsg_len = unsafe { libc::CMSG_LEN(core::mem::size_of_val(&fds) as u32) as usize };
+
+    // SAFETY: zeroed msghdr is valid before field initialization.
+    let mut msghdr: libc::msghdr = unsafe { core::mem::zeroed() };
+    msghdr.msg_iov = &mut iov;
+    msghdr.msg_iovlen = 1;
+    msghdr.msg_control = control.as_mut_ptr().cast();
+    msghdr.msg_controllen = cmsg_len as _;
+
+    // SAFETY: cmsg buffer belongs to this stack frame and is sized via CMSG_SPACE.
+    let cmsg = unsafe { libc::CMSG_FIRSTHDR(&msghdr) };
+    if cmsg.is_null() {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidData,
+            "failed to allocate SCM_RIGHTS header",
+        ));
+    }
+
+    unsafe {
+        (*cmsg).cmsg_level = libc::SOL_SOCKET;
+        (*cmsg).cmsg_type = libc::SCM_RIGHTS;
+        (*cmsg).cmsg_len = cmsg_len as _;
+        let data_ptr = libc::CMSG_DATA(cmsg).cast::<RawFd>();
+        core::ptr::copy_nonoverlapping(fds.as_ptr(), data_ptr, 1);
+    }
+
+    // SAFETY: msghdr points to valid payload/control data.
+    let n = sendmsg_no_sigpipe(control_fd, &msghdr)?;
+    if n < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if n == 0 {
+        return Err(std::io::Error::new(
+            ErrorKind::WriteZero,
+            "sendmsg wrote zero bytes for mmap attach",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sendmsg_no_sigpipe(fd: RawFd, msghdr: &libc::msghdr) -> io::Result<isize> {
+    #[cfg(target_vendor = "apple")]
+    ensure_socket_no_sigpipe(fd)?;
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let flags = libc::MSG_NOSIGNAL;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let flags = 0;
+
+    // SAFETY: caller guarantees `msghdr` points to valid iov/cmsg buffers.
+    let n = unsafe { libc::sendmsg(fd, msghdr, flags) };
+    if n < 0 {
+        return Err(Error::last_os_error());
+    }
+    Ok(n)
+}
+
+#[cfg(all(unix, target_vendor = "apple"))]
+fn ensure_socket_no_sigpipe(fd: RawFd) -> io::Result<()> {
+    let one: libc::c_int = 1;
+    // SAFETY: setsockopt reads `one` for the provided length.
+    let rc = unsafe {
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_NOSIGPIPE,
+            (&one as *const libc::c_int).cast(),
+            core::mem::size_of_val(&one) as libc::socklen_t,
+        )
+    };
+    if rc < 0 {
+        return Err(Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Send one mmap attach message (fd + map metadata) over a Unix control socket.
+///
+/// Returns 0 on success, -1 on error.
+///
+/// # Safety
+///
+/// `control_fd` and `mapping_fd` must be valid, open Unix file descriptors.
+/// `control_fd` must refer to a Unix domain socket configured to pass
+/// `SCM_RIGHTS`, and ownership/lifetime of `mapping_fd` must outlive the send.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn roam_mmap_control_send(
+    control_fd: i32,
+    mapping_fd: i32,
+    map_id: u32,
+    map_generation: u32,
+    mapping_length: u64,
+) -> i32 {
+    #[cfg(unix)]
+    {
+        if control_fd < 0 || mapping_fd < 0 {
+            return -1;
+        }
+        let msg = RoamMmapAttachMessage {
+            map_id,
+            map_generation,
+            mapping_length,
+        };
+        if send_mmap_attach(control_fd, mapping_fd, msg).is_ok() {
+            0
+        } else {
+            -1
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (
+            control_fd,
+            mapping_fd,
+            map_id,
+            map_generation,
+            mapping_length,
+        );
+        -1
+    }
+}
+
+/// Create a guest-side mmap attachment registry from a control socket fd.
+///
+/// Returns null on invalid fd or setup failure.
+///
+/// # Safety
+///
+/// `control_fd` must be a valid Unix domain socket file descriptor owned by the
+/// caller for at least as long as the returned attachments object lives.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn roam_mmap_attachments_create(control_fd: i32) -> *mut RoamMmapAttachments {
+    if control_fd < 0 {
+        return core::ptr::null_mut();
+    }
+    if set_nonblocking(control_fd) != 0 {
+        return core::ptr::null_mut();
+    }
+    Box::into_raw(Box::new(RoamMmapAttachments {
+        control_fd,
+        mappings: Mutex::new(HashMap::new()),
+    }))
+}
+
+/// Drain all pending mmap attach messages from the control socket.
+///
+/// Returns number of mappings attached, or -1 on error.
+///
+/// # Safety
+///
+/// `attachments` must be a valid pointer returned by `roam_mmap_attachments_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn roam_mmap_attachments_drain_control(
+    attachments: *mut RoamMmapAttachments,
+) -> i32 {
+    if attachments.is_null() {
+        return -1;
+    }
+
+    let attachments = unsafe { &*attachments };
+    let mut attached_count = 0_i32;
+
+    loop {
+        let result = recv_mmap_attach(attachments.control_fd);
+        match result {
+            Ok(Some((fd, msg))) => {
+                let mapping_len = msg.mapping_length as usize;
+                let region = match MmapRegion::attach_fd(fd, mapping_len) {
+                    Ok(region) => region,
+                    Err(_) => return -1,
+                };
+                let mut mappings = match attachments.mappings.lock() {
+                    Ok(mappings) => mappings,
+                    Err(_) => return -1,
+                };
+                mappings.insert(
+                    (msg.map_id, msg.map_generation),
+                    RoamMmapAttachment { region },
+                );
+                attached_count += 1;
+            }
+            Ok(None) => break,
+            Err(_) => return -1,
+        }
+    }
+
+    attached_count
+}
+
+/// Resolve an mmap-ref tuple to a direct payload pointer.
+///
+/// Return codes:
+/// - 0: success
+/// - -1: invalid arguments / internal error
+/// - -2: unknown mapping (map_id, map_generation not attached)
+/// - -3: offset+len overflow
+/// - -4: out of bounds for mapping length
+///
+/// # Safety
+///
+/// - `attachments` must be valid and created by `roam_mmap_attachments_create`.
+/// - `out_ptr` must be non-null and writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn roam_mmap_attachments_resolve_ptr(
+    attachments: *const RoamMmapAttachments,
+    map_id: u32,
+    map_generation: u32,
+    map_offset: u64,
+    payload_len: u32,
+    out_ptr: *mut *const u8,
+) -> i32 {
+    if attachments.is_null() || out_ptr.is_null() {
+        return -1;
+    }
+
+    let attachments = unsafe { &*attachments };
+    let mappings = match attachments.mappings.lock() {
+        Ok(mappings) => mappings,
+        Err(_) => return -1,
+    };
+    let Some(mapping) = mappings.get(&(map_id, map_generation)) else {
+        return -2;
+    };
+
+    let start = map_offset as usize;
+    let Some(end) = start.checked_add(payload_len as usize) else {
+        return -3;
+    };
+    if end > mapping.region.len() {
+        return -4;
+    }
+
+    // SAFETY: bounds checked against mapping length above.
+    let ptr = unsafe { mapping.region.region().as_ptr().add(start) } as *const u8;
+    unsafe { *out_ptr = ptr };
+    0
+}
+
+/// Destroy mmap attachments and free all attached mapping resources.
+///
+/// # Safety
+///
+/// `attachments` must be null or a valid pointer returned by
+/// `roam_mmap_attachments_create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn roam_mmap_attachments_destroy(attachments: *mut RoamMmapAttachments) {
+    if !attachments.is_null() {
+        drop(unsafe { Box::from_raw(attachments) });
     }
 }
 
@@ -585,8 +1426,8 @@ pub unsafe extern "C" fn roam_atomic_compare_exchange_u64(
 
 // ─── Internal helpers ───────────────────────────────────────────────────────
 
-fn to_handle(ffi: &RoamVarSlotHandle) -> VarSlotHandle {
-    VarSlotHandle {
+fn to_handle(ffi: &RoamVarSlotHandle) -> SlotRef {
+    SlotRef {
         class_idx: ffi.class_idx,
         extent_idx: ffi.extent_idx,
         slot_idx: ffi.slot_idx,

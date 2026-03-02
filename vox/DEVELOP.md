@@ -88,6 +88,48 @@ cargo xtask fmt
 cargo xtask doc
 ```
 
+### Fuzzing
+
+```bash
+# List available fuzz targets
+just fuzz-targets
+
+# Build all fuzz targets
+just fuzz-build all
+
+# Build one target
+just fuzz-build protocol_decode
+
+# Run all targets for 60s each (build + run)
+just fuzz all 60
+
+# Run one target for 5 minutes (build + run)
+just fuzz testbed_mem_session 300
+
+# Run only (no build), useful for repeated local sessions
+just fuzz-run protocol_decode 300
+
+# Fuzz with ASAN
+just fuzz-asan shm_link_roundtrip 300
+
+# Fuzz with UBSAN
+just fuzz-ubsan protocol_decode 300
+
+# Fuzz with AFL++ SAND mode (native + sanitizer workers)
+just fuzz-sand protocol_decode 300
+```
+
+Current targets:
+- `framing_peek` (SHM frame parser)
+- `shm_link_roundtrip` (SHM send/recv roundtrip)
+- `protocol_decode` (Roam wire message decode/encode)
+- `testbed_mem_session` (generated `spec-proto` RPC traffic over in-memory session/driver)
+
+SAND recipes build three binaries per target under `fuzz/.sand/<target>/`:
+- `native`
+- `asan` (built with `AFL_USE_ASAN=1 AFL_LLVM_ONLY_FSRV=1`)
+- `ubsan` (built with `AFL_USE_UBSAN=1 AFL_LLVM_ONLY_FSRV=1`)
+
 ## Project Structure
 
 - `rust/` - Rust implementation (roam, roam-session, roam-codegen, etc.)

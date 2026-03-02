@@ -17,7 +17,6 @@ export type {
   RxSchema,
   Schema,
   SchemaRegistry,
-  MethodSchema,
 } from "@bearcove/roam-postcard";
 
 export {

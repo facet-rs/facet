@@ -27,6 +27,16 @@ export type PrimitiveKind =
   | "string"
   | "bytes";
 
+/** Schema for bytes (`Vec<u8>`/`&[u8]` style payloads). */
+export interface BytesSchema {
+  kind: "bytes";
+  /**
+   * When true, bytes are encoded/decoded as "remaining input" without an outer
+   * length prefix. This must only be used for structurally trailing fields.
+   */
+  trailing?: boolean;
+}
+
 // ============================================================================
 // Container Schemas
 // ============================================================================
@@ -151,7 +161,8 @@ export interface RxSchema {
 
 /** Union of all schema types. */
 export type Schema =
-  | { kind: PrimitiveKind }
+  | { kind: Exclude<PrimitiveKind, "bytes"> }
+  | BytesSchema
   | VecSchema
   | OptionSchema
   | MapSchema
@@ -312,22 +323,16 @@ export function isRefSchema(schema: Schema): schema is RefSchema {
 // ============================================================================
 
 /**
- * Schema for a method's arguments and return type.
+ * Schema for a method's request/response wire format.
  *
- * For methods returning `Result<T, E>`:
- * - `returns` is the schema for `T` (success type)
- * - `error` is the schema for `E` (user error type)
+ * - `args` is the schema list for request arguments.
+ * - `wire` is the full response schema: `Result<T, RoamError<E>>`.
  *
- * For infallible methods returning `T`:
- * - `returns` is the schema for `T`
- * - `error` is null
- *
- * Note: The outer `Result<T, RoamError<E>>` wrapper is handled by `decodeRpcResult`.
- * After that call succeeds, you decode with `returns`. If it throws a USER error,
- * you decode the error payload with `error`.
+ * `wire` is always an enum with two variants:
+ * - `Ok` (index 0): method success payload `T`
+ * - `Err` (index 1): `RoamError<E>`
  */
 export interface MethodSchema {
   args: Schema[];
-  returns: Schema;
-  error: Schema | null;
+  wire: EnumSchema;
 }

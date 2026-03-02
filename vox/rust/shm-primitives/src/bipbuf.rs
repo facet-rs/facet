@@ -9,7 +9,7 @@ use crate::sync::{AtomicU32, Ordering};
 /// The data region of `capacity` bytes immediately follows this header,
 /// 64-byte aligned.
 ///
-/// shm[impl shm.bipbuf.header]
+/// r[impl shm.bipbuf.header]
 #[repr(C, align(64))]
 pub struct BipBufHeader {
     // --- Cache line 0: producer-owned ---
@@ -35,8 +35,6 @@ pub const BIPBUF_HEADER_SIZE: usize = 128;
 
 impl BipBufHeader {
     /// Initialize a new BipBuffer header.
-    ///
-    /// shm[impl shm.bipbuf.initialization]
     pub fn init(&mut self, capacity: u32) {
         assert!(capacity > 0, "capacity must be > 0");
         self.write = AtomicU32::new(0);
@@ -59,6 +57,8 @@ impl BipBufHeader {
 ///
 /// This is a convenience wrapper around `BipBufRaw` that manages memory
 /// through a `Region`.
+///
+/// r[impl shm.bipbuf]
 pub struct BipBuf {
     #[allow(dead_code)]
     region: Region,
@@ -135,6 +135,11 @@ impl BipBuf {
     pub fn capacity(&self) -> u32 {
         self.inner.capacity()
     }
+
+    /// Reset all indices to zero (crash recovery).  See [`BipBufRaw::reset`].
+    pub fn reset(&self) {
+        self.inner.reset();
+    }
 }
 
 /// Producer handle for the BipBuffer.
@@ -152,12 +157,23 @@ pub struct BipBufConsumer<'a> {
 pub struct BipBufFull;
 
 impl<'a> BipBufProducer<'a> {
+    /// Check whether `len` bytes could be granted contiguously right now.
+    ///
+    /// This is a non-mutating readiness probe used for backpressure decisions.
+    /// Unlike [`try_grant`](Self::try_grant), this does not perform wrapping.
+    pub fn can_grant(&self, len: u32) -> bool {
+        self.buf.inner.can_grant(len)
+    }
+
     /// Try to reserve a contiguous region of `len` bytes for writing.
     ///
     /// On success, returns a mutable slice. The caller MUST write their
     /// data into this slice and then call `commit(len)` to make it visible.
     ///
-    /// Returns `None` if there isn't enough contiguous space.
+    /// Returns `None` if there isn't enough contiguous space. A full buffer
+    /// means the consumer is slow — the caller MUST wait and retry.
+    ///
+    /// r[impl shm.bipbuf.backpressure]
     pub fn try_grant(&mut self, len: u32) -> Option<&mut [u8]> {
         self.buf.inner.try_grant(len)
     }
@@ -255,7 +271,7 @@ impl BipBufRaw {
     /// - The returned slice is not used after `commit` is called
     /// - `BipBufRaw` is only constructed via `unsafe fn from_raw`
     ///
-    /// shm[impl shm.bipbuf.grant]
+    /// r[impl shm.bipbuf.grant]
     #[allow(clippy::mut_from_ref)]
     pub fn try_grant(&self, len: u32) -> Option<&mut [u8]> {
         if len == 0 {
@@ -311,6 +327,36 @@ impl BipBufRaw {
         }
     }
 
+    /// Check whether `len` bytes could be granted contiguously right now.
+    ///
+    /// This is a read-only predicate for backpressure checks and must not
+    /// mutate write/watermark state.
+    pub fn can_grant(&self, len: u32) -> bool {
+        if len == 0 {
+            return true;
+        }
+
+        let header = self.header();
+        let capacity = header.capacity;
+        if len > capacity {
+            return false;
+        }
+
+        let write = header.write.load(Ordering::Relaxed);
+        let read = header.read.load(Ordering::Acquire);
+
+        if write >= read {
+            let space_at_end = capacity - write;
+            if space_at_end >= len {
+                true
+            } else {
+                read != 0 && len < read
+            }
+        } else {
+            write + len < read
+        }
+    }
+
     /// Commit `len` bytes that were previously granted.
     ///
     /// Makes the data visible to the consumer.
@@ -319,7 +365,7 @@ impl BipBufRaw {
     ///
     /// Panics if `write + len` would exceed the buffer capacity.
     ///
-    /// shm[impl shm.bipbuf.commit]
+    /// r[impl shm.bipbuf.commit]
     pub fn commit(&self, len: u32) {
         let header = self.header();
         let write = header.write.load(Ordering::Relaxed);
@@ -336,10 +382,15 @@ impl BipBufRaw {
     ///
     /// Returns a slice of readable bytes, or `None` if the buffer is empty.
     ///
-    /// shm[impl shm.bipbuf.read]
+    /// r[impl shm.bipbuf.read]
     pub fn try_read(&self) -> Option<&[u8]> {
         let header = self.header();
         let read = header.read.load(Ordering::Relaxed);
+
+        // Load `write` BEFORE `watermark` to synchronize with the producer's
+        // wrap sequence (which stores watermark then write with Release).
+        // If we see write=0, Acquire guarantees we also see the new watermark.
+        let write = header.write.load(Ordering::Acquire);
         let watermark = header.watermark.load(Ordering::Acquire);
 
         // If wrap is active, consume tail [read..watermark) before front data.
@@ -353,15 +404,14 @@ impl BipBufRaw {
             // Tail consumed: wrap to front and clear watermark.
             header.read.store(0, Ordering::Release);
             header.watermark.store(0, Ordering::Release);
-            let write = header.write.load(Ordering::Acquire);
-            if write > 0 {
+            let current_write = header.write.load(Ordering::Acquire);
+            if current_write > 0 {
                 let ptr = self.data;
-                return Some(unsafe { core::slice::from_raw_parts(ptr, write as usize) });
+                return Some(unsafe { core::slice::from_raw_parts(ptr, current_write as usize) });
             }
             return None;
         }
 
-        let write = header.write.load(Ordering::Acquire);
         if read < write {
             // Normal case: readable region is [read..write).
             let len = write - read;
@@ -381,7 +431,7 @@ impl BipBufRaw {
     ///
     /// Panics if `read + len` would overflow or exceed the buffer capacity.
     ///
-    /// shm[impl shm.bipbuf.release]
+    /// r[impl shm.bipbuf.release]
     pub fn release(&self, len: u32) {
         let header = self.header();
         let read = header.read.load(Ordering::Relaxed);
@@ -400,6 +450,17 @@ impl BipBufRaw {
         } else {
             header.read.store(new_read, Ordering::Release);
         }
+    }
+
+    /// Reset all indices to zero (crash recovery).
+    ///
+    /// Discards all unread data.  Must only be called by the host after
+    /// confirming the peer is dead and before returning the slot to Empty.
+    pub fn reset(&self) {
+        let header = self.header();
+        header.write.store(0, Ordering::Release);
+        header.watermark.store(0, Ordering::Release);
+        header.read.store(0, Ordering::Release);
     }
 
     /// Check if the buffer appears empty.
@@ -561,6 +622,27 @@ mod tests {
         let (mut producer, _consumer) = buf.split();
 
         assert!(producer.try_grant(33).is_none());
+        assert!(!producer.can_grant(33));
+    }
+
+    #[test]
+    fn can_grant_is_non_mutating() {
+        let (_region, buf) = make_bipbuf(32);
+        let (mut producer, mut consumer) = buf.split();
+
+        let grant = producer.try_grant(24).unwrap();
+        grant.fill(0xAA);
+        producer.commit(24);
+
+        consumer.release(20);
+        let header = unsafe { &*buf.inner().header };
+        assert_eq!(header.write.load(Ordering::Relaxed), 24);
+        assert_eq!(header.watermark.load(Ordering::Relaxed), 0);
+
+        // A 16-byte grant would need wrapping. can_grant() must not mutate.
+        assert!(producer.can_grant(16));
+        assert_eq!(header.write.load(Ordering::Relaxed), 24);
+        assert_eq!(header.watermark.load(Ordering::Relaxed), 0);
     }
 
     #[test]

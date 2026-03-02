@@ -1,83 +1,132 @@
-use std::process::Stdio;
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::future::Future;
+#[cfg(unix)]
+use std::io::Write as _;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use roam_wire::{Hello, Message};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, IntoRawFd};
+
+use roam::{Rx, Tx};
+use roam_core::{
+    BareConduit, Driver, DriverCaller, DriverReplySink, acceptor, initiator, memory_link_pair,
+};
+use roam_shm::HostHub;
+use roam_shm::ShmLink;
+use roam_shm::bootstrap::{BootstrapStatus, decode_request, encode_request};
+#[cfg(windows)]
+use roam_shm::guest_link_from_names;
+#[cfg(unix)]
+use roam_shm::guest_link_from_raw;
+use roam_shm::segment::{Segment, SegmentConfig};
+use roam_shm::varslot::SizeClassConfig as RoamShmSizeClassConfig;
+use roam_stream::StreamLink;
+use roam_types::{MessageFamily, Parity, RequestCall, SelfRef};
+use shm_primitives::FileCleanup;
+use shm_primitives::SizeClassConfig;
+use spec_proto::{
+    Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape, Testbed,
+    TestbedClient, TestbedDispatcher,
+};
+use std::process::Stdio;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
+use tokio::net::TcpListener;
 use tokio::process::{Child, Command};
+use tokio::sync::oneshot;
 
-/// Enable wire-level message logging for debugging.
-/// Set ROAM_WIRE_SPY=1 to enable.
-static WIRE_SPY_ENABLED: AtomicBool = AtomicBool::new(false);
-static WIRE_SPY_INIT: OnceLock<()> = OnceLock::new();
-
-fn wire_spy_enabled() -> bool {
-    WIRE_SPY_INIT.get_or_init(|| {
-        if std::env::var("ROAM_WIRE_SPY").is_ok() {
-            WIRE_SPY_ENABLED.store(true, Ordering::Relaxed);
+const SUBJECT_WAIT_HEARTBEAT: Duration = Duration::from_millis(500);
+/// Spawn a task that catches panics and makes them loud.
+///
+/// If the spawned future panics, the panic message is printed to stderr
+/// immediately and then re-raised. This prevents the silent-task-panic
+/// problem where tokio tasks panic and nobody notices, causing mysterious
+/// timeouts in tests.
+pub fn spawn_loud<F>(fut: F) -> moire::task::JoinHandle<F::Output>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    moire::task::spawn(async move {
+        // Inner spawn so we can catch the panic via JoinError
+        let inner = tokio::task::spawn(fut);
+        match inner.await {
+            Ok(v) => v,
+            Err(e) if e.is_panic() => {
+                let panic = e.into_panic();
+                let msg = panic
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| format!("{panic:?}"));
+                eprintln!("\n\n!!! SPAWNED TASK PANICKED !!!\n{msg}\n");
+                std::panic::resume_unwind(panic);
+            }
+            Err(e) => {
+                panic!("spawned task failed: {e}");
+            }
         }
-    });
-
-    WIRE_SPY_ENABLED.load(Ordering::Relaxed)
+    })
 }
 
-fn format_message(msg: &Message, direction: &str) -> String {
-    match msg {
-        Message::Hello(hello) => match hello {
-            Hello::V6 {
-                max_payload_size,
-                initial_channel_credit,
-                max_concurrent_requests,
-                metadata,
-            } => format!(
-                "{direction} Hello::V6 {{ max_payload: {max_payload_size}, credit: {initial_channel_credit}, max_concurrent_requests: {max_concurrent_requests}, metadata: {metadata:?} }}"
-            ),
-            other => format!("{direction} {other:?}"),
-        },
-        Message::Goodbye { reason, .. } => format!("{direction} Goodbye {{ reason: {reason:?} }}"),
-        Message::Request {
-            request_id,
-            method_id,
-            payload,
-            ..
-        } => format!(
-            "{direction} Request {{ id: {request_id}, method: 0x{method_id:016x}, payload: {} bytes }}",
-            payload.len()
-        ),
-        Message::Response {
-            request_id,
-            payload,
-            ..
-        } => format!(
-            "{direction} Response {{ id: {request_id}, payload: {} bytes }}",
-            payload.len()
-        ),
-        Message::Cancel { request_id, .. } => format!("{direction} Cancel {{ id: {request_id} }}"),
-        Message::Data {
-            channel_id,
-            payload,
-            ..
-        } => format!(
-            "{direction} Data {{ channel: {channel_id}, payload: {} bytes }}",
-            payload.len()
-        ),
-        Message::Close { channel_id, .. } => {
-            format!("{direction} Close {{ channel: {channel_id} }}")
+type TcpLink = StreamLink<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubjectLanguage {
+    Rust,
+    Swift,
+    TypeScript,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubjectTestTransport {
+    Tcp,
+    Shm,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubjectShmMode {
+    GuestServer,
+    HostServer,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SubjectSpec {
+    pub language: SubjectLanguage,
+    pub transport: SubjectTestTransport,
+    pub shm_mode: SubjectShmMode,
+}
+
+impl SubjectSpec {
+    pub const fn tcp(language: SubjectLanguage) -> Self {
+        Self {
+            language,
+            transport: SubjectTestTransport::Tcp,
+            shm_mode: SubjectShmMode::GuestServer,
         }
-        Message::Reset { channel_id, .. } => {
-            format!("{direction} Reset {{ channel: {channel_id} }}")
-        }
-        Message::Credit {
-            channel_id, bytes, ..
-        } => {
-            format!("{direction} Credit {{ channel: {channel_id}, bytes: {bytes} }}")
-        }
-        Message::Connect { .. } => format!("{direction} Connect {{ ... }}"),
-        Message::Accept { .. } => format!("{direction} Accept {{ ... }}"),
-        Message::Reject { .. } => format!("{direction} Reject {{ ... }}"),
     }
+
+    pub const fn shm_guest(language: SubjectLanguage) -> Self {
+        Self {
+            language,
+            transport: SubjectTestTransport::Shm,
+            shm_mode: SubjectShmMode::GuestServer,
+        }
+    }
+
+    pub const fn shm_host(language: SubjectLanguage) -> Self {
+        Self {
+            language,
+            transport: SubjectTestTransport::Shm,
+            shm_mode: SubjectShmMode::HostServer,
+        }
+    }
+}
+
+struct NoopHandler;
+
+impl roam_types::Handler<DriverReplySink> for NoopHandler {
+    async fn handle(&self, _call: SelfRef<RequestCall<'static>>, _reply: DriverReplySink) {}
 }
 
 pub fn workspace_root() -> &'static std::path::Path {
@@ -91,11 +140,56 @@ pub fn workspace_root() -> &'static std::path::Path {
 pub fn subject_cmd() -> String {
     match std::env::var("SUBJECT_CMD") {
         Ok(s) if !s.trim().is_empty() => s,
-        _ => "./target/release/subject-rust".to_string(),
+        _ => subject_cmd_for_language(SubjectLanguage::Rust),
     }
 }
 
-pub fn run_async<T>(f: impl std::future::Future<Output = T>) -> T {
+pub fn subject_cmd_for_language(language: SubjectLanguage) -> String {
+    match language {
+        SubjectLanguage::Rust => {
+            let exe = format!("subject-rust{}", std::env::consts::EXE_SUFFIX);
+            let debug = workspace_root().join("target").join("debug").join(&exe);
+            if debug.exists() {
+                debug.display().to_string()
+            } else {
+                workspace_root()
+                    .join("target")
+                    .join("release")
+                    .join(&exe)
+                    .display()
+                    .to_string()
+            }
+        }
+        SubjectLanguage::Swift => "./swift/subject/subject-swift.sh".to_string(),
+        SubjectLanguage::TypeScript => "./typescript/subject/subject-ts.sh".to_string(),
+    }
+}
+
+fn subject_transport() -> SubjectTestTransport {
+    match std::env::var("SPEC_TRANSPORT")
+        .ok()
+        .unwrap_or_else(|| "tcp".to_string())
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "shm" => SubjectTestTransport::Shm,
+        _ => SubjectTestTransport::Tcp,
+    }
+}
+
+fn shm_subject_mode() -> SubjectShmMode {
+    let mode = std::env::var("SPEC_SHM_SUBJECT_MODE")
+        .ok()
+        .unwrap_or_else(|| "shm-server".to_string())
+        .to_ascii_lowercase();
+    if mode == "shm-host-server" {
+        SubjectShmMode::HostServer
+    } else {
+        SubjectShmMode::GuestServer
+    }
+}
+
+pub fn run_async<T>(f: impl Future<Output = T>) -> T {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -103,128 +197,374 @@ pub fn run_async<T>(f: impl std::future::Future<Output = T>) -> T {
     rt.block_on(f)
 }
 
-pub fn our_hello(max_payload_size: u32) -> Hello {
-    Hello::V6 {
-        max_payload_size,
-        initial_channel_credit: 64 * 1024,
-        max_concurrent_requests: 64,
-        metadata: vec![],
+#[derive(Clone)]
+struct TestbedService;
+
+impl Testbed for TestbedService {
+    async fn echo(&self, message: String) -> String {
+        message
     }
-}
 
-pub struct LengthPrefixedFramed {
-    pub stream: TcpStream,
-    buf: Vec<u8>,
-}
+    async fn reverse(&self, message: String) -> String {
+        message.chars().rev().collect()
+    }
 
-impl LengthPrefixedFramed {
-    pub fn new(stream: TcpStream) -> Self {
-        Self {
-            stream,
-            buf: Vec::new(),
+    async fn divide(&self, dividend: i64, divisor: i64) -> Result<i64, MathError> {
+        if divisor == 0 {
+            Err(MathError::DivisionByZero)
+        } else {
+            Ok(dividend / divisor)
         }
     }
 
-    pub async fn send(&mut self, msg: &Message) -> std::io::Result<()> {
-        if wire_spy_enabled() {
-            eprintln!("[WIRE] {}", format_message(msg, "-->"));
+    async fn lookup(&self, id: u32) -> Result<Person, LookupError> {
+        match id {
+            1 => Ok(Person {
+                name: "Alice".to_string(),
+                age: 30,
+                email: Some("alice@example.com".to_string()),
+            }),
+            2 => Ok(Person {
+                name: "Bob".to_string(),
+                age: 25,
+                email: None,
+            }),
+            3 => Ok(Person {
+                name: "Charlie".to_string(),
+                age: 35,
+                email: Some("charlie@example.com".to_string()),
+            }),
+            _ => Err(LookupError::NotFound),
         }
-        let payload = facet_postcard::to_vec(msg)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
-
-        let frame_len = u32::try_from(payload.len())
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "frame too large"))?
-            .to_le_bytes();
-
-        self.stream.write_all(&frame_len).await?;
-        self.stream.write_all(&payload).await?;
-        self.stream.flush().await?;
-        Ok(())
     }
 
-    pub async fn recv_timeout(&mut self, timeout: Duration) -> std::io::Result<Option<Message>> {
-        tokio::time::timeout(timeout, self.recv_inner())
-            .await
-            .unwrap_or(Ok(None))
+    async fn sum(&self, mut numbers: Rx<i32>) -> i64 {
+        let mut total: i64 = 0;
+        while let Ok(Some(n)) = numbers.recv().await {
+            total += *n as i64;
+        }
+        total
     }
 
-    async fn recv_inner(&mut self) -> std::io::Result<Option<Message>> {
-        loop {
-            if self.buf.len() >= 4 {
-                let frame_len =
-                    u32::from_le_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]])
-                        as usize;
-                let needed = 4 + frame_len;
-                if self.buf.len() >= needed {
-                    let frame = self.buf[4..needed].to_vec();
-                    self.buf.drain(..needed);
-
-                    let msg: Message = facet_postcard::from_slice(&frame).map_err(|e| {
-                        eprintln!(
-                            "Failed to decode {} bytes: {:02x?}",
-                            frame.len(),
-                            &frame[..frame.len().min(64)]
-                        );
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            format!("postcard: {e}"),
-                        )
-                    })?;
-                    if wire_spy_enabled() {
-                        eprintln!("[WIRE] {}", format_message(&msg, "<--"));
-                    }
-                    return Ok(Some(msg));
-                }
+    async fn generate(&self, count: u32, output: Tx<i32>) {
+        for i in 0..count as i32 {
+            if output.send(i).await.is_err() {
+                break;
             }
-
-            let mut tmp = [0u8; 4096];
-            let n = self.stream.read(&mut tmp).await?;
-            if n == 0 {
-                if self.buf.is_empty() {
-                    return Ok(None);
-                }
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    format!("eof with {} trailing bytes", self.buf.len()),
-                ));
-            }
-            self.buf.extend_from_slice(&tmp[..n]);
         }
+        output.close(Default::default()).await.ok();
+    }
+
+    async fn transform(&self, mut input: Rx<String>, output: Tx<String>) {
+        while let Ok(Some(s)) = input.recv().await {
+            let _ = output.send(s.clone()).await;
+        }
+        output.close(Default::default()).await.ok();
+    }
+
+    async fn echo_point(&self, point: Point) -> Point {
+        point
+    }
+
+    async fn create_person(&self, name: String, age: u8, email: Option<String>) -> Person {
+        Person { name, age, email }
+    }
+
+    async fn rectangle_area(&self, rect: Rectangle) -> f64 {
+        let width = (rect.bottom_right.x - rect.top_left.x).abs() as f64;
+        let height = (rect.bottom_right.y - rect.top_left.y).abs() as f64;
+        width * height
+    }
+
+    async fn parse_color(&self, name: String) -> Option<Color> {
+        match name.to_lowercase().as_str() {
+            "red" => Some(Color::Red),
+            "green" => Some(Color::Green),
+            "blue" => Some(Color::Blue),
+            _ => None,
+        }
+    }
+
+    async fn shape_area(&self, shape: Shape) -> f64 {
+        match shape {
+            Shape::Circle { radius } => std::f64::consts::PI * radius * radius,
+            Shape::Rectangle { width, height } => width * height,
+            Shape::Point => 0.0,
+        }
+    }
+
+    async fn create_canvas(&self, name: String, shapes: Vec<Shape>, background: Color) -> Canvas {
+        Canvas {
+            name,
+            shapes,
+            background,
+        }
+    }
+
+    async fn process_message(&self, msg: Message) -> Message {
+        match msg {
+            Message::Text(s) => Message::Text(format!("processed: {s}")),
+            Message::Number(n) => Message::Number(n * 2),
+            Message::Data(d) => Message::Data(d.into_iter().rev().collect()),
+        }
+    }
+
+    async fn get_points(&self, count: u32) -> Vec<Point> {
+        (0..count as i32)
+            .map(|i| Point { x: i, y: i * 2 })
+            .collect()
+    }
+
+    async fn swap_pair(&self, pair: (i32, String)) -> (String, i32) {
+        (pair.1, pair.0)
     }
 }
 
+/// Spawn the subject binary, telling it to connect to `peer_addr`.
 pub async fn spawn_subject(peer_addr: &str) -> Result<Child, String> {
-    let cmd = subject_cmd();
+    spawn_subject_cmd_with_env(&subject_cmd(), peer_addr, &[]).await
+}
 
-    // Use a shell so SUBJECT_CMD can be `node subject.js`, etc.
-    let mut child = Command::new("sh")
+fn spawn_subject_log_pump<R>(reader: R, pid: u32, stream: &'static str)
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(reader).lines();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => eprintln!("[subject:{pid}:{stream}] {line}"),
+                Ok(None) => break,
+                Err(err) => {
+                    eprintln!("[subject:{pid}:{stream}] log read error: {err}");
+                    break;
+                }
+            }
+        }
+    });
+}
+
+async fn spawn_subject_cmd_with_env(
+    cmd: &str,
+    peer_addr: &str,
+    extra_env: &[(&str, &str)],
+) -> Result<Child, String> {
+    let extra_env_desc = if extra_env.is_empty() {
+        "<none>".to_string()
+    } else {
+        extra_env
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    eprintln!("[subject:spawn] cmd={cmd:?} peer_addr={peer_addr:?} extra_env={extra_env_desc}");
+
+    let mut command = if cmd.ends_with(".sh") {
+        let mut c = Command::new("sh");
+        c.arg("-lc").arg(cmd);
+        c
+    } else {
+        Command::new(cmd)
+    };
+    command
         .current_dir(workspace_root())
-        .arg("-lc")
-        .arg(cmd)
         .env("PEER_ADDR", peer_addr)
         .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (k, v) in extra_env {
+        command.env(k, v);
+    }
+
+    let mut child = command
         .spawn()
         .map_err(|e| format!("failed to spawn subject: {e}"))?;
+    let pid = child.id().unwrap_or_default();
+    eprintln!("[subject:{pid}] spawned");
+
+    if let Some(stdout) = child.stdout.take() {
+        spawn_subject_log_pump(stdout, pid, "stdout");
+    }
+    if let Some(stderr) = child.stderr.take() {
+        spawn_subject_log_pump(stderr, pid, "stderr");
+    }
 
     // If it exits immediately, surface that early.
     tokio::time::sleep(Duration::from_millis(10)).await;
     if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+        eprintln!("[subject:{pid}] exited immediately: {status}");
         return Err(format!("subject exited immediately with {status}"));
     }
 
     Ok(child)
 }
 
-pub async fn accept_subject() -> Result<(LengthPrefixedFramed, Child), String> {
-    accept_subject_with_options(false).await
+fn sid_hex_32() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock before epoch")
+        .as_nanos();
+    format!("{nanos:032x}")
 }
 
-/// Accept subject with option to enable incoming virtual connections.
-pub async fn accept_subject_with_options(
-    accept_connections: bool,
-) -> Result<(LengthPrefixedFramed, Child), String> {
+fn leaked_dirs() -> &'static Mutex<Vec<tempfile::TempDir>> {
+    static DIRS: OnceLock<Mutex<Vec<tempfile::TempDir>>> = OnceLock::new();
+    DIRS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn keep_tempdir_alive(dir: tempfile::TempDir) {
+    leaked_dirs().lock().expect("tempdir mutex").push(dir);
+}
+
+/// Listen on a random TCP port, spawn the subject (which connects to us),
+/// complete the roam handshake as acceptor, and return a ready `TestbedClient`.
+pub async fn accept_subject() -> Result<(TestbedClient<DriverCaller>, Child), String> {
+    let spec = SubjectSpec {
+        language: SubjectLanguage::Rust,
+        transport: subject_transport(),
+        shm_mode: shm_subject_mode(),
+    };
+    accept_subject_spec(spec).await
+}
+
+pub async fn accept_subject_spec(
+    spec: SubjectSpec,
+) -> Result<(TestbedClient<DriverCaller>, Child), String> {
+    let cmd = subject_cmd_for_language(spec.language);
+    match spec.transport {
+        SubjectTestTransport::Tcp => accept_subject_tcp(&cmd).await,
+        SubjectTestTransport::Shm => match spec.shm_mode {
+            SubjectShmMode::GuestServer => accept_subject_shm_subject_is_guest(&cmd).await,
+            SubjectShmMode::HostServer => accept_subject_shm_subject_is_host(&cmd).await,
+        },
+    }
+}
+
+pub async fn accept_subject_with_transport(
+    transport: SubjectTestTransport,
+) -> Result<(TestbedClient<DriverCaller>, Child), String> {
+    accept_subject_spec(SubjectSpec {
+        language: SubjectLanguage::Rust,
+        transport,
+        shm_mode: shm_subject_mode(),
+    })
+    .await
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RustTransport {
+    Mem,
+    Tcp,
+    Shm,
+}
+
+pub async fn accept_rust_inproc(
+    transport: RustTransport,
+) -> Result<TestbedClient<DriverCaller>, String> {
+    match transport {
+        RustTransport::Mem => {
+            let (a, b) = memory_link_pair(64 * 1024);
+            accept_rust_inproc_with_conduits(BareConduit::new(a), BareConduit::new(b)).await
+        }
+        RustTransport::Tcp => {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .map_err(|e| format!("bind: {e}"))?;
+            let addr = listener
+                .local_addr()
+                .map_err(|e| format!("local_addr: {e}"))?;
+            let connect_task =
+                tokio::spawn(async move { tokio::net::TcpStream::connect(addr).await });
+            let (server_stream, _) = listener
+                .accept()
+                .await
+                .map_err(|e| format!("accept: {e}"))?;
+            let client_stream = connect_task
+                .await
+                .map_err(|e| format!("connect task join: {e}"))?
+                .map_err(|e| format!("connect: {e}"))?;
+            server_stream.set_nodelay(true).unwrap();
+            client_stream.set_nodelay(true).unwrap();
+            accept_rust_inproc_with_conduits(
+                BareConduit::new(StreamLink::tcp(client_stream)),
+                BareConduit::new(StreamLink::tcp(server_stream)),
+            )
+            .await
+        }
+        RustTransport::Shm => {
+            let classes = [RoamShmSizeClassConfig {
+                slot_size: 4096,
+                slot_count: 64,
+            }];
+            let dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
+            let path = dir.path().join("spec-test.shm");
+            let segment = Arc::new(
+                Segment::create(
+                    &path,
+                    SegmentConfig {
+                        max_guests: 1,
+                        bipbuf_capacity: 1 << 16,
+                        max_payload_size: 1 << 20,
+                        inline_threshold: 256,
+                        heartbeat_interval: 0,
+                        size_classes: &classes,
+                    },
+                    FileCleanup::Manual,
+                )
+                .map_err(|e| format!("shm segment create: {e}"))?,
+            );
+            let (a, b) = roam_shm::create_test_link_pair(segment)
+                .await
+                .map_err(|e| format!("shm create_test_link_pair: {e}"))?;
+            // Keep the temp dir alive for the test duration by leaking it.
+            std::mem::forget(dir);
+            accept_rust_inproc_with_conduits(BareConduit::new(a), BareConduit::new(b)).await
+        }
+    }
+}
+
+async fn accept_rust_inproc_with_conduits<L>(
+    client_conduit: BareConduit<MessageFamily, L>,
+    server_conduit: BareConduit<MessageFamily, L>,
+) -> Result<TestbedClient<DriverCaller>, String>
+where
+    L: roam_types::Link + Send + 'static,
+    L::Tx: Send + 'static,
+    L::Rx: Send + 'static,
+    <L::Rx as roam_types::LinkRx>::Error: std::error::Error + Send + Sync + 'static,
+{
+    let server_task = tokio::spawn(async move {
+        let (mut server_session, server_handle, _sh) =
+            acceptor(server_conduit)
+                .establish()
+                .await
+                .map_err(|e| format!("server handshake: {e}"))?;
+        let dispatcher = TestbedDispatcher::new(TestbedService);
+        let mut server_driver = Driver::new(server_handle, dispatcher, Parity::Even);
+        tokio::spawn(async move { server_session.run().await });
+        tokio::spawn(async move { server_driver.run().await });
+        Ok::<(), String>(())
+    });
+
+    let (mut client_session, client_handle, _sh) = initiator(client_conduit)
+        .establish()
+        .await
+        .map_err(|e| format!("client handshake: {e}"))?;
+    let mut client_driver = Driver::new(client_handle, NoopHandler, Parity::Odd);
+    let caller = client_driver.caller();
+
+    tokio::spawn(async move { client_session.run().await });
+    tokio::spawn(async move { client_driver.run().await });
+
+    server_task
+        .await
+        .map_err(|e| format!("server task join: {e}"))??;
+
+    Ok(TestbedClient::new(caller))
+}
+
+async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient<DriverCaller>, Child), String> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("bind: {e}"))?;
@@ -232,476 +572,593 @@ pub async fn accept_subject_with_options(
         .local_addr()
         .map_err(|e| format!("local_addr: {e}"))?;
 
-    let child = spawn_subject_with_options(&addr.to_string(), accept_connections).await?;
+    let mut child = spawn_subject_cmd_with_env(cmd, &addr.to_string(), &[]).await?;
+    let pid = child.id().unwrap_or_default();
+    let wait_started = tokio::time::Instant::now();
+    let wait_deadline = wait_started + Duration::from_secs(5);
+    let mut heartbeat = tokio::time::interval(SUBJECT_WAIT_HEARTBEAT);
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    heartbeat.tick().await;
 
-    let (stream, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+    let (stream, _) = loop {
+        tokio::select! {
+            accepted = listener.accept() => {
+                break accepted.map_err(|e| format!("accept: {e}"))?;
+            }
+            status = child.wait() => {
+                let status = status.map_err(|e| format!("wait on subject process: {e}"))?;
+                return Err(format!("subject exited before connecting: {status}"));
+            }
+            _ = tokio::time::sleep_until(wait_deadline) => {
+                if let Some(status) = child
+                    .try_wait()
+                    .map_err(|e| format!("try_wait on subject process: {e}"))?
+                {
+                    return Err(format!("subject exited before connecting: {status}"));
+                }
+                return Err(format!(
+                    "subject did not connect within 5s (pid={pid}, addr={addr}, elapsed={:?})",
+                    wait_started.elapsed()
+                ));
+            }
+            _ = heartbeat.tick() => {
+                if let Some(status) = child
+                    .try_wait()
+                    .map_err(|e| format!("try_wait on subject process: {e}"))?
+                {
+                    return Err(format!("subject exited while waiting for tcp connect: {status}"));
+                }
+                eprintln!(
+                    "[subject:{pid}] waiting for tcp connect to {addr} (elapsed={:?})",
+                    wait_started.elapsed()
+                );
+            }
+        }
+    };
+    stream.set_nodelay(true).unwrap();
+
+    let conduit: BareConduit<MessageFamily, TcpLink> = BareConduit::new(StreamLink::tcp(stream));
+
+    let (mut session, handle, _sh) = acceptor(conduit)
+        .establish()
         .await
-        .map_err(|_| "subject did not connect within 5s".to_string())?
-        .map_err(|e| format!("accept: {e}"))?;
+        .map_err(|e| format!("handshake: {e}"))?;
 
-    Ok((LengthPrefixedFramed::new(stream), child))
+    let mut driver = Driver::new(handle, NoopHandler, Parity::Even);
+    let caller = driver.caller();
+
+    moire::task::spawn(async move { session.run().await });
+    moire::task::spawn(async move { driver.run().await });
+
+    Ok((TestbedClient::new(caller), child))
 }
 
-/// Spawn subject with option to enable incoming virtual connections.
-pub async fn spawn_subject_with_options(
-    peer_addr: &str,
-    accept_connections: bool,
-) -> Result<Child, String> {
-    let cmd = subject_cmd();
+async fn accept_subject_shm_subject_is_guest(
+    cmd: &str,
+) -> Result<(TestbedClient<DriverCaller>, Child), String> {
+    let dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
+    let sid = sid_hex_32();
+    let control_sock_path = dir.path().join("bootstrap.sock");
+    let shm_path = dir.path().join("subject.shm");
 
-    let mut command = Command::new("sh");
-    command
-        .current_dir(workspace_root())
-        .arg("-lc")
-        .arg(cmd)
-        .env("PEER_ADDR", peer_addr)
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+    let size_classes = [SizeClassConfig {
+        slot_size: 4096,
+        slot_count: 8,
+    }];
+    let segment = Arc::new(
+        Segment::create(
+            &shm_path,
+            SegmentConfig {
+                max_guests: 1,
+                bipbuf_capacity: 64 * 1024,
+                max_payload_size: 1024 * 1024,
+                inline_threshold: 256,
+                heartbeat_interval: 0,
+                size_classes: &size_classes,
+            },
+            FileCleanup::Manual,
+        )
+        .map_err(|e| format!("segment create: {e}"))?,
+    );
+    let hub = Arc::new(HostHub::new(Arc::clone(&segment)));
 
-    if accept_connections {
-        command.env("ACCEPT_CONNECTIONS", "1");
-    }
+    // Bind the control listener.
+    #[cfg(unix)]
+    let listener = roam_local::LocalListener::bind(&control_sock_path)
+        .map_err(|e| format!("bind {}: {e}", control_sock_path.display()))?;
+    #[cfg(windows)]
+    let mut listener = {
+        let endpoint = roam_local::path_to_pipe_name(&control_sock_path);
+        roam_local::LocalListener::bind(&endpoint).map_err(|e| format!("bind control pipe: {e}"))?
+    };
 
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("failed to spawn subject: {e}"))?;
+    let hub_path_str = shm_path
+        .to_str()
+        .ok_or_else(|| format!("invalid shm path: {}", shm_path.display()))?;
+    let hub_path_bytes = hub_path_str.as_bytes().to_vec();
+    let prepared = hub
+        .prepare_bootstrap_success(&hub_path_bytes)
+        .map_err(|e| format!("prepare bootstrap success: {e}"))?;
+    let mmap_tx_arg_env = prepared.guest_ticket.mmap_tx_arg();
 
-    // If it exits immediately, surface that early.
-    tokio::time::sleep(Duration::from_millis(10)).await;
-    if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-        return Err(format!("subject exited immediately with {status}"));
-    }
+    // Determine the control socket string and mmap env var for the subject.
+    #[cfg(unix)]
+    let control_sock = control_sock_path
+        .to_str()
+        .ok_or_else(|| format!("invalid socket path: {}", control_sock_path.display()))?
+        .to_string();
+    #[cfg(windows)]
+    let control_sock = roam_local::path_to_pipe_name(&control_sock_path);
 
-    Ok(child)
-}
-
-/// Spawn subject in client mode with the given scenario.
-///
-/// The subject will connect to us, and we act as the server.
-pub async fn spawn_subject_client(peer_addr: &str, scenario: &str) -> Result<Child, String> {
-    let cmd = subject_cmd();
-
-    // Use a shell so SUBJECT_CMD can be `node subject.js`, etc.
-    let mut child = Command::new("sh")
-        .current_dir(workspace_root())
-        .arg("-lc")
-        .arg(cmd)
-        .env("PEER_ADDR", peer_addr)
-        .env("SUBJECT_MODE", "client")
-        .env("CLIENT_SCENARIO", scenario)
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .map_err(|e| format!("failed to spawn subject: {e}"))?;
-
-    // If it exits immediately, surface that early.
-    tokio::time::sleep(Duration::from_millis(10)).await;
-    if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-        return Err(format!("subject exited immediately with {status}"));
-    }
-
-    Ok(child)
-}
-
-pub async fn wait_for_goodbye_with_rule(
-    io: &mut LengthPrefixedFramed,
-    rule: &str,
-) -> Result<(), String> {
-    let mut saw_reason = None::<String>;
-    for _ in 0..10 {
-        match io
-            .recv_timeout(Duration::from_millis(250))
-            .await
-            .map_err(|e| e.to_string())?
-        {
-            None => break,
-            Some(Message::Goodbye { reason, .. }) => {
-                saw_reason = Some(reason);
-                break;
+    let (peer_tx, peer_rx) = oneshot::channel();
+    let sid_for_task = sid.clone();
+    let segment_for_task = Arc::clone(&segment);
+    tokio::spawn(async move {
+        let result: Result<roam_shm::host::HostPeer, String> = async {
+            let mut stream = listener
+                .accept()
+                .await
+                .map_err(|e| format!("accept: {e}"))?;
+            let mut request_buf = [0u8; 2048];
+            let n = stream
+                .read(&mut request_buf)
+                .await
+                .map_err(|e| format!("read bootstrap request: {e}"))?;
+            if n == 0 {
+                return Err("bootstrap request EOF".to_string());
             }
-            Some(_) => continue,
-        }
-    }
+            let request = decode_request(&request_buf[..n])
+                .map_err(|e| format!("decode bootstrap request: {e}"))?;
+            let got_sid = String::from_utf8(request.sid.to_vec())
+                .map_err(|e| format!("sid not utf-8: {e}"))?;
+            if got_sid != sid_for_task {
+                return Err(format!(
+                    "sid mismatch: expected {sid_for_task}, got {got_sid}"
+                ));
+            }
 
-    let reason = saw_reason.ok_or_else(|| "expected Goodbye, got none".to_string())?;
-    if !reason.contains(rule) {
-        return Err(format!(
-            "Goodbye reason must mention {rule}, got {reason:?}"
-        ));
+            #[cfg(unix)]
+            {
+                prepared
+                    .send_success_unix(stream.as_raw_fd(), &segment_for_task)
+                    .map_err(|e| format!("send bootstrap success: {e}"))?;
+            }
+            #[cfg(windows)]
+            {
+                use roam_shm::bootstrap::{
+                    BootstrapStatus, BootstrapSuccessNames, encode_response,
+                };
+                use tokio::io::AsyncWriteExt;
+                let names = BootstrapSuccessNames {
+                    segment_path: segment_for_task.path().to_str().unwrap().to_string(),
+                    doorbell_name: prepared.guest_ticket.doorbell_arg(),
+                    mmap_ctrl_name: prepared.guest_ticket.mmap_rx_arg(),
+                };
+                let payload = names.encode();
+                let frame = encode_response(
+                    BootstrapStatus::Success,
+                    prepared.guest_ticket.peer_id.get() as u32,
+                    &payload,
+                )
+                .map_err(|e| format!("encode bootstrap response: {e}"))?;
+                stream
+                    .write_all(&frame)
+                    .await
+                    .map_err(|e| format!("send bootstrap success: {e}"))?;
+            }
+
+            Ok(prepared.host_peer)
+        }
+        .await;
+        let _ = peer_tx.send(result);
+    });
+
+    // Build the env vars for the subject process.
+    #[cfg(unix)]
+    let extra_env: Vec<(&str, &str)> = vec![
+        ("SUBJECT_MODE", "shm-server"),
+        ("SHM_CONTROL_SOCK", &control_sock),
+        ("SHM_SESSION_ID", &sid),
+        ("SHM_MMAP_TX_FD", &mmap_tx_arg_env),
+    ];
+    #[cfg(windows)]
+    let extra_env: Vec<(&str, &str)> = vec![
+        ("SUBJECT_MODE", "shm-server"),
+        ("SHM_CONTROL_SOCK", &control_sock),
+        ("SHM_SESSION_ID", &sid),
+        ("SHM_MMAP_TX_PIPE", &mmap_tx_arg_env),
+    ];
+
+    let mut child = spawn_subject_cmd_with_env(cmd, "", &extra_env).await?;
+
+    let mut peer_rx = peer_rx;
+    let pid = child.id().unwrap_or_default();
+    let wait_started = tokio::time::Instant::now();
+    let wait_deadline = wait_started + Duration::from_secs(5);
+    let mut heartbeat = tokio::time::interval(SUBJECT_WAIT_HEARTBEAT);
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    heartbeat.tick().await;
+
+    let host_peer = loop {
+        tokio::select! {
+            peer = &mut peer_rx => {
+                break peer.map_err(|_| "bootstrap task dropped".to_string())??;
+            }
+            status = child.wait() => {
+                let status = status.map_err(|e| format!("wait on subject process: {e}"))?;
+                return Err(format!("subject exited before bootstrap request: {status}"));
+            }
+            _ = tokio::time::sleep_until(wait_deadline) => {
+                if let Some(status) = child
+                    .try_wait()
+                    .map_err(|e| format!("try_wait on subject process: {e}"))?
+                {
+                    return Err(format!("subject exited before bootstrap request: {status}"));
+                }
+                return Err(format!(
+                    "timed out waiting for bootstrap request (pid={pid}, socket={}, elapsed={:?})",
+                    control_sock_path.display(),
+                    wait_started.elapsed()
+                ));
+            }
+            _ = heartbeat.tick() => {
+                if let Some(status) = child
+                    .try_wait()
+                    .map_err(|e| format!("try_wait on subject process: {e}"))?
+                {
+                    return Err(format!("subject exited while waiting for bootstrap request: {status}"));
+                }
+                eprintln!(
+                    "[subject:{pid}] waiting for bootstrap request on {} (elapsed={:?})",
+                    control_sock_path.display(),
+                    wait_started.elapsed()
+                );
+            }
+        }
+    };
+
+    eprintln!("[harness] into_link...");
+    let link = host_peer
+        .into_link()
+        .map_err(|e| format!("host peer to link: {e}"))?;
+    eprintln!("[harness] into_link ok");
+    #[cfg(windows)]
+    {
+        eprintln!("[harness] accept_doorbell...");
+        link.accept_doorbell()
+            .await
+            .map_err(|e| format!("accept doorbell: {e}"))?;
+        eprintln!("[harness] accept_doorbell ok");
     }
-    Ok(())
+    let conduit: BareConduit<MessageFamily, roam_shm::ShmLink> = BareConduit::new(link);
+
+    eprintln!("[harness] handshake...");
+    let (mut session, handle, _sh) = acceptor(conduit)
+        .establish()
+        .await
+        .map_err(|e| format!("handshake: {e}"))?;
+    eprintln!("[harness] handshake ok");
+
+    let mut driver = Driver::new(handle, NoopHandler, Parity::Even);
+    let caller = driver.caller();
+
+    tokio::spawn(async move { session.run().await });
+    tokio::spawn(async move { driver.run().await });
+
+    keep_tempdir_alive(dir);
+    Ok((TestbedClient::new(caller), child))
 }
 
-pub mod wire_server {
-    use super::*;
-    use std::collections::HashMap;
+async fn accept_subject_shm_subject_is_host(
+    cmd: &str,
+) -> Result<(TestbedClient<DriverCaller>, Child), String> {
+    let dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
+    let sid = sid_hex_32();
+    let control_sock_path = dir.path().join("bootstrap.sock");
+    let shm_path = dir.path().join("subject.shm");
 
-    /// Run a wire-level server for the given scenario.
-    ///
-    /// Spawns the subject in client mode, accepts its connection, and handles
-    /// the protocol exchange at the wire level.
-    pub async fn run(scenario: &str, method_ids: &MethodIds) -> Result<(), String> {
-        let listener = TcpListener::bind("127.0.0.1:0")
+    #[cfg(unix)]
+    let control_sock = control_sock_path
+        .to_str()
+        .ok_or_else(|| format!("invalid socket path: {}", control_sock_path.display()))?
+        .to_string();
+    #[cfg(windows)]
+    let control_sock = roam_local::path_to_pipe_name(&control_sock_path);
+
+    let shm_path_str = shm_path
+        .to_str()
+        .ok_or_else(|| format!("invalid shm path: {}", shm_path.display()))?
+        .to_string();
+
+    let mut child = spawn_subject_cmd_with_env(
+        cmd,
+        "",
+        &[
+            ("SUBJECT_MODE", "shm-host-server"),
+            ("SHM_CONTROL_SOCK", &control_sock),
+            ("SHM_SESSION_ID", &sid),
+            ("SHM_HUB_PATH", &shm_path_str),
+        ],
+    )
+    .await?;
+    let pid = child.id().unwrap_or_default();
+
+    let setup_result: Result<TestbedClient<DriverCaller>, String> = async {
+        eprintln!(
+            "[subject:{pid}] waiting for subject-host bootstrap socket {}",
+            control_sock_path.display()
+        );
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let connect_started = tokio::time::Instant::now();
+        let mut heartbeat = tokio::time::interval(SUBJECT_WAIT_HEARTBEAT);
+        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        heartbeat.tick().await;
+
+        // Connect to the subject's bootstrap socket.
+        #[cfg(unix)]
+        let mut stream = {
+            use std::os::unix::net::UnixStream as StdUnixStream;
+            loop {
+                if let Some(status) = child
+                    .try_wait()
+                    .map_err(|e| format!("try_wait on subject process: {e}"))?
+                {
+                    return Err(format!(
+                        "subject exited before bootstrap handshake: {status}"
+                    ));
+                }
+                match StdUnixStream::connect(&control_sock_path) {
+                    Ok(stream) => {
+                        eprintln!(
+                            "[subject:{pid}] connected to bootstrap socket {}",
+                            control_sock_path.display()
+                        );
+                        break stream;
+                    }
+                    Err(e) => {
+                        if tokio::time::Instant::now() >= deadline {
+                            return Err(format!(
+                                "connect bootstrap socket {} failed after {:?}: {e}",
+                                control_sock_path.display(),
+                                connect_started.elapsed()
+                            ));
+                        }
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+                            _ = heartbeat.tick() => {
+                                if let Some(status) = child
+                                    .try_wait()
+                                    .map_err(|e| format!("try_wait on subject process: {e}"))?
+                                {
+                                    return Err(format!(
+                                        "subject exited while waiting for bootstrap socket: {status}"
+                                    ));
+                                }
+                                eprintln!(
+                                    "[subject:{pid}] waiting for bootstrap socket {} (elapsed={:?}, latest_error={e})",
+                                    control_sock_path.display(),
+                                    connect_started.elapsed()
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        #[cfg(windows)]
+        let mut stream = {
+            let pipe_name = roam_local::path_to_pipe_name(&control_sock_path);
+            loop {
+                if let Some(status) = child
+                    .try_wait()
+                    .map_err(|e| format!("try_wait on subject process: {e}"))?
+                {
+                    return Err(format!(
+                        "subject exited before bootstrap handshake: {status}"
+                    ));
+                }
+                match roam_local::connect(&pipe_name).await {
+                    Ok(client) => {
+                        eprintln!(
+                            "[subject:{pid}] connected to bootstrap pipe {}",
+                            control_sock_path.display()
+                        );
+                        break client;
+                    }
+                    Err(e) => {
+                        if tokio::time::Instant::now() >= deadline {
+                            return Err(format!(
+                                "connect bootstrap pipe {} failed after {:?}: {e}",
+                                control_sock_path.display(),
+                                connect_started.elapsed()
+                            ));
+                        }
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+                            _ = heartbeat.tick() => {
+                                if let Some(status) = child
+                                    .try_wait()
+                                    .map_err(|e| format!("try_wait on subject process: {e}"))?
+                                {
+                                    return Err(format!(
+                                        "subject exited while waiting for bootstrap pipe: {status}"
+                                    ));
+                                }
+                                eprintln!(
+                                    "[subject:{pid}] waiting for bootstrap pipe {} (elapsed={:?}, latest_error={e})",
+                                    control_sock_path.display(),
+                                    connect_started.elapsed()
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        let request = encode_request(sid.as_bytes()).map_err(|e| format!("encode request: {e}"))?;
+
+        // Send the bootstrap request and receive the response.
+        #[cfg(unix)]
+        let link: ShmLink = {
+            stream
+                .write_all(&request)
+                .map_err(|e| format!("send bootstrap request: {e}"))?;
+            eprintln!("[subject:{pid}] sent bootstrap request");
+
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .map_err(|e| format!("set bootstrap socket read timeout: {e}"))?;
+
+            let recv_fd = stream.as_raw_fd();
+            let received = tokio::task::spawn_blocking(move || {
+                shm_primitives::bootstrap::recv_response_unix(recv_fd)
+            })
             .await
-            .map_err(|e| format!("bind: {e}"))?;
-        let addr = listener
-            .local_addr()
-            .map_err(|e| format!("local_addr: {e}"))?;
+            .map_err(|e| format!("bootstrap recv task join: {e}"))?
+            .map_err(|e| format!("recv bootstrap response: {e}"))?;
+            eprintln!("[subject:{pid}] received bootstrap response");
+            if received.response.status != BootstrapStatus::Success {
+                return Err(format!(
+                    "bootstrap failed: status={:?}, payload={}",
+                    received.response.status,
+                    String::from_utf8_lossy(&received.response.payload)
+                ));
+            }
 
-        // Spawn subject in client mode
-        let mut child = spawn_subject_client(&addr.to_string(), scenario).await?;
+            let fds = received
+                .fds
+                .ok_or_else(|| "missing bootstrap success fds".to_string())?;
+            let hub_path = std::str::from_utf8(&received.response.payload)
+                .map_err(|e| format!("bootstrap payload is not utf-8 path: {e}"))?;
+            let segment = Arc::new(
+                Segment::attach(std::path::Path::new(hub_path))
+                    .map_err(|e| format!("attach segment at {hub_path}: {e}"))?,
+            );
+            let peer_id = shm_primitives::PeerId::new(received.response.peer_id as u8)
+                .ok_or_else(|| format!("invalid peer id {}", received.response.peer_id))?;
 
-        // Accept the connection
-        let (stream, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
-            .await
-            .map_err(|_| "subject did not connect within 5s".to_string())?
-            .map_err(|e| format!("accept: {e}"))?;
+            let doorbell_fd = fds.doorbell_fd.into_raw_fd();
+            let mmap_rx_owned = fds.mmap_control_fd;
+            let mmap_tx_owned = mmap_rx_owned
+                .try_clone()
+                .map_err(|e| format!("clone mmap control fd: {e}"))?;
+            let mmap_rx_fd = mmap_rx_owned.into_raw_fd();
+            let mmap_tx_fd = mmap_tx_owned.into_raw_fd();
 
-        let mut io = LengthPrefixedFramed::new(stream);
+            unsafe {
+                guest_link_from_raw(segment, peer_id, doorbell_fd, mmap_rx_fd, mmap_tx_fd, true)
+            }
+            .map_err(|e| format!("guest_link_from_raw: {e}"))?
+        };
 
-        // Hello exchange
-        io.send(&Message::Hello(our_hello(1024 * 1024)))
-            .await
-            .map_err(|e| format!("send hello: {e}"))?;
-
-        let msg = io
-            .recv_timeout(Duration::from_secs(5))
-            .await
-            .map_err(|e| format!("recv hello: {e}"))?
-            .ok_or("connection closed before hello")?;
-
-        match msg {
-            Message::Hello(Hello::V6 { .. }) => {}
-            other => return Err(format!("expected Hello::V6, got {other:?}")),
-        }
-
-        // Handle requests until client disconnects
-        let result = handle_requests(&mut io, scenario, method_ids).await;
-
-        // Wait for child to exit
-        let status = child.wait().await.map_err(|e| format!("wait: {e}"))?;
-        if !status.success() {
-            return Err(format!("subject exited with {status}"));
-        }
-
-        result
-    }
-
-    /// Method IDs for the Testbed service.
-    ///
-    /// These are passed in from tests so the harness doesn't depend on spec-proto.
-    #[derive(Clone)]
-    pub struct MethodIds {
-        pub echo: u64,
-        pub reverse: u64,
-        pub sum: u64,
-        pub generate: u64,
-        pub transform: u64,
-        pub shape_area: u64,
-        pub create_canvas: u64,
-        pub process_message: u64,
-    }
-
-    fn metadata_empty() -> roam_wire::Metadata {
-        Vec::new()
-    }
-
-    /// Encode a successful result: Result::Ok(value)
-    fn encode_ok<T: for<'a> facet::Facet<'a>>(value: &T) -> Result<Vec<u8>, String> {
-        let mut result = vec![0x00]; // Result::Ok variant
-        result
-            .extend(facet_postcard::to_vec(value).map_err(|e| format!("encode ok payload: {e}"))?);
-        Ok(result)
-    }
-
-    async fn handle_requests(
-        io: &mut LengthPrefixedFramed,
-        scenario: &str,
-        method_ids: &MethodIds,
-    ) -> Result<(), String> {
-        // Track open channels: channel_id -> accumulated data
-        let mut channels: HashMap<u64, Vec<i32>> = HashMap::new();
-        // Track pending requests that are waiting for channel data
-        let mut pending_sum: Option<(u64, u64)> = None; // (request_id, channel_id)
-        let mut scenario_satisfied = false;
-
-        loop {
-            let msg = match io.recv_timeout(Duration::from_secs(5)).await {
-                Ok(Some(m)) => m,
-                Ok(None) => break, // Client disconnected or idle timeout
-                Err(e) => return Err(format!("recv: {e}")),
+        #[cfg(windows)]
+        let link: ShmLink = {
+            use roam_shm::bootstrap::{
+                BootstrapSuccessNames, BOOTSTRAP_RESPONSE_HEADER_LEN, decode_response,
             };
+            use tokio::io::AsyncWriteExt;
 
-            match msg {
-                Message::Request {
-                    request_id,
-                    method_id,
-                    payload,
-                    ..
-                } => {
-                    if method_id == method_ids.echo {
-                        // echo(message: String) -> String
-                        let args: (String,) = facet_postcard::from_slice(&payload)
-                            .map_err(|e| format!("decode echo args: {e}"))?;
-                        let response_payload = encode_ok(&args.0)?;
-                        io.send(&Message::Response {
-                            conn_id: roam_wire::ConnectionId::ROOT,
-                            request_id,
-                            metadata: metadata_empty(),
-                            channels: vec![],
-                            payload: response_payload,
-                        })
-                        .await
-                        .map_err(|e| format!("send response: {e}"))?;
-                    } else if method_id == method_ids.reverse {
-                        // reverse(message: String) -> String
-                        let args: (String,) = facet_postcard::from_slice(&payload)
-                            .map_err(|e| format!("decode reverse args: {e}"))?;
-                        let reversed: String = args.0.chars().rev().collect();
-                        let response_payload = encode_ok(&reversed)?;
-                        io.send(&Message::Response {
-                            conn_id: roam_wire::ConnectionId::ROOT,
-                            request_id,
-                            metadata: metadata_empty(),
-                            channels: vec![],
-                            payload: response_payload,
-                        })
-                        .await
-                        .map_err(|e| format!("send response: {e}"))?;
-                    } else if method_id == method_ids.sum {
-                        // sum(numbers: Rx<i32>) -> i64
-                        // Payload is (channel_id: u64)
-                        let args: (u64,) = facet_postcard::from_slice(&payload)
-                            .map_err(|e| format!("decode sum args: {e}"))?;
-                        let channel_id = args.0;
-                        channels.insert(channel_id, Vec::new());
-                        pending_sum = Some((request_id, channel_id));
-                        // Response will be sent when we receive Close
-                    } else if method_id == method_ids.generate {
-                        // generate(count: u32, output: Tx<i32>)
-                        // Payload is (count: u32, channel_id: u64)
-                        let args: (u32, u64) = facet_postcard::from_slice(&payload)
-                            .map_err(|e| format!("decode generate args: {e}"))?;
-                        let (count, channel_id) = args;
+            stream
+                .write_all(&request)
+                .await
+                .map_err(|e| format!("send bootstrap request: {e}"))?;
+            eprintln!("[subject:{pid}] sent bootstrap request");
 
-                        // Send Data messages
-                        for i in 0..count as i32 {
-                            let data_payload = facet_postcard::to_vec(&i)
-                                .map_err(|e| format!("encode data: {e}"))?;
-                            io.send(&Message::Data {
-                                conn_id: roam_wire::ConnectionId::ROOT,
-                                channel_id,
-                                payload: data_payload,
-                            })
-                            .await
-                            .map_err(|e| format!("send data: {e}"))?;
-                        }
+            // Read bootstrap response header.
+            let mut header = [0u8; BOOTSTRAP_RESPONSE_HEADER_LEN];
+            stream
+                .read_exact(&mut header)
+                .await
+                .map_err(|e| format!("read bootstrap response header: {e}"))?;
 
-                        // Send Close
-                        io.send(&Message::Close {
-                            conn_id: roam_wire::ConnectionId::ROOT,
-                            channel_id,
-                        })
-                        .await
-                        .map_err(|e| format!("send close: {e}"))?;
-
-                        // Send Response
-                        let response_payload = encode_ok(&())?;
-                        io.send(&Message::Response {
-                            conn_id: roam_wire::ConnectionId::ROOT,
-                            request_id,
-                            metadata: metadata_empty(),
-                            channels: vec![],
-                            payload: response_payload,
-                        })
-                        .await
-                        .map_err(|e| format!("send response: {e}"))?;
-                    } else if method_id == method_ids.transform {
-                        // transform(input: Rx<String>, output: Tx<String>)
-                        // This is more complex - we'll handle it if needed
-                        return Err("transform not yet implemented in wire server".to_string());
-                    } else if method_id == method_ids.shape_area {
-                        // shape_area(shape: Shape) -> f64
-                        let args: (spec_proto::Shape,) = facet_postcard::from_slice(&payload)
-                            .map_err(|e| format!("decode shape_area args: {e}"))?;
-                        match args.0 {
-                            spec_proto::Shape::Rectangle { width, height }
-                                if (width - 3.0).abs() < f64::EPSILON
-                                    && (height - 4.0).abs() < f64::EPSILON => {}
-                            other => {
-                                return Err(format!(
-                                    "shape_area expected Rectangle {{ width: 3.0, height: 4.0 }}, got {other:?}"
-                                ));
-                            }
-                        }
-
-                        let response_payload = encode_ok(&12.0_f64)?;
-                        io.send(&Message::Response {
-                            conn_id: roam_wire::ConnectionId::ROOT,
-                            request_id,
-                            metadata: metadata_empty(),
-                            channels: vec![],
-                            payload: response_payload,
-                        })
-                        .await
-                        .map_err(|e| format!("send shape_area response: {e}"))?;
-                        if scenario == "shape_area" {
-                            scenario_satisfied = true;
-                        }
-                    } else if method_id == method_ids.create_canvas {
-                        // create_canvas(name: String, shapes: Vec<Shape>, background: Color) -> Canvas
-                        let args: (String, Vec<spec_proto::Shape>, spec_proto::Color) =
-                            facet_postcard::from_slice(&payload)
-                                .map_err(|e| format!("decode create_canvas args: {e}"))?;
-
-                        if args.0 != "enum-canvas" {
-                            return Err(format!(
-                                "create_canvas expected name 'enum-canvas', got {:?}",
-                                args.0
-                            ));
-                        }
-                        if args.2 != spec_proto::Color::Green {
-                            return Err(format!(
-                                "create_canvas expected background Green, got {:?}",
-                                args.2
-                            ));
-                        }
-                        if args.1.len() != 2 {
-                            return Err(format!(
-                                "create_canvas expected 2 shapes, got {}",
-                                args.1.len()
-                            ));
-                        }
-                        match &args.1[0] {
-                            spec_proto::Shape::Point => {}
-                            other => {
-                                return Err(format!(
-                                    "create_canvas expected first shape Point, got {other:?}"
-                                ));
-                            }
-                        }
-                        match &args.1[1] {
-                            spec_proto::Shape::Circle { radius }
-                                if (*radius - 2.5).abs() < f64::EPSILON => {}
-                            other => {
-                                return Err(format!(
-                                    "create_canvas expected second shape Circle {{ radius: 2.5 }}, got {other:?}"
-                                ));
-                            }
-                        }
-
-                        let canvas = spec_proto::Canvas {
-                            name: args.0,
-                            shapes: args.1,
-                            background: args.2,
-                        };
-                        let response_payload = encode_ok(&canvas)?;
-                        io.send(&Message::Response {
-                            conn_id: roam_wire::ConnectionId::ROOT,
-                            request_id,
-                            metadata: metadata_empty(),
-                            channels: vec![],
-                            payload: response_payload,
-                        })
-                        .await
-                        .map_err(|e| format!("send create_canvas response: {e}"))?;
-                        if scenario == "create_canvas" {
-                            scenario_satisfied = true;
-                        }
-                    } else if method_id == method_ids.process_message {
-                        // process_message(msg: Message) -> Message
-                        let args: (spec_proto::Message,) = facet_postcard::from_slice(&payload)
-                            .map_err(|e| format!("decode process_message args: {e}"))?;
-                        match args.0 {
-                            spec_proto::Message::Data(ref data)
-                                if data.as_slice() == [1, 2, 3, 4] => {}
-                            ref other => {
-                                return Err(format!(
-                                    "process_message expected Data([1, 2, 3, 4]), got {other:?}"
-                                ));
-                            }
-                        }
-
-                        let response_msg = spec_proto::Message::Data(vec![4, 3, 2, 1]);
-                        let response_payload = encode_ok(&response_msg)?;
-                        io.send(&Message::Response {
-                            conn_id: roam_wire::ConnectionId::ROOT,
-                            request_id,
-                            metadata: metadata_empty(),
-                            channels: vec![],
-                            payload: response_payload,
-                        })
-                        .await
-                        .map_err(|e| format!("send process_message response: {e}"))?;
-                        if scenario == "process_message" {
-                            scenario_satisfied = true;
-                        }
-                    } else {
-                        // Unknown method - send error response
-                        let response_payload = vec![0x01, 0x01]; // Result::Err, RoamError::UnknownMethod
-                        io.send(&Message::Response {
-                            conn_id: roam_wire::ConnectionId::ROOT,
-                            request_id,
-                            metadata: metadata_empty(),
-                            channels: vec![],
-                            payload: response_payload,
-                        })
-                        .await
-                        .map_err(|e| format!("send error response: {e}"))?;
-                    }
-                }
-
-                Message::Data {
-                    channel_id,
-                    payload,
-                    ..
-                } => {
-                    // Accumulate data for the channel
-                    if let Some(data) = channels.get_mut(&channel_id) {
-                        let value: i32 = facet_postcard::from_slice(&payload)
-                            .map_err(|e| format!("decode channel data: {e}"))?;
-                        data.push(value);
-                    }
-                }
-
-                Message::Close { channel_id, .. } => {
-                    // Channel closed - if this was a sum request, send the response
-                    if let Some((request_id, sum_channel_id)) = pending_sum.take()
-                        && sum_channel_id == channel_id
-                    {
-                        let data = channels.remove(&channel_id).unwrap_or_default();
-                        let sum: i64 = data.iter().map(|&x| x as i64).sum();
-                        let response_payload = encode_ok(&sum)?;
-                        io.send(&Message::Response {
-                            conn_id: roam_wire::ConnectionId::ROOT,
-                            request_id,
-                            metadata: metadata_empty(),
-                            channels: vec![],
-                            payload: response_payload,
-                        })
-                        .await
-                        .map_err(|e| format!("send sum response: {e}"))?;
-                    }
-                }
-
-                Message::Goodbye { .. } => break,
-
-                _ => {
-                    // Ignore other messages
-                }
+            // Parse payload length from header (bytes 9-10 = payload_len as u16 LE).
+            let payload_len = u16::from_le_bytes([header[9], header[10]]) as usize;
+            let mut payload = vec![0u8; payload_len];
+            if payload_len > 0 {
+                stream
+                    .read_exact(&mut payload)
+                    .await
+                    .map_err(|e| format!("read bootstrap response payload: {e}"))?;
             }
-        }
+            eprintln!("[subject:{pid}] received bootstrap response");
 
-        if matches!(scenario, "shape_area" | "create_canvas" | "process_message")
-            && !scenario_satisfied
-        {
-            return Err(format!(
-                "scenario '{scenario}' was not exercised by subject client"
-            ));
-        }
+            // Combine into full frame for decode_response.
+            let mut frame = Vec::with_capacity(BOOTSTRAP_RESPONSE_HEADER_LEN + payload_len);
+            frame.extend_from_slice(&header);
+            frame.extend_from_slice(&payload);
+            let response_ref =
+                decode_response(&frame).map_err(|e| format!("decode bootstrap response: {e}"))?;
 
-        Ok(())
+            if response_ref.status != BootstrapStatus::Success {
+                return Err(format!(
+                    "bootstrap failed: status={:?}, payload={}",
+                    response_ref.status,
+                    String::from_utf8_lossy(response_ref.payload)
+                ));
+            }
+
+            let names = BootstrapSuccessNames::decode(response_ref.payload)
+                .map_err(|e| format!("decode bootstrap names: {e}"))?;
+            let segment = Arc::new(
+                Segment::attach(std::path::Path::new(&names.segment_path))
+                    .map_err(|e| format!("attach segment at {}: {e}", names.segment_path))?,
+            );
+            let peer_id = shm_primitives::PeerId::new(response_ref.peer_id as u8)
+                .ok_or_else(|| format!("invalid peer id {}", response_ref.peer_id))?;
+
+            // On Windows there are no inherited fds. The subject told us
+            // the mmap_tx pipe in the env; read it from the harness env.
+            // For SHM-host mode the *subject* is the host that sent us pipe names,
+            // and we read the mmap_tx_pipe from the env.
+            let mmap_tx_pipe = std::env::var("SHM_MMAP_TX_PIPE")
+                .unwrap_or_default();
+
+
+
+            guest_link_from_names(
+                segment,
+                peer_id,
+                &names.doorbell_name,
+                &names.mmap_ctrl_name,
+                &mmap_tx_pipe,
+                true,
+            )
+            .map_err(|e| format!("guest_link_from_names: {e}"))?
+        };
+
+        let conduit: BareConduit<MessageFamily, roam_shm::ShmLink> =
+            BareConduit::new(link);
+
+        let (mut session, handle, _sh) = initiator(conduit)
+            .establish()
+            .await
+            .map_err(|e| format!("handshake: {e}"))?;
+
+        let mut driver = Driver::new(handle, NoopHandler, Parity::Odd);
+        let caller = driver.caller();
+
+        tokio::spawn(async move { session.run().await });
+        tokio::spawn(async move { driver.run().await });
+
+        Ok::<_, String>(TestbedClient::new(caller))
+    }
+    .await;
+
+    match setup_result {
+        Ok(client) => {
+            keep_tempdir_alive(dir);
+            Ok((client, child))
+        }
+        Err(e) => {
+            let status_note = match child.try_wait() {
+                Ok(Some(status)) => format!("subject exited: {status}"),
+                Ok(None) => "subject still running".to_string(),
+                Err(wait_err) => format!("subject status unavailable: {wait_err}"),
+            };
+            child.kill().await.ok();
+            Err(format!("{e}; {status_note}"))
+        }
     }
 }

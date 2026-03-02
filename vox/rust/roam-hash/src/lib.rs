@@ -1,14 +1,15 @@
 #![deny(unsafe_code)]
 
-//! Hashing and method identity per `docs/content/rust-spec/_index.md`.
+//! Hashing and method identity for roam.
 //!
-//! This crate encodes types using `facet::Shape` for signature hashing.
+//! Encodes types using `facet::Shape` for signature hashing, following
+//! `docs/content/spec-sig.md`.
 
-use std::collections::HashSet;
-
-use facet_core::{Def, ScalarType, Shape, StructKind, Type, UserType};
+use facet_core::{Def, Facet, ScalarType, Shape, StructKind, Type, UserType};
 use heck::ToKebabCase;
-use roam_schema::{MethodDetail, is_rx, is_tx};
+use roam_types::{ArgDescriptor, MethodDescriptor, MethodId};
+use roam_types::{is_rx, is_tx};
+use std::collections::HashSet;
 
 /// Signature encoding tags for type serialization.
 mod sig {
@@ -52,8 +53,8 @@ mod sig {
     pub const VARIANT_STRUCT: u8 = 0x02;
 }
 
-// rs[impl signature.varint] - encode unsigned integers as varints
-pub fn encode_varint_u64(mut value: u64, out: &mut Vec<u8>) {
+// r[impl signature.varint]
+fn encode_varint_u64(mut value: u64, out: &mut Vec<u8>) {
     while value >= 0x80 {
         out.push((value as u8) | 0x80);
         value >>= 7;
@@ -61,165 +62,156 @@ pub fn encode_varint_u64(mut value: u64, out: &mut Vec<u8>) {
     out.push(value as u8);
 }
 
-fn encode_string(s: &str, out: &mut Vec<u8>) {
+fn encode_str(s: &str, out: &mut Vec<u8>) {
     encode_varint_u64(s.len() as u64, out);
     out.extend_from_slice(s.as_bytes());
 }
 
 /// Encode a `Shape` into its canonical signature byte representation.
-// rs[impl signature.primitive] - encode primitive types
-// rs[impl signature.container] - encode container types (List, Option, Array, Map, Set, Tuple)
-// rs[impl signature.struct] - encode struct types
-// rs[impl signature.enum] - encode enum types
-// rs[impl signature.stream] - encode Tx/Rx stream types
-// rs[impl signature.recursive] - handle recursive types with back-references
-pub fn encode_shape(shape: &'static Shape, out: &mut Vec<u8>) {
-    let mut visited = HashSet::new();
-    encode_shape_inner(shape, out, &mut visited);
+// r[impl signature.primitive]
+// r[impl signature.container]
+// r[impl signature.struct]
+// r[impl signature.enum]
+// r[impl signature.recursive]
+// r[impl signature.recursive.encoding]
+// r[impl signature.recursive.stack]
+fn encode_shape(shape: &'static Shape, out: &mut Vec<u8>) {
+    let mut stack: Vec<&'static Shape> = Vec::new();
+    encode_shape_inner(shape, out, &mut stack);
 }
 
-/// Internal function that tracks visited shapes to handle recursive types.
-fn encode_shape_inner(
-    shape: &'static Shape,
-    out: &mut Vec<u8>,
-    visited: &mut HashSet<*const Shape>,
-) {
-    // Check for roam streaming types first (marked with #[facet(roam::tx)] or #[facet(roam::rx)])
+fn encode_shape_inner(shape: &'static Shape, out: &mut Vec<u8>, stack: &mut Vec<&'static Shape>) {
+    // Channel types
     if is_tx(shape) {
         out.push(sig::TX);
         if let Some(inner) = shape.type_params.first() {
-            encode_shape_inner(inner.shape, out, visited);
+            encode_shape_inner(inner.shape, out, stack);
         }
         return;
     }
-
     if is_rx(shape) {
         out.push(sig::RX);
         if let Some(inner) = shape.type_params.first() {
-            encode_shape_inner(inner.shape, out, visited);
+            encode_shape_inner(inner.shape, out, stack);
         }
         return;
     }
 
-    // Handle transparent wrappers - encode as inner type
-    // Only if marked with #[repr(transparent)] or #[facet(transparent)]
+    // Transparent wrappers
     if shape.is_transparent()
         && let Some(inner) = shape.inner
     {
-        encode_shape_inner(inner, out, visited);
+        encode_shape_inner(inner, out, stack);
         return;
     }
 
-    // Try scalar types first - this handles primitives, String, etc.
+    // Scalars
     if let Some(scalar) = shape.scalar_type() {
         encode_scalar(scalar, out);
         return;
     }
 
-    // Handle semantic definitions (List, Map, Option, etc.)
+    // Semantic definitions
     match shape.def {
         Def::List(list_def) => {
-            // Check for Vec<u8> -> Bytes equivalence
             if let Some(ScalarType::U8) = list_def.t().scalar_type() {
+                // r[impl signature.bytes.equivalence]
                 out.push(sig::BYTES);
             } else {
                 out.push(sig::LIST);
-                encode_shape_inner(list_def.t(), out, visited);
+                encode_shape_inner(list_def.t(), out, stack);
             }
             return;
         }
         Def::Array(array_def) => {
             out.push(sig::ARRAY);
             encode_varint_u64(array_def.n as u64, out);
-            encode_shape_inner(array_def.t(), out, visited);
+            encode_shape_inner(array_def.t(), out, stack);
             return;
         }
         Def::Slice(slice_def) => {
-            // Slices encode like lists
             out.push(sig::LIST);
-            encode_shape_inner(slice_def.t(), out, visited);
+            encode_shape_inner(slice_def.t(), out, stack);
             return;
         }
         Def::Map(map_def) => {
             out.push(sig::MAP);
-            encode_shape_inner(map_def.k(), out, visited);
-            encode_shape_inner(map_def.v(), out, visited);
+            encode_shape_inner(map_def.k(), out, stack);
+            encode_shape_inner(map_def.v(), out, stack);
             return;
         }
         Def::Set(set_def) => {
             out.push(sig::SET);
-            encode_shape_inner(set_def.t(), out, visited);
+            encode_shape_inner(set_def.t(), out, stack);
             return;
         }
         Def::Option(opt_def) => {
             out.push(sig::OPTION);
-            encode_shape_inner(opt_def.t(), out, visited);
+            encode_shape_inner(opt_def.t(), out, stack);
             return;
         }
         Def::Pointer(ptr_def) => {
-            // Smart pointers are transparent - encode inner type
             if let Some(pointee) = ptr_def.pointee {
-                encode_shape_inner(pointee, out, visited);
+                encode_shape_inner(pointee, out, stack);
                 return;
             }
         }
         _ => {}
     }
 
-    // For user-defined types, check for cycles before recursing into fields
-    let shape_ptr = shape as *const Shape;
-    if !visited.insert(shape_ptr) {
-        // Already visited this shape - emit a back-reference to prevent infinite recursion
+    // Cycle detection for user-defined types: check if this shape is
+    // already on the encoding stack (indicates recursion).
+    if let Some(pos) = stack.iter().rposition(|&s| s == shape) {
+        // Depth = distance from top of stack (0 = immediate parent)
+        let depth = stack.len() - 1 - pos;
         out.push(sig::BACKREF);
+        encode_varint_u64(depth as u64, out);
         return;
     }
 
-    // Handle user-defined types (structs, enums)
+    // Push onto stack before encoding children, pop after.
+    stack.push(shape);
+
     match shape.ty {
-        Type::User(UserType::Struct(struct_type)) => {
-            match struct_type.kind {
-                StructKind::Unit => {
-                    out.push(sig::UNIT);
-                }
-                StructKind::TupleStruct | StructKind::Tuple => {
-                    // Tuple structs and tuples encode as tuples
-                    out.push(sig::TUPLE);
-                    encode_varint_u64(struct_type.fields.len() as u64, out);
-                    for field in struct_type.fields {
-                        encode_shape_inner(field.shape(), out, visited);
-                    }
-                }
-                StructKind::Struct => {
-                    out.push(sig::STRUCT);
-                    encode_varint_u64(struct_type.fields.len() as u64, out);
-                    for field in struct_type.fields {
-                        encode_string(field.name, out);
-                        encode_shape_inner(field.shape(), out, visited);
-                    }
+        Type::User(UserType::Struct(struct_type)) => match struct_type.kind {
+            StructKind::Unit => {
+                out.push(sig::UNIT);
+            }
+            StructKind::TupleStruct | StructKind::Tuple => {
+                out.push(sig::TUPLE);
+                encode_varint_u64(struct_type.fields.len() as u64, out);
+                for field in struct_type.fields {
+                    encode_shape_inner(field.shape(), out, stack);
                 }
             }
-        }
+            StructKind::Struct => {
+                out.push(sig::STRUCT);
+                encode_varint_u64(struct_type.fields.len() as u64, out);
+                for field in struct_type.fields {
+                    encode_str(field.name, out);
+                    encode_shape_inner(field.shape(), out, stack);
+                }
+            }
+        },
         Type::User(UserType::Enum(enum_type)) => {
             out.push(sig::ENUM);
             encode_varint_u64(enum_type.variants.len() as u64, out);
             for variant in enum_type.variants {
-                encode_string(variant.name, out);
+                encode_str(variant.name, out);
                 match variant.data.kind {
                     StructKind::Unit => {
                         out.push(sig::VARIANT_UNIT);
                     }
                     StructKind::TupleStruct | StructKind::Tuple => {
                         if variant.data.fields.len() == 1 {
-                            // Single-field tuple variant = newtype
                             out.push(sig::VARIANT_NEWTYPE);
-                            encode_shape_inner(variant.data.fields[0].shape(), out, visited);
+                            encode_shape_inner(variant.data.fields[0].shape(), out, stack);
                         } else {
-                            // Multi-field tuple variant encodes like struct with numeric keys
                             out.push(sig::VARIANT_STRUCT);
                             encode_varint_u64(variant.data.fields.len() as u64, out);
                             for (i, field) in variant.data.fields.iter().enumerate() {
-                                encode_string(&i.to_string(), out);
-                                encode_shape_inner(field.shape(), out, visited);
+                                encode_str(&i.to_string(), out);
+                                encode_shape_inner(field.shape(), out, stack);
                             }
                         }
                     }
@@ -227,26 +219,26 @@ fn encode_shape_inner(
                         out.push(sig::VARIANT_STRUCT);
                         encode_varint_u64(variant.data.fields.len() as u64, out);
                         for field in variant.data.fields {
-                            encode_string(field.name, out);
-                            encode_shape_inner(field.shape(), out, visited);
+                            encode_str(field.name, out);
+                            encode_shape_inner(field.shape(), out, stack);
                         }
                     }
                 }
             }
         }
         Type::Pointer(_) => {
-            // References are transparent - encode the inner type via type_params
             if let Some(inner) = shape.type_params.first() {
-                encode_shape_inner(inner.shape, out, visited);
+                encode_shape_inner(inner.shape, out, stack);
             } else {
-                out.push(sig::UNIT); // Fallback
+                out.push(sig::UNIT);
             }
         }
         _ => {
-            // Unknown type - encode as unit
             out.push(sig::UNIT);
         }
     }
+
+    stack.pop();
 }
 
 fn encode_scalar(scalar: ScalarType, out: &mut Vec<u8>) {
@@ -254,9 +246,7 @@ fn encode_scalar(scalar: ScalarType, out: &mut Vec<u8>) {
         ScalarType::Unit => out.push(sig::UNIT),
         ScalarType::Bool => out.push(sig::BOOL),
         ScalarType::Char => out.push(sig::CHAR),
-        ScalarType::Str => out.push(sig::STRING),
-        ScalarType::String => out.push(sig::STRING),
-        ScalarType::CowStr => out.push(sig::STRING),
+        ScalarType::Str | ScalarType::String | ScalarType::CowStr => out.push(sig::STRING),
         ScalarType::F32 => out.push(sig::F32),
         ScalarType::F64 => out.push(sig::F64),
         ScalarType::U8 => out.push(sig::U8),
@@ -264,202 +254,302 @@ fn encode_scalar(scalar: ScalarType, out: &mut Vec<u8>) {
         ScalarType::U32 => out.push(sig::U32),
         ScalarType::U64 => out.push(sig::U64),
         ScalarType::U128 => out.push(sig::U128),
-        ScalarType::USize => out.push(sig::U64), // Treat usize as u64 for portability
+        ScalarType::USize => out.push(sig::U64), // portable: usize → u64
         ScalarType::I8 => out.push(sig::I8),
         ScalarType::I16 => out.push(sig::I16),
         ScalarType::I32 => out.push(sig::I32),
         ScalarType::I64 => out.push(sig::I64),
         ScalarType::I128 => out.push(sig::I128),
-        ScalarType::ISize => out.push(sig::I64), // Treat isize as i64 for portability
-        ScalarType::ConstTypeId => out.push(sig::U64), // TypeId encodes as u64
-        _ => out.push(sig::UNIT),                // Unknown scalar - fallback
+        ScalarType::ISize => out.push(sig::I64), // portable: isize → i64
+        ScalarType::ConstTypeId => out.push(sig::U64),
+        _ => out.push(sig::UNIT),
     }
 }
 
-/// Encode a method signature: arguments followed by return type.
-// rs[impl signature.method] - encode as tuple of args + return type
-pub fn encode_method_signature(
-    args: &[&'static Shape],
-    return_type: &'static Shape,
-    out: &mut Vec<u8>,
-) {
-    out.push(sig::TUPLE);
-    encode_varint_u64(args.len() as u64, out);
-    for arg in args {
-        encode_shape(arg, out);
-    }
+/// Encode a method signature: args tuple type followed by return type.
+// r[impl rpc.schema-evolution]
+// r[impl signature.method]
+// r[impl signature.hash.algorithm]
+fn encode_method_signature(args: &'static Shape, return_type: &'static Shape, out: &mut Vec<u8>) {
+    encode_shape(args, out);
     encode_shape(return_type, out);
 }
 
-/// Compute `sig_bytes`: the BLAKE3 hash of the canonical signature bytes.
-// rs[impl signature.hash.algorithm] - hash signature using BLAKE3
-pub fn signature_hash(args: &[&'static Shape], return_type: &'static Shape) -> blake3::Hash {
-    let mut bytes = Vec::new();
-    encode_method_signature(args, return_type, &mut bytes);
-    blake3::hash(&bytes)
-}
+/// Compute the final method ID from type parameters.
+///
+/// `A` is the args tuple type (e.g. `(f64, f64)`), `R` is the return type.
+// r[impl rpc.method-id]
+// r[impl rpc.method-id.algorithm]
+// r[impl rpc.method-id.no-collisions]
+// r[impl method.identity.computation]
+// r[impl signature.endianness]
+pub fn method_id<'a, 'r, A: Facet<'a>, R: Facet<'r>>(
+    service_name: &str,
+    method_name: &str,
+) -> MethodId {
+    let mut sig_bytes = Vec::new();
+    encode_method_signature(A::SHAPE, R::SHAPE, &mut sig_bytes);
+    let sig_hash = blake3::hash(&sig_bytes);
 
-/// Compute the final 64-bit method id.
-// rs[impl method.identity.computation] - blake3(kebab(service).kebab(method).sig_bytes)[0..8]
-// rs[impl signature.endianness] - method ID bytes interpreted as little-endian u64
-pub fn method_id(service_name: &str, method_name: &str, sig_hash: blake3::Hash) -> u64 {
     let mut input = Vec::new();
     input.extend_from_slice(service_name.to_kebab_case().as_bytes());
     input.push(b'.');
     input.extend_from_slice(method_name.to_kebab_case().as_bytes());
     input.extend_from_slice(sig_hash.as_bytes());
-
     let h = blake3::hash(&input);
     let first8: [u8; 8] = h.as_bytes()[0..8].try_into().expect("slice len");
-    u64::from_le_bytes(first8)
+    MethodId(u64::from_le_bytes(first8))
 }
 
-/// Compute method ID from a MethodDetail.
-pub fn method_id_from_detail(detail: &MethodDetail) -> u64 {
-    let args: Vec<&'static Shape> = detail.args.iter().map(|a| a.ty).collect();
-    let sig = signature_hash(&args, detail.return_type);
-    method_id(&detail.service_name, &detail.method_name, sig)
+/// Build and leak a `MethodDescriptor` from type parameters and arg names.
+///
+/// Called once per method inside a `OnceLock::get_or_init` in macro-generated code.
+/// `A` is the args tuple type, `R` is the return type.
+pub fn method_descriptor<'a, 'r, A: Facet<'a>, R: Facet<'r>>(
+    service_name: &'static str,
+    method_name: &'static str,
+    arg_names: &[&'static str],
+    doc: Option<&'static str>,
+) -> &'static MethodDescriptor {
+    assert!(
+        !shape_contains_channel(R::SHAPE),
+        "channels are not allowed in return types: {service_name}.{method_name}"
+    );
+
+    let id = method_id::<A, R>(service_name, method_name);
+
+    // Extract per-arg shapes from the tuple fields of A::SHAPE.
+    let arg_shapes: &[&'static Shape] = match A::SHAPE.ty {
+        Type::User(UserType::Struct(s)) => {
+            let fields: Vec<&'static Shape> = s.fields.iter().map(|f| f.shape()).collect();
+            Box::leak(fields.into_boxed_slice())
+        }
+        _ => &[],
+    };
+
+    assert_eq!(
+        arg_names.len(),
+        arg_shapes.len(),
+        "arg_names length mismatch for {service_name}.{method_name}"
+    );
+
+    let args: &'static [ArgDescriptor] = Box::leak(
+        arg_names
+            .iter()
+            .zip(arg_shapes.iter())
+            .map(|(&name, &shape)| ArgDescriptor { name, shape })
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    );
+
+    Box::leak(Box::new(MethodDescriptor {
+        id,
+        service_name,
+        method_name,
+        args,
+        return_shape: R::SHAPE,
+        doc,
+    }))
 }
 
-/// Compute method ID from shapes at runtime.
-///
-/// This is the runtime equivalent of the codegen-time method ID computation.
-/// Can be used to compute method IDs lazily and cache them.
-///
-/// # Example
-///
-/// ```ignore
-/// use std::sync::LazyLock;
-/// use facet::Facet;
-///
-/// static ECHO_METHOD_ID: LazyLock<u64> = LazyLock::new(|| {
-///     method_id_from_shapes(
-///         "Testbed",
-///         "echo",
-///         &[<String as Facet>::SHAPE],
-///         <String as Facet>::SHAPE,
-///     )
-/// });
-/// ```
-pub fn method_id_from_shapes(
-    service_name: &str,
-    method_name: &str,
-    args: &[&'static Shape],
-    return_type: &'static Shape,
-) -> u64 {
-    let sig = signature_hash(args, return_type);
-    method_id(service_name, method_name, sig)
+fn shape_contains_channel(shape: &'static Shape) -> bool {
+    fn visit(shape: &'static Shape, seen: &mut HashSet<usize>) -> bool {
+        if is_tx(shape) || is_rx(shape) {
+            return true;
+        }
+
+        let key = shape as *const Shape as usize;
+        if !seen.insert(key) {
+            return false;
+        }
+
+        if let Some(inner) = shape.inner
+            && visit(inner, seen)
+        {
+            return true;
+        }
+
+        if shape.type_params.iter().any(|t| visit(t.shape, seen)) {
+            return true;
+        }
+
+        match shape.def {
+            Def::List(list_def) => visit(list_def.t(), seen),
+            Def::Array(array_def) => visit(array_def.t(), seen),
+            Def::Slice(slice_def) => visit(slice_def.t(), seen),
+            Def::Map(map_def) => visit(map_def.k(), seen) || visit(map_def.v(), seen),
+            Def::Set(set_def) => visit(set_def.t(), seen),
+            Def::Option(opt_def) => visit(opt_def.t(), seen),
+            Def::Result(result_def) => visit(result_def.t(), seen) || visit(result_def.e(), seen),
+            Def::Pointer(ptr_def) => ptr_def.pointee.is_some_and(|p| visit(p, seen)),
+            _ => match shape.ty {
+                Type::User(UserType::Struct(s)) => s.fields.iter().any(|f| visit(f.shape(), seen)),
+                Type::User(UserType::Enum(e)) => e
+                    .variants
+                    .iter()
+                    .any(|v| v.data.fields.iter().any(|f| visit(f.shape(), seen))),
+                _ => false,
+            },
+        }
+    }
+
+    let mut seen = HashSet::new();
+    visit(shape, &mut seen)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use facet::Facet;
+    use roam_types::{Rx, Tx};
+
+    #[derive(Facet)]
+    struct PlainRet {
+        value: u64,
+    }
+
+    #[derive(Facet)]
+    struct NestedRet {
+        nested: Option<Result<Rx<u8>, u32>>,
+    }
 
     #[test]
-    fn signature_encoding_primitives() {
+    fn allows_non_channel_return_types() {
+        let _ = method_descriptor::<(), PlainRet>("TestSvc", "plain", &[], None);
+    }
+
+    #[test]
+    #[should_panic(expected = "channels are not allowed in return types: TestSvc.nested")]
+    fn rejects_nested_channel_in_return_types() {
+        let _ = method_descriptor::<(Tx<u8>,), NestedRet>("TestSvc", "nested", &["input"], None);
+    }
+
+    #[test]
+    fn encode_varint_encodes_expected_boundaries() {
         let mut out = Vec::new();
-        encode_shape(<i32 as Facet>::SHAPE, &mut out);
-        assert_eq!(out, vec![sig::I32]);
+        encode_varint_u64(0, &mut out);
+        assert_eq!(out, vec![0x00]);
 
         out.clear();
-        encode_shape(<bool as Facet>::SHAPE, &mut out);
-        assert_eq!(out, vec![sig::BOOL]);
+        encode_varint_u64(127, &mut out);
+        assert_eq!(out, vec![0x7F]);
+
+        out.clear();
+        encode_varint_u64(128, &mut out);
+        assert_eq!(out, vec![0x80, 0x01]);
+
+        out.clear();
+        encode_varint_u64(300, &mut out);
+        assert_eq!(out, vec![0xAC, 0x02]);
     }
 
     #[test]
-    fn signature_encoding_string() {
-        let mut out = Vec::new();
-        encode_shape(<String as Facet>::SHAPE, &mut out);
-        assert_eq!(out, vec![sig::STRING]);
-    }
-
-    #[test]
-    fn bytes_and_vec_u8_have_same_encoding() {
-        let mut a = Vec::new();
-        encode_shape(<Vec<u8> as Facet>::SHAPE, &mut a);
-        assert_eq!(a, vec![sig::BYTES]);
-    }
-
-    #[test]
-    fn method_id_is_deterministic() {
-        let args = vec![<i32 as Facet>::SHAPE];
-        let return_type = <() as Facet>::SHAPE;
-        let sig = signature_hash(&args, return_type);
-
-        let a = method_id("TemplateHost", "load_template", sig);
-        let b = method_id("TemplateHost", "load_template", sig);
+    fn method_id_is_stable_and_uses_kebab_case_names() {
+        let a = method_id::<(u32,), u64>("MyService", "DoThingFast");
+        let b = method_id::<(u32,), u64>("my-service", "do-thing-fast");
+        let c = method_id::<(u32,), u64>("MY_SERVICE", "DO_THING_FAST");
         assert_eq!(a, b);
+        assert_eq!(b, c);
     }
 
-    // Test for recursive types - issue #50
-    // This test verifies that encode_shape handles recursive type definitions
-    // without causing a stack overflow.
     #[test]
-    fn recursive_type_encoding_does_not_overflow() {
-        // A recursive tree-like structure
+    fn method_id_changes_when_signature_changes() {
+        let a = method_id::<(u32,), u64>("svc", "m");
+        let b = method_id::<(u64,), u64>("svc", "m");
+        let c = method_id::<(u32,), u32>("svc", "m");
+        assert_ne!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn method_descriptor_populates_args_and_doc() {
+        let descriptor = method_descriptor::<(u32, String), PlainRet>(
+            "Svc",
+            "do_it",
+            &["count", "name"],
+            Some("doc"),
+        );
+        assert_eq!(descriptor.service_name, "Svc");
+        assert_eq!(descriptor.method_name, "do_it");
+        assert_eq!(descriptor.args.len(), 2);
+        assert_eq!(descriptor.args[0].name, "count");
+        assert_eq!(descriptor.args[1].name, "name");
+        assert_eq!(descriptor.doc, Some("doc"));
+    }
+
+    #[test]
+    #[should_panic(expected = "arg_names length mismatch for Svc.bad")]
+    fn method_descriptor_panics_when_arg_names_length_mismatches_shape() {
+        let _ = method_descriptor::<(u32, u64), PlainRet>("Svc", "bad", &["only_one"], None);
+    }
+
+    #[test]
+    fn list_of_u8_uses_bytes_tag_while_other_lists_do_not() {
+        let mut vec_u8_sig = Vec::new();
+        encode_shape(<Vec<u8> as Facet>::SHAPE, &mut vec_u8_sig);
+        assert_eq!(vec_u8_sig, vec![sig::BYTES]);
+
+        let mut vec_u16_sig = Vec::new();
+        encode_shape(<Vec<u16> as Facet>::SHAPE, &mut vec_u16_sig);
+
+        assert_ne!(vec_u8_sig, vec_u16_sig);
+        assert_eq!(vec_u16_sig[0], sig::LIST);
+    }
+
+    #[test]
+    fn shape_contains_channel_handles_recursive_and_non_recursive_shapes() {
+        #[derive(Facet)]
+        struct Recursive {
+            next: Option<Box<Recursive>>,
+        }
+
+        #[derive(Facet)]
+        struct ChannelNested {
+            inner: Option<Result<Tx<u16>, u8>>,
+        }
+
+        assert!(!shape_contains_channel(Recursive::SHAPE));
+        assert!(shape_contains_channel(ChannelNested::SHAPE));
+    }
+
+    #[test]
+    fn encode_shape_emits_expected_scalar_and_container_tags() {
+        fn head(shape: &'static facet_core::Shape) -> u8 {
+            let mut out = Vec::new();
+            encode_shape(shape, &mut out);
+            out[0]
+        }
+
+        assert_eq!(head(<bool as Facet>::SHAPE), sig::BOOL);
+        assert_eq!(head(<u64 as Facet>::SHAPE), sig::U64);
+        assert_eq!(head(<i32 as Facet>::SHAPE), sig::I32);
+        assert_eq!(head(<String as Facet>::SHAPE), sig::STRING);
+        assert_eq!(head(<Option<u8> as Facet>::SHAPE), sig::OPTION);
+        assert_eq!(head(<Vec<u16> as Facet>::SHAPE), sig::LIST);
+        assert_eq!(head(<[u16; 4] as Facet>::SHAPE), sig::ARRAY);
+        assert_eq!(
+            head(<std::collections::BTreeMap<u8, u16> as Facet>::SHAPE),
+            sig::MAP
+        );
+        assert_eq!(
+            head(<std::collections::BTreeSet<u8> as Facet>::SHAPE),
+            sig::SET
+        );
+        assert_eq!(head(<(u8, u16) as Facet>::SHAPE), sig::TUPLE);
+    }
+
+    #[test]
+    fn encode_shape_marks_recursive_types_with_backref() {
         #[derive(Facet)]
         struct Node {
-            value: i32,
-            children: Vec<Node>, // Recursive: Vec<Node> contains Node
+            next: Option<Box<Node>>,
         }
 
-        // This would previously cause a stack overflow
         let mut out = Vec::new();
-        encode_shape(<Node as Facet>::SHAPE, &mut out);
-
-        // The encoding should contain a BACKREF tag for the recursive reference
+        encode_shape(Node::SHAPE, &mut out);
         assert!(
             out.contains(&sig::BACKREF),
-            "Expected BACKREF tag in encoding for recursive type"
+            "recursive encoding should contain BACKREF marker"
         );
-    }
-
-    #[test]
-    fn recursive_type_produces_deterministic_encoding() {
-        #[derive(Facet)]
-        struct TreeNode {
-            data: String,
-            left: Option<Box<TreeNode>>,
-            right: Option<Box<TreeNode>>,
-        }
-
-        let mut out1 = Vec::new();
-        encode_shape(<TreeNode as Facet>::SHAPE, &mut out1);
-
-        let mut out2 = Vec::new();
-        encode_shape(<TreeNode as Facet>::SHAPE, &mut out2);
-
-        assert_eq!(
-            out1, out2,
-            "Recursive type encoding should be deterministic"
-        );
-    }
-
-    #[test]
-    fn mutually_recursive_types_encoding() {
-        // Test mutually recursive types (A contains B, B contains A)
-        #[derive(Facet)]
-        struct Parent {
-            name: String,
-            children: Vec<Child>,
-        }
-
-        #[derive(Facet)]
-        struct Child {
-            name: String,
-            parent: Option<Box<Parent>>, // Refers back to Parent
-        }
-
-        // Both should encode without stack overflow
-        let mut out_parent = Vec::new();
-        encode_shape(<Parent as Facet>::SHAPE, &mut out_parent);
-
-        let mut out_child = Vec::new();
-        encode_shape(<Child as Facet>::SHAPE, &mut out_child);
-
-        // Both should complete and produce some output
-        assert!(!out_parent.is_empty());
-        assert!(!out_child.is_empty());
     }
 }

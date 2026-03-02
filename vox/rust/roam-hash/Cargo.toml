@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Hashing and method identity for roam (rust-spec)"
+description = "Hashing and method identity for roam"
 
 [package.metadata]
 
@@ -14,8 +14,8 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 blake3.workspace = true
 facet-core.workspace = true
-heck = "0.5"
-roam-schema.workspace = true
+heck.workspace = true
+roam-types.workspace = true
 
 [dev-dependencies]
 facet.workspace = true

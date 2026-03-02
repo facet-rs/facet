@@ -1,12 +1,17 @@
-//! Generate SHM golden vectors for Swift runtime parity tests.
+//! Generate SHM golden vectors for Swift runtime parity tests (v7 spec).
 
-use roam_frame::{
-    SHM_FRAME_HEADER_SIZE, SLOT_REF_FRAME_SIZE, ShmFrameHeader, SlotRef, encode_inline_frame,
-    encode_slot_ref_frame,
+use roam_shm::framing::{
+    DEFAULT_INLINE_THRESHOLD, FLAG_MMAP_REF, FLAG_SLOT_REF, FRAME_HEADER_SIZE, MMAP_REF_ENTRY_SIZE,
+    SLOT_REF_ENTRY_SIZE,
 };
-use roam_shm::layout::{HEADER_SIZE, MAGIC, SegmentConfig, VERSION};
+use roam_shm::peer_table::{PEER_ENTRY_SIZE, PeerTable, bipbuf_pair_size};
+use roam_shm::segment::{SegmentConfig, SegmentLayout};
+use roam_shm::varslot::{SizeClassConfig, VarSlotPool};
+use shm_primitives::{
+    HeapRegion, MAGIC, SEGMENT_HEADER_SIZE, SEGMENT_VERSION, SegmentHeader, SegmentHeaderInit,
+};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn put_u32_le(buf: &mut [u8], off: usize, value: u32) {
     buf[off..off + 4].copy_from_slice(&value.to_le_bytes());
@@ -17,115 +22,141 @@ fn put_u64_le(buf: &mut [u8], off: usize, value: u64) {
 }
 
 fn write_vector(dir: &Path, name: &str, bytes: &[u8]) {
-    let path = dir.join(format!("{}.bin", name));
+    let path = dir.join(format!("{name}.bin"));
     fs::write(&path, bytes).expect("failed to write fixture");
     println!("Wrote {} bytes to {}", bytes.len(), path.display());
 }
 
+fn output_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("test-fixtures/golden-vectors/shm-v7")
+}
+
 fn main() {
-    let out_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("test-fixtures/golden-vectors/shm");
-
+    let out_dir = output_dir();
     fs::create_dir_all(&out_dir).expect("failed to create output directory");
-    println!("Writing SHM vectors to {}\n", out_dir.display());
 
+    let size_classes = vec![
+        SizeClassConfig {
+            slot_size: 1024,
+            slot_count: 4,
+        },
+        SizeClassConfig {
+            slot_size: 16384,
+            slot_count: 2,
+        },
+    ];
     let config = SegmentConfig {
-        max_payload_size: 1024,
-        initial_credit: 1024,
         max_guests: 2,
         bipbuf_capacity: 128,
-        inline_threshold: 256,
-        max_channels: 8,
+        max_payload_size: 1024,
+        inline_threshold: DEFAULT_INLINE_THRESHOLD,
         heartbeat_interval: 1_000_000,
-        var_slot_classes: vec![roam_shm::layout::SizeClass::new(1024, 4)],
-        file_cleanup: shm_primitives::FileCleanup::Manual,
+        size_classes: &size_classes,
     };
-    let layout = config.layout().expect("layout should be valid");
+    let bipbuf_capacity = config.bipbuf_capacity;
+    let layout = SegmentLayout::compute(config.max_guests, config.bipbuf_capacity, &size_classes);
 
-    let mut segment = vec![0u8; layout.total_size as usize];
+    let heap = HeapRegion::new_zeroed(layout.total_size);
+    let region = heap.region();
+    let ring_base_offset =
+        layout.peer_table_offset + usize::from(config.max_guests) * PEER_ENTRY_SIZE;
 
-    // SegmentHeader (128 bytes) at offset 0
-    segment[0..8].copy_from_slice(&MAGIC);
-    put_u32_le(&mut segment, 8, VERSION);
-    put_u32_le(&mut segment, 12, HEADER_SIZE as u32);
-    put_u64_le(&mut segment, 16, layout.total_size);
-    put_u32_le(&mut segment, 24, config.max_payload_size);
-    put_u32_le(&mut segment, 28, config.initial_credit);
-    put_u32_le(&mut segment, 32, config.max_guests);
-    put_u32_le(&mut segment, 36, config.bipbuf_capacity);
-    put_u64_le(&mut segment, 40, layout.peer_table_offset);
-    put_u64_le(&mut segment, 48, 0);
-    put_u32_le(&mut segment, 56, 0);
-    put_u32_le(&mut segment, 60, config.inline_threshold);
-    put_u32_le(&mut segment, 64, config.max_channels);
-    put_u32_le(&mut segment, 68, 0);
-    put_u64_le(&mut segment, 72, config.heartbeat_interval);
-    put_u64_le(&mut segment, 80, layout.var_slot_pool_offset);
-    put_u64_le(&mut segment, 88, layout.total_size);
-    put_u64_le(&mut segment, 96, layout.guest_areas_offset);
-    put_u32_le(&mut segment, 104, config.var_slot_classes.len() as u32);
+    let header: *mut SegmentHeader = unsafe { region.get_mut::<SegmentHeader>(0) };
+    unsafe {
+        (*header).init(SegmentHeaderInit {
+            total_size: layout.total_size as u64,
+            max_payload_size: config.max_payload_size,
+            inline_threshold: config.inline_threshold,
+            max_guests: u32::from(config.max_guests),
+            bipbuf_capacity: config.bipbuf_capacity,
+            peer_table_offset: layout.peer_table_offset as u64,
+            var_pool_offset: layout.var_pool_offset as u64,
+            heartbeat_interval: config.heartbeat_interval,
+            num_var_slot_classes: size_classes.len() as u32,
+        });
+    }
 
-    let peer1_off = layout.peer_entry_offset(1) as usize;
-    // Peer state: Attached, epoch: 7, heartbeat: 12345678
-    put_u32_le(&mut segment, peer1_off, 1);
-    put_u32_le(&mut segment, peer1_off + 4, 7);
-    put_u64_le(&mut segment, peer1_off + 24, 12_345_678);
-    put_u64_le(
-        &mut segment,
-        peer1_off + 32,
-        layout.guest_to_host_bipbuf_offset(1),
-    );
-    put_u64_le(&mut segment, peer1_off + 40, 0);
-    put_u64_le(
-        &mut segment,
-        peer1_off + 48,
-        layout.guest_channel_table_offset(1),
-    );
-
-    // Channel entry 1: Active, granted_total=4096
-    let ch1_off = layout.guest_channel_table_offset(1) as usize + 16;
-    put_u32_le(&mut segment, ch1_off, 1);
-    put_u32_le(&mut segment, ch1_off + 4, 4096);
-
-    write_vector(&out_dir, "segment_layout", &segment);
-    write_vector(&out_dir, "segment_header", &segment[0..HEADER_SIZE]);
-
-    let frame_header = ShmFrameHeader {
-        total_len: 28,
-        msg_type: 1,
-        flags: 0,
-        id: 99,
-        method_id: 0x1234_5678_9ABC_DEF0,
-        payload_len: 4,
+    let _peer_table = unsafe {
+        PeerTable::init(
+            region,
+            layout.peer_table_offset,
+            config.max_guests,
+            ring_base_offset,
+            config.bipbuf_capacity,
+        )
     };
-    let mut header_buf = [0u8; SHM_FRAME_HEADER_SIZE];
-    frame_header.write_to(&mut header_buf);
-    write_vector(&out_dir, "frame_header", &header_buf);
+    let _var_pool = unsafe { VarSlotPool::init(region, layout.var_pool_offset, &size_classes) };
 
-    let slot_ref = SlotRef {
-        class_idx: 2,
-        extent_idx: 1,
-        slot_idx: 42,
-        slot_generation: 7,
-    };
-    let mut slot_ref_buf = [0u8; 12];
-    slot_ref.write_to(&mut slot_ref_buf);
-    write_vector(&out_dir, "slot_ref", &slot_ref_buf);
+    let mut segment_bytes =
+        unsafe { std::slice::from_raw_parts(region.as_ptr() as *const u8, layout.total_size) }
+            .to_vec();
 
-    let mut inline_buf = [0u8; 64];
-    let inline_len = encode_inline_frame(1, 99, 0x42, b"swift-shm", &mut inline_buf);
-    write_vector(&out_dir, "frame_inline", &inline_buf[..inline_len]);
+    // Make peer #1 non-empty for parser parity checks.
+    let peer1_off = layout.peer_table_offset;
+    put_u32_le(&mut segment_bytes, peer1_off, 1); // Attached
+    put_u32_le(&mut segment_bytes, peer1_off + 4, 7); // epoch
+    put_u64_le(&mut segment_bytes, peer1_off + 8, 12_345_678); // heartbeat
 
-    let mut slot_ref_frame_buf = [0u8; SLOT_REF_FRAME_SIZE];
-    let slot_ref_frame_len =
-        encode_slot_ref_frame(4, 7, 0, 8192, &slot_ref, &mut slot_ref_frame_buf);
+    write_vector(&out_dir, "segment_layout", &segment_bytes);
     write_vector(
         &out_dir,
-        "frame_slot_ref",
-        &slot_ref_frame_buf[..slot_ref_frame_len],
+        "segment_header",
+        &segment_bytes[0..SEGMENT_HEADER_SIZE],
+    );
+
+    // 8-byte frame header fixture
+    let mut frame_header = [0u8; FRAME_HEADER_SIZE];
+    put_u32_le(&mut frame_header, 0, 20); // slot-ref entry length
+    frame_header[4] = FLAG_SLOT_REF;
+    write_vector(&out_dir, "frame_header", &frame_header);
+
+    // 12-byte slot-ref body
+    let mut slot_ref = [0u8; 12];
+    slot_ref[0] = 2; // class_idx
+    slot_ref[1] = 1; // extent_idx
+    put_u32_le(&mut slot_ref, 4, 42); // slot_idx
+    put_u32_le(&mut slot_ref, 8, 7); // generation
+    write_vector(&out_dir, "slot_ref", &slot_ref);
+
+    // Inline frame: header(8) + payload + 0-padding to align4.
+    let inline_payload = b"swift-shm";
+    let inline_total_len = ((FRAME_HEADER_SIZE + inline_payload.len() + 3) & !3) as u32;
+    let mut inline_frame = vec![0u8; inline_total_len as usize];
+    put_u32_le(&mut inline_frame, 0, inline_total_len);
+    inline_frame[4] = 0; // inline
+    inline_frame[8..8 + inline_payload.len()].copy_from_slice(inline_payload);
+    write_vector(&out_dir, "frame_inline", &inline_frame);
+
+    // Slot-ref frame: 8-byte header + 12-byte slot-ref body.
+    let mut slot_ref_frame = vec![0u8; SLOT_REF_ENTRY_SIZE as usize];
+    put_u32_le(&mut slot_ref_frame, 0, SLOT_REF_ENTRY_SIZE);
+    slot_ref_frame[4] = FLAG_SLOT_REF;
+    slot_ref_frame[8..20].copy_from_slice(&slot_ref);
+    write_vector(&out_dir, "frame_slot_ref", &slot_ref_frame);
+
+    // Mmap-ref frame: 8-byte header + 24-byte mmap-ref body.
+    let mut mmap_ref_frame = vec![0u8; MMAP_REF_ENTRY_SIZE as usize];
+    put_u32_le(&mut mmap_ref_frame, 0, MMAP_REF_ENTRY_SIZE);
+    mmap_ref_frame[4] = FLAG_MMAP_REF;
+    put_u32_le(&mut mmap_ref_frame, 8, 9); // map_id
+    put_u32_le(&mut mmap_ref_frame, 12, 3); // map_generation
+    put_u64_le(&mut mmap_ref_frame, 16, 4096); // map_offset
+    put_u32_le(&mut mmap_ref_frame, 24, 8192); // payload_len
+    put_u32_le(&mut mmap_ref_frame, 28, 0); // reserved
+    write_vector(&out_dir, "frame_mmap_ref", &mmap_ref_frame);
+
+    println!("\nGenerated SHM v7 vectors in {}", out_dir.display());
+    println!("Header magic: {:?}", MAGIC);
+    println!("Header version: {}", SEGMENT_VERSION);
+    println!("Peer entry size: {}", PEER_ENTRY_SIZE);
+    println!(
+        "Bipbuf pair size (cap={}): {}",
+        bipbuf_capacity,
+        bipbuf_pair_size(bipbuf_capacity)
     );
 }

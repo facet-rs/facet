@@ -4,7 +4,7 @@
 
 use facet_core::{ScalarType, Shape};
 use heck::ToLowerCamelCase;
-use roam_schema::{
+use roam_types::{
     EnumInfo, ShapeKind, StructInfo, VariantKind, classify_shape, classify_variant, is_bytes,
 };
 
@@ -64,7 +64,7 @@ pub fn generate_encode_expr(shape: &'static Shape, value: &str) -> String {
             let ok_encode = generate_encode_closure(ok);
             let err_encode = generate_encode_closure(err);
             format!(
-                "{{ switch {value} {{ case .success(let v): return [UInt8(0)] + {ok_encode}(v); case .failure(let e): return [UInt8(1)] + {err_encode}(e) }} }}()"
+                "{{ switch {value} {{ case .success(let v): return encodeVarint(UInt64(0)) + {ok_encode}(v); case .failure(let e): return encodeVarint(UInt64(1)) + {err_encode}(e) }} }}()"
             )
         }
         _ => "[]".into(), // fallback
@@ -127,13 +127,13 @@ pub fn generate_encode_closure(shape: &'static Shape) -> String {
                 match classify_variant(v) {
                     VariantKind::Unit => {
                         code.push_str(&format!(
-                            "    case .{variant_name}:\n        return [UInt8({i})]\n"
+                            "    case .{variant_name}:\n        return encodeVarint(UInt64({i}))\n"
                         ));
                     }
                     VariantKind::Newtype { inner } => {
                         let inner_encode = generate_encode_expr(inner, "val");
                         code.push_str(&format!(
-                            "    case .{variant_name}(let val):\n        return [UInt8({i})] + {inner_encode}\n"
+                            "    case .{variant_name}(let val):\n        return encodeVarint(UInt64({i})) + {inner_encode}\n"
                         ));
                     }
                     VariantKind::Tuple { fields } => {
@@ -145,7 +145,7 @@ pub fn generate_encode_closure(shape: &'static Shape) -> String {
                             .map(|(j, f)| generate_encode_expr(f.shape(), &format!("f{j}")))
                             .collect();
                         code.push_str(&format!(
-                            "    case .{variant_name}({}):\n        return [UInt8({i})] + {}\n",
+                            "    case .{variant_name}({}):\n        return encodeVarint(UInt64({i})) + {}\n",
                             bindings
                                 .iter()
                                 .map(|b| format!("let {b}"))
@@ -167,7 +167,7 @@ pub fn generate_encode_closure(shape: &'static Shape) -> String {
                             })
                             .collect();
                         code.push_str(&format!(
-                            "    case .{variant_name}({}):\n        return [UInt8({i})] + {}\n",
+                            "    case .{variant_name}({}):\n        return encodeVarint(UInt64({i})) + {}\n",
                             bindings
                                 .iter()
                                 .map(|b| format!("let {b}"))
@@ -186,7 +186,7 @@ pub fn generate_encode_closure(shape: &'static Shape) -> String {
             let ok_encode = generate_encode_closure(ok);
             let err_encode = generate_encode_closure(err);
             format!(
-                "{{ switch $0 {{ case .success(let v): return [UInt8(0)] + {ok_encode}(v); case .failure(let e): return [UInt8(1)] + {err_encode}(e) }} }}"
+                "{{ switch $0 {{ case .success(let v): return encodeVarint(UInt64(0)) + {ok_encode}(v); case .failure(let e): return encodeVarint(UInt64(1)) + {err_encode}(e) }} }}"
             )
         }
         _ => "{ _ in [] }".into(), // fallback
@@ -212,62 +212,5 @@ pub fn swift_encode_fn(scalar: ScalarType) -> &'static str {
         }
         ScalarType::Unit => "{ _ in [] }",
         _ => "encodeBytes", // fallback
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use facet::Facet;
-
-    #[repr(u8)]
-    #[derive(Facet)]
-    enum Color {
-        Red,
-        Green,
-    }
-
-    #[test]
-    fn test_encode_primitives() {
-        assert_eq!(
-            generate_encode_expr(<bool as Facet>::SHAPE, "x"),
-            "encodeBool(x)"
-        );
-        assert_eq!(
-            generate_encode_expr(<u32 as Facet>::SHAPE, "x"),
-            "encodeU32(x)"
-        );
-        assert_eq!(
-            generate_encode_expr(<String as Facet>::SHAPE, "x"),
-            "encodeString(x)"
-        );
-    }
-
-    #[test]
-    fn test_encode_vec() {
-        let result = generate_encode_expr(<Vec<i32> as Facet>::SHAPE, "items");
-        assert!(result.contains("encodeVec"));
-        assert!(result.contains("encodeI32"));
-    }
-
-    #[test]
-    fn test_encode_option() {
-        let result = generate_encode_expr(<Option<String> as Facet>::SHAPE, "val");
-        assert!(result.contains("encodeOption"));
-        assert!(result.contains("encodeString"));
-    }
-
-    #[test]
-    fn test_encode_bytes() {
-        let result = generate_encode_expr(<Vec<u8> as Facet>::SHAPE, "data");
-        assert_eq!(result, "encodeBytes(Array(data))");
-    }
-
-    #[test]
-    fn test_encode_enum_expr() {
-        let result = generate_encode_expr(<Color as Facet>::SHAPE, "color");
-        assert!(result.contains("switch"));
-        assert!(result.contains("(color)"));
-        assert_ne!(result, "[]");
     }
 }

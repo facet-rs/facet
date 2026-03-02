@@ -28,10 +28,10 @@ func warnLog(_ message: String) {
 /// Protocol for message transport.
 public protocol MessageTransport: Sendable {
     /// Send a message.
-    func send(_ message: Message) async throws
+    func send(_ message: MessageV7) async throws
 
     /// Receive the next message, or nil on EOF.
-    func recv() async throws -> Message?
+    func recv() async throws -> MessageV7?
 
     /// Update the maximum frame size the transport will accept.
     /// Called after handshake negotiation to match the negotiated max_payload_size.
@@ -64,12 +64,12 @@ private let defaultMaxFrameBytes = 1024 * 1024  // 1 MiB
 public final class NIOTransport: MessageTransport, @unchecked Sendable {
     private let channel: Channel
     private let frameLimit: FrameLimit
-    private let inboundStream: AsyncStream<Result<Message, Error>>
-    private var inboundIterator: AsyncStream<Result<Message, Error>>.Iterator
+    private let inboundStream: AsyncStream<Result<MessageV7, Error>>
+    private var inboundIterator: AsyncStream<Result<MessageV7, Error>>.Iterator
 
     init(
         channel: Channel, frameLimit: FrameLimit,
-        inboundStream: AsyncStream<Result<Message, Error>>
+        inboundStream: AsyncStream<Result<MessageV7, Error>>
     ) {
         self.channel = channel
         self.frameLimit = frameLimit
@@ -77,7 +77,7 @@ public final class NIOTransport: MessageTransport, @unchecked Sendable {
         self.inboundIterator = inboundStream.makeAsyncIterator()
     }
 
-    public func send(_ message: Message) async throws {
+    public func send(_ message: MessageV7) async throws {
         let encoded = message.encode()
         guard let len = UInt32(exactly: encoded.count) else {
             throw TransportError.frameEncoding("frame too large for u32 length prefix")
@@ -89,7 +89,7 @@ public final class NIOTransport: MessageTransport, @unchecked Sendable {
         try await channel.writeAndFlush(buffer)
     }
 
-    public func recv() async throws -> Message? {
+    public func recv() async throws -> MessageV7? {
         guard let result = await inboundIterator.next() else {
             return nil
         }
@@ -179,12 +179,12 @@ final class LengthPrefixDecoder: ByteToMessageDecoder, @unchecked Sendable {
 /// NIO handler that decodes wire messages from decoded frames.
 final class MessageDecoder: ChannelInboundHandler, Sendable {
     typealias InboundIn = [UInt8]
-    typealias InboundOut = Message
+    typealias InboundOut = MessageV7
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let bytes = unwrapInboundIn(data)
         do {
-            let message = try Message.decode(from: Data(bytes))
+            let message = try MessageV7.decode(from: Data(bytes))
             context.fireChannelRead(wrapInboundOut(message))
         } catch {
             context.fireErrorCaught(error)
@@ -194,11 +194,11 @@ final class MessageDecoder: ChannelInboundHandler, Sendable {
 
 /// NIO handler that passes messages to an AsyncStream.
 final class MessageStreamHandler: ChannelInboundHandler, @unchecked Sendable {
-    typealias InboundIn = Message
+    typealias InboundIn = MessageV7
 
-    private let continuation: AsyncStream<Result<Message, Error>>.Continuation
+    private let continuation: AsyncStream<Result<MessageV7, Error>>.Continuation
 
-    init(continuation: AsyncStream<Result<Message, Error>>.Continuation) {
+    init(continuation: AsyncStream<Result<MessageV7, Error>>.Continuation) {
         self.continuation = continuation
     }
 
@@ -227,8 +227,8 @@ public func connect(host: String, port: Int) async throws -> NIOTransport {
     let frameLimit = FrameLimit(defaultMaxFrameBytes)
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
 
-    var inboundContinuation: AsyncStream<Result<Message, Error>>.Continuation!
-    let inboundStream = AsyncStream<Result<Message, Error>> { continuation in
+    var inboundContinuation: AsyncStream<Result<MessageV7, Error>>.Continuation!
+    let inboundStream = AsyncStream<Result<MessageV7, Error>> { continuation in
         inboundContinuation = continuation
     }
     // Capture as let to satisfy Sendable requirements

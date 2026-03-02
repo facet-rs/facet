@@ -14,6 +14,13 @@ export { Rx, createServerRx } from "./rx.ts";
 export { channel } from "./pair.ts";
 export { type TaskMessage, type TaskSender, type ChannelContext } from "./task.ts";
 
+// Runtime descriptor types
+export {
+  type MethodDescriptor,
+  type ServiceDescriptor,
+  type RoamCall,
+} from "./descriptor.ts";
+
 // Schema types and binding
 export {
   type PrimitiveKind,
@@ -29,7 +36,6 @@ export {
   type RefSchema,
   type Schema,
   type SchemaRegistry,
-  type MethodSchema,
 } from "./schema.ts";
 
 // Schema helper functions
@@ -44,4 +50,4 @@ export {
   isRefSchema,
 } from "./schema.ts";
 
-export { bindChannels, type BindingSerializers } from "./binding.ts";
+export { bindChannels } from "./binding.ts";

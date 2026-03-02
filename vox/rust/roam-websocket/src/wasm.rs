@@ -1,269 +1,301 @@
-//! WASM (web_sys) WebSocket transport.
+//! WASM (web_sys) WebSocket transport implementing [`Link`].
 
 use std::cell::RefCell;
 use std::io;
-use std::rc::Rc;
-use std::time::Duration;
+use std::mem::ManuallyDrop;
 
+use futures_channel::mpsc;
 use futures_util::StreamExt;
-use roam_session::{
-    FramedClient, HandshakeConfig, MessageConnector, MessageTransport, RetryPolicy,
-    ServiceDispatcher, connect_framed, connect_framed_with_policy,
-};
-use roam_wire::Message;
+use js_sys::ArrayBuffer;
+use roam_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{BinaryType, CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
-/// WebSocket transport for roam messages (WASM implementation).
-///
-/// Wraps a browser [`WebSocket`] and implements [`MessageTransport`].
-/// Messages are postcard-encoded and sent as binary WebSocket frames.
-pub struct WsTransport {
-    ws: WebSocket,
-    /// Receiver for incoming messages and events.
-    rx: futures_channel::mpsc::UnboundedReceiver<WsEvent>,
-    /// Keep closures alive.
-    _closures: WsClosures,
-    /// Last decoded bytes for error detection.
-    last_decoded: Vec<u8>,
-}
-
-/// Internal events from WebSocket callbacks.
 enum WsEvent {
     Message(Vec<u8>),
     Close,
     Error(String),
 }
 
-/// Closures that need to stay alive for the WebSocket callbacks.
 struct WsClosures {
     _onmessage: Closure<dyn FnMut(MessageEvent)>,
     _onclose: Closure<dyn FnMut(CloseEvent)>,
     _onerror: Closure<dyn FnMut(ErrorEvent)>,
 }
 
-impl WsTransport {
-    /// Create a new WebSocket transport from an existing WebSocket.
-    ///
-    /// The WebSocket should be in the OPEN state or about to open.
-    /// This constructor sets up the necessary callbacks.
+/// A [`Link`] over a browser WebSocket.
+// r[impl transport.websocket]
+// r[impl transport.websocket.platforms]
+// r[impl zerocopy.framing.link.websocket]
+pub struct WsLink(WsLinkTx, WsLinkRx);
+
+impl WsLink {
+    /// Wrap an already-open [`WebSocket`].
     pub fn new(ws: WebSocket) -> Self {
-        // Ensure we receive binary data as ArrayBuffer
         ws.set_binary_type(BinaryType::Arraybuffer);
 
-        let (tx, rx) = futures_channel::mpsc::unbounded();
+        let (tx, rx) = mpsc::unbounded();
 
-        // Set up message handler
         let tx_msg = tx.clone();
         let onmessage = Closure::wrap(Box::new(move |e: MessageEvent| {
-            if let Ok(abuf) = e.data().dyn_into::<js_sys::ArrayBuffer>() {
+            if let Ok(abuf) = e.data().dyn_into::<ArrayBuffer>() {
                 let array = js_sys::Uint8Array::new(&abuf);
-                let data = array.to_vec();
-                let _ = tx_msg.unbounded_send(WsEvent::Message(data));
+                let _ = tx_msg.unbounded_send(WsEvent::Message(array.to_vec()));
             }
         }) as Box<dyn FnMut(MessageEvent)>);
         ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
 
-        // Set up close handler
         let tx_close = tx.clone();
         let onclose = Closure::wrap(Box::new(move |_: CloseEvent| {
             let _ = tx_close.unbounded_send(WsEvent::Close);
         }) as Box<dyn FnMut(CloseEvent)>);
         ws.set_onclose(Some(onclose.as_ref().unchecked_ref()));
 
-        // Set up error handler
         let tx_error = tx;
         let onerror = Closure::wrap(Box::new(move |e: ErrorEvent| {
-            let msg = e.message();
-            let _ = tx_error.unbounded_send(WsEvent::Error(msg));
+            let _ = tx_error.unbounded_send(WsEvent::Error(e.message()));
         }) as Box<dyn FnMut(ErrorEvent)>);
         ws.set_onerror(Some(onerror.as_ref().unchecked_ref()));
 
-        Self {
-            ws,
-            rx,
-            _closures: WsClosures {
-                _onmessage: onmessage,
-                _onclose: onclose,
-                _onerror: onerror,
+        let (buf_tx, buf_rx) = mpsc::channel::<Vec<u8>>(1);
+        buf_tx.clone().try_send(Vec::new()).ok();
+
+        Self(
+            WsLinkTx {
+                ws,
+                buf_tx,
+                buf_rx: RefCell::new(buf_rx),
             },
-            last_decoded: Vec::new(),
-        }
+            WsLinkRx {
+                rx,
+                _closures: WsClosures {
+                    _onmessage: onmessage,
+                    _onclose: onclose,
+                    _onerror: onerror,
+                },
+            },
+        )
     }
 
-    /// Create a new WebSocket connection to the given URL.
-    ///
-    /// Returns the transport once the connection is established.
+    /// Connect to `url`, waiting until the WebSocket is open.
     pub async fn connect(url: &str) -> io::Result<Self> {
-        let ws = WebSocket::new(url)
-            .map_err(|e| io::Error::other(format!("failed to create WebSocket: {e:?}")))?;
+        use futures_channel::oneshot;
+        use std::rc::Rc;
 
-        // Set up temporary open/error handlers to wait for connection
-        let (open_tx, open_rx) = futures_channel::oneshot::channel::<Result<(), String>>();
+        let ws = WebSocket::new(url)
+            .map_err(|e| io::Error::other(format!("WebSocket::new failed: {e:?}")))?;
+
+        let (open_tx, open_rx) = oneshot::channel::<Result<(), String>>();
         let open_tx = Rc::new(RefCell::new(Some(open_tx)));
 
-        let open_tx_clone = open_tx.clone();
+        let tx1 = open_tx.clone();
         let onopen = Closure::once(Box::new(move || {
-            if let Some(tx) = open_tx_clone.borrow_mut().take() {
+            if let Some(tx) = tx1.borrow_mut().take() {
                 let _ = tx.send(Ok(()));
             }
         }) as Box<dyn FnOnce()>);
         ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
 
-        let open_tx_clone = open_tx.clone();
-        let onerror_temp = Closure::once(Box::new(move |e: ErrorEvent| {
-            if let Some(tx) = open_tx_clone.borrow_mut().take() {
+        let tx2 = open_tx;
+        let onerror = Closure::once(Box::new(move |e: ErrorEvent| {
+            if let Some(tx) = tx2.borrow_mut().take() {
                 let _ = tx.send(Err(e.message()));
             }
         }) as Box<dyn FnOnce(ErrorEvent)>);
-        ws.set_onerror(Some(onerror_temp.as_ref().unchecked_ref()));
+        ws.set_onerror(Some(onerror.as_ref().unchecked_ref()));
 
-        // Wait for connection
-        let result = open_rx
+        open_rx
             .await
-            .map_err(|_| io::Error::other("connection cancelled"))?;
+            .map_err(|_| io::Error::other("connection cancelled"))?
+            .map_err(|e| io::Error::other(format!("WebSocket open failed: {e}")))?;
 
-        // Clear temporary handlers
         ws.set_onopen(None);
         ws.set_onerror(None);
-
-        // Keep closures alive until connection completes
         drop(onopen);
-        drop(onerror_temp);
-
-        result.map_err(|e| io::Error::other(format!("connection failed: {e}")))?;
+        drop(onerror);
 
         Ok(Self::new(ws))
     }
+}
 
-    /// Get a reference to the underlying WebSocket.
-    pub fn websocket(&self) -> &WebSocket {
-        &self.ws
+// ---------------------------------------------------------------------------
+// Link split
+// ---------------------------------------------------------------------------
+
+impl Link for WsLink {
+    type Tx = WsLinkTx;
+    type Rx = WsLinkRx;
+
+    fn split(self) -> (WsLinkTx, WsLinkRx) {
+        (self.0, self.1)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tx
+// ---------------------------------------------------------------------------
+
+/// Sending half of a [`WsLink`].
+pub struct WsLinkTx {
+    ws: WebSocket,
+    /// Returned here after each send to be reused by the next permit.
+    buf_tx: mpsc::Sender<Vec<u8>>,
+    /// Awaited to obtain the reusable buffer (and provide backpressure).
+    /// RefCell is safe: wasm is single-threaded, MaybeSync removes Sync bound.
+    buf_rx: RefCell<mpsc::Receiver<Vec<u8>>>,
+}
+
+/// Permit for one outbound send.
+///
+/// Uses `ManuallyDrop` for its fields so that `alloc` can move them out
+/// into `WsWriteSlot` without conflicting with the `Drop` impl.
+pub struct WsLinkTxPermit {
+    ws: ManuallyDrop<WebSocket>,
+    buf: ManuallyDrop<Vec<u8>>,
+    buf_tx: ManuallyDrop<mpsc::Sender<Vec<u8>>>,
+    /// Set to true by `alloc`; tells `Drop` not to return the buffer.
+    consumed: bool,
+}
+
+/// Write slot backed by the reusable send buffer.
+// r[impl zerocopy.send.websocket]
+pub struct WsWriteSlot {
+    ws: WebSocket,
+    buf: Vec<u8>,
+    buf_tx: mpsc::Sender<Vec<u8>>,
+    /// Set to true by `commit`; tells `Drop` not to return the buffer.
+    committed: bool,
+}
+
+impl LinkTx for WsLinkTx {
+    type Permit = WsLinkTxPermit;
+
+    async fn reserve(&self) -> io::Result<Self::Permit> {
+        let buf = self
+            .buf_rx
+            .borrow_mut()
+            .next()
+            .await
+            .ok_or_else(|| io::Error::other("ws send buffer channel closed"))?;
+        Ok(WsLinkTxPermit {
+            ws: ManuallyDrop::new(self.ws.clone()),
+            buf: ManuallyDrop::new(buf),
+            buf_tx: ManuallyDrop::new(self.buf_tx.clone()),
+            consumed: false,
+        })
     }
 
-    /// Close the WebSocket connection.
-    pub fn close(&self) -> io::Result<()> {
+    async fn close(self) -> io::Result<()> {
         self.ws
             .close()
-            .map_err(|e| io::Error::other(format!("close failed: {e:?}")))
+            .map_err(|e| io::Error::other(format!("ws close failed: {e:?}")))
     }
 }
 
-/// URL-based connector for WebSocket client connections on WASM.
-#[derive(Debug, Clone)]
-pub struct WsConnector {
-    url: String,
-}
-
-impl WsConnector {
-    /// Create a new WebSocket connector for the given URL.
-    pub fn new(url: impl Into<String>) -> Self {
-        Self { url: url.into() }
+impl Drop for WsLinkTx {
+    fn drop(&mut self) {
+        let _ = self.ws.close();
     }
 }
 
-impl MessageConnector for WsConnector {
-    type Transport = WsTransport;
+impl LinkTxPermit for WsLinkTxPermit {
+    type Slot = WsWriteSlot;
 
-    async fn connect(&self) -> io::Result<WsTransport> {
-        WsTransport::connect(&self.url).await
+    fn alloc(mut self, len: usize) -> io::Result<WsWriteSlot> {
+        self.consumed = true;
+        // SAFETY: we set `consumed`, so Drop will not touch these fields.
+        let ws = unsafe { ManuallyDrop::take(&mut self.ws) };
+        let mut buf = unsafe { ManuallyDrop::take(&mut self.buf) };
+        let buf_tx = unsafe { ManuallyDrop::take(&mut self.buf_tx) };
+        buf.clear();
+        buf.resize(len, 0);
+        Ok(WsWriteSlot {
+            ws,
+            buf,
+            buf_tx,
+            committed: false,
+        })
     }
 }
 
-/// Connect via WebSocket with automatic reconnection.
-pub fn ws_connect<C, D>(connector: C, config: HandshakeConfig, dispatcher: D) -> FramedClient<C, D>
-where
-    C: MessageConnector,
-    D: ServiceDispatcher + Clone,
-{
-    connect_framed(connector, config, dispatcher)
+impl Drop for WsLinkTxPermit {
+    fn drop(&mut self) {
+        if self.consumed {
+            return;
+        }
+        // SAFETY: not consumed, so fields are still valid.
+        unsafe {
+            let buf = ManuallyDrop::take(&mut self.buf);
+            let _ = self.buf_tx.try_send(buf);
+            ManuallyDrop::drop(&mut self.ws);
+            ManuallyDrop::drop(&mut self.buf_tx);
+        }
+    }
 }
 
-/// Connect via WebSocket with a custom retry policy.
-pub fn ws_connect_with_policy<C, D>(
-    connector: C,
-    config: HandshakeConfig,
-    dispatcher: D,
-    retry_policy: RetryPolicy,
-) -> FramedClient<C, D>
-where
-    C: MessageConnector,
-    D: ServiceDispatcher + Clone,
-{
-    connect_framed_with_policy(connector, config, dispatcher, retry_policy)
+impl WriteSlot for WsWriteSlot {
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        &mut self.buf
+    }
+
+    fn commit(mut self) {
+        self.committed = true;
+        let _ = self.ws.send_with_u8_array(&self.buf);
+        self.buf.clear();
+        let _ = self.buf_tx.try_send(std::mem::take(&mut self.buf));
+    }
 }
 
-impl MessageTransport for WsTransport {
-    /// Send a message over WebSocket.
-    ///
-    /// r[impl transport.message.binary] - Send as binary frame.
-    /// r[impl transport.message.one-to-one] - One message per frame.
-    async fn send(&mut self, msg: &Message) -> io::Result<()> {
-        let payload = facet_postcard::to_vec(msg)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-
-        self.ws
-            .send_with_u8_array(&payload)
-            .map_err(|e| io::Error::other(format!("send failed: {e:?}")))?;
-
-        Ok(())
+impl Drop for WsWriteSlot {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        // Slot dropped without commit — return buf without sending.
+        let _ = self.buf_tx.try_send(std::mem::take(&mut self.buf));
     }
+}
 
-    /// Receive a message with timeout.
-    async fn recv_timeout(&mut self, timeout: Duration) -> io::Result<Option<Message>> {
-        roam_session::runtime::timeout(timeout, self.recv(), "ws.recv.timeout")
-            .await
-            .unwrap_or(Ok(None))
+// ---------------------------------------------------------------------------
+// Rx
+// ---------------------------------------------------------------------------
+
+/// Receiving half of a [`WsLink`].
+pub struct WsLinkRx {
+    rx: mpsc::UnboundedReceiver<WsEvent>,
+    _closures: WsClosures,
+}
+
+/// Error type for [`WsLinkRx`].
+#[derive(Debug)]
+pub struct WsLinkRxError(String);
+
+impl std::fmt::Display for WsLinkRxError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
     }
+}
 
-    /// Receive a message (blocking until one arrives or connection closes).
-    async fn recv(&mut self) -> io::Result<Option<Message>> {
+impl std::error::Error for WsLinkRxError {}
+
+// r[impl zerocopy.recv.websocket]
+impl LinkRx for WsLinkRx {
+    type Error = WsLinkRxError;
+
+    async fn recv(&mut self) -> Result<Option<Backing>, WsLinkRxError> {
         loop {
             match self.rx.next().await {
                 Some(WsEvent::Message(data)) => {
-                    // r[impl transport.message.binary] - Process binary frames.
-                    self.last_decoded = data.clone();
-                    let msg: Message = facet_postcard::from_slice(&data).map_err(|e| {
-                        // Log the failed bytes for debugging
-                        web_sys::console::error_1(
-                            &format!(
-                                "postcard decode failed: {e}, bytes ({} total): {:?}",
-                                data.len(),
-                                &data[..data.len().min(100)]
-                            )
-                            .into(),
-                        );
-                        io::Error::new(io::ErrorKind::InvalidData, format!("postcard: {e}"))
-                    })?;
-                    return Ok(Some(msg));
+                    return Ok(Some(Backing::Boxed(data.into_boxed_slice())));
                 }
-                Some(WsEvent::Close) => {
+                Some(WsEvent::Close) | None => {
                     return Ok(None);
                 }
                 Some(WsEvent::Error(e)) => {
-                    return Err(io::Error::other(format!("WebSocket error: {e}")));
-                }
-                None => {
-                    // Channel closed (shouldn't happen normally)
-                    return Ok(None);
+                    return Err(WsLinkRxError(format!("WebSocket error: {e}")));
                 }
             }
         }
-    }
-
-    fn last_decoded(&self) -> &[u8] {
-        &self.last_decoded
-    }
-}
-
-impl Drop for WsTransport {
-    fn drop(&mut self) {
-        // Clear handlers before dropping
-        self.ws.set_onmessage(None);
-        self.ws.set_onclose(None);
-        self.ws.set_onerror(None);
-        // Best-effort close
-        let _ = self.ws.close();
     }
 }

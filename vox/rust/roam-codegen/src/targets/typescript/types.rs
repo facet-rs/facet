@@ -8,9 +8,9 @@
 use std::collections::HashSet;
 
 use facet_core::{ScalarType, Shape};
-use roam_schema::{
-    EnumInfo, ServiceDetail, ShapeKind, StructInfo, VariantKind, classify_shape, classify_variant,
-    is_bytes,
+use roam_types::{
+    EnumInfo, RpcPlan, ServiceDescriptor, ShapeKind, StructInfo, VariantKind, classify_shape,
+    classify_variant, is_bytes,
 };
 
 /// Generate TypeScript field access expression.
@@ -29,7 +29,7 @@ pub fn ts_field_access(expr: &str, field_name: &str) -> String {
 
 /// Collect all named types (structs and enums with a name) from a service.
 /// Returns a vector of (name, Shape) pairs in dependency order.
-pub fn collect_named_types(service: &ServiceDetail) -> Vec<(String, &'static Shape)> {
+pub fn collect_named_types(service: &ServiceDescriptor) -> Vec<(String, &'static Shape)> {
     let mut seen = HashSet::new();
     let mut types = Vec::new();
 
@@ -98,11 +98,11 @@ pub fn collect_named_types(service: &ServiceDetail) -> Vec<(String, &'static Sha
         }
     }
 
-    for method in &service.methods {
-        for arg in &method.args {
-            visit(arg.ty, &mut seen, &mut types);
+    for method in service.methods {
+        for arg in method.args {
+            visit(arg.shape, &mut seen, &mut types);
         }
-        visit(method.return_type, &mut seen, &mut types);
+        visit(method.return_shape, &mut seen, &mut types);
     }
 
     types
@@ -315,11 +315,8 @@ pub fn ts_type_client_arg(shape: &'static Shape) -> String {
 /// Convert Shape to TypeScript type string for client returns.
 /// Schema is from server's perspective - no inversion needed.
 pub fn ts_type_client_return(shape: &'static Shape) -> String {
-    match classify_shape(shape) {
-        ShapeKind::Tx { inner } => format!("Tx<{}>", ts_type_client_return(inner)),
-        ShapeKind::Rx { inner } => format!("Rx<{}>", ts_type_client_return(inner)),
-        _ => ts_type_base_named(shape),
-    }
+    assert_no_channels_in_return_shape(shape);
+    ts_type_base_named(shape)
 }
 
 /// Convert Shape to TypeScript type string for server/handler arguments.
@@ -335,11 +332,8 @@ pub fn ts_type_server_arg(shape: &'static Shape) -> String {
 
 /// Schema is from server's perspective - no inversion needed.
 pub fn ts_type_server_return(shape: &'static Shape) -> String {
-    match classify_shape(shape) {
-        ShapeKind::Tx { inner } => format!("Tx<{}>", ts_type_server_return(inner)),
-        ShapeKind::Rx { inner } => format!("Rx<{}>", ts_type_server_return(inner)),
-        _ => ts_type_base_named(shape),
-    }
+    assert_no_channels_in_return_shape(shape);
+    ts_type_base_named(shape)
 }
 
 /// TypeScript type for user-facing type definitions.
@@ -379,4 +373,11 @@ pub fn is_fully_supported(shape: &'static Shape) -> bool {
         ShapeKind::Result { ok, err } => is_fully_supported(ok) && is_fully_supported(err),
         ShapeKind::Opaque => false,
     }
+}
+
+fn assert_no_channels_in_return_shape(shape: &'static Shape) {
+    assert!(
+        RpcPlan::for_shape(shape).channel_locations.is_empty(),
+        "channels are not allowed in return types"
+    );
 }

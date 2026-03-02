@@ -13,6 +13,7 @@ import type {
   VecSchema,
   OptionSchema,
   MapSchema,
+  BytesSchema,
 } from "./schema.ts";
 import {
   resolveSchema,
@@ -24,35 +25,20 @@ import {
   isNewtypeVariant,
 } from "./schema.ts";
 import {
-  encodeBool,
   decodeBool,
-  encodeU8,
   decodeU8,
-  encodeI8,
   decodeI8,
-  encodeU16,
   decodeU16,
-  encodeI16,
   decodeI16,
-  encodeU32,
   decodeU32,
-  encodeI32,
   decodeI32,
-  encodeU64,
   decodeU64,
-  encodeI64,
   decodeI64,
-  encodeF32,
   decodeF32,
-  encodeF64,
   decodeF64,
-  encodeString,
   decodeString,
-  encodeBytes,
   decodeBytes,
-  encodeVarint,
   decodeVarintNumber,
-  concat,
 } from "./index.ts";
 
 // ============================================================================
@@ -152,6 +138,8 @@ class DecodeContext {
         return `map<${this.schemaToString(schema.key)}, ${this.schemaToString(schema.value)}>`;
       case "tuple":
         return `tuple(${schema.elements.length} elements)`;
+      case "bytes":
+        return schema.trailing ? "bytes(trailing)" : "bytes";
       default:
         return schema.kind;
     }
@@ -161,6 +149,83 @@ class DecodeContext {
 // ============================================================================
 // Schema-driven Encoding
 // ============================================================================
+
+class BufWriter {
+  private buf: Uint8Array;
+  private pos = 0;
+
+  constructor(initialCapacity = 128) {
+    this.buf = new Uint8Array(initialCapacity);
+  }
+
+  private reserve(additional: number): void {
+    const needed = this.pos + additional;
+    if (needed <= this.buf.length) {
+      return;
+    }
+    let capacity = this.buf.length;
+    while (capacity < needed) {
+      capacity *= 2;
+    }
+    const next = new Uint8Array(capacity);
+    next.set(this.buf.subarray(0, this.pos), 0);
+    this.buf = next;
+  }
+
+  writeByte(value: number): void {
+    this.reserve(1);
+    this.buf[this.pos++] = value & 0xff;
+  }
+
+  writeBytes(value: Uint8Array): void {
+    this.reserve(value.length);
+    this.buf.set(value, this.pos);
+    this.pos += value.length;
+  }
+
+  writeVarint(value: number | bigint): void {
+    let v: bigint;
+    if (typeof value === "number") {
+      if (!Number.isInteger(value) || value < 0) {
+        throw new Error(`varint: expected non-negative integer, got ${value}`);
+      }
+      v = BigInt(value);
+    } else {
+      if (value < 0n) {
+        throw new Error(`varint: expected non-negative integer, got ${value.toString()}`);
+      }
+      v = value;
+    }
+
+    while (v >= 0x80n) {
+      this.writeByte(Number((v & 0x7fn) | 0x80n));
+      v >>= 7n;
+    }
+    this.writeByte(Number(v));
+  }
+
+  writeF32(value: number): void {
+    this.reserve(4);
+    new DataView(this.buf.buffer, this.buf.byteOffset + this.pos, 4).setFloat32(0, value, true);
+    this.pos += 4;
+  }
+
+  writeF64(value: number): void {
+    this.reserve(8);
+    new DataView(this.buf.buffer, this.buf.byteOffset + this.pos, 8).setFloat64(0, value, true);
+    this.pos += 8;
+  }
+
+  finish(): Uint8Array {
+    return this.buf.subarray(0, this.pos);
+  }
+}
+
+function zigzagEncode(n: bigint): bigint {
+  return (n << 1n) ^ (n >> 63n);
+}
+
+const TEXT_ENCODER = new TextEncoder();
 
 /**
  * Encode a value according to its schema.
@@ -175,64 +240,94 @@ export function encodeWithSchema(
   schema: Schema,
   registry?: SchemaRegistry,
 ): Uint8Array {
+  const writer = new BufWriter();
+  encodeWithSchemaInto(value, schema, writer, registry);
+  return writer.finish();
+}
+
+function encodeWithSchemaInto(
+  value: unknown,
+  schema: Schema,
+  writer: BufWriter,
+  registry?: SchemaRegistry,
+): void {
   // Resolve refs
   const resolved = registry ? resolveSchema(schema, registry) : schema;
 
   switch (resolved.kind) {
     // Primitives
     case "bool":
-      return encodeBool(value as boolean);
+      writer.writeByte(value ? 1 : 0);
+      return;
     case "u8":
-      return encodeU8(value as number);
+      writer.writeByte(value as number);
+      return;
     case "i8":
-      return encodeI8(value as number);
+      writer.writeByte(value as number);
+      return;
     case "u16":
-      return encodeU16(value as number);
+      writer.writeVarint(value as number);
+      return;
     case "i16":
-      return encodeI16(value as number);
+      writer.writeVarint(zigzagEncode(BigInt(value as number)));
+      return;
     case "u32":
-      return encodeU32(value as number);
+      writer.writeVarint(value as number);
+      return;
     case "i32":
-      return encodeI32(value as number);
+      writer.writeVarint(zigzagEncode(BigInt(value as number)));
+      return;
     case "u64":
-      return encodeU64(value as bigint);
+      writer.writeVarint(value as bigint);
+      return;
     case "i64":
-      return encodeI64(value as bigint);
+      writer.writeVarint(zigzagEncode(value as bigint));
+      return;
     case "f32":
-      return encodeF32(value as number);
+      writer.writeF32(value as number);
+      return;
     case "f64":
-      return encodeF64(value as number);
+      writer.writeF64(value as number);
+      return;
     case "string":
-      return encodeString(value as string);
+      encodeStringWithSchema(value as string, writer);
+      return;
     case "bytes":
-      return encodeBytes(value as Uint8Array);
+      encodeBytesWithSchema(value, resolved, writer);
+      return;
 
     // Containers
     case "vec":
-      return encodeVecWithSchema(value as unknown[], resolved, registry);
+      encodeVecWithSchema(value as unknown[], resolved, writer, registry);
+      return;
     case "option":
-      return encodeOptionWithSchema(value, resolved, registry);
+      encodeOptionWithSchema(value, resolved, writer, registry);
+      return;
     case "map":
-      return encodeMapWithSchema(value as Map<unknown, unknown>, resolved, registry);
+      encodeMapWithSchema(value as Map<unknown, unknown>, resolved, writer, registry);
+      return;
 
     // Composites
     case "struct":
-      return encodeStructWithSchema(value as Record<string, unknown>, resolved, registry);
+      encodeStructWithSchema(value as Record<string, unknown>, resolved, writer, registry);
+      return;
     case "tuple":
-      return encodeTupleWithSchema(value as unknown[], resolved, registry);
+      encodeTupleWithSchema(value as unknown[], resolved, writer, registry);
+      return;
     case "enum":
-      return encodeEnumWithSchema(
+      encodeEnumWithSchema(
         value as { tag: string; [key: string]: unknown },
         resolved,
+        writer,
         registry,
       );
+      return;
 
-    // Streaming types encode as channel IDs (u64)
+    // Streaming types encode as unit (zero bytes) - channel IDs are carried
+    // in the Request/Response `channels` field, not in the args payload.
     case "tx":
     case "rx":
-      // The value should have a channelId property
-      const channelId = (value as { channelId: bigint }).channelId;
-      return encodeU64(channelId);
+      return;
 
     // Ref should have been resolved above
     case "ref":
@@ -246,81 +341,99 @@ export function encodeWithSchema(
 function encodeVecWithSchema(
   values: unknown[],
   schema: VecSchema,
+  writer: BufWriter,
   registry?: SchemaRegistry,
-): Uint8Array {
-  const parts: Uint8Array[] = [encodeVarint(values.length)];
+): void {
+  writer.writeVarint(values.length);
   for (const item of values) {
-    parts.push(encodeWithSchema(item, schema.element, registry));
+    encodeWithSchemaInto(item, schema.element, writer, registry);
   }
-  return concat(...parts);
 }
 
 function encodeOptionWithSchema(
   value: unknown,
   schema: OptionSchema,
+  writer: BufWriter,
   registry?: SchemaRegistry,
-): Uint8Array {
+): void {
   if (value === null || value === undefined) {
-    return Uint8Array.of(0);
+    writer.writeByte(0);
+    return;
   }
-  return concat(Uint8Array.of(1), encodeWithSchema(value, schema.inner, registry));
+  writer.writeByte(1);
+  encodeWithSchemaInto(value, schema.inner, writer, registry);
 }
 
 function encodeMapWithSchema(
   map: Map<unknown, unknown>,
   schema: MapSchema,
+  writer: BufWriter,
   registry?: SchemaRegistry,
-): Uint8Array {
-  const parts: Uint8Array[] = [encodeVarint(map.size)];
+): void {
+  writer.writeVarint(map.size);
   for (const [k, v] of map) {
-    parts.push(encodeWithSchema(k, schema.key, registry));
-    parts.push(encodeWithSchema(v, schema.value, registry));
+    encodeWithSchemaInto(k, schema.key, writer, registry);
+    encodeWithSchemaInto(v, schema.value, writer, registry);
   }
-  return concat(...parts);
 }
 
 function encodeStructWithSchema(
   obj: Record<string, unknown>,
   schema: StructSchema,
+  writer: BufWriter,
   registry?: SchemaRegistry,
-): Uint8Array {
-  const parts: Uint8Array[] = [];
+): void {
   // Encode fields in schema order (Object.keys preserves insertion order)
   for (const [fieldName, fieldSchema] of Object.entries(schema.fields)) {
-    parts.push(encodeWithSchema(obj[fieldName], fieldSchema, registry));
+    encodeWithSchemaInto(obj[fieldName], fieldSchema, writer, registry);
   }
-  return concat(...parts);
+}
+
+function encodeBytesWithSchema(value: unknown, schema: BytesSchema, writer: BufWriter): void {
+  const bytes = value as Uint8Array;
+  if (schema.trailing) {
+    writer.writeBytes(bytes);
+    return;
+  }
+  writer.writeVarint(bytes.length);
+  writer.writeBytes(bytes);
+}
+
+function encodeStringWithSchema(value: string, writer: BufWriter): void {
+  const bytes = TEXT_ENCODER.encode(value);
+  writer.writeVarint(bytes.length);
+  writer.writeBytes(bytes);
 }
 
 function encodeTupleWithSchema(
   values: unknown[],
   schema: TupleSchema,
+  writer: BufWriter,
   registry?: SchemaRegistry,
-): Uint8Array {
+): void {
   if (values.length !== schema.elements.length) {
     throw new Error(
       `Tuple length mismatch: got ${values.length}, expected ${schema.elements.length}`,
     );
   }
-  const parts: Uint8Array[] = [];
   for (let i = 0; i < values.length; i++) {
-    parts.push(encodeWithSchema(values[i], schema.elements[i], registry));
+    encodeWithSchemaInto(values[i], schema.elements[i], writer, registry);
   }
-  return concat(...parts);
 }
 
 function encodeEnumWithSchema(
   value: { tag: string; [key: string]: unknown },
   schema: EnumSchema,
+  writer: BufWriter,
   registry?: SchemaRegistry,
-): Uint8Array {
+): void {
   const variant = findVariantByName(schema, value.tag);
   if (!variant) {
     throw new Error(`Unknown variant: ${value.tag}`);
   }
 
   const discriminant = getVariantDiscriminant(schema, variant);
-  const parts: Uint8Array[] = [encodeVarint(discriminant)];
+  writer.writeVarint(discriminant);
 
   // Encode variant fields
   const fieldSchemas = getVariantFieldSchemas(variant);
@@ -330,20 +443,18 @@ function encodeEnumWithSchema(
     // Unit variant - no fields
   } else if (isNewtypeVariant(variant)) {
     // Newtype variant - value is in `value` field
-    parts.push(encodeWithSchema(value.value, fieldSchemas[0], registry));
+    encodeWithSchemaInto(value.value, fieldSchemas[0], writer, registry);
   } else if (fieldNames === null) {
     // Tuple variant - values are indexed (0, 1, 2, ...)
     for (let i = 0; i < fieldSchemas.length; i++) {
-      parts.push(encodeWithSchema(value[i.toString()], fieldSchemas[i], registry));
+      encodeWithSchemaInto(value[i.toString()], fieldSchemas[i], writer, registry);
     }
   } else {
     // Struct variant - values are by field name
     for (let i = 0; i < fieldNames.length; i++) {
-      parts.push(encodeWithSchema(value[fieldNames[i]], fieldSchemas[i], registry));
+      encodeWithSchemaInto(value[fieldNames[i]], fieldSchemas[i], writer, registry);
     }
   }
-
-  return concat(...parts);
 }
 
 // ============================================================================
@@ -407,7 +518,7 @@ function decodeWithSchemaImpl(
       case "string":
         return decodeString(buf, offset);
       case "bytes":
-        return decodeBytes(buf, offset);
+        return decodeBytesWithSchema(buf, offset, resolved);
 
       // Containers
       case "vec":
@@ -425,12 +536,11 @@ function decodeWithSchemaImpl(
       case "enum":
         return decodeEnumWithSchemaImpl(buf, offset, resolved, registry, ctx);
 
-      // Streaming types decode as channel IDs (u64)
+      // Streaming types decode as unit (zero bytes) - channel IDs are carried
+      // in the Request/Response `channels` field, not in the args payload.
       case "tx":
-      case "rx": {
-        const result = decodeU64(buf, offset);
-        return { value: { channelId: result.value }, next: result.next };
-      }
+      case "rx":
+        return { value: {}, next: offset };
 
       // Ref should have been resolved above
       case "ref":
@@ -534,6 +644,17 @@ function decodeStructWithSchemaImpl(
     ctx.pop();
   }
   return { value: obj, next: pos };
+}
+
+function decodeBytesWithSchema(
+  buf: Uint8Array,
+  offset: number,
+  schema: BytesSchema,
+): DecodeResult<Uint8Array> {
+  if (schema.trailing) {
+    return { value: buf.subarray(offset), next: buf.length };
+  }
+  return decodeBytes(buf, offset);
 }
 
 function decodeTupleWithSchemaImpl(
