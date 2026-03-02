@@ -1,4 +1,4 @@
-# @bearcove/$pkg
+# @bearcove/roam-wire
 
 TypeScript package for the Roam RPC ecosystem.
 

@@ -1,4 +1,4 @@
-# @bearcove/$pkg
+# @bearcove/roam-postcard
 
 TypeScript package for the Roam RPC ecosystem.
 
