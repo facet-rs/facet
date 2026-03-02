@@ -27,7 +27,7 @@ members = [
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "3.0.0"
+version = "7.0.0"
 edition = "2024"
 rust-version = "1.91"
 license = "MIT OR Apache-2.0"
@@ -35,18 +35,18 @@ repository = "https://github.com/bearcove/roam"
 
 [workspace.dependencies]
 # Internal crates
-roam = { path = "rust/roam", version = "3.0.0" }
-roam-types = { path = "rust/roam-types", version = "3.0.0" }
-roam-hash = { path = "rust/roam-hash", version = "3.0.0" }
-roam-macros-parse = { path = "rust/roam-macros-parse", version = "3.0.0" }
-roam-macros-core = { path = "rust/roam-macros-core", version = "3.0.0" }
-roam-service-macros = { path = "rust/roam-macros", version = "3.0.0" }
-roam-core = { path = "rust/roam-core", version = "3.0.0" }
-roam-stream = { path = "rust/roam-stream", version = "3.0.0" }
-roam-codegen = { path = "rust/roam-codegen", version = "3.0.0" }
-roam-websocket = { path = "rust/roam-websocket", version = "3.0.0" }
-shm-primitives = { path = "rust/shm-primitives", version = "3.0.0", default-features = false }
-shm-primitives-async = { path = "rust/shm-primitives-async", version = "3.0.0", default-features = false }
+roam = { path = "rust/roam", version = "7.0.0" }
+roam-types = { path = "rust/roam-types", version = "7.0.0" }
+roam-hash = { path = "rust/roam-hash", version = "7.0.0" }
+roam-macros-parse = { path = "rust/roam-macros-parse", version = "7.0.0" }
+roam-macros-core = { path = "rust/roam-macros-core", version = "7.0.0" }
+roam-service-macros = { path = "rust/roam-macros", version = "7.0.0" }
+roam-core = { path = "rust/roam-core", version = "7.0.0" }
+roam-stream = { path = "rust/roam-stream", version = "7.0.0" }
+roam-codegen = { path = "rust/roam-codegen", version = "7.0.0" }
+roam-websocket = { path = "rust/roam-websocket", version = "7.0.0" }
+shm-primitives = { path = "rust/shm-primitives", version = "7.0.0", default-features = false }
+shm-primitives-async = { path = "rust/shm-primitives-async", version = "7.0.0", default-features = false }
 ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "3.0.0" }
 moire = { version = "0.1.0", git = "https://github.com/bearcove/moire", branch = "main" }
 moire-types = { version = "0.1.0", git = "https://github.com/bearcove/moire", branch = "main" }
