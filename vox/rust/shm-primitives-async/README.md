@@ -1,5 +1,19 @@
 # shm-primitives-async
 
-Async OS-level control primitives for shared memory IPC (doorbell and mmap control)
+Async operating-system control helpers for shared-memory transport plumbing.
 
-Part of the Roam workspace: https://github.com/bearcove/roam
+## Role in the Roam stack
+
+`shm-primitives-async` supports low-level SHM transport setup and coordination below the `Link` layer.
+
+## What this crate provides
+
+- Async doorbell and mmap-control operations
+- OS-specific async control paths required by SHM host/guest coordination
+
+## Fits with
+
+- `shm-primitives` core data structures
+- `roam-shm` transport orchestration
+
+Part of the Roam workspace: <https://github.com/bearcove/roam>

@@ -1,5 +1,19 @@
 # @bearcove/roam-postcard
 
-TypeScript package for the Roam RPC ecosystem.
+Postcard-compatible serialization utilities for Roam TypeScript packages.
 
-This package is part of the Rust/TypeScript protocol tooling and transport stack used by Roam.
+## Role in the Roam stack
+
+`@bearcove/roam-postcard` provides binary encoding/decoding support used by wire and runtime layers.
+
+## What this package provides
+
+- Postcard-oriented schema codecs
+- Primitive/value encoding helpers used by protocol message serialization
+
+## Fits with
+
+- `@bearcove/roam-wire` for full wire message encoding
+- `@bearcove/roam-core` runtime call/response machinery
+
+Part of the Roam workspace: <https://github.com/bearcove/roam>
