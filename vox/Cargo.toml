@@ -12,8 +12,10 @@ members = [
   "rust/roam-local",
   "rust/roam-fdpass",
   "rust/roam-shm",
+  "rust/shm-primitives",
   "rust/shm-primitives-async",
   "rust/roam-shm-ffi",
+  "rust/ur-taking-me-with-you",
   "rust/roam-macros-parse",
   "rust/roam-macros-core",
   "rust/roam-macros",
@@ -30,8 +32,13 @@ exclude = ["fuzz"]
 version = "7.0.0"
 edition = "2024"
 rust-version = "1.91"
+readme = "README.md"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/bearcove/roam"
+homepage = "https://github.com/bearcove/roam"
+documentation = "https://docs.rs/roam"
+keywords = ["rpc", "ipc", "shared-memory", "serde", "networking"]
+categories = ["network-programming", "asynchronous"]
 
 [workspace.dependencies]
 # Internal crates
@@ -47,7 +54,7 @@ roam-codegen = { path = "rust/roam-codegen", version = "7.0.0" }
 roam-websocket = { path = "rust/roam-websocket", version = "7.0.0" }
 shm-primitives = { path = "rust/shm-primitives", version = "7.0.0", default-features = false }
 shm-primitives-async = { path = "rust/shm-primitives-async", version = "7.0.0", default-features = false }
-ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "3.0.0" }
+ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "7.0.0" }
 moire = { version = "0.1.0", git = "https://github.com/bearcove/moire", branch = "main" }
 moire-types = { version = "0.1.0", git = "https://github.com/bearcove/moire", branch = "main" }
 

@@ -3588,6 +3588,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ur-taking-me-with-you"
+version = "7.0.0"
+dependencies = [
+ "libc",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "url"
 version = "2.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"

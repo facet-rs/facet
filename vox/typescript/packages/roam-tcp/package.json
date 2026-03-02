@@ -1,7 +1,7 @@
 {
   "name": "@bearcove/roam-tcp",
-  "version": "0.1.0",
-  "private": true,
+  "version": "7.0.0",
+  "private": false,
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
@@ -14,5 +14,17 @@
   },
   "devDependencies": {
     "@types/node": "^22"
-  }
+  },
+  "license": "MIT OR Apache-2.0",
+  "description": "TCP transport implementation for the Roam protocol",
+  "repository": "https://github.com/bearcove/roam",
+  "homepage": "https://github.com/bearcove/roam",
+  "keywords": [
+    "roam",
+    "ipc",
+    "rpc",
+    "typescript",
+    "shared-memory"
+  ],
+  "readme": "README.md"
 }
