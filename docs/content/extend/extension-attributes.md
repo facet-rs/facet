@@ -73,29 +73,53 @@ This generates:
 | `crate_path ...;` | Path to your crate for macro hygiene | `crate_path ::facet_xml;` |
 | `pub enum Attr { ... }` | The attribute variants | See above |
 
-### Variant types and runtime storage (exhaustive)
+### Runtime decoding contract (exhaustive)
 
-`define_attr_grammar!` payload syntax determines the runtime type stored in `Attr.data`.
+The enum declaration in `define_attr_grammar!` is your runtime contract.
+Facet stores either:
 
-| Grammar payload syntax | Example variant | Runtime type stored in `Attr.data` | `attr.get_as::<your_ns::Attr>()` |
-|---|---|---|---|
-| _(no payload)_ | `Marker` | `()` | `None` |
-| `&'static str` | `EnvPrefix(&'static str)` | `&'static str` | `None` |
-| `i64` | `Min(i64)` | `i64` | `None` |
-| `usize` | `MaxLen(usize)` | `usize` | `None` |
-| `shape_type` | `Proxy(shape_type)` | `facet::Shape` | `None` |
-| `predicate TypeName` | `SkipIf(predicate SkipSerializingIfFn)` | function payload (type-erased storage) | `None` |
-| `validator TypeName` | `Validate(validator ValidatorFn)` | function payload (type-erased storage) | `None` |
-| `make_t` / `make_t or $ty::default()` | `Default(make_t or $ty::default())` | `Option<facet::DefaultInPlaceFn>` | `None` |
-| `arbitrary` | `FromRef(arbitrary)` | `()` | `None` |
-| `Option<char>` | `Short(Option<char>)` | `your_ns::Attr` | `Some(...)` |
-| `Option<&'static str>` | `Name(Option<&'static str>)` | `your_ns::Attr` | `Some(...)` |
-| `&'static SomeType` | `Mode(&'static Mode)` | `your_ns::Attr` | `Some(...)` |
-| `StructName` | `Column(Column)` | `your_ns::Attr` | `Some(...)` |
-| `fn_ptr TypeName` | `Hook(fn_ptr HookFn)` | `your_ns::Attr` | `Some(...)` |
-| any other payload type | `Custom(MyType)` | `your_ns::Attr` | `Some(...)` |
+1. A direct payload (`usize`, `i64`, `&'static str`, `()`, `Shape`, function payloads), or
+2. The generated enum value (`your_ns::Attr`).
 
-If a variant is marked `#[storage(flag)]` or `#[storage(field)]`, treat the dedicated accessor/field as the source of truth. Do not rely on whether it also appears in `field.attributes`.
+Decode with `attr.get_as::<T>()` where `T` matches what is actually stored.
+
+| Variant declaration in your grammar | Stored in `Attr.data` | Decode code |
+|---|---|---|
+| `Marker` | `()` | `attr.get_as::<()>().is_some()` (or key presence only) |
+| `EnvPrefix(&'static str)` | `&'static str` | `attr.get_as::<&'static str>()` |
+| `Min(i64)` | `i64` | `attr.get_as::<i64>()` |
+| `MaxLen(usize)` | `usize` | `attr.get_as::<usize>()` |
+| `Proxy(shape_type)` | `facet::Shape` | `attr.get_as::<facet::Shape>()` |
+| `SkipIf(predicate SkipSerializingIfFn)` | function payload | decode with the function payload type |
+| `Validate(validator ValidatorFn)` | function payload | decode with the function payload type |
+| `Default(make_t ...)` | `Option<facet::DefaultInPlaceFn>` | decode as `Option<facet::DefaultInPlaceFn>` |
+| `FromRef(arbitrary)` | `()` | usually check key presence |
+| `Short(Option<char>)` | `your_ns::Attr` | `attr.get_as::<your_ns::Attr>()` then match variant |
+| `Name(Option<&'static str>)` | `your_ns::Attr` | `attr.get_as::<your_ns::Attr>()` then match variant |
+| `Mode(&'static SomeType)` | `your_ns::Attr` | `attr.get_as::<your_ns::Attr>()` then match variant |
+| `Column(Column)` | `your_ns::Attr` | `attr.get_as::<your_ns::Attr>()` then match variant |
+| `Hook(fn_ptr HookFn)` | `your_ns::Attr` | `attr.get_as::<your_ns::Attr>()` then match variant |
+| `Custom(MyType)` | `your_ns::Attr` | `attr.get_as::<your_ns::Attr>()` then match variant |
+
+`Column(Column)` is not special: `Column` is a struct you define in the same grammar.
+
+```rust
+facet::define_attr_grammar! {
+    ns "myfmt";
+    crate_path ::myfmt;
+
+    pub enum Attr {
+        Column(Column),
+    }
+
+    pub struct Column {
+        pub rename: Option<&'static str>,
+        pub indexed: bool,
+    }
+}
+```
+
+If a variant has `#[storage(flag)]` or `#[storage(field)]`, use the generated dedicated accessor/field as the primary API.
 
 ### Advanced: how built-in attributes work
 
@@ -160,28 +184,85 @@ The system uses string similarity to suggest corrections.
 `Field::attributes` is a slice of [`Attr`](https://docs.rs/facet-core/latest/facet_core/struct.Attr.html).  
 `FieldAttribute` is a type alias to `Attr`.
 
-Use this decoding flow:
+Use this pipeline every time:
 
-1. Select by namespace + key (`field.get_attr(Some("ns"), "key")`).
-2. Decode with the exact runtime payload type from the table above.
-3. For built-in attributes, prefer dedicated fields/accessors (`field.rename`, `field.is_sensitive()`, flags) before scanning `attributes`.
+1. Declare the variant in your grammar.
+2. Apply the attribute on the reflected type.
+3. Query by `ns + key`, then decode with the exact runtime type.
+
+### Pipeline: numeric payload (`usize`)
 
 ```rust
-use facet_core::Field;
+use facet::{Facet, StructType, Type, UserType};
+use facet_testattrs as testattrs;
 
-fn process_field(field: &Field) {
-    if let Some(attr) = field.get_attr(Some("docs"), "env_prefix") {
-        let prefix = attr
-            .get_as::<&'static str>()
-            .expect("docs::env_prefix stores &'static str");
-        println!("env prefix: {}", *prefix);
-    }
+#[derive(Facet)]
+struct User {
+    #[facet(testattrs::max_len = 64)]
+    name: String,
+}
 
-    if field.get_attr(Some("docs"), "marker").is_some() {
-        println!("marker present");
+let Type::User(UserType::Struct(StructType { fields, .. })) = User::SHAPE.ty else {
+    panic!("expected struct");
+};
+let field = &fields[0];
+
+let max_len: usize = field
+    .get_attr(Some("testattrs"), "max_len")
+    .and_then(|attr| attr.get_as::<usize>().copied())
+    .expect("testattrs::max_len should decode as usize");
+assert_eq!(max_len, 64);
+```
+
+Why this is `usize`: the variant is declared as `MaxLen(usize)`, and that payload form is stored directly as `usize`.
+
+Typical use cases:
+- Maximum string/list length constraints during parsing.
+- Emitting schema limits (for example JSON Schema `maxLength`).
+- Pre-validation before allocation-heavy decode paths.
+
+### Pipeline: struct payload (`Column(Column)`)
+
+```rust
+use facet::{Facet, StructType, Type, UserType};
+use facet_testattrs as testattrs;
+
+#[derive(Facet)]
+struct IndexedUser {
+    #[facet(testattrs::column(rename = "user_name", indexed))]
+    username: String,
+}
+
+let Type::User(UserType::Struct(StructType { fields, .. })) = IndexedUser::SHAPE.ty else {
+    panic!("expected struct");
+};
+let field = &fields[0];
+
+let attr = field
+    .get_attr(Some("testattrs"), "column")
+    .expect("column attr should exist");
+
+let decoded = attr
+    .get_as::<testattrs::Attr>()
+    .expect("column payload is wrapped in testattrs::Attr");
+
+match decoded {
+    testattrs::Attr::Column(column) => {
+        assert_eq!(column.rename, Some("user_name"));
+        assert!(column.indexed);
     }
+    _ => panic!("unexpected variant"),
 }
 ```
+
+Typical use cases:
+- Per-field database/index metadata.
+- Format-specific output shape options (renaming, indexing, flags).
+- Rich configuration that is awkward as flat scalar attributes.
+
+### Built-in attributes
+
+For built-ins, use dedicated accessors/fields first:
 
 ```rust
 use facet_core::Field;
@@ -197,12 +278,16 @@ fn process_builtin(field: &Field) {
 }
 ```
 
-### Runnable reference implementation
+### Runnable references
 
-- Run: `cargo run -p facet --example extension_attr_runtime_matrix`
-- Verified in tests: `cargo nextest run -p facet --test main extension_attr_runtime_matrix`
-- Source example: [`facet/examples/extension_attr_runtime_matrix.rs`](https://github.com/facet-rs/facet/blob/main/facet/examples/extension_attr_runtime_matrix.rs)
-- Source test: [`facet/tests/integration/extension_attr_runtime_matrix.rs`](https://github.com/facet-rs/facet/blob/main/facet/tests/integration/extension_attr_runtime_matrix.rs)
+- Numeric/string/unit pipeline:
+  - Run: `cargo run -p facet --example extension_attr_runtime_matrix`
+  - Test: `cargo nextest run -p facet --test main extension_attr_runtime_matrix`
+  - Source: [`facet/examples/extension_attr_runtime_matrix.rs`](https://github.com/facet-rs/facet/blob/main/facet/examples/extension_attr_runtime_matrix.rs)
+- Struct payload pipeline (`Column(Column)`):
+  - Run: `cargo run -p facet --example extension_attr_struct_payload`
+  - Test: `cargo nextest run -p facet --test main extension_attr_struct_payload`
+  - Source: [`facet/examples/extension_attr_struct_payload.rs`](https://github.com/facet-rs/facet/blob/main/facet/examples/extension_attr_struct_payload.rs)
 
 ## Namespacing
 
