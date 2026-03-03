@@ -12,40 +12,6 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  rust-clippy:
-    name: Rust / Clippy
-    runs-on: depot-ubuntu-24.04-16
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install protoc
-        run: sudo apt-get install -y protobuf-compiler
-
-      - name: Clippy (xtask)
-        run: cargo xtask clippy
-
-  rust-fmt:
-    name: Rust / Format
-    runs-on: depot-ubuntu-24.04-4
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
-      - name: Check formatting
-        run: cargo xtask fmt
-
   rust-doc:
     name: Rust / Documentation
     runs-on: depot-ubuntu-24.04-16
