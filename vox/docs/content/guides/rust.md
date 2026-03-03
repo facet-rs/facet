@@ -4,22 +4,71 @@ description = "Use roam + a transport crate to define services, run drivers, and
 weight = 21
 +++
 
-The fastest way to learn the Rust API is the repository example:
+The best way to learn the Rust API is to run the examples in order, from simplest to most complex.
+
+## 1) `borrowed_and_channels` (smallest complete RPC)
 
 - Source: [rust-examples/examples/borrowed_and_channels.rs](https://github.com/bearcove/roam/blob/main/rust-examples/examples/borrowed_and_channels.rs)
-- Run it: `cargo run -p rust-examples --example borrowed_and_channels`
+- Run: `cargo run -p rust-examples --example borrowed_and_channels`
+- Learn: borrowed args, borrowed returns, and `Rx<T>`/`Tx<T>` channel args.
+
+> ```rust
+> async fn is_short(&self, word: &str) -> bool;
+> async fn classify(&self, word: String) -> &'roam str;
+> async fn transform(&self, prefix: &str, input: Rx<String>, output: Tx<String>) -> u32;
+> ```
+
+## 2) `virtual_connections` (multiple services on one session)
+
 - Source: [rust-examples/examples/virtual_connections.rs](https://github.com/bearcove/roam/blob/main/rust-examples/examples/virtual_connections.rs)
-- Run it: `cargo run -p rust-examples --example virtual_connections`
+- Run: `cargo run -p rust-examples --example virtual_connections`
+- Learn: `open_connection`, metadata-based accept, and independent per-vconn drivers.
 
-This example covers the three core method shapes you usually need:
+> ```rust
+> match requested_service(metadata) {
+>     Some("counter") => { ... }
+>     Some("string") => { ... }
+>     _ => Err(...),
+> }
+> ```
 
-- Borrowed argument: `&str`
-- Borrowed return: `&'roam str`
-- Channel args: `Rx<T>` and `Tx<T>`
+## 3) `stable_conduit_reconnect` (reconnect + preserved state/channels)
 
-## 1) Start with `roam` + transport
+- Source: [rust-examples/examples/stable_conduit_reconnect.rs](https://github.com/bearcove/roam/blob/main/rust-examples/examples/stable_conduit_reconnect.rs)
+- Run: `cargo run -p rust-examples --example stable_conduit_reconnect`
+- Learn: forced link cuts with `StableConduit`, automatic re-establish, service state continuity, and channel continuity across reconnect.
 
-You usually only need `roam` and one transport crate.
+> ```rust
+> println!("[demo] intentionally cutting physical link #1 mid-channel");
+> ...
+> assert_eq!(transformed_count, 3);
+> assert_eq!(second, 2);
+> ```
+
+## 4) `memory_proxying` (connection-level proxying)
+
+- Source: [rust-examples/examples/memory_proxying.rs](https://github.com/bearcove/roam/blob/main/rust-examples/examples/memory_proxying.rs)
+- Run: `cargo run -p rust-examples --example memory_proxying`
+- Learn: host bridges one virtual connection to another without service-specific forwarding code.
+
+> ```rust
+> roam::proxy_connections(incoming_handle, upstream_conn).await;
+> ```
+
+## 5) `shm_host_two_guests` (most complex: host + multiple guest processes)
+
+- Source: [rust-examples/examples/shm_host_two_guests.rs](https://github.com/bearcove/roam/blob/main/rust-examples/examples/shm_host_two_guests.rs)
+- Run (Unix): `cargo run -p rust-examples --example shm_host_two_guests`
+- Learn: one host process launching two guest processes, SHM bootstrap, and serving different services from each guest.
+
+> ```rust
+> println!("[host] launching guest: Adder");
+> println!("[host] launching guest: StringReverser");
+> ```
+
+## Practical API pattern
+
+Most application code only needs `roam` + one transport crate.
 
 ```toml
 [dependencies]
@@ -29,26 +78,19 @@ tokio = { version = "1", features = ["rt", "net"] }
 eyre = "0.6"
 ```
 
-`roam` re-exports the runtime/session types used in app code (`Driver`, `initiator`, `acceptor`, `Parity`, `Call`, `Rx`, `Tx`, `channel`, etc.).
-
-## 2) Define your service trait
+Define a service with `#[roam::service]`, implement it, and establish on each side:
 
 ```rust
-#[roam::service]
-trait WordLab {
-    async fn is_short(&self, word: &str) -> bool;
-    async fn classify(&self, word: String) -> &'roam str;
-    async fn transform(&self, prefix: &str, input: roam::Rx<String>, output: roam::Tx<String>) -> u32;
-}
+let (server_guard, _) = roam::acceptor(StreamLink::tcp(server_socket))
+    .establish::<WordLabClient>(WordLabDispatcher::new(WordLabService))
+    .await?;
+
+let (client, _session_handle) = roam::initiator(StreamLink::tcp(client_socket))
+    .establish::<WordLabClient>(())
+    .await?;
 ```
 
-The macro generates:
-
-- `WordLabClient`
-- `WordLabDispatcher`
-- `word_lab_service_descriptor() -> &'static ServiceDescriptor`
-
-For borrowed returns, the generated trait impl method takes a `Call` parameter:
+For borrowed returns, implementations receive a `Call` sink:
 
 ```rust
 async fn classify<'roam>(
@@ -60,52 +102,6 @@ async fn classify<'roam>(
 }
 ```
 
-## 3) Wire session + driver with TCP
-
-```rust
-use roam_stream::StreamLink;
-
-let conduit = roam::BareConduit::<roam::MessageFamily, _>::new(StreamLink::tcp(socket));
-let (mut session, handle, _) = roam::initiator(conduit).establish().await?;
-let mut driver = roam::Driver::new(handle, (), roam::Parity::Odd);
-let caller = driver.caller();
-let client = WordLabClient::new(caller);
-```
-
-On the server side, use `roam::acceptor(...)`, then build a driver with `WordLabDispatcher::new(your_service)`.
-
-Run both loops:
-
-- `session.run()` handles frames
-- `driver.run()` handles method dispatch and replies
-
-## 4) Use channels in method calls
-
-```rust
-let (input_tx, input_rx) = roam::channel::<String>();
-let (output_tx, mut output_rx) = roam::channel::<String>();
-
-let count = client.transform("item", input_rx, output_tx).await?;
-
-while let Some(item) = output_rx.recv().await? {
-    println!("{item}");
-}
-```
-
-This pattern is shown end-to-end in the example, including channel close behavior.
-
-## 5) Generate TypeScript/Swift from Rust descriptors
-
-If you want non-Rust bindings, use the generated service descriptor with `roam-codegen`.
-
-```rust
-let svc = my_proto::word_lab_service_descriptor();
-
-let ts = roam_codegen::targets::typescript::generate_service(svc);
-let swift = roam_codegen::targets::swift::generate_service_with_bindings(
-    svc,
-    roam_codegen::targets::swift::SwiftBindings::Client,
-);
-```
+For non-Rust bindings, generate code from service descriptors with `roam-codegen`.
 
 For migration details, see [Migrating from v6 to v7](/guides/v6-to-v7/).
