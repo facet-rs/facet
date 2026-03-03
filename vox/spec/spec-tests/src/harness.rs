@@ -530,11 +530,23 @@ where
     L::Rx: Send + 'static,
     <L::Rx as roam_types::LinkRx>::Error: std::error::Error + Send + Sync + 'static,
 {
-    let server_task = tokio::spawn(async move {
-        acceptor(server_link)
-            .establish::<()>(TestbedDispatcher::new(TestbedService))
+    let (server_ready_tx, server_ready_rx) = oneshot::channel::<Result<(), String>>();
+    let _server_task = tokio::spawn(async move {
+        let setup = acceptor(server_link)
+            .establish::<TestbedClient<DriverCaller>>(TestbedDispatcher::new(TestbedService))
             .await
-            .map_err(|e| format!("server handshake: {e}"))
+            .map_err(|e| format!("server handshake: {e}"));
+        let (server_caller_guard, _sh) = match setup {
+            Ok(parts) => parts,
+            Err(err) => {
+                let _ = server_ready_tx.send(Err(err));
+                return;
+            }
+        };
+
+        let _ = server_ready_tx.send(Ok(()));
+        let _server_caller_guard = server_caller_guard;
+        std::future::pending::<()>().await;
     });
 
     let (client, _sh) = initiator(client_link)
@@ -542,7 +554,7 @@ where
         .await
         .map_err(|e| format!("client handshake: {e}"))?;
 
-    server_task
+    server_ready_rx
         .await
         .map_err(|e| format!("server task join: {e}"))??;
 
