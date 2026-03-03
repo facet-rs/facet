@@ -96,10 +96,23 @@ swift-subject-cov-html:
         -instr-profile=.coverage/swift-subject/subject.profdata \
         -format=html -output-dir .coverage/swift-subject/html
 
+examples:
+    @set -eu
+    @for path in rust-examples/examples/*.rs; do \
+      example="$${path##*/}"; \
+      example="$${example%.rs}"; \
+      echo "[examples] running $$example"; \
+      cargo run -p rust-examples --example "$$example"; \
+    done
+
 all *args:
-    just rust {{ quote(args) }}
-    just ts {{ quote(args) }}
-    just swift {{ quote(args) }}
+    cargo nextest run {{ args }}
+    just examples
+
+interop-all *args:
+    just rust {{ args }}
+    just ts {{ args }}
+    just swift {{ args }}
 
 wasm-build:
     wasm-pack build --target web rust/wasm-browser-tests --out-dir ../../typescript/tests/browser-wasm/pkg
@@ -127,7 +140,7 @@ fuzz-targets:
     @echo "Use: just fuzz [target|all] [seconds?]"
 
 fuzz-build target="all":
-    @case "{{target}}" in \
+    @case "{{ target }}" in \
       all) \
         cargo afl build --manifest-path fuzz/roam-shm-afl/Cargo.toml --bin framing_peek; \
         cargo afl build --manifest-path fuzz/roam-shm-afl/Cargo.toml --bin shm_link_roundtrip; \
@@ -135,20 +148,20 @@ fuzz-build target="all":
         cargo afl build --manifest-path fuzz/roam-afl/Cargo.toml --bin testbed_mem_session; \
         ;; \
       framing_peek|shm_link_roundtrip) \
-        cargo afl build --manifest-path fuzz/roam-shm-afl/Cargo.toml --bin "{{target}}"; \
+        cargo afl build --manifest-path fuzz/roam-shm-afl/Cargo.toml --bin "{{ target }}"; \
         ;; \
       protocol_decode|testbed_mem_session) \
-        cargo afl build --manifest-path fuzz/roam-afl/Cargo.toml --bin "{{target}}"; \
+        cargo afl build --manifest-path fuzz/roam-afl/Cargo.toml --bin "{{ target }}"; \
         ;; \
       *) \
-        echo "Unknown target: {{target}}" >&2; \
+        echo "Unknown target: {{ target }}" >&2; \
         just fuzz-targets; \
         exit 1; \
         ;; \
     esac
 
 fuzz-run target="all" seconds="":
-    just fuzz-build "{{target}}"
+    just fuzz-build "{{ target }}"
     @mkdir -p \
       fuzz/roam-shm-afl/out/framing_peek \
       fuzz/roam-shm-afl/out/shm_link_roundtrip \
@@ -168,54 +181,54 @@ fuzz-run target="all" seconds="":
         *) exit "$status" ;; \
       esac; \
     }; \
-    case "{{target}}" in \
+    case "{{ target }}" in \
       all) \
-        run_fuzz "{{seconds}}" fuzz/roam-shm-afl/in/framing_peek fuzz/roam-shm-afl/out/framing_peek fuzz/roam-shm-afl/target/debug/framing_peek; \
-        run_fuzz "{{seconds}}" fuzz/roam-shm-afl/in/shm_link_roundtrip fuzz/roam-shm-afl/out/shm_link_roundtrip fuzz/roam-shm-afl/target/debug/shm_link_roundtrip; \
-        run_fuzz "{{seconds}}" fuzz/roam-afl/in/protocol_decode fuzz/roam-afl/out/protocol_decode fuzz/roam-afl/target/debug/protocol_decode; \
-        run_fuzz "{{seconds}}" fuzz/roam-afl/in/testbed_mem_session fuzz/roam-afl/out/testbed_mem_session fuzz/roam-afl/target/debug/testbed_mem_session; \
+        run_fuzz "{{ seconds }}" fuzz/roam-shm-afl/in/framing_peek fuzz/roam-shm-afl/out/framing_peek fuzz/roam-shm-afl/target/debug/framing_peek; \
+        run_fuzz "{{ seconds }}" fuzz/roam-shm-afl/in/shm_link_roundtrip fuzz/roam-shm-afl/out/shm_link_roundtrip fuzz/roam-shm-afl/target/debug/shm_link_roundtrip; \
+        run_fuzz "{{ seconds }}" fuzz/roam-afl/in/protocol_decode fuzz/roam-afl/out/protocol_decode fuzz/roam-afl/target/debug/protocol_decode; \
+        run_fuzz "{{ seconds }}" fuzz/roam-afl/in/testbed_mem_session fuzz/roam-afl/out/testbed_mem_session fuzz/roam-afl/target/debug/testbed_mem_session; \
         ;; \
       framing_peek) \
-        run_fuzz "{{seconds}}" fuzz/roam-shm-afl/in/framing_peek fuzz/roam-shm-afl/out/framing_peek fuzz/roam-shm-afl/target/debug/framing_peek; \
+        run_fuzz "{{ seconds }}" fuzz/roam-shm-afl/in/framing_peek fuzz/roam-shm-afl/out/framing_peek fuzz/roam-shm-afl/target/debug/framing_peek; \
         ;; \
       shm_link_roundtrip) \
-        run_fuzz "{{seconds}}" fuzz/roam-shm-afl/in/shm_link_roundtrip fuzz/roam-shm-afl/out/shm_link_roundtrip fuzz/roam-shm-afl/target/debug/shm_link_roundtrip; \
+        run_fuzz "{{ seconds }}" fuzz/roam-shm-afl/in/shm_link_roundtrip fuzz/roam-shm-afl/out/shm_link_roundtrip fuzz/roam-shm-afl/target/debug/shm_link_roundtrip; \
         ;; \
       protocol_decode) \
-        run_fuzz "{{seconds}}" fuzz/roam-afl/in/protocol_decode fuzz/roam-afl/out/protocol_decode fuzz/roam-afl/target/debug/protocol_decode; \
+        run_fuzz "{{ seconds }}" fuzz/roam-afl/in/protocol_decode fuzz/roam-afl/out/protocol_decode fuzz/roam-afl/target/debug/protocol_decode; \
         ;; \
       testbed_mem_session) \
-        run_fuzz "{{seconds}}" fuzz/roam-afl/in/testbed_mem_session fuzz/roam-afl/out/testbed_mem_session fuzz/roam-afl/target/debug/testbed_mem_session; \
+        run_fuzz "{{ seconds }}" fuzz/roam-afl/in/testbed_mem_session fuzz/roam-afl/out/testbed_mem_session fuzz/roam-afl/target/debug/testbed_mem_session; \
         ;; \
       *) \
-        echo "Unknown target: {{target}}" >&2; \
+        echo "Unknown target: {{ target }}" >&2; \
         just fuzz-targets; \
         exit 1; \
         ;; \
     esac
 
 fuzz target="all" seconds="":
-    just fuzz-run "{{target}}" "{{seconds}}"
+    just fuzz-run "{{ target }}" "{{ seconds }}"
 
 fuzz-asan-build target="all":
-    AFL_USE_ASAN=1 just fuzz-build "{{target}}"
+    AFL_USE_ASAN=1 just fuzz-build "{{ target }}"
 
 fuzz-asan-run target="all" seconds="":
-    AFL_USE_ASAN=1 ASAN_OPTIONS=abort_on_error=1:symbolize=1:detect_leaks=0 just fuzz-run "{{target}}" "{{seconds}}"
+    AFL_USE_ASAN=1 ASAN_OPTIONS=abort_on_error=1:symbolize=1:detect_leaks=0 just fuzz-run "{{ target }}" "{{ seconds }}"
 
 fuzz-asan target="all" seconds="":
-    just fuzz-asan-build "{{target}}"
-    just fuzz-asan-run "{{target}}" "{{seconds}}"
+    just fuzz-asan-build "{{ target }}"
+    just fuzz-asan-run "{{ target }}" "{{ seconds }}"
 
 fuzz-ubsan-build target="all":
-    AFL_USE_UBSAN=1 just fuzz-build "{{target}}"
+    AFL_USE_UBSAN=1 just fuzz-build "{{ target }}"
 
 fuzz-ubsan-run target="all" seconds="":
-    AFL_USE_UBSAN=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 just fuzz-run "{{target}}" "{{seconds}}"
+    AFL_USE_UBSAN=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 just fuzz-run "{{ target }}" "{{ seconds }}"
 
 fuzz-ubsan target="all" seconds="":
-    just fuzz-ubsan-build "{{target}}"
-    just fuzz-ubsan-run "{{target}}" "{{seconds}}"
+    just fuzz-ubsan-build "{{ target }}"
+    just fuzz-ubsan-run "{{ target }}" "{{ seconds }}"
 
 fuzz-sand-build target="all":
     @build_one() { \
@@ -244,7 +257,7 @@ fuzz-sand-build target="all":
       AFL_USE_UBSAN=1 AFL_LLVM_ONLY_FSRV=1 cargo afl build --manifest-path "$manifest" --bin "$t"; \
       cp "$bin_path" "$out_dir/ubsan"; \
     }; \
-    case "{{target}}" in \
+    case "{{ target }}" in \
       all) \
         build_one framing_peek; \
         build_one shm_link_roundtrip; \
@@ -252,7 +265,7 @@ fuzz-sand-build target="all":
         build_one testbed_mem_session; \
         ;; \
       *) \
-        build_one "{{target}}"; \
+        build_one "{{ target }}"; \
         ;; \
     esac
 
@@ -273,8 +286,8 @@ fuzz-sand-run target="all" seconds="":
       bin_dir="fuzz/.sand/$t"; \
       mkdir -p "$out_dir"; \
       trap 'exit 130' INT TERM; \
-      if [ -n "{{seconds}}" ]; then \
-        cargo afl fuzz -V "{{seconds}}" -i "$in_dir" -o "$out_dir" -w "$bin_dir/asan" -w "$bin_dir/ubsan" -- "$bin_dir/native"; \
+      if [ -n "{{ seconds }}" ]; then \
+        cargo afl fuzz -V "{{ seconds }}" -i "$in_dir" -o "$out_dir" -w "$bin_dir/asan" -w "$bin_dir/ubsan" -- "$bin_dir/native"; \
       else \
         cargo afl fuzz -i "$in_dir" -o "$out_dir" -w "$bin_dir/asan" -w "$bin_dir/ubsan" -- "$bin_dir/native"; \
       fi; \
@@ -284,7 +297,7 @@ fuzz-sand-run target="all" seconds="":
         *) exit "$status" ;; \
       esac; \
     }; \
-    case "{{target}}" in \
+    case "{{ target }}" in \
       all) \
         run_one framing_peek; \
         run_one shm_link_roundtrip; \
@@ -292,9 +305,9 @@ fuzz-sand-run target="all" seconds="":
         run_one testbed_mem_session; \
         ;; \
       *) \
-        run_one "{{target}}"; \
+        run_one "{{ target }}"; \
         ;; \
     esac
 
 fuzz-sand target="all" seconds="":
-    just fuzz-sand-run "{{target}}" "{{seconds}}"
+    just fuzz-sand-run "{{ target }}" "{{ seconds }}"
