@@ -1,6 +1,6 @@
 [package]
 name = "spec-proto"
-version = "7.0.0-alpha.1"
+version = "7.0.0-alpha.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = false
