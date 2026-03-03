@@ -83,15 +83,17 @@ where
             .await;
     }
 }
-#[doc = "Client for the `Ping` service.\n\nGeneric over any [`Caller`](:: roam::Caller) implementation."]
+#[doc = "Client for the `Ping` service.\n\nStores a type-erased [`Caller`](:: roam::Caller) implementation."]
 #[derive(Clone)]
-pub struct PingClient<C: ::roam::Caller = ::roam::DriverCaller> {
-    caller: C,
+pub struct PingClient {
+    caller: ::roam::ErasedCaller,
 }
-impl<C: ::roam::Caller> PingClient<C> {
+impl PingClient {
     #[doc = r" Create a new client wrapping the given caller."]
-    pub fn new(caller: C) -> Self {
-        Self { caller }
+    pub fn new(caller: impl ::roam::Caller) -> Self {
+        Self {
+            caller: ::roam::ErasedCaller::new(caller),
+        }
     }
     pub async fn ping(&self) -> Result<u64, ::roam::RoamError> {
         let method_id = ping_service_descriptor().methods[0usize].id;
@@ -103,18 +105,20 @@ impl<C: ::roam::Caller> PingClient<C> {
             channels,
             metadata: Default::default(),
         };
-        let response = self.caller.call(req).await.map_err(|e| match e {
-            ::roam::RoamError::UnknownMethod => {
-                ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
-            }
-            ::roam::RoamError::InvalidPayload => {
-                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
-            }
-            ::roam::RoamError::Cancelled => {
-                ::roam::RoamError::<::core::convert::Infallible>::Cancelled
-            }
-            ::roam::RoamError::User(never) => match never {},
-        })?;
+        let response = ::roam::Caller::call(&self.caller, req)
+            .await
+            .map_err(|e| match e {
+                ::roam::RoamError::UnknownMethod => {
+                    ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
+                }
+                ::roam::RoamError::InvalidPayload => {
+                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+                }
+                ::roam::RoamError::Cancelled => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                }
+                ::roam::RoamError::User(never) => match never {},
+            })?;
         let ret_bytes = match &response.ret {
             ::roam::Payload::Incoming(bytes) => bytes,
             _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
@@ -127,6 +131,6 @@ impl<C: ::roam::Caller> PingClient<C> {
 }
 impl From<::roam::DriverCaller> for PingClient {
     fn from(caller: ::roam::DriverCaller) -> Self {
-        Self { caller }
+        Self::new(caller)
     }
 }

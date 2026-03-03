@@ -31,6 +31,7 @@ pub use roam_types::{
     // Types
     ConnectionId,
     ConnectionSettings,
+    ErasedCaller,
     Handler,
     Link,
     LinkRx,

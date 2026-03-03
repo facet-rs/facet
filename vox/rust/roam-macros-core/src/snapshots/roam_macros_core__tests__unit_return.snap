@@ -83,15 +83,17 @@ where
             .await;
     }
 }
-#[doc = "Client for the `Notifier` service.\n\nGeneric over any [`Caller`](:: roam::Caller) implementation."]
+#[doc = "Client for the `Notifier` service.\n\nStores a type-erased [`Caller`](:: roam::Caller) implementation."]
 #[derive(Clone)]
-pub struct NotifierClient<C: ::roam::Caller = ::roam::DriverCaller> {
-    caller: C,
+pub struct NotifierClient {
+    caller: ::roam::ErasedCaller,
 }
-impl<C: ::roam::Caller> NotifierClient<C> {
+impl NotifierClient {
     #[doc = r" Create a new client wrapping the given caller."]
-    pub fn new(caller: C) -> Self {
-        Self { caller }
+    pub fn new(caller: impl ::roam::Caller) -> Self {
+        Self {
+            caller: ::roam::ErasedCaller::new(caller),
+        }
     }
     pub async fn notify(&self, msg: String) -> Result<(), ::roam::RoamError> {
         let method_id = notifier_service_descriptor().methods[0usize].id;
@@ -103,18 +105,20 @@ impl<C: ::roam::Caller> NotifierClient<C> {
             channels,
             metadata: Default::default(),
         };
-        let response = self.caller.call(req).await.map_err(|e| match e {
-            ::roam::RoamError::UnknownMethod => {
-                ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
-            }
-            ::roam::RoamError::InvalidPayload => {
-                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
-            }
-            ::roam::RoamError::Cancelled => {
-                ::roam::RoamError::<::core::convert::Infallible>::Cancelled
-            }
-            ::roam::RoamError::User(never) => match never {},
-        })?;
+        let response = ::roam::Caller::call(&self.caller, req)
+            .await
+            .map_err(|e| match e {
+                ::roam::RoamError::UnknownMethod => {
+                    ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
+                }
+                ::roam::RoamError::InvalidPayload => {
+                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+                }
+                ::roam::RoamError::Cancelled => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                }
+                ::roam::RoamError::User(never) => match never {},
+            })?;
         let ret_bytes = match &response.ret {
             ::roam::Payload::Incoming(bytes) => bytes,
             _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
@@ -127,6 +131,6 @@ impl<C: ::roam::Caller> NotifierClient<C> {
 }
 impl From<::roam::DriverCaller> for NotifierClient {
     fn from(caller: ::roam::DriverCaller) -> Self {
-        Self { caller }
+        Self::new(caller)
     }
 }

@@ -86,15 +86,17 @@ where
             .await;
     }
 }
-#[doc = "Client for the `Hasher` service.\n\nGeneric over any [`Caller`](:: roam::Caller) implementation."]
+#[doc = "Client for the `Hasher` service.\n\nStores a type-erased [`Caller`](:: roam::Caller) implementation."]
 #[derive(Clone)]
-pub struct HasherClient<C: ::roam::Caller = ::roam::DriverCaller> {
-    caller: C,
+pub struct HasherClient {
+    caller: ::roam::ErasedCaller,
 }
-impl<C: ::roam::Caller> HasherClient<C> {
+impl HasherClient {
     #[doc = r" Create a new client wrapping the given caller."]
-    pub fn new(caller: C) -> Self {
-        Self { caller }
+    pub fn new(caller: impl ::roam::Caller) -> Self {
+        Self {
+            caller: ::roam::ErasedCaller::new(caller),
+        }
     }
     pub async fn hash(
         &self,
@@ -109,18 +111,20 @@ impl<C: ::roam::Caller> HasherClient<C> {
             channels,
             metadata: Default::default(),
         };
-        let response = self.caller.call(req).await.map_err(|e| match e {
-            ::roam::RoamError::UnknownMethod => {
-                ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
-            }
-            ::roam::RoamError::InvalidPayload => {
-                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
-            }
-            ::roam::RoamError::Cancelled => {
-                ::roam::RoamError::<::core::convert::Infallible>::Cancelled
-            }
-            ::roam::RoamError::User(never) => match never {},
-        })?;
+        let response = ::roam::Caller::call(&self.caller, req)
+            .await
+            .map_err(|e| match e {
+                ::roam::RoamError::UnknownMethod => {
+                    ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
+                }
+                ::roam::RoamError::InvalidPayload => {
+                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+                }
+                ::roam::RoamError::Cancelled => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                }
+                ::roam::RoamError::User(never) => match never {},
+            })?;
         response.try_repack(|resp, _bytes| {
             let ret_bytes = match &resp.ret {
                 ::roam::Payload::Incoming(bytes) => bytes,
@@ -137,6 +141,6 @@ impl<C: ::roam::Caller> HasherClient<C> {
 }
 impl From<::roam::DriverCaller> for HasherClient {
     fn from(caller: ::roam::DriverCaller) -> Self {
-        Self { caller }
+        Self::new(caller)
     }
 }

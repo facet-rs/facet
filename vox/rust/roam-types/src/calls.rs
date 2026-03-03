@@ -1,3 +1,5 @@
+use std::{future::Future, pin::Pin, sync::Arc};
+
 use crate::{MaybeSend, MaybeSync, Metadata, RequestCall, RequestResponse, RoamError, SelfRef};
 
 // As a recap, a service defined like so:
@@ -168,7 +170,7 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
 /// invokes the appropriate typed [`Call`]-based method on the concrete server type.
 /// A cloneable handle to a connection, handed out by the session driver.
 ///
-/// Generated clients hold a `C: Caller` and use it to send calls. The caller
+/// Generated clients hold an [`ErasedCaller`] and use it to send calls. The caller
 /// serializes the outgoing [`RequestCall`] (with borrowed args), registers a
 /// pending response slot, and awaits the response from the peer.
 pub trait Caller: Clone + MaybeSend + MaybeSync + 'static {
@@ -186,6 +188,59 @@ pub trait Caller: Clone + MaybeSend + MaybeSync + 'static {
     #[cfg(not(target_arch = "wasm32"))]
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
         None
+    }
+}
+
+trait ErasedCallerDyn: MaybeSend + MaybeSync + 'static {
+    fn call<'a>(
+        &'a self,
+        call: RequestCall<'a>,
+    ) -> Pin<Box<dyn Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + 'a>>;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder>;
+}
+
+impl<C: Caller> ErasedCallerDyn for C {
+    fn call<'a>(
+        &'a self,
+        call: RequestCall<'a>,
+    ) -> Pin<Box<dyn Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + 'a>>
+    {
+        Box::pin(Caller::call(self, call))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
+        Caller::channel_binder(self)
+    }
+}
+
+/// Type-erased [`Caller`] wrapper used by generated clients.
+#[derive(Clone)]
+pub struct ErasedCaller {
+    inner: Arc<dyn ErasedCallerDyn>,
+}
+
+impl ErasedCaller {
+    pub fn new<C: Caller>(caller: C) -> Self {
+        Self {
+            inner: Arc::new(caller),
+        }
+    }
+}
+
+impl Caller for ErasedCaller {
+    async fn call<'a>(
+        &self,
+        call: RequestCall<'a>,
+    ) -> Result<SelfRef<RequestResponse<'static>>, RoamError> {
+        self.inner.call(call).await
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
+        self.inner.channel_binder()
     }
 }
 

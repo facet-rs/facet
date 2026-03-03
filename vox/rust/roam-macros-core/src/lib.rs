@@ -498,7 +498,7 @@ fn generate_client(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
 
     let client_doc = format!(
         "Client for the `{service_name}` service.\n\n\
-        Generic over any [`Caller`]({roam}::Caller) implementation.",
+        Stores a type-erased [`Caller`]({roam}::Caller) implementation.",
     );
 
     let client_methods: Vec<TokenStream2> = parsed
@@ -510,14 +510,16 @@ fn generate_client(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
     quote! {
         #[doc = #client_doc]
         #[derive(Clone)]
-        pub struct #client_name<C: #roam::Caller = #roam::DriverCaller> {
-            caller: C,
+        pub struct #client_name {
+            caller: #roam::ErasedCaller,
         }
 
-        impl<C: #roam::Caller> #client_name<C> {
+        impl #client_name {
             /// Create a new client wrapping the given caller.
-            pub fn new(caller: C) -> Self {
-                Self { caller }
+            pub fn new(caller: impl #roam::Caller) -> Self {
+                Self {
+                    caller: #roam::ErasedCaller::new(caller),
+                }
             }
 
             #(#client_methods)*
@@ -525,7 +527,7 @@ fn generate_client(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
 
         impl From<#roam::DriverCaller> for #client_name {
             fn from(caller: #roam::DriverCaller) -> Self {
-                Self { caller }
+                Self::new(caller)
             }
         }
     }
@@ -628,7 +630,7 @@ fn generate_client_method(
             quote! { let mut args = #args_tuple; },
             quote! {
                 #[cfg(not(target_arch = "wasm32"))]
-                let channels = if let Some(binder) = self.caller.channel_binder() {
+                let channels = if let Some(binder) = #roam::Caller::channel_binder(&self.caller) {
                     let plan = #roam::RpcPlan::for_type::<#args_tuple_type>();
                     // SAFETY: args is a valid, initialized value of the args tuple type
                     // and we have exclusive access to it via &mut.
@@ -667,7 +669,7 @@ fn generate_client_method(
                     channels,
                     metadata: Default::default(),
                 };
-                let response = self.caller.call(req).await.map_err(|e| match e {
+                let response = #roam::Caller::call(&self.caller, req).await.map_err(|e| match e {
                     #roam::RoamError::UnknownMethod => #roam::RoamError::<#err_ty>::UnknownMethod,
                     #roam::RoamError::InvalidPayload => #roam::RoamError::<#err_ty>::InvalidPayload,
                     #roam::RoamError::Cancelled => #roam::RoamError::<#err_ty>::Cancelled,
@@ -699,7 +701,7 @@ fn generate_client_method(
                     channels,
                     metadata: Default::default(),
                 };
-                let response = self.caller.call(req).await.map_err(|e| match e {
+                let response = #roam::Caller::call(&self.caller, req).await.map_err(|e| match e {
                     #roam::RoamError::UnknownMethod => #roam::RoamError::<#err_ty>::UnknownMethod,
                     #roam::RoamError::InvalidPayload => #roam::RoamError::<#err_ty>::InvalidPayload,
                     #roam::RoamError::Cancelled => #roam::RoamError::<#err_ty>::Cancelled,

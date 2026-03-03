@@ -90,7 +90,7 @@ pub async fn run_tests(ws_url: &str) -> TestResults {
     console_log!("Connected! Performing handshake...");
 
     let conduit = BareConduit::<MessageFamily, _>::new(link);
-    let (client, _sh) = match initiator(conduit).establish::<TestbedClient<_>>(()).await {
+    let (client, _sh) = match initiator(conduit).establish::<TestbedClient>(()).await {
         Ok(result) => result,
         Err(e) => {
             console_error!("Handshake failed: {e:?}");
@@ -121,10 +121,7 @@ pub async fn run_tests(ws_url: &str) -> TestResults {
     TestResults { results }
 }
 
-async fn run_echo_tests(
-    client: &TestbedClient<impl roam_types::Caller>,
-    results: &mut Vec<TestResult>,
-) {
+async fn run_echo_tests(client: &TestbedClient, results: &mut Vec<TestResult>) {
     // Test: echo
     console_log!("Testing echo...");
     match client.echo("Hello from Rust Wasm!".into()).await {
@@ -183,10 +180,7 @@ async fn run_echo_tests(
     }
 }
 
-async fn run_complex_tests(
-    client: &TestbedClient<impl roam_types::Caller>,
-    results: &mut Vec<TestResult>,
-) {
+async fn run_complex_tests(client: &TestbedClient, results: &mut Vec<TestResult>) {
     // Test: echo_point
     console_log!("Testing echo_point...");
     let point = Point { x: 42, y: -17 };
@@ -479,10 +473,7 @@ async fn run_complex_tests(
     }
 }
 
-async fn run_fallible_tests(
-    client: &TestbedClient<impl roam_types::Caller>,
-    results: &mut Vec<TestResult>,
-) {
+async fn run_fallible_tests(client: &TestbedClient, results: &mut Vec<TestResult>) {
     // Test: divide (success)
     console_log!("Testing divide (success)...");
     match client.divide(10, 2).await {

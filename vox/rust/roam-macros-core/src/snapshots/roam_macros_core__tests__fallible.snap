@@ -85,15 +85,17 @@ where
             .await;
     }
 }
-#[doc = "Client for the `Calc` service.\n\nGeneric over any [`Caller`](:: roam::Caller) implementation."]
+#[doc = "Client for the `Calc` service.\n\nStores a type-erased [`Caller`](:: roam::Caller) implementation."]
 #[derive(Clone)]
-pub struct CalcClient<C: ::roam::Caller = ::roam::DriverCaller> {
-    caller: C,
+pub struct CalcClient {
+    caller: ::roam::ErasedCaller,
 }
-impl<C: ::roam::Caller> CalcClient<C> {
+impl CalcClient {
     #[doc = r" Create a new client wrapping the given caller."]
-    pub fn new(caller: C) -> Self {
-        Self { caller }
+    pub fn new(caller: impl ::roam::Caller) -> Self {
+        Self {
+            caller: ::roam::ErasedCaller::new(caller),
+        }
     }
     pub async fn div(&self, a: f64, b: f64) -> Result<f64, ::roam::RoamError<DivError>> {
         let method_id = calc_service_descriptor().methods[0usize].id;
@@ -105,12 +107,14 @@ impl<C: ::roam::Caller> CalcClient<C> {
             channels,
             metadata: Default::default(),
         };
-        let response = self.caller.call(req).await.map_err(|e| match e {
-            ::roam::RoamError::UnknownMethod => ::roam::RoamError::<DivError>::UnknownMethod,
-            ::roam::RoamError::InvalidPayload => ::roam::RoamError::<DivError>::InvalidPayload,
-            ::roam::RoamError::Cancelled => ::roam::RoamError::<DivError>::Cancelled,
-            ::roam::RoamError::User(never) => match never {},
-        })?;
+        let response = ::roam::Caller::call(&self.caller, req)
+            .await
+            .map_err(|e| match e {
+                ::roam::RoamError::UnknownMethod => ::roam::RoamError::<DivError>::UnknownMethod,
+                ::roam::RoamError::InvalidPayload => ::roam::RoamError::<DivError>::InvalidPayload,
+                ::roam::RoamError::Cancelled => ::roam::RoamError::<DivError>::Cancelled,
+                ::roam::RoamError::User(never) => match never {},
+            })?;
         let ret_bytes = match &response.ret {
             ::roam::Payload::Incoming(bytes) => bytes,
             _ => return Err(::roam::RoamError::<DivError>::InvalidPayload),
@@ -123,6 +127,6 @@ impl<C: ::roam::Caller> CalcClient<C> {
 }
 impl From<::roam::DriverCaller> for CalcClient {
     fn from(caller: ::roam::DriverCaller) -> Self {
-        Self { caller }
+        Self::new(caller)
     }
 }

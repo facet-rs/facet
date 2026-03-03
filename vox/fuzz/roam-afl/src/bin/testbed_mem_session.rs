@@ -3,9 +3,7 @@ use std::time::Duration;
 
 use afl::fuzz;
 use roam::Call;
-use roam_core::{
-    BareConduit, DriverCaller, DriverReplySink, acceptor, initiator, memory_link_pair,
-};
+use roam_core::{BareConduit, DriverReplySink, acceptor, initiator, memory_link_pair};
 use roam_types::{Handler, MessageFamily, RequestCall, SelfRef};
 use spec_proto::{
     Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape, TestbedClient,
@@ -211,7 +209,7 @@ impl<'a> Cursor<'a> {
     }
 }
 
-async fn setup_client() -> Option<TestbedClient<DriverCaller>> {
+async fn setup_client() -> Option<TestbedClient> {
     let (client_link, server_link) = memory_link_pair(64 * 1024);
 
     let server_conduit: BareConduit<MessageFamily, _> = BareConduit::new(server_link);
@@ -227,7 +225,7 @@ async fn setup_client() -> Option<TestbedClient<DriverCaller>> {
     });
 
     let Ok((client, _)) = initiator(client_conduit)
-        .establish::<TestbedClient<DriverCaller>>(NoopHandler)
+        .establish::<TestbedClient>(NoopHandler)
         .await
     else {
         return None;

@@ -52,7 +52,7 @@ mod roam_zerocopy_bench {
         }
     }
 
-    pub async fn setup_mem() -> ZerocopyClient<roam_core::DriverCaller> {
+    pub async fn setup_mem() -> ZerocopyClient {
         let (a, b) = memory_link_pair(64);
 
         let server_task = moire::task::spawn(
@@ -66,7 +66,7 @@ mod roam_zerocopy_bench {
         );
 
         let (client, _sh) = initiator(a)
-            .establish::<ZerocopyClient<_>>(())
+            .establish::<ZerocopyClient>(())
             .await
             .expect("client handshake failed");
 
@@ -75,7 +75,7 @@ mod roam_zerocopy_bench {
         client
     }
 
-    pub async fn setup_shm() -> ZerocopyClient<roam_core::DriverCaller> {
+    pub async fn setup_shm() -> ZerocopyClient {
         let classes = [
             SizeClassConfig {
                 slot_size: 4096,
@@ -127,7 +127,7 @@ mod roam_zerocopy_bench {
         );
 
         let (client, _sh) = initiator(a)
-            .establish::<ZerocopyClient<_>>(())
+            .establish::<ZerocopyClient>(())
             .await
             .expect("client handshake failed");
 
@@ -136,7 +136,7 @@ mod roam_zerocopy_bench {
         client
     }
 
-    pub async fn setup_tcp() -> ZerocopyClient<roam_core::DriverCaller> {
+    pub async fn setup_tcp() -> ZerocopyClient {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -156,7 +156,7 @@ mod roam_zerocopy_bench {
         stream.set_nodelay(true).unwrap();
 
         let (client, _sh) = initiator(StreamLink::tcp(stream))
-            .establish::<ZerocopyClient<_>>(())
+            .establish::<ZerocopyClient>(())
             .await
             .expect("client handshake failed");
 
@@ -254,7 +254,7 @@ mod roam_bench {
         }
     }
 
-    pub async fn setup() -> BenchClient<roam_core::DriverCaller> {
+    pub async fn setup() -> BenchClient {
         let (a, b) = memory_link_pair(64);
 
         let server_task = moire::task::spawn(
@@ -268,7 +268,7 @@ mod roam_bench {
         );
 
         let (client, _sh) = initiator(a)
-            .establish::<BenchClient<_>>(())
+            .establish::<BenchClient>(())
             .await
             .expect("client handshake failed");
 
@@ -341,7 +341,7 @@ mod roam_shm_bench {
 
     use super::roam_bench::{BenchClient, BenchDispatcher, Handler};
 
-    pub async fn setup() -> BenchClient<roam_core::DriverCaller> {
+    pub async fn setup() -> BenchClient {
         let classes = [
             SizeClassConfig {
                 slot_size: 4096,
@@ -386,7 +386,7 @@ mod roam_shm_bench {
         );
 
         let (client, _sh) = initiator(a)
-            .establish::<BenchClient<_>>(())
+            .establish::<BenchClient>(())
             .await
             .expect("client handshake failed");
 
@@ -456,7 +456,7 @@ mod roam_tcp_bench {
 
     use super::roam_bench::{BenchClient, BenchDispatcher, Handler};
 
-    pub async fn setup() -> BenchClient<roam_core::DriverCaller> {
+    pub async fn setup() -> BenchClient {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -476,7 +476,7 @@ mod roam_tcp_bench {
         stream.set_nodelay(true).unwrap();
 
         let (client, _sh) = initiator(StreamLink::tcp(stream))
-            .establish::<BenchClient<_>>(())
+            .establish::<BenchClient>(())
             .await
             .expect("client handshake failed");
 

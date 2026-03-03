@@ -162,15 +162,17 @@ where
             .await;
     }
 }
-#[doc = "Client for the `WordLab` service.\n\nGeneric over any [`Caller`](:: roam::Caller) implementation."]
+#[doc = "Client for the `WordLab` service.\n\nStores a type-erased [`Caller`](:: roam::Caller) implementation."]
 #[derive(Clone)]
-pub struct WordLabClient<C: ::roam::Caller = ::roam::DriverCaller> {
-    caller: C,
+pub struct WordLabClient {
+    caller: ::roam::ErasedCaller,
 }
-impl<C: ::roam::Caller> WordLabClient<C> {
+impl WordLabClient {
     #[doc = r" Create a new client wrapping the given caller."]
-    pub fn new(caller: C) -> Self {
-        Self { caller }
+    pub fn new(caller: impl ::roam::Caller) -> Self {
+        Self {
+            caller: ::roam::ErasedCaller::new(caller),
+        }
     }
     pub async fn is_short(&self, word: &str) -> Result<bool, ::roam::RoamError> {
         let method_id = word_lab_service_descriptor().methods[0usize].id;
@@ -182,18 +184,20 @@ impl<C: ::roam::Caller> WordLabClient<C> {
             channels,
             metadata: Default::default(),
         };
-        let response = self.caller.call(req).await.map_err(|e| match e {
-            ::roam::RoamError::UnknownMethod => {
-                ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
-            }
-            ::roam::RoamError::InvalidPayload => {
-                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
-            }
-            ::roam::RoamError::Cancelled => {
-                ::roam::RoamError::<::core::convert::Infallible>::Cancelled
-            }
-            ::roam::RoamError::User(never) => match never {},
-        })?;
+        let response = ::roam::Caller::call(&self.caller, req)
+            .await
+            .map_err(|e| match e {
+                ::roam::RoamError::UnknownMethod => {
+                    ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
+                }
+                ::roam::RoamError::InvalidPayload => {
+                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+                }
+                ::roam::RoamError::Cancelled => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                }
+                ::roam::RoamError::User(never) => match never {},
+            })?;
         let ret_bytes = match &response.ret {
             ::roam::Payload::Incoming(bytes) => bytes,
             _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
@@ -216,18 +220,20 @@ impl<C: ::roam::Caller> WordLabClient<C> {
             channels,
             metadata: Default::default(),
         };
-        let response = self.caller.call(req).await.map_err(|e| match e {
-            ::roam::RoamError::UnknownMethod => {
-                ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
-            }
-            ::roam::RoamError::InvalidPayload => {
-                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
-            }
-            ::roam::RoamError::Cancelled => {
-                ::roam::RoamError::<::core::convert::Infallible>::Cancelled
-            }
-            ::roam::RoamError::User(never) => match never {},
-        })?;
+        let response = ::roam::Caller::call(&self.caller, req)
+            .await
+            .map_err(|e| match e {
+                ::roam::RoamError::UnknownMethod => {
+                    ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
+                }
+                ::roam::RoamError::InvalidPayload => {
+                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+                }
+                ::roam::RoamError::Cancelled => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                }
+                ::roam::RoamError::User(never) => match never {},
+            })?;
         response.try_repack(|resp, _bytes| {
             let ret_bytes = match &resp.ret {
                 ::roam::Payload::Incoming(bytes) => bytes,
@@ -250,7 +256,7 @@ impl<C: ::roam::Caller> WordLabClient<C> {
         let method_id = word_lab_service_descriptor().methods[2usize].id;
         let mut args = (prefix, input, output);
         #[cfg(not(target_arch = "wasm32"))]
-        let channels = if let Some(binder) = self.caller.channel_binder() {
+        let channels = if let Some(binder) = ::roam::Caller::channel_binder(&self.caller) {
             let plan = ::roam::RpcPlan::for_type::<(&'static str, Rx<String>, Tx<String>)>();
             #[allow(unsafe_code)]
             unsafe {
@@ -267,18 +273,20 @@ impl<C: ::roam::Caller> WordLabClient<C> {
             channels,
             metadata: Default::default(),
         };
-        let response = self.caller.call(req).await.map_err(|e| match e {
-            ::roam::RoamError::UnknownMethod => {
-                ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
-            }
-            ::roam::RoamError::InvalidPayload => {
-                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
-            }
-            ::roam::RoamError::Cancelled => {
-                ::roam::RoamError::<::core::convert::Infallible>::Cancelled
-            }
-            ::roam::RoamError::User(never) => match never {},
-        })?;
+        let response = ::roam::Caller::call(&self.caller, req)
+            .await
+            .map_err(|e| match e {
+                ::roam::RoamError::UnknownMethod => {
+                    ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
+                }
+                ::roam::RoamError::InvalidPayload => {
+                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+                }
+                ::roam::RoamError::Cancelled => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                }
+                ::roam::RoamError::User(never) => match never {},
+            })?;
         let ret_bytes = match &response.ret {
             ::roam::Payload::Incoming(bytes) => bytes,
             _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
@@ -291,6 +299,6 @@ impl<C: ::roam::Caller> WordLabClient<C> {
 }
 impl From<::roam::DriverCaller> for WordLabClient {
     fn from(caller: ::roam::DriverCaller) -> Self {
-        Self { caller }
+        Self::new(caller)
     }
 }

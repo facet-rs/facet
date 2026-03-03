@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::os::fd::{AsRawFd, IntoRawFd};
 
 use roam::{Rx, Tx};
-use roam_core::{DriverCaller, DriverReplySink, acceptor, initiator, memory_link_pair};
+use roam_core::{DriverReplySink, acceptor, initiator, memory_link_pair};
 use roam_shm::HostHub;
 use roam_shm::ShmLink;
 use roam_shm::bootstrap::{BootstrapStatus, decode_request, encode_request};
@@ -415,7 +415,7 @@ fn keep_tempdir_alive(dir: tempfile::TempDir) {
 
 /// Listen on a random TCP port, spawn the subject (which connects to us),
 /// complete the roam handshake as acceptor, and return a ready `TestbedClient`.
-pub async fn accept_subject() -> Result<(TestbedClient<DriverCaller>, Child), String> {
+pub async fn accept_subject() -> Result<(TestbedClient, Child), String> {
     let spec = SubjectSpec {
         language: SubjectLanguage::Rust,
         transport: subject_transport(),
@@ -424,9 +424,7 @@ pub async fn accept_subject() -> Result<(TestbedClient<DriverCaller>, Child), St
     accept_subject_spec(spec).await
 }
 
-pub async fn accept_subject_spec(
-    spec: SubjectSpec,
-) -> Result<(TestbedClient<DriverCaller>, Child), String> {
+pub async fn accept_subject_spec(spec: SubjectSpec) -> Result<(TestbedClient, Child), String> {
     let cmd = subject_cmd_for_language(spec.language);
     match spec.transport {
         SubjectTestTransport::Tcp => accept_subject_tcp(&cmd).await,
@@ -439,7 +437,7 @@ pub async fn accept_subject_spec(
 
 pub async fn accept_subject_with_transport(
     transport: SubjectTestTransport,
-) -> Result<(TestbedClient<DriverCaller>, Child), String> {
+) -> Result<(TestbedClient, Child), String> {
     accept_subject_spec(SubjectSpec {
         language: SubjectLanguage::Rust,
         transport,
@@ -455,9 +453,7 @@ pub enum RustTransport {
     Shm,
 }
 
-pub async fn accept_rust_inproc(
-    transport: RustTransport,
-) -> Result<TestbedClient<DriverCaller>, String> {
+pub async fn accept_rust_inproc(transport: RustTransport) -> Result<TestbedClient, String> {
     match transport {
         RustTransport::Mem => {
             let (a, b) = memory_link_pair(64 * 1024);
@@ -523,7 +519,7 @@ pub async fn accept_rust_inproc(
 async fn accept_rust_inproc_with_conduits<L>(
     client_link: L,
     server_link: L,
-) -> Result<TestbedClient<DriverCaller>, String>
+) -> Result<TestbedClient, String>
 where
     L: roam_types::Link + Send + 'static,
     L::Tx: Send + 'static,
@@ -533,7 +529,7 @@ where
     let (server_ready_tx, server_ready_rx) = oneshot::channel::<Result<(), String>>();
     let _server_task = tokio::spawn(async move {
         let setup = acceptor(server_link)
-            .establish::<TestbedClient<DriverCaller>>(TestbedDispatcher::new(TestbedService))
+            .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
             .await
             .map_err(|e| format!("server handshake: {e}"));
         let (server_caller_guard, _sh) = match setup {
@@ -561,7 +557,7 @@ where
     Ok(client)
 }
 
-async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient<DriverCaller>, Child), String> {
+async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient, Child), String> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("bind: {e}"))?;
@@ -622,9 +618,7 @@ async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient<DriverCaller>, C
     Ok((client, child))
 }
 
-async fn accept_subject_shm_subject_is_guest(
-    cmd: &str,
-) -> Result<(TestbedClient<DriverCaller>, Child), String> {
+async fn accept_subject_shm_subject_is_guest(cmd: &str) -> Result<(TestbedClient, Child), String> {
     let dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
     let sid = sid_hex_32();
     let control_sock_path = dir.path().join("bootstrap.sock");
@@ -830,9 +824,7 @@ async fn accept_subject_shm_subject_is_guest(
     Ok((client, child))
 }
 
-async fn accept_subject_shm_subject_is_host(
-    cmd: &str,
-) -> Result<(TestbedClient<DriverCaller>, Child), String> {
+async fn accept_subject_shm_subject_is_host(cmd: &str) -> Result<(TestbedClient, Child), String> {
     let dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
     let sid = sid_hex_32();
     let control_sock_path = dir.path().join("bootstrap.sock");
@@ -864,7 +856,7 @@ async fn accept_subject_shm_subject_is_host(
     .await?;
     let pid = child.id().unwrap_or_default();
 
-    let setup_result: Result<TestbedClient<DriverCaller>, String> = async {
+    let setup_result: Result<TestbedClient, String> = async {
         eprintln!(
             "[subject:{pid}] waiting for subject-host bootstrap socket {}",
             control_sock_path.display()
