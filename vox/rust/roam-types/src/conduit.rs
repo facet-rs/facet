@@ -93,6 +93,7 @@ pub trait ConduitRx {
     /// Receive and decode the next message.
     ///
     /// Returns `Ok(None)` when the peer has closed.
+    #[allow(clippy::type_complexity)]
     fn recv(
         &mut self,
     ) -> impl Future<

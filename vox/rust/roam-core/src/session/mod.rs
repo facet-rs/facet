@@ -487,6 +487,7 @@ where
     for<'p> <C::Tx as ConduitTx>::Permit<'p>: MaybeSend,
     C::Rx: MaybeSend,
 {
+    #[allow(clippy::too_many_arguments)]
     fn pre_handshake(
         tx: C::Tx,
         rx: C::Rx,

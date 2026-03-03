@@ -8,7 +8,7 @@ use roam::{Rx, Tx};
 use roam_core::acceptor;
 use roam_websocket::WsLink;
 use spec_proto::{Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape};
-use spec_proto::{Testbed, TestbedDispatcher};
+use spec_proto::{Testbed, TestbedClient, TestbedDispatcher};
 use std::env;
 use tokio::net::TcpListener;
 
@@ -164,15 +164,20 @@ async fn main() {
                 }
             };
 
-            if let Err(e) = acceptor(ws_link)
-                .establish::<()>(TestbedDispatcher::new(TestbedService))
+            let (root_caller_guard, _sh) = match acceptor(ws_link)
+                .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
                 .await
             {
-                eprintln!("Session handshake failed: {:?}", e);
-                return;
-            }
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("Session handshake failed: {:?}", e);
+                    return;
+                }
+            };
 
             eprintln!("Connection established with {}", peer);
+            let _root_caller_guard = root_caller_guard;
+            std::future::pending::<()>().await;
         });
     }
 }

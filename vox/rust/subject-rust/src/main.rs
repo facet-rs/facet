@@ -7,7 +7,7 @@ use roam_shm::segment::Segment;
 use roam_stream::StreamLink;
 use spec_proto::{
     Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape, Testbed,
-    TestbedDispatcher,
+    TestbedClient, TestbedDispatcher,
 };
 use tracing::{debug, error, info, instrument};
 
@@ -191,11 +191,13 @@ async fn connect_and_serve() -> Result<(), String> {
         .map_err(|e| format!("connect failed: {e}"))?;
     stream.set_nodelay(true).unwrap();
 
-    let ((), _sh) = initiator(StreamLink::tcp(stream))
-        .establish::<()>(TestbedDispatcher::new(TestbedService))
+    let (root_caller_guard, _sh) = initiator(StreamLink::tcp(stream))
+        .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
         .await
         .map_err(|e| format!("handshake failed: {e}"))?;
 
+    let _root_caller_guard = root_caller_guard;
+    std::future::pending::<()>().await;
     Ok(())
 }
 
@@ -321,11 +323,12 @@ async fn connect_and_serve_shm() -> Result<(), String> {
         .map_err(|e| format!("guest_link_from_names: {e}"))?
     };
 
-    let ((), _sh) = initiator(link)
-        .establish::<()>(TestbedDispatcher::new(TestbedService))
+    let (root_caller_guard, _sh) = initiator(link)
+        .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
         .await
         .map_err(|e| format!("handshake failed: {e}"))?;
 
+    let _root_caller_guard = root_caller_guard;
     // Session and driver are spawned internally by establish(); wait forever
     // so the spawned tasks can continue serving requests.
     std::future::pending::<()>().await;
