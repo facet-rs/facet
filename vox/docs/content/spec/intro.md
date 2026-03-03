@@ -1,10 +1,8 @@
 +++
-title = "roam specification"
+title = "Introduction"
 description = "Formal roam RPC protocol specification"
 weight = 10
 +++
-
-# Introduction
 
 > r[service-macro.is-source-of-truth]
 >

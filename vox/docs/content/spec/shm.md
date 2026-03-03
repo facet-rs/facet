@@ -1,10 +1,8 @@
 +++
-title = "shared memory transport"
+title = "Shared Memory Transport"
 description = "Shared memory Link: hub topology, BipBuffers, VarSlotPool, signaling, and peer lifecycle"
 weight = 15
 +++
-
-# Shared Memory Transport
 
 > r[shm]
 >

@@ -1,5 +1,5 @@
 +++
-title = "connectivity"
+title = "Connectivity"
 description = "Links, conduits, sessions, and connections"
 weight = 11
 +++

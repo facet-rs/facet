@@ -1,10 +1,10 @@
 +++
-title = "signatures"
+title = "Signatures"
 description = "Method identity and signature hash computation"
 weight = 13
 +++
 
-# Method Identity
+## Method Identity
 
 Every method has a unique 64-bit identifier computed from its service name,
 method name, and signature.
@@ -25,7 +25,7 @@ This means:
 - Changing the signature changes the ID (breaking change)
 - Case variations normalize to the same ID (`loadTemplate` = `load_template`)
 
-# Signature Hash
+## Signature Hash
 
 The `sig_bytes` used in method identity is a BLAKE3 hash of the method's
 structural signature. This is computed at compile time by the `#[roam::service]`

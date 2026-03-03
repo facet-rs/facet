@@ -1,10 +1,8 @@
 +++
-title = "stable conduit"
+title = "Stable Conduit"
 description = "Reliability layer: sequencing, acknowledgment, and reconnection"
 weight = 14
 +++
-
-# Stable Conduit
 
 > r[stable]
 >

@@ -1,11 +1,9 @@
 +++
-title = "Zero-copy"
+title = "Zero-copy data flow"
 sort_by = "weight"
-weight = 6
+weight = 16
 insert_anchor_links = "left"
 +++
-
-# Zero-copy data flow
 
 > r[zerocopy]
 >

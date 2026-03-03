@@ -1,10 +1,8 @@
 +++
-title = "RPC"
+title = "RPC Concepts"
 description = "Services, method identity, handlers, and callers"
 weight = 12
 +++
-
-# RPC concepts
 
 If you're coming from roam v6 APIs, see the
 [v6 -> v7 migration guide](../v6-to-v7/).
@@ -51,7 +49,7 @@ If you're coming from roam v6 APIs, see the
 > r[rpc.method-id.algorithm]
 >
 > The exact algorithm for computing method IDs is defined in the
-> [signature specification](../sig/). Other language implementations
+> [signature specification](./sig/). Other language implementations
 > receive pre-computed method IDs from code generation.
 
 > r[rpc.schema-evolution]
