@@ -2616,6 +2616,7 @@ dependencies = [
  "eyre",
  "roam",
  "roam-stream",
+ "roam-types",
  "tokio",
 ]
 

@@ -11,5 +11,6 @@ publish = false
 [dependencies]
 eyre.workspace = true
 roam.workspace = true
+roam-types.workspace = true
 roam-stream.workspace = true
 tokio = { workspace = true, features = ["rt", "net"] }

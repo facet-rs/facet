@@ -8,6 +8,8 @@ The fastest way to learn the Rust API is the repository example:
 
 - Source: [rust-examples/examples/borrowed_and_channels.rs](https://github.com/bearcove/roam/blob/main/rust-examples/examples/borrowed_and_channels.rs)
 - Run it: `cargo run -p rust-examples --example borrowed_and_channels`
+- Source: [rust-examples/examples/virtual_connections.rs](https://github.com/bearcove/roam/blob/main/rust-examples/examples/virtual_connections.rs)
+- Run it: `cargo run -p rust-examples --example virtual_connections`
 
 This example covers the three core method shapes you usually need:
 
