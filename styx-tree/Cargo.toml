@@ -25,5 +25,5 @@ facet-testhelpers.workspace = true
 insta = "1.42"
 strip-ansi-escapes.workspace = true
 facet.workspace = true
-facet-json = { git = "https://github.com/facet-rs/facet", branch = "main" }
-facet-postcard = { git = "https://github.com/facet-rs/facet", branch = "main" }
+facet-json.workspace = true
+facet-postcard.workspace = true

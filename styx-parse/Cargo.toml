@@ -23,6 +23,6 @@ styx-tokenizer = { workspace = true }
 [dev-dependencies]
 tracing.workspace = true
 facet-testhelpers.workspace = true
-styx-testhelpers.workspace = true
+styx-testhelpers = { path = "../styx-testhelpers" }
 similar.workspace = true
 ariadne.workspace = true

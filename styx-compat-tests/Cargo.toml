@@ -9,6 +9,6 @@ publish = false
 
 [dev-dependencies]
 facet.workspace = true
-facet-styx.workspace = true
+facet-styx = { path = "../facet-styx" }
 serde = { version = "1.0", features = ["derive"] }
 serde_styx = { path = "../serde_styx" }

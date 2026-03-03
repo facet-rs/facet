@@ -641,7 +641,7 @@ fn run_completions(shell: &str) -> Result<(), CliError> {
         }
     };
 
-    let completions = figue::generate_completions::<Args>(shell_enum, "styx");
+    let completions = figue::generate_completions_for_shape(Args::SHAPE, shell_enum, "styx");
     print!("{completions}");
     Ok(())
 }

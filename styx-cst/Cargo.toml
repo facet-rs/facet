@@ -16,4 +16,4 @@ styx-tokenizer.workspace = true
 rowan = "0.16"
 
 [dev-dependencies]
-styx-testhelpers.workspace = true
+styx-testhelpers = { path = "../styx-testhelpers" }

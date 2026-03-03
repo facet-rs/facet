@@ -178,7 +178,7 @@ impl StyxLanguageServer {
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "Extension diagnostics failed");
+                        tracing::warn!(error = ?e, "Extension diagnostics failed");
                     }
                 }
             }
@@ -796,7 +796,7 @@ impl LanguageServer for StyxLanguageServer {
                         tracing::debug!("Extension returned empty definitions");
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "Extension definition failed");
+                        tracing::warn!(error = ?e, "Extension definition failed");
                     }
                 }
             }
@@ -894,7 +894,7 @@ impl LanguageServer for StyxLanguageServer {
                         // Extension returned None, fall through to schema-based hover
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "Extension hover failed");
+                        tracing::warn!(error = ?e, "Extension hover failed");
                     }
                 }
             }
@@ -1146,7 +1146,7 @@ impl LanguageServer for StyxLanguageServer {
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "Extension completion failed");
+                        tracing::warn!(error = ?e, "Extension completion failed");
                     }
                 }
             }
@@ -1406,7 +1406,7 @@ impl LanguageServer for StyxLanguageServer {
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "Extension code actions failed");
+                        tracing::warn!(error = ?e, "Extension code actions failed");
                     }
                 }
             }
@@ -1843,7 +1843,7 @@ impl LanguageServer for StyxLanguageServer {
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "Extension inlay hints failed");
+                        tracing::warn!(error = ?e, "Extension inlay hints failed");
                     }
                 }
             }
