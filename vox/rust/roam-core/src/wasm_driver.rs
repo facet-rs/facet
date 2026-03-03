@@ -11,8 +11,8 @@ use std::{
 
 use moire::sync::{SyncMutex, mpsc};
 use roam_types::{
-    Caller, Handler, IdAllocator, Payload, ReplySink, RequestBody, RequestCall, RequestId,
-    RequestMessage, RequestResponse, RoamError, SelfRef,
+    Caller, Handler, IdAllocator, MaybeSend, Payload, ReplySink, RequestBody, RequestCall,
+    RequestId, RequestMessage, RequestResponse, RoamError, SelfRef,
 };
 
 use crate::session::{ConnectionHandle, ConnectionMessage, ConnectionSender, DropControlRequest};
@@ -70,36 +70,40 @@ pub struct DriverCaller {
 }
 
 impl Caller for DriverCaller {
-    async fn call<'a>(
-        &self,
+    fn call<'a>(
+        &'a self,
         call: RequestCall<'a>,
-    ) -> Result<SelfRef<RequestResponse<'static>>, RoamError> {
-        let req_id = self.shared.request_ids.lock().alloc();
-        let (tx, rx) = moire::sync::oneshot::channel("driver.response");
-        self.shared.pending_responses.lock().insert(req_id, tx);
+    ) -> impl std::future::Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>>
+    + MaybeSend
+    + 'a {
+        async move {
+            let req_id = self.shared.request_ids.lock().alloc();
+            let (tx, rx) = moire::sync::oneshot::channel("driver.response");
+            self.shared.pending_responses.lock().insert(req_id, tx);
 
-        let send_result = self
-            .sender
-            .send(ConnectionMessage::Request(RequestMessage {
-                id: req_id,
-                body: RequestBody::Call(call),
-            }))
-            .await;
+            let send_result = self
+                .sender
+                .send(ConnectionMessage::Request(RequestMessage {
+                    id: req_id,
+                    body: RequestBody::Call(call),
+                }))
+                .await;
 
-        if send_result.is_err() {
-            self.shared.pending_responses.lock().remove(&req_id);
-            return Err(RoamError::Cancelled);
+            if send_result.is_err() {
+                self.shared.pending_responses.lock().remove(&req_id);
+                return Err(RoamError::Cancelled);
+            }
+
+            let response_msg: SelfRef<RequestMessage<'static>> =
+                rx.await.map_err(|_| RoamError::Cancelled)?;
+
+            let response = response_msg.map(|m| match m.body {
+                RequestBody::Response(r) => r,
+                _ => unreachable!("pending_responses only gets Response variants"),
+            });
+
+            Ok(response)
         }
-
-        let response_msg: SelfRef<RequestMessage<'static>> =
-            rx.await.map_err(|_| RoamError::Cancelled)?;
-
-        let response = response_msg.map(|m| match m.body {
-            RequestBody::Response(r) => r,
-            _ => unreachable!("pending_responses only gets Response variants"),
-        });
-
-        Ok(response)
     }
 }
 

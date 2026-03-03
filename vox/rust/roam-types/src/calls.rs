@@ -175,11 +175,10 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
 /// pending response slot, and awaits the response from the peer.
 pub trait Caller: Clone + MaybeSend + MaybeSync + 'static {
     /// Send a call and wait for the response.
-    #[allow(async_fn_in_trait)]
-    async fn call<'a>(
-        &self,
+    fn call<'a>(
+        &'a self,
         call: RequestCall<'a>,
-    ) -> Result<SelfRef<RequestResponse<'static>>, RoamError>;
+    ) -> impl Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + MaybeSend + 'a;
 
     /// Return a channel binder for binding Tx/Rx handles in args before sending.
     ///
@@ -192,6 +191,14 @@ pub trait Caller: Clone + MaybeSend + MaybeSync + 'static {
 }
 
 trait ErasedCallerDyn: MaybeSend + MaybeSync + 'static {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn call<'a>(
+        &'a self,
+        call: RequestCall<'a>,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + Send + 'a>,
+    >;
+    #[cfg(target_arch = "wasm32")]
     fn call<'a>(
         &'a self,
         call: RequestCall<'a>,
@@ -202,6 +209,16 @@ trait ErasedCallerDyn: MaybeSend + MaybeSync + 'static {
 }
 
 impl<C: Caller> ErasedCallerDyn for C {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn call<'a>(
+        &'a self,
+        call: RequestCall<'a>,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + Send + 'a>,
+    > {
+        Box::pin(Caller::call(self, call))
+    }
+    #[cfg(target_arch = "wasm32")]
     fn call<'a>(
         &'a self,
         call: RequestCall<'a>,
@@ -231,11 +248,12 @@ impl ErasedCaller {
 }
 
 impl Caller for ErasedCaller {
-    async fn call<'a>(
-        &self,
+    fn call<'a>(
+        &'a self,
         call: RequestCall<'a>,
-    ) -> Result<SelfRef<RequestResponse<'static>>, RoamError> {
-        self.inner.call(call).await
+    ) -> impl Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + MaybeSend + 'a
+    {
+        self.inner.call(call)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -364,11 +382,14 @@ mod tests {
     struct NoopCaller;
 
     impl Caller for NoopCaller {
-        async fn call<'a>(
-            &self,
+        fn call<'a>(
+            &'a self,
             _call: RequestCall<'a>,
-        ) -> Result<crate::SelfRef<RequestResponse<'static>>, crate::RoamError> {
-            unreachable!("NoopCaller::call is not used by this test")
+        ) -> impl Future<
+            Output = Result<crate::SelfRef<RequestResponse<'static>>, crate::RoamError>,
+        > + MaybeSend
+        + 'a {
+            async move { unreachable!("NoopCaller::call is not used by this test") }
         }
     }
 

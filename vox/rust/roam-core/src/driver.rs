@@ -10,9 +10,9 @@ use tokio::sync::Semaphore;
 use moire::task::FutureExt as _;
 use roam_types::{
     Caller, ChannelBinder, ChannelBody, ChannelClose, ChannelId, ChannelItem, ChannelMessage,
-    ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage, Payload, ReplySink,
-    RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse, RoamError, SelfRef,
-    TxError,
+    ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage, MaybeSend, Payload,
+    ReplySink, RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse, RoamError,
+    SelfRef, TxError,
 };
 
 use crate::session::{ConnectionHandle, ConnectionMessage, ConnectionSender, DropControlRequest};
@@ -367,10 +367,12 @@ impl ChannelBinder for DriverCaller {
 }
 
 impl Caller for DriverCaller {
-    async fn call<'a>(
-        &self,
+    fn call<'a>(
+        &'a self,
         call: RequestCall<'a>,
-    ) -> Result<SelfRef<RequestResponse<'static>>, RoamError> {
+    ) -> impl std::future::Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>>
+    + MaybeSend
+    + 'a {
         async {
             // Allocate a request ID.
             let req_id = self.shared.request_ids.lock().alloc();
@@ -411,7 +413,6 @@ impl Caller for DriverCaller {
             Ok(response)
         }
         .named("Caller::call")
-        .await
     }
 
     fn channel_binder(&self) -> Option<&dyn ChannelBinder> {
