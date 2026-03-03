@@ -15,7 +15,6 @@
 
 cargo-reedme: info-end -->
 
-## facet-urlencoded
 
 [![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-urlencoded/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
 [![crates.io](https://img.shields.io/crates/v/facet-urlencoded.svg)](https://crates.io/crates/facet-urlencoded)

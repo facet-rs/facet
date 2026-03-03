@@ -15,7 +15,6 @@
 
 cargo-reedme: info-end -->
 
-## facet-pretty
 
 [![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-pretty/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
 [![crates.io](https://img.shields.io/crates/v/facet-pretty.svg)](https://crates.io/crates/facet-pretty)

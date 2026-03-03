@@ -1,5 +1,3 @@
-//! # facet-macros
-//!
 //! [![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-macros/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
 //! [![crates.io](https://img.shields.io/crates/v/facet-macros.svg)](https://crates.io/crates/facet-macros)
 //! [![documentation](https://docs.rs/facet-macros/badge.svg)](https://docs.rs/facet-macros)

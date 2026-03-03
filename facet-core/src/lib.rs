@@ -6,7 +6,6 @@
 #![warn(clippy::std_instead_of_alloc)]
 // Allow uncommon unicode in the 𝟋 prelude module
 #![allow(uncommon_codepoints)]
-//! # facet-core
 //!
 //! [![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-core/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
 //! [![crates.io](https://img.shields.io/crates/v/facet-core.svg)](https://crates.io/crates/facet-core)
