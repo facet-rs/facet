@@ -1,0 +1,303 @@
+use eyre::{Result, WrapErr, eyre};
+use roam::{
+    AcceptedConnection, ConnectionAcceptor, ConnectionId, ConnectionSettings, Driver, DriverCaller,
+    Metadata, MetadataEntry, MetadataFlags, MetadataValue, Parity, SessionHandle,
+};
+
+const PROXY_SERVICE: &str = "math_text_proxy";
+const UPSTREAM_SERVICE: &str = "math_text_upstream";
+
+#[roam::service]
+trait MathText {
+    async fn add(&self, a: i32, b: i32) -> Result<i32, String>;
+    async fn reverse(&self, value: String) -> Result<String, String>;
+}
+
+#[derive(Clone, Copy)]
+struct UpstreamMathText;
+
+impl MathText for UpstreamMathText {
+    async fn add(&self, a: i32, b: i32) -> Result<i32, String> {
+        Ok(a + b)
+    }
+
+    async fn reverse(&self, value: String) -> Result<String, String> {
+        Ok(value.chars().rev().collect())
+    }
+}
+
+#[derive(Clone)]
+struct ProxyMathText {
+    upstream: Option<MathTextClient<DriverCaller>>,
+    init_error: Option<String>,
+}
+
+impl ProxyMathText {
+    fn ready(upstream: MathTextClient<DriverCaller>) -> Self {
+        Self {
+            upstream: Some(upstream),
+            init_error: None,
+        }
+    }
+
+    fn unavailable(error: String) -> Self {
+        Self {
+            upstream: None,
+            init_error: Some(error),
+        }
+    }
+
+    fn upstream_error<T>(result: Result<T, roam::RoamError<String>>) -> Result<T, String> {
+        match result {
+            Ok(value) => Ok(value),
+            Err(roam::RoamError::User(msg)) => Err(msg),
+            Err(other) => Err(format!("upstream transport error: {other:?}")),
+        }
+    }
+}
+
+impl MathText for ProxyMathText {
+    async fn add(&self, a: i32, b: i32) -> Result<i32, String> {
+        if let Some(upstream) = &self.upstream {
+            return Self::upstream_error(upstream.add(a, b).await);
+        }
+        Err(self
+            .init_error
+            .clone()
+            .unwrap_or_else(|| "proxy is unavailable".to_string()))
+    }
+
+    async fn reverse(&self, value: String) -> Result<String, String> {
+        if let Some(upstream) = &self.upstream {
+            return Self::upstream_error(upstream.reverse(value).await);
+        }
+        Err(self
+            .init_error
+            .clone()
+            .unwrap_or_else(|| "proxy is unavailable".to_string()))
+    }
+}
+
+#[derive(Clone, Copy)]
+struct UpstreamAcceptor;
+
+impl ConnectionAcceptor for UpstreamAcceptor {
+    fn accept(
+        &self,
+        _conn_id: ConnectionId,
+        peer_settings: &ConnectionSettings,
+        metadata: &[MetadataEntry],
+    ) -> Result<AcceptedConnection, Metadata<'static>> {
+        if requested_service(metadata) != Some(UPSTREAM_SERVICE) {
+            return Err(error_metadata(
+                "unknown or missing service metadata for upstream guest",
+            ));
+        }
+
+        Ok(AcceptedConnection {
+            settings: ConnectionSettings {
+                parity: peer_settings.parity.other(),
+                max_concurrent_requests: 64,
+            },
+            metadata: vec![],
+            setup: Box::new(|handle| {
+                println!("[guest-b] accepted vconn as MathText upstream");
+                let mut driver = Driver::new(handle, MathTextDispatcher::new(UpstreamMathText));
+                tokio::spawn(async move { driver.run().await });
+            }),
+        })
+    }
+}
+
+#[derive(Clone)]
+struct ProxyAcceptor {
+    upstream_session: SessionHandle,
+}
+
+impl ConnectionAcceptor for ProxyAcceptor {
+    fn accept(
+        &self,
+        _conn_id: ConnectionId,
+        peer_settings: &ConnectionSettings,
+        metadata: &[MetadataEntry],
+    ) -> Result<AcceptedConnection, Metadata<'static>> {
+        if requested_service(metadata) != Some(PROXY_SERVICE) {
+            return Err(error_metadata(
+                "unknown or missing service metadata for proxy host",
+            ));
+        }
+
+        let upstream_session = self.upstream_session.clone();
+        Ok(AcceptedConnection {
+            settings: ConnectionSettings {
+                parity: peer_settings.parity.other(),
+                max_concurrent_requests: 64,
+            },
+            metadata: vec![],
+            setup: Box::new(move |incoming_handle| {
+                tokio::spawn(async move {
+                    println!(
+                        "[host] guest-a opened proxy vconn; opening upstream vconn to guest-b"
+                    );
+                    let (proxy_service, maybe_upstream_driver_task) = match upstream_session
+                        .open_connection(
+                            ConnectionSettings {
+                                parity: Parity::Odd,
+                                max_concurrent_requests: 64,
+                            },
+                            service_metadata(UPSTREAM_SERVICE),
+                        )
+                        .await
+                    {
+                        Ok(upstream_conn) => {
+                            let mut upstream_driver = Driver::new(upstream_conn, ());
+                            let upstream_client = MathTextClient::from(upstream_driver.caller());
+                            let upstream_driver_task =
+                                tokio::spawn(async move { upstream_driver.run().await });
+                            println!("[host] upstream vconn to guest-b is ready");
+                            (
+                                ProxyMathText::ready(upstream_client),
+                                Some(upstream_driver_task),
+                            )
+                        }
+                        Err(err) => {
+                            let msg = format!("failed to open upstream vconn: {err:?}");
+                            eprintln!("[host] {msg}");
+                            (ProxyMathText::unavailable(msg), None)
+                        }
+                    };
+
+                    let mut incoming_driver =
+                        Driver::new(incoming_handle, MathTextDispatcher::new(proxy_service));
+                    incoming_driver.run().await;
+                    if let Some(task) = maybe_upstream_driver_task {
+                        task.abort();
+                    }
+                });
+            }),
+        })
+    }
+}
+
+fn requested_service<'a>(metadata: &'a [MetadataEntry<'a>]) -> Option<&'a str> {
+    metadata
+        .iter()
+        .find(|entry| entry.key == "service")
+        .and_then(|entry| match entry.value {
+            MetadataValue::String(value) => Some(value),
+            _ => None,
+        })
+}
+
+fn service_metadata(service: &'static str) -> Metadata<'static> {
+    vec![MetadataEntry {
+        key: "service",
+        value: MetadataValue::String(service),
+        flags: MetadataFlags::NONE,
+    }]
+}
+
+fn error_metadata(message: &'static str) -> Metadata<'static> {
+    vec![MetadataEntry {
+        key: "error",
+        value: MetadataValue::String(message),
+        flags: MetadataFlags::NONE,
+    }]
+}
+
+fn main() -> Result<()> {
+    println!("[demo] memory_proxying: starting runtime");
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .wrap_err("building Tokio runtime")?;
+    rt.block_on(run_demo())
+}
+
+async fn run_demo() -> Result<()> {
+    let (host_a_link, guest_a_link) = roam::memory_link_pair(64);
+    let (host_b_link, guest_b_link) = roam::memory_link_pair(64);
+
+    println!("[guest-b] starting root session");
+    let guest_b_task = tokio::spawn(async move {
+        let (guest_b_root_guard, _) = roam::acceptor(guest_b_link)
+            .on_connection(UpstreamAcceptor)
+            .establish::<DriverCaller>(())
+            .await
+            .expect("guest-b establish");
+        let _guest_b_root_guard = guest_b_root_guard;
+        std::future::pending::<()>().await;
+    });
+
+    println!("[host] establishing session to guest-b");
+    let (_host_root_to_b_guard, upstream_session_handle) = roam::initiator(host_b_link)
+        .establish::<DriverCaller>(())
+        .await
+        .map_err(|e| eyre!("host<->guest-b establish failed: {e:?}"))?;
+    println!("[host] host<->guest-b root session ready");
+
+    println!("[host] starting root session for guest-a");
+    let proxy_acceptor = ProxyAcceptor {
+        upstream_session: upstream_session_handle,
+    };
+    let host_for_a_task = tokio::spawn(async move {
+        let (host_root_for_a_guard, _) = roam::acceptor(host_a_link)
+            .on_connection(proxy_acceptor)
+            .establish::<DriverCaller>(())
+            .await
+            .expect("host<->guest-a establish");
+        let _host_root_for_a_guard = host_root_for_a_guard;
+        std::future::pending::<()>().await;
+    });
+
+    println!("[guest-a] establishing root session to host");
+    let (_guest_a_root_guard, guest_a_session_handle) = roam::initiator(guest_a_link)
+        .establish::<DriverCaller>(())
+        .await
+        .map_err(|e| eyre!("guest-a<->host establish failed: {e:?}"))?;
+    println!("[guest-a] root session ready");
+
+    println!("[guest-a] opening proxy vconn to host");
+    let proxy_conn = guest_a_session_handle
+        .open_connection(
+            ConnectionSettings {
+                parity: Parity::Odd,
+                max_concurrent_requests: 64,
+            },
+            service_metadata(PROXY_SERVICE),
+        )
+        .await
+        .map_err(|e| eyre!("guest-a open proxy vconn failed: {e:?}"))?;
+    let proxy_conn_id = proxy_conn.connection_id();
+
+    let mut proxy_driver = Driver::new(proxy_conn, ());
+    let proxy_client = MathTextClient::from(proxy_driver.caller());
+    let proxy_driver_task = tokio::spawn(async move { proxy_driver.run().await });
+
+    println!("[guest-a] calling add via host proxy to guest-b");
+    let added = proxy_client
+        .add(20, 22)
+        .await
+        .map_err(|e| eyre!("proxy add failed: {e:?}"))?;
+    println!("[guest-a] add(20, 22) -> {added}");
+    assert_eq!(added, 42);
+
+    println!("[guest-a] calling reverse via host proxy to guest-b");
+    let reversed = proxy_client
+        .reverse("stressed".to_string())
+        .await
+        .map_err(|e| eyre!("proxy reverse failed: {e:?}"))?;
+    println!("[guest-a] reverse(\"stressed\") -> {reversed}");
+    assert_eq!(reversed, "desserts");
+
+    guest_a_session_handle
+        .close_connection(proxy_conn_id, vec![])
+        .await
+        .map_err(|e| eyre!("closing proxy vconn failed: {e:?}"))?;
+
+    proxy_driver_task.abort();
+    guest_b_task.abort();
+    host_for_a_task.abort();
+    println!("[demo] memory_proxying: complete");
+    Ok(())
+}

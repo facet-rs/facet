@@ -82,6 +82,9 @@ jobs:
       - name: Run virtual-connections example
         run: cargo run -p rust-examples --example virtual_connections
 
+      - name: Run memory proxying example
+        run: cargo run -p rust-examples --example memory_proxying
+
       - name: Run SHM host-two-guests example
         run: cargo run -p rust-examples --example shm_host_two_guests
 
