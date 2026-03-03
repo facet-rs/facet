@@ -62,9 +62,7 @@ async fn run_demo() -> Result<()> {
 
     let server_task = tokio::spawn(async move {
         let (socket, _) = listener.accept().await.expect("accept");
-        let conduit = roam::BareConduit::<roam::MessageFamily, _>::new(StreamLink::tcp(socket));
-
-        let ((), _) = roam::acceptor(conduit)
+        let ((), _) = roam::acceptor(StreamLink::tcp(socket))
             .establish::<()>(WordLabDispatcher::new(WordLabService))
             .await
             .expect("server establish");
@@ -73,9 +71,7 @@ async fn run_demo() -> Result<()> {
     let socket = tokio::net::TcpStream::connect(addr)
         .await
         .wrap_err("connecting client socket")?;
-    let conduit = roam::BareConduit::<roam::MessageFamily, _>::new(StreamLink::tcp(socket));
-
-    let (client, _) = roam::initiator(conduit)
+    let (client, _) = roam::initiator(StreamLink::tcp(socket))
         .establish::<WordLabClient<_>>(())
         .await
         .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;
