@@ -63,7 +63,7 @@ This generates:
 
 1. An `Attr` enum with variants for each attribute
 2. Compile-time parsing that validates attribute usage
-3. Type-safe data storage accessible at runtime
+3. Type-safe runtime storage (either enum values or direct payload types, depending on variant kind)
 
 ### Grammar components
 
@@ -100,6 +100,8 @@ pub enum Attr {
 ```
 
 Usage: `#[facet(rename = "new_name")]`
+
+Runtime note: these are stored as `&'static str`, so query with `attr.get_as::<&'static str>()`.
 
 #### Optional characters
 
@@ -174,48 +176,56 @@ The system uses string similarity to suggest corrections.
 
 ## Querying attributes at runtime
 
-When your format crate needs to check for attributes, use the `get_as` method on [`Attr`](https://docs.rs/facet-core/latest/facet_core/struct.Attr.html):
+`Field::attributes` is a slice of [`Attr`](https://docs.rs/facet-core/latest/facet_core/struct.Attr.html).  
+`FieldAttribute` is now just a type alias to `Attr`, so you can iterate directly:
 
 ```rust,noexec
-use facet_core::{Field, FieldAttribute, Facet};
-use facet_xml::Attr as XmlAttr;
+use facet_core::Field;
 
 fn process_field(field: &Field) {
     for attr in field.attributes {
-        if let FieldAttribute::Extension(ext) = attr {
-            // Check namespace first
-            if ext.ns == Some("xml") {
-                // Get typed attribute data
-                if let Some(xml_attr) = ext.get_as::<XmlAttr>() {
-                    match xml_attr {
-                        XmlAttr::Element => { /* handle element */ }
-                        XmlAttr::Attribute => { /* handle attribute */ }
-                        XmlAttr::Text => { /* handle text content */ }
-                        // ...
-                    }
+        if attr.ns != Some("miniopt") {
+            continue;
+        }
+
+        match attr.key {
+            // EnvPrefix(&'static str) stores the payload as &'static str
+            "env_prefix" => {
+                if let Some(prefix) = attr.get_as::<&'static str>() {
+                    println!("env prefix: {}", *prefix);
                 }
             }
+            // Marker/unit attributes can be checked by key presence
+            "named" => {
+                println!("field is named");
+            }
+            _ => {}
         }
     }
 }
 ```
 
-For built-in attributes:
+### Important runtime decoding note
+
+For some grammar variants (like `&'static str`, `i64`, `usize` payloads), facet stores the raw payload type directly.  
+That means `attr.get_as::<YourAttrEnum>()` may return `None` for those keys, even when the attribute is present.
+
+The most reliable pattern is:
+1. Match on `ns` + `key`
+2. Decode with the expected runtime payload type for that key
+
+For built-in attributes, prefer dedicated fields/accessors first:
 
 ```rust,noexec
-use facet::builtin::Attr as BuiltinAttr;
+use facet_core::Field;
 
-for attr in field.attributes {
-    if let FieldAttribute::Extension(ext) = attr {
-        if ext.is_builtin() {
-            if let Some(builtin) = ext.get_as::<BuiltinAttr>() {
-                match builtin {
-                    BuiltinAttr::Rename(name) => { /* use renamed field */ }
-                    BuiltinAttr::Skip => { /* skip this field */ }
-                    // ...
-                }
-            }
-        }
+fn process_builtin(field: &Field) {
+    if let Some(name) = field.rename {
+        println!("renamed to {name}");
+    }
+
+    if field.should_skip_deserializing() {
+        println!("field is skipped during deserialization");
     }
 }
 ```
