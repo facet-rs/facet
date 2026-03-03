@@ -23,9 +23,14 @@ pub use roam_types::{
     // Descriptors
     ChannelId,
     // Types
+    ConnectionId,
     ConnectionSettings,
     Handler,
     MessageFamily,
+    Metadata,
+    MetadataEntry,
+    MetadataFlags,
+    MetadataValue,
     MethodDescriptor,
     MethodId,
     Parity,

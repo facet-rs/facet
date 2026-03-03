@@ -4,13 +4,21 @@ use std::sync::{
 };
 
 use eyre::{Result, WrapErr, eyre};
-use roam::{AcceptedConnection, ConnectionAcceptor, ConnectionSettings, Driver, Parity};
+use roam::{
+    AcceptedConnection, ConnectionAcceptor, ConnectionId, ConnectionSettings, Driver, Metadata,
+    MetadataEntry, MetadataFlags, MetadataValue, Parity,
+};
 use roam_stream::StreamLink;
 
 #[roam::service]
 trait CounterLab {
     async fn bump(&self) -> u32;
     async fn echo(&self, value: String) -> String;
+}
+
+#[roam::service]
+trait StringLab {
+    async fn shout(&self, value: String) -> String;
 }
 
 #[derive(Clone)]
@@ -36,32 +44,80 @@ impl CounterLab for CounterLabService {
     }
 }
 
+#[derive(Clone, Copy)]
+struct StringLabService;
+
+impl StringLab for StringLabService {
+    async fn shout(&self, value: String) -> String {
+        value.to_uppercase()
+    }
+}
+
 struct CounterLabAcceptor;
 
 impl ConnectionAcceptor for CounterLabAcceptor {
     fn accept(
         &self,
-        _conn_id: roam_types::ConnectionId,
+        _conn_id: ConnectionId,
         peer_settings: &ConnectionSettings,
-        _metadata: &[roam_types::MetadataEntry],
-    ) -> Result<AcceptedConnection, roam_types::Metadata<'static>> {
+        metadata: &[MetadataEntry],
+    ) -> Result<AcceptedConnection, Metadata<'static>> {
         let peer_parity = peer_settings.parity;
-        Ok(AcceptedConnection {
-            settings: ConnectionSettings {
-                parity: peer_parity.other(),
-                max_concurrent_requests: 64,
-            },
-            metadata: vec![],
-            setup: Box::new(|handle| {
-                let mut driver =
-                    Driver::new(handle, CounterLabDispatcher::new(CounterLabService::new()));
-                tokio::spawn(async move { driver.run().await });
+        let settings = ConnectionSettings {
+            parity: peer_parity.other(),
+            max_concurrent_requests: 64,
+        };
+
+        match requested_service(metadata) {
+            Some("counter") => Ok(AcceptedConnection {
+                settings,
+                metadata: vec![],
+                setup: Box::new(|handle| {
+                    println!("[server] accepted vconn as CounterLab");
+                    let mut driver =
+                        Driver::new(handle, CounterLabDispatcher::new(CounterLabService::new()));
+                    tokio::spawn(async move { driver.run().await });
+                }),
             }),
-        })
+            Some("string") => Ok(AcceptedConnection {
+                settings,
+                metadata: vec![],
+                setup: Box::new(|handle| {
+                    println!("[server] accepted vconn as StringLab");
+                    let mut driver =
+                        Driver::new(handle, StringLabDispatcher::new(StringLabService));
+                    tokio::spawn(async move { driver.run().await });
+                }),
+            }),
+            _ => Err(vec![MetadataEntry {
+                key: "error",
+                value: MetadataValue::String("unknown or missing service metadata"),
+                flags: MetadataFlags::NONE,
+            }]),
+        }
     }
 }
 
+fn requested_service<'a>(metadata: &'a [MetadataEntry<'a>]) -> Option<&'a str> {
+    metadata
+        .iter()
+        .find(|entry| entry.key == "service")
+        .and_then(|entry| match entry.value {
+            MetadataValue::String(value) => Some(value),
+            _ => None,
+        })
+}
+
+fn service_metadata(service: &'static str) -> Metadata<'static> {
+    vec![MetadataEntry {
+        key: "service",
+        value: MetadataValue::String(service),
+        flags: MetadataFlags::NONE,
+    }]
+}
+
 fn main() -> Result<()> {
+    println!("[demo] virtual_connections: starting runtime");
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -70,13 +126,17 @@ fn main() -> Result<()> {
 }
 
 async fn run_demo() -> Result<()> {
+    println!("[demo] binding TCP listener");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .wrap_err("binding TCP listener")?;
     let addr = listener.local_addr().wrap_err("reading listener addr")?;
+    println!("[demo] listening on {addr}");
 
     let server_task = tokio::spawn(async move {
+        println!("[server] waiting for client");
         let (socket, _) = listener.accept().await.expect("accept");
+        println!("[server] client connected; establishing root session");
         let _ = roam::acceptor(StreamLink::tcp(socket))
             .on_connection(CounterLabAcceptor)
             .establish::<()>(())
@@ -84,6 +144,7 @@ async fn run_demo() -> Result<()> {
             .expect("server establish");
     });
 
+    println!("[client] connecting");
     let socket = tokio::net::TcpStream::connect(addr)
         .await
         .wrap_err("connecting client socket")?;
@@ -91,6 +152,7 @@ async fn run_demo() -> Result<()> {
         .establish::<()>(())
         .await
         .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;
+    println!("[client] root session established");
     server_task.await.wrap_err("joining server_task")?;
 
     let settings = ConnectionSettings {
@@ -98,71 +160,76 @@ async fn run_demo() -> Result<()> {
         max_concurrent_requests: 64,
     };
 
-    let conn_a = session_handle
-        .open_connection(settings.clone(), vec![])
+    println!("[client] opening counter virtual connection");
+    let counter_conn = session_handle
+        .open_connection(settings.clone(), service_metadata("counter"))
         .await
-        .map_err(|e| eyre!("open_connection(conn_a) failed: {e:?}"))?;
-    let conn_a_id = conn_a.connection_id();
-    let mut driver_a = Driver::new(conn_a, ());
-    let client_a = CounterLabClient::from(driver_a.caller());
-    let driver_a_task = tokio::spawn(async move { driver_a.run().await });
+        .map_err(|e| eyre!("open_connection(counter) failed: {e:?}"))?;
+    let counter_conn_id = counter_conn.connection_id();
+    let mut counter_driver = Driver::new(counter_conn, ());
+    let counter_client = CounterLabClient::from(counter_driver.caller());
+    let counter_driver_task = tokio::spawn(async move { counter_driver.run().await });
 
-    let conn_b = session_handle
-        .open_connection(settings, vec![])
+    println!("[client] opening string virtual connection");
+    let string_conn = session_handle
+        .open_connection(settings, service_metadata("string"))
         .await
-        .map_err(|e| eyre!("open_connection(conn_b) failed: {e:?}"))?;
-    let conn_b_id = conn_b.connection_id();
-    let mut driver_b = Driver::new(conn_b, ());
-    let client_b = CounterLabClient::from(driver_b.caller());
-    let driver_b_task = tokio::spawn(async move { driver_b.run().await });
+        .map_err(|e| eyre!("open_connection(string) failed: {e:?}"))?;
+    let string_conn_id = string_conn.connection_id();
+    let mut string_driver = Driver::new(string_conn, ());
+    let string_client = StringLabClient::from(string_driver.caller());
+    let string_driver_task = tokio::spawn(async move { string_driver.run().await });
 
+    println!("[client] calling CounterLab::bump twice");
     assert_eq!(
-        client_a
+        counter_client
             .bump()
             .await
-            .map_err(|e| eyre!("client_a.bump #1 failed: {e:?}"))?,
+            .map_err(|e| eyre!("counter_client.bump #1 failed: {e:?}"))?,
         1
     );
     assert_eq!(
-        client_a
+        counter_client
             .bump()
             .await
-            .map_err(|e| eyre!("client_a.bump #2 failed: {e:?}"))?,
+            .map_err(|e| eyre!("counter_client.bump #2 failed: {e:?}"))?,
         2
     );
+    println!("[client] CounterLab::bump -> 1, 2");
+
+    println!("[client] calling CounterLab::echo");
     assert_eq!(
-        client_b
-            .bump()
-            .await
-            .map_err(|e| eyre!("client_b.bump #1 failed: {e:?}"))?,
-        1
-    );
-    assert_eq!(
-        client_a
+        counter_client
             .echo("alpha".to_string())
             .await
-            .map_err(|e| eyre!("client_a.echo failed: {e:?}"))?,
+            .map_err(|e| eyre!("counter_client.echo failed: {e:?}"))?,
         "echo:alpha"
     );
+    println!("[client] CounterLab::echo -> echo:alpha");
+
+    println!("[client] calling StringLab::shout");
     assert_eq!(
-        client_b
-            .echo("beta".to_string())
+        string_client
+            .shout("beta".to_string())
             .await
-            .map_err(|e| eyre!("client_b.echo failed: {e:?}"))?,
-        "echo:beta"
+            .map_err(|e| eyre!("string_client.shout failed: {e:?}"))?,
+        "BETA"
     );
+    println!("[client] StringLab::shout -> BETA");
 
+    println!("[client] closing virtual connections");
     session_handle
-        .close_connection(conn_a_id, vec![])
+        .close_connection(counter_conn_id, vec![])
         .await
-        .map_err(|e| eyre!("close_connection(conn_a) failed: {e:?}"))?;
+        .map_err(|e| eyre!("close_connection(counter) failed: {e:?}"))?;
     session_handle
-        .close_connection(conn_b_id, vec![])
+        .close_connection(string_conn_id, vec![])
         .await
-        .map_err(|e| eyre!("close_connection(conn_b) failed: {e:?}"))?;
+        .map_err(|e| eyre!("close_connection(string) failed: {e:?}"))?;
 
-    driver_a_task.abort();
-    driver_b_task.abort();
+    counter_driver_task.abort();
+    string_driver_task.abort();
+    println!("[demo] virtual_connections: complete");
 
     Ok(())
 }

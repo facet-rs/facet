@@ -64,6 +64,24 @@ jobs:
       - name: Build docs (xtask)
         run: cargo xtask doc
 
+  rust-examples:
+    name: Rust / Examples
+    runs-on: depot-ubuntu-24.04-4
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run borrowed/channels example
+        run: cargo run -p rust-examples --example borrowed_and_channels
+
+      - name: Run virtual-connections example
+        run: cargo run -p rust-examples --example virtual_connections
+
   rust-miri:
     name: Rust / Miri
     runs-on: depot-ubuntu-24.04-16
