@@ -194,6 +194,24 @@ jobs:
         run: |
           cargo clippy --workspace --all-features --all-targets --keep-going -- -D warnings --allow deprecated
 
+  semver-checks:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: ✨ Run cargo-semver-checks
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          manifest-path: Cargo.toml
+          baseline-rev: origin/main
+          exclude: facet-json-classics,facet-testattrs
+          verbose: true
+
   test-aarch64-apple-darwin:
     runs-on: depot-macos-15
     steps:
