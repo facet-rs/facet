@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.1](https://github.com/facet-rs/facet/compare/facet-core-v0.44.0...facet-core-v0.44.1) - 2026-03-03
+
+### Other
+
+- Make postcard opaque passthrough API backwards compatible
+- Add postcard opaque passthrough encoded-bytes path
+
 ## [0.44.0](https://github.com/facet-rs/facet/compare/facet-core-v0.43.2...facet-core-v0.44.0) - 2026-03-01
 
 ### Added
