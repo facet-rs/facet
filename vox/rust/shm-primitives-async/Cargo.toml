@@ -30,15 +30,15 @@ tokio = { workspace = true, features = ["net", "rt"] }
 
 [target.'cfg(windows)'.dependencies]
 tokio = { workspace = true, features = ["net", "rt"] }
-windows-sys = { version = "0.61", features = [
-    "Win32_Foundation",
-    "Win32_System_Memory",
-    "Win32_Storage_FileSystem",
-    "Win32_Security",
-    "Win32_System_IO",
-    "Win32_System_Pipes",
-    "Win32_System_Threading",
-]}
+windows-sys = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_System_Memory",
+  "Win32_Storage_FileSystem",
+  "Win32_Security",
+  "Win32_System_IO",
+  "Win32_System_Pipes",
+  "Win32_System_Threading",
+] }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true

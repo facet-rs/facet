@@ -24,4 +24,4 @@ shm-primitives = { workspace = true }
 libc = { workspace = true }
 
 [build-dependencies]
-cbindgen = "0.28"
+cbindgen.workspace = true

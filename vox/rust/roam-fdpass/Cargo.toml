@@ -20,14 +20,14 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 tokio = { workspace = true, features = ["net", "io-util"] }
 
 [target.'cfg(unix)'.dependencies]
-passfd = "0.1"
+passfd.workspace = true
 libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
-    "Win32_Foundation",
-    "Win32_Networking_WinSock",
-    "Win32_System_Threading",
+windows-sys = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_Networking_WinSock",
+  "Win32_System_Threading",
 ] }
 
 [dev-dependencies]

@@ -35,4 +35,4 @@ roam-stream.workspace = true
 roam-core.workspace = true
 shm-primitives.workspace = true
 roam-shm.workspace = true
-tempfile = "3"
+tempfile.workspace = true

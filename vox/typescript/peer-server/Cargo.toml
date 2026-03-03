@@ -16,9 +16,9 @@ name = "ws-peer-server"
 path = "src/main.rs"
 
 [dependencies]
-roam = { path = "../../rust/roam" }
-roam-core = { path = "../../rust/roam-core" }
-roam-types = { path = "../../rust/roam-types" }
-roam-websocket = { path = "../../rust/roam-websocket" }
-spec-proto = { path = "../../spec/spec-proto" }
+roam.workspace = true
+roam-core.workspace = true
+roam-types.workspace = true
+roam-websocket.workspace = true
+spec-proto.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros"] }

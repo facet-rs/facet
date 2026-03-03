@@ -40,7 +40,7 @@ tower = { workspace = true, optional = true }
 tokio-stream = { workspace = true, optional = true }
 
 shm-primitives.workspace = true
-tempfile = "3"
+tempfile.workspace = true
 divan.workspace = true
 
 [build-dependencies]

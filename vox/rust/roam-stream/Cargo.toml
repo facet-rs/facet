@@ -26,5 +26,5 @@ roam-types.workspace = true
 tokio = { workspace = true, features = ["net", "io-util", "io-std", "rt", "sync"] }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

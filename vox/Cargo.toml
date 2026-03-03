@@ -67,9 +67,15 @@ structstruck = "0.5.1"
 bytes = "1"
 blake3 = "1.8"
 heck = "0.5"
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
 tokio = { version = "1", features = ["sync", "rt", "time", "macros", "io-util"] }
 tokio-tungstenite = "0.26"
 libc = "0.2.180"
+tempfile = "3.23"
+xshell = "0.2"
+passfd = "0.1"
 
 # facet ecosystem
 facet = { version = "0.44.0", features = ["camino", "reflect"] }
@@ -86,10 +92,14 @@ facet-cargo-toml = { version = "0.44.0" }
 facet-error = { version = "0.44.0" }
 
 # Futures utilities
+futures-channel = "0.3"
 futures-util = "0.3"
 
 # WASM support
+wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = "0.3"
 
 # Tracing
 tracing = "0.1"
@@ -103,6 +113,14 @@ zerocopy = { version = "0.8", features = ["derive"] }
 
 # Benchmarking
 divan = "0.1"
+dprint-plugin-typescript = "0.95"
+figue = "2.0.0"
+prettyplease = "0.2"
+insta = "1"
+unsynn = "0.3"
+cbindgen = "0.28"
+loom = "0.7"
+windows-sys = "0.61"
 tarpc = { version = "0.37", features = ["tokio1", "serde1"] }
 tonic = "0.14"
 prost = "0.14"

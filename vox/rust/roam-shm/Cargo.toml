@@ -24,7 +24,7 @@ roam-types.workspace = true
 shm-primitives.workspace = true
 shm-primitives-async.workspace = true
 zerocopy = { workspace = true }
-tempfile = "3"
+tempfile.workspace = true
 facet-postcard.workspace = true
 tracing.workspace = true
 
@@ -32,9 +32,9 @@ tracing.workspace = true
 libc = { workspace = true }
 
 [target.'cfg(loom)'.dependencies]
-loom = { version = "0.7" }
+loom.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true
 facet-postcard.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "macros", "time"] }

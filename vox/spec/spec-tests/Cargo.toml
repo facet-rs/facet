@@ -16,13 +16,8 @@ roam-types = { workspace = true }
 shm-primitives = { workspace = true }
 spec-proto.workspace = true
 moire = { workspace = true }
-tokio = { workspace = true, features = [
-  "rt-multi-thread",
-  "net",
-  "time",
-  "process",
-] }
-tempfile = "3.23"
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "process"] }
+tempfile.workspace = true
 
 [dev-dependencies]
 facet-postcard.workspace = true

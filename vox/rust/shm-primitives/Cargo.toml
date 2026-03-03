@@ -24,7 +24,7 @@ default = []
 libc = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = [
+windows-sys = { workspace = true, features = [
   "Win32_Foundation",
   "Win32_System_Memory",
   "Win32_Storage_FileSystem",
@@ -35,10 +35,10 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [target.'cfg(loom)'.dependencies]
-loom = { version = "0.7" }
+loom.workspace = true
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true

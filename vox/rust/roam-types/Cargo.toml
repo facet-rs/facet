@@ -30,6 +30,6 @@ facet-postcard.workspace = true
 tokio.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-futures-channel = "0.3"
+futures-channel.workspace = true
 
 [dev-dependencies]

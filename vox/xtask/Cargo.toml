@@ -12,13 +12,13 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet.workspace = true
-figue = { version = "2.0.0" }
-xshell = "0.2"
-roam-codegen = { path = "../rust/roam-codegen" }
-roam-types = { path = "../rust/roam-types" }
-spec-proto = { path = "../spec/spec-proto" }
-dprint-plugin-typescript = "0.95"
-proc-macro2 = "1"
-quote = "1"
-prettyplease = "0.2"
-syn = { version = "2", features = ["full"] }
+figue.workspace = true
+xshell.workspace = true
+roam-codegen.workspace = true
+roam-types.workspace = true
+spec-proto.workspace = true
+dprint-plugin-typescript.workspace = true
+proc-macro2.workspace = true
+quote.workspace = true
+prettyplease.workspace = true
+syn.workspace = true
