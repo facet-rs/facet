@@ -1,6 +1,5 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
-assertion_line: 741
 expression: "generate(quote!\n{ pub trait Adder { async fn add(&self, a: i32, b: i32) -> i32; } })"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -76,7 +75,7 @@ where
             let (a, b) = args;
             let value = self.handler.add(a, b).await;
             let sink_call = ::roam::SinkCall::new(reply);
-            ::roam::Call::<i32, ::core::convert::Infallible>::ok(sink_call, value).await;
+            ::roam::Call::<'_, i32, ::core::convert::Infallible>::ok(sink_call, value).await;
             return;
         }
         reply

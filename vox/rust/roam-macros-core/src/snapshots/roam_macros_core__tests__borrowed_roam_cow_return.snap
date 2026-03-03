@@ -1,52 +1,54 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
-expression: "generate(quote! { trait Ping { async fn ping(&self) -> u64; } })"
+expression: "generate(quote!\n{\n    trait TextSvc\n    {\n        async fn normalize(&self, input: String) -> ::std::borrow::Cow<'roam,\n        str>;\n    }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
-pub fn ping_service_descriptor() -> &'static ::roam::session::ServiceDescriptor {
+pub fn text_svc_service_descriptor() -> &'static ::roam::session::ServiceDescriptor {
     static DESCRIPTOR: std::sync::OnceLock<&'static ::roam::session::ServiceDescriptor> =
         std::sync::OnceLock::new();
     DESCRIPTOR.get_or_init(|| {
         let methods: Vec<&'static ::roam::session::MethodDescriptor> =
-            vec![::roam::hash::method_descriptor::<(), u64>(
-                "Ping",
-                "ping",
-                &[],
-                None,
-            )];
+            vec![::roam::hash::method_descriptor::<
+                (String,),
+                ::std::borrow::Cow<'static, str>,
+            >("TextSvc", "normalize", &["input"], None)];
         Box::leak(Box::new(::roam::session::ServiceDescriptor {
-            service_name: "Ping",
+            service_name: "TextSvc",
             methods: Box::leak(methods.into_boxed_slice()),
             doc: None,
         }))
     })
 }
-pub trait Ping
+pub trait TextSvc
 where
     Self: Send + Sync,
 {
-    fn ping(&self) -> impl std::future::Future<Output = u64> + Send;
+    fn normalize<'roam>(
+        &self,
+        call: impl ::roam::Call<'roam, ::std::borrow::Cow<'roam, str>, ::core::convert::Infallible>,
+        input: String,
+    ) -> impl std::future::Future<Output = ()> + Send;
 }
 #[doc = r" Dispatcher for this service."]
 #[doc = r""]
 #[doc = r" Wraps a handler and implements [`#roam::Handler`] by routing incoming"]
 #[doc = r" calls to the appropriate trait method by method ID."]
 #[derive(Clone)]
-pub struct PingDispatcher<H> {
+pub struct TextSvcDispatcher<H> {
     handler: H,
 }
-impl<H> PingDispatcher<H>
+impl<H> TextSvcDispatcher<H>
 where
-    H: Ping + Clone + Send + Sync + 'static,
+    H: TextSvc + Clone + Send + Sync + 'static,
 {
     #[doc = r" Create a new dispatcher wrapping the given handler."]
     pub fn new(handler: H) -> Self {
         Self { handler }
     }
 }
-impl<H, R> ::roam::Handler<R> for PingDispatcher<H>
+impl<H, R> ::roam::Handler<R> for TextSvcDispatcher<H>
 where
-    H: Ping + Clone + Send + Sync + 'static,
+    H: TextSvc + Clone + Send + Sync + 'static,
     R: ::roam::ReplySink,
 {
     async fn handle(&self, call: ::roam::SelfRef<::roam::RequestCall<'static>>, reply: R) {
@@ -60,8 +62,8 @@ where
                 return;
             }
         };
-        if method_id == ping_service_descriptor().methods[0usize].id {
-            let args: () = match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
+        if method_id == text_svc_service_descriptor().methods[0usize].id {
+            let args: (String,) = match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
                 Ok(v) => v,
                 Err(_) => {
                     reply
@@ -72,10 +74,9 @@ where
                     return;
                 }
             };
-            let () = args;
-            let value = self.handler.ping().await;
+            let (input,) = args;
             let sink_call = ::roam::SinkCall::new(reply);
-            ::roam::Call::<'_, u64, ::core::convert::Infallible>::ok(sink_call, value).await;
+            self.handler.normalize(sink_call, input).await;
             return;
         }
         reply
@@ -83,19 +84,22 @@ where
             .await;
     }
 }
-#[doc = "Client for the `Ping` service.\n\nGeneric over any [`Caller`](:: roam::Caller) implementation."]
+#[doc = "Client for the `TextSvc` service.\n\nGeneric over any [`Caller`](:: roam::Caller) implementation."]
 #[derive(Clone)]
-pub struct PingClient<C: ::roam::Caller> {
+pub struct TextSvcClient<C: ::roam::Caller> {
     caller: C,
 }
-impl<C: ::roam::Caller> PingClient<C> {
+impl<C: ::roam::Caller> TextSvcClient<C> {
     #[doc = r" Create a new client wrapping the given caller."]
     pub fn new(caller: C) -> Self {
         Self { caller }
     }
-    pub async fn ping(&self) -> Result<u64, ::roam::RoamError> {
-        let method_id = ping_service_descriptor().methods[0usize].id;
-        let args = ();
+    pub async fn normalize(
+        &self,
+        input: String,
+    ) -> Result<::roam::SelfRef<::std::borrow::Cow<'static, str>>, ::roam::RoamError> {
+        let method_id = text_svc_service_descriptor().methods[0usize].id;
+        let args = (input,);
         let channels = vec![];
         let req = ::roam::RequestCall {
             method_id,
@@ -115,13 +119,18 @@ impl<C: ::roam::Caller> PingClient<C> {
             }
             ::roam::RoamError::User(never) => match never {},
         })?;
-        let ret_bytes = match &response.ret {
-            ::roam::Payload::Incoming(bytes) => bytes,
-            _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
-        };
-        let result: Result<u64, ::roam::RoamError<::core::convert::Infallible>> =
-            ::roam::facet_postcard::from_slice(ret_bytes)
+        response.try_repack(|resp, _bytes| {
+            let ret_bytes = match &resp.ret {
+                ::roam::Payload::Incoming(bytes) => bytes,
+                _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
+            };
+            let result: Result<
+                ::std::borrow::Cow<'static, str>,
+                ::roam::RoamError<::core::convert::Infallible>,
+            > = ::roam::facet_postcard::from_slice_borrowed(ret_bytes)
                 .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
-        result
+            let ret = result?;
+            Ok(ret)
+        })
     }
 }

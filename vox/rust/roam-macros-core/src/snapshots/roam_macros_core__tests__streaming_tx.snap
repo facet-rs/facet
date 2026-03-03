@@ -1,6 +1,5 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
-assertion_line: 769
 expression: "generate(quote!\n{\n    trait Streamer\n    { async fn count_up(&self, start: i32, output: Tx<i32>) -> i32; }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -86,7 +85,7 @@ where
                         #[allow(unsafe_code)]
                         unsafe {
                             ::roam::bind_channels_callee_args(
-                                &mut args as *mut (i32, Tx<i32>) as *mut u8,
+                                &mut args as *mut _ as *mut u8,
                                 plan,
                                 &call.channels,
                                 binder,
@@ -98,7 +97,7 @@ where
             let (start, output) = args;
             let value = self.handler.count_up(start, output).await;
             let sink_call = ::roam::SinkCall::new(reply);
-            ::roam::Call::<i32, ::core::convert::Infallible>::ok(sink_call, value).await;
+            ::roam::Call::<'_, i32, ::core::convert::Infallible>::ok(sink_call, value).await;
             return;
         }
         reply
@@ -124,11 +123,7 @@ impl<C: ::roam::Caller> StreamerClient<C> {
             let plan = ::roam::RpcPlan::for_type::<(i32, Tx<i32>)>();
             #[allow(unsafe_code)]
             unsafe {
-                ::roam::bind_channels_caller_args(
-                    &mut args as *mut (i32, Tx<i32>) as *mut u8,
-                    plan,
-                    binder,
-                )
+                ::roam::bind_channels_caller_args(&mut args as *mut _ as *mut u8, plan, binder)
             }
         } else {
             vec![]

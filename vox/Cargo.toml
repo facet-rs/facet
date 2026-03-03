@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "rust-examples",
   "xtask",
   "spec/spec-proto",
   "spec/spec-tests",
@@ -130,6 +131,7 @@ serde = { version = "1", features = ["derive"] }
 hyper-util = "0.1"
 tower = "0.5"
 tokio-stream = "0.1"
+eyre = "0.6"
 
 # [patch."https://github.com/facet-rs/facet"]
 # facet = { path = "../facet/facet" }

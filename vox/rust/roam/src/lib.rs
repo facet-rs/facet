@@ -22,10 +22,13 @@ pub use roam_types::{
     Caller,
     // Descriptors
     ChannelId,
+    // Types
+    ConnectionSettings,
     Handler,
+    MessageFamily,
     MethodDescriptor,
     MethodId,
-    // Types
+    Parity,
     Payload,
     ReplySink,
     RequestCall,
@@ -34,14 +37,21 @@ pub use roam_types::{
     RoamError,
     RpcPlan,
     Rx,
+    RxError,
     SelfRef,
     ServiceDescriptor,
     SinkCall,
     // Channels
     Tx,
+    TxError,
     // Channels
     channel,
 };
+
+// Re-export runtime/session primitives from `roam-core`.
+// This keeps user-facing setup to `roam` + a transport crate.
+#[cfg(feature = "runtime")]
+pub use roam_core::*;
 
 // Channel binding is only available on non-wasm32 targets
 #[cfg(not(target_arch = "wasm32"))]

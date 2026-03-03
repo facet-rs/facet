@@ -1,6 +1,5 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
-assertion_line: 748
 expression: "generate(quote!\n{\n    trait Calc\n    { async fn div(&self, a: f64, b: f64) -> Result<f64, DivError>; }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -78,7 +77,7 @@ where
             let (a, b) = args;
             let result = self.handler.div(a, b).await;
             let sink_call = ::roam::SinkCall::new(reply);
-            ::roam::Call::<f64, DivError>::reply(sink_call, result).await;
+            ::roam::Call::<'_, f64, DivError>::reply(sink_call, result).await;
             return;
         }
         reply

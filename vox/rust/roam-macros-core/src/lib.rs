@@ -7,7 +7,7 @@
 
 use ::quote::{format_ident, quote};
 use heck::ToSnakeCase;
-use proc_macro2::{Group, Ident, TokenStream as TokenStream2, TokenTree};
+use proc_macro2::TokenStream as TokenStream2;
 
 pub mod crate_name;
 
@@ -60,38 +60,48 @@ pub fn roam_crate() -> TokenStream2 {
     }
 }
 
-fn rewrite_lifetime_tokens(stream: TokenStream2, from: &str, to: &str) -> TokenStream2 {
-    let mut out = TokenStream2::new();
-    let mut iter = stream.into_iter().peekable();
-    while let Some(tt) = iter.next() {
-        match tt {
-            TokenTree::Group(group) => {
-                let mut new_group = Group::new(
-                    group.delimiter(),
-                    rewrite_lifetime_tokens(group.stream(), from, to),
-                );
-                new_group.set_span(group.span());
-                out.extend([TokenTree::Group(new_group)]);
+/// Convert a parsed type into a token stream where every borrowed lifetime is `'static`.
+///
+/// This is used for descriptor hashing and client borrowed-return decode paths, where
+/// we need a concrete `'static` shape type independent of method-local lifetimes.
+fn to_static_type_tokens(ty: &Type) -> TokenStream2 {
+    match ty {
+        Type::Reference(TypeRef { mutable, inner, .. }) => {
+            let inner = to_static_type_tokens(inner);
+            if mutable.is_some() {
+                quote! { &'static mut #inner }
+            } else {
+                quote! { &'static #inner }
             }
-            TokenTree::Punct(p) if p.as_char() == '\'' => {
-                if let Some(TokenTree::Ident(lifetime_ident)) = iter.peek()
-                    && *lifetime_ident == from
-                {
-                    let span = lifetime_ident.span();
-                    let _ = iter.next();
-                    out.extend([TokenTree::Punct(p), TokenTree::Ident(Ident::new(to, span))]);
-                    continue;
-                }
-                out.extend([TokenTree::Punct(p)]);
-            }
-            other => out.extend([other]),
         }
+        Type::Tuple(TypeTuple(group)) => {
+            let elems: Vec<TokenStream2> = group
+                .content
+                .iter()
+                .map(|entry| to_static_type_tokens(&entry.value))
+                .collect();
+            match elems.len() {
+                0 => quote! { () },
+                1 => {
+                    let t = &elems[0];
+                    quote! { (#t,) }
+                }
+                _ => quote! { (#(#elems),*) },
+            }
+        }
+        Type::PathWithGenerics(PathWithGenerics { path, args, .. }) => {
+            let path = path.to_token_stream();
+            let args: Vec<TokenStream2> = args
+                .iter()
+                .map(|entry| match &entry.value {
+                    GenericArgument::Lifetime(_) => quote! { 'static },
+                    GenericArgument::Type(inner) => to_static_type_tokens(inner),
+                })
+                .collect();
+            quote! { #path < #(#args),* > }
+        }
+        Type::Path(path) => path.to_token_stream(),
     }
-    out
-}
-
-fn to_static_roam_type_tokens(ty: &Type) -> TokenStream2 {
-    rewrite_lifetime_tokens(ty.to_token_stream(), "roam", "static")
 }
 
 // r[service-macro.is-source-of-truth]
@@ -177,12 +187,12 @@ fn generate_service_descriptor_fn(parsed: &ServiceTrait, roam: &TokenStream2) ->
 
             // Build args tuple type and return type
             let arg_types: Vec<TokenStream2> =
-                m.args().map(|arg| arg.ty.to_token_stream()).collect();
+                m.args().map(|arg| to_static_type_tokens(&arg.ty)).collect();
             let args_tuple_ty = quote! { (#(#arg_types,)*) };
             let arg_name_strs: Vec<String> = m.args().map(|arg| arg.name().to_string()).collect();
 
             let return_type = m.return_type();
-            let return_ty_tokens = to_static_roam_type_tokens(&return_type);
+            let return_ty_tokens = to_static_type_tokens(&return_type);
 
             let method_doc_expr = match m.doc() {
                 Some(d) => quote! { Some(#d) },
@@ -276,7 +286,7 @@ fn generate_trait_method(method: &ServiceMethod, roam: &TokenStream2) -> TokenSt
             .unwrap_or_else(|| quote! { ::core::convert::Infallible });
         quote! {
             #method_doc
-            fn #method_name #method_lifetime (&self, call: impl #roam::Call<#ok_ty, #err_ty>, #(#params),*) -> impl std::future::Future<Output = ()> + Send;
+            fn #method_name #method_lifetime (&self, call: impl #roam::Call<'roam, #ok_ty, #err_ty>, #(#params),*) -> impl std::future::Future<Output = ()> + Send;
         }
     } else {
         let output_ty = return_type.to_token_stream();
@@ -367,7 +377,10 @@ fn generate_dispatch_arm(
     let idx = method_index;
 
     // Build args tuple type for deserialization
-    let arg_types: Vec<TokenStream2> = method.args().map(|a| a.ty.to_token_stream()).collect();
+    let arg_types: Vec<TokenStream2> = method
+        .args()
+        .map(|a| to_static_type_tokens(&a.ty))
+        .collect();
     let args_tuple_type = match arg_types.len() {
         0 => quote! { () },
         1 => {
@@ -407,7 +420,7 @@ fn generate_dispatch_arm(
                         #[allow(unsafe_code)]
                         unsafe {
                             #roam::bind_channels_callee_args(
-                                &mut args as *mut #args_tuple_type as *mut u8,
+                                &mut args as *mut _ as *mut u8,
                                 plan,
                                 &call.channels,
                                 binder,
@@ -446,13 +459,13 @@ fn generate_dispatch_arm(
         quote! {
             let result = self.handler.#method_fn(#(#arg_names),*).await;
             let sink_call = #roam::SinkCall::new(reply);
-            #roam::Call::<#ok_ty, #err_ty>::reply(sink_call, result).await;
+            #roam::Call::<'_, #ok_ty, #err_ty>::reply(sink_call, result).await;
         }
     } else {
         quote! {
             let value = self.handler.#method_fn(#(#arg_names),*).await;
             let sink_call = #roam::SinkCall::new(reply);
-            #roam::Call::<#ok_ty, #err_ty>::ok(sink_call, value).await;
+            #roam::Call::<'_, #ok_ty, #err_ty>::ok(sink_call, value).await;
         }
     };
 
@@ -539,7 +552,10 @@ fn generate_client_method(
         .collect();
 
     // Args tuple type (for RpcPlan::for_type)
-    let arg_types: Vec<TokenStream2> = method.args().map(|a| a.ty.to_token_stream()).collect();
+    let arg_types: Vec<TokenStream2> = method
+        .args()
+        .map(|a| to_static_type_tokens(&a.ty))
+        .collect();
     let args_tuple_type = match arg_types.len() {
         0 => quote! { () },
         1 => {
@@ -566,7 +582,7 @@ fn generate_client_method(
     let ok_uses_roam_lifetime = ok_type_for_lifetimes.has_named_lifetime("roam");
     let (ok_ty_decode, err_ty, client_return) = if let Some((ok, err)) = return_type.as_result() {
         let ok_t = ok.to_token_stream();
-        let ok_t_static = to_static_roam_type_tokens(ok);
+        let ok_t_static = to_static_type_tokens(ok);
         let err_t = err.to_token_stream();
         (
             if ok_uses_roam_lifetime {
@@ -583,7 +599,7 @@ fn generate_client_method(
         )
     } else {
         let t = return_type.to_token_stream();
-        let t_static = to_static_roam_type_tokens(&return_type);
+        let t_static = to_static_type_tokens(&return_type);
         (
             if ok_uses_roam_lifetime {
                 t_static.clone()
@@ -613,7 +629,7 @@ fn generate_client_method(
                     #[allow(unsafe_code)]
                     unsafe {
                         #roam::bind_channels_caller_args(
-                            &mut args as *mut #args_tuple_type as *mut u8,
+                            &mut args as *mut _ as *mut u8,
                             plan,
                             binder,
                         )
@@ -828,47 +844,36 @@ mod tests {
     }
 
     #[test]
-    fn borrowed_roam_return_maps_to_selfref_static() {
-        let parsed = roam_macros_parse::parse_trait(&quote! {
+    fn borrowed_roam_return() {
+        assert_snapshot!(generate(quote! {
             trait Hasher { async fn hash(&self, payload: String) -> &'roam str; }
-        })
-        .unwrap();
-        let roam = quote! { ::roam };
-        let ts = crate::generate_service(&parsed, &roam).unwrap().to_string();
-        assert!(
-            ts.contains("Result < :: roam :: SelfRef < & ' static str > , :: roam :: RoamError >")
-        );
-        assert!(ts.contains("method_descriptor :: < (String ,) , & ' static str >"));
+        }));
     }
 
     #[test]
-    fn borrowed_roam_return_keeps_call_style_handler_signature() {
-        let parsed = roam_macros_parse::parse_trait(&quote! {
+    fn borrowed_roam_return_call_style() {
+        assert_snapshot!(generate(quote! {
             trait Hasher { async fn hash(&self, payload: String) -> &'roam str; }
-        })
-        .unwrap();
-        let roam = quote! { ::roam };
-        let ts = crate::generate_service(&parsed, &roam).unwrap().to_string();
-        assert!(ts.contains("fn hash < 'roam >"));
-        assert!(ts.contains("self . handler . hash (sink_call , payload) . await ;"));
-        assert!(!ts.contains("let value = self.handler.hash(payload).await;"));
+        }));
     }
 
     #[test]
-    fn borrowed_roam_cow_return_maps_to_selfref_static() {
-        let parsed = roam_macros_parse::parse_trait(&quote! {
+    fn borrowed_roam_cow_return() {
+        assert_snapshot!(generate(quote! {
             trait TextSvc {
                 async fn normalize(&self, input: String) -> ::std::borrow::Cow<'roam, str>;
             }
-        })
-        .unwrap();
-        let roam = quote! { ::roam };
-        let ts = crate::generate_service(&parsed, &roam).unwrap().to_string();
-        assert!(ts.contains(
-            "Result < :: roam :: SelfRef < :: std :: borrow :: Cow < ' static , str > > , :: roam :: RoamError >"
-        ));
-        assert!(ts.contains(
-            "method_descriptor :: < (String ,) , :: std :: borrow :: Cow < ' static , str > >"
-        ));
+        }));
+    }
+
+    #[test]
+    fn borrowed_return_mixed_with_borrowed_args_and_channels_compiles_to_expected_shapes() {
+        assert_snapshot!(generate(quote! {
+            trait WordLab {
+                async fn is_short(&self, word: &str) -> bool;
+                async fn classify(&self, word: String) -> &'roam str;
+                async fn transform(&self, prefix: &str, input: Rx<String>, output: Tx<String>) -> u32;
+            }
+        }));
     }
 }

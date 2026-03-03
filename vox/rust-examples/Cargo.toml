@@ -1,0 +1,15 @@
+[package]
+name = "rust-examples"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+publish = false
+
+[dependencies]
+eyre.workspace = true
+roam.workspace = true
+roam-stream.workspace = true
+tokio = { workspace = true, features = ["rt", "net"] }

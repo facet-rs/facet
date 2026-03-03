@@ -71,7 +71,11 @@ use crate::{MaybeSend, MaybeSync, Metadata, RequestCall, RequestResponse, RoamEr
 ///
 /// - `T`: The success value type of the response.
 /// - `E`: The error value type of the response.
-pub trait Call<T, E>: MaybeSend {
+pub trait Call<'wire, T, E>: MaybeSend
+where
+    T: facet::Facet<'wire> + MaybeSend,
+    E: facet::Facet<'wire> + MaybeSend,
+{
     /// Send a [`Result`] back to the caller, consuming this `Call`.
     fn reply(self, result: Result<T, E>) -> impl std::future::Future<Output = ()> + MaybeSend;
 
@@ -81,7 +85,6 @@ pub trait Call<T, E>: MaybeSend {
     fn ok(self, value: T) -> impl std::future::Future<Output = ()> + MaybeSend
     where
         Self: Sized,
-        T: MaybeSend,
     {
         self.reply(Ok(value))
     }
@@ -92,7 +95,6 @@ pub trait Call<T, E>: MaybeSend {
     fn err(self, error: E) -> impl std::future::Future<Output = ()> + MaybeSend
     where
         Self: Sized,
-        E: MaybeSend,
     {
         self.reply(Err(error))
     }
@@ -234,16 +236,21 @@ impl<R: ReplySink> SinkCall<R> {
     }
 }
 
-impl<T, E, R> Call<T, E> for SinkCall<R>
+impl<'wire, T, E, R> Call<'wire, T, E> for SinkCall<R>
 where
-    T: for<'a> facet::Facet<'a> + MaybeSend,
-    E: for<'a> facet::Facet<'a> + MaybeSend,
+    T: facet::Facet<'wire> + MaybeSend,
+    E: facet::Facet<'wire> + MaybeSend,
     R: ReplySink,
 {
     async fn reply(self, result: Result<T, E>) {
         use crate::{Payload, RequestResponse};
         let wire: Result<T, crate::RoamError<E>> = result.map_err(crate::RoamError::User);
-        let ret = Payload::outgoing(&wire);
+        let ptr =
+            facet::PtrConst::new((&wire as *const Result<T, crate::RoamError<E>>).cast::<u8>());
+        let shape = <Result<T, crate::RoamError<E>> as facet::Facet<'wire>>::SHAPE;
+        // SAFETY: `wire` lives until `send_reply(...).await` completes in this function,
+        // and `shape` matches the pointed value exactly.
+        let ret = unsafe { Payload::outgoing_unchecked(ptr, shape) };
         self.reply
             .send_reply(RequestResponse {
                 ret,
@@ -258,7 +265,7 @@ where
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use crate::{Metadata, Payload, RequestCall, RequestResponse};
+    use crate::{MaybeSend, Metadata, Payload, RequestCall, RequestResponse};
 
     use super::{Call, Caller, Handler, ReplySink, ResponseParts};
 
@@ -266,10 +273,10 @@ mod tests {
         observed: Arc<Mutex<Option<Result<T, E>>>>,
     }
 
-    impl<T, E> Call<T, E> for RecordingCall<T, E>
+    impl<'wire, T, E> Call<'wire, T, E> for RecordingCall<T, E>
     where
-        T: Send + 'static,
-        E: Send + 'static,
+        T: facet::Facet<'wire> + MaybeSend + Send + 'static,
+        E: facet::Facet<'wire> + MaybeSend + Send + 'static,
     {
         async fn reply(self, result: Result<T, E>) {
             let mut guard = self.observed.lock().expect("recording mutex poisoned");

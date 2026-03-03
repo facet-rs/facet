@@ -1,0 +1,291 @@
+---
+source: rust/roam-macros-core/src/lib.rs
+expression: "generate(quote!\n{\n    trait WordLab\n    {\n        async fn is_short(&self, word: &str) -> bool; async fn\n        classify(&self, word: String) -> &'roam str; async fn\n        transform(&self, prefix: &str, input: Rx<String>, output: Tx<String>)\n        -> u32;\n    }\n})"
+---
+#[allow(non_snake_case, clippy::all)]
+pub fn word_lab_service_descriptor() -> &'static ::roam::session::ServiceDescriptor {
+    static DESCRIPTOR: std::sync::OnceLock<&'static ::roam::session::ServiceDescriptor> =
+        std::sync::OnceLock::new();
+    DESCRIPTOR.get_or_init(|| {
+        let methods: Vec<&'static ::roam::session::MethodDescriptor> = vec![
+            ::roam::hash::method_descriptor::<(&'static str,), bool>(
+                "WordLab",
+                "is_short",
+                &["word"],
+                None,
+            ),
+            ::roam::hash::method_descriptor::<(String,), &'static str>(
+                "WordLab",
+                "classify",
+                &["word"],
+                None,
+            ),
+            ::roam::hash::method_descriptor::<(&'static str, Rx<String>, Tx<String>), u32>(
+                "WordLab",
+                "transform",
+                &["prefix", "input", "output"],
+                None,
+            ),
+        ];
+        Box::leak(Box::new(::roam::session::ServiceDescriptor {
+            service_name: "WordLab",
+            methods: Box::leak(methods.into_boxed_slice()),
+            doc: None,
+        }))
+    })
+}
+pub trait WordLab
+where
+    Self: Send + Sync,
+{
+    fn is_short(&self, word: &str) -> impl std::future::Future<Output = bool> + Send;
+    fn classify<'roam>(
+        &self,
+        call: impl ::roam::Call<'roam, &'roam str, ::core::convert::Infallible>,
+        word: String,
+    ) -> impl std::future::Future<Output = ()> + Send;
+    fn transform(
+        &self,
+        prefix: &str,
+        input: Rx<String>,
+        output: Tx<String>,
+    ) -> impl std::future::Future<Output = u32> + Send;
+}
+#[doc = r" Dispatcher for this service."]
+#[doc = r""]
+#[doc = r" Wraps a handler and implements [`#roam::Handler`] by routing incoming"]
+#[doc = r" calls to the appropriate trait method by method ID."]
+#[derive(Clone)]
+pub struct WordLabDispatcher<H> {
+    handler: H,
+}
+impl<H> WordLabDispatcher<H>
+where
+    H: WordLab + Clone + Send + Sync + 'static,
+{
+    #[doc = r" Create a new dispatcher wrapping the given handler."]
+    pub fn new(handler: H) -> Self {
+        Self { handler }
+    }
+}
+impl<H, R> ::roam::Handler<R> for WordLabDispatcher<H>
+where
+    H: WordLab + Clone + Send + Sync + 'static,
+    R: ::roam::ReplySink,
+{
+    async fn handle(&self, call: ::roam::SelfRef<::roam::RequestCall<'static>>, reply: R) {
+        let method_id = call.method_id;
+        let args_bytes = match &call.args {
+            ::roam::Payload::Incoming(bytes) => bytes,
+            _ => {
+                reply
+                    .send_error(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)
+                    .await;
+                return;
+            }
+        };
+        if method_id == word_lab_service_descriptor().methods[0usize].id {
+            let args: (&'static str,) =
+                match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        reply
+                            .send_error(
+                                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload,
+                            )
+                            .await;
+                        return;
+                    }
+                };
+            let (word,) = args;
+            let value = self.handler.is_short(word).await;
+            let sink_call = ::roam::SinkCall::new(reply);
+            ::roam::Call::<'_, bool, ::core::convert::Infallible>::ok(sink_call, value).await;
+            return;
+        }
+        if method_id == word_lab_service_descriptor().methods[1usize].id {
+            let args: (String,) = match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
+                Ok(v) => v,
+                Err(_) => {
+                    reply
+                        .send_error(
+                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload,
+                        )
+                        .await;
+                    return;
+                }
+            };
+            let (word,) = args;
+            let sink_call = ::roam::SinkCall::new(reply);
+            self.handler.classify(sink_call, word).await;
+            return;
+        }
+        if method_id == word_lab_service_descriptor().methods[2usize].id {
+            let mut args: (&'static str, Rx<String>, Tx<String>) =
+                match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        reply
+                            .send_error(
+                                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload,
+                            )
+                            .await;
+                        return;
+                    }
+                };
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                if let Some(binder) = reply.channel_binder() {
+                    let plan =
+                        ::roam::RpcPlan::for_type::<(&'static str, Rx<String>, Tx<String>)>();
+                    if !plan.channel_locations.is_empty() {
+                        #[allow(unsafe_code)]
+                        unsafe {
+                            ::roam::bind_channels_callee_args(
+                                &mut args as *mut _ as *mut u8,
+                                plan,
+                                &call.channels,
+                                binder,
+                            );
+                        }
+                    }
+                }
+            }
+            let (prefix, input, output) = args;
+            let value = self.handler.transform(prefix, input, output).await;
+            let sink_call = ::roam::SinkCall::new(reply);
+            ::roam::Call::<'_, u32, ::core::convert::Infallible>::ok(sink_call, value).await;
+            return;
+        }
+        reply
+            .send_error(::roam::RoamError::<::core::convert::Infallible>::UnknownMethod)
+            .await;
+    }
+}
+#[doc = "Client for the `WordLab` service.\n\nGeneric over any [`Caller`](:: roam::Caller) implementation."]
+#[derive(Clone)]
+pub struct WordLabClient<C: ::roam::Caller> {
+    caller: C,
+}
+impl<C: ::roam::Caller> WordLabClient<C> {
+    #[doc = r" Create a new client wrapping the given caller."]
+    pub fn new(caller: C) -> Self {
+        Self { caller }
+    }
+    pub async fn is_short(&self, word: &str) -> Result<bool, ::roam::RoamError> {
+        let method_id = word_lab_service_descriptor().methods[0usize].id;
+        let args = (word,);
+        let channels = vec![];
+        let req = ::roam::RequestCall {
+            method_id,
+            args: ::roam::Payload::outgoing(&args),
+            channels,
+            metadata: Default::default(),
+        };
+        let response = self.caller.call(req).await.map_err(|e| match e {
+            ::roam::RoamError::UnknownMethod => {
+                ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
+            }
+            ::roam::RoamError::InvalidPayload => {
+                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+            }
+            ::roam::RoamError::Cancelled => {
+                ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+            }
+            ::roam::RoamError::User(never) => match never {},
+        })?;
+        let ret_bytes = match &response.ret {
+            ::roam::Payload::Incoming(bytes) => bytes,
+            _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
+        };
+        let result: Result<bool, ::roam::RoamError<::core::convert::Infallible>> =
+            ::roam::facet_postcard::from_slice(ret_bytes)
+                .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
+        result
+    }
+    pub async fn classify(
+        &self,
+        word: String,
+    ) -> Result<::roam::SelfRef<&'static str>, ::roam::RoamError> {
+        let method_id = word_lab_service_descriptor().methods[1usize].id;
+        let args = (word,);
+        let channels = vec![];
+        let req = ::roam::RequestCall {
+            method_id,
+            args: ::roam::Payload::outgoing(&args),
+            channels,
+            metadata: Default::default(),
+        };
+        let response = self.caller.call(req).await.map_err(|e| match e {
+            ::roam::RoamError::UnknownMethod => {
+                ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
+            }
+            ::roam::RoamError::InvalidPayload => {
+                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+            }
+            ::roam::RoamError::Cancelled => {
+                ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+            }
+            ::roam::RoamError::User(never) => match never {},
+        })?;
+        response.try_repack(|resp, _bytes| {
+            let ret_bytes = match &resp.ret {
+                ::roam::Payload::Incoming(bytes) => bytes,
+                _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
+            };
+            let result: Result<&'static str, ::roam::RoamError<::core::convert::Infallible>> =
+                ::roam::facet_postcard::from_slice_borrowed(ret_bytes).map_err(|_| {
+                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+                })?;
+            let ret = result?;
+            Ok(ret)
+        })
+    }
+    pub async fn transform(
+        &self,
+        prefix: &str,
+        input: Rx<String>,
+        output: Tx<String>,
+    ) -> Result<u32, ::roam::RoamError> {
+        let method_id = word_lab_service_descriptor().methods[2usize].id;
+        let mut args = (prefix, input, output);
+        #[cfg(not(target_arch = "wasm32"))]
+        let channels = if let Some(binder) = self.caller.channel_binder() {
+            let plan = ::roam::RpcPlan::for_type::<(&'static str, Rx<String>, Tx<String>)>();
+            #[allow(unsafe_code)]
+            unsafe {
+                ::roam::bind_channels_caller_args(&mut args as *mut _ as *mut u8, plan, binder)
+            }
+        } else {
+            vec![]
+        };
+        #[cfg(target_arch = "wasm32")]
+        let channels: Vec<::roam::ChannelId> = vec![];
+        let req = ::roam::RequestCall {
+            method_id,
+            args: ::roam::Payload::outgoing(&args),
+            channels,
+            metadata: Default::default(),
+        };
+        let response = self.caller.call(req).await.map_err(|e| match e {
+            ::roam::RoamError::UnknownMethod => {
+                ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
+            }
+            ::roam::RoamError::InvalidPayload => {
+                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+            }
+            ::roam::RoamError::Cancelled => {
+                ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+            }
+            ::roam::RoamError::User(never) => match never {},
+        })?;
+        let ret_bytes = match &response.ret {
+            ::roam::Payload::Incoming(bytes) => bytes,
+            _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
+        };
+        let result: Result<u32, ::roam::RoamError<::core::convert::Infallible>> =
+            ::roam::facet_postcard::from_slice(ret_bytes)
+                .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
+        result
+    }
+}

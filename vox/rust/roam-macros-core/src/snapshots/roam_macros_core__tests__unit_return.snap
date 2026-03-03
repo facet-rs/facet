@@ -1,6 +1,5 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
-assertion_line: 762
 expression: "generate(quote! { trait Notifier { async fn notify(&self, msg: String); } })"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -76,7 +75,7 @@ where
             let (msg,) = args;
             let value = self.handler.notify(msg).await;
             let sink_call = ::roam::SinkCall::new(reply);
-            ::roam::Call::<(), ::core::convert::Infallible>::ok(sink_call, value).await;
+            ::roam::Call::<'_, (), ::core::convert::Infallible>::ok(sink_call, value).await;
             return;
         }
         reply

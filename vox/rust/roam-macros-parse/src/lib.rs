@@ -57,11 +57,13 @@ pub use unsynn::Error as ParseError;
 pub use unsynn::ToTokens;
 
 use proc_macro2::TokenStream as TokenStream2;
-use unsynn::operator::names::{Assign, Colon, Comma, Gt, Lt, PathSep, Pound, RArrow, Semicolon};
+use unsynn::operator::names::{
+    Assign, Colon, Comma, Gt, LifetimeTick, Lt, PathSep, Pound, RArrow, Semicolon,
+};
 use unsynn::{
     Any, BraceGroupContaining, BracketGroupContaining, CommaDelimitedVec, Cons, Either,
     EndOfStream, Except, Ident, LiteralString, Many, Optional, ParenthesisGroupContaining, Parse,
-    ToTokenIter, TokenStream, keyword, operator, unsynn,
+    ToTokenIter, TokenStream, keyword, unsynn,
 };
 
 keyword! {
@@ -73,10 +75,6 @@ keyword! {
     pub KDoc = "doc";
     pub KPub = "pub";
     pub KWhere = "where";
-}
-
-operator! {
-    pub Apostrophe = "'";
 }
 
 /// Parses tokens and groups until `C` is found, handling `<...>` correctly.
@@ -132,7 +130,7 @@ unsynn! {
 
     #[derive(Clone)]
     pub struct Lifetime {
-        pub _apo: Apostrophe,
+        pub _apo: LifetimeTick,
         pub ident: Ident,
     }
 
@@ -153,7 +151,7 @@ unsynn! {
     #[derive(Clone)]
     pub struct TypeRef {
         pub _amp: unsynn::operator::names::And,
-        pub lifetime: Option<Cons<Apostrophe, Ident>>,
+        pub lifetime: Option<Cons<LifetimeTick, Ident>>,
         pub mutable: Option<KMut>,
         pub inner: Box<Type>,
     }
