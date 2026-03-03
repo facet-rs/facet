@@ -1,30 +1,87 @@
 +++
 title = "TypeScript Guide"
-description = "How TypeScript runtime packages and generated clients fit into the Roam protocol stack."
+description = "How to generate TypeScript bindings from Rust descriptors and wire clients/servers with Roam runtime packages."
 weight = 23
 +++
 
-TypeScript support combines generated service bindings with runtime packages under `typescript/packages/`.
+TypeScript usage in Roam has two parts:
 
-## Layer mapping
+- runtime packages (`@bearcove/roam-core`, transports, wire/serialization)
+- generated service bindings (client, handler interface, dispatcher, descriptor)
 
-- Core runtime: `@bearcove/roam-core`
-- Wire model/codecs: `@bearcove/roam-wire`
-- Serialization: `@bearcove/roam-postcard`
-- Transports: `@bearcove/roam-tcp`, `@bearcove/roam-ws`
+## 1) Runtime dependencies
 
-## Typical flow
+For a Node server/client setup, start with:
 
-1. Define services in Rust.
-2. Generate TypeScript bindings from descriptors.
-3. Wire generated clients to runtime transport packages.
-4. Run TypeScript and cross-language compliance tests.
+```json
+{
+  "dependencies": {
+    "@bearcove/roam-core": "7.0.0",
+    "@bearcove/roam-tcp": "7.0.0",
+    "@bearcove/roam-ws": "7.0.0",
+    "@bearcove/roam-wire": "7.0.0",
+    "@bearcove/roam-postcard": "7.0.0"
+  }
+}
+```
 
-## Transport choice
+Generated files in this repository import from `@bearcove/roam-core` and `@bearcove/roam-ws`, and may rely on channel/schema runtime pieces provided by the core/postcard/wire stack.
 
-- Node/server TCP use cases: prefer `@bearcove/roam-tcp`.
-- Browser or websocket infrastructures: prefer `@bearcove/roam-ws`.
+## 2) Generate TypeScript bindings from Rust
 
-## Versioning guidance
+Use `roam-codegen` directly from your own generator (for example a Rust `build.rs`):
 
-Keep generated packages and runtime packages on aligned major versions with the Rust protocol release.
+```rust
+// build.rs
+fn main() {
+    let svc = my_proto::greeter_service_descriptor();
+    let ts = roam_codegen::targets::typescript::generate_service(svc);
+    std::fs::write("../typescript/generated/greeter.ts", ts).unwrap();
+}
+```
+
+Typical output file contains:
+
+- `GreeterClient`
+- `GreeterHandler` interface
+- `GreeterDispatcher`
+- `greeter_descriptor`
+
+## 3) Use the generated client
+
+```ts
+import { connectGreeter } from "@acme/roam-generated/greeter.ts";
+
+const client = await connectGreeter("ws://127.0.0.1:9000");
+const msg = await client.hello("world");
+console.log(msg);
+```
+
+If your generated module does not expose a `connect*` helper for your transport, create a connection with runtime transport APIs and pass `connection.asCaller()` into `new GreeterClient(...)`.
+
+## 4) Use the generated dispatcher on the server
+
+```ts
+import { Server } from "@bearcove/roam-tcp";
+import { GreeterDispatcher, type GreeterHandler } from "@acme/roam-generated/greeter.ts";
+
+class GreeterService implements GreeterHandler {
+  hello(name: string): string {
+    return `hello, ${name}`;
+  }
+}
+
+const server = new Server();
+const conn = await server.connect("127.0.0.1:9000", { acceptConnections: true });
+await conn.runChanneling(new GreeterDispatcher(new GreeterService()));
+```
+
+## 5) Workspace/publishing layout
+
+A common layout is:
+
+- `typescript/generated/*.ts` for generated service bindings
+- a small npm package (for example `@acme/roam-generated`) exporting those files
+- app/service packages depending on both generated bindings and runtime packages
+
+Keep generated package versions aligned with the Roam protocol/runtime major version.

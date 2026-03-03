@@ -1,30 +1,152 @@
 +++
 title = "Swift Guide"
-description = "How Swift codegen and the Swift runtime integrate with Rust-defined Roam services."
+description = "How to generate Swift bindings from Rust descriptors and wire them with RoamRuntime."
 weight = 22
 +++
 
-Swift support in Roam is generated from Rust service definitions.
+Swift usage in Roam is descriptor-driven: define services in Rust, generate Swift code, then run it against `RoamRuntime`.
 
-## Layer mapping
+## 1) Add runtime dependency
 
-- Schema source: Rust `#[roam::service]` traits
-- Code generation: `roam-codegen` (Swift target)
-- Runtime package: `swift/roam-runtime`
+In your Swift package:
 
-## Typical flow
+```swift
+// Package.swift
+.dependencies([
+  .package(path: "../roam-runtime")
+]),
+.targets([
+  .executableTarget(
+    name: "my-app",
+    dependencies: [
+      .product(name: "RoamRuntime", package: "roam-runtime")
+    ]
+  )
+])
+```
 
-1. Define/update service traits in Rust.
-2. Run your codegen step to emit Swift client/server bindings.
-3. Use `roam-runtime` transport/runtime primitives in Swift code.
-4. Validate behavior through spec and cross-language tests.
+Generated Swift files import:
 
-## Runtime boundaries
+- `Foundation`
+- `RoamRuntime`
 
-- Protocol compatibility stays anchored on Rust descriptors.
-- Swift code should treat generated bindings as API surface.
-- Shared-memory integrations go through runtime/FFI layers exposed by the workspace.
+## 2) Generate Swift bindings from Rust
 
-## Practical recommendation
+Use `roam-codegen` directly from your own Rust generator/build step:
 
-Keep generated Swift code checked in or deterministically regenerable in CI so schema drift is easy to detect.
+```rust
+// build.rs
+fn main() {
+    let svc = my_proto::greeter_service_descriptor();
+
+    let code = roam_codegen::targets::swift::generate_service_with_bindings(
+        svc,
+        roam_codegen::targets::swift::SwiftBindings::ClientAndServer,
+    );
+
+    std::fs::write("../swift/Sources/MyApp/Greeter.swift", code).unwrap();
+}
+```
+
+Generated Swift output includes:
+
+- `GreeterCaller` protocol
+- `GreeterClient`
+- `GreeterHandler` protocol
+- `GreeterChannelingDispatcher`
+- method IDs and schema helpers
+
+## 3) Wire a Swift client
+
+`GreeterClient` takes a `RoamConnection`.
+
+```swift
+import Foundation
+import RoamRuntime
+
+struct NoopDispatcher: ServiceDispatcher {
+    func preregister(methodId: UInt64, payload: [UInt8], channels: [UInt64], registry: ChannelRegistry) async {}
+    func dispatch(
+        methodId: UInt64,
+        payload: [UInt8],
+        channels: [UInt64],
+        requestId: UInt64,
+        registry: ChannelRegistry,
+        taskTx: @escaping @Sendable (TaskMessage) -> Void
+    ) async {}
+}
+
+let transport = try await connect(host: "127.0.0.1", port: 9000)
+let (handle, driver) = try await establishInitiator(
+    transport: transport,
+    dispatcher: NoopDispatcher(),
+    acceptConnections: false
+)
+
+Task {
+    try await driver.run()
+}
+
+let client = GreeterClient(connection: handle)
+let reply = try await client.hello(name: "world")
+print(reply)
+```
+
+## 4) Wire a Swift server
+
+`GreeterChannelingDispatcher` is generated per service; wrap it in a `ServiceDispatcher` adapter.
+
+```swift
+final class GreeterDispatcherAdapter: ServiceDispatcher {
+    private let handler: GreeterHandler
+
+    init(handler: GreeterHandler) {
+        self.handler = handler
+    }
+
+    func preregister(methodId: UInt64, payload: [UInt8], channels: [UInt64], registry: ChannelRegistry) async {
+        await GreeterChannelingDispatcher.preregisterChannels(
+            methodId: methodId,
+            channels: channels,
+            registry: registry
+        )
+    }
+
+    func dispatch(
+        methodId: UInt64,
+        payload: [UInt8],
+        channels: [UInt64],
+        requestId: UInt64,
+        registry: ChannelRegistry,
+        taskTx: @escaping @Sendable (TaskMessage) -> Void
+    ) async {
+        let dispatcher = GreeterChannelingDispatcher(
+            handler: handler,
+            registry: registry,
+            taskSender: taskTx
+        )
+        await dispatcher.dispatch(
+            methodId: methodId,
+            requestId: requestId,
+            channels: channels,
+            payload: Data(payload)
+        )
+    }
+}
+```
+
+Then establish as acceptor and run the driver:
+
+```swift
+let transport = try await connect(host: "127.0.0.1", port: 9000)
+let (_, driver) = try await establishAcceptor(
+    transport: transport,
+    dispatcher: GreeterDispatcherAdapter(handler: MyGreeterService()),
+    acceptConnections: true
+)
+try await driver.run()
+```
+
+## 5) Keep codegen and runtime versions aligned
+
+Generated Swift code assumes the same protocol/runtime major version as your Rust descriptors and `RoamRuntime`.
