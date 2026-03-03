@@ -7,7 +7,7 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use roam_core::{BareConduit, Driver, initiator};
+use roam_core::{BareConduit, initiator};
 use roam_types::MessageFamily;
 use roam_websocket::WsLink;
 use spec_proto::{Color, LookupError, MathError, Message, Point, Rectangle, Shape, TestbedClient};
@@ -90,7 +90,7 @@ pub async fn run_tests(ws_url: &str) -> TestResults {
     console_log!("Connected! Performing handshake...");
 
     let conduit = BareConduit::<MessageFamily, _>::new(link);
-    let (handle, _sh) = match initiator(conduit).establish().await {
+    let (client, _sh) = match initiator(conduit).establish::<TestbedClient<_>>(()).await {
         Ok(result) => result,
         Err(e) => {
             console_error!("Handshake failed: {e:?}");
@@ -104,15 +104,6 @@ pub async fn run_tests(ws_url: &str) -> TestResults {
     };
 
     console_log!("Handshake complete.");
-
-    let mut driver = Driver::new(handle, ());
-    let caller = driver.caller();
-
-    wasm_bindgen_futures::spawn_local(async move {
-        driver.run().await;
-    });
-
-    let client = TestbedClient::new(caller);
 
     // Run echo tests
     run_echo_tests(&client, &mut results).await;

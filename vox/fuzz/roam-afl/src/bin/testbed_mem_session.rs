@@ -4,7 +4,7 @@ use std::time::Duration;
 use afl::fuzz;
 use roam::Call;
 use roam_core::{
-    BareConduit, Driver, DriverCaller, DriverReplySink, acceptor, initiator, memory_link_pair,
+    BareConduit, DriverCaller, DriverReplySink, acceptor, initiator, memory_link_pair,
 };
 use roam_types::{Handler, MessageFamily, RequestCall, SelfRef};
 use spec_proto::{
@@ -218,28 +218,23 @@ async fn setup_client() -> Option<TestbedClient<DriverCaller>> {
     let client_conduit: BareConduit<MessageFamily, _> = BareConduit::new(client_link);
 
     let server_task = tokio::spawn(async move {
-        let Ok((server_handle, _)) = acceptor(server_conduit).establish().await else {
+        let Ok(((), _)) = acceptor(server_conduit)
+            .establish::<()>(TestbedDispatcher::new(FuzzService))
+            .await
+        else {
             return;
         };
-        let dispatcher = TestbedDispatcher::new(FuzzService);
-        let mut server_driver = Driver::new(server_handle, dispatcher);
-        tokio::spawn(async move {
-            server_driver.run().await;
-        });
     });
 
-    let Ok((client_handle, _)) = initiator(client_conduit).establish().await else {
+    let Ok((client, _)) = initiator(client_conduit)
+        .establish::<TestbedClient<DriverCaller>>(NoopHandler)
+        .await
+    else {
         return None;
     };
-    let mut client_driver = Driver::new(client_handle, NoopHandler);
-    let caller = client_driver.caller();
-
-    tokio::spawn(async move {
-        client_driver.run().await;
-    });
 
     let _ = server_task.await;
-    Some(TestbedClient::new(caller))
+    Some(client)
 }
 
 async fn run_case(data: &[u8]) {

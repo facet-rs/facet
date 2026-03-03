@@ -25,7 +25,7 @@ const ZEROCOPY_PAYLOAD_SIZES: &[usize] = &[
 
 mod roam_zerocopy_bench {
     use moire::task::FutureExt;
-    use roam_core::{BareConduit, Driver, acceptor, initiator, memory_link_pair};
+    use roam_core::{BareConduit, acceptor, initiator, memory_link_pair};
     use roam_shm::varslot::SizeClassConfig;
     use roam_shm::{Segment, SegmentConfig, ShmLink, create_test_link_pair};
     use roam_stream::StreamLink;
@@ -65,28 +65,22 @@ mod roam_zerocopy_bench {
 
         let server_task = moire::task::spawn(
             async move {
-                let (server_handle, _sh) = acceptor(server_conduit)
-                    .establish()
+                let ((), _sh) = acceptor(server_conduit)
+                    .establish::<()>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
-                let dispatcher = ZerocopyDispatcher::new(Handler);
-                let mut server_driver = Driver::new(server_handle, dispatcher);
-                moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
             }
             .named("server_setup"),
         );
 
-        let (client_handle, _sh) = initiator(client_conduit)
-            .establish()
+        let (client, _sh) = initiator(client_conduit)
+            .establish::<ZerocopyClient<_>>(())
             .await
             .expect("client handshake failed");
-        let mut client_driver = Driver::new(client_handle, ());
-        let caller = client_driver.caller();
-        moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
 
         server_task.await.expect("server setup failed");
 
-        ZerocopyClient::new(caller)
+        client
     }
 
     pub async fn setup_shm() -> ZerocopyClient<roam_core::DriverCaller> {
@@ -134,28 +128,22 @@ mod roam_zerocopy_bench {
 
         let server_task = moire::task::spawn(
             async move {
-                let (server_handle, _sh) = acceptor(server_conduit)
-                    .establish()
+                let ((), _sh) = acceptor(server_conduit)
+                    .establish::<()>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
-                let dispatcher = ZerocopyDispatcher::new(Handler);
-                let mut server_driver = Driver::new(server_handle, dispatcher);
-                moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
             }
             .named("server_setup"),
         );
 
-        let (client_handle, _sh) = initiator(client_conduit)
-            .establish()
+        let (client, _sh) = initiator(client_conduit)
+            .establish::<ZerocopyClient<_>>(())
             .await
             .expect("client handshake failed");
-        let mut client_driver = Driver::new(client_handle, ());
-        let caller = client_driver.caller();
-        moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
 
         server_task.await.expect("server setup failed");
 
-        ZerocopyClient::new(caller)
+        client
     }
 
     pub async fn setup_tcp() -> ZerocopyClient<roam_core::DriverCaller> {
@@ -167,13 +155,10 @@ mod roam_zerocopy_bench {
                 let (stream, _) = listener.accept().await.unwrap();
                 stream.set_nodelay(true).unwrap();
                 let server_conduit: TcpConduit = BareConduit::new(StreamLink::tcp(stream));
-                let (server_handle, _sh) = acceptor(server_conduit)
-                    .establish()
+                let ((), _sh) = acceptor(server_conduit)
+                    .establish::<()>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
-                let dispatcher = ZerocopyDispatcher::new(Handler);
-                let mut server_driver = Driver::new(server_handle, dispatcher);
-                moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
             }
             .named("server_setup"),
         );
@@ -182,17 +167,14 @@ mod roam_zerocopy_bench {
         stream.set_nodelay(true).unwrap();
         let client_conduit: TcpConduit = BareConduit::new(StreamLink::tcp(stream));
 
-        let (client_handle, _sh) = initiator(client_conduit)
-            .establish()
+        let (client, _sh) = initiator(client_conduit)
+            .establish::<ZerocopyClient<_>>(())
             .await
             .expect("client handshake failed");
-        let mut client_driver = Driver::new(client_handle, ());
-        let caller = client_driver.caller();
-        moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
 
         server_task.await.expect("server setup failed");
 
-        ZerocopyClient::new(caller)
+        client
     }
 }
 
@@ -255,7 +237,7 @@ define_zerocopy_transport_benches!(
 
 mod roam_bench {
     use moire::task::FutureExt;
-    use roam_core::{BareConduit, Driver, acceptor, initiator, memory_link_pair};
+    use roam_core::{BareConduit, acceptor, initiator, memory_link_pair};
 
     type MessageConduit = BareConduit<roam_types::MessageFamily, roam_core::MemoryLink>;
 
@@ -293,28 +275,22 @@ mod roam_bench {
 
         let server_task = moire::task::spawn(
             async move {
-                let (server_handle, _sh) = acceptor(server_conduit)
-                    .establish()
+                let ((), _sh) = acceptor(server_conduit)
+                    .establish::<()>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
-                let dispatcher = BenchDispatcher::new(Handler);
-                let mut server_driver = Driver::new(server_handle, dispatcher);
-                moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
             }
             .named("server_setup"),
         );
 
-        let (client_handle, _sh) = initiator(client_conduit)
-            .establish()
+        let (client, _sh) = initiator(client_conduit)
+            .establish::<BenchClient<_>>(())
             .await
             .expect("client handshake failed");
-        let mut client_driver = Driver::new(client_handle, ());
-        let caller = client_driver.caller();
-        moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
 
         server_task.await.expect("server setup failed");
 
-        BenchClient::new(caller)
+        client
     }
 }
 
@@ -373,7 +349,7 @@ mod roam_shm_bench {
     use std::sync::Arc;
 
     use moire::task::FutureExt;
-    use roam_core::{BareConduit, Driver, acceptor, initiator};
+    use roam_core::{BareConduit, acceptor, initiator};
     use roam_shm::varslot::SizeClassConfig;
     use roam_shm::{Segment, SegmentConfig, ShmLink, create_test_link_pair};
 
@@ -421,28 +397,22 @@ mod roam_shm_bench {
 
         let server_task = moire::task::spawn(
             async move {
-                let (server_handle, _sh) = acceptor(server_conduit)
-                    .establish()
+                let ((), _sh) = acceptor(server_conduit)
+                    .establish::<()>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
-                let dispatcher = BenchDispatcher::new(Handler);
-                let mut server_driver = Driver::new(server_handle, dispatcher);
-                moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
             }
             .named("server_setup"),
         );
 
-        let (client_handle, _sh) = initiator(client_conduit)
-            .establish()
+        let (client, _sh) = initiator(client_conduit)
+            .establish::<BenchClient<_>>(())
             .await
             .expect("client handshake failed");
-        let mut client_driver = Driver::new(client_handle, ());
-        let caller = client_driver.caller();
-        moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
 
         server_task.await.expect("server setup failed");
 
-        BenchClient::new(caller)
+        client
     }
 }
 
@@ -499,7 +469,7 @@ fn roam_shm_stream(bencher: divan::Bencher, n: usize) {
 
 mod roam_tcp_bench {
     use moire::task::FutureExt;
-    use roam_core::{BareConduit, Driver, acceptor, initiator};
+    use roam_core::{BareConduit, acceptor, initiator};
     use roam_stream::StreamLink;
 
     use tokio::net::TcpListener;
@@ -519,13 +489,10 @@ mod roam_tcp_bench {
                 let (stream, _) = listener.accept().await.unwrap();
                 stream.set_nodelay(true).unwrap();
                 let server_conduit: MessageConduit = BareConduit::new(StreamLink::tcp(stream));
-                let (server_handle, _sh) = acceptor(server_conduit)
-                    .establish()
+                let ((), _sh) = acceptor(server_conduit)
+                    .establish::<()>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
-                let dispatcher = BenchDispatcher::new(Handler);
-                let mut server_driver = Driver::new(server_handle, dispatcher);
-                moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
             }
             .named("server_setup"),
         );
@@ -534,17 +501,14 @@ mod roam_tcp_bench {
         stream.set_nodelay(true).unwrap();
         let client_conduit: MessageConduit = BareConduit::new(StreamLink::tcp(stream));
 
-        let (client_handle, _sh) = initiator(client_conduit)
-            .establish()
+        let (client, _sh) = initiator(client_conduit)
+            .establish::<BenchClient<_>>(())
             .await
             .expect("client handshake failed");
-        let mut client_driver = Driver::new(client_handle, ());
-        let caller = client_driver.caller();
-        moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
 
         server_task.await.expect("server setup failed");
 
-        BenchClient::new(caller)
+        client
     }
 }
 

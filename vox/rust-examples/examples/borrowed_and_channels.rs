@@ -64,13 +64,10 @@ async fn run_demo() -> Result<()> {
         let (socket, _) = listener.accept().await.expect("accept");
         let conduit = roam::BareConduit::<roam::MessageFamily, _>::new(StreamLink::tcp(socket));
 
-        let (handle, _) = roam::acceptor(conduit)
-            .establish()
+        let ((), _) = roam::acceptor(conduit)
+            .establish::<()>(WordLabDispatcher::new(WordLabService))
             .await
             .expect("server establish");
-        let mut driver = roam::Driver::new(handle, WordLabDispatcher::new(WordLabService));
-
-        driver.run().await;
     });
 
     let socket = tokio::net::TcpStream::connect(addr)
@@ -78,18 +75,10 @@ async fn run_demo() -> Result<()> {
         .wrap_err("connecting client socket")?;
     let conduit = roam::BareConduit::<roam::MessageFamily, _>::new(StreamLink::tcp(socket));
 
-    let (handle, _) = roam::initiator(conduit)
-        .establish()
+    let (client, _) = roam::initiator(conduit)
+        .establish::<WordLabClient<_>>(())
         .await
         .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;
-    let mut driver = roam::Driver::new(handle, ());
-    let caller = driver.caller();
-
-    let client_driver_task = tokio::spawn(async move {
-        driver.run().await;
-    });
-
-    let client = WordLabClient::new(caller);
 
     assert!(
         client
@@ -149,7 +138,6 @@ async fn run_demo() -> Result<()> {
     assert_eq!(got, vec!["item:one", "item:two", "item:three"]);
 
     // The demo is complete; stop background loops.
-    client_driver_task.abort();
     server_task.abort();
 
     Ok(())

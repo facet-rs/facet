@@ -85,7 +85,7 @@ where
 }
 #[doc = "Client for the `Ping` service.\n\nGeneric over any [`Caller`](:: roam::Caller) implementation."]
 #[derive(Clone)]
-pub struct PingClient<C: ::roam::Caller> {
+pub struct PingClient<C: ::roam::Caller = ::roam::DriverCaller> {
     caller: C,
 }
 impl<C: ::roam::Caller> PingClient<C> {
@@ -123,5 +123,10 @@ impl<C: ::roam::Caller> PingClient<C> {
             ::roam::facet_postcard::from_slice(ret_bytes)
                 .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
         result
+    }
+}
+impl From<::roam::DriverCaller> for PingClient {
+    fn from(caller: ::roam::DriverCaller) -> Self {
+        Self { caller }
     }
 }

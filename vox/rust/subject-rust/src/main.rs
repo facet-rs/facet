@@ -1,7 +1,7 @@
 //! Rust subject binary for the roam compliance suite.
 
 use roam::{Rx, Tx};
-use roam_core::{BareConduit, Driver, initiator};
+use roam_core::{BareConduit, initiator};
 use roam_shm::bootstrap::{BootstrapStatus, encode_request};
 use roam_shm::segment::Segment;
 use roam_stream::StreamLink;
@@ -199,15 +199,11 @@ async fn connect_and_serve() -> Result<(), String> {
     stream.set_nodelay(true).unwrap();
 
     let conduit: TcpConduit = BareConduit::new(StreamLink::tcp(stream));
-    let (handle, _sh) = initiator(conduit)
-        .establish()
+    let ((), _sh) = initiator(conduit)
+        .establish::<()>(TestbedDispatcher::new(TestbedService))
         .await
         .map_err(|e| format!("handshake failed: {e}"))?;
 
-    let dispatcher = TestbedDispatcher::new(TestbedService);
-    let mut driver = Driver::new(handle, dispatcher);
-
-    driver.run().await;
     Ok(())
 }
 
@@ -335,14 +331,13 @@ async fn connect_and_serve_shm() -> Result<(), String> {
 
     let conduit: ShmConduit = BareConduit::new(link);
 
-    let (handle, _sh) = initiator(conduit)
-        .establish()
+    let ((), _sh) = initiator(conduit)
+        .establish::<()>(TestbedDispatcher::new(TestbedService))
         .await
         .map_err(|e| format!("handshake failed: {e}"))?;
 
-    let dispatcher = TestbedDispatcher::new(TestbedService);
-    let mut driver = Driver::new(handle, dispatcher);
-
-    driver.run().await;
+    // Session and driver are spawned internally by establish(); wait forever
+    // so the spawned tasks can continue serving requests.
+    std::future::pending::<()>().await;
     Ok(())
 }

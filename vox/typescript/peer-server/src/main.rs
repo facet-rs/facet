@@ -5,7 +5,7 @@
 //! provide a real roam peer for the TypeScript client to talk to.
 
 use roam::{Rx, Tx};
-use roam_core::{BareConduit, Driver, acceptor};
+use roam_core::{BareConduit, acceptor};
 use roam_types::MessageFamily;
 use roam_websocket::WsLink;
 use spec_proto::{Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape};
@@ -166,21 +166,15 @@ async fn main() {
             };
 
             let conduit: BareConduit<MessageFamily, _> = BareConduit::new(ws_link);
-            let (handle, _sh) = match acceptor(conduit).establish().await {
-                Ok(result) => result,
-                Err(e) => {
-                    eprintln!("Session handshake failed: {:?}", e);
-                    return;
-                }
-            };
+            if let Err(e) = acceptor(conduit)
+                .establish::<()>(TestbedDispatcher::new(TestbedService))
+                .await
+            {
+                eprintln!("Session handshake failed: {:?}", e);
+                return;
+            }
 
             eprintln!("Connection established with {}", peer);
-
-            let dispatcher = TestbedDispatcher::new(TestbedService);
-            let mut driver = Driver::new(handle, dispatcher);
-            driver.run().await;
-
-            eprintln!("Connection closed: {}", peer);
         });
     }
 }

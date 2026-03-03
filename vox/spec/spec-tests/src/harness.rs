@@ -10,7 +10,7 @@ use std::os::fd::{AsRawFd, IntoRawFd};
 
 use roam::{Rx, Tx};
 use roam_core::{
-    BareConduit, Driver, DriverCaller, DriverReplySink, acceptor, initiator, memory_link_pair,
+    BareConduit, DriverCaller, DriverReplySink, acceptor, initiator, memory_link_pair,
 };
 use roam_shm::HostHub;
 use roam_shm::ShmLink;
@@ -535,30 +535,22 @@ where
     <L::Rx as roam_types::LinkRx>::Error: std::error::Error + Send + Sync + 'static,
 {
     let server_task = tokio::spawn(async move {
-        let (server_handle, _sh) = acceptor(server_conduit)
-            .establish()
+        acceptor(server_conduit)
+            .establish::<()>(TestbedDispatcher::new(TestbedService))
             .await
-            .map_err(|e| format!("server handshake: {e}"))?;
-        let dispatcher = TestbedDispatcher::new(TestbedService);
-        let mut server_driver = Driver::new(server_handle, dispatcher);
-        tokio::spawn(async move { server_driver.run().await });
-        Ok::<(), String>(())
+            .map_err(|e| format!("server handshake: {e}"))
     });
 
-    let (client_handle, _sh) = initiator(client_conduit)
-        .establish()
+    let (client, _sh) = initiator(client_conduit)
+        .establish::<TestbedClient>(NoopHandler)
         .await
         .map_err(|e| format!("client handshake: {e}"))?;
-    let mut client_driver = Driver::new(client_handle, NoopHandler);
-    let caller = client_driver.caller();
-
-    tokio::spawn(async move { client_driver.run().await });
 
     server_task
         .await
         .map_err(|e| format!("server task join: {e}"))??;
 
-    Ok(TestbedClient::new(caller))
+    Ok(client)
 }
 
 async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient<DriverCaller>, Child), String> {
@@ -616,17 +608,12 @@ async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient<DriverCaller>, C
 
     let conduit: BareConduit<MessageFamily, TcpLink> = BareConduit::new(StreamLink::tcp(stream));
 
-    let (handle, _sh) = acceptor(conduit)
-        .establish()
+    let (client, _sh) = acceptor(conduit)
+        .establish::<TestbedClient>(NoopHandler)
         .await
         .map_err(|e| format!("handshake: {e}"))?;
 
-    let mut driver = Driver::new(handle, NoopHandler);
-    let caller = driver.caller();
-
-    moire::task::spawn(async move { driver.run().await });
-
-    Ok((TestbedClient::new(caller), child))
+    Ok((client, child))
 }
 
 async fn accept_subject_shm_subject_is_guest(
@@ -829,19 +816,14 @@ async fn accept_subject_shm_subject_is_guest(
     let conduit: BareConduit<MessageFamily, roam_shm::ShmLink> = BareConduit::new(link);
 
     eprintln!("[harness] handshake...");
-    let (handle, _sh) = acceptor(conduit)
-        .establish()
+    let (client, _sh) = acceptor(conduit)
+        .establish::<TestbedClient>(NoopHandler)
         .await
         .map_err(|e| format!("handshake: {e}"))?;
     eprintln!("[harness] handshake ok");
 
-    let mut driver = Driver::new(handle, NoopHandler);
-    let caller = driver.caller();
-
-    tokio::spawn(async move { driver.run().await });
-
     keep_tempdir_alive(dir);
-    Ok((TestbedClient::new(caller), child))
+    Ok((client, child))
 }
 
 async fn accept_subject_shm_subject_is_host(
@@ -1126,17 +1108,12 @@ async fn accept_subject_shm_subject_is_host(
         let conduit: BareConduit<MessageFamily, roam_shm::ShmLink> =
             BareConduit::new(link);
 
-        let (handle, _sh) = initiator(conduit)
-            .establish()
+        let (client, _sh) = initiator(conduit)
+            .establish::<TestbedClient>(NoopHandler)
             .await
             .map_err(|e| format!("handshake: {e}"))?;
 
-        let mut driver = Driver::new(handle, NoopHandler);
-        let caller = driver.caller();
-
-        tokio::spawn(async move { driver.run().await });
-
-        Ok::<_, String>(TestbedClient::new(caller))
+        Ok::<_, String>(client)
     }
     .await;
 

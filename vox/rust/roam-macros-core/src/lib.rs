@@ -510,7 +510,7 @@ fn generate_client(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
     quote! {
         #[doc = #client_doc]
         #[derive(Clone)]
-        pub struct #client_name<C: #roam::Caller> {
+        pub struct #client_name<C: #roam::Caller = #roam::DriverCaller> {
             caller: C,
         }
 
@@ -521,6 +521,12 @@ fn generate_client(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
             }
 
             #(#client_methods)*
+        }
+
+        impl From<#roam::DriverCaller> for #client_name {
+            fn from(caller: #roam::DriverCaller) -> Self {
+                Self { caller }
+            }
         }
     }
 }

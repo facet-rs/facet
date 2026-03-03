@@ -164,7 +164,7 @@ where
 }
 #[doc = "Client for the `WordLab` service.\n\nGeneric over any [`Caller`](:: roam::Caller) implementation."]
 #[derive(Clone)]
-pub struct WordLabClient<C: ::roam::Caller> {
+pub struct WordLabClient<C: ::roam::Caller = ::roam::DriverCaller> {
     caller: C,
 }
 impl<C: ::roam::Caller> WordLabClient<C> {
@@ -287,5 +287,10 @@ impl<C: ::roam::Caller> WordLabClient<C> {
             ::roam::facet_postcard::from_slice(ret_bytes)
                 .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
         result
+    }
+}
+impl From<::roam::DriverCaller> for WordLabClient {
+    fn from(caller: ::roam::DriverCaller) -> Self {
+        Self { caller }
     }
 }

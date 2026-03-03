@@ -86,7 +86,7 @@ where
 }
 #[doc = "Client for the `TextSvc` service.\n\nGeneric over any [`Caller`](:: roam::Caller) implementation."]
 #[derive(Clone)]
-pub struct TextSvcClient<C: ::roam::Caller> {
+pub struct TextSvcClient<C: ::roam::Caller = ::roam::DriverCaller> {
     caller: C,
 }
 impl<C: ::roam::Caller> TextSvcClient<C> {
@@ -132,5 +132,10 @@ impl<C: ::roam::Caller> TextSvcClient<C> {
             let ret = result?;
             Ok(ret)
         })
+    }
+}
+impl From<::roam::DriverCaller> for TextSvcClient {
+    fn from(caller: ::roam::DriverCaller) -> Self {
+        Self { caller }
     }
 }

@@ -10,7 +10,7 @@ use roam_types::{
 use shm_primitives::FileCleanup;
 
 use crate::session::{acceptor, initiator};
-use crate::{BareConduit, Driver, DriverReplySink};
+use crate::{BareConduit, DriverCaller, DriverReplySink};
 
 type MessageConduit = BareConduit<MessageFamily, ShmLink>;
 
@@ -68,23 +68,18 @@ async fn echo_call_across_shm_link() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (server_handle, _sh) = acceptor(server_conduit)
-                .establish()
+            let ((), _sh) = acceptor(server_conduit)
+                .establish::<()>(EchoHandler)
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(server_handle, EchoHandler);
-            moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
         .named("server_setup"),
     );
 
-    let (client_handle, _sh) = initiator(client_conduit)
-        .establish()
+    let (caller, _sh) = initiator(client_conduit)
+        .establish::<DriverCaller>(())
         .await
         .expect("client handshake failed");
-    let mut client_driver = Driver::new(client_handle, ());
-    let caller = client_driver.caller();
-    moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
 
     server_task.await.expect("server setup failed");
 
@@ -133,23 +128,18 @@ async fn echo_blob_stress_over_shm_link() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (server_handle, _sh) = acceptor(server_conduit)
-                .establish()
+            let ((), _sh) = acceptor(server_conduit)
+                .establish::<()>(BlobEchoHandler)
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(server_handle, BlobEchoHandler);
-            moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
         .named("server_setup"),
     );
 
-    let (client_handle, _sh) = initiator(client_conduit)
-        .establish()
+    let (caller, _sh) = initiator(client_conduit)
+        .establish::<DriverCaller>(())
         .await
         .expect("client handshake failed");
-    let mut client_driver = Driver::new(client_handle, ());
-    let caller = client_driver.caller();
-    moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
 
     server_task.await.expect("server setup failed");
 

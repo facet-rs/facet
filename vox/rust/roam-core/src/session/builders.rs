@@ -2,13 +2,15 @@ use std::{future::Future, pin::Pin};
 
 use moire::sync::mpsc;
 use roam_types::{
-    Conduit, ConduitTx, ConnectionSettings, MaybeSend, MaybeSync, MessageFamily, Metadata, Parity,
+    Conduit, ConduitTx, ConnectionSettings, Handler, MaybeSend, MaybeSync, MessageFamily, Metadata,
+    Parity,
 };
 
 use super::{
-    CloseRequest, ConnectionAcceptor, ConnectionHandle, OpenRequest, Session, SessionError,
-    SessionHandle, SessionKeepaliveConfig,
+    CloseRequest, ConnectionAcceptor, OpenRequest, Session, SessionError, SessionHandle,
+    SessionKeepaliveConfig,
 };
+use crate::{Driver, DriverCaller, DriverReplySink};
 
 /// A pinned, boxed session future. On non-WASM this is `Send + 'static`;
 /// on WASM it's `'static` only (no `Send` requirement).
@@ -117,7 +119,10 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
         self
     }
 
-    pub async fn establish(self) -> Result<(ConnectionHandle, SessionHandle), SessionError>
+    pub async fn establish<Client: From<DriverCaller>>(
+        self,
+        handler: impl Handler<DriverReplySink> + 'static,
+    ) -> Result<(Client, SessionHandle), SessionError>
     where
         C: Conduit<Msg = MessageFamily> + 'static,
         C::Tx: MaybeSend + MaybeSync + 'static,
@@ -139,8 +144,14 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             .establish_as_initiator(self.root_settings, self.metadata)
             .await?;
         let session_handle = SessionHandle { open_tx, close_tx };
+        let mut driver = Driver::new(handle, handler);
+        let client = Client::from(driver.caller());
         (self.spawn_fn)(Box::pin(async move { session.run().await }));
-        Ok((handle, session_handle))
+        #[cfg(not(target_arch = "wasm32"))]
+        tokio::spawn(async move { driver.run().await });
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move { driver.run().await });
+        Ok((client, session_handle))
     }
 }
 
@@ -210,7 +221,10 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
     }
 
     #[moire::instrument]
-    pub async fn establish(self) -> Result<(ConnectionHandle, SessionHandle), SessionError>
+    pub async fn establish<Client: From<DriverCaller>>(
+        self,
+        handler: impl Handler<DriverReplySink> + 'static,
+    ) -> Result<(Client, SessionHandle), SessionError>
     where
         C: Conduit<Msg = MessageFamily> + 'static,
         C::Tx: MaybeSend + MaybeSync + 'static,
@@ -232,7 +246,13 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             .establish_as_acceptor(self.root_settings, self.metadata)
             .await?;
         let session_handle = SessionHandle { open_tx, close_tx };
+        let mut driver = Driver::new(handle, handler);
+        let client = Client::from(driver.caller());
         (self.spawn_fn)(Box::pin(async move { session.run().await }));
-        Ok((handle, session_handle))
+        #[cfg(not(target_arch = "wasm32"))]
+        tokio::spawn(async move { driver.run().await });
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move { driver.run().await });
+        Ok((client, session_handle))
     }
 }

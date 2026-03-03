@@ -88,7 +88,7 @@ where
 }
 #[doc = "Client for the `Hasher` service.\n\nGeneric over any [`Caller`](:: roam::Caller) implementation."]
 #[derive(Clone)]
-pub struct HasherClient<C: ::roam::Caller> {
+pub struct HasherClient<C: ::roam::Caller = ::roam::DriverCaller> {
     caller: C,
 }
 impl<C: ::roam::Caller> HasherClient<C> {
@@ -133,5 +133,10 @@ impl<C: ::roam::Caller> HasherClient<C> {
             let ret = result?;
             Ok(ret)
         })
+    }
+}
+impl From<::roam::DriverCaller> for HasherClient {
+    fn from(caller: ::roam::DriverCaller) -> Self {
+        Self { caller }
     }
 }

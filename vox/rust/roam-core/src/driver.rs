@@ -137,6 +137,10 @@ impl ChannelSink for DriverChannelSink {
 
 /// Cloneable handle for making outgoing calls through a connection.
 ///
+impl From<DriverCaller> for () {
+    fn from(_: DriverCaller) {}
+}
+
 /// Implements [`Caller`]: allocates a request ID, registers a response slot,
 /// sends the call through the connection, and awaits the response.
 #[derive(Clone)]
@@ -168,6 +172,15 @@ impl DriverCaller {
             .lock()
             .insert(channel_id, Arc::clone(sink.credit()));
         (channel_id, sink)
+    }
+
+    /// Returns the underlying connection sender.
+    ///
+    /// Used by in-crate tests that need to inject raw messages for cancellation
+    /// and channel protocol testing.
+    #[cfg(test)]
+    pub(crate) fn connection_sender(&self) -> &ConnectionSender {
+        &self.sender
     }
 
     /// Register an inbound channel (Rx on our side) and return the receiver.

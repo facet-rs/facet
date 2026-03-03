@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use moire::sync::{SyncMutex, mpsc};
 use roam_types::{
-    Caller, Handler, IdAllocator, Parity, Payload, ReplySink, RequestBody, RequestCall, RequestId,
+    Caller, Handler, IdAllocator, Payload, ReplySink, RequestBody, RequestCall, RequestId,
     RequestMessage, RequestResponse, RoamError, SelfRef,
 };
 
@@ -88,6 +88,10 @@ impl Caller for DriverCaller {
     }
 }
 
+impl From<DriverCaller> for () {
+    fn from(_: DriverCaller) {}
+}
+
 /// Wasm-only driver. No channel support.
 pub struct Driver<H: Handler<DriverReplySink>> {
     sender: ConnectionSender,
@@ -99,11 +103,12 @@ pub struct Driver<H: Handler<DriverReplySink>> {
 }
 
 impl<H: Handler<DriverReplySink>> Driver<H> {
-    pub fn new(handle: ConnectionHandle, handler: H, parity: Parity) -> Self {
+    pub fn new(handle: ConnectionHandle, handler: H) -> Self {
         let ConnectionHandle {
             sender,
             rx,
             failures_rx,
+            parity,
         } = handle;
         Self {
             sender,
