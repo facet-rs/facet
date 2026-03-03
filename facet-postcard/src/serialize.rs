@@ -14,7 +14,7 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use facet_core::{Def, OpaqueSerialize, ScalarType, Shape};
+use facet_core::{Def, ScalarType, Shape};
 use facet_format::{
     DynamicValueEncoding, DynamicValueTag, EnumVariantEncoding, FormatSerializer, MapEncoding,
     SerializeError as FormatSerializeError, StructFieldMode, serialize_root,
@@ -23,6 +23,7 @@ use facet_format::{
 use facet_reflect::Peek;
 
 use crate::error::SerializeError;
+use crate::raw_postcard;
 
 /// A trait for writing bytes during serialization with error handling.
 ///
@@ -818,34 +819,30 @@ impl<'a, W: PostcardWriter<'a>> FormatSerializer for PostcardSerializer<'a, W> {
 
         if let Some(adapter) = shape.opaque_adapter {
             let mapped = unsafe { (adapter.serialize)(value.data()) };
-            match mapped {
-                OpaqueSerialize::Mapped { ptr, shape } => {
-                    let mapped_peek = unsafe { Peek::unchecked_new(ptr, shape) };
-                    if has_trailing_attr(field) {
-                        // Trailing opaque fields stream mapped payload directly
-                        // (no outer length framing), preserving scatter-gather
-                        // references for borrowed bytes.
-                        serialize_root(self, mapped_peek).map_err(map_format_error)?;
-                    } else {
-                        let mut bytes = Vec::new();
-                        let mut mapped_serializer =
-                            PostcardSerializer::new(CopyWriter::new(&mut bytes));
-                        serialize_root(&mut mapped_serializer, mapped_peek)
-                            .map_err(map_format_error)?;
-                        self.write_bytes(&bytes)?;
-                    }
+            if let Some(bytes) =
+                unsafe { raw_postcard::try_decode_passthrough_bytes(mapped.ptr, mapped.shape) }
+            {
+                if has_trailing_attr(field) {
+                    // Trailing opaque fields omit outer length framing.
+                    self.writer.write_referenced_bytes(bytes)?;
+                } else {
+                    // Non-trailing opaque fields add postcard byte-sequence framing.
+                    self.write_bytes_borrowed(bytes)?;
                 }
-                OpaqueSerialize::EncodedBytes { ptr, len } => {
-                    // SAFETY: `FacetOpaqueAdapter::serialize_map` must return encoded bytes
-                    // that remain valid for this serialization call.
-                    let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
-                    if has_trailing_attr(field) {
-                        // Trailing opaque fields omit outer length framing.
-                        self.writer.write_referenced_bytes(bytes)?;
-                    } else {
-                        // Non-trailing opaque fields add postcard byte-sequence framing.
-                        self.write_bytes_borrowed(bytes)?;
-                    }
+            } else {
+                let mapped_peek = unsafe { Peek::unchecked_new(mapped.ptr, mapped.shape) };
+                if has_trailing_attr(field) {
+                    // Trailing opaque fields stream mapped payload directly
+                    // (no outer length framing), preserving scatter-gather
+                    // references for borrowed bytes.
+                    serialize_root(self, mapped_peek).map_err(map_format_error)?;
+                } else {
+                    let mut bytes = Vec::new();
+                    let mut mapped_serializer =
+                        PostcardSerializer::new(CopyWriter::new(&mut bytes));
+                    serialize_root(&mut mapped_serializer, mapped_peek)
+                        .map_err(map_format_error)?;
+                    self.write_bytes(&bytes)?;
                 }
             }
             return Ok(true);

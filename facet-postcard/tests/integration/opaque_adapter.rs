@@ -19,7 +19,7 @@ impl FacetOpaqueAdapter for PayloadAdapter {
 
     fn serialize_map(value: &Self::SendValue<'_>) -> OpaqueSerialize {
         match value {
-            Payload::Borrowed(bytes) => OpaqueSerialize::Mapped {
+            Payload::Borrowed(bytes) => OpaqueSerialize {
                 ptr: PtrConst::new(bytes as *const &[u8]),
                 shape: <&[u8] as Facet>::SHAPE,
             },

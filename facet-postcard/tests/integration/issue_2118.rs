@@ -1,5 +1,8 @@
 use facet::{Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst};
-use facet_postcard::{Segment, from_slice, from_slice_borrowed, to_scatter_plan, to_vec};
+use facet_postcard::{
+    Segment, from_slice, from_slice_borrowed, opaque_encoded_borrowed, opaque_encoded_owned,
+    to_scatter_plan, to_vec,
+};
 
 #[derive(Debug, Facet)]
 #[repr(u8)]
@@ -7,6 +10,7 @@ use facet_postcard::{Segment, from_slice, from_slice_borrowed, to_scatter_plan, 
 enum Payload<'a> {
     Outgoing(&'a [u8]),
     Incoming(&'a [u8]),
+    IncomingOwned(Vec<u8>),
     RawBorrowed(&'a [u8]),
     RawOwned(Vec<u8>),
 }
@@ -20,11 +24,12 @@ impl FacetOpaqueAdapter for PayloadAdapter {
 
     fn serialize_map(value: &Self::SendValue<'_>) -> OpaqueSerialize {
         match value {
-            Payload::Outgoing(bytes) => OpaqueSerialize::Mapped {
+            Payload::Outgoing(bytes) => OpaqueSerialize {
                 ptr: PtrConst::new(bytes as *const &[u8]),
                 shape: <&[u8] as Facet>::SHAPE,
             },
-            Payload::Incoming(bytes) => OpaqueSerialize::encoded_bytes(bytes),
+            Payload::Incoming(bytes) => opaque_encoded_borrowed(bytes),
+            Payload::IncomingOwned(bytes) => opaque_encoded_owned(bytes),
             _ => unreachable!("serialize_map is only used for outgoing payload values"),
         }
     }
@@ -101,6 +106,23 @@ fn issue_2118_non_trailing_encoded_bytes_preserve_scatter_gather_reference() {
         has_payload_ref,
         "expected a scatter-gather reference segment for passthrough payload bytes"
     );
+}
+
+#[test]
+fn issue_2118_non_trailing_owned_encoded_bytes_match_typed_path() {
+    let typed = Framed {
+        id: 12,
+        payload: Payload::Outgoing(&[0x01, 0x02, 0x03]),
+    };
+    let forwarded = Framed {
+        id: 12,
+        payload: Payload::IncomingOwned(vec![3, 0x01, 0x02, 0x03]),
+    };
+
+    let typed_bytes = to_vec(&typed).expect("typed serialization should succeed");
+    let forwarded_bytes = to_vec(&forwarded).expect("passthrough serialization should succeed");
+    assert_eq!(typed_bytes, forwarded_bytes);
+    assert_eq!(forwarded_bytes, vec![12, 4, 3, 0x01, 0x02, 0x03]);
 }
 
 #[test]

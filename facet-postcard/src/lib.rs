@@ -49,6 +49,7 @@ extern crate alloc;
 
 mod error;
 mod parser;
+mod raw_postcard;
 mod serialize;
 mod shape_deser;
 
@@ -64,6 +65,7 @@ pub use error::{PostcardError, SerializeError};
 #[cfg(feature = "jit")]
 pub use jit::PostcardJitFormat;
 pub use parser::PostcardParser;
+pub use raw_postcard::{RawPostcard, opaque_encoded_borrowed, opaque_encoded_owned};
 pub use serialize::{
     ScatterPlan, Segment, Writer, peek_to_scatter_plan, peek_to_vec, to_scatter_plan, to_vec,
     to_vec_with_shape, to_writer_fallible,
