@@ -4,7 +4,7 @@
 // All options default to true. Use false to disable.
 
 pre-commit {
-    // generate-readmes false
+    generate-readmes false
     // rustfmt false
     // cargo-lock false
     // arborium false
