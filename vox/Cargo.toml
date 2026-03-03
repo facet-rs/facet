@@ -62,8 +62,8 @@ shm-primitives-async = { path = "rust/shm-primitives-async", version = "7.0.0-al
 ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "7.0.0-alpha.1" }
 
 # Not internal crates
-moire = { version = "0.1.0", git = "https://github.com/bearcove/moire", branch = "main" }
-moire-types = { version = "0.1.0", git = "https://github.com/bearcove/moire", branch = "main" }
+moire = { version = "1.0.0" }
+moire-types = { version = "1.0.0" }
 
 bitflags = "2.11.0"
 structstruck = "0.5.1"
