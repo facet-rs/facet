@@ -34,4 +34,4 @@ Rust is the source-of-truth implementation for Roam. Service traits in Rust defi
 
 ## Upgrade notes
 
-If you are moving from v6, read [Migrating from v6 to v7](/v6-to-v7/).
+If you are moving from v6, read [Migrating from v6 to v7](/guides/v6-to-v7/).
