@@ -167,6 +167,11 @@ impl<T: 'static> SelfRef<T> {
             backing: ManuallyDrop::new(backing),
         }
     }
+
+    /// Access the backing bytes that keep this value alive.
+    pub fn backing_bytes(&self) -> &[u8] {
+        self.backing.as_bytes()
+    }
 }
 
 impl<T: 'static> core::ops::Deref for SelfRef<T> {

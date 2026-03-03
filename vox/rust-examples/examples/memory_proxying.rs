@@ -26,58 +26,6 @@ impl MathText for UpstreamMathText {
     }
 }
 
-#[derive(Clone)]
-struct ProxyMathText {
-    upstream: Option<MathTextClient<DriverCaller>>,
-    init_error: Option<String>,
-}
-
-impl ProxyMathText {
-    fn ready(upstream: MathTextClient<DriverCaller>) -> Self {
-        Self {
-            upstream: Some(upstream),
-            init_error: None,
-        }
-    }
-
-    fn unavailable(error: String) -> Self {
-        Self {
-            upstream: None,
-            init_error: Some(error),
-        }
-    }
-
-    fn upstream_error<T>(result: Result<T, roam::RoamError<String>>) -> Result<T, String> {
-        match result {
-            Ok(value) => Ok(value),
-            Err(roam::RoamError::User(msg)) => Err(msg),
-            Err(other) => Err(format!("upstream transport error: {other:?}")),
-        }
-    }
-}
-
-impl MathText for ProxyMathText {
-    async fn add(&self, a: i32, b: i32) -> Result<i32, String> {
-        if let Some(upstream) = &self.upstream {
-            return Self::upstream_error(upstream.add(a, b).await);
-        }
-        Err(self
-            .init_error
-            .clone()
-            .unwrap_or_else(|| "proxy is unavailable".to_string()))
-    }
-
-    async fn reverse(&self, value: String) -> Result<String, String> {
-        if let Some(upstream) = &self.upstream {
-            return Self::upstream_error(upstream.reverse(value).await);
-        }
-        Err(self
-            .init_error
-            .clone()
-            .unwrap_or_else(|| "proxy is unavailable".to_string()))
-    }
-}
-
 #[derive(Clone, Copy)]
 struct UpstreamAcceptor;
 
@@ -139,7 +87,7 @@ impl ConnectionAcceptor for ProxyAcceptor {
                     println!(
                         "[host] guest-a opened proxy vconn; opening upstream vconn to guest-b"
                     );
-                    let (proxy_service, maybe_upstream_driver_task) = match upstream_session
+                    match upstream_session
                         .open_connection(
                             ConnectionSettings {
                                 parity: Parity::Odd,
@@ -150,28 +98,13 @@ impl ConnectionAcceptor for ProxyAcceptor {
                         .await
                     {
                         Ok(upstream_conn) => {
-                            let mut upstream_driver = Driver::new(upstream_conn, ());
-                            let upstream_client = MathTextClient::from(upstream_driver.caller());
-                            let upstream_driver_task =
-                                tokio::spawn(async move { upstream_driver.run().await });
                             println!("[host] upstream vconn to guest-b is ready");
-                            (
-                                ProxyMathText::ready(upstream_client),
-                                Some(upstream_driver_task),
-                            )
+                            roam::proxy_connections(incoming_handle, upstream_conn).await;
                         }
                         Err(err) => {
                             let msg = format!("failed to open upstream vconn: {err:?}");
                             eprintln!("[host] {msg}");
-                            (ProxyMathText::unavailable(msg), None)
                         }
-                    };
-
-                    let mut incoming_driver =
-                        Driver::new(incoming_handle, MathTextDispatcher::new(proxy_service));
-                    incoming_driver.run().await;
-                    if let Some(task) = maybe_upstream_driver_task {
-                        task.abort();
                     }
                 });
             }),

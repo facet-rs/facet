@@ -267,6 +267,40 @@ pub(crate) struct ConnectionSender {
     failures: Arc<mpsc::UnboundedSender<(RequestId, &'static str)>>,
 }
 
+fn write_varint_u64(mut value: u64, out: &mut Vec<u8>) {
+    loop {
+        let mut byte = (value & 0x7F) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+            out.push(byte);
+        } else {
+            out.push(byte);
+            break;
+        }
+    }
+}
+
+fn varint_prefix_len(bytes: &[u8]) -> Option<usize> {
+    for (idx, byte) in bytes.iter().enumerate() {
+        if (byte & 0x80) == 0 {
+            return Some(idx + 1);
+        }
+        if idx == 9 {
+            return None;
+        }
+    }
+    None
+}
+
+fn rewrite_connection_id(raw_message: &[u8], connection_id: ConnectionId) -> Option<Vec<u8>> {
+    let old_prefix_len = varint_prefix_len(raw_message)?;
+    let mut rewritten = Vec::with_capacity(raw_message.len() + 10);
+    write_varint_u64(connection_id.0, &mut rewritten);
+    rewritten.extend_from_slice(&raw_message[old_prefix_len..]);
+    Some(rewritten)
+}
+
 impl ConnectionSender {
     /// Send an arbitrary connection message
     pub async fn send<'a>(&self, msg: ConnectionMessage<'a>) -> Result<(), ()> {
@@ -279,6 +313,17 @@ impl ConnectionSender {
             payload,
         };
         self.sess_core.send(message).await.map_err(|_| ())
+    }
+
+    /// Send a received connection message without re-materializing payload values.
+    pub(crate) async fn send_owned(
+        &self,
+        msg: SelfRef<ConnectionMessage<'static>>,
+    ) -> Result<(), ()> {
+        let Some(encoded) = rewrite_connection_id(msg.backing_bytes(), self.connection_id) else {
+            return Err(());
+        };
+        self.sess_core.send_encoded(&encoded).await
     }
 
     /// Send a response specifically
@@ -327,6 +372,58 @@ impl ConnectionHandle {
     /// Returns the connection ID for this handle.
     pub fn connection_id(&self) -> ConnectionId {
         self.sender.connection_id
+    }
+}
+
+/// Forward all request/channel traffic between two connections.
+///
+/// This is a protocol-level bridge: it does not inspect service schemas or method IDs.
+/// It exits when either side closes or a forward send fails, then requests closure of
+/// both underlying connections.
+pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) {
+    let left_conn_id = left.connection_id();
+    let right_conn_id = right.connection_id();
+    let ConnectionHandle {
+        sender: left_sender,
+        rx: mut left_rx,
+        failures_rx: _left_failures_rx,
+        control_tx: left_control_tx,
+        parity: _left_parity,
+    } = left;
+    let ConnectionHandle {
+        sender: right_sender,
+        rx: mut right_rx,
+        failures_rx: _right_failures_rx,
+        control_tx: right_control_tx,
+        parity: _right_parity,
+    } = right;
+
+    loop {
+        tokio::select! {
+            msg = left_rx.recv() => {
+                let Some(msg) = msg else {
+                    break;
+                };
+                if right_sender.send_owned(msg).await.is_err() {
+                    break;
+                }
+            }
+            msg = right_rx.recv() => {
+                let Some(msg) = msg else {
+                    break;
+                };
+                if left_sender.send_owned(msg).await.is_err() {
+                    break;
+                }
+            }
+        }
+    }
+
+    if let Some(tx) = left_control_tx.as_ref() {
+        let _ = send_drop_control(tx, DropControlRequest::Close(left_conn_id));
+    }
+    if let Some(tx) = right_control_tx.as_ref() {
+        let _ = send_drop_control(tx, DropControlRequest::Close(right_conn_id));
     }
 }
 
@@ -1004,6 +1101,10 @@ impl SessionCore {
     pub(crate) async fn send<'a>(&self, msg: Message<'a>) -> Result<(), ()> {
         self.tx.send_msg(msg).await.map_err(|_| ())
     }
+
+    pub(crate) async fn send_encoded(&self, msg: &[u8]) -> Result<(), ()> {
+        self.tx.send_msg_encoded(msg).await.map_err(|_| ())
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1014,10 +1115,12 @@ type BoxFuture<'a, T> = Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
 #[cfg(not(target_arch = "wasm32"))]
 pub trait DynConduitTx: Send + Sync {
     fn send_msg<'a>(&'a self, msg: Message<'a>) -> BoxFuture<'a, std::io::Result<()>>;
+    fn send_msg_encoded<'a>(&'a self, msg: &'a [u8]) -> BoxFuture<'a, std::io::Result<()>>;
 }
 #[cfg(target_arch = "wasm32")]
 pub trait DynConduitTx {
     fn send_msg<'a>(&'a self, msg: Message<'a>) -> BoxFuture<'a, std::io::Result<()>>;
+    fn send_msg_encoded<'a>(&'a self, msg: &'a [u8]) -> BoxFuture<'a, std::io::Result<()>>;
 }
 
 // r[impl zerocopy.send]
@@ -1032,6 +1135,15 @@ where
             let permit = self.reserve().await?;
             permit
                 .send(msg)
+                .map_err(|e| std::io::Error::other(e.to_string()))
+        })
+    }
+
+    fn send_msg_encoded<'a>(&'a self, msg: &'a [u8]) -> BoxFuture<'a, std::io::Result<()>> {
+        Box::pin(async move {
+            let permit = self.reserve().await?;
+            permit
+                .send_encoded(msg)
                 .map_err(|e| std::io::Error::other(e.to_string()))
         })
     }

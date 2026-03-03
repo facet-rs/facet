@@ -132,6 +132,16 @@ impl<F: MsgFamily, LTx: LinkTx> ConduitTxPermit for BareConduitPermit<'_, F, LTx
         slot.commit();
         Ok(())
     }
+
+    fn send_encoded(self, encoded_item: &[u8]) -> Result<(), Self::Error> {
+        let mut slot = self
+            .permit
+            .alloc(encoded_item.len())
+            .map_err(BareConduitError::Io)?;
+        slot.as_mut_slice().copy_from_slice(encoded_item);
+        slot.commit();
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -11,8 +11,8 @@ use roam_types::{
 };
 
 use crate::session::{
-    AcceptedConnection, ConnectionAcceptor, ConnectionMessage, SessionError,
-    SessionKeepaliveConfig, acceptor, initiator,
+    AcceptedConnection, ConnectionAcceptor, ConnectionMessage, SessionError, SessionHandle,
+    SessionKeepaliveConfig, acceptor, initiator, proxy_connections,
 };
 use crate::{BareConduit, Driver, DriverCaller, DriverReplySink, memory_link_pair};
 
@@ -1487,4 +1487,152 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
     };
     let result: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(result, 42);
+}
+
+#[tokio::test]
+async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() {
+    let (host_a_conduit, guest_a_conduit) = message_conduit_pair();
+    let (host_b_conduit, guest_b_conduit) = message_conduit_pair();
+
+    struct GuestBAcceptor;
+    impl ConnectionAcceptor for GuestBAcceptor {
+        fn accept(
+            &self,
+            _conn_id: roam_types::ConnectionId,
+            peer_settings: &ConnectionSettings,
+            _metadata: &[roam_types::MetadataEntry],
+        ) -> Result<AcceptedConnection, Metadata<'static>> {
+            Ok(AcceptedConnection {
+                settings: ConnectionSettings {
+                    parity: peer_settings.parity.other(),
+                    max_concurrent_requests: 64,
+                },
+                metadata: vec![],
+                setup: Box::new(|handle| {
+                    let mut driver = Driver::new(handle, EchoHandler);
+                    moire::task::spawn(async move { driver.run().await }.named("guest_b_vconn"));
+                }),
+            })
+        }
+    }
+
+    struct ProxyHostAcceptor {
+        upstream_session: SessionHandle,
+    }
+    impl ConnectionAcceptor for ProxyHostAcceptor {
+        fn accept(
+            &self,
+            _conn_id: roam_types::ConnectionId,
+            peer_settings: &ConnectionSettings,
+            _metadata: &[roam_types::MetadataEntry],
+        ) -> Result<AcceptedConnection, Metadata<'static>> {
+            let upstream_session = self.upstream_session.clone();
+            Ok(AcceptedConnection {
+                settings: ConnectionSettings {
+                    parity: peer_settings.parity.other(),
+                    max_concurrent_requests: 64,
+                },
+                metadata: vec![],
+                setup: Box::new(move |incoming| {
+                    moire::task::spawn(
+                        async move {
+                            let upstream = upstream_session
+                                .open_connection(
+                                    ConnectionSettings {
+                                        parity: Parity::Odd,
+                                        max_concurrent_requests: 64,
+                                    },
+                                    vec![],
+                                )
+                                .await
+                                .expect("host->guest-b open_connection");
+                            proxy_connections(incoming, upstream).await;
+                        }
+                        .named("host_proxy_vconn"),
+                    );
+                }),
+            })
+        }
+    }
+
+    let guest_b_task = moire::task::spawn(
+        async move {
+            let (guard, _) = acceptor(guest_b_conduit)
+                .on_connection(GuestBAcceptor)
+                .establish::<DriverCaller>(())
+                .await
+                .expect("guest-b establish");
+            let _guard = guard;
+            std::future::pending::<()>().await;
+        }
+        .named("guest_b_root"),
+    );
+
+    let (_host_to_b_guard, host_to_b_session) = initiator(host_b_conduit)
+        .establish::<DriverCaller>(())
+        .await
+        .expect("host<->guest-b establish");
+
+    let host_for_a_task = moire::task::spawn(
+        async move {
+            let (guard, _) = acceptor(host_a_conduit)
+                .on_connection(ProxyHostAcceptor {
+                    upstream_session: host_to_b_session,
+                })
+                .establish::<DriverCaller>(())
+                .await
+                .expect("host<->guest-a establish");
+            let _guard = guard;
+            std::future::pending::<()>().await;
+        }
+        .named("host_for_guest_a_root"),
+    );
+
+    let (_guest_a_root_guard, guest_a_session) = initiator(guest_a_conduit)
+        .establish::<DriverCaller>(())
+        .await
+        .expect("guest-a<->host establish");
+
+    let proxy_conn = guest_a_session
+        .open_connection(
+            ConnectionSettings {
+                parity: Parity::Odd,
+                max_concurrent_requests: 64,
+            },
+            vec![],
+        )
+        .await
+        .expect("guest-a open proxy connection");
+    let proxy_conn_id = proxy_conn.connection_id();
+
+    let mut proxy_driver = Driver::new(proxy_conn, ());
+    let proxy_caller = proxy_driver.caller();
+    let proxy_driver_task =
+        moire::task::spawn(async move { proxy_driver.run().await }.named("guest_a_proxy_driver"));
+
+    let args_value: u32 = 777;
+    let response = proxy_caller
+        .call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&args_value),
+            channels: vec![],
+            metadata: Default::default(),
+        })
+        .await
+        .expect("proxied call should succeed");
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload"),
+    };
+    let result: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize proxied response");
+    assert_eq!(result, args_value);
+
+    guest_a_session
+        .close_connection(proxy_conn_id, vec![])
+        .await
+        .expect("close proxy connection");
+
+    proxy_driver_task.abort();
+    guest_b_task.abort();
+    host_for_a_task.abort();
 }
