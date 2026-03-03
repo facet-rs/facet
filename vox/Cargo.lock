@@ -1945,7 +1945,7 @@ dependencies = [
 
 [[package]]
 name = "peer-server"
-version = "7.0.0-alpha.2"
+version = "7.0.0"
 dependencies = [
  "roam",
  "roam-core",
@@ -2286,7 +2286,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "roam"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "facet",
  "facet-postcard",
@@ -2303,7 +2303,7 @@ dependencies = [
 
 [[package]]
 name = "roam-bench"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "divan",
  "futures-util",
@@ -2329,7 +2329,7 @@ dependencies = [
 
 [[package]]
 name = "roam-codegen"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "facet",
  "facet-core",
@@ -2341,7 +2341,7 @@ dependencies = [
 
 [[package]]
 name = "roam-core"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "facet",
  "facet-core",
@@ -2364,7 +2364,7 @@ dependencies = [
 
 [[package]]
 name = "roam-fdpass"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "libc",
  "passfd",
@@ -2374,7 +2374,7 @@ dependencies = [
 
 [[package]]
 name = "roam-hash"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "blake3",
  "facet",
@@ -2385,7 +2385,7 @@ dependencies = [
 
 [[package]]
 name = "roam-local"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "moire",
  "tokio",
@@ -2393,7 +2393,7 @@ dependencies = [
 
 [[package]]
 name = "roam-macros-core"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "facet-cargo-toml",
  "heck 0.5.0",
@@ -2405,7 +2405,7 @@ dependencies = [
 
 [[package]]
 name = "roam-macros-parse"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "proc-macro2",
  "unsynn",
@@ -2413,7 +2413,7 @@ dependencies = [
 
 [[package]]
 name = "roam-service-macros"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "proc-macro2",
  "roam-macros-core",
@@ -2421,7 +2421,7 @@ dependencies = [
 
 [[package]]
 name = "roam-shm"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "facet-postcard",
  "libc",
@@ -2437,7 +2437,7 @@ dependencies = [
 
 [[package]]
 name = "roam-shm-ffi"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "cbindgen",
  "libc",
@@ -2446,7 +2446,7 @@ dependencies = [
 
 [[package]]
 name = "roam-stream"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "moire",
  "roam-types",
@@ -2456,7 +2456,7 @@ dependencies = [
 
 [[package]]
 name = "roam-types"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "bitflags",
  "facet",
@@ -2471,7 +2471,7 @@ dependencies = [
 
 [[package]]
 name = "roam-websocket"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "futures-channel",
  "futures-util",
@@ -2486,7 +2486,7 @@ dependencies = [
 
 [[package]]
 name = "rust-examples"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "eyre",
  "roam",
@@ -2626,7 +2626,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "shm-primitives"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "libc",
  "loom",
@@ -2636,7 +2636,7 @@ dependencies = [
 
 [[package]]
 name = "shm-primitives-async"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "libc",
  "tempfile",
@@ -2714,7 +2714,7 @@ dependencies = [
 
 [[package]]
 name = "spec-proto"
-version = "7.0.0-alpha.2"
+version = "7.0.0"
 dependencies = [
  "facet",
  "roam",
@@ -2722,7 +2722,7 @@ dependencies = [
 
 [[package]]
 name = "spec-tests"
-version = "7.0.0-alpha.2"
+version = "7.0.0"
 dependencies = [
  "facet-postcard",
  "libc",
@@ -2804,7 +2804,7 @@ dependencies = [
 
 [[package]]
 name = "subject-rust"
-version = "7.0.0-alpha.2"
+version = "7.0.0"
 dependencies = [
  "moire",
  "roam",
@@ -3499,7 +3499,7 @@ dependencies = [
 
 [[package]]
 name = "ur-taking-me-with-you"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "libc",
  "tokio",
@@ -3662,7 +3662,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-browser-tests"
-version = "7.0.0-alpha.3"
+version = "7.0.0"
 dependencies = [
  "roam-core",
  "roam-types",
@@ -4026,7 +4026,7 @@ checksum = "32ac00cd3f8ec9c1d33fb3e7958a82df6989c42d747bd326c822b1d625283547"
 
 [[package]]
 name = "xtask"
-version = "7.0.0-alpha.2"
+version = "7.0.0"
 dependencies = [
  "dprint-plugin-typescript",
  "facet",
