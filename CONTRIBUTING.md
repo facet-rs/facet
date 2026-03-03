@@ -16,5 +16,6 @@ That one checks for UB, memory unsafety, etc.
 
 ## Generated code
 
-Do not edit `README.md` files directly, edit `README.md.in` in the respective
-folders.
+Some `README.md` files are generated with `cargo reedme`.
+If a README contains `cargo-reedme` markers, edit crate-level rustdoc in `src/lib.rs`
+instead of editing the generated section directly.
