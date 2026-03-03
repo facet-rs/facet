@@ -550,34 +550,6 @@ pub struct StableConduitPermit<F: MsgFamily, LS: LinkSource> {
     _phantom: PhantomData<fn(F)>,
 }
 
-fn write_varint_u64(mut value: u64, out: &mut Vec<u8>) {
-    loop {
-        let mut byte = (value & 0x7F) as u8;
-        value >>= 7;
-        if value != 0 {
-            byte |= 0x80;
-            out.push(byte);
-        } else {
-            out.push(byte);
-            break;
-        }
-    }
-}
-
-fn encode_frame_bytes(seq: PacketSeq, ack: Option<PacketAck>, item_bytes: &[u8]) -> Vec<u8> {
-    let mut frame_bytes = Vec::with_capacity(item_bytes.len() + 12);
-    write_varint_u64(seq.0 as u64, &mut frame_bytes);
-    match ack {
-        Some(ack) => {
-            frame_bytes.push(1);
-            write_varint_u64(ack.max_delivered.0 as u64, &mut frame_bytes);
-        }
-        None => frame_bytes.push(0),
-    }
-    frame_bytes.extend_from_slice(item_bytes);
-    frame_bytes
-}
-
 impl<F: MsgFamily, LS: LinkSource> ConduitTxPermit for StableConduitPermit<F, LS> {
     type Msg = F;
     type Error = StableConduitError;
@@ -634,40 +606,6 @@ impl<F: MsgFamily, LS: LinkSource> ConduitTxPermit for StableConduitPermit<F, LS
 
         // Keep an owned copy for replay after reconnect.
         shared.lock_inner()?.replay.push(seq, slot_bytes.to_vec());
-        slot.commit();
-
-        Ok(())
-    }
-
-    fn send_encoded(self, encoded_item: &[u8]) -> Result<(), StableConduitError> {
-        let StableConduitPermit {
-            shared,
-            link_permit,
-            generation,
-            _phantom: _,
-        } = self;
-
-        let (seq, ack) = {
-            let mut inner = shared.lock_inner()?;
-            if inner.link_generation != generation {
-                return Err(StableConduitError::LinkDead);
-            }
-            let seq = inner.next_send_seq;
-            inner.next_send_seq = PacketSeq(seq.0.wrapping_add(1));
-            let ack = inner
-                .last_received
-                .map(|max_delivered| PacketAck { max_delivered });
-            (seq, ack)
-        };
-
-        let frame_bytes = encode_frame_bytes(seq, ack, encoded_item);
-        let mut slot = link_permit
-            .alloc(frame_bytes.len())
-            .map_err(StableConduitError::Io)?;
-        slot.as_mut_slice().copy_from_slice(&frame_bytes);
-
-        // Keep an owned copy for replay after reconnect.
-        shared.lock_inner()?.replay.push(seq, frame_bytes);
         slot.commit();
 
         Ok(())

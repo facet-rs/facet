@@ -80,12 +80,6 @@ pub trait ConduitTxPermit {
     type Error: std::error::Error + MaybeSend + 'static;
 
     fn send(self, item: <Self::Msg as MsgFamily>::Msg<'_>) -> Result<(), Self::Error>;
-
-    /// Send one pre-encoded message payload for this conduit message family.
-    ///
-    /// `encoded_item` must be exactly the wire bytes for `<Self::Msg as MsgFamily>::Msg<'_>`
-    /// (not including any lower-level link framing).
-    fn send_encoded(self, encoded_item: &[u8]) -> Result<(), Self::Error>;
 }
 
 /// Receiving half of a [`Conduit`].

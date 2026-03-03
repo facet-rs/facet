@@ -6,6 +6,7 @@ use std::marker::PhantomData;
 
 use crate::{ChannelId, ConnectionId, Metadata, MethodId, RequestId};
 use facet::{Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst, Shape};
+use facet_postcard::opaque_encoded_borrowed;
 
 /// Per-connection limits advertised by a peer.
 // r[impl session.connection-settings]
@@ -328,10 +329,10 @@ impl FacetOpaqueAdapter for PayloadAdapter {
     type RecvValue<'de> = Payload<'de>;
 
     fn serialize_map(value: &Self::SendValue<'_>) -> OpaqueSerialize {
-        let Payload::Outgoing { ptr, shape, .. } = value else {
-            unreachable!("serialize_map is only called on outgoing Payload variants");
-        };
-        OpaqueSerialize { ptr: *ptr, shape }
+        match value {
+            Payload::Outgoing { ptr, shape, .. } => OpaqueSerialize { ptr: *ptr, shape },
+            Payload::Incoming(bytes) => opaque_encoded_borrowed(bytes),
+        }
     }
 
     fn deserialize_build<'de>(

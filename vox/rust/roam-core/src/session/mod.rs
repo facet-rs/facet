@@ -267,38 +267,57 @@ pub(crate) struct ConnectionSender {
     failures: Arc<mpsc::UnboundedSender<(RequestId, &'static str)>>,
 }
 
-fn write_varint_u64(mut value: u64, out: &mut Vec<u8>) {
-    loop {
-        let mut byte = (value & 0x7F) as u8;
-        value >>= 7;
-        if value != 0 {
-            byte |= 0x80;
-            out.push(byte);
-        } else {
-            out.push(byte);
-            break;
-        }
+fn forwarded_payload<'a>(payload: &'a roam_types::Payload<'static>) -> roam_types::Payload<'a> {
+    let roam_types::Payload::Incoming(bytes) = payload else {
+        unreachable!("proxy forwarding expects decoded incoming payload bytes")
+    };
+    roam_types::Payload::Incoming(bytes)
+}
+
+fn forwarded_request_body<'a>(body: &'a RequestBody<'static>) -> RequestBody<'a> {
+    match body {
+        RequestBody::Call(call) => RequestBody::Call(roam_types::RequestCall {
+            method_id: call.method_id,
+            channels: call.channels.clone(),
+            metadata: call.metadata.clone(),
+            args: forwarded_payload(&call.args),
+        }),
+        RequestBody::Response(response) => RequestBody::Response(RequestResponse {
+            channels: response.channels.clone(),
+            metadata: response.metadata.clone(),
+            ret: forwarded_payload(&response.ret),
+        }),
+        RequestBody::Cancel(cancel) => RequestBody::Cancel(roam_types::RequestCancel {
+            metadata: cancel.metadata.clone(),
+        }),
     }
 }
 
-fn varint_prefix_len(bytes: &[u8]) -> Option<usize> {
-    for (idx, byte) in bytes.iter().enumerate() {
-        if (byte & 0x80) == 0 {
-            return Some(idx + 1);
+fn forwarded_channel_body<'a>(
+    body: &'a roam_types::ChannelBody<'static>,
+) -> roam_types::ChannelBody<'a> {
+    match body {
+        roam_types::ChannelBody::Item(item) => {
+            roam_types::ChannelBody::Item(roam_types::ChannelItem {
+                item: forwarded_payload(&item.item),
+            })
         }
-        if idx == 9 {
-            return None;
+        roam_types::ChannelBody::Close(close) => {
+            roam_types::ChannelBody::Close(roam_types::ChannelClose {
+                metadata: close.metadata.clone(),
+            })
+        }
+        roam_types::ChannelBody::Reset(reset) => {
+            roam_types::ChannelBody::Reset(roam_types::ChannelReset {
+                metadata: reset.metadata.clone(),
+            })
+        }
+        roam_types::ChannelBody::GrantCredit(credit) => {
+            roam_types::ChannelBody::GrantCredit(roam_types::ChannelGrantCredit {
+                additional: credit.additional,
+            })
         }
     }
-    None
-}
-
-fn rewrite_connection_id(raw_message: &[u8], connection_id: ConnectionId) -> Option<Vec<u8>> {
-    let old_prefix_len = varint_prefix_len(raw_message)?;
-    let mut rewritten = Vec::with_capacity(raw_message.len() + 10);
-    write_varint_u64(connection_id.0, &mut rewritten);
-    rewritten.extend_from_slice(&raw_message[old_prefix_len..]);
-    Some(rewritten)
 }
 
 impl ConnectionSender {
@@ -320,10 +339,24 @@ impl ConnectionSender {
         &self,
         msg: SelfRef<ConnectionMessage<'static>>,
     ) -> Result<(), ()> {
-        let Some(encoded) = rewrite_connection_id(msg.backing_bytes(), self.connection_id) else {
-            return Err(());
+        let payload = match &*msg {
+            ConnectionMessage::Request(request) => MessagePayload::RequestMessage(RequestMessage {
+                id: request.id,
+                body: forwarded_request_body(&request.body),
+            }),
+            ConnectionMessage::Channel(channel) => MessagePayload::ChannelMessage(ChannelMessage {
+                id: channel.id,
+                body: forwarded_channel_body(&channel.body),
+            }),
         };
-        self.sess_core.send_encoded(&encoded).await
+
+        self.sess_core
+            .send(Message {
+                connection_id: self.connection_id,
+                payload,
+            })
+            .await
+            .map_err(|_| ())
     }
 
     /// Send a response specifically
@@ -1101,10 +1134,6 @@ impl SessionCore {
     pub(crate) async fn send<'a>(&self, msg: Message<'a>) -> Result<(), ()> {
         self.tx.send_msg(msg).await.map_err(|_| ())
     }
-
-    pub(crate) async fn send_encoded(&self, msg: &[u8]) -> Result<(), ()> {
-        self.tx.send_msg_encoded(msg).await.map_err(|_| ())
-    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1115,12 +1144,10 @@ type BoxFuture<'a, T> = Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
 #[cfg(not(target_arch = "wasm32"))]
 pub trait DynConduitTx: Send + Sync {
     fn send_msg<'a>(&'a self, msg: Message<'a>) -> BoxFuture<'a, std::io::Result<()>>;
-    fn send_msg_encoded<'a>(&'a self, msg: &'a [u8]) -> BoxFuture<'a, std::io::Result<()>>;
 }
 #[cfg(target_arch = "wasm32")]
 pub trait DynConduitTx {
     fn send_msg<'a>(&'a self, msg: Message<'a>) -> BoxFuture<'a, std::io::Result<()>>;
-    fn send_msg_encoded<'a>(&'a self, msg: &'a [u8]) -> BoxFuture<'a, std::io::Result<()>>;
 }
 
 // r[impl zerocopy.send]
@@ -1135,15 +1162,6 @@ where
             let permit = self.reserve().await?;
             permit
                 .send(msg)
-                .map_err(|e| std::io::Error::other(e.to_string()))
-        })
-    }
-
-    fn send_msg_encoded<'a>(&'a self, msg: &'a [u8]) -> BoxFuture<'a, std::io::Result<()>> {
-        Box::pin(async move {
-            let permit = self.reserve().await?;
-            permit
-                .send_encoded(msg)
                 .map_err(|e| std::io::Error::other(e.to_string()))
         })
     }
