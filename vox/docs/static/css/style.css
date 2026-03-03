@@ -437,11 +437,79 @@ article pre {
     border: 1px solid var(--border);
 }
 
+/* When pre is inside a .code-block wrapper, the wrapper owns the chrome */
+.code-block pre {
+    border: none;
+    border-radius: 6px;
+    margin-bottom: 0;
+}
+
+/* When there's a header, only round the bottom corners */
+.code-header + pre {
+    border-radius: 0 0 6px 6px;
+}
+
 article pre code {
     background: none;
     padding: 0;
     font-size: 0.85rem;
     line-height: 1.5;
+}
+
+/* ============================================
+   Code Block (wrapper with language header)
+   ============================================ */
+.code-block {
+    position: relative;
+    margin-bottom: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--code-bg);
+}
+
+.code-header {
+    display: flex;
+    align-items: center;
+    padding: 0.35rem 1rem;
+    font-family: var(--font-mono);
+    font-variation-settings: "MONO" 1, "CASL" 0;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--fg-muted);
+    border-bottom: 1px solid var(--border);
+    user-select: none;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.code-block .copy-btn {
+    position: absolute;
+    top: 0.3rem;
+    right: 0.5rem;
+    padding: 0.2rem 0.5rem;
+    font-family: var(--font-mono);
+    font-variation-settings: "MONO" 1, "CASL" 0;
+    font-size: 0.7rem;
+    background: var(--copy-btn-bg);
+    border: 1px solid var(--copy-btn-border);
+    border-radius: 4px;
+    color: var(--copy-btn-text);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.code-block:hover .copy-btn {
+    opacity: 1;
+}
+
+.code-block .copy-btn:hover {
+    background: var(--copy-btn-hover-bg);
+}
+
+.code-block .copy-btn.copied {
+    background: var(--copy-btn-copied-bg);
+    color: #fff;
 }
 
 article strong {
@@ -766,32 +834,33 @@ footer a:visited {
     margin-bottom: 0.75rem;
 }
 
-/* ============================================
-   Copy Button for Code Blocks
-   ============================================ */
+/* Copy button for bare pre elements (without .code-block wrapper) */
 pre {
     position: relative;
 }
-pre .copy-btn {
+pre > .copy-btn {
     position: absolute;
     top: 0.5rem;
     right: 0.5rem;
-    padding: 0.25rem 0.5rem;
-    font-size: 0.75rem;
+    padding: 0.2rem 0.5rem;
+    font-family: var(--font-mono);
+    font-variation-settings: "MONO" 1, "CASL" 0;
+    font-size: 0.7rem;
     background: var(--copy-btn-bg);
     border: 1px solid var(--copy-btn-border);
-    border-radius: 0.25rem;
+    border-radius: 4px;
     color: var(--copy-btn-text);
     cursor: pointer;
     opacity: 0;
     transition: opacity 0.15s;
 }
-pre:hover .copy-btn {
+pre:hover > .copy-btn {
     opacity: 1;
 }
-pre .copy-btn:hover {
+pre > .copy-btn:hover {
     background: var(--copy-btn-hover-bg);
 }
-pre .copy-btn.copied {
+pre > .copy-btn.copied {
     background: var(--copy-btn-copied-bg);
+    color: #fff;
 }
