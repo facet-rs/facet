@@ -1,33 +1,4 @@
-# facet-macros-impl
-
-<!-- cargo-reedme: start -->
-
-<!-- cargo-reedme: info-start
-
-    Do not edit this region by hand
-    ===============================
-
-    This region was generated from Rust documentation comments by `cargo-reedme` using this command:
-
-        cargo +nightly reedme --package facet-macros-impl
-
-    for more info: https://github.com/nik-rev/cargo-reedme
-
-cargo-reedme: info-end -->
-
-## facet-macros-impl
-
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-macros-impl/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-macros-impl.svg)](https://crates.io/crates/facet-macros-impl)
-[![documentation](https://docs.rs/facet-macros-impl/badge.svg)](https://docs.rs/facet-macros-impl)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-macros-impl.svg)](./LICENSE)
-[![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
-
-Implementation of facet derive macros, combining parsing and code generation.
-
-This crate provides the internal implementation for `#[derive(Facet)]` and related procedural macros. It’s used by `facet-macros` (the proc-macro crate) and should not be used directly.
-
-### Sponsors
+## Sponsors
 
 Thanks to all individual sponsors:
 
@@ -43,7 +14,7 @@ Thanks to all individual sponsors:
     </picture>
 </a> </p>
 
-…along with corporate sponsors:
+...along with corporate sponsors:
 
 <p> <a href="https://aws.amazon.com">
 <picture>
@@ -62,13 +33,13 @@ Thanks to all individual sponsors:
 </picture>
 </a> </p>
 
-…without whom this work could not exist.
+...without whom this work could not exist.
 
-### Special thanks
+## Special thanks
 
 The facet logo was drawn by [Misiasart](https://misiasart.com/).
 
-### License
+## License
 
 Licensed under either of:
 
@@ -76,5 +47,3 @@ Licensed under either of:
 - MIT license ([LICENSE-MIT](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
 
 at your option.
-
-<!-- cargo-reedme: end -->
