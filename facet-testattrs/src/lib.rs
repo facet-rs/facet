@@ -26,9 +26,19 @@ facet::define_attr_grammar! {
         MaxLen(usize),
         /// An attribute with an optional value.
         Short(Option<char>),
+        /// Structured payload used to test enum-wrapped runtime decoding.
+        Column(Column),
         /// Optional string payload used for generic extension-attr tests.
         GenericName(Option<&'static str>),
         /// Arbitrary payload used for generic extension-attr tests.
         GenericSize(Option<usize>),
+    }
+
+    /// Structured configuration payload used by `Attr::Column`.
+    pub struct Column {
+        /// Optional renamed field name used by format adapters.
+        pub rename: Option<&'static str>,
+        /// Whether the field should be treated as indexed.
+        pub indexed: bool,
     }
 }
