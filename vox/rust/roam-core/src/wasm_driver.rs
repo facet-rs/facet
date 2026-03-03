@@ -4,7 +4,13 @@
 /// `tokio::sync::Semaphore` and channel infrastructure that doesn't
 /// compile for wasm). This module provides the same public API surface
 /// (`Driver`, `DriverReplySink`, `DriverCaller`) but without channel support.
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use moire::sync::{SyncMutex, mpsc};
 use roam_types::{
@@ -19,6 +25,25 @@ type ResponseSlot = moire::sync::oneshot::Sender<SelfRef<RequestMessage<'static>
 struct DriverShared {
     pending_responses: SyncMutex<BTreeMap<RequestId, ResponseSlot>>,
     request_ids: SyncMutex<IdAllocator<RequestId>>,
+}
+
+struct SessionShutdownOnDrop {
+    shutdown_tx: mpsc::UnboundedSender<()>,
+    armed: AtomicBool,
+}
+
+impl SessionShutdownOnDrop {
+    fn disarm(&self) {
+        self.armed.store(false, Ordering::SeqCst);
+    }
+}
+
+impl Drop for SessionShutdownOnDrop {
+    fn drop(&mut self) {
+        if self.armed.load(Ordering::SeqCst) {
+            let _ = self.shutdown_tx.send(());
+        }
+    }
 }
 
 /// Concrete [`ReplySink`] for the wasm driver. No channel support.
@@ -52,6 +77,7 @@ impl Drop for DriverReplySink {
 pub struct DriverCaller {
     sender: ConnectionSender,
     shared: Arc<DriverShared>,
+    shutdown_on_drop: Option<Arc<SessionShutdownOnDrop>>,
 }
 
 impl Caller for DriverCaller {
@@ -89,7 +115,12 @@ impl Caller for DriverCaller {
 }
 
 impl From<DriverCaller> for () {
-    fn from(_: DriverCaller) {}
+    fn from(mut caller: DriverCaller) {
+        if let Some(guard) = caller.shutdown_on_drop.take() {
+            guard.disarm();
+        }
+        caller.shutdown_on_drop = None;
+    }
 }
 
 /// Wasm-only driver. No channel support.
@@ -100,6 +131,8 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     handler: Arc<H>,
     shared: Arc<DriverShared>,
     in_flight_handlers: BTreeMap<RequestId, moire::task::JoinHandle<()>>,
+    shutdown_seed: Option<mpsc::UnboundedSender<()>>,
+    shutdown_on_drop: SyncMutex<Option<Weak<SessionShutdownOnDrop>>>,
 }
 
 impl<H: Handler<DriverReplySink>> Driver<H> {
@@ -108,6 +141,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             sender,
             rx,
             failures_rx,
+            shutdown_tx,
             parity,
         } = handle;
         Self {
@@ -120,13 +154,31 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 request_ids: SyncMutex::new("driver.request_ids", IdAllocator::new(parity)),
             }),
             in_flight_handlers: BTreeMap::new(),
+            shutdown_seed: shutdown_tx,
+            shutdown_on_drop: SyncMutex::new("driver.shutdown_on_drop", None),
         }
     }
 
     pub fn caller(&self) -> DriverCaller {
+        let shutdown_on_drop = if let Some(seed) = &self.shutdown_seed {
+            let mut guard = self.shutdown_on_drop.lock();
+            if let Some(existing) = guard.as_ref().and_then(Weak::upgrade) {
+                Some(existing)
+            } else {
+                let arc = Arc::new(SessionShutdownOnDrop {
+                    shutdown_tx: seed.clone(),
+                    armed: AtomicBool::new(true),
+                });
+                *guard = Some(Arc::downgrade(&arc));
+                Some(arc)
+            }
+        } else {
+            None
+        };
         DriverCaller {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
+            shutdown_on_drop,
         }
     }
 

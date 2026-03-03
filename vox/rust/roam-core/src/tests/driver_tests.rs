@@ -341,6 +341,55 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
     );
 }
 
+#[tokio::test]
+async fn dropping_root_caller_shuts_down_session() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let (client_session_tx, client_session_rx) =
+        tokio::sync::oneshot::channel::<moire::task::JoinHandle<()>>();
+    let (server_session_tx, server_session_rx) =
+        tokio::sync::oneshot::channel::<moire::task::JoinHandle<()>>();
+
+    let server_task = moire::task::spawn(
+        async move {
+            let ((), _sh) = acceptor(server_conduit)
+                .spawn_fn(move |fut| {
+                    let handle = moire::task::spawn(fut.named("server_session"));
+                    let _ = server_session_tx.send(handle);
+                })
+                .establish::<()>(EchoHandler)
+                .await
+                .expect("server handshake failed");
+        }
+        .named("server_setup"),
+    );
+
+    let (caller, _sh) = initiator(client_conduit)
+        .spawn_fn(move |fut| {
+            let handle = moire::task::spawn(fut.named("client_session"));
+            let _ = client_session_tx.send(handle);
+        })
+        .establish::<DriverCaller>(())
+        .await
+        .expect("client handshake failed");
+
+    server_task.await.expect("server setup failed");
+
+    let client_session = client_session_rx.await.expect("client session handle sent");
+    let server_session = server_session_rx.await.expect("server session handle sent");
+
+    drop(caller);
+
+    tokio::time::timeout(std::time::Duration::from_millis(500), client_session)
+        .await
+        .expect("timed out waiting for client session to exit")
+        .expect("client session task failed");
+    tokio::time::timeout(std::time::Duration::from_millis(500), server_session)
+        .await
+        .expect("timed out waiting for server session to exit")
+        .expect("server session task failed");
+}
+
 // ---------------------------------------------------------------------------
 // Virtual connection tests
 // ---------------------------------------------------------------------------

@@ -1,4 +1,11 @@
-use std::{collections::BTreeMap, pin::Pin, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    pin::Pin,
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use moire::sync::SyncMutex;
 use tokio::sync::Semaphore;
@@ -34,6 +41,25 @@ struct DriverShared {
     /// Credit semaphores for outbound channels (Tx on our side).
     /// The driver's GrantCredit handler adds permits to these.
     channel_credits: SyncMutex<BTreeMap<ChannelId, Arc<Semaphore>>>,
+}
+
+struct SessionShutdownOnDrop {
+    shutdown_tx: mpsc::UnboundedSender<()>,
+    armed: AtomicBool,
+}
+
+impl SessionShutdownOnDrop {
+    fn disarm(&self) {
+        self.armed.store(false, Ordering::SeqCst);
+    }
+}
+
+impl Drop for SessionShutdownOnDrop {
+    fn drop(&mut self) {
+        if self.armed.load(Ordering::SeqCst) {
+            let _ = self.shutdown_tx.send(());
+        }
+    }
 }
 
 /// Concrete `ReplySink` implementation for the driver.
@@ -138,7 +164,12 @@ impl ChannelSink for DriverChannelSink {
 /// Cloneable handle for making outgoing calls through a connection.
 ///
 impl From<DriverCaller> for () {
-    fn from(_: DriverCaller) {}
+    fn from(mut caller: DriverCaller) {
+        if let Some(guard) = caller.shutdown_on_drop.take() {
+            guard.disarm();
+        }
+        caller.shutdown_on_drop = None;
+    }
 }
 
 /// Implements [`Caller`]: allocates a request ID, registers a response slot,
@@ -148,6 +179,7 @@ pub struct DriverCaller {
     sender: ConnectionSender,
     shared: Arc<DriverShared>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
+    shutdown_on_drop: Option<Arc<SessionShutdownOnDrop>>,
 }
 
 impl DriverCaller {
@@ -326,6 +358,8 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     /// Used to abort handlers on cancel.
     in_flight_handlers: BTreeMap<RequestId, moire::task::JoinHandle<()>>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
+    shutdown_seed: Option<mpsc::UnboundedSender<()>>,
+    shutdown_on_drop: SyncMutex<Option<Weak<SessionShutdownOnDrop>>>,
 }
 
 enum DriverLocalControl {
@@ -338,6 +372,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             sender,
             rx,
             failures_rx,
+            shutdown_tx,
             parity,
         } = handle;
         let (local_control_tx, local_control_rx) = mpsc::unbounded_channel("driver.local_control");
@@ -357,15 +392,42 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             }),
             in_flight_handlers: BTreeMap::new(),
             local_control_tx,
+            shutdown_seed: shutdown_tx,
+            shutdown_on_drop: SyncMutex::new("driver.shutdown_on_drop", None),
         }
     }
 
     /// Get a cloneable caller handle for making outgoing calls.
     pub fn caller(&self) -> DriverCaller {
+        let shutdown_on_drop = if let Some(seed) = &self.shutdown_seed {
+            let mut guard = self.shutdown_on_drop.lock();
+            if let Some(existing) = guard.as_ref().and_then(Weak::upgrade) {
+                Some(existing)
+            } else {
+                let arc = Arc::new(SessionShutdownOnDrop {
+                    shutdown_tx: seed.clone(),
+                    armed: AtomicBool::new(true),
+                });
+                *guard = Some(Arc::downgrade(&arc));
+                Some(arc)
+            }
+        } else {
+            None
+        };
         DriverCaller {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
             local_control_tx: self.local_control_tx.clone(),
+            shutdown_on_drop,
+        }
+    }
+
+    fn internal_caller(&self) -> DriverCaller {
+        DriverCaller {
+            sender: self.sender.clone(),
+            shared: Arc::clone(&self.shared),
+            local_control_tx: self.local_control_tx.clone(),
+            shutdown_on_drop: None,
         }
     }
 
@@ -461,7 +523,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             let reply = DriverReplySink {
                 sender: Some(self.sender.clone()),
                 request_id: req_id,
-                binder: self.caller(),
+                binder: self.internal_caller(),
             };
             let call = msg.map(|m| match m.body {
                 RequestBody::Call(c) => c,

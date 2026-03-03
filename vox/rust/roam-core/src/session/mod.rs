@@ -84,6 +84,7 @@ struct CloseRequest {
 pub struct SessionHandle {
     open_tx: mpsc::Sender<OpenRequest>,
     close_tx: mpsc::Sender<CloseRequest>,
+    shutdown_tx: mpsc::UnboundedSender<()>,
 }
 
 impl SessionHandle {
@@ -136,6 +137,13 @@ impl SessionHandle {
             .await
             .map_err(|_| SessionError::Protocol("session closed".into()))?
     }
+
+    /// Request shutdown of the entire session (root + all virtual connections).
+    pub fn shutdown(&self) -> Result<(), SessionError> {
+        self.shutdown_tx
+            .send(())
+            .map_err(|_| SessionError::Protocol("session closed".into()))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -173,6 +181,9 @@ pub struct Session<C: Conduit> {
 
     /// Receiver for close requests from SessionHandle.
     close_rx: mpsc::Receiver<CloseRequest>,
+
+    /// Receiver for shutdown requests from SessionHandle / root caller drop.
+    shutdown_rx: mpsc::UnboundedReceiver<()>,
 
     /// Optional proactive keepalive runtime config for connection ID 0.
     keepalive: Option<SessionKeepaliveConfig>,
@@ -270,6 +281,7 @@ pub struct ConnectionHandle {
     pub(crate) sender: ConnectionSender,
     pub(crate) rx: mpsc::Receiver<SelfRef<ConnectionMessage<'static>>>,
     pub(crate) failures_rx: mpsc::UnboundedReceiver<(RequestId, &'static str)>,
+    pub(crate) shutdown_tx: Option<mpsc::UnboundedSender<()>>,
     /// The parity this side should use for allocating request/channel IDs.
     pub parity: Parity,
 }
@@ -327,6 +339,7 @@ where
         on_connection: Option<Box<dyn ConnectionAcceptor>>,
         open_rx: mpsc::Receiver<OpenRequest>,
         close_rx: mpsc::Receiver<CloseRequest>,
+        shutdown_rx: mpsc::UnboundedReceiver<()>,
         keepalive: Option<SessionKeepaliveConfig>,
     ) -> Self {
         let sess_core = Arc::new(SessionCore { tx: Box::new(tx) });
@@ -340,6 +353,7 @@ where
             on_connection,
             open_rx,
             close_rx,
+            shutdown_rx,
             keepalive,
         }
     }
@@ -497,6 +511,7 @@ where
             sender,
             rx: conn_rx,
             failures_rx,
+            shutdown_tx: None,
             parity,
         }
     }
@@ -533,6 +548,10 @@ where
                 }
                 Some(req) = self.close_rx.recv() => {
                     self.handle_close_request(req).await;
+                }
+                Some(()) = self.shutdown_rx.recv() => {
+                    debug!("session shutdown requested");
+                    break;
                 }
                 _ = async {
                     if let Some(interval) = keepalive_tick.as_mut() {
@@ -962,7 +981,8 @@ mod tests {
         let (tx, rx) = conduit.split();
         let (_open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open.test", 4);
         let (_close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close.test", 4);
-        Session::pre_handshake(tx, rx, None, open_rx, close_rx, None)
+        let (_shutdown_tx, shutdown_rx) = mpsc::unbounded_channel("session.shutdown.test");
+        Session::pre_handshake(tx, rx, None, open_rx, close_rx, shutdown_rx, None)
     }
 
     fn accept_ref() -> SelfRef<ConnectionAccept<'static>> {
