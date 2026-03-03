@@ -30,6 +30,16 @@
                 </ul>
             </div>
             {% endfor %}
+            {% if root.pages and root.pages | length > 0 %}
+            <div class="sidebar-section">
+                <h3>Guides</h3>
+                <ul>
+                    {% for page in root.pages %}
+                    <li><a href="{{ page.permalink }}">{{ page.title }}</a></li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
         </nav>
     </aside>
     <main class="content">

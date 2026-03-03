@@ -42,6 +42,16 @@
                     </ul>
                 </div>
                 {% endfor %}
+                {% if root.pages and root.pages | length > 0 %}
+                <div class="sidebar-section">
+                    <h3>Guides</h3>
+                    <ul>
+                        {% for pg in root.pages %}
+                        <li><a href="{{ pg.permalink }}"{% if current_path and current_path == pg.path %} class="active"{% endif %}>{{ pg.title }}</a></li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
             </nav>
         </aside>
         <main class="content">

@@ -1,10 +1,8 @@
 +++
-title = "migrating from v6 to v7"
+title = "Migrating from v6 to v7"
 description = "Practical API migration notes for Rust users moving to roam v7"
 weight = 16
 +++
-
-# Migration guide (Rust API)
 
 This page maps the old v6 Rust API surface to the current v7 API.
 
