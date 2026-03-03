@@ -1,11 +1,10 @@
 //! Rust subject binary for the roam compliance suite.
 
 use roam::{Rx, Tx};
-use roam_core::{BareConduit, initiator};
+use roam_core::initiator;
 use roam_shm::bootstrap::{BootstrapStatus, encode_request};
 use roam_shm::segment::Segment;
 use roam_stream::StreamLink;
-use roam_types::MessageFamily;
 use spec_proto::{
     Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape, Testbed,
     TestbedDispatcher,
@@ -18,12 +17,6 @@ use roam_shm::guest_link_from_names;
 use roam_shm::guest_link_from_raw;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
-
-type TcpConduit = BareConduit<
-    MessageFamily,
-    StreamLink<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>,
->;
-type ShmConduit = BareConduit<MessageFamily, roam_shm::ShmLink>;
 
 #[derive(Clone)]
 struct TestbedService;
@@ -198,8 +191,7 @@ async fn connect_and_serve() -> Result<(), String> {
         .map_err(|e| format!("connect failed: {e}"))?;
     stream.set_nodelay(true).unwrap();
 
-    let conduit: TcpConduit = BareConduit::new(StreamLink::tcp(stream));
-    let ((), _sh) = initiator(conduit)
+    let ((), _sh) = initiator(StreamLink::tcp(stream))
         .establish::<()>(TestbedDispatcher::new(TestbedService))
         .await
         .map_err(|e| format!("handshake failed: {e}"))?;
@@ -329,9 +321,7 @@ async fn connect_and_serve_shm() -> Result<(), String> {
         .map_err(|e| format!("guest_link_from_names: {e}"))?
     };
 
-    let conduit: ShmConduit = BareConduit::new(link);
-
-    let ((), _sh) = initiator(conduit)
+    let ((), _sh) = initiator(link)
         .establish::<()>(TestbedDispatcher::new(TestbedService))
         .await
         .map_err(|e| format!("handshake failed: {e}"))?;

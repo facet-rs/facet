@@ -11,6 +11,9 @@
 mod bare_conduit;
 pub use bare_conduit::*;
 
+mod into_conduit;
+pub use into_conduit::*;
+
 #[cfg(not(target_arch = "wasm32"))]
 mod stable_conduit;
 #[cfg(not(target_arch = "wasm32"))]

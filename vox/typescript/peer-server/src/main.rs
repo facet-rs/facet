@@ -5,8 +5,7 @@
 //! provide a real roam peer for the TypeScript client to talk to.
 
 use roam::{Rx, Tx};
-use roam_core::{BareConduit, acceptor};
-use roam_types::MessageFamily;
+use roam_core::acceptor;
 use roam_websocket::WsLink;
 use spec_proto::{Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape};
 use spec_proto::{Testbed, TestbedDispatcher};
@@ -165,8 +164,7 @@ async fn main() {
                 }
             };
 
-            let conduit: BareConduit<MessageFamily, _> = BareConduit::new(ws_link);
-            if let Err(e) = acceptor(conduit)
+            if let Err(e) = acceptor(ws_link)
                 .establish::<()>(TestbedDispatcher::new(TestbedService))
                 .await
             {

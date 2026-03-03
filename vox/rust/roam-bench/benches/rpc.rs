@@ -25,19 +25,13 @@ const ZEROCOPY_PAYLOAD_SIZES: &[usize] = &[
 
 mod roam_zerocopy_bench {
     use moire::task::FutureExt;
-    use roam_core::{BareConduit, acceptor, initiator, memory_link_pair};
+    use roam_core::{acceptor, initiator, memory_link_pair};
     use roam_shm::varslot::SizeClassConfig;
-    use roam_shm::{Segment, SegmentConfig, ShmLink, create_test_link_pair};
+    use roam_shm::{Segment, SegmentConfig, create_test_link_pair};
     use roam_stream::StreamLink;
 
     use shm_primitives::FileCleanup;
     use tokio::net::TcpListener;
-
-    type MemoryConduit = BareConduit<roam_types::MessageFamily, roam_core::MemoryLink>;
-    type ShmConduit = BareConduit<roam_types::MessageFamily, ShmLink>;
-    type TcpStreamLink =
-        StreamLink<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>;
-    type TcpConduit = BareConduit<roam_types::MessageFamily, TcpStreamLink>;
 
     #[roam::service]
     pub trait Zerocopy {
@@ -60,12 +54,10 @@ mod roam_zerocopy_bench {
 
     pub async fn setup_mem() -> ZerocopyClient<roam_core::DriverCaller> {
         let (a, b) = memory_link_pair(64);
-        let client_conduit: MemoryConduit = BareConduit::new(a);
-        let server_conduit: MemoryConduit = BareConduit::new(b);
 
         let server_task = moire::task::spawn(
             async move {
-                let ((), _sh) = acceptor(server_conduit)
+                let ((), _sh) = acceptor(b)
                     .establish::<()>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -73,7 +65,7 @@ mod roam_zerocopy_bench {
             .named("server_setup"),
         );
 
-        let (client, _sh) = initiator(client_conduit)
+        let (client, _sh) = initiator(a)
             .establish::<ZerocopyClient<_>>(())
             .await
             .expect("client handshake failed");
@@ -123,12 +115,10 @@ mod roam_zerocopy_bench {
             .await
             .expect("create_test_link_pair");
         std::mem::forget(dir);
-        let client_conduit: ShmConduit = BareConduit::new(a);
-        let server_conduit: ShmConduit = BareConduit::new(b);
 
         let server_task = moire::task::spawn(
             async move {
-                let ((), _sh) = acceptor(server_conduit)
+                let ((), _sh) = acceptor(b)
                     .establish::<()>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -136,7 +126,7 @@ mod roam_zerocopy_bench {
             .named("server_setup"),
         );
 
-        let (client, _sh) = initiator(client_conduit)
+        let (client, _sh) = initiator(a)
             .establish::<ZerocopyClient<_>>(())
             .await
             .expect("client handshake failed");
@@ -154,8 +144,7 @@ mod roam_zerocopy_bench {
             async move {
                 let (stream, _) = listener.accept().await.unwrap();
                 stream.set_nodelay(true).unwrap();
-                let server_conduit: TcpConduit = BareConduit::new(StreamLink::tcp(stream));
-                let ((), _sh) = acceptor(server_conduit)
+                let ((), _sh) = acceptor(StreamLink::tcp(stream))
                     .establish::<()>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -165,9 +154,8 @@ mod roam_zerocopy_bench {
 
         let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         stream.set_nodelay(true).unwrap();
-        let client_conduit: TcpConduit = BareConduit::new(StreamLink::tcp(stream));
 
-        let (client, _sh) = initiator(client_conduit)
+        let (client, _sh) = initiator(StreamLink::tcp(stream))
             .establish::<ZerocopyClient<_>>(())
             .await
             .expect("client handshake failed");
@@ -237,9 +225,7 @@ define_zerocopy_transport_benches!(
 
 mod roam_bench {
     use moire::task::FutureExt;
-    use roam_core::{BareConduit, acceptor, initiator, memory_link_pair};
-
-    type MessageConduit = BareConduit<roam_types::MessageFamily, roam_core::MemoryLink>;
+    use roam_core::{acceptor, initiator, memory_link_pair};
 
     #[roam::service]
     pub trait Bench {
@@ -270,12 +256,10 @@ mod roam_bench {
 
     pub async fn setup() -> BenchClient<roam_core::DriverCaller> {
         let (a, b) = memory_link_pair(64);
-        let client_conduit: MessageConduit = BareConduit::new(a);
-        let server_conduit: MessageConduit = BareConduit::new(b);
 
         let server_task = moire::task::spawn(
             async move {
-                let ((), _sh) = acceptor(server_conduit)
+                let ((), _sh) = acceptor(b)
                     .establish::<()>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -283,7 +267,7 @@ mod roam_bench {
             .named("server_setup"),
         );
 
-        let (client, _sh) = initiator(client_conduit)
+        let (client, _sh) = initiator(a)
             .establish::<BenchClient<_>>(())
             .await
             .expect("client handshake failed");
@@ -349,15 +333,13 @@ mod roam_shm_bench {
     use std::sync::Arc;
 
     use moire::task::FutureExt;
-    use roam_core::{BareConduit, acceptor, initiator};
+    use roam_core::{acceptor, initiator};
     use roam_shm::varslot::SizeClassConfig;
-    use roam_shm::{Segment, SegmentConfig, ShmLink, create_test_link_pair};
+    use roam_shm::{Segment, SegmentConfig, create_test_link_pair};
 
     use shm_primitives::FileCleanup;
 
     use super::roam_bench::{BenchClient, BenchDispatcher, Handler};
-
-    type MessageConduit = BareConduit<roam_types::MessageFamily, ShmLink>;
 
     pub async fn setup() -> BenchClient<roam_core::DriverCaller> {
         let classes = [
@@ -392,12 +374,10 @@ mod roam_shm_bench {
             .expect("create_test_link_pair");
         // Leak the tempdir so the segment file lives for the entire benchmark run.
         std::mem::forget(dir);
-        let client_conduit: MessageConduit = BareConduit::new(a);
-        let server_conduit: MessageConduit = BareConduit::new(b);
 
         let server_task = moire::task::spawn(
             async move {
-                let ((), _sh) = acceptor(server_conduit)
+                let ((), _sh) = acceptor(b)
                     .establish::<()>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -405,7 +385,7 @@ mod roam_shm_bench {
             .named("server_setup"),
         );
 
-        let (client, _sh) = initiator(client_conduit)
+        let (client, _sh) = initiator(a)
             .establish::<BenchClient<_>>(())
             .await
             .expect("client handshake failed");
@@ -469,16 +449,12 @@ fn roam_shm_stream(bencher: divan::Bencher, n: usize) {
 
 mod roam_tcp_bench {
     use moire::task::FutureExt;
-    use roam_core::{BareConduit, acceptor, initiator};
+    use roam_core::{acceptor, initiator};
     use roam_stream::StreamLink;
 
     use tokio::net::TcpListener;
 
     use super::roam_bench::{BenchClient, BenchDispatcher, Handler};
-
-    type TcpStreamLink =
-        StreamLink<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>;
-    type MessageConduit = BareConduit<roam_types::MessageFamily, TcpStreamLink>;
 
     pub async fn setup() -> BenchClient<roam_core::DriverCaller> {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -488,8 +464,7 @@ mod roam_tcp_bench {
             async move {
                 let (stream, _) = listener.accept().await.unwrap();
                 stream.set_nodelay(true).unwrap();
-                let server_conduit: MessageConduit = BareConduit::new(StreamLink::tcp(stream));
-                let ((), _sh) = acceptor(server_conduit)
+                let ((), _sh) = acceptor(StreamLink::tcp(stream))
                     .establish::<()>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -499,9 +474,8 @@ mod roam_tcp_bench {
 
         let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         stream.set_nodelay(true).unwrap();
-        let client_conduit: MessageConduit = BareConduit::new(StreamLink::tcp(stream));
 
-        let (client, _sh) = initiator(client_conduit)
+        let (client, _sh) = initiator(StreamLink::tcp(stream))
             .establish::<BenchClient<_>>(())
             .await
             .expect("client handshake failed");

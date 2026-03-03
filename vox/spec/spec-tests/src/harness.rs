@@ -9,9 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::os::fd::{AsRawFd, IntoRawFd};
 
 use roam::{Rx, Tx};
-use roam_core::{
-    BareConduit, DriverCaller, DriverReplySink, acceptor, initiator, memory_link_pair,
-};
+use roam_core::{DriverCaller, DriverReplySink, acceptor, initiator, memory_link_pair};
 use roam_shm::HostHub;
 use roam_shm::ShmLink;
 use roam_shm::bootstrap::{BootstrapStatus, decode_request, encode_request};
@@ -22,7 +20,7 @@ use roam_shm::guest_link_from_raw;
 use roam_shm::segment::{Segment, SegmentConfig};
 use roam_shm::varslot::SizeClassConfig as RoamShmSizeClassConfig;
 use roam_stream::StreamLink;
-use roam_types::{MessageFamily, RequestCall, SelfRef};
+use roam_types::{RequestCall, SelfRef};
 use shm_primitives::FileCleanup;
 use shm_primitives::SizeClassConfig;
 use spec_proto::{
@@ -68,8 +66,6 @@ where
         }
     })
 }
-
-type TcpLink = StreamLink<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SubjectLanguage {
@@ -465,7 +461,7 @@ pub async fn accept_rust_inproc(
     match transport {
         RustTransport::Mem => {
             let (a, b) = memory_link_pair(64 * 1024);
-            accept_rust_inproc_with_conduits(BareConduit::new(a), BareConduit::new(b)).await
+            accept_rust_inproc_with_conduits(a, b).await
         }
         RustTransport::Tcp => {
             let listener = TcpListener::bind("127.0.0.1:0")
@@ -487,8 +483,8 @@ pub async fn accept_rust_inproc(
             server_stream.set_nodelay(true).unwrap();
             client_stream.set_nodelay(true).unwrap();
             accept_rust_inproc_with_conduits(
-                BareConduit::new(StreamLink::tcp(client_stream)),
-                BareConduit::new(StreamLink::tcp(server_stream)),
+                StreamLink::tcp(client_stream),
+                StreamLink::tcp(server_stream),
             )
             .await
         }
@@ -519,14 +515,14 @@ pub async fn accept_rust_inproc(
                 .map_err(|e| format!("shm create_test_link_pair: {e}"))?;
             // Keep the temp dir alive for the test duration by leaking it.
             std::mem::forget(dir);
-            accept_rust_inproc_with_conduits(BareConduit::new(a), BareConduit::new(b)).await
+            accept_rust_inproc_with_conduits(a, b).await
         }
     }
 }
 
 async fn accept_rust_inproc_with_conduits<L>(
-    client_conduit: BareConduit<MessageFamily, L>,
-    server_conduit: BareConduit<MessageFamily, L>,
+    client_link: L,
+    server_link: L,
 ) -> Result<TestbedClient<DriverCaller>, String>
 where
     L: roam_types::Link + Send + 'static,
@@ -535,13 +531,13 @@ where
     <L::Rx as roam_types::LinkRx>::Error: std::error::Error + Send + Sync + 'static,
 {
     let server_task = tokio::spawn(async move {
-        acceptor(server_conduit)
+        acceptor(server_link)
             .establish::<()>(TestbedDispatcher::new(TestbedService))
             .await
             .map_err(|e| format!("server handshake: {e}"))
     });
 
-    let (client, _sh) = initiator(client_conduit)
+    let (client, _sh) = initiator(client_link)
         .establish::<TestbedClient>(NoopHandler)
         .await
         .map_err(|e| format!("client handshake: {e}"))?;
@@ -606,9 +602,7 @@ async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient<DriverCaller>, C
     };
     stream.set_nodelay(true).unwrap();
 
-    let conduit: BareConduit<MessageFamily, TcpLink> = BareConduit::new(StreamLink::tcp(stream));
-
-    let (client, _sh) = acceptor(conduit)
+    let (client, _sh) = acceptor(StreamLink::tcp(stream))
         .establish::<TestbedClient>(NoopHandler)
         .await
         .map_err(|e| format!("handshake: {e}"))?;
@@ -813,10 +807,8 @@ async fn accept_subject_shm_subject_is_guest(
             .map_err(|e| format!("accept doorbell: {e}"))?;
         eprintln!("[harness] accept_doorbell ok");
     }
-    let conduit: BareConduit<MessageFamily, roam_shm::ShmLink> = BareConduit::new(link);
-
     eprintln!("[harness] handshake...");
-    let (client, _sh) = acceptor(conduit)
+    let (client, _sh) = acceptor(link)
         .establish::<TestbedClient>(NoopHandler)
         .await
         .map_err(|e| format!("handshake: {e}"))?;
@@ -1105,10 +1097,7 @@ async fn accept_subject_shm_subject_is_host(
             .map_err(|e| format!("guest_link_from_names: {e}"))?
         };
 
-        let conduit: BareConduit<MessageFamily, roam_shm::ShmLink> =
-            BareConduit::new(link);
-
-        let (client, _sh) = initiator(conduit)
+        let (client, _sh) = initiator(link)
             .establish::<TestbedClient>(NoopHandler)
             .await
             .map_err(|e| format!("handshake: {e}"))?;

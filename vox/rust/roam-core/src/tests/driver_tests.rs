@@ -49,6 +49,18 @@ where
     }
 }
 
+impl<C> crate::IntoConduit for DropPongConduit<C>
+where
+    C: Conduit<Msg = MessageFamily>,
+    C::Rx: Send,
+{
+    type Conduit = Self;
+
+    fn into_conduit(self) -> Self {
+        self
+    }
+}
+
 struct DropPongRx<Rx> {
     inner: Rx,
 }

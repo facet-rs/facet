@@ -6,6 +6,8 @@ use roam_types::{
     Parity,
 };
 
+use crate::IntoConduit;
+
 use super::{
     CloseRequest, ConnectionAcceptor, OpenRequest, Session, SessionError, SessionHandle,
     SessionKeepaliveConfig,
@@ -40,13 +42,13 @@ fn default_spawn_fn() -> SpawnFn {
 
 // r[impl rpc.session-setup]
 // r[impl session.role]
-pub fn initiator<C>(conduit: C) -> SessionInitiatorBuilder<'static, C> {
-    SessionInitiatorBuilder::new(conduit)
+pub fn initiator<I: IntoConduit>(into_conduit: I) -> SessionInitiatorBuilder<'static, I::Conduit> {
+    SessionInitiatorBuilder::new(into_conduit.into_conduit())
 }
 
 // r[impl session.role]
-pub fn acceptor<C>(conduit: C) -> SessionAcceptorBuilder<'static, C> {
-    SessionAcceptorBuilder::new(conduit)
+pub fn acceptor<I: IntoConduit>(into_conduit: I) -> SessionAcceptorBuilder<'static, I::Conduit> {
+    SessionAcceptorBuilder::new(into_conduit.into_conduit())
 }
 
 pub struct SessionInitiatorBuilder<'a, C> {
