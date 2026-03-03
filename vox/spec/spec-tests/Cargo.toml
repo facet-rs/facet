@@ -9,12 +9,12 @@ description = "Compliance tests for the canonical roam spec in docs/content/"
 [dependencies]
 roam = { workspace = true }
 roam-core = { workspace = true }
-roam-local = { path = "../../rust/roam-local" }
-roam-shm = { path = "../../rust/roam-shm" }
+roam-local.workspace = true
+roam-shm.workspace = true
 roam-stream = { workspace = true }
 roam-types = { workspace = true }
 shm-primitives = { workspace = true }
-spec-proto = { path = "../spec-proto" }
+spec-proto.workspace = true
 moire = { workspace = true }
 tokio = { workspace = true, features = [
   "rt-multi-thread",

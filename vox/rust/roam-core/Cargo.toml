@@ -38,8 +38,7 @@ facet-error.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-roam.workspace = true
 facet-postcard.workspace = true
 shm-primitives.workspace = true
-roam-shm = { path = "../roam-shm" }
+roam-shm.workspace = true
 tempfile = "3"

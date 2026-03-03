@@ -369,10 +369,7 @@ async fn rx_recv_signals_reset() {
 
 mod credit_tests;
 mod driver_tests;
-mod service_macro_shared;
-mod service_macro_tests;
 mod shm_driver_tests;
-mod shm_service_macro_tests;
 
 #[test]
 fn test_deser_postcard_borrowed() {

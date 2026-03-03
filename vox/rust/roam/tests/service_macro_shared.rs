@@ -1,8 +1,5 @@
-use moire::task::FutureExt;
+use roam_core::{BareConduit, Driver, acceptor, initiator};
 use roam_types::{Link, Parity};
-
-use crate::session::{acceptor, initiator};
-use crate::{BareConduit, Driver};
 
 type MessageConduit<L> = BareConduit<roam_types::MessageFamily, L>;
 
@@ -29,19 +26,16 @@ pub async fn run_adder_end_to_end<L>(
 {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
-    let server_task = moire::task::spawn(
-        async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
-                .establish()
-                .await
-                .expect("server handshake failed");
-            let dispatcher = AdderDispatcher::new(MyAdder);
-            let mut server_driver = Driver::new(server_handle, dispatcher, Parity::Even);
-            moire::task::spawn(async move { server_session.run().await }.named("server_session"));
-            moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
-        }
-        .named("server_setup"),
-    );
+    let server_task = tokio::task::spawn(async move {
+        let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            .establish()
+            .await
+            .expect("server handshake failed");
+        let dispatcher = AdderDispatcher::new(MyAdder);
+        let mut server_driver = Driver::new(server_handle, dispatcher, Parity::Even);
+        let _server_session_task = tokio::task::spawn(async move { server_session.run().await });
+        let _server_driver_task = tokio::task::spawn(async move { server_driver.run().await });
+    });
 
     let (mut client_session, client_handle, _sh) = initiator(client_conduit)
         .establish()
@@ -49,8 +43,8 @@ pub async fn run_adder_end_to_end<L>(
         .expect("client handshake failed");
     let mut client_driver = Driver::new(client_handle, (), Parity::Odd);
     let caller = client_driver.caller();
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
-    moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
+    let _client_session_task = tokio::task::spawn(async move { client_session.run().await });
+    let _client_driver_task = tokio::task::spawn(async move { client_driver.run().await });
 
     server_task.await.expect("server setup failed");
 

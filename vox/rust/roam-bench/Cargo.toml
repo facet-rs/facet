@@ -24,7 +24,7 @@ protobuf = [
 roam.workspace = true
 roam-core.workspace = true
 roam-types.workspace = true
-roam-shm = { path = "../roam-shm" }
+roam-shm.workspace = true
 roam-stream.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
 moire.workspace = true

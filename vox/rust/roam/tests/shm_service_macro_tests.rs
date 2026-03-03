@@ -1,10 +1,11 @@
+mod service_macro_shared;
+
 use std::sync::Arc;
 
+use roam_core::BareConduit;
 use roam_shm::varslot::SizeClassConfig;
 use roam_shm::{Segment, SegmentConfig, ShmLink, create_test_link_pair};
 use shm_primitives::FileCleanup;
-
-use crate::BareConduit;
 
 type MessageConduit = BareConduit<roam_types::MessageFamily, ShmLink>;
 
@@ -39,5 +40,5 @@ async fn message_conduit_pair() -> (MessageConduit, MessageConduit, tempfile::Te
 #[tokio::test]
 async fn adder_service_macro_end_to_end_over_shm() {
     let (a, b, _dir) = message_conduit_pair().await;
-    super::service_macro_shared::run_adder_end_to_end(|| (a, b)).await;
+    service_macro_shared::run_adder_end_to_end(|| (a, b)).await;
 }

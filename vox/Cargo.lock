@@ -2399,9 +2399,15 @@ version = "7.0.0"
 dependencies = [
  "facet 0.44.0",
  "facet-postcard",
+ "roam-core",
  "roam-hash",
  "roam-service-macros",
+ "roam-shm",
+ "roam-stream",
  "roam-types",
+ "shm-primitives",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -2454,7 +2460,6 @@ dependencies = [
  "facet-reflect 0.44.0",
  "getrandom 0.3.4",
  "moire",
- "roam",
  "roam-shm",
  "roam-types",
  "shm-primitives",

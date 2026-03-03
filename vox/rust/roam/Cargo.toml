@@ -17,9 +17,22 @@ categories.workspace = true
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[features]
+default = ["runtime"]
+runtime = ["dep:roam-core"]
+
 [dependencies]
 roam-types.workspace = true
 roam-hash.workspace = true
 roam-service-macros.workspace = true
+roam-core = { workspace = true, optional = true }
 facet.workspace = true
 facet-postcard.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
+roam-stream.workspace = true
+roam-core.workspace = true
+shm-primitives.workspace = true
+roam-shm.workspace = true
+tempfile = "3"
