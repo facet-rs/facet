@@ -73,48 +73,29 @@ This generates:
 | `crate_path ...;` | Path to your crate for macro hygiene | `crate_path ::facet_xml;` |
 | `pub enum Attr { ... }` | The attribute variants | See above |
 
-### Variant types
+### Variant types and runtime storage (exhaustive)
 
-#### Unit variants (markers)
+`define_attr_grammar!` payload syntax determines the runtime type stored in `Attr.data`.
 
-Simple flags with no arguments:
+| Grammar payload syntax | Example variant | Runtime type stored in `Attr.data` | `attr.get_as::<your_ns::Attr>()` |
+|---|---|---|---|
+| _(no payload)_ | `Marker` | `()` | `None` |
+| `&'static str` | `EnvPrefix(&'static str)` | `&'static str` | `None` |
+| `i64` | `Min(i64)` | `i64` | `None` |
+| `usize` | `MaxLen(usize)` | `usize` | `None` |
+| `shape_type` | `Proxy(shape_type)` | `facet::Shape` | `None` |
+| `predicate TypeName` | `SkipIf(predicate SkipSerializingIfFn)` | function payload (type-erased storage) | `None` |
+| `validator TypeName` | `Validate(validator ValidatorFn)` | function payload (type-erased storage) | `None` |
+| `make_t` / `make_t or $ty::default()` | `Default(make_t or $ty::default())` | `Option<facet::DefaultInPlaceFn>` | `None` |
+| `arbitrary` | `FromRef(arbitrary)` | `()` | `None` |
+| `Option<char>` | `Short(Option<char>)` | `your_ns::Attr` | `Some(...)` |
+| `Option<&'static str>` | `Name(Option<&'static str>)` | `your_ns::Attr` | `Some(...)` |
+| `&'static SomeType` | `Mode(&'static Mode)` | `your_ns::Attr` | `Some(...)` |
+| `StructName` | `Column(Column)` | `your_ns::Attr` | `Some(...)` |
+| `fn_ptr TypeName` | `Hook(fn_ptr HookFn)` | `your_ns::Attr` | `Some(...)` |
+| any other payload type | `Custom(MyType)` | `your_ns::Attr` | `Some(...)` |
 
-```rust,noexec
-pub enum Attr {
-    /// A marker attribute
-    Element,
-}
-```
-
-Usage: `#[facet(xml::element)]`
-
-#### String values
-
-Attributes that take a string:
-
-```rust,noexec
-pub enum Attr {
-    /// Rename to a different name
-    Rename(&'static str),
-}
-```
-
-Usage: `#[facet(rename = "new_name")]`
-
-Runtime note: these are stored as `&'static str`, so query with `attr.get_as::<&'static str>()`.
-
-#### Optional characters
-
-For single-character flags (like CLI short options):
-
-```rust,noexec
-pub enum Attr {
-    /// Short flag, optionally with a character
-    Short(Option<char>),
-}
-```
-
-Usage: `#[facet(args::short)]` or `#[facet(args::short = 'v')]`
+If a variant is marked `#[storage(flag)]` or `#[storage(field)]`, treat the dedicated accessor/field as the source of truth. Do not rely on whether it also appears in `field.attributes`.
 
 ### Advanced: how built-in attributes work
 
@@ -177,46 +158,32 @@ The system uses string similarity to suggest corrections.
 ## Querying attributes at runtime
 
 `Field::attributes` is a slice of [`Attr`](https://docs.rs/facet-core/latest/facet_core/struct.Attr.html).  
-`FieldAttribute` is now just a type alias to `Attr`, so you can iterate directly:
+`FieldAttribute` is a type alias to `Attr`.
 
-```rust,noexec
+Use this decoding flow:
+
+1. Select by namespace + key (`field.get_attr(Some("ns"), "key")`).
+2. Decode with the exact runtime payload type from the table above.
+3. For built-in attributes, prefer dedicated fields/accessors (`field.rename`, `field.is_sensitive()`, flags) before scanning `attributes`.
+
+```rust
 use facet_core::Field;
 
 fn process_field(field: &Field) {
-    for attr in field.attributes {
-        if attr.ns != Some("miniopt") {
-            continue;
-        }
+    if let Some(attr) = field.get_attr(Some("docs"), "env_prefix") {
+        let prefix = attr
+            .get_as::<&'static str>()
+            .expect("docs::env_prefix stores &'static str");
+        println!("env prefix: {}", *prefix);
+    }
 
-        match attr.key {
-            // EnvPrefix(&'static str) stores the payload as &'static str
-            "env_prefix" => {
-                if let Some(prefix) = attr.get_as::<&'static str>() {
-                    println!("env prefix: {}", *prefix);
-                }
-            }
-            // Marker/unit attributes can be checked by key presence
-            "named" => {
-                println!("field is named");
-            }
-            _ => {}
-        }
+    if field.get_attr(Some("docs"), "marker").is_some() {
+        println!("marker present");
     }
 }
 ```
 
-### Important runtime decoding note
-
-For some grammar variants (like `&'static str`, `i64`, `usize` payloads), facet stores the raw payload type directly.  
-That means `attr.get_as::<YourAttrEnum>()` may return `None` for those keys, even when the attribute is present.
-
-The most reliable pattern is:
-1. Match on `ns` + `key`
-2. Decode with the expected runtime payload type for that key
-
-For built-in attributes, prefer dedicated fields/accessors first:
-
-```rust,noexec
+```rust
 use facet_core::Field;
 
 fn process_builtin(field: &Field) {
@@ -224,11 +191,18 @@ fn process_builtin(field: &Field) {
         println!("renamed to {name}");
     }
 
-    if field.should_skip_deserializing() {
-        println!("field is skipped during deserialization");
+    if field.is_sensitive() {
+        println!("sensitive field");
     }
 }
 ```
+
+### Runnable reference implementation
+
+- Run: `cargo run -p facet --example extension_attr_runtime_matrix`
+- Verified in tests: `cargo nextest run -p facet --test main extension_attr_runtime_matrix`
+- Source example: [`facet/examples/extension_attr_runtime_matrix.rs`](https://github.com/facet-rs/facet/blob/main/facet/examples/extension_attr_runtime_matrix.rs)
+- Source test: [`facet/tests/integration/extension_attr_runtime_matrix.rs`](https://github.com/facet-rs/facet/blob/main/facet/tests/integration/extension_attr_runtime_matrix.rs)
 
 ## Namespacing
 

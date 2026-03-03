@@ -18,6 +18,12 @@ facet::define_attr_grammar! {
         Positional,
         /// Another marker attribute for testing.
         Named,
+        /// Newtype static string payload used to test direct payload storage.
+        EnvPrefix(&'static str),
+        /// Newtype i64 payload used to test direct payload storage.
+        Min(i64),
+        /// Newtype usize payload used to test direct payload storage.
+        MaxLen(usize),
         /// An attribute with an optional value.
         Short(Option<char>),
         /// Optional string payload used for generic extension-attr tests.
