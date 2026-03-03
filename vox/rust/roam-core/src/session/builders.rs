@@ -1,3 +1,5 @@
+use std::{future::Future, pin::Pin};
+
 use moire::sync::mpsc;
 use roam_types::{
     Conduit, ConduitTx, ConnectionSettings, MaybeSend, MaybeSync, MessageFamily, Metadata, Parity,
@@ -7,6 +9,32 @@ use super::{
     CloseRequest, ConnectionAcceptor, ConnectionHandle, OpenRequest, Session, SessionError,
     SessionHandle, SessionKeepaliveConfig,
 };
+
+/// A pinned, boxed session future. On non-WASM this is `Send + 'static`;
+/// on WASM it's `'static` only (no `Send` requirement).
+#[cfg(not(target_arch = "wasm32"))]
+pub type BoxSessionFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+#[cfg(target_arch = "wasm32")]
+pub type BoxSessionFuture = Pin<Box<dyn Future<Output = ()> + 'static>>;
+
+#[cfg(not(target_arch = "wasm32"))]
+type SpawnFn = Box<dyn FnOnce(BoxSessionFuture) + Send + 'static>;
+#[cfg(target_arch = "wasm32")]
+type SpawnFn = Box<dyn FnOnce(BoxSessionFuture) + 'static>;
+
+#[cfg(not(target_arch = "wasm32"))]
+fn default_spawn_fn() -> SpawnFn {
+    Box::new(|fut| {
+        tokio::spawn(fut);
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn default_spawn_fn() -> SpawnFn {
+    Box::new(|fut| {
+        wasm_bindgen_futures::spawn_local(fut);
+    })
+}
 
 // r[impl rpc.session-setup]
 // r[impl session.role]
@@ -25,6 +53,7 @@ pub struct SessionInitiatorBuilder<'a, C> {
     metadata: Metadata<'a>,
     on_connection: Option<Box<dyn ConnectionAcceptor>>,
     keepalive: Option<SessionKeepaliveConfig>,
+    spawn_fn: SpawnFn,
 }
 
 impl<'a, C> SessionInitiatorBuilder<'a, C> {
@@ -38,6 +67,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             metadata: vec![],
             on_connection: None,
             keepalive: None,
+            spawn_fn: default_spawn_fn(),
         }
     }
 
@@ -71,19 +101,33 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
         self
     }
 
-    pub async fn establish(
-        self,
-    ) -> Result<(Session<C>, ConnectionHandle, SessionHandle), SessionError>
+    /// Override the function used to spawn the session background task.
+    /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + Send + 'static) -> Self {
+        self.spawn_fn = Box::new(f);
+        self
+    }
+
+    /// Override the function used to spawn the session background task.
+    /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
+    #[cfg(target_arch = "wasm32")]
+    pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + 'static) -> Self {
+        self.spawn_fn = Box::new(f);
+        self
+    }
+
+    pub async fn establish(self) -> Result<(ConnectionHandle, SessionHandle), SessionError>
     where
-        C: Conduit<Msg = MessageFamily>,
+        C: Conduit<Msg = MessageFamily> + 'static,
         C::Tx: MaybeSend + MaybeSync + 'static,
         for<'p> <C::Tx as ConduitTx>::Permit<'p>: MaybeSend,
-        C::Rx: MaybeSend,
+        C::Rx: MaybeSend + 'static,
     {
         let (tx, rx) = self.conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
-        let mut session = Session::pre_handshake(
+        let mut session: Session<C> = Session::pre_handshake(
             tx,
             rx,
             self.on_connection,
@@ -95,7 +139,8 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             .establish_as_initiator(self.root_settings, self.metadata)
             .await?;
         let session_handle = SessionHandle { open_tx, close_tx };
-        Ok((session, handle, session_handle))
+        (self.spawn_fn)(Box::pin(async move { session.run().await }));
+        Ok((handle, session_handle))
     }
 }
 
@@ -105,6 +150,7 @@ pub struct SessionAcceptorBuilder<'a, C> {
     metadata: Metadata<'a>,
     on_connection: Option<Box<dyn ConnectionAcceptor>>,
     keepalive: Option<SessionKeepaliveConfig>,
+    spawn_fn: SpawnFn,
 }
 
 impl<'a, C> SessionAcceptorBuilder<'a, C> {
@@ -118,6 +164,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             metadata: vec![],
             on_connection: None,
             keepalive: None,
+            spawn_fn: default_spawn_fn(),
         }
     }
 
@@ -146,20 +193,34 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         self
     }
 
+    /// Override the function used to spawn the session background task.
+    /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + Send + 'static) -> Self {
+        self.spawn_fn = Box::new(f);
+        self
+    }
+
+    /// Override the function used to spawn the session background task.
+    /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
+    #[cfg(target_arch = "wasm32")]
+    pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + 'static) -> Self {
+        self.spawn_fn = Box::new(f);
+        self
+    }
+
     #[moire::instrument]
-    pub async fn establish(
-        self,
-    ) -> Result<(Session<C>, ConnectionHandle, SessionHandle), SessionError>
+    pub async fn establish(self) -> Result<(ConnectionHandle, SessionHandle), SessionError>
     where
-        C: Conduit<Msg = MessageFamily>,
+        C: Conduit<Msg = MessageFamily> + 'static,
         C::Tx: MaybeSend + MaybeSync + 'static,
         for<'p> <C::Tx as ConduitTx>::Permit<'p>: MaybeSend,
-        C::Rx: MaybeSend,
+        C::Rx: MaybeSend + 'static,
     {
         let (tx, rx) = self.conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
-        let mut session = Session::pre_handshake(
+        let mut session: Session<C> = Session::pre_handshake(
             tx,
             rx,
             self.on_connection,
@@ -171,6 +232,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             .establish_as_acceptor(self.root_settings, self.metadata)
             .await?;
         let session_handle = SessionHandle { open_tx, close_tx };
-        Ok((session, handle, session_handle))
+        (self.spawn_fn)(Box::pin(async move { session.run().await }));
+        Ok((handle, session_handle))
     }
 }

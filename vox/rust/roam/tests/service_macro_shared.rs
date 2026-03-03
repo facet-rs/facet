@@ -27,23 +27,21 @@ pub async fn run_adder_end_to_end<L>(
     let (client_conduit, server_conduit) = message_conduit_pair();
 
     let server_task = tokio::task::spawn(async move {
-        let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+        let (server_handle, _sh) = acceptor(server_conduit)
             .establish()
             .await
             .expect("server handshake failed");
         let dispatcher = AdderDispatcher::new(MyAdder);
         let mut server_driver = Driver::new(server_handle, dispatcher);
-        let _server_session_task = tokio::task::spawn(async move { server_session.run().await });
         let _server_driver_task = tokio::task::spawn(async move { server_driver.run().await });
     });
 
-    let (mut client_session, client_handle, _sh) = initiator(client_conduit)
+    let (client_handle, _sh) = initiator(client_conduit)
         .establish()
         .await
         .expect("client handshake failed");
     let mut client_driver = Driver::new(client_handle, ());
     let caller = client_driver.caller();
-    let _client_session_task = tokio::task::spawn(async move { client_session.run().await });
     let _client_driver_task = tokio::task::spawn(async move { client_driver.run().await });
 
     server_task.await.expect("server setup failed");

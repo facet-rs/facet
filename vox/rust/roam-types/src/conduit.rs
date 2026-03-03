@@ -93,9 +93,12 @@ pub trait ConduitRx {
     /// Receive and decode the next message.
     ///
     /// Returns `Ok(None)` when the peer has closed.
-    async fn recv(
+    fn recv(
         &mut self,
-    ) -> Result<Option<SelfRef<<Self::Msg as MsgFamily>::Msg<'static>>>, Self::Error>;
+    ) -> impl Future<
+        Output = Result<Option<SelfRef<<Self::Msg as MsgFamily>::Msg<'static>>>, Self::Error>,
+    > + MaybeSend
+    + '_;
 }
 
 /// Yields new conduits from inbound connections.

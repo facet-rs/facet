@@ -106,4 +106,4 @@ let swift = roam_codegen::targets::swift::generate_service_with_bindings(
 );
 ```
 
-For migration details, see [Migrating from v6 to v7](/v6-to-v7/).
+For migration details, see [Migrating from v6 to v7](/guides/v6-to-v7/).

@@ -128,12 +128,11 @@ async fn cancel_aborts_in_flight_handler() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            let (server_handle, _sh) = acceptor(server_conduit)
                 .establish()
                 .await
                 .expect("server handshake failed");
             let mut server_driver = Driver::new(server_handle, BlockingHandler { was_cancelled });
-            moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
         .named("server_setup"),
@@ -141,14 +140,13 @@ async fn cancel_aborts_in_flight_handler() {
 
     // Set up client side. We need both the Caller (for sending the call) and
     // the raw sender (for sending the cancel message with the same request ID).
-    let (mut client_session, client_handle, _sh) = initiator(client_conduit)
+    let (client_handle, _sh) = initiator(client_conduit)
         .establish()
         .await
         .expect("client handshake failed");
     let client_sender = client_handle.sender.clone();
     let mut client_driver = Driver::new(client_handle, ());
     let caller = client_driver.caller();
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
     moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
 
     server_task.await.expect("server setup failed");
@@ -221,34 +219,33 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
     let was_cancelled = Arc::new(AtomicBool::new(false));
     let was_cancelled_check = was_cancelled.clone();
 
+    let (session_tx, session_rx) = tokio::sync::oneshot::channel::<moire::task::JoinHandle<()>>();
     let server_task = moire::task::spawn(
         async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            let (server_handle, _sh) = acceptor(server_conduit)
+                .spawn_fn(move |fut| {
+                    let handle = moire::task::spawn(fut);
+                    let _ = session_tx.send(handle);
+                })
                 .establish()
                 .await
                 .expect("server handshake failed");
             let mut server_driver = Driver::new(server_handle, BlockingHandler { was_cancelled });
-            let session_task = moire::task::spawn(
-                async move { server_session.run().await }.named("server_session"),
-            );
-            let driver_task =
-                moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
-            (session_task, driver_task)
+            moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
         .named("server_setup"),
     );
 
-    let (mut client_session, client_handle, _sh) = initiator(client_conduit)
+    let (client_handle, _sh) = initiator(client_conduit)
         .establish()
         .await
         .expect("client handshake failed");
     let mut client_driver = Driver::new(client_handle, ());
     let caller = client_driver.caller();
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
     moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
 
-    let (server_session_task, _server_driver_task) =
-        server_task.await.expect("server setup failed");
+    server_task.await.expect("server setup failed");
+    let server_session_task = session_rx.await.expect("session handle sent");
 
     let call_task = moire::task::spawn(
         async move {
@@ -296,7 +293,7 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            let (server_handle, _sh) = acceptor(server_conduit)
                 .establish()
                 .await
                 .expect("server handshake failed");
@@ -306,13 +303,12 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
                     was_cancelled: Arc::new(AtomicBool::new(false)),
                 },
             );
-            moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
         .named("server_setup"),
     );
 
-    let (mut client_session, client_handle, _sh) = initiator(client_conduit)
+    let (client_handle, _sh) = initiator(client_conduit)
         .keepalive(SessionKeepaliveConfig {
             ping_interval: std::time::Duration::from_millis(20),
             pong_timeout: std::time::Duration::from_millis(50),
@@ -322,7 +318,6 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
         .expect("client handshake failed");
     let mut client_driver = Driver::new(client_handle, ());
     let caller = client_driver.caller();
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
     moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
 
     server_task.await.expect("server setup failed");
@@ -403,23 +398,21 @@ async fn open_virtual_connection_and_call() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            let (server_handle, _sh) = acceptor(server_conduit)
                 .on_connection(EchoAcceptor)
                 .establish()
                 .await
                 .expect("server handshake failed");
             let mut server_driver = Driver::new(server_handle, ());
-            moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
         .named("server_setup"),
     );
 
-    let (mut client_session, _client_handle, session_handle) = initiator(client_conduit)
+    let (_client_handle, session_handle) = initiator(client_conduit)
         .establish()
         .await
         .expect("client handshake failed");
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
 
     server_task.await.expect("server setup failed");
 
@@ -466,7 +459,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
 
     let server_task = moire::task::spawn(
         async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            let (server_handle, _sh) = acceptor(server_conduit)
                 .root_settings(ConnectionSettings {
                     parity: Parity::Odd,
                     max_concurrent_requests: 8,
@@ -478,13 +471,12 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
                 .await
                 .expect("server handshake failed");
             let mut server_driver = Driver::new(server_handle, ());
-            moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
         .named("server_setup"),
     );
 
-    let (mut client_session, _client_handle, session_handle) = initiator(client_conduit)
+    let (_client_handle, session_handle) = initiator(client_conduit)
         .root_settings(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 4,
@@ -495,7 +487,6 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
         .establish()
         .await
         .expect("client handshake failed");
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
 
     server_task.await.expect("server setup failed");
 
@@ -523,18 +514,14 @@ async fn acceptor_builder_customization_supports_opening_connections() {
 
     let initiator_task = moire::task::spawn(
         async move {
-            let (mut initiator_session, initiator_handle, _initiator_session_handle) =
-                initiator(initiator_conduit)
-                    .parity(Parity::Even)
-                    .metadata(vec![])
-                    .on_connection(EchoAcceptor)
-                    .establish()
-                    .await
-                    .expect("initiator handshake failed");
+            let (initiator_handle, _initiator_session_handle) = initiator(initiator_conduit)
+                .parity(Parity::Even)
+                .metadata(vec![])
+                .on_connection(EchoAcceptor)
+                .establish()
+                .await
+                .expect("initiator handshake failed");
             let mut initiator_driver = Driver::new(initiator_handle, ());
-            moire::task::spawn(
-                async move { initiator_session.run().await }.named("initiator_session"),
-            );
             moire::task::spawn(
                 async move { initiator_driver.run().await }.named("initiator_driver"),
             );
@@ -542,18 +529,16 @@ async fn acceptor_builder_customization_supports_opening_connections() {
         .named("initiator_setup"),
     );
 
-    let (mut acceptor_session, _acceptor_handle, acceptor_session_handle) =
-        acceptor(acceptor_conduit)
-            .root_settings(ConnectionSettings {
-                parity: Parity::Even,
-                max_concurrent_requests: 2,
-            })
-            .max_concurrent_requests(32)
-            .metadata(vec![])
-            .establish()
-            .await
-            .expect("acceptor handshake failed");
-    moire::task::spawn(async move { acceptor_session.run().await }.named("acceptor_session"));
+    let (_acceptor_handle, acceptor_session_handle) = acceptor(acceptor_conduit)
+        .root_settings(ConnectionSettings {
+            parity: Parity::Even,
+            max_concurrent_requests: 2,
+        })
+        .max_concurrent_requests(32)
+        .metadata(vec![])
+        .establish()
+        .await
+        .expect("acceptor handshake failed");
 
     initiator_task.await.expect("initiator setup failed");
 
@@ -582,23 +567,21 @@ async fn reject_virtual_connection() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            let (server_handle, _sh) = acceptor(server_conduit)
                 .on_connection(RejectAcceptor)
                 .establish()
                 .await
                 .expect("server handshake failed");
             let mut server_driver = Driver::new(server_handle, ());
-            moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
         .named("server_setup"),
     );
 
-    let (mut client_session, _client_handle, session_handle) = initiator(client_conduit)
+    let (_client_handle, session_handle) = initiator(client_conduit)
         .establish()
         .await
         .expect("client handshake failed");
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
 
     server_task.await.expect("server setup failed");
 
@@ -626,22 +609,20 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            let (server_handle, _sh) = acceptor(server_conduit)
                 .establish()
                 .await
                 .expect("server handshake failed");
             let mut server_driver = Driver::new(server_handle, ());
-            moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
         .named("server_setup"),
     );
 
-    let (mut client_session, _client_handle, session_handle) = initiator(client_conduit)
+    let (_client_handle, session_handle) = initiator(client_conduit)
         .establish()
         .await
         .expect("client handshake failed");
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
 
     server_task.await.expect("server setup failed");
 
@@ -668,22 +649,20 @@ async fn close_root_connection_is_rejected() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            let (server_handle, _sh) = acceptor(server_conduit)
                 .establish()
                 .await
                 .expect("server handshake failed");
             let mut server_driver = Driver::new(server_handle, EchoHandler);
-            moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
         .named("server_setup"),
     );
 
-    let (mut client_session, _client_handle, session_handle) = initiator(client_conduit)
+    let (_client_handle, session_handle) = initiator(client_conduit)
         .establish()
         .await
         .expect("client handshake failed");
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
 
     server_task.await.expect("server setup failed");
 
@@ -703,22 +682,20 @@ async fn close_unknown_virtual_connection_is_rejected() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            let (server_handle, _sh) = acceptor(server_conduit)
                 .establish()
                 .await
                 .expect("server handshake failed");
             let mut server_driver = Driver::new(server_handle, EchoHandler);
-            moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
         .named("server_setup"),
     );
 
-    let (mut client_session, _client_handle, session_handle) = initiator(client_conduit)
+    let (_client_handle, session_handle) = initiator(client_conduit)
         .establish()
         .await
         .expect("client handshake failed");
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
 
     server_task.await.expect("server setup failed");
 
@@ -778,7 +755,7 @@ async fn close_virtual_connection() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            let (server_handle, _sh) = acceptor(server_conduit)
                 .on_connection(TrackingAcceptor {
                     exited: server_driver_exited,
                 })
@@ -786,17 +763,15 @@ async fn close_virtual_connection() {
                 .await
                 .expect("server handshake failed");
             let mut server_driver = Driver::new(server_handle, ());
-            moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
         .named("server_setup"),
     );
 
-    let (mut client_session, _client_handle, session_handle) = initiator(client_conduit)
+    let (_client_handle, session_handle) = initiator(client_conduit)
         .establish()
         .await
         .expect("client handshake failed");
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
 
     server_task.await.expect("server setup failed");
 
@@ -869,23 +844,21 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            let (server_handle, _sh) = acceptor(server_conduit)
                 .on_connection(EchoAcceptor)
                 .establish()
                 .await
                 .expect("server handshake failed");
             let mut server_driver = Driver::new(server_handle, ());
-            moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
         .named("server_setup"),
     );
 
-    let (mut client_session, _client_handle, session_handle) = initiator(client_conduit)
+    let (_client_handle, session_handle) = initiator(client_conduit)
         .establish()
         .await
         .expect("client handshake failed");
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
 
     server_task.await.expect("server setup failed");
 
@@ -929,25 +902,23 @@ async fn echo_call_across_memory_link() {
     // settings before either can proceed.
     let server_task = moire::task::spawn(
         async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            let (server_handle, _sh) = acceptor(server_conduit)
                 .establish()
                 .await
                 .expect("server handshake failed");
             let mut server_driver = Driver::new(server_handle, EchoHandler);
-            moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
         .named("server_setup"),
     );
 
     // Set up client side (runs concurrently with server_task above).
-    let (mut client_session, client_handle, _sh) = initiator(client_conduit)
+    let (client_handle, _sh) = initiator(client_conduit)
         .establish()
         .await
         .expect("client handshake failed");
     let mut client_driver = Driver::new(client_handle, ());
     let caller = client_driver.caller();
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
     moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
 
     server_task.await.expect("server setup failed");
@@ -979,25 +950,23 @@ async fn buffers_inbound_channel_items_until_rx_is_registered() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            let (server_handle, _sh) = acceptor(server_conduit)
                 .establish()
                 .await
                 .expect("server handshake failed");
             let mut server_driver = Driver::new(server_handle, ());
             let server_caller = server_driver.caller();
-            moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
             server_caller
         }
         .named("server_setup"),
     );
 
-    let (mut client_session, client_handle, _sh) = initiator(client_conduit)
+    let (client_handle, _sh) = initiator(client_conduit)
         .establish()
         .await
         .expect("client handshake failed");
     let client_sender = client_handle.sender.clone();
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
 
     let server_caller = server_task.await.expect("server setup failed");
 
@@ -1038,25 +1007,23 @@ async fn grant_credit_unblocks_driver_created_tx_channel() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            let (server_handle, _sh) = acceptor(server_conduit)
                 .establish()
                 .await
                 .expect("server handshake failed");
             let mut server_driver = Driver::new(server_handle, ());
             let server_caller = server_driver.caller();
-            moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
             server_caller
         }
         .named("server_setup"),
     );
 
-    let (mut client_session, client_handle, _sh) = initiator(client_conduit)
+    let (client_handle, _sh) = initiator(client_conduit)
         .establish()
         .await
         .expect("client handshake failed");
     let client_sender = client_handle.sender.clone();
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
 
     let server_caller = server_task.await.expect("server setup failed");
     let (channel_id, sink) = server_caller.create_tx_channel(0);
@@ -1096,25 +1063,23 @@ async fn buffered_close_before_registration_keeps_channel_terminal() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            let (server_handle, _sh) = acceptor(server_conduit)
                 .establish()
                 .await
                 .expect("server handshake failed");
             let mut server_driver = Driver::new(server_handle, ());
             let server_caller = server_driver.caller();
-            moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
             server_caller
         }
         .named("server_setup"),
     );
 
-    let (mut client_session, client_handle, _sh) = initiator(client_conduit)
+    let (client_handle, _sh) = initiator(client_conduit)
         .establish()
         .await
         .expect("client handshake failed");
     let client_sender = client_handle.sender.clone();
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
 
     let server_caller = server_task.await.expect("server setup failed");
     let channel_id = ChannelId(77);
@@ -1167,26 +1132,24 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (mut server_session, server_handle, _sh) = acceptor(server_conduit)
+            let (server_handle, _sh) = acceptor(server_conduit)
                 .establish()
                 .await
                 .expect("server handshake failed");
             let server_sender = server_handle.sender.clone();
             let mut server_driver = Driver::new(server_handle, EchoHandler);
-            moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
             server_sender
         }
         .named("server_setup"),
     );
 
-    let (mut client_session, client_handle, _sh) = initiator(client_conduit)
+    let (client_handle, _sh) = initiator(client_conduit)
         .establish()
         .await
         .expect("client handshake failed");
     let mut client_driver = Driver::new(client_handle, ());
     let caller = client_driver.caller();
-    moire::task::spawn(async move { client_session.run().await }.named("client_session"));
     moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
 
     let server_sender = server_task.await.expect("server setup failed");

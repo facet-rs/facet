@@ -218,30 +218,22 @@ async fn setup_client() -> Option<TestbedClient<DriverCaller>> {
     let client_conduit: BareConduit<MessageFamily, _> = BareConduit::new(client_link);
 
     let server_task = tokio::spawn(async move {
-        let Ok((mut server_session, server_handle, _)) = acceptor(server_conduit).establish().await
-        else {
+        let Ok((server_handle, _)) = acceptor(server_conduit).establish().await else {
             return;
         };
         let dispatcher = TestbedDispatcher::new(FuzzService);
         let mut server_driver = Driver::new(server_handle, dispatcher);
         tokio::spawn(async move {
-            server_session.run().await;
-        });
-        tokio::spawn(async move {
             server_driver.run().await;
         });
     });
 
-    let Ok((mut client_session, client_handle, _)) = initiator(client_conduit).establish().await
-    else {
+    let Ok((client_handle, _)) = initiator(client_conduit).establish().await else {
         return None;
     };
     let mut client_driver = Driver::new(client_handle, NoopHandler);
     let caller = client_driver.caller();
 
-    tokio::spawn(async move {
-        client_session.run().await;
-    });
     tokio::spawn(async move {
         client_driver.run().await;
     });

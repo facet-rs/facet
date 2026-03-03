@@ -535,26 +535,23 @@ where
     <L::Rx as roam_types::LinkRx>::Error: std::error::Error + Send + Sync + 'static,
 {
     let server_task = tokio::spawn(async move {
-        let (mut server_session, server_handle, _sh) =
-            acceptor(server_conduit)
-                .establish()
-                .await
-                .map_err(|e| format!("server handshake: {e}"))?;
+        let (server_handle, _sh) = acceptor(server_conduit)
+            .establish()
+            .await
+            .map_err(|e| format!("server handshake: {e}"))?;
         let dispatcher = TestbedDispatcher::new(TestbedService);
         let mut server_driver = Driver::new(server_handle, dispatcher);
-        tokio::spawn(async move { server_session.run().await });
         tokio::spawn(async move { server_driver.run().await });
         Ok::<(), String>(())
     });
 
-    let (mut client_session, client_handle, _sh) = initiator(client_conduit)
+    let (client_handle, _sh) = initiator(client_conduit)
         .establish()
         .await
         .map_err(|e| format!("client handshake: {e}"))?;
     let mut client_driver = Driver::new(client_handle, NoopHandler);
     let caller = client_driver.caller();
 
-    tokio::spawn(async move { client_session.run().await });
     tokio::spawn(async move { client_driver.run().await });
 
     server_task
@@ -619,7 +616,7 @@ async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient<DriverCaller>, C
 
     let conduit: BareConduit<MessageFamily, TcpLink> = BareConduit::new(StreamLink::tcp(stream));
 
-    let (mut session, handle, _sh) = acceptor(conduit)
+    let (handle, _sh) = acceptor(conduit)
         .establish()
         .await
         .map_err(|e| format!("handshake: {e}"))?;
@@ -627,7 +624,6 @@ async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient<DriverCaller>, C
     let mut driver = Driver::new(handle, NoopHandler);
     let caller = driver.caller();
 
-    moire::task::spawn(async move { session.run().await });
     moire::task::spawn(async move { driver.run().await });
 
     Ok((TestbedClient::new(caller), child))
@@ -833,7 +829,7 @@ async fn accept_subject_shm_subject_is_guest(
     let conduit: BareConduit<MessageFamily, roam_shm::ShmLink> = BareConduit::new(link);
 
     eprintln!("[harness] handshake...");
-    let (mut session, handle, _sh) = acceptor(conduit)
+    let (handle, _sh) = acceptor(conduit)
         .establish()
         .await
         .map_err(|e| format!("handshake: {e}"))?;
@@ -842,7 +838,6 @@ async fn accept_subject_shm_subject_is_guest(
     let mut driver = Driver::new(handle, NoopHandler);
     let caller = driver.caller();
 
-    tokio::spawn(async move { session.run().await });
     tokio::spawn(async move { driver.run().await });
 
     keep_tempdir_alive(dir);
@@ -1131,7 +1126,7 @@ async fn accept_subject_shm_subject_is_host(
         let conduit: BareConduit<MessageFamily, roam_shm::ShmLink> =
             BareConduit::new(link);
 
-        let (mut session, handle, _sh) = initiator(conduit)
+        let (handle, _sh) = initiator(conduit)
             .establish()
             .await
             .map_err(|e| format!("handshake: {e}"))?;
@@ -1139,7 +1134,6 @@ async fn accept_subject_shm_subject_is_host(
         let mut driver = Driver::new(handle, NoopHandler);
         let caller = driver.caller();
 
-        tokio::spawn(async move { session.run().await });
         tokio::spawn(async move { driver.run().await });
 
         Ok::<_, String>(TestbedClient::new(caller))

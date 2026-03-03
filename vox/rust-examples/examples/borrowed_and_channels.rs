@@ -64,15 +64,12 @@ async fn run_demo() -> Result<()> {
         let (socket, _) = listener.accept().await.expect("accept");
         let conduit = roam::BareConduit::<roam::MessageFamily, _>::new(StreamLink::tcp(socket));
 
-        let (mut session, handle, _) = roam::acceptor(conduit)
+        let (handle, _) = roam::acceptor(conduit)
             .establish()
             .await
             .expect("server establish");
         let mut driver = roam::Driver::new(handle, WordLabDispatcher::new(WordLabService));
 
-        tokio::spawn(async move {
-            session.run().await;
-        });
         driver.run().await;
     });
 
@@ -81,16 +78,13 @@ async fn run_demo() -> Result<()> {
         .wrap_err("connecting client socket")?;
     let conduit = roam::BareConduit::<roam::MessageFamily, _>::new(StreamLink::tcp(socket));
 
-    let (mut session, handle, _) = roam::initiator(conduit)
+    let (handle, _) = roam::initiator(conduit)
         .establish()
         .await
         .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;
     let mut driver = roam::Driver::new(handle, ());
     let caller = driver.caller();
 
-    let client_session_task = tokio::spawn(async move {
-        session.run().await;
-    });
     let client_driver_task = tokio::spawn(async move {
         driver.run().await;
     });
@@ -156,7 +150,6 @@ async fn run_demo() -> Result<()> {
 
     // The demo is complete; stop background loops.
     client_driver_task.abort();
-    client_session_task.abort();
     server_task.abort();
 
     Ok(())

@@ -90,7 +90,7 @@ pub async fn run_tests(ws_url: &str) -> TestResults {
     console_log!("Connected! Performing handshake...");
 
     let conduit = BareConduit::<MessageFamily, _>::new(link);
-    let (mut session, handle, _sh) = match initiator(conduit).establish().await {
+    let (handle, _sh) = match initiator(conduit).establish().await {
         Ok(result) => result,
         Err(e) => {
             console_error!("Handshake failed: {e:?}");
@@ -108,9 +108,6 @@ pub async fn run_tests(ws_url: &str) -> TestResults {
     let mut driver = Driver::new(handle, ());
     let caller = driver.caller();
 
-    wasm_bindgen_futures::spawn_local(async move {
-        session.run().await;
-    });
     wasm_bindgen_futures::spawn_local(async move {
         driver.run().await;
     });

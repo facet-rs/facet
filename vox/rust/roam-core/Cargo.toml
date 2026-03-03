@@ -36,6 +36,9 @@ getrandom.workspace = true
 zerocopy.workspace = true
 facet-error.workspace = true
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures.workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 facet-postcard.workspace = true

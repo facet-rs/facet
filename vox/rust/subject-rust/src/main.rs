@@ -199,7 +199,7 @@ async fn connect_and_serve() -> Result<(), String> {
     stream.set_nodelay(true).unwrap();
 
     let conduit: TcpConduit = BareConduit::new(StreamLink::tcp(stream));
-    let (mut session, handle, _sh) = initiator(conduit)
+    let (handle, _sh) = initiator(conduit)
         .establish()
         .await
         .map_err(|e| format!("handshake failed: {e}"))?;
@@ -207,7 +207,6 @@ async fn connect_and_serve() -> Result<(), String> {
     let dispatcher = TestbedDispatcher::new(TestbedService);
     let mut driver = Driver::new(handle, dispatcher);
 
-    moire::task::spawn(async move { session.run().await });
     driver.run().await;
     Ok(())
 }
@@ -336,7 +335,7 @@ async fn connect_and_serve_shm() -> Result<(), String> {
 
     let conduit: ShmConduit = BareConduit::new(link);
 
-    let (mut session, handle, _sh) = initiator(conduit)
+    let (handle, _sh) = initiator(conduit)
         .establish()
         .await
         .map_err(|e| format!("handshake failed: {e}"))?;
@@ -344,7 +343,6 @@ async fn connect_and_serve_shm() -> Result<(), String> {
     let dispatcher = TestbedDispatcher::new(TestbedService);
     let mut driver = Driver::new(handle, dispatcher);
 
-    moire::task::spawn(async move { session.run().await });
     driver.run().await;
     Ok(())
 }

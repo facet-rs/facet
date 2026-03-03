@@ -166,7 +166,7 @@ async fn main() {
             };
 
             let conduit: BareConduit<MessageFamily, _> = BareConduit::new(ws_link);
-            let (mut session, handle, _sh) = match acceptor(conduit).establish().await {
+            let (handle, _sh) = match acceptor(conduit).establish().await {
                 Ok(result) => result,
                 Err(e) => {
                     eprintln!("Session handshake failed: {:?}", e);
@@ -178,7 +178,6 @@ async fn main() {
 
             let dispatcher = TestbedDispatcher::new(TestbedService);
             let mut driver = Driver::new(handle, dispatcher);
-            tokio::spawn(async move { session.run().await });
             driver.run().await;
 
             eprintln!("Connection closed: {}", peer);
