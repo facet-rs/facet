@@ -1,24 +1,54 @@
 use std::collections::VecDeque;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 use eyre::{Result, WrapErr, eyre};
-use roam::facet::Facet;
 use roam::{
-    Attachment, Backing, Conduit, ConduitRx, ConduitTx, ConduitTxPermit, Link, LinkRx, LinkSource,
-    LinkTx, MemoryLink, MemoryLinkRx, MemoryLinkRxError, MemoryLinkTx, MsgFamily, StableConduit,
-    prepare_acceptor_attachment,
+    Attachment, Backing, ConnectionSettings, DriverCaller, Link, LinkRx, LinkSource, LinkTx,
+    MemoryLink, MemoryLinkRx, MemoryLinkRxError, MemoryLinkTx, MessageFamily, Parity, Rx,
+    StableConduit, Tx, channel, prepare_acceptor_attachment,
 };
 
-struct StringFamily;
+#[roam::service]
+trait StableLab {
+    async fn bump(&self) -> u32;
+    async fn transform(&self, prefix: String, input: Rx<String>, output: Tx<String>) -> u32;
+}
 
-impl MsgFamily for StringFamily {
-    type Msg<'a> = String;
+#[derive(Clone)]
+struct StableLabService {
+    counter: Arc<AtomicU32>,
+}
 
-    fn shape() -> &'static roam::facet::Shape {
-        String::SHAPE
+impl StableLabService {
+    fn new() -> Self {
+        Self {
+            counter: Arc::new(AtomicU32::new(0)),
+        }
+    }
+}
+
+impl StableLab for StableLabService {
+    async fn bump(&self) -> u32 {
+        self.counter.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    async fn transform(&self, prefix: String, mut input: Rx<String>, output: Tx<String>) -> u32 {
+        let mut count = 0;
+        while let Ok(Some(item)) = input.recv().await {
+            if output
+                .send(format!("{prefix}:{}", item.as_str()))
+                .await
+                .is_err()
+            {
+                break;
+            }
+            count += 1;
+        }
+        let _ = output.close(Default::default()).await;
+        count
     }
 }
 
@@ -205,8 +235,8 @@ async fn run_demo() -> Result<()> {
 
     println!("[demo] building client/server stable conduits");
     let server_conduit_task =
-        tokio::spawn(async move { StableConduit::<StringFamily, _>::new(server_source).await });
-    let client_conduit = StableConduit::<StringFamily, _>::new(client_source)
+        tokio::spawn(async move { StableConduit::<MessageFamily, _>::new(server_source).await });
+    let client_conduit = StableConduit::<MessageFamily, _>::new(client_source)
         .await
         .map_err(|e| eyre!("client StableConduit::new failed: {e}"))?;
     let server_conduit = server_conduit_task
@@ -214,75 +244,91 @@ async fn run_demo() -> Result<()> {
         .wrap_err("joining server_conduit_task")?
         .map_err(|e| eyre!("server StableConduit::new failed: {e}"))?;
 
-    let (client_tx, mut client_rx) = client_conduit.split();
-    let (server_tx, mut server_rx) = server_conduit.split();
-
+    println!("[demo] establishing roam session over stable conduits");
     let server_task = tokio::spawn(async move {
-        println!("[server] waiting for first message");
-        let first = server_rx
-            .recv()
+        let (server_guard, _) = roam::acceptor(server_conduit)
+            .root_settings(ConnectionSettings {
+                parity: Parity::Even,
+                max_concurrent_requests: 64,
+            })
+            .establish::<DriverCaller>(StableLabDispatcher::new(StableLabService::new()))
             .await
-            .expect("server recv #1")
-            .expect("server eof #1");
-        println!("[server] <- {}", first.as_str());
-        server_tx
-            .reserve()
-            .await
-            .expect("server reserve #1")
-            .send(format!("echo:{}", first.as_str()))
-            .expect("server send #1");
-        println!("[server] -> echo:{}", first.as_str());
-
-        println!("[server] intentionally cutting physical link #1");
-        kill_switch_1.trip();
-
-        println!("[server] waiting for second message (after reconnect)");
-        let second = server_rx
-            .recv()
-            .await
-            .expect("server recv #2")
-            .expect("server eof #2");
-        println!("[server] <- {}", second.as_str());
-        server_tx
-            .reserve()
-            .await
-            .expect("server reserve #2")
-            .send(format!("echo:{}", second.as_str()))
-            .expect("server send #2");
-        println!("[server] -> echo:{}", second.as_str());
+            .expect("server establish");
+        let _server_guard = server_guard;
+        std::future::pending::<()>().await;
     });
 
-    println!("[client] sending first message on link #1");
-    client_tx
-        .reserve()
+    let (client, _) = roam::initiator(client_conduit)
+        .root_settings(ConnectionSettings {
+            parity: Parity::Odd,
+            max_concurrent_requests: 64,
+        })
+        .establish::<StableLabClient>(())
         .await
-        .map_err(|e| eyre!("client reserve #1 failed: {e}"))?
-        .send("alpha".to_string())
-        .map_err(|e| eyre!("client send #1 failed: {e}"))?;
-    let first_reply = client_rx
+        .map_err(|e| eyre!("client establish failed: {e:?}"))?;
+    println!("[demo] session established");
+
+    println!("[client] calling bump before cut");
+    let first = client
+        .bump()
+        .await
+        .map_err(|e| eyre!("bump #1 failed: {e:?}"))?;
+    println!("[client] bump #1 -> {first}");
+    assert_eq!(first, 1);
+
+    let (input_tx, input_rx) = channel::<String>();
+    let (output_tx, mut output_rx) = channel::<String>();
+    let cut_switch = kill_switch_1.clone();
+
+    let send_task = tokio::spawn(async move {
+        for (idx, word) in ["one", "two", "three"].iter().enumerate() {
+            println!("[client/send] -> {word}");
+            input_tx
+                .send((*word).to_string())
+                .await
+                .expect("send input");
+            if idx == 1 {
+                println!("[demo] intentionally cutting physical link #1 mid-channel");
+                cut_switch.trip();
+            }
+        }
+        println!("[client/send] closing input");
+        input_tx
+            .close(Default::default())
+            .await
+            .expect("close input");
+    });
+
+    println!("[client] calling transform (channel state should survive reconnect)");
+    let transformed_count = client
+        .transform("item".to_string(), input_rx, output_tx)
+        .await
+        .map_err(|e| eyre!("transform failed: {e:?}"))?;
+    println!("[client] transform returned count={transformed_count}");
+    assert_eq!(transformed_count, 3);
+    send_task.await.wrap_err("joining send_task")?;
+
+    let mut got = Vec::new();
+    while let Some(item) = output_rx
         .recv()
         .await
-        .map_err(|e| eyre!("client recv #1 failed: {e}"))?
-        .ok_or_else(|| eyre!("client recv #1: unexpected eof"))?;
-    println!("[client] <- {}", first_reply.as_str());
-    assert_eq!(first_reply.as_str(), "echo:alpha");
+        .wrap_err("receiving from output_rx")?
+    {
+        println!("[client/recv] <- {}", item.as_str());
+        got.push(item.to_string());
+    }
+    assert_eq!(got, vec!["item:one", "item:two", "item:three"]);
+    println!("[client] output stream complete: {got:?}");
 
-    println!("[client] sending second message (will force reconnect to link #2)");
-    client_tx
-        .reserve()
+    println!("[client] calling bump after reconnect");
+    let second = client
+        .bump()
         .await
-        .map_err(|e| eyre!("client reserve #2 failed: {e}"))?
-        .send("beta".to_string())
-        .map_err(|e| eyre!("client send #2 failed: {e}"))?;
-    let second_reply = client_rx
-        .recv()
-        .await
-        .map_err(|e| eyre!("client recv #2 failed: {e}"))?
-        .ok_or_else(|| eyre!("client recv #2: unexpected eof"))?;
-    println!("[client] <- {}", second_reply.as_str());
-    assert_eq!(second_reply.as_str(), "echo:beta");
+        .map_err(|e| eyre!("bump #2 failed: {e:?}"))?;
+    println!("[client] bump #2 -> {second}");
+    assert_eq!(second, 2);
 
-    server_task.await.wrap_err("joining server_task")?;
+    server_task.abort();
     println!("[demo] stable_conduit_reconnect: complete");
     Ok(())
 }
