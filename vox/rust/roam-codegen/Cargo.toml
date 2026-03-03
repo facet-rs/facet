@@ -24,4 +24,4 @@ roam-types.workspace = true
 
 [dev-dependencies]
 facet.workspace = true
-roam.workspace = true
+roam = { path = "../roam" }

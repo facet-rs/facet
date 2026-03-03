@@ -31,8 +31,8 @@ facet-postcard.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
-roam-stream.workspace = true
-roam-core.workspace = true
-shm-primitives.workspace = true
-roam-shm.workspace = true
+roam-stream = { path = "../roam-stream" }
+roam-core = { path = "../roam-core" }
+shm-primitives = { path = "../shm-primitives" }
+roam-shm = { path = "../roam-shm" }
 tempfile.workspace = true
