@@ -14,7 +14,7 @@ impl FacetOpaqueAdapter for BadAdapter {
     type RecvValue<'de> = BadPayload;
 
     fn serialize_map(_: &Self::SendValue<'_>) -> OpaqueSerialize {
-        OpaqueSerialize {
+        OpaqueSerialize::Mapped {
             ptr: PtrConst::new(&0u8 as *const u8),
             shape: <u8 as Facet>::SHAPE,
         }

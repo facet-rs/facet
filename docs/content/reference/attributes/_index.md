@@ -288,7 +288,7 @@ impl FacetOpaqueAdapter for PayloadAdapter {
     type RecvValue<'de> = Payload<'de>;
 
     fn serialize_map(value: &Self::SendValue<'_>) -> OpaqueSerialize {
-        OpaqueSerialize {
+        OpaqueSerialize::Mapped {
             ptr: PtrConst::new(&value.0 as *const &[u8]),
             shape: <&[u8] as Facet>::SHAPE,
         }
@@ -306,6 +306,9 @@ impl FacetOpaqueAdapter for PayloadAdapter {
     }
 }
 ```
+
+When forwarding opaque payloads that are already postcard-encoded, adapters can
+return `OpaqueSerialize::encoded_bytes(bytes)` instead of `Mapped { .. }`.
 
 Rules and notes:
 

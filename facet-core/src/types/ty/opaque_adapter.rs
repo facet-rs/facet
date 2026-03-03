@@ -11,11 +11,42 @@ use alloc::{string::String, vec::Vec};
 /// Erased serialization inputs returned by an opaque adapter.
 #[cfg(feature = "alloc")]
 #[derive(Clone, Copy, Debug)]
-pub struct OpaqueSerialize {
-    /// Pointer to the value to serialize.
-    pub ptr: PtrConst,
-    /// Shape describing `ptr`.
-    pub shape: &'static Shape,
+pub enum OpaqueSerialize {
+    /// Serialize a typed value by pointer + shape (existing behavior).
+    Mapped {
+        /// Pointer to the value to serialize.
+        ptr: PtrConst,
+        /// Shape describing `ptr`.
+        shape: &'static Shape,
+    },
+
+    /// Serialize bytes that are already encoded in the format's opaque payload encoding.
+    ///
+    /// The pointed bytes must remain valid for the duration of the serialize call.
+    EncodedBytes {
+        /// Pointer to already-encoded payload bytes.
+        ptr: *const u8,
+        /// Length of `ptr` in bytes.
+        len: usize,
+    },
+}
+
+#[cfg(feature = "alloc")]
+impl OpaqueSerialize {
+    /// Constructs a mapped opaque serialization input from a typed pointer + shape.
+    pub const fn mapped(ptr: PtrConst, shape: &'static Shape) -> Self {
+        Self::Mapped { ptr, shape }
+    }
+
+    /// Constructs an encoded-bytes opaque serialization input.
+    ///
+    /// The slice must outlive the ongoing serialization call.
+    pub fn encoded_bytes(bytes: &[u8]) -> Self {
+        Self::EncodedBytes {
+            ptr: bytes.as_ptr(),
+            len: bytes.len(),
+        }
+    }
 }
 
 /// Input bytes provided to an opaque adapter during deserialization.

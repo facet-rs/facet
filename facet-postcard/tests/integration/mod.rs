@@ -9,6 +9,7 @@ mod issue_2065;
 mod issue_2079;
 mod issue_2098;
 mod issue_2108;
+mod issue_2118;
 mod jit_vec_bool;
 mod jit_vec_int;
 mod multi_tier;
