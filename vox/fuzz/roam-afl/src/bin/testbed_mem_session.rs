@@ -6,7 +6,7 @@ use roam::Call;
 use roam_core::{
     BareConduit, Driver, DriverCaller, DriverReplySink, acceptor, initiator, memory_link_pair,
 };
-use roam_types::{Handler, MessageFamily, Parity, RequestCall, SelfRef};
+use roam_types::{Handler, MessageFamily, RequestCall, SelfRef};
 use spec_proto::{
     Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape, TestbedClient,
     TestbedDispatcher, TestbedServer,
@@ -223,7 +223,7 @@ async fn setup_client() -> Option<TestbedClient<DriverCaller>> {
             return;
         };
         let dispatcher = TestbedDispatcher::new(FuzzService);
-        let mut server_driver = Driver::new(server_handle, dispatcher, Parity::Even);
+        let mut server_driver = Driver::new(server_handle, dispatcher);
         tokio::spawn(async move {
             server_session.run().await;
         });
@@ -236,7 +236,7 @@ async fn setup_client() -> Option<TestbedClient<DriverCaller>> {
     else {
         return None;
     };
-    let mut client_driver = Driver::new(client_handle, NoopHandler, Parity::Odd);
+    let mut client_driver = Driver::new(client_handle, NoopHandler);
     let caller = client_driver.caller();
 
     tokio::spawn(async move {

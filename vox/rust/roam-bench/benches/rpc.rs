@@ -29,7 +29,7 @@ mod roam_zerocopy_bench {
     use roam_shm::varslot::SizeClassConfig;
     use roam_shm::{Segment, SegmentConfig, ShmLink, create_test_link_pair};
     use roam_stream::StreamLink;
-    use roam_types::Parity;
+
     use shm_primitives::FileCleanup;
     use tokio::net::TcpListener;
 
@@ -70,7 +70,7 @@ mod roam_zerocopy_bench {
                     .await
                     .expect("server handshake failed");
                 let dispatcher = ZerocopyDispatcher::new(Handler);
-                let mut server_driver = Driver::new(server_handle, dispatcher, Parity::Even);
+                let mut server_driver = Driver::new(server_handle, dispatcher);
                 moire::task::spawn(
                     async move { server_session.run().await }.named("server_session"),
                 );
@@ -83,7 +83,7 @@ mod roam_zerocopy_bench {
             .establish()
             .await
             .expect("client handshake failed");
-        let mut client_driver = Driver::new(client_handle, (), Parity::Odd);
+        let mut client_driver = Driver::new(client_handle, ());
         let caller = client_driver.caller();
         moire::task::spawn(async move { client_session.run().await }.named("client_session"));
         moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
@@ -143,7 +143,7 @@ mod roam_zerocopy_bench {
                     .await
                     .expect("server handshake failed");
                 let dispatcher = ZerocopyDispatcher::new(Handler);
-                let mut server_driver = Driver::new(server_handle, dispatcher, Parity::Even);
+                let mut server_driver = Driver::new(server_handle, dispatcher);
                 moire::task::spawn(
                     async move { server_session.run().await }.named("server_session"),
                 );
@@ -156,7 +156,7 @@ mod roam_zerocopy_bench {
             .establish()
             .await
             .expect("client handshake failed");
-        let mut client_driver = Driver::new(client_handle, (), Parity::Odd);
+        let mut client_driver = Driver::new(client_handle, ());
         let caller = client_driver.caller();
         moire::task::spawn(async move { client_session.run().await }.named("client_session"));
         moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
@@ -180,7 +180,7 @@ mod roam_zerocopy_bench {
                     .await
                     .expect("server handshake failed");
                 let dispatcher = ZerocopyDispatcher::new(Handler);
-                let mut server_driver = Driver::new(server_handle, dispatcher, Parity::Even);
+                let mut server_driver = Driver::new(server_handle, dispatcher);
                 moire::task::spawn(
                     async move { server_session.run().await }.named("server_session"),
                 );
@@ -197,7 +197,7 @@ mod roam_zerocopy_bench {
             .establish()
             .await
             .expect("client handshake failed");
-        let mut client_driver = Driver::new(client_handle, (), Parity::Odd);
+        let mut client_driver = Driver::new(client_handle, ());
         let caller = client_driver.caller();
         moire::task::spawn(async move { client_session.run().await }.named("client_session"));
         moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
@@ -268,7 +268,6 @@ define_zerocopy_transport_benches!(
 mod roam_bench {
     use moire::task::FutureExt;
     use roam_core::{BareConduit, Driver, acceptor, initiator, memory_link_pair};
-    use roam_types::Parity;
 
     type MessageConduit = BareConduit<roam_types::MessageFamily, roam_core::MemoryLink>;
 
@@ -311,7 +310,7 @@ mod roam_bench {
                     .await
                     .expect("server handshake failed");
                 let dispatcher = BenchDispatcher::new(Handler);
-                let mut server_driver = Driver::new(server_handle, dispatcher, Parity::Even);
+                let mut server_driver = Driver::new(server_handle, dispatcher);
                 moire::task::spawn(
                     async move { server_session.run().await }.named("server_session"),
                 );
@@ -324,7 +323,7 @@ mod roam_bench {
             .establish()
             .await
             .expect("client handshake failed");
-        let mut client_driver = Driver::new(client_handle, (), Parity::Odd);
+        let mut client_driver = Driver::new(client_handle, ());
         let caller = client_driver.caller();
         moire::task::spawn(async move { client_session.run().await }.named("client_session"));
         moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
@@ -393,7 +392,7 @@ mod roam_shm_bench {
     use roam_core::{BareConduit, Driver, acceptor, initiator};
     use roam_shm::varslot::SizeClassConfig;
     use roam_shm::{Segment, SegmentConfig, ShmLink, create_test_link_pair};
-    use roam_types::Parity;
+
     use shm_primitives::FileCleanup;
 
     use super::roam_bench::{BenchClient, BenchDispatcher, Handler};
@@ -443,7 +442,7 @@ mod roam_shm_bench {
                     .await
                     .expect("server handshake failed");
                 let dispatcher = BenchDispatcher::new(Handler);
-                let mut server_driver = Driver::new(server_handle, dispatcher, Parity::Even);
+                let mut server_driver = Driver::new(server_handle, dispatcher);
                 moire::task::spawn(
                     async move { server_session.run().await }.named("server_session"),
                 );
@@ -456,7 +455,7 @@ mod roam_shm_bench {
             .establish()
             .await
             .expect("client handshake failed");
-        let mut client_driver = Driver::new(client_handle, (), Parity::Odd);
+        let mut client_driver = Driver::new(client_handle, ());
         let caller = client_driver.caller();
         moire::task::spawn(async move { client_session.run().await }.named("client_session"));
         moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
@@ -522,7 +521,7 @@ mod roam_tcp_bench {
     use moire::task::FutureExt;
     use roam_core::{BareConduit, Driver, acceptor, initiator};
     use roam_stream::StreamLink;
-    use roam_types::Parity;
+
     use tokio::net::TcpListener;
 
     use super::roam_bench::{BenchClient, BenchDispatcher, Handler};
@@ -545,7 +544,7 @@ mod roam_tcp_bench {
                     .await
                     .expect("server handshake failed");
                 let dispatcher = BenchDispatcher::new(Handler);
-                let mut server_driver = Driver::new(server_handle, dispatcher, Parity::Even);
+                let mut server_driver = Driver::new(server_handle, dispatcher);
                 moire::task::spawn(
                     async move { server_session.run().await }.named("server_session"),
                 );
@@ -562,7 +561,7 @@ mod roam_tcp_bench {
             .establish()
             .await
             .expect("client handshake failed");
-        let mut client_driver = Driver::new(client_handle, (), Parity::Odd);
+        let mut client_driver = Driver::new(client_handle, ());
         let caller = client_driver.caller();
         moire::task::spawn(async move { client_session.run().await }.named("client_session"));
         moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));

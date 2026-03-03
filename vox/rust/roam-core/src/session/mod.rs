@@ -270,6 +270,8 @@ pub struct ConnectionHandle {
     pub(crate) sender: ConnectionSender,
     pub(crate) rx: mpsc::Receiver<SelfRef<ConnectionMessage<'static>>>,
     pub(crate) failures_rx: mpsc::UnboundedReceiver<(RequestId, &'static str)>,
+    /// The parity this side should use for allocating request/channel IDs.
+    pub parity: Parity,
 }
 
 impl std::fmt::Debug for ConnectionHandle {
@@ -480,6 +482,7 @@ where
             failures: Arc::new(failures_tx),
         };
 
+        let parity = local_settings.parity;
         self.conns.insert(
             conn_id,
             ConnectionSlot::Active(ConnectionState {
@@ -494,6 +497,7 @@ where
             sender,
             rx: conn_rx,
             failures_rx,
+            parity,
         }
     }
 

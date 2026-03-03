@@ -6,7 +6,7 @@
 
 use roam::{Rx, Tx};
 use roam_core::{BareConduit, Driver, acceptor};
-use roam_types::{MessageFamily, Parity};
+use roam_types::MessageFamily;
 use roam_websocket::WsLink;
 use spec_proto::{Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape};
 use spec_proto::{Testbed, TestbedDispatcher};
@@ -177,7 +177,7 @@ async fn main() {
             eprintln!("Connection established with {}", peer);
 
             let dispatcher = TestbedDispatcher::new(TestbedService);
-            let mut driver = Driver::new(handle, dispatcher, Parity::Even);
+            let mut driver = Driver::new(handle, dispatcher);
             tokio::spawn(async move { session.run().await });
             driver.run().await;
 

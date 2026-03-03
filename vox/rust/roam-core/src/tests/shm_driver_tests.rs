@@ -4,8 +4,8 @@ use moire::task::FutureExt;
 use roam_shm::varslot::SizeClassConfig;
 use roam_shm::{Segment, SegmentConfig, ShmLink, create_test_link_pair};
 use roam_types::{
-    Caller, Handler, MessageFamily, MethodId, Parity, Payload, ReplySink, RequestCall,
-    RequestResponse, SelfRef,
+    Caller, Handler, MessageFamily, MethodId, Payload, ReplySink, RequestCall, RequestResponse,
+    SelfRef,
 };
 use shm_primitives::FileCleanup;
 
@@ -72,7 +72,7 @@ async fn echo_call_across_shm_link() {
                 .establish()
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(server_handle, EchoHandler, Parity::Even);
+            let mut server_driver = Driver::new(server_handle, EchoHandler);
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
@@ -83,7 +83,7 @@ async fn echo_call_across_shm_link() {
         .establish()
         .await
         .expect("client handshake failed");
-    let mut client_driver = Driver::new(client_handle, (), Parity::Odd);
+    let mut client_driver = Driver::new(client_handle, ());
     let caller = client_driver.caller();
     moire::task::spawn(async move { client_session.run().await }.named("client_session"));
     moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
@@ -139,7 +139,7 @@ async fn echo_blob_stress_over_shm_link() {
                 .establish()
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(server_handle, BlobEchoHandler, Parity::Even);
+            let mut server_driver = Driver::new(server_handle, BlobEchoHandler);
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
@@ -150,7 +150,7 @@ async fn echo_blob_stress_over_shm_link() {
         .establish()
         .await
         .expect("client handshake failed");
-    let mut client_driver = Driver::new(client_handle, (), Parity::Odd);
+    let mut client_driver = Driver::new(client_handle, ());
     let caller = client_driver.caller();
     moire::task::spawn(async move { client_session.run().await }.named("client_session"));
     moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));

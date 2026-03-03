@@ -5,7 +5,7 @@ use roam_core::{BareConduit, Driver, initiator};
 use roam_shm::bootstrap::{BootstrapStatus, encode_request};
 use roam_shm::segment::Segment;
 use roam_stream::StreamLink;
-use roam_types::{MessageFamily, Parity};
+use roam_types::MessageFamily;
 use spec_proto::{
     Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape, Testbed,
     TestbedDispatcher,
@@ -205,7 +205,7 @@ async fn connect_and_serve() -> Result<(), String> {
         .map_err(|e| format!("handshake failed: {e}"))?;
 
     let dispatcher = TestbedDispatcher::new(TestbedService);
-    let mut driver = Driver::new(handle, dispatcher, Parity::Odd);
+    let mut driver = Driver::new(handle, dispatcher);
 
     moire::task::spawn(async move { session.run().await });
     driver.run().await;
@@ -342,7 +342,7 @@ async fn connect_and_serve_shm() -> Result<(), String> {
         .map_err(|e| format!("handshake failed: {e}"))?;
 
     let dispatcher = TestbedDispatcher::new(TestbedService);
-    let mut driver = Driver::new(handle, dispatcher, Parity::Odd);
+    let mut driver = Driver::new(handle, dispatcher);
 
     moire::task::spawn(async move { session.run().await });
     driver.run().await;

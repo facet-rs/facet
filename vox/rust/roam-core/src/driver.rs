@@ -6,9 +6,9 @@ use tokio::sync::Semaphore;
 use moire::task::FutureExt as _;
 use roam_types::{
     Caller, ChannelBinder, ChannelBody, ChannelClose, ChannelId, ChannelItem, ChannelMessage,
-    ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage, Parity, Payload,
-    ReplySink, RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse, RoamError,
-    SelfRef, TxError,
+    ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage, Payload, ReplySink,
+    RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse, RoamError, SelfRef,
+    TxError,
 };
 
 use crate::session::{ConnectionHandle, ConnectionMessage, ConnectionSender};
@@ -320,11 +320,12 @@ enum DriverLocalControl {
 }
 
 impl<H: Handler<DriverReplySink>> Driver<H> {
-    pub fn new(handle: ConnectionHandle, handler: H, parity: Parity) -> Self {
+    pub fn new(handle: ConnectionHandle, handler: H) -> Self {
         let ConnectionHandle {
             sender,
             rx,
             failures_rx,
+            parity,
         } = handle;
         let (local_control_tx, local_control_rx) = mpsc::unbounded_channel("driver.local_control");
         Self {

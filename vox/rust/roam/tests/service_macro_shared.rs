@@ -1,5 +1,5 @@
 use roam_core::{BareConduit, Driver, acceptor, initiator};
-use roam_types::{Link, Parity};
+use roam_types::Link;
 
 type MessageConduit<L> = BareConduit<roam_types::MessageFamily, L>;
 
@@ -32,7 +32,7 @@ pub async fn run_adder_end_to_end<L>(
             .await
             .expect("server handshake failed");
         let dispatcher = AdderDispatcher::new(MyAdder);
-        let mut server_driver = Driver::new(server_handle, dispatcher, Parity::Even);
+        let mut server_driver = Driver::new(server_handle, dispatcher);
         let _server_session_task = tokio::task::spawn(async move { server_session.run().await });
         let _server_driver_task = tokio::task::spawn(async move { server_driver.run().await });
     });
@@ -41,7 +41,7 @@ pub async fn run_adder_end_to_end<L>(
         .establish()
         .await
         .expect("client handshake failed");
-    let mut client_driver = Driver::new(client_handle, (), Parity::Odd);
+    let mut client_driver = Driver::new(client_handle, ());
     let caller = client_driver.caller();
     let _client_session_task = tokio::task::spawn(async move { client_session.run().await });
     let _client_driver_task = tokio::task::spawn(async move { client_driver.run().await });

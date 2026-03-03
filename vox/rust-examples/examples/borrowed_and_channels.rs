@@ -68,11 +68,7 @@ async fn run_demo() -> Result<()> {
             .establish()
             .await
             .expect("server establish");
-        let mut driver = roam::Driver::new(
-            handle,
-            WordLabDispatcher::new(WordLabService),
-            roam::Parity::Even,
-        );
+        let mut driver = roam::Driver::new(handle, WordLabDispatcher::new(WordLabService));
 
         tokio::spawn(async move {
             session.run().await;
@@ -89,7 +85,7 @@ async fn run_demo() -> Result<()> {
         .establish()
         .await
         .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;
-    let mut driver = roam::Driver::new(handle, (), roam::Parity::Odd);
+    let mut driver = roam::Driver::new(handle, ());
     let caller = driver.caller();
 
     let client_session_task = tokio::spawn(async move {

@@ -8,7 +8,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use roam_core::{BareConduit, Driver, initiator};
-use roam_types::{MessageFamily, Parity};
+use roam_types::MessageFamily;
 use roam_websocket::WsLink;
 use spec_proto::{Color, LookupError, MathError, Message, Point, Rectangle, Shape, TestbedClient};
 use wasm_bindgen::prelude::*;
@@ -105,7 +105,7 @@ pub async fn run_tests(ws_url: &str) -> TestResults {
 
     console_log!("Handshake complete.");
 
-    let mut driver = Driver::new(handle, (), Parity::Odd);
+    let mut driver = Driver::new(handle, ());
     let caller = driver.caller();
 
     wasm_bindgen_futures::spawn_local(async move {

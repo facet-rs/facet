@@ -132,11 +132,7 @@ async fn cancel_aborts_in_flight_handler() {
                 .establish()
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(
-                server_handle,
-                BlockingHandler { was_cancelled },
-                Parity::Even,
-            );
+            let mut server_driver = Driver::new(server_handle, BlockingHandler { was_cancelled });
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
@@ -150,7 +146,7 @@ async fn cancel_aborts_in_flight_handler() {
         .await
         .expect("client handshake failed");
     let client_sender = client_handle.sender.clone();
-    let mut client_driver = Driver::new(client_handle, (), Parity::Odd);
+    let mut client_driver = Driver::new(client_handle, ());
     let caller = client_driver.caller();
     moire::task::spawn(async move { client_session.run().await }.named("client_session"));
     moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
@@ -231,11 +227,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
                 .establish()
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(
-                server_handle,
-                BlockingHandler { was_cancelled },
-                Parity::Even,
-            );
+            let mut server_driver = Driver::new(server_handle, BlockingHandler { was_cancelled });
             let session_task = moire::task::spawn(
                 async move { server_session.run().await }.named("server_session"),
             );
@@ -250,7 +242,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
         .establish()
         .await
         .expect("client handshake failed");
-    let mut client_driver = Driver::new(client_handle, (), Parity::Odd);
+    let mut client_driver = Driver::new(client_handle, ());
     let caller = client_driver.caller();
     moire::task::spawn(async move { client_session.run().await }.named("client_session"));
     moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
@@ -313,7 +305,6 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
                 BlockingHandler {
                     was_cancelled: Arc::new(AtomicBool::new(false)),
                 },
-                Parity::Even,
             );
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
@@ -329,7 +320,7 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
         .establish()
         .await
         .expect("client handshake failed");
-    let mut client_driver = Driver::new(client_handle, (), Parity::Odd);
+    let mut client_driver = Driver::new(client_handle, ());
     let caller = client_driver.caller();
     moire::task::spawn(async move { client_session.run().await }.named("client_session"));
     moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
@@ -382,7 +373,7 @@ impl ConnectionAcceptor for EchoAcceptor {
             },
             metadata: vec![],
             setup: Box::new(move |handle| {
-                let mut driver = Driver::new(handle, EchoHandler, peer_parity.other());
+                let mut driver = Driver::new(handle, EchoHandler);
                 moire::task::spawn(async move { driver.run().await }.named("vconn_server_driver"));
             }),
         })
@@ -417,7 +408,7 @@ async fn open_virtual_connection_and_call() {
                 .establish()
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(server_handle, (), Parity::Even);
+            let mut server_driver = Driver::new(server_handle, ());
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
@@ -445,7 +436,7 @@ async fn open_virtual_connection_and_call() {
         .expect("open virtual connection");
 
     // Set up a driver on the client side for the virtual connection.
-    let mut vconn_driver = Driver::new(vconn_handle, (), Parity::Odd);
+    let mut vconn_driver = Driver::new(vconn_handle, ());
     let caller = vconn_driver.caller();
     moire::task::spawn(async move { vconn_driver.run().await }.named("vconn_client_driver"));
 
@@ -486,7 +477,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
                 .establish()
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(server_handle, (), Parity::Even);
+            let mut server_driver = Driver::new(server_handle, ());
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
@@ -540,7 +531,7 @@ async fn acceptor_builder_customization_supports_opening_connections() {
                     .establish()
                     .await
                     .expect("initiator handshake failed");
-            let mut initiator_driver = Driver::new(initiator_handle, (), Parity::Even);
+            let mut initiator_driver = Driver::new(initiator_handle, ());
             moire::task::spawn(
                 async move { initiator_session.run().await }.named("initiator_session"),
             );
@@ -596,7 +587,7 @@ async fn reject_virtual_connection() {
                 .establish()
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(server_handle, (), Parity::Even);
+            let mut server_driver = Driver::new(server_handle, ());
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
@@ -639,7 +630,7 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
                 .establish()
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(server_handle, (), Parity::Even);
+            let mut server_driver = Driver::new(server_handle, ());
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
@@ -681,7 +672,7 @@ async fn close_root_connection_is_rejected() {
                 .establish()
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(server_handle, EchoHandler, Parity::Even);
+            let mut server_driver = Driver::new(server_handle, EchoHandler);
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
@@ -716,7 +707,7 @@ async fn close_unknown_virtual_connection_is_rejected() {
                 .establish()
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(server_handle, EchoHandler, Parity::Even);
+            let mut server_driver = Driver::new(server_handle, EchoHandler);
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
@@ -772,7 +763,7 @@ async fn close_virtual_connection() {
                 },
                 metadata: vec![],
                 setup: Box::new(move |handle| {
-                    let mut driver = Driver::new(handle, EchoHandler, peer_parity.other());
+                    let mut driver = Driver::new(handle, EchoHandler);
                     moire::task::spawn(
                         async move {
                             driver.run().await;
@@ -794,7 +785,7 @@ async fn close_virtual_connection() {
                 .establish()
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(server_handle, (), Parity::Even);
+            let mut server_driver = Driver::new(server_handle, ());
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
@@ -825,7 +816,7 @@ async fn close_virtual_connection() {
     assert!(!conn_id.is_root(), "virtual connection should not be root");
 
     // Set up a driver on the client side.
-    let mut vconn_driver = Driver::new(vconn_handle, (), Parity::Odd);
+    let mut vconn_driver = Driver::new(vconn_handle, ());
     let caller = vconn_driver.caller();
     moire::task::spawn(async move { vconn_driver.run().await }.named("vconn_client_driver"));
 
@@ -883,7 +874,7 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
                 .establish()
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(server_handle, (), Parity::Even);
+            let mut server_driver = Driver::new(server_handle, ());
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
@@ -910,7 +901,7 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
         .expect("open virtual connection");
 
     let conn_id = vconn_handle.connection_id();
-    let mut vconn_driver = Driver::new(vconn_handle, (), Parity::Odd);
+    let mut vconn_driver = Driver::new(vconn_handle, ());
     let caller = vconn_driver.caller();
     moire::task::spawn(async move { vconn_driver.run().await }.named("vconn_client_driver"));
 
@@ -942,7 +933,7 @@ async fn echo_call_across_memory_link() {
                 .establish()
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(server_handle, EchoHandler, Parity::Even);
+            let mut server_driver = Driver::new(server_handle, EchoHandler);
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
         }
@@ -954,7 +945,7 @@ async fn echo_call_across_memory_link() {
         .establish()
         .await
         .expect("client handshake failed");
-    let mut client_driver = Driver::new(client_handle, (), Parity::Odd);
+    let mut client_driver = Driver::new(client_handle, ());
     let caller = client_driver.caller();
     moire::task::spawn(async move { client_session.run().await }.named("client_session"));
     moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));
@@ -992,7 +983,7 @@ async fn buffers_inbound_channel_items_until_rx_is_registered() {
                 .establish()
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(server_handle, (), Parity::Even);
+            let mut server_driver = Driver::new(server_handle, ());
             let server_caller = server_driver.caller();
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
@@ -1051,7 +1042,7 @@ async fn grant_credit_unblocks_driver_created_tx_channel() {
                 .establish()
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(server_handle, (), Parity::Even);
+            let mut server_driver = Driver::new(server_handle, ());
             let server_caller = server_driver.caller();
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
@@ -1109,7 +1100,7 @@ async fn buffered_close_before_registration_keeps_channel_terminal() {
                 .establish()
                 .await
                 .expect("server handshake failed");
-            let mut server_driver = Driver::new(server_handle, (), Parity::Even);
+            let mut server_driver = Driver::new(server_handle, ());
             let server_caller = server_driver.caller();
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
@@ -1181,7 +1172,7 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
                 .await
                 .expect("server handshake failed");
             let server_sender = server_handle.sender.clone();
-            let mut server_driver = Driver::new(server_handle, EchoHandler, Parity::Even);
+            let mut server_driver = Driver::new(server_handle, EchoHandler);
             moire::task::spawn(async move { server_session.run().await }.named("server_session"));
             moire::task::spawn(async move { server_driver.run().await }.named("server_driver"));
             server_sender
@@ -1193,7 +1184,7 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
         .establish()
         .await
         .expect("client handshake failed");
-    let mut client_driver = Driver::new(client_handle, (), Parity::Odd);
+    let mut client_driver = Driver::new(client_handle, ());
     let caller = client_driver.caller();
     moire::task::spawn(async move { client_session.run().await }.named("client_session"));
     moire::task::spawn(async move { client_driver.run().await }.named("client_driver"));

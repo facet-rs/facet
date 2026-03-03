@@ -22,7 +22,7 @@ use roam_shm::guest_link_from_raw;
 use roam_shm::segment::{Segment, SegmentConfig};
 use roam_shm::varslot::SizeClassConfig as RoamShmSizeClassConfig;
 use roam_stream::StreamLink;
-use roam_types::{MessageFamily, Parity, RequestCall, SelfRef};
+use roam_types::{MessageFamily, RequestCall, SelfRef};
 use shm_primitives::FileCleanup;
 use shm_primitives::SizeClassConfig;
 use spec_proto::{
@@ -541,7 +541,7 @@ where
                 .await
                 .map_err(|e| format!("server handshake: {e}"))?;
         let dispatcher = TestbedDispatcher::new(TestbedService);
-        let mut server_driver = Driver::new(server_handle, dispatcher, Parity::Even);
+        let mut server_driver = Driver::new(server_handle, dispatcher);
         tokio::spawn(async move { server_session.run().await });
         tokio::spawn(async move { server_driver.run().await });
         Ok::<(), String>(())
@@ -551,7 +551,7 @@ where
         .establish()
         .await
         .map_err(|e| format!("client handshake: {e}"))?;
-    let mut client_driver = Driver::new(client_handle, NoopHandler, Parity::Odd);
+    let mut client_driver = Driver::new(client_handle, NoopHandler);
     let caller = client_driver.caller();
 
     tokio::spawn(async move { client_session.run().await });
@@ -624,7 +624,7 @@ async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient<DriverCaller>, C
         .await
         .map_err(|e| format!("handshake: {e}"))?;
 
-    let mut driver = Driver::new(handle, NoopHandler, Parity::Even);
+    let mut driver = Driver::new(handle, NoopHandler);
     let caller = driver.caller();
 
     moire::task::spawn(async move { session.run().await });
@@ -839,7 +839,7 @@ async fn accept_subject_shm_subject_is_guest(
         .map_err(|e| format!("handshake: {e}"))?;
     eprintln!("[harness] handshake ok");
 
-    let mut driver = Driver::new(handle, NoopHandler, Parity::Even);
+    let mut driver = Driver::new(handle, NoopHandler);
     let caller = driver.caller();
 
     tokio::spawn(async move { session.run().await });
@@ -1136,7 +1136,7 @@ async fn accept_subject_shm_subject_is_host(
             .await
             .map_err(|e| format!("handshake: {e}"))?;
 
-        let mut driver = Driver::new(handle, NoopHandler, Parity::Odd);
+        let mut driver = Driver::new(handle, NoopHandler);
         let caller = driver.caller();
 
         tokio::spawn(async move { session.run().await });
