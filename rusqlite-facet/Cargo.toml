@@ -1,5 +1,6 @@
 [package]
 name = "rusqlite-facet"
+description = "Rusqlite integration for the facet reflection framework"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
