@@ -2615,7 +2615,10 @@ version = "7.0.0-alpha.1"
 dependencies = [
  "eyre",
  "roam",
+ "roam-shm",
  "roam-stream",
+ "shm-primitives",
+ "tempfile",
  "tokio",
 ]
 
