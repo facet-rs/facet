@@ -72,7 +72,7 @@ async fn run_demo() -> Result<()> {
         .await
         .wrap_err("connecting client socket")?;
     let (client, _) = roam::initiator(StreamLink::tcp(socket))
-        .establish::<WordLabClient<_>>(())
+        .establish::<WordLabClient>(())
         .await
         .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;
 
