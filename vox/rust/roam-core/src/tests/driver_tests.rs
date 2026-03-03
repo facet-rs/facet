@@ -130,6 +130,182 @@ impl Handler<DriverReplySink> for BlockingHandler {
     }
 }
 
+// r[verify rpc.caller.liveness.refcounted]
+#[tokio::test]
+async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let (client_session_tx, client_session_rx) =
+        tokio::sync::oneshot::channel::<moire::task::JoinHandle<()>>();
+    let (server_session_tx, server_session_rx) =
+        tokio::sync::oneshot::channel::<moire::task::JoinHandle<()>>();
+
+    let server_task = moire::task::spawn(
+        async move {
+            let (server_caller, _sh) = acceptor(server_conduit)
+                .spawn_fn(move |fut| {
+                    let handle = moire::task::spawn(fut.named("server_session"));
+                    let _ = server_session_tx.send(handle);
+                })
+                .establish::<DriverCaller>(EchoHandler)
+                .await
+                .expect("server handshake failed");
+            server_caller
+        }
+        .named("server_setup"),
+    );
+
+    let (caller, _sh) = initiator(client_conduit)
+        .spawn_fn(move |fut| {
+            let handle = moire::task::spawn(fut.named("client_session"));
+            let _ = client_session_tx.send(handle);
+        })
+        .establish::<DriverCaller>(())
+        .await
+        .expect("client handshake failed");
+
+    let server_caller_guard = server_task.await.expect("server setup failed");
+    let client_session = client_session_rx.await.expect("client session handle sent");
+    let server_session = server_session_rx.await.expect("server session handle sent");
+
+    let caller_clone = caller.clone();
+    drop(caller_clone);
+
+    let response = caller
+        .call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&42_u32),
+            channels: vec![],
+            metadata: Default::default(),
+        })
+        .await
+        .expect("call should still succeed while one root caller remains");
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let echoed: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    assert_eq!(echoed, 42);
+
+    drop(caller);
+    drop(server_caller_guard);
+
+    tokio::time::timeout(std::time::Duration::from_millis(500), client_session)
+        .await
+        .expect("timed out waiting for client session to exit")
+        .expect("client session task failed");
+    tokio::time::timeout(std::time::Duration::from_millis(500), server_session)
+        .await
+        .expect("timed out waiting for server session to exit")
+        .expect("server session task failed");
+}
+
+// r[verify rpc.caller.liveness.root-internal-close]
+// r[verify rpc.caller.liveness.root-teardown-condition]
+#[tokio::test]
+async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutdown() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let (client_session_tx, client_session_rx) =
+        tokio::sync::oneshot::channel::<moire::task::JoinHandle<()>>();
+
+    struct LocalEchoAcceptor;
+
+    impl ConnectionAcceptor for LocalEchoAcceptor {
+        fn accept(
+            &self,
+            _conn_id: roam_types::ConnectionId,
+            peer_settings: &ConnectionSettings,
+            _metadata: &[roam_types::MetadataEntry],
+        ) -> Result<AcceptedConnection, Metadata<'static>> {
+            let peer_parity = peer_settings.parity;
+            Ok(AcceptedConnection {
+                settings: ConnectionSettings {
+                    parity: peer_parity.other(),
+                    max_concurrent_requests: 64,
+                },
+                metadata: vec![],
+                setup: Box::new(move |handle| {
+                    let mut driver = Driver::new(handle, EchoHandler);
+                    moire::task::spawn(
+                        async move { driver.run().await }.named("vconn_server_driver"),
+                    );
+                }),
+            })
+        }
+    }
+
+    let server_task = moire::task::spawn(
+        async move {
+            let (server_caller, _sh) = acceptor(server_conduit)
+                .on_connection(LocalEchoAcceptor)
+                .establish::<DriverCaller>(())
+                .await
+                .expect("server handshake failed");
+            server_caller
+        }
+        .named("server_setup"),
+    );
+
+    let (root_caller, session_handle) = initiator(client_conduit)
+        .spawn_fn(move |fut| {
+            let handle = moire::task::spawn(fut.named("client_session"));
+            let _ = client_session_tx.send(handle);
+        })
+        .establish::<DriverCaller>(())
+        .await
+        .expect("client handshake failed");
+
+    let server_caller_guard = server_task.await.expect("server setup failed");
+    let client_session = client_session_rx.await.expect("client session handle sent");
+
+    let vconn_handle = session_handle
+        .open_connection(
+            ConnectionSettings {
+                parity: Parity::Odd,
+                max_concurrent_requests: 64,
+            },
+            vec![],
+        )
+        .await
+        .expect("open virtual connection");
+
+    let mut vconn_driver = Driver::new(vconn_handle, ());
+    let vconn_caller = vconn_driver.caller();
+    moire::task::spawn(async move { vconn_driver.run().await }.named("vconn_client_driver"));
+
+    drop(root_caller);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(
+        !client_session.is_finished(),
+        "session should remain alive while a virtual connection is still caller-live"
+    );
+
+    let response = vconn_caller
+        .call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&7_u32),
+            channels: vec![],
+            metadata: Default::default(),
+        })
+        .await
+        .expect("virtual connection should still be usable after root caller drop");
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let echoed: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    assert_eq!(echoed, 7);
+
+    drop(vconn_caller);
+    drop(server_caller_guard);
+
+    tokio::time::timeout(std::time::Duration::from_millis(500), client_session)
+        .await
+        .expect("timed out waiting for client session to exit")
+        .expect("client session task failed");
+}
+
 // r[verify rpc.cancel]
 // r[verify rpc.cancel.channels]
 #[tokio::test]
@@ -141,10 +317,11 @@ async fn cancel_aborts_in_flight_handler() {
 
     let server_task = moire::task::spawn(
         async move {
-            let ((), _sh) = acceptor(server_conduit)
-                .establish::<()>(BlockingHandler { was_cancelled })
+            let (server_caller, _sh) = acceptor(server_conduit)
+                .establish::<DriverCaller>(BlockingHandler { was_cancelled })
                 .await
                 .expect("server handshake failed");
+            server_caller
         }
         .named("server_setup"),
     );
@@ -157,7 +334,7 @@ async fn cancel_aborts_in_flight_handler() {
         .expect("client handshake failed");
     let client_sender = caller.connection_sender().clone();
 
-    server_task.await.expect("server setup failed");
+    let _server_caller_guard = server_task.await.expect("server setup failed");
 
     // Spawn the call as a task so we can concurrently send a cancel.
     let call_task = moire::task::spawn(
@@ -230,14 +407,15 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
     let (session_tx, session_rx) = tokio::sync::oneshot::channel::<moire::task::JoinHandle<()>>();
     let server_task = moire::task::spawn(
         async move {
-            let ((), _sh) = acceptor(server_conduit)
+            let (server_caller, _sh) = acceptor(server_conduit)
                 .spawn_fn(move |fut| {
                     let handle = moire::task::spawn(fut);
                     let _ = session_tx.send(handle);
                 })
-                .establish::<()>(BlockingHandler { was_cancelled })
+                .establish::<DriverCaller>(BlockingHandler { was_cancelled })
                 .await
                 .expect("server handshake failed");
+            server_caller
         }
         .named("server_setup"),
     );
@@ -247,7 +425,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
         .await
         .expect("client handshake failed");
 
-    server_task.await.expect("server setup failed");
+    let server_caller_guard = server_task.await.expect("server setup failed");
     let server_session_task = session_rx.await.expect("session handle sent");
 
     let call_task = moire::task::spawn(
@@ -265,6 +443,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
     );
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    drop(server_caller_guard);
     server_session_task.abort();
 
     let result = tokio::time::timeout(std::time::Duration::from_millis(500), call_task)
@@ -296,12 +475,13 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
 
     let server_task = moire::task::spawn(
         async move {
-            let ((), _sh) = acceptor(server_conduit)
-                .establish::<()>(BlockingHandler {
+            let (server_caller, _sh) = acceptor(server_conduit)
+                .establish::<DriverCaller>(BlockingHandler {
                     was_cancelled: Arc::new(AtomicBool::new(false)),
                 })
                 .await
                 .expect("server handshake failed");
+            server_caller
         }
         .named("server_setup"),
     );
@@ -315,7 +495,7 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
         .await
         .expect("client handshake failed");
 
-    server_task.await.expect("server setup failed");
+    let _server_caller_guard = server_task.await.expect("server setup failed");
 
     let call_task = moire::task::spawn(
         async move {
@@ -352,14 +532,15 @@ async fn dropping_root_caller_shuts_down_session() {
 
     let server_task = moire::task::spawn(
         async move {
-            let ((), _sh) = acceptor(server_conduit)
+            let (server_caller, _sh) = acceptor(server_conduit)
                 .spawn_fn(move |fut| {
                     let handle = moire::task::spawn(fut.named("server_session"));
                     let _ = server_session_tx.send(handle);
                 })
-                .establish::<()>(EchoHandler)
+                .establish::<DriverCaller>(EchoHandler)
                 .await
                 .expect("server handshake failed");
+            server_caller
         }
         .named("server_setup"),
     );
@@ -373,7 +554,7 @@ async fn dropping_root_caller_shuts_down_session() {
         .await
         .expect("client handshake failed");
 
-    server_task.await.expect("server setup failed");
+    let _server_caller_guard = server_task.await.expect("server setup failed");
 
     let client_session = client_session_rx.await.expect("client session handle sent");
     let server_session = server_session_rx.await.expect("server session handle sent");
@@ -442,21 +623,22 @@ async fn open_virtual_connection_and_call() {
 
     let server_task = moire::task::spawn(
         async move {
-            let ((), _sh) = acceptor(server_conduit)
+            let (server_caller, _sh) = acceptor(server_conduit)
                 .on_connection(EchoAcceptor)
-                .establish::<()>(())
+                .establish::<DriverCaller>(())
                 .await
                 .expect("server handshake failed");
+            server_caller
         }
         .named("server_setup"),
     );
 
-    let ((), session_handle) = initiator(client_conduit)
-        .establish::<()>(())
+    let (_client_caller_guard, session_handle) = initiator(client_conduit)
+        .establish::<DriverCaller>(())
         .await
         .expect("client handshake failed");
 
-    server_task.await.expect("server setup failed");
+    let _server_caller_guard = server_task.await.expect("server setup failed");
 
     // Open a virtual connection.
     let vconn_handle = session_handle
@@ -501,7 +683,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
 
     let server_task = moire::task::spawn(
         async move {
-            let ((), _sh) = acceptor(server_conduit)
+            let (server_caller, _sh) = acceptor(server_conduit)
                 .root_settings(ConnectionSettings {
                     parity: Parity::Odd,
                     max_concurrent_requests: 8,
@@ -509,14 +691,15 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
                 .max_concurrent_requests(32)
                 .metadata(vec![])
                 .on_connection(EchoAcceptor)
-                .establish::<()>(())
+                .establish::<DriverCaller>(())
                 .await
                 .expect("server handshake failed");
+            server_caller
         }
         .named("server_setup"),
     );
 
-    let ((), session_handle) = initiator(client_conduit)
+    let (_client_caller_guard, session_handle) = initiator(client_conduit)
         .root_settings(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 4,
@@ -524,11 +707,11 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
         .max_concurrent_requests(64)
         .metadata(vec![])
         .parity(Parity::Even)
-        .establish::<()>(())
+        .establish::<DriverCaller>(())
         .await
         .expect("client handshake failed");
 
-    server_task.await.expect("server setup failed");
+    let _server_caller_guard = server_task.await.expect("server setup failed");
 
     let vconn_handle = session_handle
         .open_connection(
@@ -554,29 +737,30 @@ async fn acceptor_builder_customization_supports_opening_connections() {
 
     let initiator_task = moire::task::spawn(
         async move {
-            let ((), _initiator_session_handle) = initiator(initiator_conduit)
+            let (initiator_caller, _initiator_session_handle) = initiator(initiator_conduit)
                 .parity(Parity::Even)
                 .metadata(vec![])
                 .on_connection(EchoAcceptor)
-                .establish::<()>(())
+                .establish::<DriverCaller>(())
                 .await
                 .expect("initiator handshake failed");
+            initiator_caller
         }
         .named("initiator_setup"),
     );
 
-    let ((), acceptor_session_handle) = acceptor(acceptor_conduit)
+    let (_acceptor_caller_guard, acceptor_session_handle) = acceptor(acceptor_conduit)
         .root_settings(ConnectionSettings {
             parity: Parity::Even,
             max_concurrent_requests: 2,
         })
         .max_concurrent_requests(32)
         .metadata(vec![])
-        .establish::<()>(())
+        .establish::<DriverCaller>(())
         .await
         .expect("acceptor handshake failed");
 
-    initiator_task.await.expect("initiator setup failed");
+    let _initiator_caller_guard = initiator_task.await.expect("initiator setup failed");
 
     let vconn_handle = acceptor_session_handle
         .open_connection(
@@ -603,21 +787,22 @@ async fn reject_virtual_connection() {
 
     let server_task = moire::task::spawn(
         async move {
-            let ((), _sh) = acceptor(server_conduit)
+            let (server_caller, _sh) = acceptor(server_conduit)
                 .on_connection(RejectAcceptor)
-                .establish::<()>(())
+                .establish::<DriverCaller>(())
                 .await
                 .expect("server handshake failed");
+            server_caller
         }
         .named("server_setup"),
     );
 
-    let ((), session_handle) = initiator(client_conduit)
-        .establish::<()>(())
+    let (_client_caller_guard, session_handle) = initiator(client_conduit)
+        .establish::<DriverCaller>(())
         .await
         .expect("client handshake failed");
 
-    server_task.await.expect("server setup failed");
+    let _server_caller_guard = server_task.await.expect("server setup failed");
 
     // Try to open a virtual connection — should be rejected.
     let result = session_handle
@@ -643,20 +828,21 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
 
     let server_task = moire::task::spawn(
         async move {
-            let ((), _sh) = acceptor(server_conduit)
-                .establish::<()>(())
+            let (server_caller, _sh) = acceptor(server_conduit)
+                .establish::<DriverCaller>(())
                 .await
                 .expect("server handshake failed");
+            server_caller
         }
         .named("server_setup"),
     );
 
-    let ((), session_handle) = initiator(client_conduit)
-        .establish::<()>(())
+    let (_client_caller_guard, session_handle) = initiator(client_conduit)
+        .establish::<DriverCaller>(())
         .await
         .expect("client handshake failed");
 
-    server_task.await.expect("server setup failed");
+    let _server_caller_guard = server_task.await.expect("server setup failed");
 
     let result = session_handle
         .open_connection(
@@ -681,20 +867,21 @@ async fn close_root_connection_is_rejected() {
 
     let server_task = moire::task::spawn(
         async move {
-            let ((), _sh) = acceptor(server_conduit)
-                .establish::<()>(EchoHandler)
+            let (server_caller, _sh) = acceptor(server_conduit)
+                .establish::<DriverCaller>(EchoHandler)
                 .await
                 .expect("server handshake failed");
+            server_caller
         }
         .named("server_setup"),
     );
 
-    let ((), session_handle) = initiator(client_conduit)
-        .establish::<()>(())
+    let (_client_caller_guard, session_handle) = initiator(client_conduit)
+        .establish::<DriverCaller>(())
         .await
         .expect("client handshake failed");
 
-    server_task.await.expect("server setup failed");
+    let _server_caller_guard = server_task.await.expect("server setup failed");
 
     let result = session_handle
         .close_connection(roam_types::ConnectionId::ROOT, vec![])
@@ -712,20 +899,21 @@ async fn close_unknown_virtual_connection_is_rejected() {
 
     let server_task = moire::task::spawn(
         async move {
-            let ((), _sh) = acceptor(server_conduit)
-                .establish::<()>(EchoHandler)
+            let (server_caller, _sh) = acceptor(server_conduit)
+                .establish::<DriverCaller>(EchoHandler)
                 .await
                 .expect("server handshake failed");
+            server_caller
         }
         .named("server_setup"),
     );
 
-    let ((), session_handle) = initiator(client_conduit)
-        .establish::<()>(())
+    let (_client_caller_guard, session_handle) = initiator(client_conduit)
+        .establish::<DriverCaller>(())
         .await
         .expect("client handshake failed");
 
-    server_task.await.expect("server setup failed");
+    let _server_caller_guard = server_task.await.expect("server setup failed");
 
     let missing_conn_id = roam_types::ConnectionId(1);
     let result = session_handle
@@ -739,6 +927,7 @@ async fn close_unknown_virtual_connection_is_rejected() {
 
 // r[verify connection.close]
 // r[verify connection.close.semantics]
+// r[verify rpc.caller.liveness.last-drop-closes-connection]
 #[tokio::test]
 async fn close_virtual_connection() {
     let (client_conduit, server_conduit) = message_conduit_pair();
@@ -783,23 +972,24 @@ async fn close_virtual_connection() {
 
     let server_task = moire::task::spawn(
         async move {
-            let ((), _sh) = acceptor(server_conduit)
+            let (server_caller, _sh) = acceptor(server_conduit)
                 .on_connection(TrackingAcceptor {
                     exited: server_driver_exited,
                 })
-                .establish::<()>(())
+                .establish::<DriverCaller>(())
                 .await
                 .expect("server handshake failed");
+            server_caller
         }
         .named("server_setup"),
     );
 
-    let ((), session_handle) = initiator(client_conduit)
-        .establish::<()>(())
+    let (_client_caller_guard, session_handle) = initiator(client_conduit)
+        .establish::<DriverCaller>(())
         .await
         .expect("client handshake failed");
 
-    server_task.await.expect("server setup failed");
+    let _server_caller_guard = server_task.await.expect("server setup failed");
 
     // Open a virtual connection.
     let vconn_handle = session_handle
@@ -862,6 +1052,114 @@ async fn close_virtual_connection() {
     );
 }
 
+// r[verify rpc.caller.liveness.last-drop-closes-connection]
+#[tokio::test]
+async fn dropping_last_virtual_caller_closes_virtual_connection() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let server_driver_exited = Arc::new(AtomicBool::new(false));
+    let server_driver_exited_check = server_driver_exited.clone();
+
+    struct TrackingAcceptor {
+        exited: Arc<AtomicBool>,
+    }
+
+    impl ConnectionAcceptor for TrackingAcceptor {
+        fn accept(
+            &self,
+            _conn_id: roam_types::ConnectionId,
+            peer_settings: &ConnectionSettings,
+            _metadata: &[roam_types::MetadataEntry],
+        ) -> Result<AcceptedConnection, Metadata<'static>> {
+            let peer_parity = peer_settings.parity;
+            let exited = self.exited.clone();
+            Ok(AcceptedConnection {
+                settings: ConnectionSettings {
+                    parity: peer_parity.other(),
+                    max_concurrent_requests: 64,
+                },
+                metadata: vec![],
+                setup: Box::new(move |handle| {
+                    let mut driver = Driver::new(handle, EchoHandler);
+                    moire::task::spawn(
+                        async move {
+                            driver.run().await;
+                            exited.store(true, Ordering::SeqCst);
+                        }
+                        .named("vconn_server_driver"),
+                    );
+                }),
+            })
+        }
+    }
+
+    let server_task = moire::task::spawn(
+        async move {
+            let (server_caller, _sh) = acceptor(server_conduit)
+                .on_connection(TrackingAcceptor {
+                    exited: server_driver_exited,
+                })
+                .establish::<DriverCaller>(())
+                .await
+                .expect("server handshake failed");
+            server_caller
+        }
+        .named("server_setup"),
+    );
+
+    let (_client_caller_guard, session_handle) = initiator(client_conduit)
+        .establish::<DriverCaller>(())
+        .await
+        .expect("client handshake failed");
+
+    let _server_caller_guard = server_task.await.expect("server setup failed");
+
+    let vconn_handle = session_handle
+        .open_connection(
+            ConnectionSettings {
+                parity: Parity::Odd,
+                max_concurrent_requests: 64,
+            },
+            vec![],
+        )
+        .await
+        .expect("open virtual connection");
+
+    let mut vconn_driver = Driver::new(vconn_handle, ());
+    let vconn_caller = vconn_driver.caller();
+    moire::task::spawn(async move { vconn_driver.run().await }.named("vconn_client_driver"));
+
+    let response = vconn_caller
+        .call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&11_u32),
+            channels: vec![],
+            metadata: Default::default(),
+        })
+        .await
+        .expect("call should succeed before dropping virtual caller");
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let echoed: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    assert_eq!(echoed, 11);
+
+    drop(vconn_caller);
+
+    for _ in 0..20 {
+        if server_driver_exited_check.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    assert!(
+        server_driver_exited_check.load(Ordering::SeqCst),
+        "server-side virtual driver should exit after last virtual caller drops"
+    );
+}
+
 // r[verify connection.close.semantics]
 // r[verify rpc.channel.close]
 #[tokio::test]
@@ -870,21 +1168,22 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
 
     let server_task = moire::task::spawn(
         async move {
-            let ((), _sh) = acceptor(server_conduit)
+            let (server_caller, _sh) = acceptor(server_conduit)
                 .on_connection(EchoAcceptor)
-                .establish::<()>(())
+                .establish::<DriverCaller>(())
                 .await
                 .expect("server handshake failed");
+            server_caller
         }
         .named("server_setup"),
     );
 
-    let ((), session_handle) = initiator(client_conduit)
-        .establish::<()>(())
+    let (_client_caller_guard, session_handle) = initiator(client_conduit)
+        .establish::<DriverCaller>(())
         .await
         .expect("client handshake failed");
 
-    server_task.await.expect("server setup failed");
+    let _server_caller_guard = server_task.await.expect("server setup failed");
 
     let vconn_handle = session_handle
         .open_connection(
@@ -926,10 +1225,11 @@ async fn echo_call_across_memory_link() {
     // settings before either can proceed.
     let server_task = moire::task::spawn(
         async move {
-            let ((), _sh) = acceptor(server_conduit)
-                .establish::<()>(EchoHandler)
+            let (server_caller, _sh) = acceptor(server_conduit)
+                .establish::<DriverCaller>(EchoHandler)
                 .await
                 .expect("server handshake failed");
+            server_caller
         }
         .named("server_setup"),
     );
@@ -940,7 +1240,7 @@ async fn echo_call_across_memory_link() {
         .await
         .expect("client handshake failed");
 
-    server_task.await.expect("server setup failed");
+    let _server_caller_guard = server_task.await.expect("server setup failed");
 
     // Make a call: serialize a u32 as the args payload.
     let args_value: u32 = 42;
@@ -1146,7 +1446,7 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
                 .establish::<DriverCaller>(EchoHandler)
                 .await
                 .expect("server handshake failed");
-            server_caller.connection_sender().clone()
+            (server_caller.connection_sender().clone(), server_caller)
         }
         .named("server_setup"),
     );
@@ -1156,7 +1456,7 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
         .await
         .expect("client handshake failed");
 
-    let server_sender = server_task.await.expect("server setup failed");
+    let (server_sender, _server_caller_guard) = server_task.await.expect("server setup failed");
 
     server_sender
         .send(crate::session::ConnectionMessage::Request(RequestMessage {

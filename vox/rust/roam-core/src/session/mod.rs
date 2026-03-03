@@ -70,6 +70,28 @@ struct CloseRequest {
     result_tx: moire::sync::oneshot::Sender<Result<(), SessionError>>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum DropControlRequest {
+    Shutdown,
+    Close(ConnectionId),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn send_drop_control(
+    tx: &mpsc::UnboundedSender<DropControlRequest>,
+    req: DropControlRequest,
+) -> Result<(), ()> {
+    tx.send(req).map_err(|_| ())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn send_drop_control(
+    tx: &mpsc::UnboundedSender<DropControlRequest>,
+    req: DropControlRequest,
+) -> Result<(), ()> {
+    tx.try_send(req).map_err(|_| ())
+}
+
 // ---------------------------------------------------------------------------
 // SessionHandle — cloneable handle for opening/closing virtual connections
 // ---------------------------------------------------------------------------
@@ -84,7 +106,7 @@ struct CloseRequest {
 pub struct SessionHandle {
     open_tx: mpsc::Sender<OpenRequest>,
     close_tx: mpsc::Sender<CloseRequest>,
-    shutdown_tx: mpsc::UnboundedSender<()>,
+    control_tx: mpsc::UnboundedSender<DropControlRequest>,
 }
 
 impl SessionHandle {
@@ -140,8 +162,7 @@ impl SessionHandle {
 
     /// Request shutdown of the entire session (root + all virtual connections).
     pub fn shutdown(&self) -> Result<(), SessionError> {
-        self.shutdown_tx
-            .send(())
+        send_drop_control(&self.control_tx, DropControlRequest::Shutdown)
             .map_err(|_| SessionError::Protocol("session closed".into()))
     }
 }
@@ -169,6 +190,8 @@ pub struct Session<C: Conduit> {
 
     /// Connection state (active, pending inbound, pending outbound).
     conns: BTreeMap<ConnectionId, ConnectionSlot>,
+    /// Whether the root connection was internally closed because all root callers dropped.
+    root_closed_internal: bool,
 
     /// Allocator for outbound virtual connection IDs (uses session parity).
     conn_ids: IdAllocator<ConnectionId>,
@@ -182,8 +205,9 @@ pub struct Session<C: Conduit> {
     /// Receiver for close requests from SessionHandle.
     close_rx: mpsc::Receiver<CloseRequest>,
 
-    /// Receiver for shutdown requests from SessionHandle / root caller drop.
-    shutdown_rx: mpsc::UnboundedReceiver<()>,
+    /// Sender/receiver for drop-driven session/connection control requests.
+    control_tx: mpsc::UnboundedSender<DropControlRequest>,
+    control_rx: mpsc::UnboundedReceiver<DropControlRequest>,
 
     /// Optional proactive keepalive runtime config for connection ID 0.
     keepalive: Option<SessionKeepaliveConfig>,
@@ -281,7 +305,7 @@ pub struct ConnectionHandle {
     pub(crate) sender: ConnectionSender,
     pub(crate) rx: mpsc::Receiver<SelfRef<ConnectionMessage<'static>>>,
     pub(crate) failures_rx: mpsc::UnboundedReceiver<(RequestId, &'static str)>,
-    pub(crate) shutdown_tx: Option<mpsc::UnboundedSender<()>>,
+    pub(crate) control_tx: Option<mpsc::UnboundedSender<DropControlRequest>>,
     /// The parity this side should use for allocating request/channel IDs.
     pub parity: Parity,
 }
@@ -339,7 +363,8 @@ where
         on_connection: Option<Box<dyn ConnectionAcceptor>>,
         open_rx: mpsc::Receiver<OpenRequest>,
         close_rx: mpsc::Receiver<CloseRequest>,
-        shutdown_rx: mpsc::UnboundedReceiver<()>,
+        control_tx: mpsc::UnboundedSender<DropControlRequest>,
+        control_rx: mpsc::UnboundedReceiver<DropControlRequest>,
         keepalive: Option<SessionKeepaliveConfig>,
     ) -> Self {
         let sess_core = Arc::new(SessionCore { tx: Box::new(tx) });
@@ -349,11 +374,13 @@ where
             parity: Parity::Odd,          // overwritten in establish_as_*
             sess_core,
             conns: BTreeMap::new(),
+            root_closed_internal: false,
             conn_ids: IdAllocator::new(Parity::Odd), // overwritten in establish_as_*
             on_connection,
             open_rx,
             close_rx,
-            shutdown_rx,
+            control_tx,
+            control_rx,
             keepalive,
         }
     }
@@ -511,7 +538,7 @@ where
             sender,
             rx: conn_rx,
             failures_rx,
-            shutdown_tx: None,
+            control_tx: Some(self.control_tx.clone()),
             parity,
         }
     }
@@ -549,9 +576,10 @@ where
                 Some(req) = self.close_rx.recv() => {
                     self.handle_close_request(req).await;
                 }
-                Some(()) = self.shutdown_rx.recv() => {
-                    debug!("session shutdown requested");
-                    break;
+                Some(req) = self.control_rx.recv() => {
+                    if !self.handle_drop_control_request(req).await {
+                        break;
+                    }
                 }
                 _ = async {
                     if let Some(interval) = keepalive_tick.as_mut() {
@@ -588,6 +616,7 @@ where
                 // to return None, which exits its run loop. All in-flight handlers
                 // are dropped, triggering DriverReplySink::drop → Cancelled responses.
                 self.conns.remove(&conn_id);
+                self.maybe_request_shutdown_after_root_closed();
             }
             MessagePayload::ConnectionOpen(open) => {
                 self.handle_inbound_open(conn_id, open).await;
@@ -605,6 +634,7 @@ where
                 };
                 if conn_tx.send(r.map(ConnectionMessage::Request)).await.is_err() {
                     self.conns.remove(&conn_id);
+                    self.maybe_request_shutdown_after_root_closed();
                 }
             }
             MessagePayload::ChannelMessage(c) => {
@@ -614,6 +644,7 @@ where
                 };
                 if conn_tx.send(c.map(ConnectionMessage::Channel)).await.is_err() {
                     self.conns.remove(&conn_id);
+                    self.maybe_request_shutdown_after_root_closed();
                 }
             }
             MessagePayload::Ping(ping) => {
@@ -918,6 +949,50 @@ where
         }
 
         let _ = req.result_tx.send(Ok(()));
+        self.maybe_request_shutdown_after_root_closed();
+    }
+
+    async fn handle_drop_control_request(&mut self, req: DropControlRequest) -> bool {
+        match req {
+            DropControlRequest::Shutdown => {
+                debug!("session shutdown requested");
+                false
+            }
+            DropControlRequest::Close(conn_id) => {
+                // r[impl rpc.caller.liveness.last-drop-closes-connection]
+                if conn_id.is_root() {
+                    // r[impl rpc.caller.liveness.root-internal-close]
+                    debug!("root callers dropped; internally closing root connection");
+                    self.root_closed_internal = true;
+                    // r[impl rpc.caller.liveness.root-teardown-condition]
+                    return self.has_virtual_connections();
+                }
+
+                if self.conns.remove(&conn_id).is_some() {
+                    let _ = self
+                        .sess_core
+                        .send(Message {
+                            connection_id: conn_id,
+                            payload: MessagePayload::ConnectionClose(ConnectionClose {
+                                metadata: vec![],
+                            }),
+                        })
+                        .await;
+                }
+
+                !self.root_closed_internal || self.has_virtual_connections()
+            }
+        }
+    }
+
+    fn has_virtual_connections(&self) -> bool {
+        self.conns.keys().any(|id| !id.is_root())
+    }
+
+    fn maybe_request_shutdown_after_root_closed(&self) {
+        if self.root_closed_internal && !self.has_virtual_connections() {
+            let _ = send_drop_control(&self.control_tx, DropControlRequest::Shutdown);
+        }
     }
 }
 
@@ -981,8 +1056,10 @@ mod tests {
         let (tx, rx) = conduit.split();
         let (_open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open.test", 4);
         let (_close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close.test", 4);
-        let (_shutdown_tx, shutdown_rx) = mpsc::unbounded_channel("session.shutdown.test");
-        Session::pre_handshake(tx, rx, None, open_rx, close_rx, shutdown_rx, None)
+        let (control_tx, control_rx) = mpsc::unbounded_channel("session.control.test");
+        Session::pre_handshake(
+            tx, rx, None, open_rx, close_rx, control_tx, control_rx, None,
+        )
     }
 
     fn accept_ref() -> SelfRef<ConnectionAccept<'static>> {

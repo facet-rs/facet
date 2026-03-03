@@ -6,10 +6,7 @@
 /// (`Driver`, `DriverReplySink`, `DriverCaller`) but without channel support.
 use std::{
     collections::BTreeMap,
-    sync::{
-        Arc, Weak,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Weak},
 };
 
 use moire::sync::{SyncMutex, mpsc};
@@ -18,7 +15,7 @@ use roam_types::{
     RequestMessage, RequestResponse, RoamError, SelfRef,
 };
 
-use crate::session::{ConnectionHandle, ConnectionMessage, ConnectionSender};
+use crate::session::{ConnectionHandle, ConnectionMessage, ConnectionSender, DropControlRequest};
 
 type ResponseSlot = moire::sync::oneshot::Sender<SelfRef<RequestMessage<'static>>>;
 
@@ -27,22 +24,14 @@ struct DriverShared {
     request_ids: SyncMutex<IdAllocator<RequestId>>,
 }
 
-struct SessionShutdownOnDrop {
-    shutdown_tx: mpsc::UnboundedSender<()>,
-    armed: AtomicBool,
+struct CallerDropGuard {
+    control_tx: mpsc::UnboundedSender<DropControlRequest>,
+    request: DropControlRequest,
 }
 
-impl SessionShutdownOnDrop {
-    fn disarm(&self) {
-        self.armed.store(false, Ordering::SeqCst);
-    }
-}
-
-impl Drop for SessionShutdownOnDrop {
+impl Drop for CallerDropGuard {
     fn drop(&mut self) {
-        if self.armed.load(Ordering::SeqCst) {
-            let _ = self.shutdown_tx.send(());
-        }
+        let _ = self.control_tx.try_send(self.request);
     }
 }
 
@@ -77,7 +66,7 @@ impl Drop for DriverReplySink {
 pub struct DriverCaller {
     sender: ConnectionSender,
     shared: Arc<DriverShared>,
-    shutdown_on_drop: Option<Arc<SessionShutdownOnDrop>>,
+    _drop_guard: Option<Arc<CallerDropGuard>>,
 }
 
 impl Caller for DriverCaller {
@@ -115,12 +104,7 @@ impl Caller for DriverCaller {
 }
 
 impl From<DriverCaller> for () {
-    fn from(mut caller: DriverCaller) {
-        if let Some(guard) = caller.shutdown_on_drop.take() {
-            guard.disarm();
-        }
-        caller.shutdown_on_drop = None;
-    }
+    fn from(_: DriverCaller) {}
 }
 
 /// Wasm-only driver. No channel support.
@@ -131,19 +115,22 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     handler: Arc<H>,
     shared: Arc<DriverShared>,
     in_flight_handlers: BTreeMap<RequestId, moire::task::JoinHandle<()>>,
-    shutdown_seed: Option<mpsc::UnboundedSender<()>>,
-    shutdown_on_drop: SyncMutex<Option<Weak<SessionShutdownOnDrop>>>,
+    drop_control_seed: Option<mpsc::UnboundedSender<DropControlRequest>>,
+    drop_control_request: DropControlRequest,
+    drop_guard: SyncMutex<Option<Weak<CallerDropGuard>>>,
 }
 
 impl<H: Handler<DriverReplySink>> Driver<H> {
     pub fn new(handle: ConnectionHandle, handler: H) -> Self {
+        let conn_id = handle.connection_id();
         let ConnectionHandle {
             sender,
             rx,
             failures_rx,
-            shutdown_tx,
+            control_tx,
             parity,
         } = handle;
+        let drop_control_request = DropControlRequest::Close(conn_id);
         Self {
             sender,
             rx,
@@ -154,20 +141,25 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 request_ids: SyncMutex::new("driver.request_ids", IdAllocator::new(parity)),
             }),
             in_flight_handlers: BTreeMap::new(),
-            shutdown_seed: shutdown_tx,
-            shutdown_on_drop: SyncMutex::new("driver.shutdown_on_drop", None),
+            drop_control_seed: control_tx,
+            drop_control_request,
+            drop_guard: SyncMutex::new("driver.drop_guard", None),
         }
     }
 
+    // r[impl rpc.caller.liveness.refcounted]
+    // r[impl rpc.caller.liveness.last-drop-closes-connection]
+    // r[impl rpc.caller.liveness.root-internal-close]
+    // r[impl rpc.caller.liveness.root-teardown-condition]
     pub fn caller(&self) -> DriverCaller {
-        let shutdown_on_drop = if let Some(seed) = &self.shutdown_seed {
-            let mut guard = self.shutdown_on_drop.lock();
+        let drop_guard = if let Some(seed) = &self.drop_control_seed {
+            let mut guard = self.drop_guard.lock();
             if let Some(existing) = guard.as_ref().and_then(Weak::upgrade) {
                 Some(existing)
             } else {
-                let arc = Arc::new(SessionShutdownOnDrop {
-                    shutdown_tx: seed.clone(),
-                    armed: AtomicBool::new(true),
+                let arc = Arc::new(CallerDropGuard {
+                    control_tx: seed.clone(),
+                    request: self.drop_control_request,
                 });
                 *guard = Some(Arc::downgrade(&arc));
                 Some(arc)
@@ -178,7 +170,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         DriverCaller {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
-            shutdown_on_drop,
+            _drop_guard: drop_guard,
         }
     }
 

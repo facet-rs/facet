@@ -86,6 +86,31 @@ If you're coming from roam v6 APIs, see the
 > signature, and takes care of serialization and response handling internally.
 > Successful responses include both return data and response metadata.
 
+> r[rpc.caller.liveness.refcounted]
+>
+> Runtime caller handles for a given connection MUST share a refcounted liveness
+> guard. Cloning a caller increments that refcount; dropping a caller decrements
+> it. A connection is considered caller-live while this refcount is greater than
+> zero.
+
+> r[rpc.caller.liveness.last-drop-closes-connection]
+>
+> When the caller liveness refcount for a non-root connection reaches zero, the
+> runtime MUST close that connection as if the local peer requested a graceful
+> close. This close operation MUST be automatic and MUST NOT require the user to
+> pass the `ConnectionId` manually.
+
+> r[rpc.caller.liveness.root-internal-close]
+>
+> When the caller liveness refcount for the root connection reaches zero, the
+> runtime MUST mark the root connection as internally closed. It MUST NOT send a
+> protocol `CloseConnection` message for connection ID 0.
+
+> r[rpc.caller.liveness.root-teardown-condition]
+>
+> Once the root is internally closed, the session MUST be torn down when and only
+> when there are no live virtual connections left.
+
 > r[rpc.session-setup]
 >
 > When establishing a session, the user provides a handler for the root

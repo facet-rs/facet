@@ -1,10 +1,7 @@
 use std::{
     collections::BTreeMap,
     pin::Pin,
-    sync::{
-        Arc, Weak,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Weak},
 };
 
 use moire::sync::SyncMutex;
@@ -18,7 +15,7 @@ use roam_types::{
     TxError,
 };
 
-use crate::session::{ConnectionHandle, ConnectionMessage, ConnectionSender};
+use crate::session::{ConnectionHandle, ConnectionMessage, ConnectionSender, DropControlRequest};
 use moire::sync::mpsc;
 
 type ResponseSlot = moire::sync::oneshot::Sender<SelfRef<RequestMessage<'static>>>;
@@ -43,22 +40,14 @@ struct DriverShared {
     channel_credits: SyncMutex<BTreeMap<ChannelId, Arc<Semaphore>>>,
 }
 
-struct SessionShutdownOnDrop {
-    shutdown_tx: mpsc::UnboundedSender<()>,
-    armed: AtomicBool,
+struct CallerDropGuard {
+    control_tx: mpsc::UnboundedSender<DropControlRequest>,
+    request: DropControlRequest,
 }
 
-impl SessionShutdownOnDrop {
-    fn disarm(&self) {
-        self.armed.store(false, Ordering::SeqCst);
-    }
-}
-
-impl Drop for SessionShutdownOnDrop {
+impl Drop for CallerDropGuard {
     fn drop(&mut self) {
-        if self.armed.load(Ordering::SeqCst) {
-            let _ = self.shutdown_tx.send(());
-        }
+        let _ = self.control_tx.send(self.request);
     }
 }
 
@@ -71,7 +60,7 @@ impl Drop for SessionShutdownOnDrop {
 pub struct DriverReplySink {
     sender: Option<ConnectionSender>,
     request_id: RequestId,
-    binder: DriverCaller,
+    binder: DriverChannelBinder,
 }
 
 impl ReplySink for DriverReplySink {
@@ -164,11 +153,100 @@ impl ChannelSink for DriverChannelSink {
 /// Cloneable handle for making outgoing calls through a connection.
 ///
 impl From<DriverCaller> for () {
-    fn from(mut caller: DriverCaller) {
-        if let Some(guard) = caller.shutdown_on_drop.take() {
-            guard.disarm();
+    fn from(_: DriverCaller) {}
+}
+
+#[derive(Clone)]
+struct DriverChannelBinder {
+    sender: ConnectionSender,
+    shared: Arc<DriverShared>,
+    local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
+}
+
+impl DriverChannelBinder {
+    fn create_tx_channel(
+        &self,
+        initial_credit: u32,
+    ) -> (ChannelId, Arc<CreditSink<DriverChannelSink>>) {
+        let channel_id = self.shared.channel_ids.lock().alloc();
+        let inner = DriverChannelSink {
+            sender: self.sender.clone(),
+            channel_id,
+            local_control_tx: self.local_control_tx.clone(),
+        };
+        let sink = Arc::new(CreditSink::new(inner, initial_credit));
+        self.shared
+            .channel_credits
+            .lock()
+            .insert(channel_id, Arc::clone(sink.credit()));
+        (channel_id, sink)
+    }
+
+    fn register_rx_channel(
+        &self,
+        channel_id: ChannelId,
+    ) -> tokio::sync::mpsc::Receiver<IncomingChannelMessage> {
+        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let mut terminal_buffered = false;
+        if let Some(buffered) = self.shared.channel_buffers.lock().remove(&channel_id) {
+            for msg in buffered {
+                let is_terminal = matches!(
+                    msg,
+                    IncomingChannelMessage::Close(_) | IncomingChannelMessage::Reset(_)
+                );
+                let _ = tx.try_send(msg);
+                if is_terminal {
+                    terminal_buffered = true;
+                    break;
+                }
+            }
         }
-        caller.shutdown_on_drop = None;
+        if terminal_buffered {
+            self.shared.channel_credits.lock().remove(&channel_id);
+            return rx;
+        }
+
+        self.shared.channel_senders.lock().insert(channel_id, tx);
+        rx
+    }
+}
+
+impl ChannelBinder for DriverChannelBinder {
+    fn create_tx(&self, initial_credit: u32) -> (ChannelId, Arc<dyn ChannelSink>) {
+        let (id, sink) = self.create_tx_channel(initial_credit);
+        (id, sink as Arc<dyn ChannelSink>)
+    }
+
+    fn create_rx(
+        &self,
+    ) -> (
+        ChannelId,
+        tokio::sync::mpsc::Receiver<IncomingChannelMessage>,
+    ) {
+        let channel_id = self.shared.channel_ids.lock().alloc();
+        let rx = self.register_rx_channel(channel_id);
+        (channel_id, rx)
+    }
+
+    fn bind_tx(&self, channel_id: ChannelId, initial_credit: u32) -> Arc<dyn ChannelSink> {
+        let inner = DriverChannelSink {
+            sender: self.sender.clone(),
+            channel_id,
+            local_control_tx: self.local_control_tx.clone(),
+        };
+        let sink = Arc::new(CreditSink::new(inner, initial_credit));
+        self.shared
+            .channel_credits
+            .lock()
+            .insert(channel_id, Arc::clone(sink.credit()));
+        sink
+    }
+
+    fn register_rx(
+        &self,
+        channel_id: ChannelId,
+    ) -> tokio::sync::mpsc::Receiver<IncomingChannelMessage> {
+        self.register_rx_channel(channel_id)
     }
 }
 
@@ -179,7 +257,7 @@ pub struct DriverCaller {
     sender: ConnectionSender,
     shared: Arc<DriverShared>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
-    shutdown_on_drop: Option<Arc<SessionShutdownOnDrop>>,
+    _drop_guard: Option<Arc<CallerDropGuard>>,
 }
 
 impl DriverCaller {
@@ -358,8 +436,9 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     /// Used to abort handlers on cancel.
     in_flight_handlers: BTreeMap<RequestId, moire::task::JoinHandle<()>>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
-    shutdown_seed: Option<mpsc::UnboundedSender<()>>,
-    shutdown_on_drop: SyncMutex<Option<Weak<SessionShutdownOnDrop>>>,
+    drop_control_seed: Option<mpsc::UnboundedSender<DropControlRequest>>,
+    drop_control_request: DropControlRequest,
+    drop_guard: SyncMutex<Option<Weak<CallerDropGuard>>>,
 }
 
 enum DriverLocalControl {
@@ -368,13 +447,15 @@ enum DriverLocalControl {
 
 impl<H: Handler<DriverReplySink>> Driver<H> {
     pub fn new(handle: ConnectionHandle, handler: H) -> Self {
+        let conn_id = handle.connection_id();
         let ConnectionHandle {
             sender,
             rx,
             failures_rx,
-            shutdown_tx,
+            control_tx,
             parity,
         } = handle;
+        let drop_control_request = DropControlRequest::Close(conn_id);
         let (local_control_tx, local_control_rx) = mpsc::unbounded_channel("driver.local_control");
         Self {
             sender,
@@ -392,21 +473,26 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             }),
             in_flight_handlers: BTreeMap::new(),
             local_control_tx,
-            shutdown_seed: shutdown_tx,
-            shutdown_on_drop: SyncMutex::new("driver.shutdown_on_drop", None),
+            drop_control_seed: control_tx,
+            drop_control_request,
+            drop_guard: SyncMutex::new("driver.drop_guard", None),
         }
     }
 
     /// Get a cloneable caller handle for making outgoing calls.
+    // r[impl rpc.caller.liveness.refcounted]
+    // r[impl rpc.caller.liveness.last-drop-closes-connection]
+    // r[impl rpc.caller.liveness.root-internal-close]
+    // r[impl rpc.caller.liveness.root-teardown-condition]
     pub fn caller(&self) -> DriverCaller {
-        let shutdown_on_drop = if let Some(seed) = &self.shutdown_seed {
-            let mut guard = self.shutdown_on_drop.lock();
+        let drop_guard = if let Some(seed) = &self.drop_control_seed {
+            let mut guard = self.drop_guard.lock();
             if let Some(existing) = guard.as_ref().and_then(Weak::upgrade) {
                 Some(existing)
             } else {
-                let arc = Arc::new(SessionShutdownOnDrop {
-                    shutdown_tx: seed.clone(),
-                    armed: AtomicBool::new(true),
+                let arc = Arc::new(CallerDropGuard {
+                    control_tx: seed.clone(),
+                    request: self.drop_control_request,
                 });
                 *guard = Some(Arc::downgrade(&arc));
                 Some(arc)
@@ -418,16 +504,15 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
             local_control_tx: self.local_control_tx.clone(),
-            shutdown_on_drop,
+            _drop_guard: drop_guard,
         }
     }
 
-    fn internal_caller(&self) -> DriverCaller {
-        DriverCaller {
+    fn internal_binder(&self) -> DriverChannelBinder {
+        DriverChannelBinder {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
             local_control_tx: self.local_control_tx.clone(),
-            shutdown_on_drop: None,
         }
     }
 
@@ -523,7 +608,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             let reply = DriverReplySink {
                 sender: Some(self.sender.clone()),
                 request_id: req_id,
-                binder: self.internal_caller(),
+                binder: self.internal_binder(),
             };
             let call = msg.map(|m| match m.body {
                 RequestBody::Call(c) => c,

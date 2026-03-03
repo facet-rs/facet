@@ -134,24 +134,24 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
         let (tx, rx) = self.conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
-        let (shutdown_tx, shutdown_rx) = mpsc::unbounded_channel("session.shutdown");
+        let (control_tx, control_rx) = mpsc::unbounded_channel("session.control");
         let mut session: Session<C> = Session::pre_handshake(
             tx,
             rx,
             self.on_connection,
             open_rx,
             close_rx,
-            shutdown_rx,
+            control_tx.clone(),
+            control_rx,
             self.keepalive,
         );
-        let mut handle = session
+        let handle = session
             .establish_as_initiator(self.root_settings, self.metadata)
             .await?;
-        handle.shutdown_tx = Some(shutdown_tx.clone());
         let session_handle = SessionHandle {
             open_tx,
             close_tx,
-            shutdown_tx,
+            control_tx,
         };
         let mut driver = Driver::new(handle, handler);
         let client = Client::from(driver.caller());
@@ -243,24 +243,24 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         let (tx, rx) = self.conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
-        let (shutdown_tx, shutdown_rx) = mpsc::unbounded_channel("session.shutdown");
+        let (control_tx, control_rx) = mpsc::unbounded_channel("session.control");
         let mut session: Session<C> = Session::pre_handshake(
             tx,
             rx,
             self.on_connection,
             open_rx,
             close_rx,
-            shutdown_rx,
+            control_tx.clone(),
+            control_rx,
             self.keepalive,
         );
-        let mut handle = session
+        let handle = session
             .establish_as_acceptor(self.root_settings, self.metadata)
             .await?;
-        handle.shutdown_tx = Some(shutdown_tx.clone());
         let session_handle = SessionHandle {
             open_tx,
             close_tx,
-            shutdown_tx,
+            control_tx,
         };
         let mut driver = Driver::new(handle, handler);
         let client = Client::from(driver.caller());

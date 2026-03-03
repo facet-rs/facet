@@ -132,28 +132,34 @@ async fn run_demo() -> Result<()> {
         .wrap_err("binding TCP listener")?;
     let addr = listener.local_addr().wrap_err("reading listener addr")?;
     println!("[demo] listening on {addr}");
+    let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
 
     let server_task = tokio::spawn(async move {
         println!("[server] waiting for client");
         let (socket, _) = listener.accept().await.expect("accept");
         println!("[server] client connected; establishing root session");
-        let _ = roam::acceptor(StreamLink::tcp(socket))
+        let (server_root_guard, _) = roam::acceptor(StreamLink::tcp(socket))
             .on_connection(CounterLabAcceptor)
-            .establish::<()>(())
+            .establish::<roam::DriverCaller>(())
             .await
             .expect("server establish");
+        let _ = server_ready_tx.send(());
+        let _server_root_guard = server_root_guard;
+        std::future::pending::<()>().await;
     });
 
     println!("[client] connecting");
     let socket = tokio::net::TcpStream::connect(addr)
         .await
         .wrap_err("connecting client socket")?;
-    let ((), session_handle) = roam::initiator(StreamLink::tcp(socket))
-        .establish::<()>(())
+    let (_root_caller_guard, session_handle) = roam::initiator(StreamLink::tcp(socket))
+        .establish::<roam::DriverCaller>(())
         .await
         .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;
     println!("[client] root session established");
-    server_task.await.wrap_err("joining server_task")?;
+    server_ready_rx
+        .await
+        .map_err(|_| eyre!("server task ended before signaling readiness"))?;
 
     let settings = ConnectionSettings {
         parity: Parity::Odd,
@@ -229,6 +235,7 @@ async fn run_demo() -> Result<()> {
 
     counter_driver_task.abort();
     string_driver_task.abort();
+    server_task.abort();
     println!("[demo] virtual_connections: complete");
 
     Ok(())

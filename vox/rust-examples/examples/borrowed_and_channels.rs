@@ -67,10 +67,12 @@ async fn run_demo() -> Result<()> {
         println!("[server] waiting for client");
         let (socket, _) = listener.accept().await.expect("accept");
         println!("[server] client connected; establishing session");
-        let ((), _) = roam::acceptor(StreamLink::tcp(socket))
-            .establish::<()>(WordLabDispatcher::new(WordLabService))
+        let (server_caller_guard, _) = roam::acceptor(StreamLink::tcp(socket))
+            .establish::<WordLabClient>(WordLabDispatcher::new(WordLabService))
             .await
             .expect("server establish");
+        let _server_caller_guard = server_caller_guard;
+        std::future::pending::<()>().await;
     });
 
     println!("[client] connecting");

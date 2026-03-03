@@ -68,10 +68,11 @@ async fn echo_call_across_shm_link() {
 
     let server_task = moire::task::spawn(
         async move {
-            let ((), _sh) = acceptor(server_conduit)
-                .establish::<()>(EchoHandler)
+            let (server_caller, _sh) = acceptor(server_conduit)
+                .establish::<DriverCaller>(EchoHandler)
                 .await
                 .expect("server handshake failed");
+            server_caller
         }
         .named("server_setup"),
     );
@@ -81,7 +82,7 @@ async fn echo_call_across_shm_link() {
         .await
         .expect("client handshake failed");
 
-    server_task.await.expect("server setup failed");
+    let _server_caller_guard = server_task.await.expect("server setup failed");
 
     let args_value: u32 = 42;
     let response = caller
@@ -128,10 +129,11 @@ async fn echo_blob_stress_over_shm_link() {
 
     let server_task = moire::task::spawn(
         async move {
-            let ((), _sh) = acceptor(server_conduit)
-                .establish::<()>(BlobEchoHandler)
+            let (server_caller, _sh) = acceptor(server_conduit)
+                .establish::<DriverCaller>(BlobEchoHandler)
                 .await
                 .expect("server handshake failed");
+            server_caller
         }
         .named("server_setup"),
     );
@@ -141,7 +143,7 @@ async fn echo_blob_stress_over_shm_link() {
         .await
         .expect("client handshake failed");
 
-    server_task.await.expect("server setup failed");
+    let _server_caller_guard = server_task.await.expect("server setup failed");
 
     // Alternate tiny and large payloads to exercise both inline and slot-ref SHM paths.
     for i in 0..200 {
