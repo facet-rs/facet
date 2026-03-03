@@ -43,7 +43,6 @@ glob = "0.3"
 serde_json.workspace = true
 
 # LSP extensions (roam RPC)
-roam.workspace = true
 roam-core.workspace = true
 roam-stream.workspace = true
 roam-types.workspace = true
