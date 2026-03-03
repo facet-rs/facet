@@ -17,15 +17,25 @@ pub use roam_hash as hash;
 
 // Re-export roam-types items used by generated code
 pub use roam_types::{
+    Backing,
     // Traits
     Call,
     Caller,
     // Descriptors
     ChannelId,
+    Conduit,
+    ConduitAcceptor,
+    ConduitRx,
+    ConduitTx,
+    ConduitTxPermit,
     // Types
     ConnectionId,
     ConnectionSettings,
     Handler,
+    Link,
+    LinkRx,
+    LinkTx,
+    LinkTxPermit,
     MessageFamily,
     Metadata,
     MetadataEntry,
@@ -33,6 +43,7 @@ pub use roam_types::{
     MetadataValue,
     MethodDescriptor,
     MethodId,
+    MsgFamily,
     Parity,
     Payload,
     ReplySink,
@@ -49,6 +60,7 @@ pub use roam_types::{
     // Channels
     Tx,
     TxError,
+    WriteSlot,
     // Channels
     channel,
 };

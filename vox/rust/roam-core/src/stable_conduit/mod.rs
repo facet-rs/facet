@@ -95,9 +95,60 @@ struct Frame<T> {
 // Attachment / LinkSource
 // ---------------------------------------------------------------------------
 
-struct Attachment<L> {
+/// One transport attachment consumed by [`LinkSource::next_link`].
+///
+/// Use [`Attachment::initiator`] for the initiator side, or
+/// [`prepare_acceptor_attachment`] on inbound links for the acceptor side.
+pub struct Attachment<L> {
     link: L,
     client_hello: Option<ClientHello>,
+}
+
+impl<L> Attachment<L> {
+    /// Build an initiator-side attachment.
+    pub fn initiator(link: L) -> Self {
+        Self {
+            link,
+            client_hello: None,
+        }
+    }
+}
+
+/// Link wrapper that re-combines pre-split Tx/Rx halves into a [`Link`].
+///
+/// This is used by [`prepare_acceptor_attachment`] after consuming the inbound
+/// `ClientHello` during stable-conduit setup.
+pub struct SplitLink<Tx, Rx> {
+    tx: Tx,
+    rx: Rx,
+}
+
+impl<Tx, Rx> Link for SplitLink<Tx, Rx>
+where
+    Tx: LinkTx,
+    Rx: LinkRx,
+{
+    type Tx = Tx;
+    type Rx = Rx;
+
+    fn split(self) -> (Self::Tx, Self::Rx) {
+        (self.tx, self.rx)
+    }
+}
+
+/// Prepare an acceptor-side attachment from an inbound link.
+///
+/// This consumes the leading stable `ClientHello` from the inbound link and
+/// returns an attachment suitable for acceptor-side [`StableConduit::new`].
+pub async fn prepare_acceptor_attachment<L: Link>(
+    link: L,
+) -> Result<Attachment<SplitLink<L::Tx, L::Rx>>, StableConduitError> {
+    let (tx, mut rx) = link.split();
+    let client_hello = recv_handshake::<_, ClientHello>(&mut rx).await?;
+    Ok(Attachment {
+        link: SplitLink { tx, rx },
+        client_hello: Some(client_hello),
+    })
 }
 
 // r[impl stable.link-source]
