@@ -309,5 +309,8 @@ fuzz-sand-run target="all" seconds="":
         ;; \
     esac
 
+npm-publish *args:
+    pnpm -r publish --access public --no-git-checks {{ args }}
+
 fuzz-sand target="all" seconds="":
     just fuzz-sand-run "{{ target }}" "{{ seconds }}"
