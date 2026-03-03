@@ -30,7 +30,7 @@ members = [
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "7.0.0-alpha.2"
+version = "7.0.0-alpha.3"
 edition = "2024"
 rust-version = "1.91"
 readme = "README.md"
@@ -43,23 +43,23 @@ categories = ["network-programming", "asynchronous"]
 
 [workspace.dependencies]
 # Internal crates
-roam = { path = "rust/roam", version = "7.0.0-alpha.2" }
-roam-types = { path = "rust/roam-types", version = "7.0.0-alpha.2" }
-roam-hash = { path = "rust/roam-hash", version = "7.0.0-alpha.2" }
-roam-macros-parse = { path = "rust/roam-macros-parse", version = "7.0.0-alpha.2" }
-roam-macros-core = { path = "rust/roam-macros-core", version = "7.0.0-alpha.2" }
-roam-service-macros = { path = "rust/roam-macros", version = "7.0.0-alpha.2" }
-roam-core = { path = "rust/roam-core", version = "7.0.0-alpha.2" }
-roam-stream = { path = "rust/roam-stream", version = "7.0.0-alpha.2" }
-roam-codegen = { path = "rust/roam-codegen", version = "7.0.0-alpha.2" }
-roam-websocket = { path = "rust/roam-websocket", version = "7.0.0-alpha.2" }
-roam-local = { path = "rust/roam-local", version = "7.0.0-alpha.2" }
-roam-shm = { path = "rust/roam-shm", version = "7.0.0-alpha.2" }
-roam-shm-ffi = { path = "rust/roam-shm-ffi", version = "7.0.0-alpha.2" }
+roam = { path = "rust/roam", version = "7.0.0-alpha.3" }
+roam-types = { path = "rust/roam-types", version = "7.0.0-alpha.3" }
+roam-hash = { path = "rust/roam-hash", version = "7.0.0-alpha.3" }
+roam-macros-parse = { path = "rust/roam-macros-parse", version = "7.0.0-alpha.3" }
+roam-macros-core = { path = "rust/roam-macros-core", version = "7.0.0-alpha.3" }
+roam-service-macros = { path = "rust/roam-macros", version = "7.0.0-alpha.3" }
+roam-core = { path = "rust/roam-core", version = "7.0.0-alpha.3" }
+roam-stream = { path = "rust/roam-stream", version = "7.0.0-alpha.3" }
+roam-codegen = { path = "rust/roam-codegen", version = "7.0.0-alpha.3" }
+roam-websocket = { path = "rust/roam-websocket", version = "7.0.0-alpha.3" }
+roam-local = { path = "rust/roam-local", version = "7.0.0-alpha.3" }
+roam-shm = { path = "rust/roam-shm", version = "7.0.0-alpha.3" }
+roam-shm-ffi = { path = "rust/roam-shm-ffi", version = "7.0.0-alpha.3" }
 spec-proto = { path = "spec/spec-proto", version = "7.0.0-alpha.2" }
-shm-primitives = { path = "rust/shm-primitives", version = "7.0.0-alpha.2", default-features = false }
-shm-primitives-async = { path = "rust/shm-primitives-async", version = "7.0.0-alpha.2", default-features = false }
-ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "7.0.0-alpha.2" }
+shm-primitives = { path = "rust/shm-primitives", version = "7.0.0-alpha.3", default-features = false }
+shm-primitives-async = { path = "rust/shm-primitives-async", version = "7.0.0-alpha.3", default-features = false }
+ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "7.0.0-alpha.3" }
 
 # Not internal crates
 moire = { version = "1.0.0" }
