@@ -194,6 +194,9 @@ jobs:
       - name: TypeScript typecheck (tsgo)
         run: cd typescript && pnpm check
 
+      - name: Build TypeScript packages
+        run: cd typescript && pnpm run build
+
       - name: Generate TypeScript bindings
         run: cargo xtask codegen --typescript
 

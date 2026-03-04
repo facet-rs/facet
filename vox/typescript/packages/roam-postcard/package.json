@@ -7,9 +7,24 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "build": "tsdown",
     "check": "tsgo --noEmit",
     "test": "vitest run"
   },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "import": {
+          "types": "./dist/index.d.mts",
+          "default": "./dist/index.mjs"
+        }
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "devDependencies": {
     "vitest": "^2.1.0"
   },

@@ -310,6 +310,7 @@ fuzz-sand-run target="all" seconds="":
     esac
 
 npm-publish *args:
+    pnpm run build
     pnpm -r publish --access public --no-git-checks {{ args }}
 
 fuzz-sand target="all" seconds="":

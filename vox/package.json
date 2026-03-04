@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "pnpm --filter './typescript/packages/*' run build",
     "check": "pnpm -r run check && pnpm run check:ts-boundaries",
     "check:ts-boundaries": "node scripts/check-ts-package-boundaries.mjs",
     "test": "pnpm -r run test",
@@ -11,6 +12,8 @@
   "devDependencies": {
     "@types/node": "^22",
     "@typescript/native-preview": "7.0.0-dev.20260109.1",
-    "oxlint": "^1.41.0"
+    "oxlint": "^1.41.0",
+    "tsdown": "^0.20.0",
+    "typescript": "^5.8.0"
   }
 }

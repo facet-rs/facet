@@ -20,6 +20,7 @@ examples/browser_ws/playwright-report/
 
 # TypeScript
 typescript/dist/
+typescript/packages/*/dist/
 typescript/playwright-report/
 typescript/test-results/
 typescript/**/playwright-report/
