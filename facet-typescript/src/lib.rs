@@ -461,7 +461,60 @@ impl TypeScriptGenerator {
         // Check if the enum is untagged
         let is_untagged = shape.is_untagged();
 
-        if is_untagged {
+        if let Some(tag_key) = shape.tag {
+            // Internally tagged enum: each variant is an object with the tag field
+            let mut variant_types = Vec::new();
+
+            for variant in enum_type.variants {
+                let variant_name = variant.effective_name();
+                match variant.data.kind {
+                    StructKind::Unit => {
+                        variant_types.push(format!("{{ {}: \"{}\" }}", tag_key, variant_name));
+                    }
+                    StructKind::TupleStruct if variant.data.fields.len() == 1 => {
+                        // Newtype variant: tag merged into inner type via intersection
+                        let inner = self.type_for_shape(variant.data.fields[0].shape.get());
+                        variant_types.push(format!(
+                            "{{ {}: \"{}\" }} & {}",
+                            tag_key, variant_name, inner
+                        ));
+                    }
+                    StructKind::TupleStruct => {
+                        // Multi-element tuple variant: tag + tuple payload
+                        let types: Vec<String> = variant
+                            .data
+                            .fields
+                            .iter()
+                            .map(|f| self.type_for_shape(f.shape.get()))
+                            .collect();
+                        variant_types.push(format!(
+                            "{{ {}: \"{}\"; _: [{}] }}",
+                            tag_key,
+                            variant_name,
+                            types.join(", ")
+                        ));
+                    }
+                    _ => {
+                        // Struct variant: { tag: "VariantName"; field1: T1; field2: T2 }
+                        let field_types = self.collect_inline_fields(variant.data.fields, false);
+                        variant_types.push(format!(
+                            "{{ {}: \"{}\"; {} }}",
+                            tag_key,
+                            variant_name,
+                            field_types.join("; ")
+                        ));
+                    }
+                }
+            }
+
+            writeln!(
+                self.output,
+                "export type {} =\n  | {};",
+                shape.type_identifier,
+                variant_types.join("\n  | ")
+            )
+            .unwrap();
+        } else if is_untagged {
             // Untagged enum: simple union of variant types
             let mut variant_types = Vec::new();
 
@@ -1590,5 +1643,35 @@ mod tests {
             "bug: transparent tuple newtype did not generate scalar alias:\n{ts}"
         );
         insta::assert_snapshot!("transparent_newtype", ts);
+    }
+
+    #[test]
+    fn test_internally_tagged_enum() {
+        #[derive(Facet)]
+        #[facet(tag = "type")]
+        #[repr(C)]
+        #[allow(dead_code)]
+        enum Rr {
+            Mat,
+            Sp { first_roll: u32, long_last: bool },
+        }
+
+        let ts = to_typescript::<Rr>();
+        insta::assert_snapshot!(ts);
+    }
+
+    // Non-transparent single-field tuple struct serializes as [42] in facet-json,
+    // so TypeScript must emit [number], not number.
+    #[test]
+    fn test_non_transparent_single_field_tuple_struct() {
+        #[derive(Facet)]
+        struct Spread(pub i32);
+
+        let ts = to_typescript::<Spread>();
+        assert!(
+            ts.contains("export type Spread = [number];"),
+            "bug: non-transparent single-field tuple struct should be [number], got:\n{ts}"
+        );
+        insta::assert_snapshot!(ts);
     }
 }
