@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { startWsServer } from "./ws-server";
 
 // Root of the roam project
 const projectRoot = new URL("../../../", import.meta.url).pathname;
@@ -36,40 +37,7 @@ test.beforeAll(async () => {
 
   // Start Rust WebSocket server
   console.log(`Starting Rust WebSocket server on port ${wsPort}...`);
-  wsServer = spawn("cargo", ["run", "-p", "peer-server", "--bin", "ws-peer-server"], {
-    cwd: projectRoot,
-    env: { ...process.env, WS_PORT: String(wsPort) },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    const timeout = globalThis.setTimeout(
-      () => reject(new Error("Timeout starting WS server")),
-      5000,
-    );
-
-    wsServer!.stdout!.on("data", (data: Buffer) => {
-      process.stdout.write(data);
-      if (data.toString().trim() === String(wsPort)) {
-        clearTimeout(timeout);
-        resolve();
-      }
-    });
-
-    wsServer!.stderr!.on("data", (data: Buffer) => {
-      process.stderr.write(data);
-    });
-
-    wsServer!.on("error", (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
-
-    wsServer!.on("exit", (code, signal) => {
-      clearTimeout(timeout);
-      reject(new Error(`WS server exited unexpectedly (code=${code}, signal=${signal})`));
-    });
-  });
+  wsServer = await startWsServer(projectRoot, wsPort);
 
   console.log(`Rust WebSocket server started on port ${wsPort}`);
 

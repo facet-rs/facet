@@ -86,6 +86,10 @@ class ScriptedTransport implements MessageTransport {
     }
   }
 
+  isClosed(): boolean {
+    return this.closed;
+  }
+
   private enqueue(payload: Uint8Array): void {
     if (this.waitingResolve) {
       const resolve = this.waitingResolve;

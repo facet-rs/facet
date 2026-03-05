@@ -152,4 +152,9 @@ export class LengthPrefixedFramed implements MessageTransport {
   close(): void {
     this.socket.destroy();
   }
+
+  /** Returns true if the connection is permanently closed. */
+  isClosed(): boolean {
+    return this.closed;
+  }
 }

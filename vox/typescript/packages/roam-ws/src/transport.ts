@@ -118,6 +118,13 @@ export class WsTransport implements MessageTransport {
   close(): void {
     this.ws.close();
   }
+
+  /**
+   * Returns true if the WebSocket is permanently closed.
+   */
+  isClosed(): boolean {
+    return this.closed;
+  }
 }
 
 /**

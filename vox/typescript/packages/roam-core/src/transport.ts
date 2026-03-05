@@ -45,4 +45,9 @@ export interface MessageTransport {
    * Close the transport.
    */
   close(): void;
+
+  /**
+   * Returns true if the transport is permanently closed (not just timed out).
+   */
+  isClosed(): boolean;
 }

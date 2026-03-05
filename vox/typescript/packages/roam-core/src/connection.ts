@@ -448,6 +448,10 @@ export class Connection<T extends MessageTransport = MessageTransport> {
           }
           const data = await this.io.recvTimeout(100); // Short timeout to check for new requests
           if (!data) {
+            if (this.io.isClosed()) {
+              this.failPendingRequests(ConnectionError.closed());
+              return;
+            }
             // No message received, but keep running if there are pending requests
             continue;
           }
@@ -702,7 +706,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
 
       const payload = recvResult.payload;
       if (!payload) {
-        if (keepaliveRuntime) {
+        if (keepaliveRuntime && !this.io.isClosed()) {
           continue;
         }
         // Connection closed - wait for all in-flight handlers to complete
@@ -971,7 +975,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
       }
 
       if (!payload) {
-        if (keepaliveRuntime) {
+        if (keepaliveRuntime && !this.io.isClosed()) {
           continue;
         }
         return; // Connection closed or timeout
