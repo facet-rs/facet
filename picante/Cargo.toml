@@ -1,14 +1,17 @@
 [package]
 name = "picante"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-authors = ["Amos Wenger <amos@bearcove.eu>"]
+authors.workspace = true
 description = "An async incremental query runtime"
-repository = "https://github.com/bearcove/picante"
-homepage = "https://github.com/bearcove/picante"
-readme = "../../README.md"
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+documentation = "https://docs.rs/picante"
+keywords = ["incremental", "async", "memoization", "runtime"]
+categories = ["asynchronous", "caching", "data-structures"]
 
 [package.metadata]
 
@@ -26,7 +29,7 @@ futures-util = { version = "0.3.31", default-features = false, features = ["std"
 parking_lot.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-picante-macros = { path = "../picante-macros", optional = true }
+picante-macros = { workspace = true, optional = true }
 
 [features]
 default = ["macros"]

@@ -1,13 +1,17 @@
 [package]
 name = "picante-macros"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-authors = ["Amos Wenger <amos@bearcove.eu>"]
+authors.workspace = true
 description = "Proc macros for Picante (input, tracked, interned, and db)"
-repository = "https://github.com/bearcove/picante"
-homepage = "https://github.com/bearcove/picante"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+documentation = "https://docs.rs/picante-macros"
+keywords = ["incremental", "async", "proc-macro", "runtime"]
+categories = ["asynchronous", "development-tools::procedural-macro-helpers"]
 
 [package.metadata]
 
