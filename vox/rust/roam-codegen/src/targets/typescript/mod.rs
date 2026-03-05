@@ -193,6 +193,16 @@ mod tests {
         next: Option<Box<RecursiveNode>>,
     }
 
+    #[derive(Facet)]
+    #[repr(transparent)]
+    #[facet(transparent)]
+    struct SessionId(pub String);
+
+    #[derive(Facet)]
+    struct SessionSummary {
+        id: SessionId,
+    }
+
     #[test]
     fn generated_typescript_contains_no_postcard_primitive_usage() {
         let echo = method_descriptor::<(String,), String>("TestSvc", "echo", &["message"], None);
@@ -243,6 +253,32 @@ mod tests {
         assert!(
             generated.contains("{ kind: 'ref', name: 'RecursiveNode' }"),
             "recursive references must emit ref schemas:\n{generated}"
+        );
+    }
+
+    #[test]
+    fn generated_typescript_emits_alias_for_transparent_newtype() {
+        let summarize = method_descriptor::<(SessionId,), SessionSummary>(
+            "SessionSvc",
+            "summarize",
+            &["id"],
+            None,
+        );
+        let methods = Box::leak(vec![summarize].into_boxed_slice());
+        let service = ServiceDescriptor {
+            service_name: "SessionSvc",
+            methods,
+            doc: None,
+        };
+
+        let generated = generate_service(&service);
+        assert!(
+            generated.contains("export type SessionId = string;"),
+            "transparent named newtypes must emit a type alias:\n{generated}"
+        );
+        assert!(
+            generated.contains("id: SessionId;"),
+            "uses of transparent named newtypes must keep alias name:\n{generated}"
         );
     }
 }

@@ -13,6 +13,25 @@ use roam_types::{
     classify_variant, is_bytes,
 };
 
+fn transparent_named_alias(shape: &'static Shape) -> Option<(&'static str, &'static Shape)> {
+    if !shape.is_transparent() {
+        return None;
+    }
+    let name = extract_type_name(shape.type_identifier)?;
+    let inner = shape.inner?;
+    Some((name, inner))
+}
+
+fn extract_type_name(type_identifier: &'static str) -> Option<&'static str> {
+    if type_identifier.is_empty()
+        || type_identifier.starts_with('(')
+        || type_identifier.starts_with('[')
+    {
+        return None;
+    }
+    Some(type_identifier)
+}
+
 /// Generate TypeScript field access expression.
 /// Uses bracket notation for numeric field names (tuple fields), dot notation otherwise.
 pub fn ts_field_access(expr: &str, field_name: &str) -> String {
@@ -38,6 +57,15 @@ pub fn collect_named_types(service: &ServiceDescriptor) -> Vec<(String, &'static
         seen: &mut HashSet<String>,
         types: &mut Vec<(String, &'static Shape)>,
     ) {
+        if let Some((name, inner)) = transparent_named_alias(shape) {
+            if !seen.contains(name) {
+                seen.insert(name.to_string());
+                visit(inner, seen, types);
+                types.push((name.to_string(), shape));
+            }
+            return;
+        }
+
         match classify_shape(shape) {
             ShapeKind::Struct(StructInfo {
                 name: Some(name),
@@ -119,6 +147,14 @@ pub fn generate_named_types(named_types: &[(String, &'static Shape)]) -> String 
     out.push_str("// Named type definitions\n");
 
     for (name, shape) in named_types {
+        if let Some((_, inner)) = transparent_named_alias(shape) {
+            out.push_str(&format!(
+                "export type {name} = {};\n\n",
+                ts_type_base_named(inner)
+            ));
+            continue;
+        }
+
         match classify_shape(shape) {
             ShapeKind::Struct(StructInfo { fields, .. }) => {
                 out.push_str(&format!("export interface {} {{\n", name));
@@ -167,6 +203,10 @@ pub fn generate_named_types(named_types: &[(String, &'static Shape)]) -> String 
 /// Convert Shape to TypeScript type string, using named types when available.
 /// This handles container types recursively, using named types at every level.
 pub fn ts_type_base_named(shape: &'static Shape) -> String {
+    if let Some((name, _)) = transparent_named_alias(shape) {
+        return name.to_string();
+    }
+
     match classify_shape(shape) {
         // Named types - use the name directly
         ShapeKind::Struct(StructInfo {
