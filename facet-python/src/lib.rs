@@ -76,7 +76,7 @@ fn has_reserved_keyword_field(fields: &[TypedDictField]) -> bool {
 
 /// Generate TypedDict using functional syntax: `Name = TypedDict("Name", {...}, total=False)`
 fn write_typed_dict_functional(output: &mut String, class_name: &str, fields: &[TypedDictField]) {
-    writeln!(output, "{} = TypedDict(", class_name).unwrap();
+    writeln!(output, "type {} = TypedDict(", class_name).unwrap();
     writeln!(output, "    \"{}\",", class_name).unwrap();
     output.push_str("    {");
 
@@ -1049,6 +1049,22 @@ mod tests {
             Data { name: String, value: f64 },
         }
         let py = to_python::<Message>(false);
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_functional_typed_dict_has_type_keyword() {
+        // Regression test for https://github.com/facet-rs/facet/issues/2128
+        #[derive(Facet)]
+        struct Bug {
+            from: Option<String>,
+        }
+
+        let py = to_python::<Bug>(false);
+        assert!(
+            py.starts_with("type "),
+            "functional TypedDict should start with `type` keyword, got:\n{py}"
+        );
         insta::assert_snapshot!(py);
     }
 }

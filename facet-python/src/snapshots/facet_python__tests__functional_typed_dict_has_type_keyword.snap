@@ -1,0 +1,10 @@
+---
+source: facet-python/src/lib.rs
+assertion_line: 1072
+expression: py
+---
+type Bug = TypedDict(
+    "Bug",
+    {"from": str},
+    total=False,
+)

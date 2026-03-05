@@ -1,8 +1,9 @@
 ---
 source: facet-python/src/lib.rs
+assertion_line: 957
 expression: py
 ---
-From = TypedDict(
+type From = TypedDict(
     "From",
     {"from": Required[str]},
     total=False,
