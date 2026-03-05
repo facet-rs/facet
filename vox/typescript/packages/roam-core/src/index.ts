@@ -13,6 +13,8 @@ export {
   Tx,
   Rx,
   channel,
+  type Schema,
+  type SchemaRegistry,
   type MethodDescriptor,
   type ServiceDescriptor,
   type RoamCall,

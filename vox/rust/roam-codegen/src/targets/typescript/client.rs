@@ -145,7 +145,7 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
                 .collect();
             out.push_str("    // Bind any Tx/Rx channels in arguments and collect channel IDs\n");
             out.push_str(&format!(
-                "    const channels = bindChannels(\n      descriptor.args.elements,\n      [{}],\n      this.caller.getChannelAllocator(),\n      this.caller.getChannelRegistry(),\n    );\n",
+                "    const channels = bindChannels(\n      descriptor.args.elements,\n      [{}],\n      this.caller.getChannelAllocator(),\n      this.caller.getChannelRegistry(),\n      {service_name_lower}_descriptor.schema_registry,\n    );\n",
                 arg_names.join(", ")
             ));
         }
@@ -166,6 +166,9 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             ));
             out.push_str(&format!("          args: {},\n", args_record));
             out.push_str("          descriptor,\n");
+            out.push_str(&format!(
+                "          schemaRegistry: {service_name_lower}_descriptor.schema_registry,\n"
+            ));
             if has_streaming_args {
                 out.push_str("          channels,\n");
             }
@@ -191,6 +194,9 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             ));
             out.push_str(&format!("        args: {},\n", args_record));
             out.push_str("        descriptor,\n");
+            out.push_str(&format!(
+                "        schemaRegistry: {service_name_lower}_descriptor.schema_registry,\n"
+            ));
             if has_streaming_args {
                 out.push_str("        channels,\n");
             }

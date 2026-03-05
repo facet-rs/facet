@@ -3,7 +3,12 @@
 // Provides a clean interface for making RPC calls that supports
 // middleware composition via the with() method.
 
-import type { ChannelIdAllocator, ChannelRegistry, MethodDescriptor } from "./channeling/index.ts";
+import type {
+  ChannelIdAllocator,
+  ChannelRegistry,
+  MethodDescriptor,
+  SchemaRegistry,
+} from "./channeling/index.ts";
 import type {
   ClientMiddleware,
   ClientContext,
@@ -36,6 +41,10 @@ export interface CallerRequest {
    * The method ID is descriptor.id.
    */
   descriptor: MethodDescriptor;
+  /**
+   * Optional schema registry for resolving `ref` nodes in descriptor schemas.
+   */
+  schemaRegistry?: SchemaRegistry;
 
   /**
    * Channel IDs for streaming arguments.

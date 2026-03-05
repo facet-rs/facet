@@ -44,6 +44,7 @@ import {
   type MethodDescriptor,
   type ServiceDescriptor,
   type RoamCall,
+  type SchemaRegistry,
 } from "./channeling/index.ts";
 import { type MessageTransport } from "./transport.ts";
 import type { Caller, CallerRequest } from "./caller.ts";
@@ -161,12 +162,17 @@ class RoamCallImpl implements RoamCall {
     private readonly method: MethodDescriptor,
     private readonly requestId: bigint,
     private readonly taskSender: TaskSender,
+    private readonly schemaRegistry?: SchemaRegistry,
   ) {}
 
   reply(value: unknown): void {
     if (this.responded) return;
     this.responded = true;
-    const payload = encodeWithSchema({ tag: "Ok", value }, this.method.result);
+    const payload = encodeWithSchema(
+      { tag: "Ok", value },
+      this.method.result,
+      this.schemaRegistry,
+    );
     this.taskSender({ kind: "response", requestId: this.requestId, payload });
   }
 
@@ -176,6 +182,7 @@ class RoamCallImpl implements RoamCall {
     const payload = encodeWithSchema(
       { tag: "Err", value: { tag: "User", value: error } },
       this.method.result,
+      this.schemaRegistry,
     );
     this.taskSender({ kind: "response", requestId: this.requestId, payload });
   }
@@ -186,6 +193,7 @@ class RoamCallImpl implements RoamCall {
     const payload = encodeWithSchema(
       { tag: "Err", value: { tag: "InvalidPayload" } },
       this.method.result,
+      this.schemaRegistry,
     );
     this.taskSender({ kind: "response", requestId: this.requestId, payload });
   }
@@ -827,7 +835,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
         let rawArgs: unknown[];
         let decodeEnd: number;
         try {
-          const decoded = decodeWithSchema(rawPayload, 0, method.args);
+          const decoded = decodeWithSchema(rawPayload, 0, method.args, descriptor.schema_registry);
           rawArgs = decoded.value as unknown[];
           decodeEnd = decoded.next;
         } catch {
@@ -859,19 +867,19 @@ export class Connection<T extends MessageTransport = MessageTransport> {
           if (argSchema.kind === "tx") {
             const channelId = requestChannels[channelIdx++];
             return createServerTx(channelId, taskSender, (v: unknown) =>
-              encodeWithSchema(v, argSchema.element),
+              encodeWithSchema(v, argSchema.element, descriptor.schema_registry),
             );
           } else if (argSchema.kind === "rx") {
             const channelId = requestChannels[channelIdx++];
             const receiver = this.channelRegistry.registerIncoming(channelId);
             return createServerRx(channelId, receiver, (b: Uint8Array) =>
-              decodeWithSchema(b, 0, argSchema.element).value,
+              decodeWithSchema(b, 0, argSchema.element, descriptor.schema_registry).value,
             );
           }
           return raw;
         });
 
-        const call = new RoamCallImpl(method, requestId, taskSender);
+        const call = new RoamCallImpl(method, requestId, taskSender, descriptor.schema_registry);
         return dispatcher.dispatch(method, args, call);
       }
       return undefined;
@@ -1333,7 +1341,7 @@ export class ConnectionCaller<T extends MessageTransport = MessageTransport> imp
     const payload =
       values.length === 0
         ? new Uint8Array(0)
-        : encodeWithSchema(values, request.descriptor.args);
+        : encodeWithSchema(values, request.descriptor.args, request.schemaRegistry);
 
     // Convert metadata to wire format entries
     const metadataEntries = request.metadata ? clientMetadataToEntries(request.metadata) : [];
@@ -1368,7 +1376,12 @@ export class ConnectionCaller<T extends MessageTransport = MessageTransport> imp
 
     // Wait for response and decode full Result<T, RoamError<E>> using descriptor.result schema
     const responsePayload = await responsePromise;
-    const decoded = decodeWithSchema(responsePayload, 0, request.descriptor.result).value as {
+    const decoded = decodeWithSchema(
+      responsePayload,
+      0,
+      request.descriptor.result,
+      request.schemaRegistry,
+    ).value as {
       tag: string;
       value?: unknown;
     };

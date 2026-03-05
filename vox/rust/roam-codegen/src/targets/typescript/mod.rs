@@ -105,7 +105,7 @@ fn generate_imports(service: &ServiceDescriptor, w: &mut CodeWriter<&mut String>
     // Core runtime: descriptor types + Caller + CallBuilder + connection helpers
     cw_writeln!(
         w,
-        "import type {{ Caller, MethodDescriptor, ServiceDescriptor, RoamCall, ChannelingDispatcher }} from \"@bearcove/roam-core\";"
+        "import type {{ Caller, MethodDescriptor, ServiceDescriptor, RoamCall, ChannelingDispatcher, Schema, SchemaRegistry }} from \"@bearcove/roam-core\";"
     )
     .unwrap();
     cw_writeln!(
@@ -184,8 +184,14 @@ fn generate_request_response_types(
 #[cfg(test)]
 mod tests {
     use super::generate_service;
+    use facet::Facet;
     use roam_hash::method_descriptor;
     use roam_types::ServiceDescriptor;
+
+    #[derive(Facet)]
+    struct RecursiveNode {
+        next: Option<Box<RecursiveNode>>,
+    }
 
     #[test]
     fn generated_typescript_contains_no_postcard_primitive_usage() {
@@ -211,6 +217,32 @@ mod tests {
         assert!(
             !generated.contains("pc."),
             "generated TypeScript must not call postcard primitives directly:\n{generated}"
+        );
+    }
+
+    #[test]
+    fn generated_typescript_uses_refs_for_recursive_named_types() {
+        let recurse = method_descriptor::<(RecursiveNode,), RecursiveNode>(
+            "RecursiveSvc",
+            "recurse",
+            &["node"],
+            None,
+        );
+        let methods = Box::leak(vec![recurse].into_boxed_slice());
+        let service = ServiceDescriptor {
+            service_name: "RecursiveSvc",
+            methods,
+            doc: None,
+        };
+
+        let generated = generate_service(&service);
+        assert!(
+            generated.contains("schema_registry"),
+            "generated TypeScript must include a schema registry:\n{generated}"
+        );
+        assert!(
+            generated.contains("{ kind: 'ref', name: 'RecursiveNode' }"),
+            "recursive references must emit ref schemas:\n{generated}"
         );
     }
 }

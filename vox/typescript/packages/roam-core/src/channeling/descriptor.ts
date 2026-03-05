@@ -3,7 +3,7 @@
 // These are the TypeScript equivalents of the Rust ServiceDescriptor,
 // used by the runtime to drive schema-based encode/decode for channels.
 
-import type { TupleSchema, EnumSchema } from "./schema.ts";
+import type { TupleSchema, EnumSchema, SchemaRegistry } from "./schema.ts";
 
 /**
  * Describes a single RPC method at runtime.
@@ -35,6 +35,8 @@ export interface MethodDescriptor {
 /** Describes a service at runtime (collection of method descriptors). */
 export interface ServiceDescriptor {
   service_name: string;
+  /** Registry for resolving `ref` schemas inside args/result. */
+  schema_registry?: SchemaRegistry;
   methods: MethodDescriptor[];
 }
 

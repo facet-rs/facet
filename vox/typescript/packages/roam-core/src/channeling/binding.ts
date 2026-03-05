@@ -3,12 +3,13 @@
 // Walks argument structures using schemas to find and bind Tx/Rx channels.
 // Uses encodeWithSchema/decodeWithSchema for element serialization.
 
-import type { Schema } from "./schema.ts";
+import type { Schema, SchemaRegistry } from "./schema.ts";
 import {
   findVariantByName,
   getVariantFieldSchemas,
   getVariantFieldNames,
   isNewtypeVariant,
+  resolveSchema,
 } from "./schema.ts";
 import type { ChannelIdAllocator } from "./allocator.ts";
 import type { ChannelRegistry } from "./registry.ts";
@@ -39,10 +40,11 @@ export function bindChannels(
   args: unknown[],
   allocator: ChannelIdAllocator,
   registry: ChannelRegistry,
+  schemaRegistry?: SchemaRegistry,
 ): bigint[] {
   const channelIds: bigint[] = [];
   for (let i = 0; i < schemas.length; i++) {
-    bindValue(schemas[i], args[i], allocator, registry, channelIds);
+    bindValue(schemas[i], args[i], allocator, registry, channelIds, schemaRegistry);
   }
   return channelIds;
 }
@@ -56,8 +58,12 @@ function bindValue(
   allocator: ChannelIdAllocator,
   registry: ChannelRegistry,
   channelIds: bigint[],
+  schemaRegistry?: SchemaRegistry,
 ): void {
-  switch (schema.kind) {
+  const resolved =
+    schema.kind === "ref" && schemaRegistry ? resolveSchema(schema, schemaRegistry) : schema;
+
+  switch (resolved.kind) {
     // Primitives - nothing to bind
     case "bool":
     case "u8":
@@ -81,7 +87,7 @@ function bindValue(
       const tx = value as Tx<unknown>;
       if (!tx.isBound) {
         const channelId = allocator.next();
-        const elementSchema = schema.element;
+        const elementSchema = resolved.element;
 
         // Just set the channel ID on Tx (for wire encoding)
         // Don't register as outgoing - client doesn't send on this channel
@@ -90,7 +96,7 @@ function bindValue(
         // Bind the paired Rx for receiving (this is what client reads from)
         if (tx._pair && !tx._pair.isBound) {
           tx._pair.bind(channelId, registry, (b: Uint8Array) =>
-            decodeWithSchema(b, 0, elementSchema).value,
+            decodeWithSchema(b, 0, elementSchema, schemaRegistry).value,
           );
         }
       }
@@ -105,14 +111,16 @@ function bindValue(
       const rx = value as Rx<unknown>;
       if (!rx.isBound) {
         const channelId = allocator.next();
-        const elementSchema = schema.element;
+        const elementSchema = resolved.element;
         rx.bind(channelId, registry, (b: Uint8Array) =>
-          decodeWithSchema(b, 0, elementSchema).value,
+          decodeWithSchema(b, 0, elementSchema, schemaRegistry).value,
         );
 
         // Bind the paired Tx for sending (this is what client writes to)
         if (rx._pair && !rx._pair.isBound) {
-          rx._pair.bind(channelId, registry, (v: unknown) => encodeWithSchema(v, elementSchema));
+          rx._pair.bind(channelId, registry, (v: unknown) =>
+            encodeWithSchema(v, elementSchema, schemaRegistry),
+          );
         }
       }
       // Collect channel ID for Request.channels field
@@ -126,7 +134,7 @@ function bindValue(
       // nested in the map. we should check that before iterating the entire vec...
       const arr = value as unknown[];
       for (const item of arr) {
-        bindValue(schema.element, item, allocator, registry, channelIds);
+        bindValue(resolved.element, item, allocator, registry, channelIds, schemaRegistry);
       }
       return;
     }
@@ -136,7 +144,7 @@ function bindValue(
       // whether there's even a _possibility_ of there being a Tx/Rx
       // nested in the option
       if (value !== null && value !== undefined) {
-        bindValue(schema.inner, value, allocator, registry, channelIds);
+        bindValue(resolved.inner, value, allocator, registry, channelIds, schemaRegistry);
       }
       return;
     }
@@ -147,8 +155,8 @@ function bindValue(
       // whether there's even a _possibility_ of there being a Tx/Rx
       // nested in the map. we should check that before iterating the entire map...
       for (const [k, v] of map) {
-        bindValue(schema.key, k, allocator, registry, channelIds);
-        bindValue(schema.value, v, allocator, registry, channelIds);
+        bindValue(resolved.key, k, allocator, registry, channelIds, schemaRegistry);
+        bindValue(resolved.value, v, allocator, registry, channelIds, schemaRegistry);
       }
       return;
     }
@@ -158,9 +166,9 @@ function bindValue(
       // whether there's even a _possibility_ of there being a Tx/Rx
       // nested in any of the fields here
       const obj = value as Record<string, unknown>;
-      for (const [fieldName, fieldSchema] of Object.entries(schema.fields)) {
+      for (const [fieldName, fieldSchema] of Object.entries(resolved.fields)) {
         if (fieldName in obj) {
-          bindValue(fieldSchema, obj[fieldName], allocator, registry, channelIds);
+          bindValue(fieldSchema, obj[fieldName], allocator, registry, channelIds, schemaRegistry);
         }
       }
       return;
@@ -173,7 +181,7 @@ function bindValue(
 
       // Enum value should be { tag: string, ... } (tagged union)
       const enumVal = value as { tag: string; [key: string]: unknown };
-      const variant = findVariantByName(schema, enumVal.tag);
+      const variant = findVariantByName(resolved, enumVal.tag);
       if (!variant) {
         return; // Unknown variant, nothing to bind
       }
@@ -185,7 +193,7 @@ function bindValue(
         if (fieldValue !== undefined) {
           const fieldSchemas = getVariantFieldSchemas(variant);
           if (fieldSchemas.length === 1) {
-            bindValue(fieldSchemas[0], fieldValue, allocator, registry, channelIds);
+            bindValue(fieldSchemas[0], fieldValue, allocator, registry, channelIds, schemaRegistry);
           }
         }
       } else {
@@ -198,7 +206,14 @@ function bindValue(
           for (let i = 0; i < fieldSchemas.length; i++) {
             const fieldValue = enumVal[fieldNames[i]];
             if (fieldValue !== undefined) {
-              bindValue(fieldSchemas[i], fieldValue, allocator, registry, channelIds);
+              bindValue(
+                fieldSchemas[i],
+                fieldValue,
+                allocator,
+                registry,
+                channelIds,
+                schemaRegistry,
+              );
             }
           }
         } else if (fieldSchemas.length > 0) {
@@ -206,7 +221,14 @@ function bindValue(
           const tupleValues = enumVal.values as unknown[] | undefined;
           if (tupleValues) {
             for (let i = 0; i < fieldSchemas.length; i++) {
-              bindValue(fieldSchemas[i], tupleValues[i], allocator, registry, channelIds);
+              bindValue(
+                fieldSchemas[i],
+                tupleValues[i],
+                allocator,
+                registry,
+                channelIds,
+                schemaRegistry,
+              );
             }
           }
         }
@@ -217,22 +239,28 @@ function bindValue(
     case "tuple": {
       // Tuple: array of values matching schema.elements
       const arr = value as unknown[];
-      for (let i = 0; i < schema.elements.length; i++) {
-        bindValue(schema.elements[i], arr[i], allocator, registry, channelIds);
+      for (let i = 0; i < resolved.elements.length; i++) {
+        bindValue(
+          resolved.elements[i],
+          arr[i],
+          allocator,
+          registry,
+          channelIds,
+          schemaRegistry,
+        );
       }
       return;
     }
 
     case "ref": {
-      // Refs should be resolved before binding, but for safety we skip them
-      // The actual type should be resolved at a higher level if needed
+      // If no registry is available, we can't inspect the referenced schema.
       return;
     }
 
     default: {
       // Exhaustiveness check
-      const _exhaustive: never = schema;
-      throw new Error(`Unknown schema kind: ${(schema as Schema).kind}`);
+      const _exhaustive: never = resolved;
+      throw new Error(`Unknown schema kind: ${(resolved as Schema).kind}`);
     }
   }
 }

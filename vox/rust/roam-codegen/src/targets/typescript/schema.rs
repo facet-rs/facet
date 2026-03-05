@@ -14,6 +14,8 @@
 //! - 2: InvalidPayload — unit
 //! - 3: Cancelled      — unit
 
+use std::collections::HashSet;
+
 use facet_core::{Field, ScalarType, Shape};
 use heck::ToLowerCamelCase;
 use roam_types::{
@@ -23,10 +25,56 @@ use roam_types::{
 
 /// Generate a TypeScript Schema object literal for a type.
 pub fn generate_schema(shape: &'static Shape) -> String {
-    generate_schema_with_field(shape, None)
+    let mut state = SchemaGenState::default();
+    generate_schema_with_field(shape, None, &mut state)
 }
 
-fn generate_schema_with_field(shape: &'static Shape, field: Option<&Field>) -> String {
+#[derive(Default)]
+struct SchemaGenState {
+    /// When true, named structs/enums are emitted as `{ kind: 'ref', name: 'T' }`
+    /// unless we're currently generating that type's registry entry (`root_name`).
+    use_named_refs: bool,
+    /// Name of the registry entry currently being generated, if any.
+    root_name: Option<String>,
+    /// Active shape pointers for recursion detection.
+    active: HashSet<usize>,
+}
+
+fn named_shape_name(shape: &'static Shape) -> Option<&'static str> {
+    match classify_shape(shape) {
+        ShapeKind::Struct(StructInfo {
+            name: Some(name), ..
+        })
+        | ShapeKind::Enum(EnumInfo {
+            name: Some(name), ..
+        }) => Some(name),
+        _ => None,
+    }
+}
+
+fn generate_schema_with_field(
+    shape: &'static Shape,
+    field: Option<&Field>,
+    state: &mut SchemaGenState,
+) -> String {
+    if state.use_named_refs
+        && let Some(name) = named_shape_name(shape)
+        && state.root_name.as_deref() != Some(name)
+    {
+        return format!("{{ kind: 'ref', name: '{name}' }}");
+    }
+
+    let shape_ptr = shape as *const Shape as usize;
+    if !state.active.insert(shape_ptr) {
+        if let Some(name) = named_shape_name(shape) {
+            return format!("{{ kind: 'ref', name: '{name}' }}");
+        }
+        panic!(
+            "encountered recursive anonymous shape in TypeScript schema generation; \
+             recursive shapes must be named to generate refs"
+        );
+    }
+
     let bytes_schema = if field.is_some_and(|f| f.has_builtin_attr("trailing")) {
         "{ kind: 'bytes', trailing: true }"
     } else {
@@ -35,58 +83,59 @@ fn generate_schema_with_field(shape: &'static Shape, field: Option<&Field>) -> S
 
     // Check for bytes first (Vec<u8>)
     if is_bytes(shape) {
+        state.active.remove(&shape_ptr);
         return bytes_schema.into();
     }
 
-    match classify_shape(shape) {
+    let rendered = match classify_shape(shape) {
         ShapeKind::Scalar(scalar) => generate_scalar_schema(scalar),
         ShapeKind::Tx { inner } => {
             format!(
                 "{{ kind: 'tx', element: {} }}",
-                generate_schema_with_field(inner, None)
+                generate_schema_with_field(inner, None, state)
             )
         }
         ShapeKind::Rx { inner } => {
             format!(
                 "{{ kind: 'rx', element: {} }}",
-                generate_schema_with_field(inner, None)
+                generate_schema_with_field(inner, None, state)
             )
         }
         ShapeKind::List { element } => {
             format!(
                 "{{ kind: 'vec', element: {} }}",
-                generate_schema_with_field(element, None)
+                generate_schema_with_field(element, None, state)
             )
         }
         ShapeKind::Option { inner } => {
             format!(
                 "{{ kind: 'option', inner: {} }}",
-                generate_schema_with_field(inner, None)
+                generate_schema_with_field(inner, None, state)
             )
         }
         ShapeKind::Array { element, .. } | ShapeKind::Slice { element } => {
             format!(
                 "{{ kind: 'vec', element: {} }}",
-                generate_schema_with_field(element, None)
+                generate_schema_with_field(element, None, state)
             )
         }
         ShapeKind::Map { key, value } => {
             format!(
                 "{{ kind: 'map', key: {}, value: {} }}",
-                generate_schema_with_field(key, None),
-                generate_schema_with_field(value, None)
+                generate_schema_with_field(key, None, state),
+                generate_schema_with_field(value, None, state)
             )
         }
         ShapeKind::Set { element } => {
             format!(
                 "{{ kind: 'vec', element: {} }}",
-                generate_schema_with_field(element, None)
+                generate_schema_with_field(element, None, state)
             )
         }
         ShapeKind::Tuple { elements } => {
             let element_schemas: Vec<_> = elements
                 .iter()
-                .map(|p| generate_schema_with_field(p.shape, None))
+                .map(|p| generate_schema_with_field(p.shape, None, state))
                 .collect();
             format!(
                 "{{ kind: 'tuple', elements: [{}] }}",
@@ -100,7 +149,7 @@ fn generate_schema_with_field(shape: &'static Shape, field: Option<&Field>) -> S
                     format!(
                         "'{}': {}",
                         f.name,
-                        generate_schema_with_field(f.shape(), Some(f))
+                        generate_schema_with_field(f.shape(), Some(f), state)
                     )
                 })
                 .collect();
@@ -110,34 +159,40 @@ fn generate_schema_with_field(shape: &'static Shape, field: Option<&Field>) -> S
             )
         }
         ShapeKind::Enum(EnumInfo { variants, .. }) => {
-            let variant_schemas: Vec<_> = variants.iter().map(generate_enum_variant).collect();
+            let variant_schemas: Vec<_> = variants
+                .iter()
+                .map(|variant| generate_enum_variant(variant, state))
+                .collect();
             format!(
                 "{{ kind: 'enum', variants: [{}] }}",
                 variant_schemas.join(", ")
             )
         }
-        ShapeKind::Pointer { pointee } => generate_schema(pointee),
+        ShapeKind::Pointer { pointee } => generate_schema_with_field(pointee, None, state),
         ShapeKind::Result { ok, err } => {
             // Represent Result as enum with Ok/Err variants
             format!(
                 "{{ kind: 'enum', variants: [{{ name: 'Ok', fields: {} }}, {{ name: 'Err', fields: {} }}] }}",
-                generate_schema_with_field(ok, None),
-                generate_schema_with_field(err, None)
+                generate_schema_with_field(ok, None, state),
+                generate_schema_with_field(err, None, state)
             )
         }
         ShapeKind::TupleStruct { fields } => {
             let inner: Vec<String> = fields
                 .iter()
-                .map(|f| generate_schema_with_field(f.shape(), Some(f)))
+                .map(|f| generate_schema_with_field(f.shape(), Some(f), state))
                 .collect();
             format!("{{ kind: 'tuple', elements: [{}] }}", inner.join(", "))
         }
         ShapeKind::Opaque => bytes_schema.into(),
-    }
+    };
+
+    state.active.remove(&shape_ptr);
+    rendered
 }
 
 /// Generate an EnumVariant object literal.
-fn generate_enum_variant(variant: &facet_core::Variant) -> String {
+fn generate_enum_variant(variant: &facet_core::Variant, state: &mut SchemaGenState) -> String {
     match classify_variant(variant) {
         VariantKind::Unit => {
             format!("{{ name: '{}', fields: null }}", variant.name)
@@ -147,13 +202,13 @@ fn generate_enum_variant(variant: &facet_core::Variant) -> String {
             format!(
                 "{{ name: '{}', fields: {} }}",
                 variant.name,
-                generate_schema_with_field(inner, field)
+                generate_schema_with_field(inner, field, state)
             )
         }
         VariantKind::Tuple { fields } => {
             let field_schemas: Vec<_> = fields
                 .iter()
-                .map(|f| generate_schema_with_field(f.shape(), Some(f)))
+                .map(|f| generate_schema_with_field(f.shape(), Some(f), state))
                 .collect();
             format!(
                 "{{ name: '{}', fields: [{}] }}",
@@ -168,7 +223,7 @@ fn generate_enum_variant(variant: &facet_core::Variant) -> String {
                     format!(
                         "'{}': {}",
                         f.name,
-                        generate_schema_with_field(f.shape(), Some(f))
+                        generate_schema_with_field(f.shape(), Some(f), state)
                     )
                 })
                 .collect();
@@ -242,16 +297,36 @@ fn generate_result_schema(ok_schema: &str, err_schema: &str) -> String {
 /// The descriptor contains all method descriptors with their args tuple schemas
 /// and full result schemas. The runtime uses this for schema-driven dispatch.
 pub fn generate_descriptor(service: &ServiceDescriptor) -> String {
+    use super::types::collect_named_types;
     use crate::render::hex_u64;
 
     let mut out = String::new();
     let service_name_lower = service.service_name.to_lower_camel_case();
+    let named_types = collect_named_types(service);
+
+    out.push_str("// Named schema registry (for recursive / shared named types)\n");
+    out.push_str(&format!(
+        "const {service_name_lower}_schema_registry: SchemaRegistry = new Map<string, Schema>([\n"
+    ));
+    for (name, shape) in &named_types {
+        let mut state = SchemaGenState {
+            use_named_refs: true,
+            root_name: Some(name.clone()),
+            active: HashSet::new(),
+        };
+        let schema = generate_schema_with_field(shape, None, &mut state);
+        out.push_str(&format!("  [\"{name}\", {schema}],\n"));
+    }
+    out.push_str("]);\n\n");
 
     out.push_str("// Service descriptor for runtime schema-driven dispatch\n");
     out.push_str(&format!(
         "export const {service_name_lower}_descriptor: ServiceDescriptor = {{\n"
     ));
     out.push_str(&format!("  service_name: '{}',\n", service.service_name));
+    out.push_str(&format!(
+        "  schema_registry: {service_name_lower}_schema_registry,\n"
+    ));
     out.push_str("  methods: [\n");
 
     for method in service.methods {
@@ -259,10 +334,15 @@ pub fn generate_descriptor(service: &ServiceDescriptor) -> String {
         let id = crate::method_id(method);
 
         // Args as a tuple schema
+        let mut args_state = SchemaGenState {
+            use_named_refs: true,
+            root_name: None,
+            active: HashSet::new(),
+        };
         let arg_schemas: Vec<_> = method
             .args
             .iter()
-            .map(|a| generate_schema(a.shape))
+            .map(|a| generate_schema_with_field(a.shape, None, &mut args_state))
             .collect();
         let args_schema = format!(
             "{{ kind: 'tuple', elements: [{}] }}",
@@ -272,13 +352,29 @@ pub fn generate_descriptor(service: &ServiceDescriptor) -> String {
         // Result schema: Result<T, RoamError<E>>
         let result_schema = match classify_shape(method.return_shape) {
             ShapeKind::Result { ok, err } => {
-                let ok_schema = generate_schema(ok);
-                let err_schema = generate_schema(err);
+                let mut ok_state = SchemaGenState {
+                    use_named_refs: true,
+                    root_name: None,
+                    active: HashSet::new(),
+                };
+                let mut err_state = SchemaGenState {
+                    use_named_refs: true,
+                    root_name: None,
+                    active: HashSet::new(),
+                };
+                let ok_schema = generate_schema_with_field(ok, None, &mut ok_state);
+                let err_schema = generate_schema_with_field(err, None, &mut err_state);
                 generate_result_schema(&ok_schema, &err_schema)
             }
             _ => {
                 // Infallible: ok = return type, err = null (User variant never sent)
-                let ok_schema = generate_schema(method.return_shape);
+                let mut ok_state = SchemaGenState {
+                    use_named_refs: true,
+                    root_name: None,
+                    active: HashSet::new(),
+                };
+                let ok_schema =
+                    generate_schema_with_field(method.return_shape, None, &mut ok_state);
                 generate_result_schema(&ok_schema, "null")
             }
         };
