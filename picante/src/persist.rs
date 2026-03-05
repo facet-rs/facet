@@ -10,7 +10,7 @@ use futures_util::future::BoxFuture;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info, trace, warn};
+use tracing::{trace, warn};
 
 // r[persist.format]
 // r[persist.load-version]

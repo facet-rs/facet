@@ -10,7 +10,7 @@ use facet::Facet;
 use futures_util::future::BoxFuture;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use tracing::{debug, trace};
+use tracing::trace;
 
 // r[interned.id-type]
 /// An identifier returned from [`InternedIngredient::intern`].

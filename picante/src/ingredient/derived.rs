@@ -16,7 +16,7 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
-use tracing::{debug, trace};
+use tracing::trace;
 
 type ComputeFuture<'db, V> = BoxFuture<'db, PicanteResult<V>>;
 type ComputeFn<DB, K, V> = dyn for<'db> Fn(&'db DB, K) -> ComputeFuture<'db, V> + Send + Sync;

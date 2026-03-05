@@ -11,7 +11,7 @@ use parking_lot::RwLock;
 use std::any::Any;
 use std::hash::Hash;
 use std::sync::Arc;
-use tracing::{debug, trace};
+use tracing::trace;
 
 // ============================================================================
 // Type-erased storage and callbacks for InputIngredient
