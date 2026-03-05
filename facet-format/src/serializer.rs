@@ -1125,6 +1125,145 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
         Ok(())
     }
 
+    /// Recursively flattens a newtype variant's inner value into the current
+    /// JSON object that already has `begin_struct` and the outer tag written.
+    ///
+    /// Three cases:
+    /// 1. Inner value is a **struct** → emit its fields directly.
+    /// 2. Inner value is an **internally-tagged enum** → emit its tag, then
+    ///    handle its active variant (which may itself be a newtype, so recurse).
+    /// 3. Inner value is a **scalar / unsupported type** → error, because
+    ///    scalars cannot be flattened into an object.
+    fn serialize_flattened_newtype_value<'mem, 'facet>(
+        &mut self,
+        value: Peek<'mem, 'facet>,
+        used_tag_keys: &[&str],
+    ) -> Result<(), SerializeError<S::Error>> {
+        let shape = value.shape();
+        let field_mode = self.serializer.struct_field_mode();
+
+        // Case 1: plain struct — flatten its fields into the enclosing object
+        if let Ok(struct_) = value.into_struct() {
+            let mut fields: alloc::vec::Vec<_> = if field_mode == StructFieldMode::Unnamed {
+                struct_.fields_for_binary_serialize().collect()
+            } else {
+                struct_.fields_for_serialize().collect()
+            };
+            sort_fields_if_needed(self.serializer, &mut fields);
+            for (field_item, field_value) in fields {
+                self.serializer
+                    .field_metadata(&field_item)
+                    .map_err(SerializeError::Backend)?;
+                if field_mode == StructFieldMode::Named {
+                    self.serializer
+                        .field_key(field_item.effective_name())
+                        .map_err(SerializeError::Backend)?;
+                }
+                self.push(PathSegment::Field(Cow::Owned(
+                    field_item.effective_name().to_string(),
+                )));
+                self.serialize_field_value(&field_item, field_value)?;
+                self.pop();
+            }
+            return Ok(());
+        }
+
+        // Case 2: internally-tagged enum — write its tag, then handle its variant
+        if let Some(inner_tag) = shape.get_tag_attr()
+            && shape.get_content_attr().is_none()
+            && let Ok(inner_enum) = value.into_enum()
+        {
+            // Reject duplicate tag key names across nesting levels —
+            // e.g. both outer and inner enum using #[facet(tag = "type")].
+            // With a flat JSON object we cannot distinguish which "type"
+            // value belongs to which level.
+            if used_tag_keys.contains(&inner_tag) {
+                return Err(SerializeError::Unsupported(
+                    format!(
+                        "nested internally-tagged enums use the same tag key \"{}\"; \
+                         this is ambiguous when flattened into a single object",
+                        inner_tag
+                    )
+                    .into(),
+                ));
+            }
+
+            let inner_variant = inner_enum
+                .active_variant()
+                .map_err(|e| SerializeError::Unsupported(Cow::Owned(e.to_string())))?;
+
+            // Write the inner enum's tag
+            self.serializer
+                .field_key(inner_tag)
+                .map_err(SerializeError::Backend)?;
+            self.serializer
+                .scalar(ScalarValue::Str(Cow::Borrowed(
+                    inner_variant.effective_name(),
+                )))
+                .map_err(SerializeError::Backend)?;
+
+            self.push(PathSegment::Variant(Cow::Borrowed(
+                inner_variant.effective_name(),
+            )));
+
+            match inner_variant.data.kind {
+                StructKind::Unit => {}
+                StructKind::Struct => {
+                    let mut inner_fields: alloc::vec::Vec<_> =
+                        if field_mode == StructFieldMode::Unnamed {
+                            inner_enum.fields_for_binary_serialize().collect()
+                        } else {
+                            inner_enum.fields_for_serialize().collect()
+                        };
+                    sort_fields_if_needed(self.serializer, &mut inner_fields);
+
+                    for (field_item, field_value) in inner_fields {
+                        self.serializer
+                            .field_metadata(&field_item)
+                            .map_err(SerializeError::Backend)?;
+                        if field_mode == StructFieldMode::Named {
+                            self.serializer
+                                .field_key(field_item.effective_name())
+                                .map_err(SerializeError::Backend)?;
+                        }
+                        self.push(PathSegment::Field(Cow::Owned(
+                            field_item.effective_name().to_string(),
+                        )));
+                        self.serialize_field_value(&field_item, field_value)?;
+                        self.pop();
+                    }
+                }
+                StructKind::TupleStruct | StructKind::Tuple => {
+                    // Inner variant is itself a newtype — recurse
+                    if inner_variant.data.fields.len() != 1 {
+                        self.pop();
+                        return Err(SerializeError::Unsupported(Cow::Borrowed(
+                            "internally tagged tuple variants with multiple fields are not supported",
+                        )));
+                    }
+                    let nested_value = inner_enum
+                        .field(0)
+                        .map_err(|e| SerializeError::Unsupported(Cow::Owned(e.to_string())))?
+                        .expect("single-field tuple variant should have field 0");
+                    let mut inner_used_tag_keys = alloc::vec::Vec::from(used_tag_keys);
+                    inner_used_tag_keys.push(inner_tag);
+                    self.serialize_flattened_newtype_value(nested_value, &inner_used_tag_keys)?;
+                }
+            }
+
+            self.pop();
+            return Ok(());
+        }
+
+        // Case 3: scalar or other non-flattenable type
+        Err(SerializeError::Unsupported(
+            "internally-tagged enum with scalar newtype payload cannot be \
+             flattened; use #[facet(content = \"...\")] for adjacently-tagged \
+             representation"
+                .into(),
+        ))
+    }
+
     fn serialize_discriminant<'mem, 'facet>(
         &mut self,
         enum_: facet_reflect::PeekEnum<'mem, 'facet>,
@@ -1286,93 +1425,23 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
                         }
                     }
                     StructKind::TupleStruct | StructKind::Tuple => {
-                        // Single-field tuple variants containing an internally-tagged enum
-                        // get flattened: their inner enum's tag and fields merge into this object
+                        // Single-field tuple (newtype) variants get flattened into the
+                        // enclosing tagged object. The inner value may be a struct, an
+                        // internally-tagged enum, or a chain of newtype wrappers around
+                        // one of those — we handle all cases recursively.
                         if variant.data.fields.len() != 1 {
                             self.pop();
                             return Err(SerializeError::Unsupported(Cow::Borrowed(
-                                "internally tagged tuple variants are not supported",
+                                "internally tagged tuple variants with multiple fields are not supported",
                             )));
                         }
-
-                        let inner_shape = variant.data.fields[0].shape();
-                        let inner_tag = match inner_shape.get_tag_attr() {
-                            Some(tag) if inner_shape.get_content_attr().is_none() => tag,
-                            _ => {
-                                self.pop();
-                                return Err(SerializeError::Unsupported(Cow::Borrowed(
-                                    "internally tagged tuple variants are not supported",
-                                )));
-                            }
-                        };
 
                         let inner_value = enum_
                             .field(0)
                             .map_err(|e| SerializeError::Unsupported(Cow::Owned(e.to_string())))?
                             .expect("single-field tuple variant should have field 0");
 
-                        let inner_enum = inner_value.into_enum().map_err(|_| {
-                            SerializeError::Unsupported(Cow::Borrowed(
-                                "internally tagged tuple variant field is not an enum",
-                            ))
-                        })?;
-
-                        let inner_variant = inner_enum
-                            .active_variant()
-                            .map_err(|e| SerializeError::Unsupported(Cow::Owned(e.to_string())))?;
-
-                        // Write the inner enum's tag
-                        self.serializer
-                            .field_key(inner_tag)
-                            .map_err(SerializeError::Backend)?;
-                        self.serializer
-                            .scalar(ScalarValue::Str(Cow::Borrowed(
-                                inner_variant.effective_name(),
-                            )))
-                            .map_err(SerializeError::Backend)?;
-
-                        // Write the inner enum's fields
-                        self.push(PathSegment::Variant(Cow::Borrowed(
-                            inner_variant.effective_name(),
-                        )));
-
-                        match inner_variant.data.kind {
-                            StructKind::Unit => {}
-                            StructKind::Struct => {
-                                let mut inner_fields: alloc::vec::Vec<_> =
-                                    if field_mode == StructFieldMode::Unnamed {
-                                        inner_enum.fields_for_binary_serialize().collect()
-                                    } else {
-                                        inner_enum.fields_for_serialize().collect()
-                                    };
-                                sort_fields_if_needed(self.serializer, &mut inner_fields);
-
-                                for (field_item, field_value) in inner_fields {
-                                    self.serializer
-                                        .field_metadata(&field_item)
-                                        .map_err(SerializeError::Backend)?;
-                                    if field_mode == StructFieldMode::Named {
-                                        self.serializer
-                                            .field_key(field_item.effective_name())
-                                            .map_err(SerializeError::Backend)?;
-                                    }
-                                    self.push(PathSegment::Field(Cow::Owned(
-                                        field_item.effective_name().to_string(),
-                                    )));
-                                    self.serialize_field_value(&field_item, field_value)?;
-                                    self.pop();
-                                }
-                            }
-                            StructKind::TupleStruct | StructKind::Tuple => {
-                                self.pop();
-                                self.pop();
-                                return Err(SerializeError::Unsupported(Cow::Borrowed(
-                                    "nested internally tagged tuple variants are not supported",
-                                )));
-                            }
-                        }
-
-                        self.pop();
+                        self.serialize_flattened_newtype_value(inner_value, &[tag_key])?;
                     }
                 }
                 self.pop();
