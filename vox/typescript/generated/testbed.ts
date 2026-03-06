@@ -791,7 +791,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "sum",
       id: 0x855b3a25d97bfefdn,
-      args: { kind: "tuple", elements: [{ kind: "rx", element: { kind: "i32" } }] },
+      args: { kind: "tuple", elements: [{ kind: "rx", initial_credit: 16, element: { kind: "i32" } }] },
       result: {
         kind: "enum",
         variants: [{ name: "Ok", fields: { kind: "i64" } }, {
@@ -809,7 +809,10 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "generate",
       id: 0x54d2273d8cdb9c38n,
-      args: { kind: "tuple", elements: [{ kind: "u32" }, { kind: "tx", element: { kind: "i32" } }] },
+      args: {
+        kind: "tuple",
+        elements: [{ kind: "u32" }, { kind: "tx", initial_credit: 16, element: { kind: "i32" } }],
+      },
       result: {
         kind: "enum",
         variants: [{ name: "Ok", fields: { kind: "struct", fields: {} } }, {
@@ -829,7 +832,11 @@ export const testbed_descriptor: ServiceDescriptor = {
       id: 0x5d9895604eb18b19n,
       args: {
         kind: "tuple",
-        elements: [{ kind: "rx", element: { kind: "string" } }, { kind: "tx", element: { kind: "string" } }],
+        elements: [{ kind: "rx", initial_credit: 16, element: { kind: "string" } }, {
+          kind: "tx",
+          initial_credit: 16,
+          element: { kind: "string" },
+        }],
       },
       result: {
         kind: "enum",

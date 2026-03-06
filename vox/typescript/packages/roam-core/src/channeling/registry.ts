@@ -1,17 +1,144 @@
 // Channel registry for managing active channels on a connection.
 
-import { type ChannelId, ChannelError } from "./types.ts";
+import { type ChannelId, ChannelError, DEFAULT_INITIAL_CREDIT } from "./types.ts";
 import { createChannel, type Channel, ChannelReceiver } from "./channel.ts";
 
 /** Message sent on an outgoing channel. */
-export type OutgoingMessage = { kind: "data"; payload: Uint8Array } | { kind: "close" };
+export type OutgoingMessage =
+  | { kind: "data"; payload: Uint8Array }
+  | { kind: "close" }
+  | { kind: "credit"; additional: number };
 
 /** Result of polling an outgoing channel. */
 export type OutgoingPoll =
   | { kind: "data"; channelId: ChannelId; payload: Uint8Array }
   | { kind: "close"; channelId: ChannelId }
+  | { kind: "credit"; channelId: ChannelId; additional: number }
   | { kind: "pending" }
   | { kind: "done" };
+
+class AsyncQueue<T> {
+  private items: T[] = [];
+  private closed = false;
+  private recvWaiters: Array<(value: T | null) => void> = [];
+  private sendWaiters: Array<() => void> = [];
+
+  constructor(private readonly capacity: number) {}
+
+  async enqueue(value: T): Promise<boolean> {
+    while (!this.closed && this.recvWaiters.length === 0 && this.items.length >= this.capacity) {
+      await new Promise<void>((resolve) => {
+        this.sendWaiters.push(resolve);
+      });
+    }
+
+    if (this.closed) {
+      return false;
+    }
+
+    const waiter = this.recvWaiters.shift();
+    if (waiter) {
+      waiter(value);
+      return true;
+    }
+
+    this.items.push(value);
+    return true;
+  }
+
+  async dequeue(): Promise<T | null> {
+    if (this.items.length > 0) {
+      const value = this.items.shift()!;
+      this.signalSpace();
+      return value;
+    }
+
+    if (this.closed) {
+      return null;
+    }
+
+    return new Promise((resolve) => {
+      this.recvWaiters.push(resolve);
+    });
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+
+    for (const waiter of this.recvWaiters) {
+      waiter(null);
+    }
+    this.recvWaiters.length = 0;
+
+    for (const waiter of this.sendWaiters) {
+      waiter();
+    }
+    this.sendWaiters.length = 0;
+  }
+
+  private signalSpace(): void {
+    const waiter = this.sendWaiters.shift();
+    waiter?.();
+  }
+}
+
+class CreditWindow {
+  private available: number;
+  private closed = false;
+  private waiters: Array<() => void> = [];
+
+  constructor(initialCredit: number) {
+    this.available = initialCredit;
+  }
+
+  async consume(): Promise<void> {
+    while (true) {
+      if (this.closed) {
+        throw ChannelError.closed();
+      }
+      if (this.available > 0) {
+        this.available -= 1;
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        this.waiters.push(resolve);
+      });
+    }
+  }
+
+  grant(additional: number): void {
+    if (this.closed || additional <= 0) {
+      return;
+    }
+    this.available += additional;
+    const waiters = this.waiters.splice(0, this.waiters.length);
+    for (const waiter of waiters) {
+      waiter();
+    }
+  }
+
+  close(): void {
+    if (this.closed) {
+      return;
+    }
+    this.closed = true;
+    const waiters = this.waiters.splice(0, this.waiters.length);
+    for (const waiter of waiters) {
+      waiter();
+    }
+  }
+}
+
+export interface OutgoingCreditController {
+  consume(): Promise<void>;
+  close(): void;
+}
+
+interface OutgoingState {
+  queue: AsyncQueue<OutgoingMessage>;
+  credit: CreditWindow;
+}
 
 /**
  * Sender handle for outgoing channel data.
@@ -21,7 +148,8 @@ export type OutgoingPoll =
 export class OutgoingSender {
   constructor(
     private _channelId: ChannelId,
-    private channel: Channel<OutgoingMessage>,
+    private state: OutgoingState,
+    private readonly notifyOutgoing?: () => void,
     private readonly _keepaliveOwner?: object,
   ) {}
 
@@ -30,14 +158,24 @@ export class OutgoingSender {
   }
 
   /** Send serialized data. */
-  sendData(data: Uint8Array): boolean {
-    return this.channel.send({ kind: "data", payload: data });
+  async sendData(data: Uint8Array): Promise<void> {
+    await this.state.credit.consume();
+    const enqueued = await this.state.queue.enqueue({ kind: "data", payload: data });
+    if (!enqueued) {
+      throw ChannelError.closed();
+    }
+    this.notifyOutgoing?.();
   }
 
   /** Send close signal. */
   sendClose(): void {
-    this.channel.send({ kind: "close" });
-    this.channel.close();
+    void this.state.queue.enqueue({ kind: "close" }).then((enqueued) => {
+      if (enqueued) {
+        this.notifyOutgoing?.();
+      }
+      this.state.queue.close();
+      this.state.credit.close();
+    });
   }
 }
 
@@ -50,13 +188,20 @@ export class OutgoingSender {
  * r[impl channeling.unknown] - Unknown channel IDs cause Goodbye.
  */
 export class ChannelRegistry {
-  constructor(private readonly keepaliveOwner?: object) {}
+  constructor(
+    private readonly keepaliveOwner?: object,
+    private readonly notifyOutgoing?: () => void,
+  ) {}
 
   /** Channels where we receive Data messages (backing Rx<T> handles). */
   private incoming = new Map<ChannelId, Channel<Uint8Array>>();
 
   /** Channels where we send Data messages (backing Tx<T> handles). */
-  private outgoing = new Map<ChannelId, Channel<OutgoingMessage>>();
+  private outgoing = new Map<ChannelId, OutgoingState>();
+
+  /** Pending GrantCredit control messages. */
+  private pendingCredits: Array<{ channelId: ChannelId; additional: number }> = [];
+  private creditWaiter: ((value: { channelId: ChannelId; additional: number }) => void) | null = null;
 
   /** Channel IDs that have been closed. */
   private closed = new Set<ChannelId>();
@@ -66,10 +211,18 @@ export class ChannelRegistry {
    *
    * r[impl channeling.allocation.caller] - Caller allocates channel IDs.
    */
-  registerIncoming(channelId: ChannelId): ChannelReceiver<Uint8Array> {
-    const channel = createChannel<Uint8Array>(64);
+  registerIncoming(
+    channelId: ChannelId,
+    initialCredit: number = DEFAULT_INITIAL_CREDIT,
+    onConsumed?: (additional: number) => void,
+  ): ChannelReceiver<Uint8Array> {
+    const channel = createChannel<Uint8Array>(initialCredit);
     this.incoming.set(channelId, channel);
-    return new ChannelReceiver(channel, this.keepaliveOwner);
+    return new ChannelReceiver(
+      channel,
+      this.keepaliveOwner,
+      () => (onConsumed ? onConsumed(1) : this.queueGrantCredit(channelId, 1)),
+    );
   }
 
   /**
@@ -77,10 +230,19 @@ export class ChannelRegistry {
    *
    * r[impl channeling.allocation.caller] - Caller allocates channel IDs.
    */
-  registerOutgoing(channelId: ChannelId): OutgoingSender {
-    const channel = createChannel<OutgoingMessage>(64);
-    this.outgoing.set(channelId, channel);
-    return new OutgoingSender(channelId, channel, this.keepaliveOwner);
+  registerOutgoing(
+    channelId: ChannelId,
+    initialCredit: number = DEFAULT_INITIAL_CREDIT,
+  ): OutgoingSender {
+    const state = this.ensureOutgoing(channelId, initialCredit);
+    return new OutgoingSender(channelId, state, this.notifyOutgoing, this.keepaliveOwner);
+  }
+
+  registerServerOutgoing(
+    channelId: ChannelId,
+    initialCredit: number = DEFAULT_INITIAL_CREDIT,
+  ): OutgoingCreditController {
+    return this.ensureOutgoing(channelId, initialCredit).credit;
   }
 
   /**
@@ -100,49 +262,98 @@ export class ChannelRegistry {
       throw ChannelError.unknown(channelId);
     }
 
-    // If send fails, the Rx<T> was dropped - that's okay
-    channel.send(payload);
+    if (!channel.send(payload)) {
+      throw ChannelError.overflow(channelId);
+    }
+  }
+
+  grantCredit(channelId: ChannelId, additional: number): void {
+    this.outgoing.get(channelId)?.credit.grant(additional);
+  }
+
+  queueGrantCredit(channelId: ChannelId, additional: number): void {
+    if (additional <= 0) {
+      return;
+    }
+
+    const credit = { channelId, additional };
+    if (this.creditWaiter) {
+      const waiter = this.creditWaiter;
+      this.creditWaiter = null;
+      waiter(credit);
+    } else {
+      this.pendingCredits.push(credit);
+    }
+    this.notifyOutgoing?.();
   }
 
   /**
    * Wait for outgoing data from any registered channel.
    */
   async waitOutgoing(): Promise<OutgoingPoll> {
-    if (this.outgoing.size === 0) {
-      return { kind: "done" };
+    while (true) {
+      const pendingCredit = this.pendingCredits.shift();
+      if (pendingCredit) {
+        return { kind: "credit", ...pendingCredit };
+      }
+
+      if (this.outgoing.size === 0) {
+        return { kind: "done" };
+      }
+
+      const promises: Promise<
+        | { source: "channel"; channelId: ChannelId; msg: OutgoingMessage | null }
+        | { source: "credit"; channelId: ChannelId; additional: number }
+      >[] = [];
+
+      for (const [channelId, state] of this.outgoing) {
+        promises.push(
+          state.queue.dequeue().then((msg) => ({
+            source: "channel" as const,
+            channelId,
+            msg,
+          })),
+        );
+      }
+
+      promises.push(
+        new Promise<{ source: "credit"; channelId: ChannelId; additional: number }>((resolve) => {
+          this.creditWaiter = (credit) => {
+            resolve({ source: "credit", ...credit });
+          };
+        }),
+      );
+
+      const result = await Promise.race(promises);
+
+      if (result.source === "credit") {
+        return { kind: "credit", channelId: result.channelId, additional: result.additional };
+      }
+
+      this.creditWaiter = null;
+
+      if (result.msg === null) {
+        this.outgoing.delete(result.channelId);
+        this.closed.add(result.channelId);
+        continue;
+      }
+
+      if (result.msg.kind === "data") {
+        return { kind: "data", channelId: result.channelId, payload: result.msg.payload };
+      }
+
+      if (result.msg.kind === "close") {
+        this.outgoing.delete(result.channelId);
+        this.closed.add(result.channelId);
+        return { kind: "close", channelId: result.channelId };
+      }
+
+      return {
+        kind: "credit",
+        channelId: result.channelId,
+        additional: result.msg.additional,
+      };
     }
-
-    // Create a race between all outgoing channels
-    const promises: Promise<{ channelId: ChannelId; msg: OutgoingMessage | null }>[] = [];
-
-    for (const [channelId, channel] of this.outgoing) {
-      promises.push(channel.recv().then((msg) => ({ channelId, msg })));
-    }
-
-    if (promises.length === 0) {
-      return { kind: "done" };
-    }
-
-    const result = await Promise.race(promises);
-
-    if (result.msg === null) {
-      // Channel closed without message - implicit close
-      this.outgoing.delete(result.channelId);
-      this.closed.add(result.channelId);
-      return { kind: "close", channelId: result.channelId };
-    }
-
-    if (result.msg.kind === "data") {
-      return { kind: "data", channelId: result.channelId, payload: result.msg.payload };
-    }
-
-    if (result.msg.kind === "close") {
-      this.outgoing.delete(result.channelId);
-      this.closed.add(result.channelId);
-      return { kind: "close", channelId: result.channelId };
-    }
-
-    return { kind: "pending" };
   }
 
   /**
@@ -155,6 +366,13 @@ export class ChannelRegistry {
     if (channel) {
       channel.close();
       this.incoming.delete(channelId);
+    }
+
+    const outgoing = this.outgoing.get(channelId);
+    if (outgoing) {
+      outgoing.credit.close();
+      outgoing.queue.close();
+      this.outgoing.delete(channelId);
     }
     this.closed.add(channelId);
   }
@@ -175,6 +393,20 @@ export class ChannelRegistry {
   }
 
   hasLiveChannels(): boolean {
-    return this.incoming.size > 0 || this.outgoing.size > 0;
+    return this.incoming.size > 0 || this.outgoing.size > 0 || this.pendingCredits.length > 0;
+  }
+
+  private ensureOutgoing(channelId: ChannelId, initialCredit: number): OutgoingState {
+    let state = this.outgoing.get(channelId);
+    if (state) {
+      return state;
+    }
+
+    state = {
+      queue: new AsyncQueue<OutgoingMessage>(64),
+      credit: new CreditWindow(initialCredit),
+    };
+    this.outgoing.set(channelId, state);
+    return state;
   }
 }

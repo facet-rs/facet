@@ -52,6 +52,15 @@ fn named_shape_name(shape: &'static Shape) -> Option<&'static str> {
     }
 }
 
+fn extract_initial_credit(shape: &'static Shape) -> u32 {
+    shape
+        .const_params
+        .iter()
+        .find(|cp| cp.name == "N")
+        .map(|cp| cp.value as u32)
+        .unwrap_or(16)
+}
+
 fn generate_schema_with_field(
     shape: &'static Shape,
     field: Option<&Field>,
@@ -91,13 +100,15 @@ fn generate_schema_with_field(
         ShapeKind::Scalar(scalar) => generate_scalar_schema(scalar),
         ShapeKind::Tx { inner } => {
             format!(
-                "{{ kind: 'tx', element: {} }}",
+                "{{ kind: 'tx', initial_credit: {}, element: {} }}",
+                extract_initial_credit(shape),
                 generate_schema_with_field(inner, None, state)
             )
         }
         ShapeKind::Rx { inner } => {
             format!(
-                "{{ kind: 'rx', element: {} }}",
+                "{{ kind: 'rx', initial_credit: {}, element: {} }}",
+                extract_initial_credit(shape),
                 generate_schema_with_field(inner, None, state)
             )
         }

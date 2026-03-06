@@ -3,6 +3,9 @@
 /** Channel ID type (matches wire format). */
 export type ChannelId = bigint;
 
+/** Default per-channel initial credit when the const generic `N` is omitted. */
+export const DEFAULT_INITIAL_CREDIT = 16;
+
 /** Connection role - determines channel ID parity. */
 export const Role = {
   /** Initiator (client) uses odd channel IDs (1, 3, 5, ...). */
@@ -19,6 +22,7 @@ export class ChannelError extends Error {
       | "unknown"
       | "dataAfterClose"
       | "closed"
+      | "overflow"
       | "serialize"
       | "deserialize"
       | "notBound"
@@ -39,6 +43,10 @@ export class ChannelError extends Error {
 
   static closed(): ChannelError {
     return new ChannelError("closed", "channel closed");
+  }
+
+  static overflow(channelId: ChannelId): ChannelError {
+    return new ChannelError("overflow", `incoming channel buffer overflow on channel ${channelId}`);
   }
 
   static serialize(cause: unknown): ChannelError {

@@ -147,12 +147,14 @@ export interface RefSchema {
 export interface TxSchema {
   kind: "tx";
   element: Schema;
+  initial_credit?: number;
 }
 
 /** Schema for Rx<T> - data flowing from callee to caller. */
 export interface RxSchema {
   kind: "rx";
   element: Schema;
+  initial_credit?: number;
 }
 
 // ============================================================================

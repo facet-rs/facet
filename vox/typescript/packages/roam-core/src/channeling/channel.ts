@@ -112,10 +112,15 @@ export class ChannelReceiver<T> {
   constructor(
     private channel: Channel<T>,
     private readonly _keepaliveOwner?: object,
+    private readonly onRecv?: () => void,
   ) {}
 
-  recv(): Promise<T | null> {
-    return this.channel.recv();
+  async recv(): Promise<T | null> {
+    const value = await this.channel.recv();
+    if (value !== null) {
+      this.onRecv?.();
+    }
+    return value;
   }
 
   isClosed(): boolean {

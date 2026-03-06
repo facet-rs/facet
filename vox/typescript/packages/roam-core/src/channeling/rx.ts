@@ -89,13 +89,15 @@ export class Rx<T> {
     channelId: ChannelId,
     registry: ChannelRegistry,
     deserialize: (bytes: Uint8Array) => T,
+    initialCredit: number,
+    onConsumed?: (additional: number) => void,
   ): void {
     if (this._consumed) {
       throw ChannelError.alreadyConsumed("Rx");
     }
 
     this._channelId = channelId;
-    this.receiver = registry.registerIncoming(channelId);
+    this.receiver = registry.registerIncoming(channelId, initialCredit, onConsumed);
     this.deserialize = deserialize;
     this._consumed = true;
   }

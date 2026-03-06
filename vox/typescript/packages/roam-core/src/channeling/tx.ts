@@ -1,7 +1,7 @@
 // Tx channel handle - caller sends data to callee.
 
 import { type ChannelId, ChannelError } from "./types.ts";
-import { OutgoingSender, ChannelRegistry } from "./registry.ts";
+import { OutgoingSender, ChannelRegistry, type OutgoingCreditController } from "./registry.ts";
 import { type TaskSender } from "./task.ts";
 
 // Forward declaration for pair reference
@@ -16,7 +16,7 @@ import type { Rx } from "./rx.ts";
  */
 type TxSender =
   | { mode: "client"; sender: OutgoingSender }
-  | { mode: "server"; channelId: ChannelId; taskSender: TaskSender };
+  | { mode: "server"; channelId: ChannelId; taskSender: TaskSender; credit: OutgoingCreditController };
 
 /**
  * Tx channel handle - caller sends data to callee.
@@ -49,19 +49,31 @@ export class Tx<T> {
   /** Create an unbound Tx (for use with channel<T>()). */
   constructor();
   /** Create a server-side Tx with a TaskSender. */
-  constructor(channelId: ChannelId, taskSender: TaskSender, serialize: (value: T) => Uint8Array);
+  constructor(
+    channelId: ChannelId,
+    taskSender: TaskSender,
+    credit: OutgoingCreditController,
+    serialize: (value: T) => Uint8Array,
+  );
   constructor(
     channelId?: ChannelId,
     taskSender?: TaskSender,
+    credit?: OutgoingCreditController,
     serialize?: (value: T) => Uint8Array,
   ) {
-    if (channelId !== undefined && taskSender !== undefined && serialize !== undefined) {
+    if (
+      channelId !== undefined &&
+      taskSender !== undefined &&
+      credit !== undefined &&
+      serialize !== undefined
+    ) {
       // Server-side constructor
       this._channelId = channelId;
       this.sender = {
         mode: "server",
         channelId: channelId,
         taskSender: taskSender,
+        credit,
       };
       this.serialize = serialize;
       this._consumed = true; // Server-side Tx is immediately bound
@@ -97,13 +109,18 @@ export class Tx<T> {
    * @param registry - The channel registry to register with
    * @param serialize - Function to serialize values
    */
-  bind(channelId: ChannelId, registry: ChannelRegistry, serialize: (value: T) => Uint8Array): void {
+  bind(
+    channelId: ChannelId,
+    registry: ChannelRegistry,
+    serialize: (value: T) => Uint8Array,
+    initialCredit: number,
+  ): void {
     if (this._consumed) {
       throw ChannelError.alreadyConsumed("Tx");
     }
 
     this._channelId = channelId;
-    const outgoing = registry.registerOutgoing(channelId);
+    const outgoing = registry.registerOutgoing(channelId, initialCredit);
     this.sender = { mode: "client", sender: outgoing };
     this.serialize = serialize;
     this._consumed = true;
@@ -150,11 +167,10 @@ export class Tx<T> {
     }
 
     if (this.sender.mode === "client") {
-      if (!this.sender.sender.sendData(bytes)) {
-        throw ChannelError.closed();
-      }
+      await this.sender.sender.sendData(bytes);
     } else {
       // Server-side: send directly via task channel
+      await this.sender.credit.consume();
       this.sender.taskSender({
         kind: "data",
         channelId: this.sender.channelId,
@@ -180,6 +196,7 @@ export class Tx<T> {
     if (this.sender.mode === "client") {
       this.sender.sender.sendClose();
     } else {
+      this.sender.credit.close();
       // Server-side: send Close via task channel
       this.sender.taskSender({
         kind: "close",
@@ -206,7 +223,14 @@ export class Tx<T> {
 export function createServerTx<T>(
   channelId: ChannelId,
   taskSender: TaskSender,
+  registry: ChannelRegistry,
+  initialCredit: number,
   serialize: (value: T) => Uint8Array,
 ): Tx<T> {
-  return new Tx(channelId, taskSender, serialize);
+  return new Tx(
+    channelId,
+    taskSender,
+    registry.registerServerOutgoing(channelId, initialCredit),
+    serialize,
+  );
 }

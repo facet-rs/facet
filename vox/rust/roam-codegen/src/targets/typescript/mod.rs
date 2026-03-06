@@ -186,7 +186,7 @@ mod tests {
     use super::generate_service;
     use facet::Facet;
     use roam_hash::method_descriptor;
-    use roam_types::ServiceDescriptor;
+    use roam_types::{Rx, ServiceDescriptor, Tx};
 
     #[derive(Facet)]
     struct RecursiveNode {
@@ -279,6 +279,32 @@ mod tests {
         assert!(
             generated.contains("id: SessionId;"),
             "uses of transparent named newtypes must keep alias name:\n{generated}"
+        );
+    }
+
+    #[test]
+    fn generated_typescript_preserves_channel_initial_credit() {
+        let subscribe = method_descriptor::<(Tx<u32>, Rx<u32, 32>), ()>(
+            "StreamSvc",
+            "subscribe",
+            &["output", "input"],
+            None,
+        );
+        let methods = Box::leak(vec![subscribe].into_boxed_slice());
+        let service = ServiceDescriptor {
+            service_name: "StreamSvc",
+            methods,
+            doc: None,
+        };
+
+        let generated = generate_service(&service);
+        assert!(
+            generated.contains("{ kind: 'tx', initial_credit: 16, element: { kind: 'u32' } }"),
+            "default Tx<T> credit must be emitted into the descriptor:\n{generated}"
+        );
+        assert!(
+            generated.contains("{ kind: 'rx', initial_credit: 32, element: { kind: 'u32' } }"),
+            "explicit Rx<T, N> credit must be emitted into the descriptor:\n{generated}"
         );
     }
 }

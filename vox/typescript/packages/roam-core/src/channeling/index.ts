@@ -1,6 +1,6 @@
 // Channeling module exports
 
-export { type ChannelId, Role, ChannelError } from "./types.ts";
+export { type ChannelId, Role, ChannelError, DEFAULT_INITIAL_CREDIT } from "./types.ts";
 export { ChannelIdAllocator } from "./allocator.ts";
 export { createChannel, ChannelSender, ChannelReceiver, type Channel } from "./channel.ts";
 export {

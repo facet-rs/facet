@@ -27,6 +27,7 @@ import {
   messageReject,
   messageData,
   messageClose,
+  messageCredit,
   encodeMessage,
   decodeMessage,
 } from "@bearcove/roam-wire";
@@ -34,6 +35,7 @@ import {
   ChannelRegistry,
   ChannelIdAllocator,
   ChannelError,
+  DEFAULT_INITIAL_CREDIT,
   Role,
   Tx,
   Rx,
@@ -231,6 +233,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
   >();
   private messagePumpRunning = false;
   private messagePumpPromise: Promise<void> | null = null;
+  private messagePumpWakeupResolve: (() => void) | null = null;
   private keepalive: KeepaliveConfig | null;
 
   /**
@@ -252,7 +255,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     this._negotiated = negotiated;
     this.ourHello = ourHello;
     this.channelAllocator = new ChannelIdAllocator(role);
-    this.channelRegistry = new ChannelRegistry(this);
+    this.channelRegistry = new ChannelRegistry(this, () => this.wakeMessagePump());
     this._acceptConnections = acceptConnections;
     this.keepalive = keepalive;
   }
@@ -342,7 +345,18 @@ export class Connection<T extends MessageTransport = MessageTransport> {
         await this.io.send(encodeMessage(messageData(poll.channelId, poll.payload)));
       } else if (poll.kind === "close") {
         await this.io.send(encodeMessage(messageClose(poll.channelId)));
+      } else if (poll.kind === "credit") {
+        await this.io.send(encodeMessage(messageCredit(poll.channelId, poll.additional)));
       }
+    }
+  }
+
+  private wakeMessagePump(): void {
+    this.startMessagePump();
+    const resolve = this.messagePumpWakeupResolve;
+    if (resolve) {
+      this.messagePumpWakeupResolve = null;
+      resolve();
     }
   }
 
@@ -441,18 +455,50 @@ export class Connection<T extends MessageTransport = MessageTransport> {
 
     this.messagePumpPromise = (async () => {
       const keepaliveRuntime = this.makeKeepaliveRuntime();
+      let pendingRecv: Promise<
+        { kind: "message"; payload: Uint8Array | null } | { kind: "error"; error: unknown }
+      > | null = null;
       try {
         while (this.pendingRequests.size > 0 || this.channelRegistry.hasLiveChannels()) {
           if (!(await this.handleKeepaliveTick(keepaliveRuntime))) {
             return;
           }
-          const data = await this.io.recvTimeout(100); // Short timeout to check for new requests
+
+          await this.flushOutgoing();
+
+          if (!pendingRecv) {
+            pendingRecv = this.io
+              .recvTimeout(100)
+              .then((payload) => ({ kind: "message" as const, payload }))
+              .catch((error) => ({ kind: "error" as const, error }));
+          }
+
+          const wakeupPromise = new Promise<void>((resolve) => {
+            this.messagePumpWakeupResolve = resolve;
+          });
+
+          const raceResult = await Promise.race([
+            pendingRecv.then((result) => ({ source: "recv" as const, result })),
+            wakeupPromise.then(() => ({ source: "wakeup" as const })),
+          ]);
+
+          if (raceResult.source === "wakeup") {
+            continue;
+          }
+
+          pendingRecv = null;
+          const recvResult = raceResult.result;
+
+          if (recvResult.kind === "error") {
+            throw recvResult.error;
+          }
+
+          const data = recvResult.payload;
           if (!data) {
             if (this.io.isClosed()) {
               this.failPendingRequests(ConnectionError.closed());
               return;
             }
-            // No message received, but keep running if there are pending requests
             continue;
           }
 
@@ -485,8 +531,12 @@ export class Connection<T extends MessageTransport = MessageTransport> {
                 msg.payload.value.id,
                 msg.payload.value.body.value.item,
               );
-            } catch {
-              // Ignore channel errors - connection still valid
+            } catch (e) {
+              if (e instanceof ChannelError && e.kind === "overflow") {
+                this.io.close();
+                this.failPendingRequests(ConnectionError.closed());
+                return;
+              }
             }
             continue;
           }
@@ -499,7 +549,12 @@ export class Connection<T extends MessageTransport = MessageTransport> {
           }
 
           if (msgTag(msg) === "ChannelMessage" && msg.payload.value.body.tag === "GrantCredit") {
-            // Flow control, currently ignored
+            if (this.channelRegistry.contains(msg.payload.value.id)) {
+              this.channelRegistry.grantCredit(
+                msg.payload.value.id,
+                msg.payload.value.body.value.additional,
+              );
+            }
             continue;
           }
 
@@ -523,6 +578,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
       } finally {
         this.messagePumpRunning = false;
         this.messagePumpPromise = null;
+        this.messagePumpWakeupResolve = null;
       }
     })();
   }
@@ -638,6 +694,9 @@ export class Connection<T extends MessageTransport = MessageTransport> {
             break;
           case "close":
             await this.io.send(encodeMessage(messageClose(msg.channelId)));
+            break;
+          case "grantCredit":
+            await this.io.send(encodeMessage(messageCredit(msg.channelId, msg.additional)));
             break;
           case "response":
             await this.io.send(encodeMessage(messageResponse(msg.requestId, msg.payload)));
@@ -870,12 +929,26 @@ export class Connection<T extends MessageTransport = MessageTransport> {
           const argSchema = method.args.elements[i];
           if (argSchema.kind === "tx") {
             const channelId = requestChannels[channelIdx++];
-            return createServerTx(channelId, taskSender, (v: unknown) =>
-              encodeWithSchema(v, argSchema.element, descriptor.schema_registry),
+            return createServerTx(
+              channelId,
+              taskSender,
+              this.channelRegistry,
+              argSchema.initial_credit ?? DEFAULT_INITIAL_CREDIT,
+              (v: unknown) => encodeWithSchema(v, argSchema.element, descriptor.schema_registry),
             );
           } else if (argSchema.kind === "rx") {
             const channelId = requestChannels[channelIdx++];
-            const receiver = this.channelRegistry.registerIncoming(channelId);
+            const receiver = this.channelRegistry.registerIncoming(
+              channelId,
+              argSchema.initial_credit ?? DEFAULT_INITIAL_CREDIT,
+              (additional) => {
+                taskSender({
+                  kind: "grantCredit",
+                  channelId,
+                  additional,
+                });
+              },
+            );
             return createServerRx(channelId, receiver, (b: Uint8Array) =>
               decodeWithSchema(b, 0, argSchema.element, descriptor.schema_registry).value,
             );
@@ -916,6 +989,12 @@ export class Connection<T extends MessageTransport = MessageTransport> {
                 context: "data after close",
               });
             }
+            if (e.kind === "overflow") {
+              throw ConnectionError.protocol({
+                ruleId: "rpc.flow-control.credit.exhaustion",
+                context: "incoming channel buffer overflow",
+              });
+            }
           }
           throw e;
         }
@@ -931,6 +1010,11 @@ export class Connection<T extends MessageTransport = MessageTransport> {
 
       if (body.tag === "Close" || body.tag === "Reset") {
         this.channelRegistry.close(channelId);
+        return undefined;
+      }
+
+      if (body.tag === "GrantCredit") {
+        this.channelRegistry.grantCredit(channelId, body.value.additional);
       }
       return undefined;
     }
@@ -1074,6 +1158,9 @@ export class Connection<T extends MessageTransport = MessageTransport> {
             // r[impl channeling.data-after-close] - Data after Close is error.
             throw await this.goodbye("channeling.data-after-close");
           }
+          if (e.kind === "overflow") {
+            throw await this.goodbye("rpc.flow-control.credit.exhaustion");
+          }
         }
         throw e;
       }
@@ -1119,11 +1206,10 @@ export class Connection<T extends MessageTransport = MessageTransport> {
         throw await this.goodbye("rpc.channel.allocation");
       }
 
-      // TODO: Implement flow control.
-      // For now, validate channel exists but ignore credit.
       if (!this.channelRegistry.contains(channelId)) {
         throw await this.goodbye("channeling.unknown");
       }
+      this.channelRegistry.grantCredit(channelId, msg.payload.value.body.value.additional);
       return;
     }
 

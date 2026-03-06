@@ -15,6 +15,7 @@ import type { ChannelIdAllocator } from "./allocator.ts";
 import type { ChannelRegistry } from "./registry.ts";
 import { Tx } from "./tx.ts";
 import { Rx } from "./rx.ts";
+import { DEFAULT_INITIAL_CREDIT } from "./types.ts";
 import { encodeWithSchema, decodeWithSchema } from "@bearcove/roam-postcard";
 
 /**
@@ -88,6 +89,7 @@ function bindValue(
       if (!tx.isBound) {
         const channelId = allocator.next();
         const elementSchema = resolved.element;
+        const initialCredit = resolved.initial_credit ?? DEFAULT_INITIAL_CREDIT;
 
         // Just set the channel ID on Tx (for wire encoding)
         // Don't register as outgoing - client doesn't send on this channel
@@ -95,8 +97,11 @@ function bindValue(
 
         // Bind the paired Rx for receiving (this is what client reads from)
         if (tx._pair && !tx._pair.isBound) {
-          tx._pair.bind(channelId, registry, (b: Uint8Array) =>
-            decodeWithSchema(b, 0, elementSchema, schemaRegistry).value,
+          tx._pair.bind(
+            channelId,
+            registry,
+            (b: Uint8Array) => decodeWithSchema(b, 0, elementSchema, schemaRegistry).value,
+            initialCredit,
           );
         }
       }
@@ -112,14 +117,21 @@ function bindValue(
       if (!rx.isBound) {
         const channelId = allocator.next();
         const elementSchema = resolved.element;
-        rx.bind(channelId, registry, (b: Uint8Array) =>
-          decodeWithSchema(b, 0, elementSchema, schemaRegistry).value,
+        const initialCredit = resolved.initial_credit ?? DEFAULT_INITIAL_CREDIT;
+        rx.bind(
+          channelId,
+          registry,
+          (b: Uint8Array) => decodeWithSchema(b, 0, elementSchema, schemaRegistry).value,
+          initialCredit,
         );
 
         // Bind the paired Tx for sending (this is what client writes to)
         if (rx._pair && !rx._pair.isBound) {
-          rx._pair.bind(channelId, registry, (v: unknown) =>
-            encodeWithSchema(v, elementSchema, schemaRegistry),
+          rx._pair.bind(
+            channelId,
+            registry,
+            (v: unknown) => encodeWithSchema(v, elementSchema, schemaRegistry),
+            initialCredit,
           );
         }
       }
