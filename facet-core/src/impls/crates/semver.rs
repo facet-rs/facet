@@ -1,5 +1,6 @@
 #![cfg(feature = "semver")]
 
+use alloc::string::String;
 pub use semver::{Version, VersionReq};
 
 use crate::{
@@ -105,7 +106,7 @@ unsafe fn try_from_semver_versionreq(
                     target.put(val);
                     TryFromOutcome::Converted
                 }
-                Err(_) => TryFromOutcome::Failed("SemVer::Version parsing failed".into()),
+                Err(_) => TryFromOutcome::Failed("SemVer::VersionReq parsing failed".into()),
             }
         }
         // Handle String (consume via read)
@@ -116,7 +117,7 @@ unsafe fn try_from_semver_versionreq(
                     target.put(val);
                     TryFromOutcome::Converted
                 }
-                Err(_) => TryFromOutcome::Failed("SemVer::Version parsing failed".into()),
+                Err(_) => TryFromOutcome::Failed("SemVer::VersionReq parsing failed".into()),
             }
         } else {
             TryFromOutcome::Unsupported
@@ -173,4 +174,47 @@ unsafe impl Facet<'_> for VersionReq {
             .vtable_indirect(&SEMVER_VERSIONREQ_VTABLE)
             .build()
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_semver_version_shape() {
+        let shape = <Version as Facet>::SHAPE;
+        assert_eq!(shape.type_identifier, "Version");
+        assert_eq!(shape.module_path, Some("semver"));
+    }
+
+    #[test]
+    fn test_semver_version_parse_domain() {
+        let host = Version::parse("1.2.3-rc2").unwrap();
+        assert_eq!(host.to_string(), "1.2.3-rc2");
+    }
+
+    #[test]
+    fn test_semver_version_invalid() {
+        let result = Version::parse("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_semver_versionreq_shape() {
+        let shape = <VersionReq as Facet>::SHAPE;
+        assert_eq!(shape.type_identifier, "VersionReq");
+        assert_eq!(shape.module_path, Some("semver"));
+    }
+
+    #[test]
+    fn test_semver_versionreq_parse_domain() {
+        let host = VersionReq::parse("=1.2.3-rc2").unwrap();
+        assert_eq!(host.to_string(), "=1.2.3-rc2");
+    }
+
+    #[test]
+    fn test_semver_versionreq_invalid() {
+        let result = VersionReq::parse("");
+        assert!(result.is_err());
+    }
 }
