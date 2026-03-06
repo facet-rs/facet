@@ -107,8 +107,17 @@ impl Caller for DriverCaller {
     }
 }
 
-impl From<DriverCaller> for () {
-    fn from(_: DriverCaller) {}
+/// Liveness-only handle for a connection root.
+///
+/// Keeps the root connection alive but intentionally exposes no outbound RPC API.
+#[must_use = "Dropping NoopCaller may close the connection if it is the last caller."]
+#[derive(Clone)]
+pub struct NoopCaller(#[allow(dead_code)] DriverCaller);
+
+impl From<DriverCaller> for NoopCaller {
+    fn from(caller: DriverCaller) -> Self {
+        Self(caller)
+    }
 }
 
 /// Wasm-only driver. No channel support.

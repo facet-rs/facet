@@ -509,6 +509,7 @@ fn generate_client(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
 
     quote! {
         #[doc = #client_doc]
+        #[must_use = "Dropping this client may close the connection if it is the last caller."]
         #[derive(Clone)]
         pub struct #client_name {
             caller: #roam::ErasedCaller,

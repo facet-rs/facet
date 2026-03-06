@@ -4,6 +4,10 @@ All notable changes to Roam are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- Remove the implicit `From<DriverCaller> for ()` conversion. Use `NoopCaller` when you need to retain root connection liveness without exposing root RPC methods.
+
 - No entries yet.
 
 ## [7.0.0] - 2026-03-02

@@ -86,6 +86,7 @@ where
     }
 }
 #[doc = "Client for the `Calc` service.\n\nStores a type-erased [`Caller`](:: roam::Caller) implementation."]
+#[must_use = "Dropping this client may close the connection if it is the last caller."]
 #[derive(Clone)]
 pub struct CalcClient {
     caller: ::roam::ErasedCaller,

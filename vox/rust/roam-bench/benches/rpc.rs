@@ -25,7 +25,7 @@ const ZEROCOPY_PAYLOAD_SIZES: &[usize] = &[
 
 mod roam_zerocopy_bench {
     use moire::task::FutureExt;
-    use roam_core::{acceptor, initiator, memory_link_pair};
+    use roam_core::{NoopCaller, acceptor, initiator, memory_link_pair};
     use roam_shm::varslot::SizeClassConfig;
     use roam_shm::{Segment, SegmentConfig, create_test_link_pair};
     use roam_stream::StreamLink;
@@ -55,12 +55,15 @@ mod roam_zerocopy_bench {
     pub async fn setup_mem() -> ZerocopyClient {
         let (a, b) = memory_link_pair(64);
 
-        let server_task = moire::task::spawn(
+        let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
+        let _server_task = moire::task::spawn(
             async move {
-                let ((), _sh) = acceptor(b)
-                    .establish::<()>(ZerocopyDispatcher::new(Handler))
+                let (_caller, _sh) = acceptor(b)
+                    .establish::<NoopCaller>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
+                let _ = server_ready_tx.send(());
+                std::future::pending::<()>().await;
             }
             .named("server_setup"),
         );
@@ -70,7 +73,7 @@ mod roam_zerocopy_bench {
             .await
             .expect("client handshake failed");
 
-        server_task.await.expect("server setup failed");
+        server_ready_rx.await.expect("server setup failed");
 
         client
     }
@@ -116,12 +119,15 @@ mod roam_zerocopy_bench {
             .expect("create_test_link_pair");
         std::mem::forget(dir);
 
-        let server_task = moire::task::spawn(
+        let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
+        let _server_task = moire::task::spawn(
             async move {
-                let ((), _sh) = acceptor(b)
-                    .establish::<()>(ZerocopyDispatcher::new(Handler))
+                let (_caller, _sh) = acceptor(b)
+                    .establish::<NoopCaller>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
+                let _ = server_ready_tx.send(());
+                std::future::pending::<()>().await;
             }
             .named("server_setup"),
         );
@@ -131,7 +137,7 @@ mod roam_zerocopy_bench {
             .await
             .expect("client handshake failed");
 
-        server_task.await.expect("server setup failed");
+        server_ready_rx.await.expect("server setup failed");
 
         client
     }
@@ -140,14 +146,17 @@ mod roam_zerocopy_bench {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let server_task = moire::task::spawn(
+        let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
+        let _server_task = moire::task::spawn(
             async move {
                 let (stream, _) = listener.accept().await.unwrap();
                 stream.set_nodelay(true).unwrap();
-                let ((), _sh) = acceptor(StreamLink::tcp(stream))
-                    .establish::<()>(ZerocopyDispatcher::new(Handler))
+                let (_caller, _sh) = acceptor(StreamLink::tcp(stream))
+                    .establish::<NoopCaller>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
+                let _ = server_ready_tx.send(());
+                std::future::pending::<()>().await;
             }
             .named("server_setup"),
         );
@@ -160,7 +169,7 @@ mod roam_zerocopy_bench {
             .await
             .expect("client handshake failed");
 
-        server_task.await.expect("server setup failed");
+        server_ready_rx.await.expect("server setup failed");
 
         client
     }
@@ -225,7 +234,7 @@ define_zerocopy_transport_benches!(
 
 mod roam_bench {
     use moire::task::FutureExt;
-    use roam_core::{acceptor, initiator, memory_link_pair};
+    use roam_core::{NoopCaller, acceptor, initiator, memory_link_pair};
 
     #[roam::service]
     pub trait Bench {
@@ -257,12 +266,15 @@ mod roam_bench {
     pub async fn setup() -> BenchClient {
         let (a, b) = memory_link_pair(64);
 
-        let server_task = moire::task::spawn(
+        let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
+        let _server_task = moire::task::spawn(
             async move {
-                let ((), _sh) = acceptor(b)
-                    .establish::<()>(BenchDispatcher::new(Handler))
+                let (_caller, _sh) = acceptor(b)
+                    .establish::<NoopCaller>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
+                let _ = server_ready_tx.send(());
+                std::future::pending::<()>().await;
             }
             .named("server_setup"),
         );
@@ -272,7 +284,7 @@ mod roam_bench {
             .await
             .expect("client handshake failed");
 
-        server_task.await.expect("server setup failed");
+        server_ready_rx.await.expect("server setup failed");
 
         client
     }
@@ -333,7 +345,7 @@ mod roam_shm_bench {
     use std::sync::Arc;
 
     use moire::task::FutureExt;
-    use roam_core::{acceptor, initiator};
+    use roam_core::{NoopCaller, acceptor, initiator};
     use roam_shm::varslot::SizeClassConfig;
     use roam_shm::{Segment, SegmentConfig, create_test_link_pair};
 
@@ -375,12 +387,15 @@ mod roam_shm_bench {
         // Leak the tempdir so the segment file lives for the entire benchmark run.
         std::mem::forget(dir);
 
-        let server_task = moire::task::spawn(
+        let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
+        let _server_task = moire::task::spawn(
             async move {
-                let ((), _sh) = acceptor(b)
-                    .establish::<()>(BenchDispatcher::new(Handler))
+                let (_caller, _sh) = acceptor(b)
+                    .establish::<NoopCaller>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
+                let _ = server_ready_tx.send(());
+                std::future::pending::<()>().await;
             }
             .named("server_setup"),
         );
@@ -390,7 +405,7 @@ mod roam_shm_bench {
             .await
             .expect("client handshake failed");
 
-        server_task.await.expect("server setup failed");
+        server_ready_rx.await.expect("server setup failed");
 
         client
     }
@@ -449,7 +464,7 @@ fn roam_shm_stream(bencher: divan::Bencher, n: usize) {
 
 mod roam_tcp_bench {
     use moire::task::FutureExt;
-    use roam_core::{acceptor, initiator};
+    use roam_core::{NoopCaller, acceptor, initiator};
     use roam_stream::StreamLink;
 
     use tokio::net::TcpListener;
@@ -460,14 +475,17 @@ mod roam_tcp_bench {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let server_task = moire::task::spawn(
+        let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
+        let _server_task = moire::task::spawn(
             async move {
                 let (stream, _) = listener.accept().await.unwrap();
                 stream.set_nodelay(true).unwrap();
-                let ((), _sh) = acceptor(StreamLink::tcp(stream))
-                    .establish::<()>(BenchDispatcher::new(Handler))
+                let (_caller, _sh) = acceptor(StreamLink::tcp(stream))
+                    .establish::<NoopCaller>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
+                let _ = server_ready_tx.send(());
+                std::future::pending::<()>().await;
             }
             .named("server_setup"),
         );
@@ -480,7 +498,7 @@ mod roam_tcp_bench {
             .await
             .expect("client handshake failed");
 
-        server_task.await.expect("server setup failed");
+        server_ready_rx.await.expect("server setup failed");
 
         client
     }

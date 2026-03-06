@@ -150,10 +150,17 @@ impl ChannelSink for DriverChannelSink {
     }
 }
 
-/// Cloneable handle for making outgoing calls through a connection.
+/// Liveness-only handle for a connection root.
 ///
-impl From<DriverCaller> for () {
-    fn from(_: DriverCaller) {}
+/// Keeps the root connection alive but intentionally exposes no outbound RPC API.
+#[must_use = "Dropping NoopCaller may close the connection if it is the last caller."]
+#[derive(Clone)]
+pub struct NoopCaller(#[allow(dead_code)] DriverCaller);
+
+impl From<DriverCaller> for NoopCaller {
+    fn from(caller: DriverCaller) -> Self {
+        Self(caller)
+    }
 }
 
 #[derive(Clone)]
