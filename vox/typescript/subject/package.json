@@ -1,6 +1,6 @@
 {
   "name": "@bearcove/roam-subject",
-  "version": "7.0.1",
+  "version": "7.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,8 +8,8 @@
   },
   "dependencies": {
     "@bearcove/roam-core": "workspace:*",
-    "@bearcove/roam-tcp": "workspace:*",
-    "@bearcove/roam-generated": "workspace:*"
+    "@bearcove/roam-generated": "workspace:*",
+    "@bearcove/roam-tcp": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22"

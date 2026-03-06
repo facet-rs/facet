@@ -1,6 +1,6 @@
 {
   "name": "@bearcove/roam-browser-tests",
-  "version": "7.0.1",
+  "version": "7.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,8 +10,8 @@
   },
   "dependencies": {
     "@bearcove/roam-core": "workspace:*",
-    "@bearcove/roam-ws": "workspace:*",
-    "@bearcove/roam-generated": "workspace:*"
+    "@bearcove/roam-generated": "workspace:*",
+    "@bearcove/roam-ws": "workspace:*"
   },
   "devDependencies": {
     "vite": "^6"

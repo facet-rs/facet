@@ -1,6 +1,6 @@
 {
   "name": "@bearcove/roam-postcard",
-  "version": "7.0.3",
+  "version": "7.1.0",
   "private": false,
   "type": "module",
   "exports": {
