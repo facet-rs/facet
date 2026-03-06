@@ -261,20 +261,7 @@ export function getVariantDiscriminant(schema: EnumSchema, variant: EnumVariant)
  * @returns Array of field schemas in encoding order
  */
 export function getVariantFieldSchemas(variant: EnumVariant): Schema[] {
-  if (variant.fields === null || variant.fields === undefined) {
-    // Unit variant
-    return [];
-  }
-  if ("kind" in variant.fields) {
-    // Newtype variant - single schema
-    return [variant.fields as Schema];
-  }
-  if (Array.isArray(variant.fields)) {
-    // Tuple variant
-    return variant.fields;
-  }
-  // Struct variant - return schemas in key order
-  return Object.values(variant.fields);
+  return classifyVariantFields(variant).schemas;
 }
 
 /**
@@ -284,20 +271,7 @@ export function getVariantFieldSchemas(variant: EnumVariant): Schema[] {
  * @returns Array of field names, or null if not a struct variant
  */
 export function getVariantFieldNames(variant: EnumVariant): string[] | null {
-  if (variant.fields === null || variant.fields === undefined) {
-    // Unit variant
-    return null;
-  }
-  if ("kind" in variant.fields) {
-    // Newtype variant - no field names
-    return null;
-  }
-  if (Array.isArray(variant.fields)) {
-    // Tuple variant - no field names
-    return null;
-  }
-  // Struct variant - return keys in order
-  return Object.keys(variant.fields);
+  return classifyVariantFields(variant).names;
 }
 
 /**
@@ -307,7 +281,37 @@ export function getVariantFieldNames(variant: EnumVariant): string[] | null {
  * @returns True if this is a newtype variant
  */
 export function isNewtypeVariant(variant: EnumVariant): boolean {
-  return variant.fields !== null && variant.fields !== undefined && "kind" in variant.fields;
+  return classifyVariantFields(variant).kind === "newtype";
+}
+
+type VariantFieldInfo =
+  | { kind: "unit"; schemas: []; names: null }
+  | { kind: "newtype"; schemas: [Schema]; names: null }
+  | { kind: "tuple"; schemas: Schema[]; names: null }
+  | { kind: "struct"; schemas: Schema[]; names: string[] };
+
+function classifyVariantFields(variant: EnumVariant): VariantFieldInfo {
+  const fields = variant.fields;
+  if (fields === null || fields === undefined) {
+    return { kind: "unit", schemas: [], names: null };
+  }
+  if (Array.isArray(fields)) {
+    return { kind: "tuple", schemas: fields, names: null };
+  }
+  if (isSchemaNode(fields)) {
+    return { kind: "newtype", schemas: [fields], names: null };
+  }
+
+  const names = Object.keys(fields);
+  return {
+    kind: "struct",
+    schemas: names.map((name) => fields[name]),
+    names,
+  };
+}
+
+function isSchemaNode(fields: Schema | Record<string, Schema>): fields is Schema {
+  return typeof (fields as { kind?: unknown }).kind === "string";
 }
 
 /**

@@ -183,6 +183,8 @@ fn generate_request_response_types(
 
 #[cfg(test)]
 mod tests {
+    #![allow(dead_code)]
+
     use super::generate_service;
     use facet::Facet;
     use roam_hash::method_descriptor;
@@ -201,6 +203,89 @@ mod tests {
     #[derive(Facet)]
     struct SessionSummary {
         id: SessionId,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    enum ToolCallKind {
+        Read,
+        Execute,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    enum ToolCallStatus {
+        Running,
+        Success,
+        Failure,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    enum PermissionResolution {
+        Approved,
+        Denied,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    enum ContentBlock {
+        Text {
+            text: String,
+        },
+        ToolCall {
+            id: String,
+            title: String,
+            kind: Option<ToolCallKind>,
+            status: ToolCallStatus,
+        },
+        Permission {
+            id: String,
+            title: String,
+            kind: Option<ToolCallKind>,
+            resolution: Option<PermissionResolution>,
+        },
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    enum BlockPatch {
+        TextAppend {
+            text: String,
+        },
+        ToolCallUpdate {
+            id: String,
+            kind: Option<ToolCallKind>,
+            status: ToolCallStatus,
+        },
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    enum SessionEvent {
+        BlockAppend {
+            block_id: String,
+            role: String,
+            block: ContentBlock,
+        },
+        BlockPatch {
+            block_id: String,
+            role: String,
+            patch: BlockPatch,
+        },
+    }
+
+    #[derive(Facet)]
+    struct SessionEventEnvelope {
+        seq: u64,
+        event: SessionEvent,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    enum SubscribeMessage {
+        Event(SessionEventEnvelope),
+        ReplayComplete,
     }
 
     #[test]
@@ -305,6 +390,38 @@ mod tests {
         assert!(
             generated.contains("{ kind: 'rx', initial_credit: 32, element: { kind: 'u32' } }"),
             "explicit Rx<T, N> credit must be emitted into the descriptor:\n{generated}"
+        );
+    }
+
+    #[test]
+    fn generated_typescript_keeps_struct_variants_with_kind_fields_named() {
+        let subscribe =
+            method_descriptor::<(), SubscribeMessage>("ShipSvc", "subscribe", &[], None);
+        let methods = Box::leak(vec![subscribe].into_boxed_slice());
+        let service = ServiceDescriptor {
+            service_name: "ShipSvc",
+            methods,
+            doc: None,
+        };
+
+        let generated = generate_service(&service);
+        assert!(
+            generated.contains(
+                "name: 'ToolCall', fields: { 'id': { kind: 'string' }, 'title': { kind: 'string' }, 'kind': { kind: 'option', inner: { kind: 'ref', name: 'ToolCallKind' } }, 'status': { kind: 'ref', name: 'ToolCallStatus' } }"
+            ),
+            "struct variants with a field named `kind` must stay named-field variants:\n{generated}"
+        );
+        assert!(
+            generated.contains(
+                "name: 'Permission', fields: { 'id': { kind: 'string' }, 'title': { kind: 'string' }, 'kind': { kind: 'option', inner: { kind: 'ref', name: 'ToolCallKind' } }, 'resolution': { kind: 'option', inner: { kind: 'ref', name: 'PermissionResolution' } } }"
+            ),
+            "similar struct variants must keep their named `kind` field:\n{generated}"
+        );
+        assert!(
+            generated.contains(
+                "name: 'ToolCallUpdate', fields: { 'id': { kind: 'string' }, 'kind': { kind: 'option', inner: { kind: 'ref', name: 'ToolCallKind' } }, 'status': { kind: 'ref', name: 'ToolCallStatus' } }"
+            ),
+            "patch variants with a field named `kind` must also stay named-field variants:\n{generated}"
         );
     }
 }

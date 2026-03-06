@@ -59,6 +59,27 @@ const MessageSchema: EnumSchema = {
   ],
 };
 
+const ShipLikeBlockSchema: EnumSchema = {
+  kind: "enum",
+  variants: [
+    {
+      name: "ToolCall",
+      fields: {
+        id: { kind: "string" },
+        kind: { kind: "option", inner: { kind: "ref", name: "MetadataValue" } },
+        status: { kind: "u8" },
+      },
+    },
+    {
+      name: "Permission",
+      fields: {
+        kind: { kind: "option", inner: { kind: "ref", name: "MetadataValue" } },
+        resolution: { kind: "bool" },
+      },
+    },
+  ],
+};
+
 const HelloSchema: EnumSchema = {
   kind: "enum",
   variants: [
@@ -229,6 +250,16 @@ describe("getVariantFieldSchemas", () => {
     expect(schemas[0]).toEqual({ kind: "u32" });
     expect(schemas[1]).toEqual({ kind: "u32" });
   });
+
+  it("treats a named-field variant with a `kind` field as a struct", () => {
+    const variant = ShipLikeBlockSchema.variants[0];
+    const schemas = getVariantFieldSchemas(variant);
+    expect(schemas).toEqual([
+      { kind: "string" },
+      { kind: "option", inner: { kind: "ref", name: "MetadataValue" } },
+      { kind: "u8" },
+    ]);
+  });
 });
 
 describe("getVariantFieldNames", () => {
@@ -258,6 +289,16 @@ describe("getVariantFieldNames", () => {
     const names = getVariantFieldNames(variant);
     expect(names).toEqual(["reason"]);
   });
+
+  it("returns field names for a struct variant whose fields include `kind`", () => {
+    const variant = ShipLikeBlockSchema.variants[0];
+    expect(getVariantFieldNames(variant)).toEqual(["id", "kind", "status"]);
+  });
+
+  it("returns field names when `kind` is the first and only semantic discriminator field", () => {
+    const variant = ShipLikeBlockSchema.variants[1];
+    expect(getVariantFieldNames(variant)).toEqual(["kind", "resolution"]);
+  });
 });
 
 describe("isNewtypeVariant", () => {
@@ -284,6 +325,11 @@ describe("isNewtypeVariant", () => {
   it("returns false for struct variant", () => {
     const variant = HelloSchema.variants[0]; // V1 { ... }
     expect(isNewtypeVariant(variant)).toBe(false);
+  });
+
+  it("returns false for struct variants whose named fields include `kind`", () => {
+    expect(isNewtypeVariant(ShipLikeBlockSchema.variants[0])).toBe(false);
+    expect(isNewtypeVariant(ShipLikeBlockSchema.variants[1])).toBe(false);
   });
 });
 

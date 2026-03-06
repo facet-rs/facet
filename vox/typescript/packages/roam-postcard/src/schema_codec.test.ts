@@ -72,6 +72,112 @@ const MetadataEntrySchema: TupleSchema = {
   elements: [{ kind: "string" }, { kind: "ref", name: "MetadataValue" }],
 };
 
+const ShipToolCallKindSchema: EnumSchema = {
+  kind: "enum",
+  variants: [
+    { name: "Read", fields: null },
+    { name: "Execute", fields: null },
+  ],
+};
+
+const ShipToolCallStatusSchema: EnumSchema = {
+  kind: "enum",
+  variants: [
+    { name: "Running", fields: null },
+    { name: "Success", fields: null },
+    { name: "Failure", fields: null },
+  ],
+};
+
+const ShipPermissionResolutionSchema: EnumSchema = {
+  kind: "enum",
+  variants: [
+    { name: "Approved", fields: null },
+    { name: "Denied", fields: null },
+  ],
+};
+
+const ShipContentBlockSchema: EnumSchema = {
+  kind: "enum",
+  variants: [
+    { name: "Text", fields: { text: { kind: "string" } } },
+    {
+      name: "ToolCall",
+      fields: {
+        id: { kind: "string" },
+        title: { kind: "string" },
+        kind: { kind: "option", inner: { kind: "ref", name: "ShipToolCallKind" } },
+        status: { kind: "ref", name: "ShipToolCallStatus" },
+      },
+    },
+    {
+      name: "Permission",
+      fields: {
+        id: { kind: "string" },
+        title: { kind: "string" },
+        kind: { kind: "option", inner: { kind: "ref", name: "ShipToolCallKind" } },
+        resolution: {
+          kind: "option",
+          inner: { kind: "ref", name: "ShipPermissionResolution" },
+        },
+      },
+    },
+  ],
+};
+
+const ShipBlockPatchSchema: EnumSchema = {
+  kind: "enum",
+  variants: [
+    { name: "TextAppend", fields: { text: { kind: "string" } } },
+    {
+      name: "ToolCallUpdate",
+      fields: {
+        id: { kind: "string" },
+        kind: { kind: "option", inner: { kind: "ref", name: "ShipToolCallKind" } },
+        status: { kind: "ref", name: "ShipToolCallStatus" },
+      },
+    },
+  ],
+};
+
+const ShipSessionEventSchema: EnumSchema = {
+  kind: "enum",
+  variants: [
+    {
+      name: "BlockAppend",
+      fields: {
+        block_id: { kind: "string" },
+        role: { kind: "string" },
+        block: { kind: "ref", name: "ShipContentBlock" },
+      },
+    },
+    {
+      name: "BlockPatch",
+      fields: {
+        block_id: { kind: "string" },
+        role: { kind: "string" },
+        patch: { kind: "ref", name: "ShipBlockPatch" },
+      },
+    },
+  ],
+};
+
+const ShipSessionEventEnvelopeSchema: StructSchema = {
+  kind: "struct",
+  fields: {
+    seq: { kind: "u64" },
+    event: { kind: "ref", name: "ShipSessionEvent" },
+  },
+};
+
+const ShipSubscribeMessageSchema: EnumSchema = {
+  kind: "enum",
+  variants: [
+    { name: "Event", fields: { kind: "ref", name: "ShipSessionEventEnvelope" } },
+    { name: "ReplayComplete", fields: null },
+  ],
+};
+
 // Registry for resolving refs
 const testRegistry: SchemaRegistry = new Map<string, Schema>([
   ["Point", PointSchema as Schema],
@@ -80,6 +186,14 @@ const testRegistry: SchemaRegistry = new Map<string, Schema>([
   ["Hello", HelloSchema as Schema],
   ["Message", MessageSchema as Schema],
   ["MetadataEntry", MetadataEntrySchema as Schema],
+  ["ShipToolCallKind", ShipToolCallKindSchema as Schema],
+  ["ShipToolCallStatus", ShipToolCallStatusSchema as Schema],
+  ["ShipPermissionResolution", ShipPermissionResolutionSchema as Schema],
+  ["ShipContentBlock", ShipContentBlockSchema as Schema],
+  ["ShipBlockPatch", ShipBlockPatchSchema as Schema],
+  ["ShipSessionEvent", ShipSessionEventSchema as Schema],
+  ["ShipSessionEventEnvelope", ShipSessionEventEnvelopeSchema as Schema],
+  ["ShipSubscribeMessage", ShipSubscribeMessageSchema as Schema],
 ]);
 
 // ============================================================================
@@ -446,6 +560,117 @@ describe("wire protocol types", () => {
     const encoded = encodeWithSchema(value, schema, testRegistry);
     const decoded = decodeWithSchema(encoded, 0, schema, testRegistry);
     expect(decoded.value).toEqual(value);
+  });
+});
+
+describe("Ship-style enum variants with a `kind` field", () => {
+  it("roundtrips SubscribeMessage.Event -> BlockAppend -> ContentBlock.ToolCall", () => {
+    const value = {
+      tag: "Event",
+      value: {
+        seq: 7n,
+        event: {
+          tag: "BlockAppend",
+          block_id: "block-1",
+          role: "assistant",
+          block: {
+            tag: "ToolCall",
+            id: "tool-1",
+            title: "Inspect logs",
+            kind: { tag: "Read" },
+            status: { tag: "Running" },
+          },
+        },
+      },
+    };
+
+    const encoded = encodeWithSchema(
+      value,
+      { kind: "ref", name: "ShipSubscribeMessage" },
+      testRegistry,
+    );
+    const decoded = decodeWithSchema(
+      encoded,
+      0,
+      { kind: "ref", name: "ShipSubscribeMessage" },
+      testRegistry,
+    );
+
+    expect(decoded.value).toEqual(value);
+  });
+
+  it("roundtrips ContentBlock.Permission without routing through a synthetic `.value` field", () => {
+    const value = {
+      tag: "Permission",
+      id: "perm-1",
+      title: "Allow write",
+      kind: { tag: "Execute" },
+      resolution: { tag: "Approved" },
+    };
+
+    const encoded = encodeWithSchema(value, { kind: "ref", name: "ShipContentBlock" }, testRegistry);
+    const decoded = decodeWithSchema(
+      encoded,
+      0,
+      { kind: "ref", name: "ShipContentBlock" },
+      testRegistry,
+    );
+
+    expect(decoded.value).toEqual(value);
+  });
+
+  it("roundtrips BlockPatch.ToolCallUpdate with named fields including `kind`", () => {
+    const value = {
+      tag: "ToolCallUpdate",
+      id: "tool-1",
+      kind: { tag: "Read" },
+      status: { tag: "Success" },
+    };
+
+    const encoded = encodeWithSchema(value, { kind: "ref", name: "ShipBlockPatch" }, testRegistry);
+    const decoded = decodeWithSchema(
+      encoded,
+      0,
+      { kind: "ref", name: "ShipBlockPatch" },
+      testRegistry,
+    );
+
+    expect(decoded.value).toEqual(value);
+  });
+
+  it("reports nested struct-variant field paths without inserting `.value`", () => {
+    const value = {
+      tag: "Event",
+      value: {
+        seq: 11n,
+        event: {
+          tag: "BlockAppend",
+          block_id: "block-2",
+          role: "assistant",
+          block: {
+            tag: "ToolCall",
+            id: "tool-2",
+            title: "Run command",
+            kind: { tag: "Execute" },
+            status: { tag: "Running" },
+          },
+        },
+      },
+    };
+
+    const encoded = encodeWithSchema(
+      value,
+      { kind: "ref", name: "ShipSubscribeMessage" },
+      testRegistry,
+    );
+    encoded[encoded.length - 1] = 9;
+
+    expect(() =>
+      decodeWithSchema(encoded, 0, { kind: "ref", name: "ShipSubscribeMessage" }, testRegistry),
+    ).toThrow(/Path: Event.value.event.BlockAppend.block.ToolCall.status/);
+    expect(() =>
+      decodeWithSchema(encoded, 0, { kind: "ref", name: "ShipSubscribeMessage" }, testRegistry),
+    ).not.toThrow(/ToolCall.value/);
   });
 });
 
