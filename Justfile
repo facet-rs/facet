@@ -15,13 +15,14 @@ list:
 
 precommit: gen
 
-gen *args:
-    cargo install --git https://github.com/facet-rs/facet-dev
-    facet-dev generate -- {{ args }}
+capn:
+    cargo install --git https://github.com/bearcove/capn capn
 
-prepush:
-    cargo install --git https://github.com/facet-rs/facet-dev
-    facet-dev prepush
+gen *args: capn
+    capn pre-commit -- {{ args }}
+
+prepush: capn
+    capn pre-push
 
 ci: precommit prepush docs msrv miri
 
