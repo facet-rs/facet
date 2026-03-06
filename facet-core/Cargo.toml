@@ -51,6 +51,8 @@ bytestring = ["alloc", "dep:bytestring"]
 compact_str = ["alloc", "dep:compact_str"]
 # Provide Facet trait implementations for num_complex::Complex
 num-complex = ["dep:num-complex"]
+# Provide Facet trait implementations for semver::Version and semver::VersionReq
+semver = ["alloc", "dep:semver"]
 # Provide Facet trait implementations for smartstring::SmartString
 smartstring = ["alloc", "dep:smartstring"]
 # Provide Facet trait implementations for smol_str::SmolStr
@@ -113,6 +115,7 @@ yoke = { version = "0.8.1", optional = true }
 tendril = { version = "0.5.0", optional = true }
 stable_deref_trait = { version = "1.2.1", optional = true }
 smallvec = { workspace = true, optional = true }
+semver = { version = "1.0.27", optional = true, default-features = false }
 
 
 [dev-dependencies]

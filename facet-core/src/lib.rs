@@ -32,6 +32,8 @@ pub use write::Write;
 
 // Implementations of the Shape trait
 mod impls;
+#[cfg(feature = "semver")]
+pub use semver;
 
 /// Allows querying the [`Shape`] of a type, which in turn lets us inspect any fields, build a value of
 /// this type progressively, etc.
