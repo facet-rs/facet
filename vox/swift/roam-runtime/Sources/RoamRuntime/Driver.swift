@@ -184,6 +184,30 @@ private actor AsyncSemaphore {
     }
 }
 
+private final class SingleResume<ResultValue: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var finished = false
+    private let body: @Sendable (Result<ResultValue, ConnectionError>) -> Void
+
+    init(body: @escaping @Sendable (Result<ResultValue, ConnectionError>) -> Void) {
+        self.body = body
+    }
+
+    func callAsFunction(_ result: Result<ResultValue, ConnectionError>) {
+        let shouldRun = lock.withLock {
+            if finished {
+                return false
+            }
+            finished = true
+            return true
+        }
+        guard shouldRun else {
+            return
+        }
+        body(result)
+    }
+}
+
 /// Handle for making outgoing RPC calls.
 public final class ConnectionHandle: @unchecked Sendable {
     private let commandTx: @Sendable (HandleCommand) -> Bool
@@ -233,7 +257,7 @@ public final class ConnectionHandle: @unchecked Sendable {
 
         return try await withCheckedThrowingContinuation { cont in
             let sem = requestSemaphore
-            let responseTx: @Sendable (Result<[UInt8], ConnectionError>) -> Void = { result in
+            let responseTx = SingleResume<[UInt8]> { result in
                 if let sem {
                     Task { await sem.release() }
                 }
@@ -247,13 +271,10 @@ public final class ConnectionHandle: @unchecked Sendable {
                     payload: payload,
                     channels: channels,
                     timeout: timeout,
-                    responseTx: responseTx
+                    responseTx: { result in responseTx(result) }
                 ))
             guard accepted else {
-                if let sem {
-                    Task { await sem.release() }
-                }
-                cont.resume(throwing: ConnectionError.connectionClosed)
+                responseTx(.failure(.connectionClosed))
                 return
             }
         }

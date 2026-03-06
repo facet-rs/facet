@@ -234,6 +234,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
   private messagePumpRunning = false;
   private messagePumpPromise: Promise<void> | null = null;
   private messagePumpWakeupResolve: (() => void) | null = null;
+  private flushOutgoingPromise: Promise<void> | null = null;
   private keepalive: KeepaliveConfig | null;
 
   /**
@@ -336,17 +337,33 @@ export class Connection<T extends MessageTransport = MessageTransport> {
    * r[impl channeling.close] - Send Close messages when channels end.
    */
   async flushOutgoing(): Promise<void> {
-    while (true) {
-      const poll = await this.channelRegistry.waitOutgoing();
-      if (poll.kind === "pending" || poll.kind === "done") {
-        break;
+    if (this.flushOutgoingPromise) {
+      await this.flushOutgoingPromise;
+      return;
+    }
+
+    const flush = (async () => {
+      while (true) {
+        const poll = this.channelRegistry.pollOutgoing();
+        if (poll.kind === "pending" || poll.kind === "done") {
+          break;
+        }
+        if (poll.kind === "data") {
+          await this.io.send(encodeMessage(messageData(poll.channelId, poll.payload)));
+        } else if (poll.kind === "close") {
+          await this.io.send(encodeMessage(messageClose(poll.channelId)));
+        } else if (poll.kind === "credit") {
+          await this.io.send(encodeMessage(messageCredit(poll.channelId, poll.additional)));
+        }
       }
-      if (poll.kind === "data") {
-        await this.io.send(encodeMessage(messageData(poll.channelId, poll.payload)));
-      } else if (poll.kind === "close") {
-        await this.io.send(encodeMessage(messageClose(poll.channelId)));
-      } else if (poll.kind === "credit") {
-        await this.io.send(encodeMessage(messageCredit(poll.channelId, poll.additional)));
+    })();
+
+    this.flushOutgoingPromise = flush;
+    try {
+      await flush;
+    } finally {
+      if (this.flushOutgoingPromise === flush) {
+        this.flushOutgoingPromise = null;
       }
     }
   }

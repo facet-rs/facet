@@ -1307,7 +1307,8 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
     let caller = vconn_driver.caller();
     moire::task::spawn(async move { vconn_driver.run().await }.named("vconn_client_driver"));
 
-    let (_channel_id, mut rx_items) = caller.create_rx();
+    let (_channel_id, bound_rx) = caller.create_rx(16);
+    let mut rx_items = bound_rx.receiver;
 
     session_handle
         .close_connection(conn_id, vec![])
@@ -1406,7 +1407,7 @@ async fn buffers_inbound_channel_items_until_rx_is_registered() {
 
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
-    let mut rx = server_caller.register_rx_channel(channel_id);
+    let mut rx = server_caller.register_rx_channel(channel_id, 16).receiver;
     let msg = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv())
         .await
         .expect("timed out waiting for buffered channel item")
@@ -1512,7 +1513,7 @@ async fn buffered_close_before_registration_keeps_channel_terminal() {
 
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
-    let mut rx = server_caller.register_rx_channel(channel_id);
+    let mut rx = server_caller.register_rx_channel(channel_id, 16).receiver;
     let close = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv())
         .await
         .expect("timed out waiting for buffered close")

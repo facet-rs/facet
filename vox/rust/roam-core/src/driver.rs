@@ -9,10 +9,11 @@ use tokio::sync::Semaphore;
 
 use moire::task::FutureExt as _;
 use roam_types::{
-    Caller, ChannelBinder, ChannelBody, ChannelClose, ChannelId, ChannelItem,
-    ChannelLivenessHandle, ChannelMessage, ChannelSink, CreditSink, Handler, IdAllocator,
-    IncomingChannelMessage, MaybeSend, Payload, ReplySink, RequestBody, RequestCall, RequestId,
-    RequestMessage, RequestResponse, RoamError, SelfRef, TxError,
+    Caller, ChannelBinder, ChannelBody, ChannelClose, ChannelCreditReplenisher,
+    ChannelCreditReplenisherHandle, ChannelId, ChannelItem, ChannelLivenessHandle, ChannelMessage,
+    ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage, MaybeSend, Payload,
+    ReplySink, RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse, RoamError,
+    SelfRef, TxError,
 };
 
 use crate::session::{ConnectionHandle, ConnectionMessage, ConnectionSender, DropControlRequest};
@@ -48,6 +49,55 @@ struct CallerDropGuard {
 impl Drop for CallerDropGuard {
     fn drop(&mut self) {
         let _ = self.control_tx.send(self.request);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DriverChannelCreditReplenisher, DriverLocalControl};
+    use roam_types::{ChannelCreditReplenisher, ChannelId};
+    use tokio::sync::mpsc::error::TryRecvError;
+
+    #[test]
+    fn replenisher_batches_at_half_the_initial_window() {
+        let (tx, mut rx) = moire::sync::mpsc::unbounded_channel("test.replenisher");
+        let replenisher = DriverChannelCreditReplenisher::new(ChannelId(7), 16, tx);
+
+        for _ in 0..7 {
+            replenisher.on_item_consumed();
+        }
+        assert!(
+            matches!(rx.try_recv(), Err(TryRecvError::Empty)),
+            "should not emit credit before reaching the batch threshold"
+        );
+
+        replenisher.on_item_consumed();
+        let Ok(DriverLocalControl::GrantCredit {
+            channel_id,
+            additional,
+        }) = rx.try_recv()
+        else {
+            panic!("expected batched credit grant");
+        };
+        assert_eq!(channel_id, ChannelId(7));
+        assert_eq!(additional, 8);
+    }
+
+    #[test]
+    fn replenisher_grants_one_by_one_for_single_credit_windows() {
+        let (tx, mut rx) = moire::sync::mpsc::unbounded_channel("test.replenisher.single");
+        let replenisher = DriverChannelCreditReplenisher::new(ChannelId(9), 1, tx);
+
+        replenisher.on_item_consumed();
+        let Ok(DriverLocalControl::GrantCredit {
+            channel_id,
+            additional,
+        }) = rx.try_recv()
+        else {
+            panic!("expected immediate credit grant");
+        };
+        assert_eq!(channel_id, ChannelId(9));
+        assert_eq!(additional, 1);
     }
 }
 
@@ -193,7 +243,8 @@ impl DriverChannelBinder {
     fn register_rx_channel(
         &self,
         channel_id: ChannelId,
-    ) -> tokio::sync::mpsc::Receiver<IncomingChannelMessage> {
+        initial_credit: u32,
+    ) -> roam_types::BoundChannelReceiver {
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let mut terminal_buffered = false;
         if let Some(buffered) = self.shared.channel_buffers.lock().remove(&channel_id) {
@@ -211,11 +262,23 @@ impl DriverChannelBinder {
         }
         if terminal_buffered {
             self.shared.channel_credits.lock().remove(&channel_id);
-            return rx;
+            return roam_types::BoundChannelReceiver {
+                receiver: rx,
+                liveness: self.channel_liveness(),
+                replenisher: None,
+            };
         }
 
         self.shared.channel_senders.lock().insert(channel_id, tx);
-        rx
+        roam_types::BoundChannelReceiver {
+            receiver: rx,
+            liveness: self.channel_liveness(),
+            replenisher: Some(Arc::new(DriverChannelCreditReplenisher::new(
+                channel_id,
+                initial_credit,
+                self.local_control_tx.clone(),
+            )) as ChannelCreditReplenisherHandle),
+        }
     }
 }
 
@@ -225,14 +288,9 @@ impl ChannelBinder for DriverChannelBinder {
         (id, sink as Arc<dyn ChannelSink>)
     }
 
-    fn create_rx(
-        &self,
-    ) -> (
-        ChannelId,
-        tokio::sync::mpsc::Receiver<IncomingChannelMessage>,
-    ) {
+    fn create_rx(&self, initial_credit: u32) -> (ChannelId, roam_types::BoundChannelReceiver) {
         let channel_id = self.shared.channel_ids.lock().alloc();
-        let rx = self.register_rx_channel(channel_id);
+        let rx = self.register_rx_channel(channel_id, initial_credit);
         (channel_id, rx)
     }
 
@@ -253,8 +311,9 @@ impl ChannelBinder for DriverChannelBinder {
     fn register_rx(
         &self,
         channel_id: ChannelId,
-    ) -> tokio::sync::mpsc::Receiver<IncomingChannelMessage> {
-        self.register_rx_channel(channel_id)
+        initial_credit: u32,
+    ) -> roam_types::BoundChannelReceiver {
+        self.register_rx_channel(channel_id, initial_credit)
     }
 
     fn channel_liveness(&self) -> Option<ChannelLivenessHandle> {
@@ -314,7 +373,8 @@ impl DriverCaller {
     pub fn register_rx_channel(
         &self,
         channel_id: ChannelId,
-    ) -> tokio::sync::mpsc::Receiver<IncomingChannelMessage> {
+        initial_credit: u32,
+    ) -> roam_types::BoundChannelReceiver {
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let mut terminal_buffered = false;
         // Drain any buffered messages that arrived before registration.
@@ -333,11 +393,23 @@ impl DriverCaller {
         }
         if terminal_buffered {
             self.shared.channel_credits.lock().remove(&channel_id);
-            return rx;
+            return roam_types::BoundChannelReceiver {
+                receiver: rx,
+                liveness: self.channel_liveness(),
+                replenisher: None,
+            };
         }
 
         self.shared.channel_senders.lock().insert(channel_id, tx);
-        rx
+        roam_types::BoundChannelReceiver {
+            receiver: rx,
+            liveness: self.channel_liveness(),
+            replenisher: Some(Arc::new(DriverChannelCreditReplenisher::new(
+                channel_id,
+                initial_credit,
+                self.local_control_tx.clone(),
+            )) as ChannelCreditReplenisherHandle),
+        }
     }
 }
 
@@ -347,14 +419,9 @@ impl ChannelBinder for DriverCaller {
         (id, sink as Arc<dyn ChannelSink>)
     }
 
-    fn create_rx(
-        &self,
-    ) -> (
-        ChannelId,
-        tokio::sync::mpsc::Receiver<IncomingChannelMessage>,
-    ) {
+    fn create_rx(&self, initial_credit: u32) -> (ChannelId, roam_types::BoundChannelReceiver) {
         let channel_id = self.shared.channel_ids.lock().alloc();
-        let rx = self.register_rx_channel(channel_id);
+        let rx = self.register_rx_channel(channel_id, initial_credit);
         (channel_id, rx)
     }
 
@@ -375,8 +442,9 @@ impl ChannelBinder for DriverCaller {
     fn register_rx(
         &self,
         channel_id: ChannelId,
-    ) -> tokio::sync::mpsc::Receiver<IncomingChannelMessage> {
-        self.register_rx_channel(channel_id)
+        initial_credit: u32,
+    ) -> roam_types::BoundChannelReceiver {
+        self.register_rx_channel(channel_id, initial_credit)
     }
 
     fn channel_liveness(&self) -> Option<ChannelLivenessHandle> {
@@ -463,7 +531,52 @@ pub struct Driver<H: Handler<DriverReplySink>> {
 }
 
 enum DriverLocalControl {
-    CloseChannel { channel_id: ChannelId },
+    CloseChannel {
+        channel_id: ChannelId,
+    },
+    GrantCredit {
+        channel_id: ChannelId,
+        additional: u32,
+    },
+}
+
+struct DriverChannelCreditReplenisher {
+    channel_id: ChannelId,
+    threshold: u32,
+    local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
+    pending: std::sync::Mutex<u32>,
+}
+
+impl DriverChannelCreditReplenisher {
+    fn new(
+        channel_id: ChannelId,
+        initial_credit: u32,
+        local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
+    ) -> Self {
+        Self {
+            channel_id,
+            threshold: (initial_credit / 2).max(1),
+            local_control_tx,
+            pending: std::sync::Mutex::new(0),
+        }
+    }
+}
+
+impl ChannelCreditReplenisher for DriverChannelCreditReplenisher {
+    fn on_item_consumed(&self) {
+        let mut pending = self.pending.lock().expect("pending credit mutex poisoned");
+        *pending += 1;
+        if *pending < self.threshold {
+            return;
+        }
+
+        let additional = *pending;
+        *pending = 0;
+        let _ = self.local_control_tx.send(DriverLocalControl::GrantCredit {
+            channel_id: self.channel_id,
+            additional,
+        });
+    }
 }
 
 impl<H: Handler<DriverReplySink>> Driver<H> {
@@ -605,6 +718,20 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         id: channel_id,
                         body: ChannelBody::Close(ChannelClose {
                             metadata: Default::default(),
+                        }),
+                    }))
+                    .await;
+            }
+            DriverLocalControl::GrantCredit {
+                channel_id,
+                additional,
+            } => {
+                let _ = self
+                    .sender
+                    .send(ConnectionMessage::Channel(ChannelMessage {
+                        id: channel_id,
+                        body: ChannelBody::GrantCredit(roam_types::ChannelGrantCredit {
+                            additional,
                         }),
                     }))
                     .await;

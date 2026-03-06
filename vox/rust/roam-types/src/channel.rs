@@ -34,6 +34,14 @@ impl<T: Send + Sync + 'static> ChannelLiveness for T {}
 pub type ChannelLivenessHandle = Arc<dyn ChannelLiveness>;
 
 #[cfg(not(target_arch = "wasm32"))]
+pub trait ChannelCreditReplenisher: Send + Sync + 'static {
+    fn on_item_consumed(&self);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub type ChannelCreditReplenisherHandle = Arc<dyn ChannelCreditReplenisher>;
+
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 pub struct BoundChannelSink {
     pub sink: Arc<dyn ChannelSink>,
@@ -44,6 +52,7 @@ pub struct BoundChannelSink {
 pub struct BoundChannelReceiver {
     pub receiver: mpsc::Receiver<IncomingChannelMessage>,
     pub liveness: Option<ChannelLivenessHandle>,
+    pub replenisher: Option<ChannelCreditReplenisherHandle>,
 }
 
 // r[impl rpc.channel.pair]
@@ -278,6 +287,23 @@ impl ReceiverSlot {
     }
 }
 
+/// Receiver-side credit replenishment slot.
+#[derive(Facet)]
+#[facet(opaque)]
+pub(crate) struct ReplenisherSlot {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) inner: Option<ChannelCreditReplenisherHandle>,
+}
+
+impl ReplenisherSlot {
+    pub(crate) fn empty() -> Self {
+        Self {
+            #[cfg(not(target_arch = "wasm32"))]
+            inner: None,
+        }
+    }
+}
+
 /// Sender handle: "I send". The holder of a `Tx<T>` sends items of type `T`.
 ///
 /// In method args, the handler holds it (handler sends → caller).
@@ -477,6 +503,7 @@ pub struct Rx<T, const N: usize = 16> {
     pub(crate) receiver: ReceiverSlot,
     pub(crate) core: CoreSlot,
     pub(crate) liveness: LivenessSlot,
+    pub(crate) replenisher: ReplenisherSlot,
     #[facet(opaque)]
     _marker: PhantomData<T>,
 }
@@ -488,6 +515,7 @@ impl<T, const N: usize> Rx<T, N> {
             receiver: ReceiverSlot::empty(),
             core: CoreSlot::empty(),
             liveness: LivenessSlot::empty(),
+            replenisher: ReplenisherSlot::empty(),
             _marker: PhantomData,
         }
     }
@@ -499,6 +527,7 @@ impl<T, const N: usize> Rx<T, N> {
             receiver: ReceiverSlot::empty(),
             core: CoreSlot { inner: Some(core) },
             liveness: LivenessSlot::empty(),
+            replenisher: ReplenisherSlot::empty(),
             _marker: PhantomData,
         }
     }
@@ -536,22 +565,31 @@ impl<T, const N: usize> Rx<T, N> {
         {
             self.receiver.inner = Some(bound.receiver);
             self.liveness.inner = bound.liveness;
+            self.replenisher.inner = bound.replenisher;
         }
 
         let receiver = self.receiver.inner.as_mut().ok_or(RxError::Unbound)?;
         match receiver.recv().await {
             Some(IncomingChannelMessage::Close(_)) | None => Ok(None),
             Some(IncomingChannelMessage::Reset(_)) => Err(RxError::Reset),
-            Some(IncomingChannelMessage::Item(msg)) => msg
-                .try_repack(|item, _backing_bytes| {
-                    let Payload::Incoming(bytes) = item.item else {
-                        return Err(RxError::Protocol(
-                            "incoming channel item payload was not Incoming".into(),
-                        ));
-                    };
-                    facet_postcard::from_slice_borrowed(bytes).map_err(RxError::Deserialize)
-                })
-                .map(Some),
+            Some(IncomingChannelMessage::Item(msg)) => {
+                let value = msg
+                    .try_repack(|item, _backing_bytes| {
+                        let Payload::Incoming(bytes) = item.item else {
+                            return Err(RxError::Protocol(
+                                "incoming channel item payload was not Incoming".into(),
+                            ));
+                        };
+                        facet_postcard::from_slice_borrowed(bytes).map_err(RxError::Deserialize)
+                    })
+                    .map(Some);
+                if value.is_ok()
+                    && let Some(replenisher) = &self.replenisher.inner
+                {
+                    replenisher.on_item_consumed();
+                }
+                value
+            }
         }
     }
 
@@ -570,6 +608,7 @@ impl<T, const N: usize> Rx<T, N> {
     ) {
         self.receiver.inner = Some(receiver);
         self.liveness.inner = liveness;
+        self.replenisher.inner = None;
     }
 }
 
@@ -669,6 +708,24 @@ mod tests {
 
         fn close_channel_on_drop(&self) {
             self.close_on_drop_calls.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    struct CountingReplenisher {
+        calls: AtomicUsize,
+    }
+
+    impl CountingReplenisher {
+        fn new() -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl ChannelCreditReplenisher for CountingReplenisher {
+        fn on_item_consumed(&self) {
+            self.calls.fetch_add(1, Ordering::AcqRel);
         }
     }
 
@@ -791,5 +848,33 @@ mod tests {
             Err(err) => err,
         };
         assert!(matches!(err, RxError::Protocol(_)));
+    }
+
+    #[tokio::test]
+    async fn rx_recv_notifies_replenisher_after_consuming_an_item() {
+        let (tx, rx_inner) = mpsc::channel(1);
+        let replenisher = Arc::new(CountingReplenisher::new());
+        let mut rx = Rx::<u32>::unbound();
+        rx.bind(rx_inner);
+        rx.replenisher.inner = Some(replenisher.clone());
+
+        let encoded = facet_postcard::to_vec(&123_u32).expect("serialize test item");
+        let item = SelfRef::owning(
+            Backing::Boxed(Box::<[u8]>::default()),
+            ChannelItem {
+                item: Payload::Incoming(Box::leak(encoded.into_boxed_slice())),
+            },
+        );
+        tx.send(IncomingChannelMessage::Item(item))
+            .await
+            .expect("send item");
+
+        let value = rx
+            .recv()
+            .await
+            .expect("recv should succeed")
+            .expect("expected item");
+        assert_eq!(*value, 123_u32);
+        assert_eq!(replenisher.calls.load(Ordering::Acquire), 1);
     }
 }

@@ -3,9 +3,8 @@
 // This test connects to a Rust WebSocket server and makes RPC calls
 // using generated client code for the Testbed service.
 
-import { connectWs } from "@bearcove/roam-ws";
-import { helloExchangeInitiator, defaultHello, channel } from "@bearcove/roam-core";
-import { TestbedClient } from "@bearcove/roam-generated/testbed.ts";
+import { channel } from "@bearcove/roam-core";
+import { connectTestbed, TestbedClient } from "@bearcove/roam-generated/testbed.ts";
 
 // Make test results available to Playwright
 declare global {
@@ -366,19 +365,101 @@ async function testChanneling(client: TestbedClient): Promise<void> {
   }
 }
 
+async function testChannelingBeyondInitialCredit(client: TestbedClient): Promise<void> {
+  // These browser tests intentionally cross the historical default channel
+  // window of 16 items so flow-control regressions fail end-to-end.
+
+  log("Testing sum (client-to-server, >16 items)...");
+  {
+    const [tx, rx] = channel<number>();
+    const count = 40;
+    const resultPromise = client.sum(rx);
+    let expected = 0n;
+
+    for (let i = 1; i <= count; i++) {
+      await tx.send(i);
+      expected += BigInt(i);
+    }
+    tx.close();
+
+    const result = await resultPromise;
+    if (result !== expected) {
+      throw new Error(`sum (>16 items) mismatch: expected ${expected}, got ${result}`);
+    }
+    addResult("sum (client-to-server, >16 items)", true);
+  }
+
+  log("Testing generate (server-to-client, >16 items)...");
+  {
+    const [tx, rx] = channel<number>();
+    const count = 64;
+    const callPromise = client.generate(count, tx);
+
+    const values: number[] = [];
+    for await (const n of rx) {
+      values.push(n);
+    }
+    await callPromise;
+
+    if (values.length !== count) {
+      throw new Error(
+        `generate (>16 items) length mismatch: expected ${count}, got ${values.length}`,
+      );
+    }
+    for (let i = 0; i < count; i++) {
+      if (values[i] !== i) {
+        throw new Error(`generate (>16 items)[${i}] mismatch: expected ${i}, got ${values[i]}`);
+      }
+    }
+    addResult("generate (server-to-client, >16 items)", true);
+  }
+
+  log("Testing transform (bidirectional, >16 items)...");
+  {
+    const [inputTx, inputRx] = channel<string>();
+    const [outputTx, outputRx] = channel<string>();
+    const count = 40;
+
+    const callPromise = client.transform(inputRx, outputTx);
+    const echoedPromise = (async () => {
+      const echoed: string[] = [];
+      for await (const s of outputRx) {
+        echoed.push(s);
+      }
+      return echoed;
+    })();
+
+    for (let i = 0; i < count; i++) {
+      await inputTx.send(`msg-${i}`);
+    }
+    inputTx.close();
+
+    const echoed = await echoedPromise;
+    await callPromise;
+
+    if (echoed.length !== count) {
+      throw new Error(
+        `transform (>16 items) length mismatch: expected ${count}, got ${echoed.length}`,
+      );
+    }
+    for (let i = 0; i < count; i++) {
+      const expected = `msg-${i}`;
+      if (echoed[i] !== expected) {
+        throw new Error(
+          `transform (>16 items)[${i}] mismatch: expected ${expected}, got ${echoed[i]}`,
+        );
+      }
+    }
+    addResult("transform (bidirectional, >16 items)", true);
+  }
+}
+
 async function runTests(wsUrl: string): Promise<void> {
   log(`Connecting to ${wsUrl}...`);
 
   try {
-    const transport = await connectWs(wsUrl);
-    log("WebSocket connected!");
-
-    log("Performing Hello exchange...");
-    const conn = await helloExchangeInitiator(transport, defaultHello());
-    log(`Hello exchange complete. Negotiated maxPayloadSize: ${conn.negotiated().maxPayloadSize}`);
-
-    // Create generated client
-    const client = new TestbedClient(conn.asCaller());
+    const client = await connectTestbed(wsUrl);
+    log("Generated client connected!");
 
     // Run Echo tests
     await testEcho(client);
@@ -391,8 +472,8 @@ async function runTests(wsUrl: string): Promise<void> {
 
     // Run Channeling tests
     await testChanneling(client);
+    await testChannelingBeyondInitialCredit(client);
 
-    conn.getIo().close();
     log("All tests passed!");
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);

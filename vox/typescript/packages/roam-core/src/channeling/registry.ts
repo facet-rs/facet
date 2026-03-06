@@ -62,6 +62,20 @@ class AsyncQueue<T> {
     });
   }
 
+  tryDequeue(): T | null | undefined {
+    if (this.items.length > 0) {
+      const value = this.items.shift()!;
+      this.signalSpace();
+      return value;
+    }
+
+    if (this.closed) {
+      return null;
+    }
+
+    return undefined;
+  }
+
   close(): void {
     if (this.closed) return;
     this.closed = true;
@@ -140,6 +154,15 @@ interface OutgoingState {
   credit: CreditWindow;
 }
 
+interface IncomingCreditState {
+  consumedSinceGrant: number;
+  threshold: number;
+}
+
+function creditReplenishmentThreshold(initialCredit: number): number {
+  return Math.max(1, Math.floor(initialCredit / 2));
+}
+
 /**
  * Sender handle for outgoing channel data.
  *
@@ -195,6 +218,7 @@ export class ChannelRegistry {
 
   /** Channels where we receive Data messages (backing Rx<T> handles). */
   private incoming = new Map<ChannelId, Channel<Uint8Array>>();
+  private incomingCredit = new Map<ChannelId, IncomingCreditState>();
 
   /** Channels where we send Data messages (backing Tx<T> handles). */
   private outgoing = new Map<ChannelId, OutgoingState>();
@@ -218,10 +242,31 @@ export class ChannelRegistry {
   ): ChannelReceiver<Uint8Array> {
     const channel = createChannel<Uint8Array>(initialCredit);
     this.incoming.set(channelId, channel);
+    this.incomingCredit.set(channelId, {
+      consumedSinceGrant: 0,
+      threshold: creditReplenishmentThreshold(initialCredit),
+    });
     return new ChannelReceiver(
       channel,
       this.keepaliveOwner,
-      () => (onConsumed ? onConsumed(1) : this.queueGrantCredit(channelId, 1)),
+      () => {
+        const state = this.incomingCredit.get(channelId);
+        if (!state) {
+          return;
+        }
+        state.consumedSinceGrant += 1;
+        if (state.consumedSinceGrant < state.threshold) {
+          return;
+        }
+
+        const additional = state.consumedSinceGrant;
+        state.consumedSinceGrant = 0;
+        if (onConsumed) {
+          onConsumed(additional);
+        } else {
+          this.queueGrantCredit(channelId, additional);
+        }
+      },
     );
   }
 
@@ -287,73 +332,46 @@ export class ChannelRegistry {
     this.notifyOutgoing?.();
   }
 
-  /**
-   * Wait for outgoing data from any registered channel.
-   */
-  async waitOutgoing(): Promise<OutgoingPoll> {
-    while (true) {
-      const pendingCredit = this.pendingCredits.shift();
-      if (pendingCredit) {
-        return { kind: "credit", ...pendingCredit };
-      }
+  pollOutgoing(): OutgoingPoll {
+    const pendingCredit = this.pendingCredits.shift();
+    if (pendingCredit) {
+      return { kind: "credit", ...pendingCredit };
+    }
 
-      if (this.outgoing.size === 0) {
-        return { kind: "done" };
-      }
-
-      const promises: Promise<
-        | { source: "channel"; channelId: ChannelId; msg: OutgoingMessage | null }
-        | { source: "credit"; channelId: ChannelId; additional: number }
-      >[] = [];
-
-      for (const [channelId, state] of this.outgoing) {
-        promises.push(
-          state.queue.dequeue().then((msg) => ({
-            source: "channel" as const,
-            channelId,
-            msg,
-          })),
-        );
-      }
-
-      promises.push(
-        new Promise<{ source: "credit"; channelId: ChannelId; additional: number }>((resolve) => {
-          this.creditWaiter = (credit) => {
-            resolve({ source: "credit", ...credit });
-          };
-        }),
-      );
-
-      const result = await Promise.race(promises);
-
-      if (result.source === "credit") {
-        return { kind: "credit", channelId: result.channelId, additional: result.additional };
-      }
-
-      this.creditWaiter = null;
-
-      if (result.msg === null) {
-        this.outgoing.delete(result.channelId);
-        this.closed.add(result.channelId);
+    for (const [channelId, state] of this.outgoing) {
+      const msg = state.queue.tryDequeue();
+      if (msg === undefined) {
         continue;
       }
 
-      if (result.msg.kind === "data") {
-        return { kind: "data", channelId: result.channelId, payload: result.msg.payload };
+      if (msg === null) {
+        this.outgoing.delete(channelId);
+        this.closed.add(channelId);
+        return this.pollOutgoing();
       }
 
-      if (result.msg.kind === "close") {
-        this.outgoing.delete(result.channelId);
-        this.closed.add(result.channelId);
-        return { kind: "close", channelId: result.channelId };
+      if (msg.kind === "data") {
+        return { kind: "data", channelId, payload: msg.payload };
+      }
+
+      if (msg.kind === "close") {
+        this.outgoing.delete(channelId);
+        this.closed.add(channelId);
+        return { kind: "close", channelId };
       }
 
       return {
         kind: "credit",
-        channelId: result.channelId,
-        additional: result.msg.additional,
+        channelId,
+        additional: msg.additional,
       };
     }
+
+    if (this.outgoing.size === 0) {
+      return { kind: "done" };
+    }
+
+    return { kind: "pending" };
   }
 
   /**
@@ -367,6 +385,7 @@ export class ChannelRegistry {
       channel.close();
       this.incoming.delete(channelId);
     }
+    this.incomingCredit.delete(channelId);
 
     const outgoing = this.outgoing.get(channelId);
     if (outgoing) {

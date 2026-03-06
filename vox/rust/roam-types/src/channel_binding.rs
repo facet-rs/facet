@@ -10,16 +10,14 @@
 
 use std::sync::Arc;
 
-use facet_core::PtrMut;
-use facet_path::PathAccessError;
-use tokio::sync::mpsc;
-
 use crate::ChannelId;
 use crate::channel::{
     BoundChannelReceiver, BoundChannelSink, ChannelBinding, ChannelLivenessHandle, ChannelSink,
-    CoreSlot, IncomingChannelMessage, ReceiverSlot, SinkSlot,
+    CoreSlot, ReceiverSlot, ReplenisherSlot, SinkSlot,
 };
 use crate::rpc_plan::{ChannelKind, RpcPlan};
+use facet_core::PtrMut;
+use facet_path::PathAccessError;
 
 /// Trait for channel operations, implemented by the session driver.
 ///
@@ -32,7 +30,7 @@ pub trait ChannelBinder: Send + Sync {
     fn create_tx(&self, initial_credit: u32) -> (ChannelId, Arc<dyn ChannelSink>);
 
     /// Allocate a channel ID, register it for routing, and return a receiver.
-    fn create_rx(&self) -> (ChannelId, mpsc::Receiver<IncomingChannelMessage>);
+    fn create_rx(&self, initial_credit: u32) -> (ChannelId, BoundChannelReceiver);
 
     /// Create a sink for a known channel ID (callee side).
     ///
@@ -43,7 +41,7 @@ pub trait ChannelBinder: Send + Sync {
     /// Register an inbound channel by ID and return the receiver (callee side).
     ///
     /// The channel ID comes from `Request.channels`.
-    fn register_rx(&self, channel_id: ChannelId) -> mpsc::Receiver<IncomingChannelMessage>;
+    fn register_rx(&self, channel_id: ChannelId, initial_credit: u32) -> BoundChannelReceiver;
 
     /// Optional opaque handle that keeps the underlying session/connection alive
     /// for the lifetime of any bound channel handle.
@@ -100,18 +98,14 @@ pub unsafe fn bind_channels_caller_args(
                 // Create a receiver and store it in the shared core so the caller's
                 // paired Rx can receive from it.
                 ChannelKind::Tx => {
-                    let (channel_id, receiver) = binder.create_rx();
+                    let (channel_id, bound) = binder.create_rx(loc.initial_credit);
                     channel_ids.push(channel_id);
-                    let liveness = binder.channel_liveness();
                     if let Ok(mut ps) = channel_poke.into_struct()
                         && let Ok(mut core_field) = ps.field_by_name("core")
                         && let Ok(slot) = core_field.get_mut::<CoreSlot>()
                         && let Some(core) = &slot.inner
                     {
-                        core.set_binding(ChannelBinding::Receiver(BoundChannelReceiver {
-                            receiver,
-                            liveness,
-                        }));
+                        core.set_binding(ChannelBinding::Receiver(bound));
                     }
                 }
             },
@@ -181,19 +175,23 @@ pub unsafe fn bind_channels_callee_args(
                     // r[impl rpc.channel.binding.callee-args.rx]
                     // Rx in args: handler receives. Register and bind a receiver directly.
                     ChannelKind::Rx => {
-                        let receiver = binder.register_rx(channel_id);
-                        let liveness = binder.channel_liveness();
+                        let bound = binder.register_rx(channel_id, loc.initial_credit);
                         if let Ok(mut ps) = channel_poke.into_struct() {
                             if let Ok(mut receiver_field) = ps.field_by_name("receiver")
                                 && let Ok(slot) = receiver_field.get_mut::<ReceiverSlot>()
                             {
-                                slot.inner = Some(receiver);
+                                slot.inner = Some(bound.receiver);
                             }
                             if let Ok(mut liveness_field) = ps.field_by_name("liveness")
                                 && let Ok(slot) =
                                     liveness_field.get_mut::<crate::channel::LivenessSlot>()
                             {
-                                slot.inner = liveness;
+                                slot.inner = bound.liveness;
+                            }
+                            if let Ok(mut replenisher_field) = ps.field_by_name("replenisher")
+                                && let Ok(slot) = replenisher_field.get_mut::<ReplenisherSlot>()
+                            {
+                                slot.inner = bound.replenisher;
                             }
                         }
                     }
@@ -217,7 +215,9 @@ mod tests {
     use facet::Facet;
     use tokio::sync::mpsc;
 
-    use crate::channel::{ChannelSink, IncomingChannelMessage, RxError, TxError, channel};
+    use crate::channel::{
+        BoundChannelReceiver, ChannelSink, IncomingChannelMessage, RxError, TxError, channel,
+    };
     use crate::{Backing, ChannelClose, ChannelId, Metadata, Payload, RpcPlan, SelfRef, Tx};
 
     use super::{ChannelBinder, bind_channels_callee_args, bind_channels_caller_args};
@@ -246,7 +246,7 @@ mod tests {
         next_id: Mutex<u64>,
         create_tx_credits: Mutex<Vec<u32>>,
         bind_tx_calls: Mutex<Vec<(ChannelId, u32)>>,
-        register_rx_calls: Mutex<Vec<ChannelId>>,
+        register_rx_calls: Mutex<Vec<(ChannelId, u32)>>,
         rx_senders: Mutex<HashMap<u64, mpsc::Sender<IncomingChannelMessage>>>,
     }
 
@@ -284,14 +284,21 @@ mod tests {
             (self.alloc_id(), Arc::new(TestSink))
         }
 
-        fn create_rx(&self) -> (ChannelId, mpsc::Receiver<IncomingChannelMessage>) {
+        fn create_rx(&self, _initial_credit: u32) -> (ChannelId, BoundChannelReceiver) {
             let channel_id = self.alloc_id();
             let (tx, rx) = mpsc::channel(8);
             self.rx_senders
                 .lock()
                 .expect("sender map mutex poisoned")
                 .insert(channel_id.0, tx);
-            (channel_id, rx)
+            (
+                channel_id,
+                BoundChannelReceiver {
+                    receiver: rx,
+                    liveness: None,
+                    replenisher: None,
+                },
+            )
         }
 
         fn bind_tx(&self, channel_id: ChannelId, initial_credit: u32) -> Arc<dyn ChannelSink> {
@@ -302,17 +309,21 @@ mod tests {
             Arc::new(TestSink)
         }
 
-        fn register_rx(&self, channel_id: ChannelId) -> mpsc::Receiver<IncomingChannelMessage> {
+        fn register_rx(&self, channel_id: ChannelId, initial_credit: u32) -> BoundChannelReceiver {
             self.register_rx_calls
                 .lock()
                 .expect("register-rx mutex poisoned")
-                .push(channel_id);
+                .push((channel_id, initial_credit));
             let (tx, rx) = mpsc::channel(8);
             self.rx_senders
                 .lock()
                 .expect("sender map mutex poisoned")
                 .insert(channel_id.0, tx);
-            rx
+            BoundChannelReceiver {
+                receiver: rx,
+                liveness: None,
+                replenisher: None,
+            }
         }
     }
 
@@ -436,7 +447,7 @@ mod tests {
                 .lock()
                 .expect("register-rx mutex poisoned")
                 .as_slice(),
-            &[ChannelId(43)]
+            &[(ChannelId(43), 16)]
         );
     }
 
