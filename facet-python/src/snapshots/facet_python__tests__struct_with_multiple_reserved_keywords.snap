@@ -3,7 +3,7 @@ source: facet-python/src/lib.rs
 assertion_line: 938
 expression: py
 ---
-type ControlFlow = TypedDict(
+ControlFlow = TypedDict(
     "ControlFlow",
     {"if": Required[bool], "else": Required[str], "return": Required[int]},
     total=False,

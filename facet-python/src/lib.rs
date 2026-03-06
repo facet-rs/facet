@@ -76,7 +76,7 @@ fn has_reserved_keyword_field(fields: &[TypedDictField]) -> bool {
 
 /// Generate TypedDict using functional syntax: `Name = TypedDict("Name", {...}, total=False)`
 fn write_typed_dict_functional(output: &mut String, class_name: &str, fields: &[TypedDictField]) {
-    writeln!(output, "type {} = TypedDict(", class_name).unwrap();
+    writeln!(output, "{} = TypedDict(", class_name).unwrap();
     writeln!(output, "    \"{}\",", class_name).unwrap();
     output.push_str("    {");
 
@@ -184,6 +184,7 @@ impl PythonGenerator {
         }
 
         // Collect all generated code in sorted order (BTreeMap iterates in key order)
+        // Invariant: we must generate in lexia order to ensure that forward references are quoted correctly
         let mut output = String::new();
 
         // Write imports if requested
@@ -211,7 +212,7 @@ impl PythonGenerator {
         // Handle transparent wrappers - generate a type alias to the inner type
         if let Some(inner) = shape.inner {
             self.add_shape(inner);
-            let inner_type = self.type_for_shape(inner);
+            let inner_type = self.type_for_shape(inner, None);
             write_doc_comment(&mut output, shape.doc);
             writeln!(output, "type {} = {}", shape.type_identifier, inner_type).unwrap();
             output.push('\n');
@@ -229,7 +230,7 @@ impl PythonGenerator {
             }
             _ => {
                 // For other types, generate a type alias
-                let type_str = self.type_for_shape(shape);
+                let type_str = self.type_for_shape(shape, None);
                 write_doc_comment(&mut output, shape.doc);
                 writeln!(output, "type {} = {}", shape.type_identifier, type_str).unwrap();
                 output.push('\n');
@@ -258,14 +259,14 @@ impl PythonGenerator {
                 writeln!(output, "{} = None", shape.type_identifier).unwrap();
             }
             StructKind::TupleStruct if fields.len() == 1 => {
-                let inner_type = self.type_for_shape(fields[0].shape.get());
+                let inner_type = self.type_for_shape(fields[0].shape.get(), None);
                 write_doc_comment(output, shape.doc);
                 writeln!(output, "{} = {}", shape.type_identifier, inner_type).unwrap();
             }
             StructKind::TupleStruct | StructKind::Tuple => {
                 let types: Vec<String> = fields
                     .iter()
-                    .map(|f| self.type_for_shape(f.shape.get()))
+                    .map(|f| self.type_for_shape(f.shape.get(), None))
                     .collect();
                 write_doc_comment(output, shape.doc);
                 writeln!(
@@ -297,11 +298,21 @@ impl PythonGenerator {
             .filter(|f| !f.flags.contains(facet_core::FieldFlags::SKIP))
             .collect();
 
+        // Functional form uses runtime expressions — quote forward references.
+        let needs_functional = visible_fields
+            .iter()
+            .any(|f| is_python_keyword(f.effective_name()));
+        let quote_after: Option<&str> = if needs_functional {
+            Some(shape.type_identifier)
+        } else {
+            None
+        };
+
         // Convert to TypedDictField for shared generation logic
         let typed_dict_fields: Vec<_> = visible_fields
             .iter()
             .map(|f| {
-                let (type_string, required) = self.field_type_info(f);
+                let (type_string, required) = self.field_type_info(f, quote_after);
                 TypedDictField::new(f.effective_name(), type_string, required, f.doc)
             })
             .collect();
@@ -316,11 +327,11 @@ impl PythonGenerator {
     }
 
     /// Get the Python type string and required status for a field.
-    fn field_type_info(&mut self, field: &Field) -> (String, bool) {
+    fn field_type_info(&mut self, field: &Field, quote_after: Option<&str>) -> (String, bool) {
         if let Def::Option(opt) = &field.shape.get().def {
-            (self.type_for_shape(opt.t), false)
+            (self.type_for_shape(opt.t, quote_after), false)
         } else {
-            (self.type_for_shape(field.shape.get()), true)
+            (self.type_for_shape(field.shape.get(), quote_after), true)
         }
     }
 
@@ -427,7 +438,14 @@ impl PythonGenerator {
         self.imports.insert("TypedDict");
         self.imports.insert("Required");
 
-        let inner_type = self.type_for_shape(variant.data.fields[0].shape.get());
+        // Functional form uses runtime expressions — quote forward references.
+        let quote_after: Option<&str> = if is_python_keyword(variant_name) {
+            Some(pascal_variant_name)
+        } else {
+            None
+        };
+
+        let inner_type = self.type_for_shape(variant.data.fields[0].shape.get(), quote_after);
 
         let fields = [TypedDictField::new(variant_name, inner_type, true, &[])];
 
@@ -449,11 +467,18 @@ impl PythonGenerator {
         self.imports.insert("TypedDict");
         self.imports.insert("Required");
 
+        // Functional form uses runtime expressions — quote forward references.
+        let quote_after: Option<&str> = if is_python_keyword(variant_name) {
+            Some(pascal_variant_name)
+        } else {
+            None
+        };
+
         let types: Vec<String> = variant
             .data
             .fields
             .iter()
-            .map(|f| self.type_for_shape(f.shape.get()))
+            .map(|f| self.type_for_shape(f.shape.get(), quote_after))
             .collect();
 
         // Note: types should never be empty here because:
@@ -483,13 +508,25 @@ impl PythonGenerator {
 
         let data_class_name = format!("{}Data", pascal_variant_name);
 
+        // Functional form uses runtime expressions — quote forward references.
+        let needs_functional = variant
+            .data
+            .fields
+            .iter()
+            .any(|f| is_python_keyword(f.effective_name()));
+        let quote_after: Option<&str> = if needs_functional {
+            Some(&data_class_name)
+        } else {
+            None
+        };
+
         // Generate the data class fields
         let data_fields: Vec<_> = variant
             .data
             .fields
             .iter()
             .map(|field| {
-                let field_type = self.type_for_shape(field.shape.get());
+                let field_type = self.type_for_shape(field.shape.get(), quote_after);
                 TypedDictField::new(field.effective_name(), field_type, true, &[])
             })
             .collect();
@@ -499,10 +536,17 @@ impl PythonGenerator {
         data_output.push('\n');
         self.generated.insert(data_class_name.clone(), data_output);
 
-        // Generate the wrapper class
+        // Quote data_class_name if wrapper will use functional form (forward ref).
+        let wrapper_type_str = if is_python_keyword(variant_name)
+            && data_class_name.as_str() > pascal_variant_name
+        {
+            format!("\"{}\"", data_class_name)
+        } else {
+            data_class_name.clone()
+        };
         let wrapper_fields = [TypedDictField::new(
             variant_name,
-            data_class_name.clone(),
+            wrapper_type_str,
             true,
             &[],
         )];
@@ -515,38 +559,40 @@ impl PythonGenerator {
             .insert(pascal_variant_name.to_string(), wrapper_output);
     }
 
-    fn type_for_shape(&mut self, shape: &'static Shape) -> String {
+    /// Get the Python type string for a shape.
+    /// `quote_after` quotes user-defined names sorting after it (forward refs).
+    fn type_for_shape(&mut self, shape: &'static Shape, quote_after: Option<&str>) -> String {
         // Check Def first - these take precedence over transparent wrappers
         match &shape.def {
             Def::Scalar => self.scalar_type(shape),
             Def::Option(opt) => {
-                format!("{} | None", self.type_for_shape(opt.t))
+                format!("{} | None", self.type_for_shape(opt.t, quote_after))
             }
             Def::List(list) => {
-                format!("list[{}]", self.type_for_shape(list.t))
+                format!("list[{}]", self.type_for_shape(list.t, quote_after))
             }
             Def::Array(arr) => {
-                format!("list[{}]", self.type_for_shape(arr.t))
+                format!("list[{}]", self.type_for_shape(arr.t, quote_after))
             }
             Def::Set(set) => {
-                format!("list[{}]", self.type_for_shape(set.t))
+                format!("list[{}]", self.type_for_shape(set.t, quote_after))
             }
             Def::Map(map) => {
                 format!(
                     "dict[{}, {}]",
-                    self.type_for_shape(map.k),
-                    self.type_for_shape(map.v)
+                    self.type_for_shape(map.k, quote_after),
+                    self.type_for_shape(map.v, quote_after)
                 )
             }
             Def::Pointer(ptr) => match ptr.pointee {
-                Some(pointee) => self.type_for_shape(pointee),
+                Some(pointee) => self.type_for_shape(pointee, quote_after),
                 None => {
                     self.imports.insert("Any");
                     "Any".to_string()
                 }
             },
             Def::Undefined => {
-                // User-defined types - queue for generation and return quoted name
+                // User-defined types - queue for generation and return name
                 match &shape.ty {
                     Type::User(UserType::Struct(st)) => {
                         // Handle tuples specially - inline them as tuple[...] since their
@@ -555,29 +601,37 @@ impl PythonGenerator {
                             let types: Vec<String> = st
                                 .fields
                                 .iter()
-                                .map(|f| self.type_for_shape(f.shape.get()))
+                                .map(|f| self.type_for_shape(f.shape.get(), quote_after))
                                 .collect();
                             format!("tuple[{}]", types.join(", "))
                         } else {
                             self.add_shape(shape);
-                            shape.type_identifier.to_string()
+                            self.maybe_quote(shape.type_identifier, quote_after)
                         }
                     }
                     Type::User(UserType::Enum(_)) => {
                         self.add_shape(shape);
-                        shape.type_identifier.to_string()
+                        self.maybe_quote(shape.type_identifier, quote_after)
                     }
-                    _ => self.inner_type_or_any(shape),
+                    _ => self.inner_type_or_any(shape, quote_after),
                 }
             }
-            _ => self.inner_type_or_any(shape),
+            _ => self.inner_type_or_any(shape, quote_after),
         }
     }
 
+    /// Wrap a type name in quotes if it is a forward reference (sorts after `quote_after`).
+    fn maybe_quote(&self, name: &str, quote_after: Option<&str>) -> String {
+        if let Some(after) = quote_after &&  name > after {
+            return format!("\"{}\"", name);
+        }
+        name.to_string()
+    }
+
     /// Get the inner type for transparent wrappers, or "Any" as fallback.
-    fn inner_type_or_any(&mut self, shape: &'static Shape) -> String {
+    fn inner_type_or_any(&mut self, shape: &'static Shape, quote_after: Option<&str>) -> String {
         match shape.inner {
-            Some(inner) => self.type_for_shape(inner),
+            Some(inner) => self.type_for_shape(inner, quote_after),
             None => {
                 self.imports.insert("Any");
                 "Any".to_string()
@@ -1053,8 +1107,8 @@ mod tests {
     }
 
     #[test]
-    fn test_functional_typed_dict_has_type_keyword() {
-        // Regression test for https://github.com/facet-rs/facet/issues/2128
+    fn test_functional_typed_dict_no_type_keyword() {
+        // Regression test for https://github.com/facet-rs/facet/issues/2131
         #[derive(Facet)]
         struct Bug {
             from: Option<String>,
@@ -1062,8 +1116,32 @@ mod tests {
 
         let py = to_python::<Bug>(false);
         assert!(
-            py.starts_with("type "),
-            "functional TypedDict should start with `type` keyword, got:\n{py}"
+            !py.starts_with("type "),
+            "functional TypedDict should NOT start with `type` keyword, got:\n{py}"
+        );
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_functional_typed_dict_forward_ref_quoted() {
+        // Regression test for https://github.com/facet-rs/facet/issues/2131
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Recipient {
+            name: String,
+        }
+
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Addr {
+            from: String,
+            to: Recipient,
+        }
+
+        let py = to_python::<Addr>(false);
+        assert!(
+            py.contains("Required[\"Recipient\"]"),
+            "forward reference in functional TypedDict should be quoted, got:\n{py}"
         );
         insta::assert_snapshot!(py);
     }
