@@ -83,7 +83,7 @@ indexmap = [
 num-complex = [
   "facet-core/num-complex",
 ] # Provide Facet trait implementations for num_complex::Complex
-semver = ["facet-core/semver"] # Provide Facet trait implementations for semver::Version
+semver = ["facet-core/semver"] # Provide Facet trait implementations for semver::Version and semver::VersionReq
 smartstring = [
   "facet-core/smartstring",
 ] # Provide Facet trait implementations for smartstring::SmartString
