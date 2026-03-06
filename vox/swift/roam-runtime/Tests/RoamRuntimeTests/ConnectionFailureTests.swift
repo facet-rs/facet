@@ -587,7 +587,7 @@ struct ConnectionFailureTests {
         #expect(protocolReason == "call.lifecycle.unknown-request-id")
     }
 
-    @Test func lateResponseAfterTimeoutTriggersProtocolViolation() async throws {
+    @Test func lateResponseAfterTimeoutIsIgnoredAndConnectionStaysUsable() async throws {
         let transport = ScriptedTransport()
         let (handle, driver) = try await establishInitiator(
             transport: transport,
@@ -620,19 +620,97 @@ struct ConnectionFailureTests {
             )
         )
 
-        do {
-            try await driverTask.value
-            Issue.record("expected protocol violation")
-        } catch {
-            #expect(isProtocolViolation(error, rule: "call.lifecycle.unknown-request-id"))
+        let followupCall = Task {
+            try await handle.callRaw(methodId: 99, payload: [9], timeout: 1.0)
+        }
+        guard let followupRequestId = await awaitRequestId(transport, index: 1) else {
+            Issue.record("expected follow-up request to be sent")
+            return
         }
 
-        do {
-            _ = try await handle.callRaw(methodId: 99, payload: [9], timeout: 2.0)
-            Issue.record("expected connection closed")
-        } catch {
-            #expect(isConnectionClosed(error))
+        await transport.enqueueMessage(
+            .response(
+                connId: 0,
+                requestId: followupRequestId,
+                metadata: [],
+                channels: [],
+                payload: [0xBB]
+            )
+        )
+
+        let followupResponse = try await awaitTaskResult(followupCall, timeoutMs: 1_000)
+        #expect(followupResponse == [0xBB])
+        #expect(await awaitProtocolReason(transport, timeoutMs: 100) == nil)
+
+        try? await transport.close()
+        _ = try? await driverTask.value
+    }
+
+    @Test func duplicateResponseAfterSuccessIsIgnored() async throws {
+        let transport = ScriptedTransport()
+        let (handle, driver) = try await establishInitiator(
+            transport: transport,
+            dispatcher: NoopDispatcher()
+        )
+        let driverTask = Task {
+            try await driver.run()
         }
+
+        let firstCall = Task {
+            try await handle.callRaw(methodId: 7, payload: [7], timeout: 1.0)
+        }
+        guard let firstRequestId = await awaitRequestId(transport, index: 0) else {
+            Issue.record("expected first request to be sent")
+            return
+        }
+
+        await transport.enqueueMessage(
+            .response(
+                connId: 0,
+                requestId: firstRequestId,
+                metadata: [],
+                channels: [],
+                payload: [0x01]
+            )
+        )
+
+        let firstResponse = try await awaitTaskResult(firstCall, timeoutMs: 1_000)
+        #expect(firstResponse == [0x01])
+
+        await transport.enqueueMessage(
+            .response(
+                connId: 0,
+                requestId: firstRequestId,
+                metadata: [],
+                channels: [],
+                payload: [0x02]
+            )
+        )
+
+        let secondCall = Task {
+            try await handle.callRaw(methodId: 8, payload: [8], timeout: 1.0)
+        }
+        guard let secondRequestId = await awaitRequestId(transport, index: 1) else {
+            Issue.record("expected second request to be sent")
+            return
+        }
+
+        await transport.enqueueMessage(
+            .response(
+                connId: 0,
+                requestId: secondRequestId,
+                metadata: [],
+                channels: [],
+                payload: [0x03]
+            )
+        )
+
+        let secondResponse = try await awaitTaskResult(secondCall, timeoutMs: 1_000)
+        #expect(secondResponse == [0x03])
+        #expect(await awaitProtocolReason(transport, timeoutMs: 100) == nil)
+
+        try? await transport.close()
+        _ = try? await driverTask.value
     }
 
     @Test func protocolViolationFromIncomingMessageFailsPendingCalls() async throws {

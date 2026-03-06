@@ -341,9 +341,7 @@ private final class LockedQueue<T>: @unchecked Sendable {
 
 /// Actor that holds mutable driver state to avoid NSLock in async contexts.
 private actor DriverState {
-    // Temporary kill-switch: keep the implementation in-tree but disabled
-    // while we debug the primary state-machine bug.
-    private let retainFinalizedRequests = false
+    private let retainFinalizedRequests = true
 
     private struct FinalizedRequest: Sendable {
         let reason: String
@@ -373,8 +371,12 @@ private actor DriverState {
         return true
     }
 
-    func removePendingResponse(_ requestId: UInt64) -> PendingCall? {
-        pendingResponses.removeValue(forKey: requestId)
+    func claimPendingResponse(_ requestId: UInt64, reason: String) -> PendingCall? {
+        guard let pending = pendingResponses.removeValue(forKey: requestId) else {
+            return nil
+        }
+        markFinalizedRequest(requestId, reason: reason)
+        return pending
     }
 
     func markFinalizedRequest(_ requestId: UInt64, reason: String) {
@@ -454,12 +456,15 @@ private actor DriverState {
         )
     }
 
-    func failAllPending() -> [UInt64: PendingCall] {
+    func claimAllPendingResponses(reason: String) -> [UInt64: PendingCall] {
         isClosed = true
         let responses = pendingResponses
         pendingResponses.removeAll()
         inFlightRequests.removeAll()
         inFlightResponseContext.removeAll()
+        for requestId in responses.keys {
+            markFinalizedRequest(requestId, reason: reason)
+        }
         return responses
     }
 
@@ -800,12 +805,15 @@ public final class Driver: @unchecked Sendable {
                     ))
                 return
             } catch {
-                let pending = await state.removePendingResponse(requestId)
+                let pending = await state.claimPendingResponse(
+                    requestId,
+                    reason: "transport-send-failed"
+                )
                 pending?.timeoutTask?.cancel()
                 warnLog(
                     "transport send failed for request_id \(requestId): \(String(describing: error))"
                 )
-                responseTx(.failure(.transportError(String(describing: error))))
+                pending?.responseTx(.failure(.transportError(String(describing: error))))
                 await failAllPending()
                 eventContinuation.finish()
                 return
@@ -827,10 +835,12 @@ public final class Driver: @unchecked Sendable {
                 } catch {
                     return
                 }
-                guard let pending = await capturedState.removePendingResponse(requestId) else {
+                guard let pending = await capturedState.claimPendingResponse(
+                    requestId,
+                    reason: "timeout"
+                ) else {
                     return
                 }
-                await capturedState.markFinalizedRequest(requestId, reason: "timeout")
                 pending.timeoutTask?.cancel()
                 warnLog("request timed out request_id=\(requestId) timeout_s=\(timeout)")
                 pending.responseTx(.failure(.timeout))
@@ -863,7 +873,10 @@ public final class Driver: @unchecked Sendable {
             } catch TransportError.wouldBlock {
                 return
             } catch {
-                let pending = await state.removePendingResponse(call.requestId)
+                let pending = await state.claimPendingResponse(
+                    call.requestId,
+                    reason: "transport-send-failed"
+                )
                 pending?.timeoutTask?.cancel()
                 pending?.responseTx(.failure(.transportError(String(describing: error))))
                 pendingCalls.removeFirst()
@@ -888,10 +901,12 @@ public final class Driver: @unchecked Sendable {
                 } catch {
                     return
                 }
-                guard let pending = await capturedState.removePendingResponse(requestId) else {
+                guard let pending = await capturedState.claimPendingResponse(
+                    requestId,
+                    reason: "timeout"
+                ) else {
                     return
                 }
-                await capturedState.markFinalizedRequest(requestId, reason: "timeout")
                 pending.timeoutTask?.cancel()
                 warnLog("request timed out request_id=\(requestId) timeout_s=\(timeout)")
                 pending.responseTx(.failure(.timeout))
@@ -983,7 +998,8 @@ public final class Driver: @unchecked Sendable {
                 )
             case .response(let response):
                 let payload = response.ret.bytes
-                guard let pending = await state.removePendingResponse(request.id) else {
+                guard let pending = await state.claimPendingResponse(request.id, reason: "response")
+                else {
                     if let finalized = await state.takeFinalizedRequest(request.id) {
                         warnLog(
                             "dropping late response for finalized request_id \(request.id) "
@@ -1212,7 +1228,7 @@ public final class Driver: @unchecked Sendable {
         // instead of hanging forever.
         await handle.closeRequestSemaphore()
 
-        let responses = await state.failAllPending()
+        let responses = await state.claimAllPendingResponses(reason: "connection-closed")
 
         for (_, pending) in responses {
             pending.timeoutTask?.cancel()
