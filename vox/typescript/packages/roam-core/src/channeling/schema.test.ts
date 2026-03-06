@@ -1,79 +1,84 @@
-// Tests to verify schema types are correctly re-exported from roam-postcard
-
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
+import type { EnumSchema, Schema, SchemaRegistry, StructSchema } from "./schema.ts";
 import {
-  type Schema,
-  type EnumSchema,
-  type StructSchema,
-  type TupleSchema,
-  type RefSchema,
-  type SchemaRegistry,
   findVariantByDiscriminant,
   findVariantByName,
   getVariantDiscriminant,
-  getVariantFieldSchemas,
   getVariantFieldNames,
+  getVariantFieldSchemas,
   isNewtypeVariant,
   isRefSchema,
   resolveSchema,
 } from "./schema.ts";
 
-describe("Schema re-exports", () => {
-  it("exports EnumSchema type correctly", () => {
-    const schema: EnumSchema = {
-      kind: "enum",
-      variants: [
-        { name: "A", fields: null },
-        { name: "B", discriminant: 5, fields: { kind: "string" } },
-      ],
-    };
-    expect(schema.kind).toBe("enum");
-    expect(schema.variants).toHaveLength(2);
+const PayloadSchema: StructSchema = {
+  kind: "struct",
+  fields: {
+    message: { kind: "string" },
+    next: { kind: "option", inner: { kind: "ref", name: "Payload" } },
+  },
+};
+
+const EventSchema: EnumSchema = {
+  kind: "enum",
+  variants: [
+    {
+      name: "Started",
+      fields: { kind: "ref", name: "Payload" },
+    },
+    {
+      name: "Progress",
+      discriminant: 7,
+      fields: {
+        current: { kind: "u32" },
+        total: { kind: "u32" },
+      },
+    },
+    {
+      name: "Chunk",
+      fields: [{ kind: "bytes" }, { kind: "u32" }],
+    },
+  ],
+};
+
+const registry: SchemaRegistry = new Map<string, Schema>([
+  ["Payload", PayloadSchema],
+  ["Event", EventSchema],
+]);
+
+describe("channeling schema compatibility", () => {
+  it("resolves the top-level ref without eagerly resolving nested refs", () => {
+    const resolved = resolveSchema({ kind: "ref", name: "Payload" }, registry);
+
+    expect(resolved).toBe(PayloadSchema);
+    expect((resolved as StructSchema).fields.next).toEqual({
+      kind: "option",
+      inner: { kind: "ref", name: "Payload" },
+    });
   });
 
-  it("exports TupleSchema type correctly", () => {
-    const schema: TupleSchema = {
-      kind: "tuple",
-      elements: [{ kind: "string" }, { kind: "u32" }],
-    };
-    expect(schema.kind).toBe("tuple");
-    expect(schema.elements).toHaveLength(2);
+  it("provides enum metadata used by the channel binder for named variants", () => {
+    const progress = findVariantByName(EventSchema, "Progress");
+
+    expect(progress).toBeDefined();
+    expect(isNewtypeVariant(progress!)).toBe(false);
+    expect(getVariantFieldNames(progress!)).toEqual(["current", "total"]);
+    expect(getVariantFieldSchemas(progress!)).toEqual([{ kind: "u32" }, { kind: "u32" }]);
   });
 
-  it("exports RefSchema type correctly", () => {
-    const schema: RefSchema = {
-      kind: "ref",
-      name: "MyType",
-    };
-    expect(schema.kind).toBe("ref");
-    expect(schema.name).toBe("MyType");
+  it("recognizes newtype variants and sparse discriminants", () => {
+    const started = findVariantByDiscriminant(EventSchema, 0);
+    const progress = findVariantByDiscriminant(EventSchema, 7);
+
+    expect(started?.name).toBe("Started");
+    expect(progress?.name).toBe("Progress");
+    expect(isNewtypeVariant(started!)).toBe(true);
+    expect(getVariantDiscriminant(EventSchema, progress!)).toBe(7);
+    expect(getVariantFieldSchemas(started!)).toEqual([{ kind: "ref", name: "Payload" }]);
   });
 
-  it("exports helper functions", () => {
-    // Just verify the functions are exported and callable
-    expect(typeof findVariantByDiscriminant).toBe("function");
-    expect(typeof findVariantByName).toBe("function");
-    expect(typeof getVariantDiscriminant).toBe("function");
-    expect(typeof getVariantFieldSchemas).toBe("function");
-    expect(typeof getVariantFieldNames).toBe("function");
-    expect(typeof isNewtypeVariant).toBe("function");
-    expect(typeof isRefSchema).toBe("function");
-    expect(typeof resolveSchema).toBe("function");
-  });
-
-  it("isRefSchema works on re-exported function", () => {
-    expect(isRefSchema({ kind: "ref", name: "Test" })).toBe(true);
-    expect(isRefSchema({ kind: "string" })).toBe(false);
-  });
-
-  it("resolveSchema works with registry", () => {
-    const pointSchema: StructSchema = {
-      kind: "struct",
-      fields: { x: { kind: "i32" }, y: { kind: "i32" } },
-    };
-    const registry: SchemaRegistry = new Map<string, Schema>([["Point", pointSchema as Schema]]);
-
-    const resolved = resolveSchema({ kind: "ref", name: "Point" }, registry);
-    expect(resolved).toBe(pointSchema);
+  it("exposes ref detection for runtime schema walking", () => {
+    expect(isRefSchema({ kind: "ref", name: "Payload" })).toBe(true);
+    expect(isRefSchema(PayloadSchema)).toBe(false);
   });
 });
