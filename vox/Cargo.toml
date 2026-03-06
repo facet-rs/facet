@@ -30,7 +30,7 @@ members = [
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "7.2.0"
+version = "7.3.0"
 edition = "2024"
 rust-version = "1.91"
 readme = "README.md"
@@ -43,23 +43,23 @@ categories = ["network-programming", "asynchronous"]
 
 [workspace.dependencies]
 # Internal crates
-roam = { path = "rust/roam", version = "7.2.0" }
-roam-types = { path = "rust/roam-types", version = "7.2.0" }
-roam-hash = { path = "rust/roam-hash", version = "7.2.0" }
-roam-macros-parse = { path = "rust/roam-macros-parse", version = "7.2.0" }
-roam-macros-core = { path = "rust/roam-macros-core", version = "7.2.0" }
-roam-service-macros = { path = "rust/roam-macros", version = "7.2.0" }
-roam-core = { path = "rust/roam-core", version = "7.2.0" }
-roam-stream = { path = "rust/roam-stream", version = "7.2.0" }
-roam-codegen = { path = "rust/roam-codegen", version = "7.2.0" }
-roam-websocket = { path = "rust/roam-websocket", version = "7.2.0" }
-roam-local = { path = "rust/roam-local", version = "7.2.0" }
-roam-shm = { path = "rust/roam-shm", version = "7.2.0" }
-roam-shm-ffi = { path = "rust/roam-shm-ffi", version = "7.2.0" }
-spec-proto = { path = "spec/spec-proto", version = "7.2.0" }
-shm-primitives = { path = "rust/shm-primitives", version = "7.2.0", default-features = false }
-shm-primitives-async = { path = "rust/shm-primitives-async", version = "7.2.0", default-features = false }
-ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "7.2.0" }
+roam = { path = "rust/roam", version = "7.3.0" }
+roam-types = { path = "rust/roam-types", version = "7.3.0" }
+roam-hash = { path = "rust/roam-hash", version = "7.3.0" }
+roam-macros-parse = { path = "rust/roam-macros-parse", version = "7.3.0" }
+roam-macros-core = { path = "rust/roam-macros-core", version = "7.3.0" }
+roam-service-macros = { path = "rust/roam-macros", version = "7.3.0" }
+roam-core = { path = "rust/roam-core", version = "7.3.0" }
+roam-stream = { path = "rust/roam-stream", version = "7.3.0" }
+roam-codegen = { path = "rust/roam-codegen", version = "7.3.0" }
+roam-websocket = { path = "rust/roam-websocket", version = "7.3.0" }
+roam-local = { path = "rust/roam-local", version = "7.3.0" }
+roam-shm = { path = "rust/roam-shm", version = "7.3.0" }
+roam-shm-ffi = { path = "rust/roam-shm-ffi", version = "7.3.0" }
+spec-proto = { path = "spec/spec-proto", version = "7.3.0" }
+shm-primitives = { path = "rust/shm-primitives", version = "7.3.0", default-features = false }
+shm-primitives-async = { path = "rust/shm-primitives-async", version = "7.3.0", default-features = false }
+ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "7.3.0" }
 
 # Not internal crates
 moire = { version = "1.0.0" }
