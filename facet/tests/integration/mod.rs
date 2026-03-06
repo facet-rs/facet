@@ -1,4 +1,5 @@
 mod compile_tests;
+mod crate_semver;
 mod cycle;
 mod derive;
 mod derive_hashmap_key_bounds;

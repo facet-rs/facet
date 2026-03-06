@@ -11,6 +11,7 @@ mod num_complex;
 mod ordered_float;
 mod ruint;
 mod rust_decimal;
+mod semver;
 mod smartstring;
 mod smol_str;
 mod tendril;

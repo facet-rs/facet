@@ -47,6 +47,7 @@ all-impls = [
   "iddqd",
   "yoke",
   "smallvec",
+  "semver",
 ] # Enable all optional Facet trait implementations for third-party types
 alloc = ["facet-core/alloc"] # Enable allocation support for no_std environments
 nonzero = ["facet-core/nonzero"] # Provide Facet trait implementations for NonZero<T> types
@@ -82,6 +83,7 @@ indexmap = [
 num-complex = [
   "facet-core/num-complex",
 ] # Provide Facet trait implementations for num_complex::Complex
+semver = ["facet-core/semver"] # Provide Facet trait implementations for semver::Version
 smartstring = [
   "facet-core/smartstring",
 ] # Provide Facet trait implementations for smartstring::SmartString
