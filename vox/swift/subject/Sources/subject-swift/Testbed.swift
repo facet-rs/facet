@@ -147,7 +147,7 @@ public protocol TestbedCaller {
   func swapPair(pair: (Int32, String)) async throws -> (String, Int32)
 }
 
-public final class TestbedClient: TestbedCaller {
+public final class TestbedClient: TestbedCaller, Sendable {
   private let connection: RoamConnection
   private let timeout: TimeInterval?
 
@@ -1070,7 +1070,11 @@ public final class TestbedChannelingDispatcher {
       }
       let numbersChannelId = channels[channelCursor]
       channelCursor += 1
-      let numbersReceiver = await registry.register(numbersChannelId)
+      let numbersReceiver = await registry.register(
+        numbersChannelId, initialCredit: 16,
+        onConsumed: { [taskSender = self.taskSender] additional in
+          taskSender(.grantCredit(channelId: numbersChannelId, bytes: additional))
+        })
       let numbers = createServerRx(
         channelId: numbersChannelId, receiver: numbersReceiver,
         deserialize: { bytes in
@@ -1096,8 +1100,9 @@ public final class TestbedChannelingDispatcher {
       }
       let outputChannelId = channels[channelCursor]
       channelCursor += 1
-      let output = createServerTx(
-        channelId: outputChannelId, taskSender: taskSender, serialize: ({ encodeI32($0) }))
+      let output = await createServerTx(
+        channelId: outputChannelId, taskSender: taskSender, registry: registry, initialCredit: 16,
+        serialize: ({ encodeI32($0) }))
       try await handler.generate(count: count, output: output)
       output.close()
       taskSender(.response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))
@@ -1114,7 +1119,11 @@ public final class TestbedChannelingDispatcher {
       }
       let inputChannelId = channels[channelCursor]
       channelCursor += 1
-      let inputReceiver = await registry.register(inputChannelId)
+      let inputReceiver = await registry.register(
+        inputChannelId, initialCredit: 16,
+        onConsumed: { [taskSender = self.taskSender] additional in
+          taskSender(.grantCredit(channelId: inputChannelId, bytes: additional))
+        })
       let input = createServerRx(
         channelId: inputChannelId, receiver: inputReceiver,
         deserialize: { bytes in
@@ -1126,8 +1135,9 @@ public final class TestbedChannelingDispatcher {
       }
       let outputChannelId = channels[channelCursor]
       channelCursor += 1
-      let output = createServerTx(
-        channelId: outputChannelId, taskSender: taskSender, serialize: ({ encodeString($0) }))
+      let output = await createServerTx(
+        channelId: outputChannelId, taskSender: taskSender, registry: registry, initialCredit: 16,
+        serialize: ({ encodeString($0) }))
       try await handler.transform(input: input, output: output)
       output.close()
       taskSender(.response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))
@@ -1408,9 +1418,11 @@ public let testbed_schemas: [String: MethodSchema] = [
   "reverse": MethodSchema(args: [.string]),
   "divide": MethodSchema(args: [.i64, .i64]),
   "lookup": MethodSchema(args: [.u32]),
-  "sum": MethodSchema(args: [.rx(element: .i32)]),
-  "generate": MethodSchema(args: [.u32, .tx(element: .i32)]),
-  "transform": MethodSchema(args: [.rx(element: .string), .tx(element: .string)]),
+  "sum": MethodSchema(args: [.rx(initialCredit: 16, element: .i32)]),
+  "generate": MethodSchema(args: [.u32, .tx(initialCredit: 16, element: .i32)]),
+  "transform": MethodSchema(args: [
+    .rx(initialCredit: 16, element: .string), .tx(initialCredit: 16, element: .string),
+  ]),
   "echoPoint": MethodSchema(args: [.struct(fields: [("x", .i32), ("y", .i32)])]),
   "createPerson": MethodSchema(args: [.string, .u8, .option(inner: .string)]),
   "rectangleArea": MethodSchema(args: [
@@ -1455,6 +1467,7 @@ public struct TestbedSerializers: BindingSerializers {
     case .f64: return { encodeF64($0 as! Double) }
     case .string: return { encodeString($0 as! String) }
     case .bytes: return { [UInt8]($0 as! Data) }
+    case .tx(_, _), .rx(_, _): fatalError("Channel schemas are not serialized directly")
     default: fatalError("Unsupported schema for Tx serialization: \(schema)")
     }
   }
@@ -1522,6 +1535,7 @@ public struct TestbedSerializers: BindingSerializers {
         return try decodeString(from: Data($0), offset: &o)
       }
     case .bytes: return { Data($0) }
+    case .tx(_, _), .rx(_, _): fatalError("Channel schemas are not deserialized directly")
     default: fatalError("Unsupported schema for Rx deserialization: \(schema)")
     }
   }

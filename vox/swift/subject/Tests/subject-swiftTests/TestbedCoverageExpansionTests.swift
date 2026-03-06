@@ -47,6 +47,14 @@ private func withTimeout<T: Sendable>(
     }
 }
 
+private func collectValues<T: Sendable>(from rx: UnboundRx<T>) async throws -> [T] {
+    var values: [T] = []
+    for try await value in rx {
+        values.append(value)
+    }
+    return values
+}
+
 private final class LoopbackConnection: RoamConnection, @unchecked Sendable {
     let channelAllocator = ChannelIdAllocator(role: .initiator)
     let incomingChannelRegistry = ChannelRegistry()
@@ -113,6 +121,8 @@ private final class LoopbackConnection: RoamConnection, @unchecked Sendable {
             _ = await serverRegistry.deliverData(channelId: channelId, payload: payload)
         case .close(let channelId):
             _ = await serverRegistry.deliverClose(channelId: channelId)
+        case .grantCredit(let channelId, let bytes):
+            await serverRegistry.deliverCredit(channelId: channelId, bytes: bytes)
         case .response:
             return
         }
@@ -126,6 +136,8 @@ private final class LoopbackConnection: RoamConnection, @unchecked Sendable {
             _ = await incomingChannelRegistry.deliverData(channelId: channelId, payload: payload)
         case .close(let channelId):
             _ = await incomingChannelRegistry.deliverClose(channelId: channelId)
+        case .grantCredit(let channelId, let bytes):
+            await incomingChannelRegistry.deliverCredit(channelId: channelId, bytes: bytes)
         }
     }
 }
@@ -361,6 +373,89 @@ struct ClientScenarioCoverageTests {
             }
         } catch {
             Issue.record("expected SubjectError.unknownScenario, got \(error)")
+        }
+    }
+
+    @Test func generatedClientClientToServerStreamingCrossesInitialCreditWindow() async throws {
+        let client = TestbedClient(connection: LoopbackConnection())
+
+        try await withTimeout(milliseconds: 1_000) {
+            let (tx, rx) = channel(
+                serialize: { encodeI32($0) },
+                deserialize: { bytes in
+                    var offset = 0
+                    return try decodeI32(from: Data(bytes), offset: &offset)
+                }
+            )
+
+            async let call: Int64 = client.sum(numbers: rx)
+            try await Task.sleep(nanoseconds: 50_000_000)
+            for i in 1...40 {
+                try await tx.send(Int32(i))
+            }
+            tx.close()
+            let result = try await call
+            #expect(result == 820)
+        }
+    }
+
+    @Test func generatedClientServerToClientStreamingCrossesInitialCreditWindow() async throws {
+        let client = TestbedClient(connection: LoopbackConnection())
+
+        try await withTimeout(milliseconds: 1_000) {
+            let (tx, rx) = channel(
+                serialize: { encodeI32($0) },
+                deserialize: { bytes in
+                    var offset = 0
+                    return try decodeI32(from: Data(bytes), offset: &offset)
+                }
+            )
+
+            async let call: Void = client.generate(count: 64, output: tx)
+            try await Task.sleep(nanoseconds: 50_000_000)
+            let values = try await collectValues(from: rx)
+            try await call
+
+            #expect(values.count == 64)
+            #expect(values.first == 0)
+            #expect(values.last == 63)
+        }
+    }
+
+    @Test func generatedClientBidirectionalStreamingCrossesInitialCreditWindow() async throws {
+        let client = TestbedClient(connection: LoopbackConnection())
+
+        try await withTimeout(milliseconds: 1_000) {
+            let (inputTx, inputRx) = channel(
+                serialize: { encodeString($0) },
+                deserialize: { bytes in
+                    var offset = 0
+                    return try decodeString(from: Data(bytes), offset: &offset)
+                }
+            )
+            let (outputTx, outputRx) = channel(
+                serialize: { encodeString($0) },
+                deserialize: { bytes in
+                    var offset = 0
+                    return try decodeString(from: Data(bytes), offset: &offset)
+                }
+            )
+
+            async let call: Void = client.transform(input: inputRx, output: outputTx)
+            try await Task.sleep(nanoseconds: 50_000_000)
+            async let echoed: [String] = collectValues(from: outputRx)
+
+            for i in 0..<40 {
+                try await inputTx.send("msg-\(i)")
+            }
+            inputTx.close()
+
+            let echoedValues = try await echoed
+            try await call
+
+            #expect(echoedValues.count == 40)
+            #expect(echoedValues.first == "msg-0")
+            #expect(echoedValues.last == "msg-39")
         }
     }
 }

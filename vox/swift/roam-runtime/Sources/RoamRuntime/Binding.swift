@@ -6,8 +6,11 @@ import Foundation
 public final class UnboundTx<T: Sendable>: @unchecked Sendable {
     public private(set) var channelId: ChannelId = 0
     private var taskTx: (@Sendable (TaskMessage) -> Void)?
+    private var credit: ChannelCreditController?
     private let serialize: @Sendable (T) -> [UInt8]
     private var bound = false
+    private var closed = false
+    private let lock = NSLock()
     weak var pairedRx: AnyObject?
 
     public init(serialize: @escaping @Sendable (T) -> [UInt8]) {
@@ -17,10 +20,15 @@ public final class UnboundTx<T: Sendable>: @unchecked Sendable {
     public var isBound: Bool { bound }
 
     /// Bind for sending (client-side outgoing).
-    func bind(channelId: ChannelId, taskTx: @escaping @Sendable (TaskMessage) -> Void) {
+    func bind(
+        channelId: ChannelId,
+        taskTx: @escaping @Sendable (TaskMessage) -> Void,
+        credit: ChannelCreditController
+    ) {
         precondition(!bound, "UnboundTx already bound")
         self.channelId = channelId
         self.taskTx = taskTx
+        self.credit = credit
         self.bound = true
     }
 
@@ -32,16 +40,35 @@ public final class UnboundTx<T: Sendable>: @unchecked Sendable {
     }
 
     /// Send a value.
-    public func send(_ value: T) throws {
-        guard let taskTx = taskTx else {
+    public func send(_ value: T) async throws {
+        guard let taskTx = taskTx, let credit else {
             throw ChannelError.notBound
         }
+        if lock.withLock({ closed }) {
+            throw ChannelError.closed
+        }
+        try await credit.consume()
         let bytes = serialize(value)
         taskTx(.data(channelId: channelId, payload: bytes))
     }
 
     /// Close this channel.
     public func close() {
+        let shouldClose = lock.withLock {
+            if closed {
+                return false
+            }
+            closed = true
+            return true
+        }
+        guard shouldClose else {
+            return
+        }
+        if let credit {
+            Task {
+                await credit.close()
+            }
+        }
         taskTx?(.close(channelId: channelId))
     }
 }
@@ -165,11 +192,11 @@ public func collectChannelIds(schemas: [Schema], args: [Any]) -> [UInt64] {
 
 private func collectChannelIdsFromValue(schema: Schema, value: Any, out: inout [UInt64]) {
     switch schema {
-    case .rx:
+    case .rx(_, _):
         if let rx = value as? AnyUnboundRx {
             out.append(rx.channelIdForSchema())
         }
-    case .tx:
+    case .tx(_, _):
         if let tx = value as? AnyUnboundTx {
             out.append(tx.channelIdForSchema())
         }
@@ -205,21 +232,28 @@ private func bindValue(
     serializers: any BindingSerializers
 ) async {
     switch schema {
-    case .rx:
+    case .rx(let initialCredit, _):
         // Schema Rx = client passes Rx to method, sends via paired Tx
         // Need to bind Tx for outgoing
         // The value is the Rx; find its paired Tx
         if let rx = value as? AnyUnboundRx {
             let channelId = allocator.allocate()
-            rx.bindForSchema(channelId: channelId, taskSender: taskSender)
+            let credit = await incomingRegistry.registerOutgoing(channelId, initialCredit: initialCredit)
+            rx.bindForSchema(channelId: channelId, taskSender: taskSender, credit: credit)
         }
 
-    case .tx:
+    case .tx(let initialCredit, _):
         // Schema Tx = client passes Tx to method, receives via paired Rx
         // Need to bind Rx for incoming
         if let tx = value as? AnyUnboundTx {
             let channelId = allocator.allocate()
-            let receiver = await incomingRegistry.register(channelId)
+            let receiver = await incomingRegistry.register(
+                channelId,
+                initialCredit: initialCredit,
+                onConsumed: { additional in
+                    taskSender(.grantCredit(channelId: channelId, bytes: additional))
+                }
+            )
             tx.bindForSchema(channelId: channelId, receiver: receiver)
         }
 
@@ -277,7 +311,11 @@ private func bindValue(
 
 /// Protocol for type-erased UnboundRx binding.
 protocol AnyUnboundRx: AnyObject {
-    func bindForSchema(channelId: ChannelId, taskSender: @escaping TaskSender)
+    func bindForSchema(
+        channelId: ChannelId,
+        taskSender: @escaping TaskSender,
+        credit: ChannelCreditController
+    )
     func channelIdForSchema() -> ChannelId
 }
 
@@ -288,10 +326,14 @@ protocol AnyUnboundTx: AnyObject {
 }
 
 extension UnboundRx: AnyUnboundRx {
-    func bindForSchema(channelId: ChannelId, taskSender: @escaping TaskSender) {
+    func bindForSchema(
+        channelId: ChannelId,
+        taskSender: @escaping TaskSender,
+        credit: ChannelCreditController
+    ) {
         // Schema Rx = client sends via Tx, so bind the paired Tx
         if let pairedTx = self.pairedTx as? AnyUnboundTxSender {
-            pairedTx.bindForSending(channelId: channelId, taskSender: taskSender)
+            pairedTx.bindForSending(channelId: channelId, taskSender: taskSender, credit: credit)
         }
         self.setChannelIdOnly(channelId: channelId)
     }
@@ -317,12 +359,20 @@ extension UnboundTx: AnyUnboundTx {
 
 /// Protocol for sending via Tx.
 protocol AnyUnboundTxSender: AnyObject {
-    func bindForSending(channelId: ChannelId, taskSender: @escaping TaskSender)
+    func bindForSending(
+        channelId: ChannelId,
+        taskSender: @escaping TaskSender,
+        credit: ChannelCreditController
+    )
 }
 
 extension UnboundTx: AnyUnboundTxSender {
-    func bindForSending(channelId: ChannelId, taskSender: @escaping TaskSender) {
-        self.bind(channelId: channelId, taskTx: taskSender)
+    func bindForSending(
+        channelId: ChannelId,
+        taskSender: @escaping TaskSender,
+        credit: ChannelCreditController
+    ) {
+        self.bind(channelId: channelId, taskTx: taskSender, credit: credit)
     }
 }
 

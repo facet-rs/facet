@@ -722,6 +722,8 @@ public final class Driver: @unchecked Sendable {
             wireMsg = .data(connId: 0, channelId: channelId, payload: payload)
         case .close(let channelId):
             wireMsg = .close(connId: 0, channelId: channelId)
+        case .grantCredit(let channelId, let bytes):
+            wireMsg = .credit(connId: 0, channelId: channelId, bytes: bytes)
         case .response(let requestId, let payload):
             let responseContext = await state.removeInFlight(requestId)
             guard responseContext.removed else {

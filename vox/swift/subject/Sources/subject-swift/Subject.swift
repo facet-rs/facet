@@ -58,7 +58,7 @@ struct TestbedService: TestbedHandler {
         log("generate called: count=\(count)")
         for i in 0..<Int32(count) {
             log("  sending: \(i)")
-            try output.send(i)
+            try await output.send(i)
         }
         log("generate complete, about to return (close will be sent by dispatcher)")
     }
@@ -67,7 +67,7 @@ struct TestbedService: TestbedHandler {
         log("transform called")
         for try await s in input {
             log("  transforming: \(s)")
-            try output.send(s)
+            try await output.send(s)
         }
         log("transform complete")
     }
@@ -252,11 +252,11 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
 
         let sender = Task {
             try await Task.sleep(nanoseconds: 50_000_000)
-            try tx.send(1)
-            try tx.send(2)
-            try tx.send(3)
-            try tx.send(4)
-            try tx.send(5)
+            try await tx.send(1)
+            try await tx.send(2)
+            try await tx.send(3)
+            try await tx.send(4)
+            try await tx.send(5)
             tx.close()
         }
 

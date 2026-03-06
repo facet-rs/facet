@@ -10,8 +10,8 @@ public indirect enum Schema: Sendable {
     case f32, f64
     case string
     case bytes
-    case tx(element: Schema)
-    case rx(element: Schema)
+    case tx(initialCredit: UInt32, element: Schema)
+    case rx(initialCredit: UInt32, element: Schema)
     case vec(element: Schema)
     case option(inner: Schema)
     case map(key: Schema, value: Schema)

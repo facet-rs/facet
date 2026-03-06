@@ -75,7 +75,7 @@ fn generate_client_impl(service: &ServiceDescriptor) -> String {
     let service_name = service.service_name.to_upper_camel_case();
 
     w.writeln(&format!(
-        "public final class {service_name}Client: {service_name}Caller {{"
+        "public final class {service_name}Client: {service_name}Caller, Sendable {{"
     ))
     .unwrap();
     {

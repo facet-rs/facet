@@ -125,3 +125,38 @@ pub fn generate_service_with_bindings(
 
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::generate_service;
+    use roam::{Rx, Tx};
+    use roam_hash::method_descriptor;
+    use roam_types::ServiceDescriptor;
+
+    #[test]
+    fn generated_swift_preserves_channel_initial_credit() {
+        let subscribe = method_descriptor::<(Tx<u32>, Rx<u32, 32>), ()>(
+            "StreamSvc",
+            "subscribe",
+            &["output", "input"],
+            None,
+        );
+        let methods = Box::leak(vec![subscribe].into_boxed_slice());
+        let service = ServiceDescriptor {
+            service_name: "StreamSvc",
+            methods,
+            doc: None,
+        };
+
+        let generated = generate_service(&service);
+
+        assert!(
+            generated.contains(".tx(initialCredit: 16, element: .u32)"),
+            "generated Swift should preserve default channel credit:\n{generated}"
+        );
+        assert!(
+            generated.contains(".rx(initialCredit: 32, element: .u32)"),
+            "generated Swift should preserve custom channel credit:\n{generated}"
+        );
+    }
+}

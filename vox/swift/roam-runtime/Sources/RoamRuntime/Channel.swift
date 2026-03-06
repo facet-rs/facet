@@ -45,7 +45,55 @@ public final class ChannelIdAllocator: @unchecked Sendable {
 public enum TaskMessage: Sendable {
     case data(channelId: ChannelId, payload: [UInt8])
     case close(channelId: ChannelId)
+    case grantCredit(channelId: ChannelId, bytes: UInt32)
     case response(requestId: UInt64, payload: [UInt8])
+}
+
+actor ChannelCreditController {
+    private var available: UInt32
+    private var closed = false
+    private var waiters: [CheckedContinuation<Void, Error>] = []
+
+    init(initialCredit: UInt32) {
+        self.available = initialCredit
+    }
+
+    func consume() async throws {
+        if available > 0 {
+            available -= 1
+            return
+        }
+        if closed {
+            throw ChannelError.closed
+        }
+        try await withCheckedThrowingContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func grant(_ additional: UInt32) {
+        guard additional > 0 else {
+            return
+        }
+        var remaining = additional
+        while remaining > 0, !waiters.isEmpty {
+            let waiter = waiters.removeFirst()
+            waiter.resume()
+            remaining -= 1
+        }
+        if remaining > 0 {
+            available &+= remaining
+        }
+    }
+
+    func close() {
+        closed = true
+        let waiters = waiters
+        self.waiters.removeAll()
+        for waiter in waiters {
+            waiter.resume(throwing: ChannelError.closed)
+        }
+    }
 }
 
 // MARK: - Channel Receiver
@@ -56,8 +104,17 @@ public final class ChannelReceiver: @unchecked Sendable {
     private var buffer: [[UInt8]] = []
     private var closed = false
     private var waiter: CheckedContinuation<[UInt8]?, Never>?
+    private let replenishmentThreshold: UInt32
+    private let onConsumed: (@Sendable (UInt32) -> Void)?
+    private var consumedSinceGrant: UInt32 = 0
 
-    public init() {}
+    public init(
+        replenishmentThreshold: UInt32 = 0,
+        onConsumed: (@Sendable (UInt32) -> Void)? = nil
+    ) {
+        self.replenishmentThreshold = replenishmentThreshold
+        self.onConsumed = onConsumed
+    }
 
     public func deliver(_ data: [UInt8]) {
         var toResume: CheckedContinuation<[UInt8]?, Never>?
@@ -113,15 +170,17 @@ public final class ChannelReceiver: @unchecked Sendable {
             }
             return .wait
         }
+        let value: [UInt8]?
         switch state {
         case .value(let value):
+            self.noteConsumptionIfNeeded()
             return value
         case .closed:
             return nil
         case .wait:
             break
         }
-        return await withCheckedContinuation { cont in
+        value = await withCheckedContinuation { cont in
             lock.withLock {
                 if !buffer.isEmpty {
                     let value = buffer.removeFirst()
@@ -134,6 +193,30 @@ public final class ChannelReceiver: @unchecked Sendable {
                 }
                 waiter = cont
             }
+        }
+        if value != nil {
+            self.noteConsumptionIfNeeded()
+        }
+        return value
+    }
+
+    private func noteConsumptionIfNeeded() {
+        guard replenishmentThreshold > 0, let onConsumed else {
+            return
+        }
+
+        let additional: UInt32? = lock.withLock {
+            consumedSinceGrant &+= 1
+            guard consumedSinceGrant >= replenishmentThreshold else {
+                return nil
+            }
+            let additional = consumedSinceGrant
+            consumedSinceGrant = 0
+            return additional
+        }
+
+        if let additional {
+            onConsumed(additional)
         }
     }
 }
@@ -156,25 +239,37 @@ private extension NSLock {
 public final class Tx<T: Sendable>: @unchecked Sendable {
     public var channelId: ChannelId = 0
     private var taskTx: (@Sendable (TaskMessage) -> Void)?
+    private var credit: ChannelCreditController?
     private let serialize: @Sendable (T) -> [UInt8]
+    private let lock = NSLock()
+    private var closed = false
 
     public init(serialize: @escaping @Sendable (T) -> [UInt8]) {
         self.serialize = serialize
     }
 
     /// Bind this Tx for sending (server-side).
-    public func bind(channelId: ChannelId, taskTx: @escaping @Sendable (TaskMessage) -> Void) {
+    func bind(
+        channelId: ChannelId,
+        taskTx: @escaping @Sendable (TaskMessage) -> Void,
+        credit: ChannelCreditController
+    ) {
         self.channelId = channelId
         self.taskTx = taskTx
+        self.credit = credit
     }
 
     /// Send a value.
     ///
     /// r[impl rpc.channel.item] - Data messages carry serialized values.
-    public func send(_ value: T) throws {
-        guard let taskTx = taskTx else {
+    public func send(_ value: T) async throws {
+        guard let taskTx = taskTx, let credit else {
             throw ChannelError.notBound
         }
+        if lock.withLock({ closed }) {
+            throw ChannelError.closed
+        }
+        try await credit.consume()
         let bytes = serialize(value)
         taskTx(.data(channelId: channelId, payload: bytes))
     }
@@ -184,6 +279,21 @@ public final class Tx<T: Sendable>: @unchecked Sendable {
     /// r[impl rpc.channel.close] - Close terminates the channel.
     /// r[impl rpc.channel.lifecycle] - Caller sends Close when done.
     public func close() {
+        let shouldClose = lock.withLock {
+            if closed {
+                return false
+            }
+            closed = true
+            return true
+        }
+        guard shouldClose else {
+            return
+        }
+        if let credit {
+            Task {
+                await credit.close()
+            }
+        }
         taskTx?(.close(channelId: channelId))
     }
 }
@@ -253,6 +363,7 @@ public actor ChannelRegistry {
     private var pendingData: [ChannelId: [[UInt8]]] = [:]
     private var pendingClose: Set<ChannelId> = []
     private var knownChannels: Set<ChannelId> = []
+    private var outgoingCredits: [ChannelId: ChannelCreditController] = [:]
 
     public init() {}
 
@@ -264,8 +375,15 @@ public actor ChannelRegistry {
     /// Register a channel and return its receiver.
     /// This is async to ensure pending data/close are delivered synchronously
     /// before returning, avoiding race conditions with the handler.
-    public func register(_ channelId: ChannelId) async -> ChannelReceiver {
-        let receiver = ChannelReceiver()
+    public func register(
+        _ channelId: ChannelId,
+        initialCredit: UInt32,
+        onConsumed: (@Sendable (UInt32) -> Void)? = nil
+    ) async -> ChannelReceiver {
+        let receiver = ChannelReceiver(
+            replenishmentThreshold: Swift.max(UInt32(1), initialCredit / 2),
+            onConsumed: onConsumed
+        )
         receivers[channelId] = receiver
         knownChannels.insert(channelId)
 
@@ -282,6 +400,13 @@ public actor ChannelRegistry {
         }
 
         return receiver
+    }
+
+    func registerOutgoing(_ channelId: ChannelId, initialCredit: UInt32) -> ChannelCreditController {
+        let controller = ChannelCreditController(initialCredit: initialCredit)
+        outgoingCredits[channelId] = controller
+        knownChannels.insert(channelId)
+        return controller
     }
 
     /// Deliver data to a channel. Returns true if known.
@@ -305,10 +430,18 @@ public actor ChannelRegistry {
         if let receiver = receivers[channelId] {
             receiver.deliverClose()
             receivers.removeValue(forKey: channelId)
+            if let credit = outgoingCredits[channelId] {
+                await credit.close()
+            }
+            outgoingCredits.removeValue(forKey: channelId)
             return true
         }
         if knownChannels.contains(channelId) {
             pendingClose.insert(channelId)
+            if let credit = outgoingCredits[channelId] {
+                await credit.close()
+            }
+            outgoingCredits.removeValue(forKey: channelId)
             return true
         }
         return false
@@ -327,6 +460,10 @@ public actor ChannelRegistry {
             receiver.deliverReset()
             receivers.removeValue(forKey: channelId)
         }
+        if let credit = outgoingCredits[channelId] {
+            await credit.close()
+        }
+        outgoingCredits.removeValue(forKey: channelId)
         knownChannels.remove(channelId)
         pendingData.removeValue(forKey: channelId)
         pendingClose.remove(channelId)
@@ -335,12 +472,10 @@ public actor ChannelRegistry {
     /// Deliver credit to a channel.
     ///
     /// r[impl rpc.flow-control.credit.grant] - Credit message grants permission.
-    /// r[impl rpc.flow-control.credit] - Infinite credit mode bypasses accounting.
     public func deliverCredit(channelId: ChannelId, bytes: UInt32) async {
-        // TODO: Implement credit tracking for flow control
-        // For now, we operate in "infinite credit" mode
-        _ = channelId
-        _ = bytes
+        if let credit = outgoingCredits[channelId] {
+            await credit.grant(bytes)
+        }
     }
 }
 

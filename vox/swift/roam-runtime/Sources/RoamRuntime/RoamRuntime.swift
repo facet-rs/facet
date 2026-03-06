@@ -156,10 +156,13 @@ public func encodeInvalidPayloadError() -> [UInt8] {
 public func createServerTx<T: Sendable>(
     channelId: ChannelId,
     taskSender: @escaping TaskSender,
+    registry: ChannelRegistry,
+    initialCredit: UInt32,
     serialize: @escaping @Sendable (T) -> [UInt8]
-) -> Tx<T> {
+) async -> Tx<T> {
     let tx = Tx<T>(serialize: serialize)
-    tx.bind(channelId: channelId, taskTx: taskSender)
+    let credit = await registry.registerOutgoing(channelId, initialCredit: initialCredit)
+    tx.bind(channelId: channelId, taskTx: taskSender, credit: credit)
     return tx
 }
 
