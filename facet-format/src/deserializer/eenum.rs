@@ -467,154 +467,242 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             return Ok(wip);
         }
 
-        // Check if this is a single-field tuple variant containing an internally-tagged enum
-        // In this case, the inner enum's fields are flattened into the outer object
+        // Check if this is a single-field tuple (newtype) variant.
+        // The inner value's fields are flattened into the enclosing tagged object.
+        // Three cases are handled:
+        //   1. Inner value is a struct — its fields appear alongside the tag.
+        //   2. Inner value is an internally-tagged enum — its tag and fields are
+        //      flattened too (and its variants may themselves be newtypes, so we
+        //      recurse).
+        //   3. Inner value is a scalar / unsupported — error.
         if matches!(
             variant.data.kind,
             StructKind::TupleStruct | StructKind::Tuple
         ) && variant_fields.len() == 1
         {
-            let inner_shape = variant_fields[0].shape();
-            if let Some(inner_tag_key) = inner_shape.get_tag_attr()
-                && inner_shape.get_content_attr().is_none()
-            {
-                // Find the inner tag value in evidence
-                let inner_variant_name = find_tag_value(&evidence, inner_tag_key)
-                    .ok_or_else(|| {
-                        self.mk_err(
+            // Collect every tag key that appears anywhere in the newtype chain so
+            // we can skip them when reading data fields from the JSON object.
+            let mut skip_tag_keys: Vec<&'static str> = vec![tag_key];
+
+            // Walk down the newtype chain, calling begin_nth_field(0) at each
+            // level, selecting variants for internally-tagged enums, until we
+            // land on a struct or unit variant whose fields we can read directly.
+            //
+            // `depth` tracks how many begin_nth_field(0) calls we've made so we
+            // can issue the matching end() calls afterwards.
+            let mut depth: usize = 0;
+            let mut leaf_shape = variant_fields[0].shape();
+
+            loop {
+                // Case 1: inner value is a plain struct
+                if matches!(&leaf_shape.ty, Type::User(UserType::Struct(_))) {
+                    wip = wip.begin_nth_field(0)?;
+                    depth += 1;
+                    break;
+                }
+
+                // Case 2: inner value is an internally-tagged enum
+                if let Some(inner_tag_key) = leaf_shape.get_tag_attr()
+                    && leaf_shape.get_content_attr().is_none()
+                    && matches!(&leaf_shape.ty, Type::User(UserType::Enum(_)))
+                {
+                    // Reject duplicate tag key names across nesting levels —
+                    // e.g. both outer and inner enum using #[facet(tag = "type")].
+                    // With a flat JSON object we cannot distinguish which "type"
+                    // value belongs to which level.
+                    if skip_tag_keys.contains(&inner_tag_key) {
+                        for _ in 0..depth {
+                            wip = wip.end()?;
+                        }
+                        return Err(self.mk_err(
                             &wip,
-                            DeserializeErrorKind::MissingField {
-                                field: inner_tag_key,
-                                container_shape: inner_shape,
+                            DeserializeErrorKind::Unsupported {
+                                message: format!(
+                                    "nested internally-tagged enums use the same tag key \"{}\"; \
+                                     this is ambiguous when flattened into a single object",
+                                    inner_tag_key
+                                )
+                                .into(),
                             },
-                        )
-                    })?
-                    .to_string();
+                        ));
+                    }
 
-                // Begin the tuple field (field 0)
-                wip = wip.begin_nth_field(0)?;
+                    skip_tag_keys.push(inner_tag_key);
 
-                // Select the inner variant
-                wip = wip.select_variant_named(&inner_variant_name)?;
-
-                // Get the inner variant info
-                let inner_variant = wip.selected_variant().ok_or_else(|| DeserializeError {
-                    span: Some(self.last_span),
-                    path: Some(wip.path()),
-                    kind: DeserializeErrorKind::UnexpectedToken {
-                        expected: "selected inner variant",
-                        got: "no variant selected".into(),
-                    },
-                })?;
-
-                let inner_variant_fields = inner_variant.data.fields;
-
-                // Process all fields for the inner enum
-                loop {
-                    let event = self.expect_event("value")?;
-                    match event.kind {
-                        ParseEventKind::StructEnd => break,
-                        ParseEventKind::FieldKey(key) => {
-                            let key_name = match key.name() {
-                                Some(name) => name.as_ref(),
-                                None => {
-                                    self.skip_value()?;
-                                    continue;
-                                }
-                            };
-
-                            // Skip outer and inner tag fields
-                            if key_name == tag_key || key_name == inner_tag_key {
-                                self.skip_value()?;
-                                continue;
-                            }
-
-                            // Look up field in the inner variant
-                            let inner_variant_plan = wip.selected_variant_plan().unwrap();
-                            if let Some(idx) = inner_variant_plan
-                                .field_lookup
-                                .find(key_name, wip.type_plan_core())
-                            {
-                                wip = wip
-                                    .begin_nth_field(idx)?
-                                    .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
-                                    .end()?;
-                            } else {
-                                // Unknown field - skip
-                                self.skip_value()?;
-                            }
-                        }
-                        other => {
-                            return Err(DeserializeError {
-                                span: Some(self.last_span),
-                                path: Some(wip.path()),
-                                kind: DeserializeErrorKind::UnexpectedToken {
-                                    expected: "field key or struct end",
-                                    got: other.kind_name().into(),
+                    let inner_variant_name = find_tag_value(&evidence, inner_tag_key)
+                        .ok_or_else(|| {
+                            self.mk_err(
+                                &wip,
+                                DeserializeErrorKind::MissingField {
+                                    field: inner_tag_key,
+                                    container_shape: leaf_shape,
                                 },
-                            });
+                            )
+                        })?
+                        .to_string();
+
+                    wip = wip.begin_nth_field(0)?;
+                    depth += 1;
+
+                    wip = wip.select_variant_named(&inner_variant_name)?;
+
+                    let inner_variant = wip.selected_variant().ok_or_else(|| DeserializeError {
+                        span: Some(self.last_span),
+                        path: Some(wip.path()),
+                        kind: DeserializeErrorKind::UnexpectedToken {
+                            expected: "selected inner variant",
+                            got: "no variant selected".into(),
+                        },
+                    })?;
+
+                    match inner_variant.data.kind {
+                        StructKind::Unit => {
+                            // Unit variant — no fields to read, just consume the
+                            // remaining JSON object entries and return.
+                            break;
+                        }
+                        StructKind::Struct => {
+                            // Struct variant — read its fields below.
+                            break;
+                        }
+                        StructKind::TupleStruct | StructKind::Tuple => {
+                            // Another newtype — continue drilling down.
+                            if inner_variant.data.fields.len() != 1 {
+                                // Unwind depth before returning error
+                                for _ in 0..depth {
+                                    wip = wip.end()?;
+                                }
+                                return Err(self.mk_err(
+                                    &wip,
+                                    DeserializeErrorKind::Unsupported {
+                                        message: "internally tagged tuple variants with multiple fields are not supported".into(),
+                                    },
+                                ));
+                            }
+                            leaf_shape = inner_variant.data.fields[0].shape();
+                            continue;
                         }
                     }
                 }
 
-                // Apply defaults for missing inner fields
-                for (idx, field) in inner_variant_fields.iter().enumerate() {
-                    if wip.is_field_set(idx)? {
-                        continue;
-                    }
+                // Case 3: scalar or other non-flattenable type — error
+                // Unwind depth before returning error
+                for _ in 0..depth {
+                    wip = wip.end()?;
+                }
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::Unsupported {
+                        message: "internally-tagged enum with scalar newtype payload cannot be flattened; use #[facet(content = \"...\")] for adjacently-tagged representation".into(),
+                    },
+                ));
+            }
 
-                    let field_has_default = field.has_default();
-                    let field_is_option = matches!(field.shape().def, Def::Option(_));
+            // Now `wip` points at the leaf type (a struct, a struct variant of
+            // an enum, or a unit variant). Read the JSON object's remaining
+            // fields into it.
+            wip = self.read_tagged_object_fields(wip, &skip_tag_keys)?;
 
-                    if field_has_default {
-                        wip = wip.set_nth_field_to_default(idx)?;
-                    } else if field_is_option {
-                        wip = wip.begin_nth_field(idx)?.set_default()?.end()?;
-                    } else if field.should_skip_deserializing() {
-                        wip = wip.set_nth_field_to_default(idx)?;
-                    }
-                    // Note: don't error on missing required fields here - let the outer
-                    // build() call handle that with proper error messages
+            // Determine the leaf's fields for default-filling.
+            let leaf_fields: &[Field] = if let Some(v) = wip.selected_variant() {
+                v.data.fields
+            } else if let Type::User(UserType::Struct(s)) = &wip.shape().ty {
+                s.fields
+            } else {
+                &[]
+            };
+
+            // Apply defaults for missing leaf fields
+            for (idx, field) in leaf_fields.iter().enumerate() {
+                if wip.is_field_set(idx)? {
+                    continue;
                 }
 
-                // End the tuple field
-                wip = wip.end()?;
+                let field_has_default = field.has_default();
+                let field_is_option = matches!(field.shape().def, Def::Option(_));
 
-                return Ok(wip);
+                if field_has_default {
+                    wip = wip.set_nth_field_to_default(idx)?;
+                } else if field_is_option {
+                    wip = wip.begin_nth_field(idx)?.set_default()?.end()?;
+                } else if field.should_skip_deserializing() {
+                    wip = wip.set_nth_field_to_default(idx)?;
+                }
             }
+
+            // Unwind all the begin_nth_field(0) calls
+            for _ in 0..depth {
+                wip = wip.end()?;
+            }
+
+            return Ok(wip);
         }
 
-        // Use precomputed has_flatten from VariantPlanMeta
-        let has_flatten = wip.selected_variant_plan().unwrap().has_flatten;
+        wip = self.read_tagged_object_fields(wip, &[tag_key])?;
+
+        // Defaults for missing fields are applied automatically by facet-reflect's
+        // fill_defaults() when build() or end() is called.
+
+        Ok(wip)
+    }
+
+    /// Read fields from a JSON object into `wip`, skipping any keys in `skip_keys`.
+    ///
+    /// This is the shared field-reading loop used by both the newtype and struct
+    /// variant paths in `deserialize_enum_internally_tagged`. It handles:
+    /// - Simple field lookup via `FieldLookup`
+    /// - `#[facet(flatten)]` via recursive `find_field_path`
+    ///
+    /// Expects the parser to be positioned inside an open struct (after StructStart).
+    /// Consumes events up to and including StructEnd.
+    fn read_tagged_object_fields(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        skip_keys: &[&str],
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        // Determine the current fields for flatten lookup
+        let fields: &[Field] = if let Some(v) = wip.selected_variant() {
+            v.data.fields
+        } else if let Type::User(UserType::Struct(s)) = &wip.shape().ty {
+            s.fields
+        } else {
+            &[]
+        };
+
+        // Check if the current type has flattened fields
+        let has_flatten = if let Some(vp) = wip.selected_variant_plan() {
+            vp.has_flatten
+        } else if let Some(sp) = wip.struct_plan() {
+            sp.has_flatten
+        } else {
+            false
+        };
 
         // Track currently open path segments for flatten handling: (field_name, is_option)
         let mut open_segments: Vec<(&str, bool)> = Vec::new();
 
-        // Process all fields (they can come in any order now)
         loop {
             let event = self.expect_event("value")?;
             match event.kind {
                 ParseEventKind::StructEnd => break,
                 ParseEventKind::FieldKey(key) => {
-                    // Unit keys don't make sense for struct fields
                     let key_name = match key.name() {
                         Some(name) => name.as_ref(),
                         None => {
-                            // Skip unit keys in struct context
                             self.skip_value()?;
                             continue;
                         }
                     };
 
-                    // Skip the tag field - already used
-                    if key_name == tag_key {
+                    // Skip tag fields - already consumed
+                    if skip_keys.contains(&key_name) {
                         self.skip_value()?;
                         continue;
                     }
 
                     if has_flatten {
-                        // Use path-based lookup for variants with flattened fields
-                        if let Some(path) = find_field_path(variant_fields, key_name) {
+                        // Use path-based lookup for types with flattened fields
+                        if let Some(path) = find_field_path(fields, key_name) {
                             // Find common prefix with currently open segments
                             let common_len = open_segments
                                 .iter()
@@ -658,12 +746,15 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                         }
                     } else {
                         // Simple case: direct field lookup using precomputed FieldLookup
-                        let variant_plan = wip.selected_variant_plan().unwrap();
+                        let found_idx = if let Some(vp) = wip.selected_variant_plan() {
+                            vp.field_lookup.find(key_name, wip.type_plan_core())
+                        } else if let Some(sp) = wip.struct_plan() {
+                            sp.field_lookup.find(key_name, wip.type_plan_core())
+                        } else {
+                            None
+                        };
 
-                        if let Some(idx) = variant_plan
-                            .field_lookup
-                            .find(key_name, wip.type_plan_core())
-                        {
+                        if let Some(idx) = found_idx {
                             wip = wip
                                 .begin_nth_field(idx)?
                                 .with(|w| self.deserialize_into(w, MetaSource::FromEvents))?
@@ -694,9 +785,6 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             }
             wip = wip.end()?;
         }
-
-        // Defaults for missing fields are applied automatically by facet-reflect's
-        // fill_defaults() when build() or end() is called.
 
         Ok(wip)
     }
