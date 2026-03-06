@@ -1115,6 +1115,7 @@ async fn close_virtual_connection() {
     // Set up a driver on the client side.
     let mut vconn_driver = Driver::new(vconn_handle, ());
     let caller = vconn_driver.caller();
+    let caller_closed = caller.clone();
     moire::task::spawn(async move { vconn_driver.run().await }.named("vconn_client_driver"));
 
     // Make a call to confirm the connection works.
@@ -1141,6 +1142,14 @@ async fn close_virtual_connection() {
         .close_connection(conn_id, vec![])
         .await
         .expect("close virtual connection");
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), caller_closed.closed())
+        .await
+        .expect("caller closed() should resolve after virtual connection close");
+    assert!(
+        !caller.is_connected(),
+        "caller should report disconnected after virtual connection close"
+    );
 
     // The server-side driver should exit because `ConnectionClose` causes the
     // peer session to drop the connection slot, which drops conn_tx, causing

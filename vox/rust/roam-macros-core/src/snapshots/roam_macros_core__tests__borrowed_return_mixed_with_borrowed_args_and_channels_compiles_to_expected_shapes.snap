@@ -175,6 +175,14 @@ impl WordLabClient {
             caller: ::roam::ErasedCaller::new(caller),
         }
     }
+    #[doc = r" Resolve when the underlying connection closes."]
+    pub async fn closed(&self) {
+        ::roam::Caller::closed(&self.caller).await;
+    }
+    #[doc = r" Return whether the underlying connection is still considered connected."]
+    pub fn is_connected(&self) -> bool {
+        ::roam::Caller::is_connected(&self.caller)
+    }
     pub async fn is_short(&self, word: &str) -> Result<bool, ::roam::RoamError> {
         let method_id = word_lab_service_descriptor().methods[0usize].id;
         let args = (word,);

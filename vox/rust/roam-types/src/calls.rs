@@ -180,6 +180,27 @@ pub trait Caller: Clone + MaybeSend + MaybeSync + 'static {
         call: RequestCall<'a>,
     ) -> impl Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + MaybeSend + 'a;
 
+    /// Resolve when the underlying connection closes.
+    ///
+    /// Runtime-backed callers can override this to expose connection liveness.
+    /// The default implementation never resolves.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(std::future::pending())
+    }
+    #[cfg(target_arch = "wasm32")]
+    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + '_>> {
+        Box::pin(std::future::pending())
+    }
+
+    /// Return whether the underlying connection is still considered connected.
+    ///
+    /// Runtime-backed callers can override this to provide eager liveness
+    /// checks. The default implementation assumes the connection is live.
+    fn is_connected(&self) -> bool {
+        true
+    }
+
     /// Return a channel binder for binding Tx/Rx handles in args before sending.
     ///
     /// Returns `None` by default. The driver's `Caller` implementation
@@ -205,6 +226,13 @@ trait ErasedCallerDyn: MaybeSend + MaybeSync + 'static {
     ) -> Pin<Box<dyn Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + 'a>>;
 
     #[cfg(not(target_arch = "wasm32"))]
+    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
+    #[cfg(target_arch = "wasm32")]
+    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + '_>>;
+
+    fn is_connected(&self) -> bool;
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder>;
 }
 
@@ -225,6 +253,19 @@ impl<C: Caller> ErasedCallerDyn for C {
     ) -> Pin<Box<dyn Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + 'a>>
     {
         Box::pin(Caller::call(self, call))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Caller::closed(self)
+    }
+    #[cfg(target_arch = "wasm32")]
+    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + '_>> {
+        Caller::closed(self)
+    }
+
+    fn is_connected(&self) -> bool {
+        Caller::is_connected(self)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -254,6 +295,20 @@ impl Caller for ErasedCaller {
     ) -> impl Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + MaybeSend + 'a
     {
         self.inner.call(call)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        self.inner.closed()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + '_>> {
+        self.inner.closed()
+    }
+
+    fn is_connected(&self) -> bool {
+        self.inner.is_connected()
     }
 
     #[cfg(not(target_arch = "wasm32"))]

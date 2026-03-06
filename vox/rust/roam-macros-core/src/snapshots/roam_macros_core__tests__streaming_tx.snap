@@ -118,6 +118,14 @@ impl StreamerClient {
             caller: ::roam::ErasedCaller::new(caller),
         }
     }
+    #[doc = r" Resolve when the underlying connection closes."]
+    pub async fn closed(&self) {
+        ::roam::Caller::closed(&self.caller).await;
+    }
+    #[doc = r" Return whether the underlying connection is still considered connected."]
+    pub fn is_connected(&self) -> bool {
+        ::roam::Caller::is_connected(&self.caller)
+    }
     pub async fn count_up(&self, start: i32, output: Tx<i32>) -> Result<i32, ::roam::RoamError> {
         let method_id = streamer_service_descriptor().methods[0usize].id;
         let mut args = (start, output);

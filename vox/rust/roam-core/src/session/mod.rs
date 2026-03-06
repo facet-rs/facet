@@ -7,6 +7,7 @@ use roam_types::{
     IdAllocator, MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload, Metadata, Parity,
     RequestBody, RequestId, RequestMessage, RequestResponse, SelfRef, SessionRole,
 };
+use tokio::sync::watch;
 use tracing::{debug, warn};
 
 mod builders;
@@ -238,6 +239,7 @@ pub struct ConnectionState {
 
     /// Sender for routing incoming messages to the per-connection driver task.
     conn_tx: mpsc::Sender<SelfRef<ConnectionMessage<'static>>>,
+    closed_tx: watch::Sender<bool>,
 }
 
 #[derive(Debug)]
@@ -384,6 +386,7 @@ pub struct ConnectionHandle {
     pub(crate) rx: mpsc::Receiver<SelfRef<ConnectionMessage<'static>>>,
     pub(crate) failures_rx: mpsc::UnboundedReceiver<(RequestId, &'static str)>,
     pub(crate) control_tx: Option<mpsc::UnboundedSender<DropControlRequest>>,
+    pub(crate) closed_rx: watch::Receiver<bool>,
     /// The parity this side should use for allocating request/channel IDs.
     pub parity: Parity,
 }
@@ -406,6 +409,24 @@ impl ConnectionHandle {
     pub fn connection_id(&self) -> ConnectionId {
         self.sender.connection_id
     }
+
+    /// Resolve when this connection closes.
+    pub async fn closed(&self) {
+        if *self.closed_rx.borrow() {
+            return;
+        }
+        let mut rx = self.closed_rx.clone();
+        while rx.changed().await.is_ok() {
+            if *rx.borrow() {
+                return;
+            }
+        }
+    }
+
+    /// Return whether this connection is still considered connected.
+    pub fn is_connected(&self) -> bool {
+        !*self.closed_rx.borrow()
+    }
 }
 
 /// Forward all request/channel traffic between two connections.
@@ -421,6 +442,7 @@ pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) 
         rx: mut left_rx,
         failures_rx: _left_failures_rx,
         control_tx: left_control_tx,
+        closed_rx: _left_closed_rx,
         parity: _left_parity,
     } = left;
     let ConnectionHandle {
@@ -428,6 +450,7 @@ pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) 
         rx: mut right_rx,
         failures_rx: _right_failures_rx,
         control_tx: right_control_tx,
+        closed_rx: _right_closed_rx,
         parity: _right_parity,
     } = right;
 
@@ -647,6 +670,7 @@ where
         let label = format!("session.conn{}", conn_id.0);
         let (conn_tx, conn_rx) = mpsc::channel::<SelfRef<ConnectionMessage<'static>>>(&label, 64);
         let (failures_tx, failures_rx) = mpsc::unbounded_channel(format!("{label}.failures"));
+        let (closed_tx, closed_rx) = watch::channel(false);
 
         let sender = ConnectionSender {
             connection_id: conn_id,
@@ -662,6 +686,7 @@ where
                 local_settings,
                 peer_settings,
                 conn_tx,
+                closed_tx,
             }),
         );
 
@@ -670,6 +695,7 @@ where
             rx: conn_rx,
             failures_rx,
             control_tx: Some(self.control_tx.clone()),
+            closed_rx,
             parity,
         }
     }
@@ -725,7 +751,7 @@ where
         }
 
         // Drop all connection slots so per-connection drivers exit immediately.
-        self.conns.clear();
+        self.close_all_connections();
         debug!("session recv loop exited");
     }
 
@@ -746,7 +772,7 @@ where
                 // Remove the connection — dropping conn_tx causes the Driver's rx
                 // to return None, which exits its run loop. All in-flight handlers
                 // are dropped, triggering DriverReplySink::drop → Cancelled responses.
-                self.conns.remove(&conn_id);
+                self.remove_connection(&conn_id);
                 self.maybe_request_shutdown_after_root_closed();
             }
             MessagePayload::ConnectionOpen(open) => {
@@ -764,7 +790,7 @@ where
                     _ => return,
                 };
                 if conn_tx.send(r.map(ConnectionMessage::Request)).await.is_err() {
-                    self.conns.remove(&conn_id);
+                    self.remove_connection(&conn_id);
                     self.maybe_request_shutdown_after_root_closed();
                 }
             }
@@ -774,7 +800,7 @@ where
                     _ => return,
                 };
                 if conn_tx.send(c.map(ConnectionMessage::Channel)).await.is_err() {
-                    self.conns.remove(&conn_id);
+                    self.remove_connection(&conn_id);
                     self.maybe_request_shutdown_after_root_closed();
                 }
             }
@@ -967,7 +993,7 @@ where
         conn_id: ConnectionId,
         accept: SelfRef<ConnectionAccept<'static>>,
     ) {
-        let slot = self.conns.remove(&conn_id);
+        let slot = self.remove_connection(&conn_id);
         match slot {
             Some(ConnectionSlot::PendingOutbound(mut pending)) => {
                 let handle = self.make_connection_handle(
@@ -995,7 +1021,7 @@ where
         conn_id: ConnectionId,
         reject: SelfRef<ConnectionReject<'static>>,
     ) {
-        let slot = self.conns.remove(&conn_id);
+        let slot = self.remove_connection(&conn_id);
         match slot {
             Some(ConnectionSlot::PendingOutbound(mut pending)) => {
                 if let Some(tx) = pending.result_tx.take() {
@@ -1054,7 +1080,7 @@ where
 
         // Remove the connection slot — this drops conn_tx and causes the
         // Driver to exit cleanly.
-        if self.conns.remove(&req.conn_id).is_none() {
+        if self.remove_connection(&req.conn_id).is_none() {
             let _ = req
                 .result_tx
                 .send(Err(SessionError::Protocol("connection not found".into())));
@@ -1099,7 +1125,7 @@ where
                     return self.has_virtual_connections();
                 }
 
-                if self.conns.remove(&conn_id).is_some() {
+                if self.remove_connection(&conn_id).is_some() {
                     let _ = self
                         .sess_core
                         .send(Message {
@@ -1118,6 +1144,23 @@ where
 
     fn has_virtual_connections(&self) -> bool {
         self.conns.keys().any(|id| !id.is_root())
+    }
+
+    fn remove_connection(&mut self, conn_id: &ConnectionId) -> Option<ConnectionSlot> {
+        let slot = self.conns.remove(conn_id);
+        if let Some(ConnectionSlot::Active(state)) = &slot {
+            let _ = state.closed_tx.send(true);
+        }
+        slot
+    }
+
+    fn close_all_connections(&mut self) {
+        for slot in self.conns.values() {
+            if let ConnectionSlot::Active(state) = slot {
+                let _ = state.closed_tx.send(true);
+            }
+        }
+        self.conns.clear();
     }
 
     fn maybe_request_shutdown_after_root_closed(&self) {

@@ -14,6 +14,7 @@ use roam_types::{
     Caller, Handler, IdAllocator, MaybeSend, Payload, ReplySink, RequestBody, RequestCall,
     RequestId, RequestMessage, RequestResponse, RoamError, SelfRef,
 };
+use tokio::sync::watch;
 
 use crate::session::{ConnectionHandle, ConnectionMessage, ConnectionSender, DropControlRequest};
 
@@ -66,6 +67,7 @@ impl Drop for DriverReplySink {
 pub struct DriverCaller {
     sender: ConnectionSender,
     shared: Arc<DriverShared>,
+    closed_rx: watch::Receiver<bool>,
     _drop_guard: Option<Arc<CallerDropGuard>>,
 }
 
@@ -105,6 +107,24 @@ impl Caller for DriverCaller {
             Ok(response)
         }
     }
+
+    fn closed(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + '_>> {
+        Box::pin(async move {
+            if *self.closed_rx.borrow() {
+                return;
+            }
+            let mut rx = self.closed_rx.clone();
+            while rx.changed().await.is_ok() {
+                if *rx.borrow() {
+                    return;
+                }
+            }
+        })
+    }
+
+    fn is_connected(&self) -> bool {
+        !*self.closed_rx.borrow()
+    }
 }
 
 /// Liveness-only handle for a connection root.
@@ -125,6 +145,7 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     sender: ConnectionSender,
     rx: mpsc::Receiver<SelfRef<ConnectionMessage<'static>>>,
     failures_rx: mpsc::UnboundedReceiver<(RequestId, &'static str)>,
+    closed_rx: watch::Receiver<bool>,
     handler: Arc<H>,
     shared: Arc<DriverShared>,
     in_flight_handlers: BTreeMap<RequestId, moire::task::JoinHandle<()>>,
@@ -141,6 +162,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             rx,
             failures_rx,
             control_tx,
+            closed_rx,
             parity,
         } = handle;
         let drop_control_request = DropControlRequest::Close(conn_id);
@@ -148,6 +170,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             sender,
             rx,
             failures_rx,
+            closed_rx,
             handler: Arc::new(handler),
             shared: Arc::new(DriverShared {
                 pending_responses: SyncMutex::new("driver.pending_responses", BTreeMap::new()),
@@ -183,6 +206,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         DriverCaller {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
+            closed_rx: self.closed_rx.clone(),
             _drop_guard: drop_guard,
         }
     }

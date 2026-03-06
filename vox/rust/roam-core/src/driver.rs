@@ -5,7 +5,7 @@ use std::{
 };
 
 use moire::sync::SyncMutex;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, watch};
 
 use moire::task::FutureExt as _;
 use roam_types::{
@@ -330,6 +330,7 @@ pub struct DriverCaller {
     sender: ConnectionSender,
     shared: Arc<DriverShared>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
+    closed_rx: watch::Receiver<bool>,
     _drop_guard: Option<Arc<CallerDropGuard>>,
 }
 
@@ -503,6 +504,24 @@ impl Caller for DriverCaller {
         .named("Caller::call")
     }
 
+    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {
+            if *self.closed_rx.borrow() {
+                return;
+            }
+            let mut rx = self.closed_rx.clone();
+            while rx.changed().await.is_ok() {
+                if *rx.borrow() {
+                    return;
+                }
+            }
+        })
+    }
+
+    fn is_connected(&self) -> bool {
+        !*self.closed_rx.borrow()
+    }
+
     fn channel_binder(&self) -> Option<&dyn ChannelBinder> {
         Some(self)
     }
@@ -518,6 +537,7 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     sender: ConnectionSender,
     rx: mpsc::Receiver<SelfRef<ConnectionMessage<'static>>>,
     failures_rx: mpsc::UnboundedReceiver<(RequestId, &'static str)>,
+    closed_rx: watch::Receiver<bool>,
     local_control_rx: mpsc::UnboundedReceiver<DriverLocalControl>,
     handler: Arc<H>,
     shared: Arc<DriverShared>,
@@ -587,6 +607,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             rx,
             failures_rx,
             control_tx,
+            closed_rx,
             parity,
         } = handle;
         let drop_control_request = DropControlRequest::Close(conn_id);
@@ -595,6 +616,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             sender,
             rx,
             failures_rx,
+            closed_rx,
             local_control_rx,
             handler: Arc::new(handler),
             shared: Arc::new(DriverShared {
@@ -649,6 +671,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
             local_control_tx: self.local_control_tx.clone(),
+            closed_rx: self.closed_rx.clone(),
             _drop_guard: drop_guard,
         }
     }
