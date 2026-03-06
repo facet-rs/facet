@@ -3,7 +3,7 @@ source: facet-python/src/lib.rs
 assertion_line: 957
 expression: py
 ---
-type From = TypedDict(
+From = TypedDict(
     "From",
     {"from": Required[str]},
     total=False,
