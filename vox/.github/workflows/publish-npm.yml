@@ -1,0 +1,52 @@
+name: Publish npm
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  publish:
+    name: Publish TypeScript packages
+    # npm trusted publishing requires a GitHub-hosted runner.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: publish-npm-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          cache: pnpm
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Install TypeScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Sync TypeScript package versions
+        run: node scripts/sync-ts-package-versions.mjs
+
+      - name: Build TypeScript packages
+        run: pnpm run build
+
+      - name: Publish npm packages
+        run: pnpm -r --filter './typescript/packages/*' publish --access public --no-git-checks --report-summary
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+
+      - name: Show publish summary
+        if: always()
+        run: |
+          if [ -f pnpm-publish-summary.json ]; then
+            cat pnpm-publish-summary.json
+          fi
