@@ -1066,6 +1066,7 @@ dependencies = [
  "parking_lot",
  "ruint",
  "rust_decimal",
+ "semver",
  "smallvec 1.15.1",
  "smartstring",
  "smol_str",
