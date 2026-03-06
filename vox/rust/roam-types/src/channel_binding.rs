@@ -16,7 +16,8 @@ use tokio::sync::mpsc;
 
 use crate::ChannelId;
 use crate::channel::{
-    ChannelBinding, ChannelSink, CoreSlot, IncomingChannelMessage, ReceiverSlot, SinkSlot,
+    BoundChannelReceiver, BoundChannelSink, ChannelBinding, ChannelLivenessHandle, ChannelSink,
+    CoreSlot, IncomingChannelMessage, ReceiverSlot, SinkSlot,
 };
 use crate::rpc_plan::{ChannelKind, RpcPlan};
 
@@ -43,6 +44,12 @@ pub trait ChannelBinder: Send + Sync {
     ///
     /// The channel ID comes from `Request.channels`.
     fn register_rx(&self, channel_id: ChannelId) -> mpsc::Receiver<IncomingChannelMessage>;
+
+    /// Optional opaque handle that keeps the underlying session/connection alive
+    /// for the lifetime of any bound channel handle.
+    fn channel_liveness(&self) -> Option<ChannelLivenessHandle> {
+        None
+    }
 }
 
 // r[impl rpc.channel.binding.caller-args]
@@ -79,12 +86,13 @@ pub unsafe fn bind_channels_caller_args(
                 ChannelKind::Rx => {
                     let (channel_id, sink) = binder.create_tx(loc.initial_credit);
                     channel_ids.push(channel_id);
+                    let liveness = binder.channel_liveness();
                     if let Ok(mut ps) = channel_poke.into_struct()
                         && let Ok(mut core_field) = ps.field_by_name("core")
                         && let Ok(slot) = core_field.get_mut::<CoreSlot>()
                         && let Some(core) = &slot.inner
                     {
-                        core.set_binding(ChannelBinding::Sink(sink));
+                        core.set_binding(ChannelBinding::Sink(BoundChannelSink { sink, liveness }));
                     }
                 }
                 // r[impl rpc.channel.binding.caller-args.tx]
@@ -94,12 +102,16 @@ pub unsafe fn bind_channels_caller_args(
                 ChannelKind::Tx => {
                     let (channel_id, receiver) = binder.create_rx();
                     channel_ids.push(channel_id);
+                    let liveness = binder.channel_liveness();
                     if let Ok(mut ps) = channel_poke.into_struct()
                         && let Ok(mut core_field) = ps.field_by_name("core")
                         && let Ok(slot) = core_field.get_mut::<CoreSlot>()
                         && let Some(core) = &slot.inner
                     {
-                        core.set_binding(ChannelBinding::Receiver(receiver));
+                        core.set_binding(ChannelBinding::Receiver(BoundChannelReceiver {
+                            receiver,
+                            liveness,
+                        }));
                     }
                 }
             },
@@ -151,22 +163,38 @@ pub unsafe fn bind_channels_callee_args(
                     // Tx in args: handler sends. Bind a sink directly.
                     ChannelKind::Tx => {
                         let sink = binder.bind_tx(channel_id, loc.initial_credit);
-                        if let Ok(mut ps) = channel_poke.into_struct()
-                            && let Ok(mut sink_field) = ps.field_by_name("sink")
-                            && let Ok(slot) = sink_field.get_mut::<SinkSlot>()
-                        {
-                            slot.inner = Some(sink);
+                        let liveness = binder.channel_liveness();
+                        if let Ok(mut ps) = channel_poke.into_struct() {
+                            if let Ok(mut sink_field) = ps.field_by_name("sink")
+                                && let Ok(slot) = sink_field.get_mut::<SinkSlot>()
+                            {
+                                slot.inner = Some(sink);
+                            }
+                            if let Ok(mut liveness_field) = ps.field_by_name("liveness")
+                                && let Ok(slot) =
+                                    liveness_field.get_mut::<crate::channel::LivenessSlot>()
+                            {
+                                slot.inner = liveness;
+                            }
                         }
                     }
                     // r[impl rpc.channel.binding.callee-args.rx]
                     // Rx in args: handler receives. Register and bind a receiver directly.
                     ChannelKind::Rx => {
                         let receiver = binder.register_rx(channel_id);
-                        if let Ok(mut ps) = channel_poke.into_struct()
-                            && let Ok(mut receiver_field) = ps.field_by_name("receiver")
-                            && let Ok(slot) = receiver_field.get_mut::<ReceiverSlot>()
-                        {
-                            slot.inner = Some(receiver);
+                        let liveness = binder.channel_liveness();
+                        if let Ok(mut ps) = channel_poke.into_struct() {
+                            if let Ok(mut receiver_field) = ps.field_by_name("receiver")
+                                && let Ok(slot) = receiver_field.get_mut::<ReceiverSlot>()
+                            {
+                                slot.inner = Some(receiver);
+                            }
+                            if let Ok(mut liveness_field) = ps.field_by_name("liveness")
+                                && let Ok(slot) =
+                                    liveness_field.get_mut::<crate::channel::LivenessSlot>()
+                            {
+                                slot.inner = liveness;
+                            }
                         }
                     }
                 }

@@ -91,7 +91,10 @@ export function createChannel<T>(capacity = 64): Channel<T> {
  * Sender end of a channel (for Push).
  */
 export class ChannelSender<T> {
-  constructor(private channel: Channel<T>) {}
+  constructor(
+    private channel: Channel<T>,
+    private readonly _keepaliveOwner?: object,
+  ) {}
 
   send(value: T): boolean {
     return this.channel.send(value);
@@ -106,7 +109,10 @@ export class ChannelSender<T> {
  * Receiver end of a channel (for Pull).
  */
 export class ChannelReceiver<T> {
-  constructor(private channel: Channel<T>) {}
+  constructor(
+    private channel: Channel<T>,
+    private readonly _keepaliveOwner?: object,
+  ) {}
 
   recv(): Promise<T | null> {
     return this.channel.recv();

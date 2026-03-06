@@ -252,7 +252,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     this._negotiated = negotiated;
     this.ourHello = ourHello;
     this.channelAllocator = new ChannelIdAllocator(role);
-    this.channelRegistry = new ChannelRegistry();
+    this.channelRegistry = new ChannelRegistry(this);
     this._acceptConnections = acceptConnections;
     this.keepalive = keepalive;
   }
@@ -442,7 +442,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     this.messagePumpPromise = (async () => {
       const keepaliveRuntime = this.makeKeepaliveRuntime();
       try {
-        while (this.pendingRequests.size > 0) {
+        while (this.pendingRequests.size > 0 || this.channelRegistry.hasLiveChannels()) {
           if (!(await this.handleKeepaliveTick(keepaliveRuntime))) {
             return;
           }

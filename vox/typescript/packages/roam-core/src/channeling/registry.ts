@@ -22,6 +22,7 @@ export class OutgoingSender {
   constructor(
     private _channelId: ChannelId,
     private channel: Channel<OutgoingMessage>,
+    private readonly _keepaliveOwner?: object,
   ) {}
 
   get channelId(): ChannelId {
@@ -49,6 +50,8 @@ export class OutgoingSender {
  * r[impl channeling.unknown] - Unknown channel IDs cause Goodbye.
  */
 export class ChannelRegistry {
+  constructor(private readonly keepaliveOwner?: object) {}
+
   /** Channels where we receive Data messages (backing Rx<T> handles). */
   private incoming = new Map<ChannelId, Channel<Uint8Array>>();
 
@@ -66,7 +69,7 @@ export class ChannelRegistry {
   registerIncoming(channelId: ChannelId): ChannelReceiver<Uint8Array> {
     const channel = createChannel<Uint8Array>(64);
     this.incoming.set(channelId, channel);
-    return new ChannelReceiver(channel);
+    return new ChannelReceiver(channel, this.keepaliveOwner);
   }
 
   /**
@@ -77,7 +80,7 @@ export class ChannelRegistry {
   registerOutgoing(channelId: ChannelId): OutgoingSender {
     const channel = createChannel<OutgoingMessage>(64);
     this.outgoing.set(channelId, channel);
-    return new OutgoingSender(channelId, channel);
+    return new OutgoingSender(channelId, channel, this.keepaliveOwner);
   }
 
   /**
@@ -169,5 +172,9 @@ export class ChannelRegistry {
   /** Get the number of active outgoing channels. */
   get outgoingCount(): number {
     return this.outgoing.size;
+  }
+
+  hasLiveChannels(): boolean {
+    return this.incoming.size > 0 || this.outgoing.size > 0;
   }
 }

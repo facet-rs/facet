@@ -1,3 +1,4 @@
+use facet::Facet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -7,7 +8,7 @@ use roam_types::{
     ChannelMessage, ChannelSink, Conduit, ConduitRx, ConnectionSettings, Handler,
     IncomingChannelMessage, Message, MessageFamily, MessagePayload, Metadata, MethodId, Parity,
     Payload, ReplySink, RequestBody, RequestCall, RequestCancel, RequestMessage, RequestResponse,
-    RoamError, SelfRef,
+    RoamError, RpcPlan, SelfRef, Tx, bind_channels_caller_args, channel,
 };
 
 use crate::session::{
@@ -128,6 +129,11 @@ impl Handler<DriverReplySink> for BlockingHandler {
         // Block forever — only cancellation (abort) will stop this
         std::future::pending::<()>().await;
     }
+}
+
+#[derive(Facet)]
+struct SubscribeArgs {
+    updates: Tx<u32, 16>,
 }
 
 // r[verify rpc.caller.liveness.refcounted]
@@ -299,6 +305,106 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
 
     drop(vconn_caller);
     drop(server_caller_guard);
+
+    tokio::time::timeout(std::time::Duration::from_millis(500), client_session)
+        .await
+        .expect("timed out waiting for client session to exit")
+        .expect("client session task failed");
+}
+
+// r[verify rpc.channel.binding.caller-args.tx]
+#[tokio::test]
+async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let (client_session_tx, client_session_rx) =
+        tokio::sync::oneshot::channel::<moire::task::JoinHandle<()>>();
+
+    let server_task = moire::task::spawn(
+        async move {
+            let (server_caller, _sh) = acceptor(server_conduit)
+                .establish::<DriverCaller>(())
+                .await
+                .expect("server handshake failed");
+            server_caller
+        }
+        .named("server_setup"),
+    );
+
+    let (root_caller, _sh) = initiator(client_conduit)
+        .spawn_fn(move |fut| {
+            let handle = moire::task::spawn(fut.named("client_session"));
+            let _ = client_session_tx.send(handle);
+        })
+        .establish::<DriverCaller>(())
+        .await
+        .expect("client handshake failed");
+
+    let server_caller = server_task.await.expect("server setup failed");
+    let client_session = client_session_rx.await.expect("client session handle sent");
+
+    let (updates_tx, mut updates_rx) = channel::<u32>();
+    let mut args = SubscribeArgs {
+        updates: updates_tx,
+    };
+    let channel_ids = unsafe {
+        bind_channels_caller_args(
+            (&mut args as *mut SubscribeArgs).cast::<u8>(),
+            RpcPlan::for_type::<SubscribeArgs>(),
+            &root_caller,
+        )
+    };
+    assert_eq!(channel_ids.as_slice(), &[ChannelId(1)]);
+    drop(args);
+    drop(root_caller);
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(
+        !client_session.is_finished(),
+        "session should remain alive while a bound stream handle still exists"
+    );
+
+    let value = 123_u32;
+    server_caller
+        .connection_sender()
+        .send(ConnectionMessage::Channel(ChannelMessage {
+            id: channel_ids[0],
+            body: ChannelBody::Item(ChannelItem {
+                item: Payload::outgoing(&value),
+            }),
+        }))
+        .await
+        .expect("send channel item");
+
+    let received = updates_rx
+        .recv()
+        .await
+        .expect("stream should remain usable")
+        .expect("channel should yield one item");
+    assert_eq!(*received, 123);
+
+    server_caller
+        .connection_sender()
+        .send(ConnectionMessage::Channel(ChannelMessage {
+            id: channel_ids[0],
+            body: ChannelBody::Close(ChannelClose {
+                metadata: Default::default(),
+            }),
+        }))
+        .await
+        .expect("send channel close");
+
+    assert!(
+        updates_rx
+            .recv()
+            .await
+            .expect("close should be delivered")
+            .is_none(),
+        "stream should end after explicit close"
+    );
+
+    drop(updates_rx);
+    drop(server_caller);
 
     tokio::time::timeout(std::time::Duration::from_millis(500), client_session)
         .await

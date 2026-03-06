@@ -20,8 +20,30 @@ use crate::{ChannelClose, ChannelItem, ChannelReset, Metadata, Payload, SelfRef}
 /// The binding stored in a channel core — either a sink or a receiver, never both.
 #[cfg(not(target_arch = "wasm32"))]
 pub enum ChannelBinding {
-    Sink(Arc<dyn ChannelSink>),
-    Receiver(mpsc::Receiver<IncomingChannelMessage>),
+    Sink(BoundChannelSink),
+    Receiver(BoundChannelReceiver),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub trait ChannelLiveness: Send + Sync + 'static {}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send + Sync + 'static> ChannelLiveness for T {}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub type ChannelLivenessHandle = Arc<dyn ChannelLiveness>;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone)]
+pub struct BoundChannelSink {
+    pub sink: Arc<dyn ChannelSink>,
+    pub liveness: Option<ChannelLivenessHandle>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub struct BoundChannelReceiver {
+    pub receiver: mpsc::Receiver<IncomingChannelMessage>,
+    pub liveness: Option<ChannelLivenessHandle>,
 }
 
 // r[impl rpc.channel.pair]
@@ -55,17 +77,17 @@ impl ChannelCore {
     pub fn get_sink(&self) -> Option<Arc<dyn ChannelSink>> {
         let guard = self.binding.lock().expect("channel core mutex poisoned");
         match guard.as_ref() {
-            Some(ChannelBinding::Sink(sink)) => Some(sink.clone()),
+            Some(ChannelBinding::Sink(bound)) => Some(bound.sink.clone()),
             _ => None,
         }
     }
 
     /// Take the receiver out of the core (for Rx on first recv).
     /// Returns None if no receiver has been set or if it was already taken.
-    pub fn take_receiver(&self) -> Option<mpsc::Receiver<IncomingChannelMessage>> {
+    pub fn take_receiver(&self) -> Option<BoundChannelReceiver> {
         let mut guard = self.binding.lock().expect("channel core mutex poisoned");
         match guard.take() {
-            Some(ChannelBinding::Receiver(rx)) => Some(rx),
+            Some(ChannelBinding::Receiver(bound)) => Some(bound),
             other => {
                 // Put it back if it wasn't a receiver
                 *guard = other;
@@ -222,6 +244,23 @@ impl SinkSlot {
     }
 }
 
+/// Opaque liveness retention slot for bound channel handles.
+#[derive(Facet)]
+#[facet(opaque)]
+pub(crate) struct LivenessSlot {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) inner: Option<ChannelLivenessHandle>,
+}
+
+impl LivenessSlot {
+    pub(crate) fn empty() -> Self {
+        Self {
+            #[cfg(not(target_arch = "wasm32"))]
+            inner: None,
+        }
+    }
+}
+
 /// Receiver-side runtime slot.
 #[derive(Facet)]
 #[facet(opaque)]
@@ -253,6 +292,7 @@ impl ReceiverSlot {
 pub struct Tx<T, const N: usize = 16> {
     pub(crate) sink: SinkSlot,
     pub(crate) core: CoreSlot,
+    pub(crate) liveness: LivenessSlot,
     #[cfg(not(target_arch = "wasm32"))]
     #[facet(opaque)]
     closed: AtomicBool,
@@ -266,6 +306,7 @@ impl<T, const N: usize> Tx<T, N> {
         Self {
             sink: SinkSlot::empty(),
             core: CoreSlot::empty(),
+            liveness: LivenessSlot::empty(),
             #[cfg(not(target_arch = "wasm32"))]
             closed: AtomicBool::new(false),
             _marker: PhantomData,
@@ -278,6 +319,7 @@ impl<T, const N: usize> Tx<T, N> {
         Self {
             sink: SinkSlot::empty(),
             core: CoreSlot { inner: Some(core) },
+            liveness: LivenessSlot::empty(),
             closed: AtomicBool::new(false),
             _marker: PhantomData,
         }
@@ -348,7 +390,18 @@ impl<T, const N: usize> Tx<T, N> {
     #[doc(hidden)]
     #[cfg(not(target_arch = "wasm32"))]
     pub fn bind(&mut self, sink: Arc<dyn ChannelSink>) {
+        self.bind_with_liveness(sink, None);
+    }
+
+    #[doc(hidden)]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn bind_with_liveness(
+        &mut self,
+        sink: Arc<dyn ChannelSink>,
+        liveness: Option<ChannelLivenessHandle>,
+    ) {
         self.sink.inner = Some(sink);
+        self.liveness.inner = liveness;
     }
 }
 
@@ -423,6 +476,7 @@ impl std::error::Error for TxError {}
 pub struct Rx<T, const N: usize = 16> {
     pub(crate) receiver: ReceiverSlot,
     pub(crate) core: CoreSlot,
+    pub(crate) liveness: LivenessSlot,
     #[facet(opaque)]
     _marker: PhantomData<T>,
 }
@@ -433,6 +487,7 @@ impl<T, const N: usize> Rx<T, N> {
         Self {
             receiver: ReceiverSlot::empty(),
             core: CoreSlot::empty(),
+            liveness: LivenessSlot::empty(),
             _marker: PhantomData,
         }
     }
@@ -443,6 +498,7 @@ impl<T, const N: usize> Rx<T, N> {
         Self {
             receiver: ReceiverSlot::empty(),
             core: CoreSlot { inner: Some(core) },
+            liveness: LivenessSlot::empty(),
             _marker: PhantomData,
         }
     }
@@ -476,9 +532,10 @@ impl<T, const N: usize> Rx<T, N> {
         // On first call, take receiver from shared core into local slot
         if self.receiver.inner.is_none()
             && let Some(core) = &self.core.inner
-            && let Some(rx) = core.take_receiver()
+            && let Some(bound) = core.take_receiver()
         {
-            self.receiver.inner = Some(rx);
+            self.receiver.inner = Some(bound.receiver);
+            self.liveness.inner = bound.liveness;
         }
 
         let receiver = self.receiver.inner.as_mut().ok_or(RxError::Unbound)?;
@@ -501,7 +558,18 @@ impl<T, const N: usize> Rx<T, N> {
     #[doc(hidden)]
     #[cfg(not(target_arch = "wasm32"))]
     pub fn bind(&mut self, receiver: mpsc::Receiver<IncomingChannelMessage>) {
+        self.bind_with_liveness(receiver, None);
+    }
+
+    #[doc(hidden)]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn bind_with_liveness(
+        &mut self,
+        receiver: mpsc::Receiver<IncomingChannelMessage>,
+        liveness: Option<ChannelLivenessHandle>,
+    ) {
         self.receiver.inner = Some(receiver);
+        self.liveness.inner = liveness;
     }
 }
 
@@ -639,7 +707,10 @@ mod tests {
 
         let (tx, _rx) = channel::<u32>();
         let core = tx.core.inner.as_ref().expect("paired tx should have core");
-        core.set_binding(ChannelBinding::Sink(sink));
+        core.set_binding(ChannelBinding::Sink(BoundChannelSink {
+            sink,
+            liveness: None,
+        }));
         drop(tx);
 
         assert_eq!(sink_impl.close_on_drop_calls.load(Ordering::Acquire), 1);

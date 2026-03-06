@@ -9,10 +9,10 @@ use tokio::sync::Semaphore;
 
 use moire::task::FutureExt as _;
 use roam_types::{
-    Caller, ChannelBinder, ChannelBody, ChannelClose, ChannelId, ChannelItem, ChannelMessage,
-    ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage, MaybeSend, Payload,
-    ReplySink, RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse, RoamError,
-    SelfRef, TxError,
+    Caller, ChannelBinder, ChannelBody, ChannelClose, ChannelId, ChannelItem,
+    ChannelLivenessHandle, ChannelMessage, ChannelSink, CreditSink, Handler, IdAllocator,
+    IncomingChannelMessage, MaybeSend, Payload, ReplySink, RequestBody, RequestCall, RequestId,
+    RequestMessage, RequestResponse, RoamError, SelfRef, TxError,
 };
 
 use crate::session::{ConnectionHandle, ConnectionMessage, ConnectionSender, DropControlRequest};
@@ -168,6 +168,7 @@ struct DriverChannelBinder {
     sender: ConnectionSender,
     shared: Arc<DriverShared>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
+    drop_guard: Option<Arc<CallerDropGuard>>,
 }
 
 impl DriverChannelBinder {
@@ -254,6 +255,12 @@ impl ChannelBinder for DriverChannelBinder {
         channel_id: ChannelId,
     ) -> tokio::sync::mpsc::Receiver<IncomingChannelMessage> {
         self.register_rx_channel(channel_id)
+    }
+
+    fn channel_liveness(&self) -> Option<ChannelLivenessHandle> {
+        self.drop_guard
+            .as_ref()
+            .map(|guard| guard.clone() as ChannelLivenessHandle)
     }
 }
 
@@ -370,6 +377,12 @@ impl ChannelBinder for DriverCaller {
         channel_id: ChannelId,
     ) -> tokio::sync::mpsc::Receiver<IncomingChannelMessage> {
         self.register_rx_channel(channel_id)
+    }
+
+    fn channel_liveness(&self) -> Option<ChannelLivenessHandle> {
+        self._drop_guard
+            .as_ref()
+            .map(|guard| guard.clone() as ChannelLivenessHandle)
     }
 }
 
@@ -492,8 +505,14 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
     // r[impl rpc.caller.liveness.last-drop-closes-connection]
     // r[impl rpc.caller.liveness.root-internal-close]
     // r[impl rpc.caller.liveness.root-teardown-condition]
-    pub fn caller(&self) -> DriverCaller {
-        let drop_guard = if let Some(seed) = &self.drop_control_seed {
+    fn existing_drop_guard(&self) -> Option<Arc<CallerDropGuard>> {
+        self.drop_guard.lock().as_ref().and_then(Weak::upgrade)
+    }
+
+    fn connection_drop_guard(&self) -> Option<Arc<CallerDropGuard>> {
+        let drop_guard = if let Some(existing) = self.existing_drop_guard() {
+            Some(existing)
+        } else if let Some(seed) = &self.drop_control_seed {
             let mut guard = self.drop_guard.lock();
             if let Some(existing) = guard.as_ref().and_then(Weak::upgrade) {
                 Some(existing)
@@ -508,6 +527,11 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         } else {
             None
         };
+        drop_guard
+    }
+
+    pub fn caller(&self) -> DriverCaller {
+        let drop_guard = self.connection_drop_guard();
         DriverCaller {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
@@ -521,6 +545,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             sender: self.sender.clone(),
             shared: Arc::clone(&self.shared),
             local_control_tx: self.local_control_tx.clone(),
+            drop_guard: self.existing_drop_guard(),
         }
     }
 
