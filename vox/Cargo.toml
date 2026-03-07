@@ -10,6 +10,7 @@ members = [
   "rust/roam-hash",
   "rust/roam-stream",
   "rust/roam-websocket",
+  "rust/roam-inprocess",
   "rust/roam-local",
   "rust/roam-fdpass",
   "rust/roam-shm",
@@ -25,6 +26,7 @@ members = [
   "rust/subject-rust",
   "rust/roam-codegen",
   "rust/wasm-browser-tests",
+  "rust/wasm-inprocess-tests",
   "typescript/peer-server",
 ]
 exclude = ["fuzz"]
@@ -53,6 +55,7 @@ roam-core = { path = "rust/roam-core", version = "7.3.0" }
 roam-stream = { path = "rust/roam-stream", version = "7.3.0" }
 roam-codegen = { path = "rust/roam-codegen", version = "7.3.0" }
 roam-websocket = { path = "rust/roam-websocket", version = "7.3.0" }
+roam-inprocess = { path = "rust/roam-inprocess", version = "7.3.0" }
 roam-local = { path = "rust/roam-local", version = "7.3.0" }
 roam-shm = { path = "rust/roam-shm", version = "7.3.0" }
 roam-shm-ffi = { path = "rust/roam-shm-ffi", version = "7.3.0" }

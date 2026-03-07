@@ -104,6 +104,12 @@ insert_anchor_links = "left"
 > **WebSocket links:** serialize into a message buffer, send as a WebSocket
 > frame. One copy (value → message buffer).
 
+> r[zerocopy.send.inprocess]
+>
+> **In-process links (WASM ↔ JS):** serialize into a reusable message buffer,
+> deliver to JS via a `js_sys::Function` callback as a `Uint8Array`. One copy
+> (value → message buffer).
+
 > r[zerocopy.send.shm]
 >
 > **SHM links:** the send path depends on payload size:
@@ -156,6 +162,12 @@ insert_anchor_links = "left"
 > **WebSocket links:** `recv` receives a complete message as `bytes::Bytes`,
 > converted to `Box<[u8]>`. One copy at the Roam link boundary (transport-
 > internal buffering is not counted). Deserialization borrows from the box.
+
+> r[zerocopy.recv.inprocess]
+>
+> **In-process links (WASM ↔ JS):** `recv` yields a `Vec<u8>` pushed by JS
+> via the `deliver()` method, converted to `Box<[u8]>`. One copy (JS
+> `Uint8Array` → Rust heap). Deserialization borrows from the box.
 
 > r[zerocopy.recv.shm.inline]
 >
@@ -272,6 +284,12 @@ insert_anchor_links = "left"
 > See the
 > [SHM spec](@/spec/shm.md) for details.
 
+> r[zerocopy.framing.link.inprocess]
+>
+> **In-process links (WASM ↔ JS):** no framing. Messages are `Vec<u8>`
+> passed through a `js_sys::Function` callback (Rust → JS) and an MPSC
+> channel (JS → Rust). Used for same-tab WASM ↔ TypeScript communication.
+
 > r[zerocopy.framing.link.memory]
 >
 > **Memory links (in-process):** no framing. Messages are `Vec<u8>` passed
@@ -283,12 +301,12 @@ insert_anchor_links = "left"
 >
 > Not all conduit × link combinations are valid or useful:
 >
-> | Conduit       | Stream | WebSocket | SHM  | Memory |
-> |---------------|--------|-----------|------|--------|
-> | BareConduit   | —      | —         | yes  | yes    |
-> | StableConduit | yes    | yes       | —    | —      |
+> | Conduit       | Stream | WebSocket | InProcess | SHM  | Memory |
+> |---------------|--------|-----------|-----------|------|--------|
+> | BareConduit   | —      | —         | yes       | yes  | yes    |
+> | StableConduit | yes    | yes       | —         | —    | —      |
 >
-> BareConduit is used with links that don't lose connections (SHM, memory).
+> BareConduit is used with links that don't lose connections (SHM, memory, InProcess).
 > StableConduit is used with links that may disconnect (TCP, WebSocket) and
 > need seq/ack for replay on reconnect.
 

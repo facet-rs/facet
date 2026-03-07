@@ -49,6 +49,16 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.3)
 
+  typescript/packages/roam-inprocess:
+    dependencies:
+      '@bearcove/roam-core':
+        specifier: workspace:*
+        version: link:../roam-core
+    devDependencies:
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.3)
+
   typescript/packages/roam-postcard:
     devDependencies:
       vitest:
@@ -122,6 +132,25 @@ importers:
       vite:
         specifier: ^6
         version: 6.4.1(@types/node@22.19.3)(jiti@2.6.1)
+
+  typescript/tests/browser-inprocess:
+    dependencies:
+      '@bearcove/roam-core':
+        specifier: workspace:*
+        version: link:../../packages/roam-core
+      '@bearcove/roam-generated':
+        specifier: workspace:*
+        version: link:../../generated
+      '@bearcove/roam-inprocess':
+        specifier: workspace:*
+        version: link:../../packages/roam-inprocess
+    devDependencies:
+      vite:
+        specifier: ^6
+        version: 6.4.1(@types/node@22.19.3)(jiti@2.6.1)
+      vite-plugin-wasm:
+        specifier: ^3
+        version: 3.5.0(vite@6.4.1(@types/node@22.19.3)(jiti@2.6.1))
 
   typescript/tests/browser-wasm:
     devDependencies:

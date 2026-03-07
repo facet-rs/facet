@@ -2384,6 +2384,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "roam-inprocess"
+version = "7.3.0"
+dependencies = [
+ "futures-channel",
+ "futures-util",
+ "js-sys",
+ "roam-types",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "roam-local"
 version = "7.3.0"
 dependencies = [
@@ -3680,6 +3691,19 @@ checksum = "990065f2fe63003fe337b932cfb5e3b80e0b4d0f5ff650e6985b1048f62c8319"
 dependencies = [
  "leb128fmt",
  "wasmparser",
+]
+
+[[package]]
+name = "wasm-inprocess-tests"
+version = "7.3.0"
+dependencies = [
+ "js-sys",
+ "roam-core",
+ "roam-inprocess",
+ "roam-types",
+ "spec-proto",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

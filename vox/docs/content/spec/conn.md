@@ -49,6 +49,16 @@ weight = 11
 > The Websocket link MUST work on platforms where tokio works
 > (e.g. `x86_64-unknown-linux-gnu`) and on `wasm32-unknown-unknown`.
 
+> r[transport.inprocess]
+>
+> Roam provides an in-process link for WASM ↔ JS communication within the
+> same browser tab. The Rust side sends via a `js_sys::Function` callback and
+> receives via an MPSC channel fed by JS. No network is involved.
+
+> r[transport.inprocess.platforms]
+>
+> The in-process link is available only on `wasm32-unknown-unknown`.
+
 > r[transport.shm]
 >
 > Roam provides a shared memory transport. It is designed for high-performance
