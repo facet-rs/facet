@@ -423,7 +423,15 @@ impl SchemaContext {
                     }
 
                     let field_name = field.effective_name();
-                    let field_schema = self.schema_for_shape(field.shape.get());
+                    let mut field_schema = self.schema_for_shape(field.shape.get());
+
+                    // Use field-level doc comments instead of type-level
+                    let field_description = if field.doc.is_empty() {
+                        None
+                    } else {
+                        Some(field.doc.join("\n").trim().to_string())
+                    };
+                    field_schema.description = field_description;
 
                     // Check if field is required (not Option and no default)
                     let is_option = matches!(field.shape.get().def, Def::Option(_));
@@ -621,6 +629,40 @@ mod tests {
 
         let schema = to_schema::<ApiResponse>();
         insta::assert_snapshot!(schema);
+    }
+
+    #[test]
+    fn test_field_doc_comments_override_type_description() {
+        #[derive(Facet)]
+        /// Shared type-level docs that should not leak into undocumented fields.
+        struct DocumentedInner {
+            value: String,
+        }
+
+        #[derive(Facet)]
+        struct Container {
+            /// Field-level docs win for this property.
+            documented: DocumentedInner,
+            undocumented: DocumentedInner,
+        }
+
+        let schema = schema_for::<Container>();
+        let properties = schema
+            .properties
+            .expect("container should have object properties");
+
+        let documented = properties
+            .get("documented")
+            .expect("documented field schema should exist");
+        assert_eq!(
+            documented.description.as_deref(),
+            Some("Field-level docs win for this property.")
+        );
+
+        let undocumented = properties
+            .get("undocumented")
+            .expect("undocumented field schema should exist");
+        assert_eq!(undocumented.description, None);
     }
 
     #[test]
