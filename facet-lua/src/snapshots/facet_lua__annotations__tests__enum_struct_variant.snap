@@ -1,0 +1,18 @@
+---
+source: facet-lua/src/annotations.rs
+expression: lua
+---
+---@alias Message Message.TextMessage | Message.ImageUpload
+
+---@class Message.ImageUpload
+---@field ImageUpload Message.ImageUpload._
+
+---@class Message.ImageUpload._
+---@field url string
+---@field width integer
+
+---@class Message.TextMessage
+---@field TextMessage Message.TextMessage._
+
+---@class Message.TextMessage._
+---@field content string

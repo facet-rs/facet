@@ -1,0 +1,12 @@
+---
+source: facet-lua/src/annotations.rs
+expression: lua
+---
+---@alias Request Request.Ping | Request.Echo
+
+---@class Request.Echo
+---@field type "Echo"
+---@field message string
+
+---@class Request.Ping
+---@field type "Ping"

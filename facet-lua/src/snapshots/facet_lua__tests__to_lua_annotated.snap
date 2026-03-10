@@ -1,0 +1,15 @@
+---
+source: facet-lua/src/lib.rs
+expression: lua
+---
+---@meta
+
+---@class User
+---@field name string
+---@field age integer
+
+---@type User
+local user = {
+    name = "DT",
+    age = 25,
+}

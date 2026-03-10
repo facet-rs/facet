@@ -1,0 +1,15 @@
+---
+source: facet-lua/src/lib.rs
+expression: lua
+---
+---@meta
+
+---@class Config
+---@field host string
+---@field port? integer
+
+---@type Config
+local config = {
+    host = "localhost",
+    port = 8080,
+}

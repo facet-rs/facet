@@ -1,0 +1,5 @@
+---
+source: facet-lua/src/annotations.rs
+expression: lua
+---
+---@alias ValidationErrorCode "circular_dependency" | "invalid_naming" | "unknown_requirement"
