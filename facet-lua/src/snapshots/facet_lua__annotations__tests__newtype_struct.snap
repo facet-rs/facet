@@ -1,0 +1,5 @@
+---
+source: facet-lua/src/annotations.rs
+expression: lua
+---
+---@alias UserId integer

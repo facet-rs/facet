@@ -1,0 +1,9 @@
+---
+source: facet-lua/src/serializer.rs
+expression: lua
+---
+{
+    flag = true,
+    count = 42,
+    score = 3.125,
+}

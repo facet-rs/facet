@@ -1213,6 +1213,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-lua"
+version = "0.44.1"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-format",
+ "facet-format-suite",
+ "facet-reflect",
+ "insta",
+ "libtest-mimic",
+]
+
+[[package]]
 name = "facet-macro-parse"
 version = "0.44.1"
 dependencies = [

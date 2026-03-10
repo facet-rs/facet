@@ -62,6 +62,7 @@ members = [
   "facet-json-schema",
   "facet-typescript",
   "facet-python",
+  "facet-lua",
 ]
 exclude = [
   # proto-attr experiment uses nightly features

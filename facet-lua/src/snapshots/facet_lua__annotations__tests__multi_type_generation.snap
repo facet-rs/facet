@@ -1,0 +1,9 @@
+---
+source: facet-lua/src/annotations.rs
+expression: lua
+---
+---@alias Role "Admin" | "User"
+
+---@class User
+---@field name string
+---@field age integer
