@@ -1339,7 +1339,16 @@ impl TypePlanBuilder {
                         // Use Slice kind so we can distinguish from List if needed
                         TypePlanNodeKind::Slice
                     }
-                    // Opaque types have Def::Undefined AND ty that doesn't match above
+                    // Opaque types with builder_shape + try_from (like Yoke):
+                    // build the builder_shape as a child so TransparentConvert can
+                    // deserialize the cart then try_from it into the opaque type
+                    Type::User(UserType::Opaque) | Type::Undefined
+                        if shape.builder_shape.is_some() && shape.vtable.has_try_from() =>
+                    {
+                        children.push(self.build_node(shape.builder_shape.unwrap())?);
+                        TypePlanNodeKind::Transparent
+                    }
+                    // Truly opaque types - no deserialization possible
                     Type::User(UserType::Opaque) | Type::Undefined => TypePlanNodeKind::Opaque,
                     _ => {
                         // Check for transparent wrappers (newtypes) as fallback
