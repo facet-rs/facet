@@ -779,19 +779,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-postcard"
-version = "0.44.1"
-source = "git+https://github.com/facet-rs/facet-format?branch=main#235881beed60114ab6c3cdab9772f3ea516162e5"
-dependencies = [
- "facet-core",
- "facet-format",
- "facet-path",
- "facet-reflect",
- "facet-value",
- "tracing",
-]
-
-[[package]]
 name = "facet-pretty"
 version = "0.44.1"
 dependencies = [
@@ -825,16 +812,6 @@ dependencies = [
  "tracing",
  "ulid",
  "uuid",
-]
-
-[[package]]
-name = "facet-shapelike"
-version = "0.44.1"
-dependencies = [
- "facet",
- "facet-core",
- "facet-postcard",
- "facet-reflect",
 ]
 
 [[package]]

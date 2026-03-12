@@ -98,11 +98,6 @@ version_group = "facet"
 changelog_path = "CHANGELOG.md"
 
 [[package]]
-name = "facet-shapelike"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
 name = "facet-validate"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"

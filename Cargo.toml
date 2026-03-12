@@ -44,8 +44,6 @@ members = [
   # showcase infrastructure
   "facet-showcase",
 
-  "facet-shapelike",
-
 ]
 exclude = [
   # proto-attr experiment uses nightly features
