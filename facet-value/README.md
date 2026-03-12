@@ -14,13 +14,15 @@ A memory-efficient dynamic value type for representing structured data, with sup
 
 - **Pointer-sized**: `Value` is exactly one pointer in size using tagged pointers
 - **Rich type support**: Null, Bool, Number, String, Bytes, Array, Object, DateTime
-- **Bidirectional conversion**: Convert between `Value` and any type implementing `Facet`
+- **Typed extraction**: Convert from `Value` into any type implementing `Facet`
+- **Companion serializer**: Use `facet-value-format` to serialize typed values into `Value`
 
 ## Example
 
 ```rust
 use facet::Facet;
-use facet_value::{Value, to_value, from_value};
+use facet_value::{Value, from_value};
+use facet_value_format::to_value;
 
 #[derive(Debug, Facet, PartialEq)]
 struct Person {

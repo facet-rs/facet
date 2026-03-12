@@ -1490,7 +1490,6 @@ dependencies = [
  "divan",
  "facet",
  "facet-core",
- "facet-format",
  "facet-reflect",
  "facet-testhelpers",
  "indexmap",

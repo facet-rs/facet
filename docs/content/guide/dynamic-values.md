@@ -42,11 +42,12 @@ println!("{:?}", config);
 
 ### Serialize a type to Value
 
-The inverse operation — converting a typed value to a `Value` — is done with `to_value`. This is useful when you want to manipulate data dynamically or serialize through a common format:
+The inverse operation — converting a typed value to a `Value` — lives in the companion crate `facet-value-format`. This is useful when you want to manipulate data dynamically or serialize through a common format:
 
 ```rust,noexec
 use facet::Facet;
-use facet_value::{to_value, from_value, Value};
+use facet_value::{from_value, Value};
+use facet_value_format::to_value;
 
 #[derive(Facet, Debug, PartialEq)]
 struct Config {
