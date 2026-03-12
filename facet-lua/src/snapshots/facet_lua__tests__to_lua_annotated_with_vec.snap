@@ -1,0 +1,18 @@
+---
+source: facet-lua/src/lib.rs
+expression: lua
+---
+---@meta
+
+---@class Settings
+---@field name string
+---@field tags string[]
+
+---@type Settings
+local settings = {
+    name = "test",
+    tags = {
+        "a",
+        "b",
+    },
+}

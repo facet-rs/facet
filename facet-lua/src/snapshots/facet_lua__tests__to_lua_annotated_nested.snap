@@ -1,0 +1,22 @@
+---
+source: facet-lua/src/lib.rs
+expression: lua
+---
+---@meta
+
+---@class Address
+---@field street string
+---@field city string
+
+---@class Person
+---@field name string
+---@field address Address
+
+---@type Person
+local person = {
+    name = "Alice",
+    address = {
+        street = "123 Main St",
+        city = "Springfield",
+    },
+}

@@ -1,0 +1,20 @@
+---
+source: facet-lua/src/annotations.rs
+expression: lua
+---
+---@alias Event
+---| "Empty" # Unit variant
+---| Event.Id # Newtype variant
+---| Event.Data # Struct variant
+
+--- Struct variant
+---@class Event.Data
+---@field Data Event.Data._
+
+---@class Event.Data._
+---@field name string
+---@field value number
+
+--- Newtype variant
+---@class Event.Id
+---@field Id integer

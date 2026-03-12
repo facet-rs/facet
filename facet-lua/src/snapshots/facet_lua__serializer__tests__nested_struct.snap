@@ -1,0 +1,10 @@
+---
+source: facet-lua/src/serializer.rs
+expression: lua
+---
+{
+    inner = {
+        value = 42,
+    },
+    name = "test",
+}
