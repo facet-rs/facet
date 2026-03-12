@@ -34,6 +34,7 @@ where
 #[derive(Clone)]
 pub struct PingDispatcher<H> {
     handler: H,
+    middlewares: Vec<::std::sync::Arc<dyn ::roam::ServerMiddleware>>,
 }
 impl<H> PingDispatcher<H>
 where
@@ -41,7 +42,29 @@ where
 {
     #[doc = r" Create a new dispatcher wrapping the given handler."]
     pub fn new(handler: H) -> Self {
-        Self { handler }
+        Self {
+            handler,
+            middlewares: vec![],
+        }
+    }
+    #[doc = r" Append a server middleware to this dispatcher."]
+    pub fn with_middleware(mut self, middleware: impl ::roam::ServerMiddleware) -> Self {
+        self.middlewares.push(::std::sync::Arc::new(middleware));
+        self
+    }
+    async fn run_pre_hooks(&self, context: &::roam::RequestContext<'_>) {
+        for middleware in &self.middlewares {
+            middleware.pre(context).await;
+        }
+    }
+    async fn run_post_hooks(
+        &self,
+        context: &::roam::RequestContext<'_>,
+        outcome: ::roam::ServerCallOutcome,
+    ) {
+        for middleware in self.middlewares.iter().rev() {
+            middleware.post(context, outcome).await;
+        }
     }
 }
 impl<H, R> ::roam::Handler<R> for PingDispatcher<H>
@@ -73,9 +96,23 @@ where
                 }
             };
             let () = args;
+            let extensions = ::roam::Extensions::new();
+            let context = ::roam::RequestContext::with_extensions(
+                ping_service_descriptor().methods[0usize],
+                &call.metadata,
+                &extensions,
+            );
+            if !self.middlewares.is_empty() {
+                self.run_pre_hooks(&context).await;
+            }
+            let (reply, outcome_handle) = ::roam::observe_reply(reply);
             let value = self.handler.ping().await;
             let sink_call = ::roam::SinkCall::new(reply);
             ::roam::Call::<'_, u64, ::core::convert::Infallible>::ok(sink_call, value).await;
+            if !self.middlewares.is_empty() {
+                self.run_post_hooks(&context, outcome_handle.outcome())
+                    .await;
+            }
             return;
         }
         reply

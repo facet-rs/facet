@@ -357,6 +357,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
         #[derive(Clone)]
         pub struct #dispatcher_name<H> {
             handler: H,
+            middlewares: Vec<::std::sync::Arc<dyn #roam::ServerMiddleware>>,
         }
 
         impl<H> #dispatcher_name<H>
@@ -365,7 +366,32 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
         {
             /// Create a new dispatcher wrapping the given handler.
             pub fn new(handler: H) -> Self {
-                Self { handler }
+                Self {
+                    handler,
+                    middlewares: vec![],
+                }
+            }
+
+            /// Append a server middleware to this dispatcher.
+            pub fn with_middleware(mut self, middleware: impl #roam::ServerMiddleware) -> Self {
+                self.middlewares.push(::std::sync::Arc::new(middleware));
+                self
+            }
+
+            async fn run_pre_hooks(&self, context: &#roam::RequestContext<'_>) {
+                for middleware in &self.middlewares {
+                    middleware.pre(context).await;
+                }
+            }
+
+            async fn run_post_hooks(
+                &self,
+                context: &#roam::RequestContext<'_>,
+                outcome: #roam::ServerCallOutcome,
+            ) {
+                for middleware in self.middlewares.iter().rev() {
+                    middleware.post(context, outcome).await;
+                }
             }
         }
 
@@ -465,15 +491,18 @@ fn generate_dispatch_arm(
         .map(Type::to_token_stream)
         .unwrap_or_else(|| quote! { ::core::convert::Infallible });
 
-    let context_setup = if wants_context {
+    let context_setup = {
         quote! {
-            let context = #roam::RequestContext::new(
+            let extensions = #roam::Extensions::new();
+            let context = #roam::RequestContext::with_extensions(
                 #descriptor_fn_name().methods[#idx],
                 &call.metadata,
+                &extensions,
             );
+            if !self.middlewares.is_empty() {
+                self.run_pre_hooks(&context).await;
+            }
         }
-    } else {
-        quote! {}
     };
 
     let plain_handler_args: Vec<TokenStream2> = std::iter::empty()
@@ -489,20 +518,32 @@ fn generate_dispatch_arm(
 
     let invoke_and_reply = if ok_has_roam_lifetime {
         quote! {
+            let (reply, outcome_handle) = #roam::observe_reply(reply);
             let sink_call = #roam::SinkCall::new(reply);
             self.handler.#method_fn(#(#borrowed_handler_args),*).await;
+            if !self.middlewares.is_empty() {
+                self.run_post_hooks(&context, outcome_handle.outcome()).await;
+            }
         }
     } else if is_fallible {
         quote! {
+            let (reply, outcome_handle) = #roam::observe_reply(reply);
             let result = self.handler.#method_fn(#(#plain_handler_args),*).await;
             let sink_call = #roam::SinkCall::new(reply);
             #roam::Call::<'_, #ok_ty, #err_ty>::reply(sink_call, result).await;
+            if !self.middlewares.is_empty() {
+                self.run_post_hooks(&context, outcome_handle.outcome()).await;
+            }
         }
     } else {
         quote! {
+            let (reply, outcome_handle) = #roam::observe_reply(reply);
             let value = self.handler.#method_fn(#(#plain_handler_args),*).await;
             let sink_call = #roam::SinkCall::new(reply);
             #roam::Call::<'_, #ok_ty, #err_ty>::ok(sink_call, value).await;
+            if !self.middlewares.is_empty() {
+                self.run_post_hooks(&context, outcome_handle.outcome()).await;
+            }
         }
     };
 

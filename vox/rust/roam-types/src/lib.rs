@@ -97,6 +97,9 @@ pub use metadata::*;
 mod request_context;
 pub use request_context::*;
 
+mod server_middleware;
+pub use server_middleware::*;
+
 mod calls;
 pub use calls::*;
 

@@ -2299,6 +2299,8 @@ dependencies = [
  "shm-primitives",
  "tempfile",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

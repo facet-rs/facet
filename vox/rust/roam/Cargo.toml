@@ -28,6 +28,7 @@ roam-service-macros.workspace = true
 roam-core = { workspace = true, optional = true }
 facet.workspace = true
 facet-postcard.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
@@ -36,3 +37,4 @@ roam-core = { path = "../roam-core" }
 shm-primitives = { path = "../shm-primitives" }
 roam-shm = { path = "../roam-shm" }
 tempfile.workspace = true
+tracing-subscriber.workspace = true

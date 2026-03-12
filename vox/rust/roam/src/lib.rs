@@ -3,8 +3,11 @@
 //! This is the facade crate. It re-exports everything needed by both
 //! hand-written code and `#[roam::service]` macro-generated code.
 
+mod server_logging;
+
 // Re-export the proc macro
 pub use roam_service_macros::service;
+pub use server_logging::{ServerLogging, ServerLoggingOptions};
 
 // Re-export facet (generated code uses `roam::facet::Facet`)
 pub use facet;
@@ -18,6 +21,7 @@ pub use roam_hash as hash;
 // Re-export roam-types items used by generated code
 pub use roam_types::{
     Backing,
+    BoxMiddlewareFuture,
     // Traits
     Call,
     Caller,
@@ -32,6 +36,7 @@ pub use roam_types::{
     ConnectionId,
     ConnectionSettings,
     ErasedCaller,
+    Extensions,
     Handler,
     Link,
     LinkRx,
@@ -57,6 +62,8 @@ pub use roam_types::{
     Rx,
     RxError,
     SelfRef,
+    ServerCallOutcome,
+    ServerMiddleware,
     ServiceDescriptor,
     SinkCall,
     // Channels
@@ -65,6 +72,7 @@ pub use roam_types::{
     WriteSlot,
     // Channels
     channel,
+    observe_reply,
 };
 
 // Re-export runtime/session primitives from `roam-core`.
