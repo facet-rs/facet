@@ -46,9 +46,9 @@ bytes = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 divan = { workspace = true }
 facet = { workspace = true, features = ["std", "all-impls", "doc"] }
-facet-format = { path = "../facet-format", features = ["jit"] }
-facet-json = { path = "../facet-json" }
-facet-json-classics = { path = "../facet-json-classics" }
+facet-format = { path = "../facet-format", version = "0.44.1", features = ["jit"] }
+facet-json = { path = "../facet-json", version = "0.44.1" }
+facet-json-classics = { path = "../facet-json-classics", version = "0.44.1" }
 facet-testhelpers = { workspace = true }
 facet-value = { workspace = true }
 serde_json = { workspace = true }
