@@ -1,61 +1,61 @@
 # facet-msgpack
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-msgpack/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-msgpack.svg)](https://crates.io/crates/facet-msgpack)
-[![documentation](https://docs.rs/facet-msgpack/badge.svg)](https://docs.rs/facet-msgpack)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-msgpack.svg)](./LICENSE)
-[![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+<!-- cargo-reedme: start -->
 
-# facet-msgpack
+<!-- cargo-reedme: info-start
 
-MessagePack binary format for facet using the Tier-2 JIT architecture.
+    Do not edit this region by hand
+    ===============================
 
-## Sponsors
+    This region was generated from Rust documentation comments by `cargo-reedme` using this command:
 
-Thanks to all individual sponsors:
+        cargo +nightly reedme --workspace
 
-<p> <a href="https://github.com/sponsors/fasterthanlime">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/github-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/github-light.svg" height="40" alt="GitHub Sponsors">
-</picture>
-</a> <a href="https://patreon.com/fasterthanlime">
-    <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/patreon-dark.svg">
-    <img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/patreon-light.svg" height="40" alt="Patreon">
-    </picture>
-</a> </p>
+    for more info: https://github.com/nik-rev/cargo-reedme
 
-...along with corporate sponsors:
+cargo-reedme: info-end -->
 
-<p> <a href="https://aws.amazon.com">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/aws-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/aws-light.svg" height="40" alt="AWS">
-</picture>
-</a> <a href="https://zed.dev">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/zed-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/zed-light.svg" height="40" alt="Zed">
-</picture>
-</a> <a href="https://depot.dev?utm_source=facet">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/depot-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/depot-light.svg" height="40" alt="Depot">
-</picture>
-</a> </p>
+MsgPack binary format for facet.
 
-...without whom this work could not exist.
+This crate provides serialization and deserialization for the MessagePack binary format.
 
-## Special thanks
+## Serialization
 
-The facet logo was drawn by [Misiasart](https://misiasart.com/).
+```rust
+use facet::Facet;
+use facet_msgpack::to_vec;
 
-## License
+#[derive(Facet)]
+struct Point { x: i32, y: i32 }
 
-Licensed under either of:
+let point = Point { x: 10, y: 20 };
+let bytes = to_vec(&point).unwrap();
+```
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/facet-rs/facet/blob/main/LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
-- MIT license ([LICENSE-MIT](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+## Deserialization
 
-at your option.
+There are two deserialization functions:
+
+- [`from_slice`](https://docs.rs/facet-msgpack/latest/facet_msgpack/fn.from_slice.html): Deserializes into owned types (`T: Facet<'static>`)
+- [`from_slice_borrowed`](https://docs.rs/facet-msgpack/latest/facet_msgpack/fn.from_slice_borrowed.html): Deserializes with zero-copy borrowing from the input buffer
+- [`from_slice_into`](https://docs.rs/facet-msgpack/latest/facet_msgpack/fn.from_slice_into.html): Deserializes into an existing `Partial` (type-erased, owned)
+- [`from_slice_into_borrowed`](https://docs.rs/facet-msgpack/latest/facet_msgpack/fn.from_slice_into_borrowed.html): Deserializes into an existing `Partial` (type-erased, zero-copy)
+
+```rust
+use facet::Facet;
+use facet_msgpack::from_slice;
+
+#[derive(Facet, Debug, PartialEq)]
+struct Point { x: i32, y: i32 }
+
+// MsgPack encoding of {"x": 10, "y": 20}
+let bytes = &[0x82, 0xa1, b'x', 0x0a, 0xa1, b'y', 0x14];
+let point: Point = from_slice(bytes).unwrap();
+assert_eq!(point.x, 10);
+assert_eq!(point.y, 20);
+```
+
+Both functions use Tier-2 JIT for compatible types (when the `jit` feature is enabled),
+with automatic fallback to Tier-0 reflection for all other types.
+
+<!-- cargo-reedme: end -->

@@ -22,13 +22,13 @@ iddqd = ["facet/iddqd"]
 yoke = ["facet/yoke", "facet-format-suite/yoke"]
 
 [dependencies]
-facet-core = { path = "../../facet/facet-core", version = "0.44.1", default-features = false, features = ["alloc"] }
+facet-core = { workspace = true, features = ["alloc"] }
 facet-format = { path = "../facet-format", version = "0.44.1", default-features = false }
-facet-reflect = { path = "../../facet/facet-reflect", version = "0.44.1", default-features = false, features = ["alloc"] }
+facet-reflect = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
-facet = { path = "../../facet/facet", features = ["all-impls", "iddqd"] }
-facet-testhelpers = { path = "../../facet/facet-testhelpers" }
+facet = { workspace = true, features = ["std", "all-impls", "iddqd"] }
+facet-testhelpers = { workspace = true }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "net"] }
 libtest-mimic = "0.8"
 

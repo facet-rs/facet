@@ -16,11 +16,11 @@ homepage = "https://facet.rs"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet-core = { path = "../../facet/facet-core", version = "0.44.1", default-features = false }
+facet-core = { workspace = true }
 facet-format = { path = "../facet-format", version = "0.44.1" }
-facet-path = { path = "../../facet/facet-path", version = "0.44.1", default-features = false, features = ["alloc"] }
-facet-reflect = { path = "../../facet/facet-reflect", version = "0.44.1", default-features = false }
-facet-value = { path = "../../facet/facet-value", version = "0.44.1" }
+facet-path = { workspace = true, features = ["alloc"] }
+facet-reflect = { workspace = true }
+facet-value = { workspace = true }
 tracing = { workspace = true }
 
 # Axum integration (optional)
@@ -45,12 +45,12 @@ uuid = { workspace = true, optional = true }
 bytes = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 divan = { workspace = true }
-facet = { path = "../../facet/facet", features = ["all-impls", "doc"] }
+facet = { workspace = true, features = ["std", "all-impls", "doc"] }
 facet-format = { path = "../facet-format", features = ["jit"] }
 facet-json = { path = "../facet-json" }
 facet-json-classics = { path = "../facet-json-classics" }
-facet-testhelpers = { path = "../../facet/facet-testhelpers" }
-facet-value = { path = "../../facet/facet-value" }
+facet-testhelpers = { workspace = true }
+facet-value = { workspace = true }
 serde_json = { workspace = true }
 jiff = { workspace = true }
 ordered-float = { version = "5.0.0", default-features = false }
