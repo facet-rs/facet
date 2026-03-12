@@ -6,6 +6,7 @@ use roam_types::{
     ConnectionClose, ConnectionId, ConnectionOpen, ConnectionReject, ConnectionSettings,
     IdAllocator, MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload, Metadata, Parity,
     RequestBody, RequestId, RequestMessage, RequestResponse, SelfRef, SessionRole,
+    append_retry_support_metadata, metadata_supports_retry,
 };
 use tokio::sync::watch;
 use tracing::{debug, warn};
@@ -188,6 +189,7 @@ pub struct Session<C: Conduit> {
 
     /// Shared core (for sending) — also held by all ConnectionSenders.
     sess_core: Arc<SessionCore>,
+    peer_supports_retry: bool,
 
     /// Connection state (active, pending inbound, pending outbound).
     conns: BTreeMap<ConnectionId, ConnectionSlot>,
@@ -389,6 +391,7 @@ pub struct ConnectionHandle {
     pub(crate) closed_rx: watch::Receiver<bool>,
     /// The parity this side should use for allocating request/channel IDs.
     pub parity: Parity,
+    pub(crate) peer_supports_retry: bool,
 }
 
 impl std::fmt::Debug for ConnectionHandle {
@@ -427,6 +430,10 @@ impl ConnectionHandle {
     pub fn is_connected(&self) -> bool {
         !*self.closed_rx.borrow()
     }
+
+    pub fn peer_supports_retry(&self) -> bool {
+        self.peer_supports_retry
+    }
 }
 
 /// Forward all request/channel traffic between two connections.
@@ -444,6 +451,7 @@ pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) 
         control_tx: left_control_tx,
         closed_rx: _left_closed_rx,
         parity: _left_parity,
+        peer_supports_retry: _left_peer_supports_retry,
     } = left;
     let ConnectionHandle {
         sender: right_sender,
@@ -452,6 +460,7 @@ pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) 
         control_tx: right_control_tx,
         closed_rx: _right_closed_rx,
         parity: _right_parity,
+        peer_supports_retry: _right_peer_supports_retry,
     } = right;
 
     loop {
@@ -527,6 +536,7 @@ where
             role: SessionRole::Initiator, // overwritten in establish_as_*
             parity: Parity::Odd,          // overwritten in establish_as_*
             sess_core,
+            peer_supports_retry: false,
             conns: BTreeMap::new(),
             root_closed_internal: false,
             conn_ids: IdAllocator::new(Parity::Odd), // overwritten in establish_as_*
@@ -551,6 +561,9 @@ where
         self.parity = settings.parity;
         self.conn_ids = IdAllocator::new(settings.parity);
 
+        let mut hello_metadata = metadata.to_vec();
+        append_retry_support_metadata(&mut hello_metadata);
+
         // Send Hello
         self.sess_core
             .send(Message {
@@ -558,18 +571,21 @@ where
                 payload: MessagePayload::Hello(Hello {
                     version: PROTOCOL_VERSION,
                     connection_settings: settings.clone(),
-                    metadata,
+                    metadata: hello_metadata,
                 }),
             })
             .await
             .map_err(|_| SessionError::Protocol("failed to send Hello".into()))?;
 
         // Receive HelloYourself
-        let peer_settings = match self.rx.recv().await {
+        let (peer_settings, peer_supports_retry) = match self.rx.recv().await {
             Ok(Some(msg)) => {
                 let payload = msg.map(|m| m.payload);
                 match &*payload {
-                    MessagePayload::HelloYourself(hy) => hy.connection_settings.clone(),
+                    MessagePayload::HelloYourself(hy) => (
+                        hy.connection_settings.clone(),
+                        metadata_supports_retry(&hy.metadata),
+                    ),
                     MessagePayload::ProtocolError(e) => {
                         return Err(SessionError::Protocol(e.description.to_owned()));
                     }
@@ -585,6 +601,7 @@ where
             }
             Err(e) => return Err(SessionError::Protocol(e.to_string())),
         };
+        self.peer_supports_retry = peer_supports_retry;
 
         Ok(self.make_root_handle(settings, peer_settings))
     }
@@ -601,7 +618,7 @@ where
         self.role = SessionRole::Acceptor;
 
         // Receive Hello
-        let peer_settings = match self.rx.recv().await {
+        let (peer_settings, peer_supports_retry) = match self.rx.recv().await {
             Ok(Some(msg)) => {
                 let payload = msg.map(|m| m.payload);
                 match &*payload {
@@ -612,7 +629,10 @@ where
                                 h.version
                             )));
                         }
-                        h.connection_settings.clone()
+                        (
+                            h.connection_settings.clone(),
+                            metadata_supports_retry(&h.metadata),
+                        )
                     }
                     MessagePayload::ProtocolError(e) => {
                         return Err(SessionError::Protocol(e.description.to_owned()));
@@ -629,6 +649,7 @@ where
             }
             Err(e) => return Err(SessionError::Protocol(e.to_string())),
         };
+        self.peer_supports_retry = peer_supports_retry;
 
         // Acceptor parity is opposite of initiator
         let our_settings = ConnectionSettings {
@@ -638,13 +659,16 @@ where
         self.parity = our_settings.parity;
         self.conn_ids = IdAllocator::new(our_settings.parity);
 
+        let mut hello_metadata = metadata.to_vec();
+        append_retry_support_metadata(&mut hello_metadata);
+
         // Send HelloYourself
         self.sess_core
             .send(Message {
                 connection_id: ConnectionId::ROOT,
                 payload: MessagePayload::HelloYourself(HelloYourself {
                     connection_settings: our_settings.clone(),
-                    metadata,
+                    metadata: hello_metadata,
                 }),
             })
             .await
@@ -697,6 +721,7 @@ where
             control_tx: Some(self.control_tx.clone()),
             closed_rx,
             parity,
+            peer_supports_retry: self.peer_supports_retry,
         }
     }
 

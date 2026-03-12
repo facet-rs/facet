@@ -106,7 +106,7 @@ where
                 idem: false,
             };
         }
-        ::roam::RetryPolicy::default()
+        ::roam::RetryPolicy::VOLATILE
     }
     async fn handle(&self, call: ::roam::SelfRef<::roam::RequestCall<'static>>, reply: R) {
         let method_id = call.method_id;

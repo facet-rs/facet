@@ -424,7 +424,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
         {
             fn retry_policy(&self, method_id: #roam::MethodId) -> #roam::RetryPolicy {
                 #(#retry_policy_arms)*
-                #roam::RetryPolicy::default()
+                #roam::RetryPolicy::VOLATILE
             }
 
             async fn handle(&self, call: #roam::SelfRef<#roam::RequestCall<'static>>, reply: R) {

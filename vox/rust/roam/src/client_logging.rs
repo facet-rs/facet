@@ -210,7 +210,7 @@ mod tests {
             method_name: "record",
             args: &[],
             return_shape: &<() as facet::Facet<'static>>::SHAPE,
-            retry: crate::RetryPolicy::default(),
+            retry: crate::RetryPolicy::VOLATILE,
             doc: None,
         };
 

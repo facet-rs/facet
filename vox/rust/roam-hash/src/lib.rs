@@ -316,7 +316,7 @@ pub fn method_descriptor<'a, 'r, A: Facet<'a>, R: Facet<'r>>(
         method_name,
         arg_names,
         doc,
-        RetryPolicy::default(),
+        RetryPolicy::VOLATILE,
     )
 }
 

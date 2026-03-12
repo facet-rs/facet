@@ -1,6 +1,6 @@
 use facet::Facet;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use moire::task::FutureExt;
 use roam_types::{
@@ -9,6 +9,7 @@ use roam_types::{
     IncomingChannelMessage, Message, MessageFamily, MessagePayload, Metadata, MethodId, Parity,
     Payload, ReplySink, RequestBody, RequestCall, RequestCancel, RequestMessage, RequestResponse,
     RetryPolicy, RoamError, RpcPlan, SelfRef, Tx, bind_channels_caller_args, channel,
+    ensure_operation_id, metadata_operation_id,
 };
 
 use crate::session::{
@@ -139,6 +140,49 @@ impl Handler<DriverReplySink> for BlockingHandler {
 struct PersistentReplyingHandler {
     was_cancelled: Arc<AtomicBool>,
     release: Arc<tokio::sync::Notify>,
+}
+
+struct OperationIdHandler;
+
+impl Handler<DriverReplySink> for OperationIdHandler {
+    async fn handle(&self, call: SelfRef<RequestCall<'static>>, reply: DriverReplySink) {
+        let operation_id = metadata_operation_id(&call.metadata).expect("operation id metadata");
+        reply
+            .send_reply(RequestResponse {
+                ret: Payload::outgoing(&operation_id),
+                channels: vec![],
+                metadata: Default::default(),
+            })
+            .await;
+    }
+}
+
+struct ReplayHandler {
+    runs: Arc<std::sync::atomic::AtomicUsize>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+impl Handler<DriverReplySink> for ReplayHandler {
+    fn retry_policy(&self, _method_id: MethodId) -> RetryPolicy {
+        RetryPolicy::PERSIST
+    }
+
+    async fn handle(&self, call: SelfRef<RequestCall<'static>>, reply: DriverReplySink) {
+        self.runs.fetch_add(1, Ordering::SeqCst);
+        self.release.notified().await;
+        let args_bytes = match &call.args {
+            Payload::Incoming(bytes) => *bytes,
+            _ => panic!("expected incoming payload"),
+        };
+        let result: u32 = facet_postcard::from_slice(args_bytes).expect("deserialize args");
+        reply
+            .send_reply(RequestResponse {
+                ret: Payload::outgoing(&result),
+                channels: vec![],
+                metadata: Default::default(),
+            })
+            .await;
+    }
 }
 
 impl Handler<DriverReplySink> for PersistentReplyingHandler {
@@ -476,7 +520,7 @@ async fn cancel_aborts_in_flight_handler() {
             let (server_caller, _sh) = acceptor(server_conduit)
                 .establish::<DriverCaller>(BlockingHandler {
                     was_cancelled,
-                    retry: RetryPolicy::default(),
+                    retry: RetryPolicy::VOLATILE,
                 })
                 .await
                 .expect("server handshake failed");
@@ -635,6 +679,152 @@ async fn cancel_does_not_abort_persist_handler() {
 }
 
 #[tokio::test]
+async fn caller_injects_operation_id_when_peer_supports_retry() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let server_task = moire::task::spawn(
+        async move {
+            let (server_caller, _sh) = acceptor(server_conduit)
+                .establish::<DriverCaller>(OperationIdHandler)
+                .await
+                .expect("server handshake failed");
+            server_caller
+        }
+        .named("server_setup"),
+    );
+
+    let (caller, _sh) = initiator(client_conduit)
+        .establish::<DriverCaller>(())
+        .await
+        .expect("client handshake failed");
+
+    let _server_caller_guard = server_task.await.expect("server setup failed");
+
+    let response = caller
+        .call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&7_u32),
+            channels: vec![],
+            metadata: Default::default(),
+        })
+        .await
+        .expect("call should succeed");
+
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let operation_id: u64 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    assert_ne!(operation_id, 0);
+}
+
+#[tokio::test]
+async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let runs = Arc::new(AtomicUsize::new(0));
+    let runs_check = Arc::clone(&runs);
+    let release = Arc::new(tokio::sync::Notify::new());
+    let release_server = Arc::clone(&release);
+
+    let server_task = moire::task::spawn(
+        async move {
+            let (server_caller, _sh) = acceptor(server_conduit)
+                .establish::<DriverCaller>(ReplayHandler {
+                    runs,
+                    release: release_server,
+                })
+                .await
+                .expect("server handshake failed");
+            server_caller
+        }
+        .named("server_setup"),
+    );
+
+    let (caller, _sh) = initiator(client_conduit)
+        .establish::<DriverCaller>(())
+        .await
+        .expect("client handshake failed");
+
+    let _server_caller_guard = server_task.await.expect("server setup failed");
+
+    let mut metadata = Metadata::default();
+    ensure_operation_id(&mut metadata, 99);
+
+    let first = moire::task::spawn(
+        {
+            let caller = caller.clone();
+            let metadata = metadata.clone();
+            async move {
+                caller
+                    .call(RequestCall {
+                        method_id: MethodId(1),
+                        args: Payload::outgoing(&11_u32),
+                        channels: vec![],
+                        metadata,
+                    })
+                    .await
+            }
+        }
+        .named("first_duplicate_call"),
+    );
+
+    let second = moire::task::spawn(
+        {
+            let caller = caller.clone();
+            let metadata = metadata.clone();
+            async move {
+                caller
+                    .call(RequestCall {
+                        method_id: MethodId(1),
+                        args: Payload::outgoing(&11_u32),
+                        channels: vec![],
+                        metadata,
+                    })
+                    .await
+            }
+        }
+        .named("second_duplicate_call"),
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(runs_check.load(Ordering::SeqCst), 1);
+
+    release.notify_waiters();
+
+    for response in [
+        first.await.expect("first join"),
+        second.await.expect("second join"),
+    ] {
+        let response = response.expect("duplicate call should succeed");
+        let ret_bytes = match &response.ret {
+            Payload::Incoming(bytes) => *bytes,
+            _ => panic!("expected incoming payload in response"),
+        };
+        let value: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+        assert_eq!(value, 11);
+    }
+    assert_eq!(runs_check.load(Ordering::SeqCst), 1);
+
+    let replayed = caller
+        .call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&11_u32),
+            channels: vec![],
+            metadata,
+        })
+        .await
+        .expect("sealed replay should succeed");
+    let ret_bytes = match &replayed.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let value: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    assert_eq!(value, 11);
+    assert_eq!(runs_check.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn in_flight_call_returns_cancelled_when_peer_closes() {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
@@ -651,7 +841,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
                 })
                 .establish::<DriverCaller>(BlockingHandler {
                     was_cancelled,
-                    retry: RetryPolicy::default(),
+                    retry: RetryPolicy::VOLATILE,
                 })
                 .await
                 .expect("server handshake failed");
@@ -718,7 +908,7 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
             let (server_caller, _sh) = acceptor(server_conduit)
                 .establish::<DriverCaller>(BlockingHandler {
                     was_cancelled: Arc::new(AtomicBool::new(false)),
-                    retry: RetryPolicy::default(),
+                    retry: RetryPolicy::VOLATILE,
                 })
                 .await
                 .expect("server handshake failed");

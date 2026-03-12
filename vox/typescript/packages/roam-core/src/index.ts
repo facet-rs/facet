@@ -88,3 +88,9 @@ export {
   clientMetadataToEntries,
   metadataEntriesToClientMetadata,
 } from "./metadata.ts";
+
+export {
+  OPERATION_ID_METADATA_KEY,
+  RETRY_SUPPORT_METADATA_KEY,
+  RETRY_SUPPORT_VERSION,
+} from "./retry.ts";

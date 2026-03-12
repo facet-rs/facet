@@ -262,7 +262,7 @@ pub async fn run_request_context_end_to_end<L>(
         .describe()
         .await
         .expect("describe call should succeed");
-    assert_eq!(described, "describe:0");
+    assert_eq!(described, "describe:1");
 
     let plain = client.plain().await.expect("plain call should succeed");
     assert_eq!(plain, "plain");

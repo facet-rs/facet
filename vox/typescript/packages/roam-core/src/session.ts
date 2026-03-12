@@ -36,10 +36,15 @@ import {
 import type { Caller, CallerRequest } from "./caller.ts";
 import { MiddlewareCaller } from "./caller.ts";
 import type { ClientMiddleware } from "./middleware.ts";
-import { clientMetadataToEntries } from "./metadata.ts";
+import { ClientMetadata, clientMetadataToEntries } from "./metadata.ts";
 import type { Conduit } from "./conduit.ts";
 import { AsyncQueue } from "./internal/async_queue.ts";
 import { deferred, type Deferred } from "./internal/deferred.ts";
+import {
+  appendRetrySupportMetadata,
+  ensureOperationId,
+  metadataSupportsRetry,
+} from "./retry.ts";
 import {
   firstIdForParity,
   oppositeParity,
@@ -139,13 +144,16 @@ class SessionCore {
   private closeError: SessionError | null = null;
   private rootConnectionValue: ConnectionHandle | null = null;
   private runPromise: Promise<void> | null = null;
+  private readonly peerSupportsRetry: boolean;
 
   constructor(
     private readonly conduit: Conduit<Message>,
     private readonly localRootSettings: ConnectionSettings,
     private readonly peerRootSettings: ConnectionSettings,
+    peerSupportsRetry: boolean,
     private readonly onConnection?: (connection: ConnectionHandle) => void | Promise<void>,
   ) {
+    this.peerSupportsRetry = peerSupportsRetry;
     this.nextConnectionId = firstIdForParity(localRootSettings.parity);
     this.sessionHandle = new SessionHandle(this);
   }
@@ -168,6 +176,7 @@ class SessionCore {
         0n,
         this.localRootSettings,
         this.peerRootSettings,
+        this.peerSupportsRetry,
       );
       this.connections.set(0n, this.rootConnectionValue);
     }
@@ -348,6 +357,7 @@ class SessionCore {
       connectionId,
       localSettings,
       value.connection_settings,
+      this.peerSupportsRetry,
     );
     this.connections.set(connectionId, connection);
     await this.sendMessage(messageAccept(connectionId, localSettings, []));
@@ -368,6 +378,7 @@ class SessionCore {
       connectionId,
       pending.localSettings,
       peerSettings,
+      this.peerSupportsRetry,
     );
     this.connections.set(connectionId, connection);
     pending.result.resolve(connection);
@@ -415,6 +426,7 @@ class SessionCore {
         return;
 
       case "Cancel":
+        connection.enqueueIncomingCancel(request.id);
         return;
     }
   }
@@ -469,8 +481,10 @@ export class ConnectionHandle {
   private readonly channelAllocator: ChannelIdAllocator;
   private readonly channelRegistry: ChannelRegistry;
   private readonly incomingCalls = new AsyncQueue<IncomingCall>();
+  private readonly incomingCancels = new AsyncQueue<bigint>();
   private readonly pendingResponses = new Map<bigint, PendingResponse>();
   private nextRequestId: bigint;
+  private nextOperationId = 1n;
   private closed = false;
   private flushPromise: Promise<void> | null = null;
 
@@ -479,6 +493,7 @@ export class ConnectionHandle {
     readonly id: bigint,
     readonly localSettings: ConnectionSettings,
     readonly peerSettings: ConnectionSettings,
+    readonly peerSupportsRetry: boolean,
   ) {
     this.role = roleFromParity(localSettings.parity);
     this.channelAllocator = new ChannelIdAllocator(this.role);
@@ -518,7 +533,11 @@ export class ConnectionHandle {
       values.length === 0
         ? new Uint8Array(0)
         : encodeWithSchema(values, request.descriptor.args, request.schemaRegistry);
-    const metadata = request.metadata ? clientMetadataToEntries(request.metadata) : [];
+    const metadataCarrier = request.metadata ? request.metadata.clone() : new ClientMetadata();
+    if (this.peerSupportsRetry) {
+      ensureOperationId(metadataCarrier, this.nextOperationId++);
+    }
+    const metadata = clientMetadataToEntries(metadataCarrier);
     const channels = request.channels ?? [];
     const requestId = this.nextRequestId;
     this.nextRequestId += 2n;
@@ -608,6 +627,14 @@ export class ConnectionHandle {
     return this.incomingCalls.shift();
   }
 
+  enqueueIncomingCancel(requestId: bigint): void {
+    this.incomingCancels.push(requestId);
+  }
+
+  nextIncomingCancel(): Promise<bigint | null> {
+    return this.incomingCancels.shift();
+  }
+
   resolveResponse(requestId: bigint, payload: Uint8Array): void {
     const pending = this.pendingResponses.get(requestId);
     if (!pending) {
@@ -644,6 +671,7 @@ export class ConnectionHandle {
     }
     this.closed = true;
     this.incomingCalls.close();
+    this.incomingCancels.close();
     this.channelRegistry.closeAll();
     for (const [requestId, pending] of this.pendingResponses) {
       clearTimeout(pending.timer);
@@ -726,12 +754,16 @@ export class Session {
       parity: parityOdd(),
       max_concurrent_requests: options.maxConcurrentRequests ?? 64,
     };
-    await conduit.send(messageHello(helloV7(localSettings.parity, localSettings.max_concurrent_requests, options.metadata ?? [])));
+    const helloMetadata = appendRetrySupportMetadata(options.metadata ?? []);
+    await conduit.send(
+      messageHello(helloV7(localSettings.parity, localSettings.max_concurrent_requests, helloMetadata)),
+    );
     const helloYourself = await waitForHelloYourself(conduit);
     const core = new SessionCore(
       conduit,
       localSettings,
       helloYourself.connection_settings,
+      metadataSupportsRetry(helloYourself.metadata),
       options.onConnection,
     );
     core.rootConnection();
@@ -751,15 +783,17 @@ export class Session {
       parity: parityEven(),
       max_concurrent_requests: options.maxConcurrentRequests ?? 64,
     };
+    const helloMetadata = appendRetrySupportMetadata(options.metadata ?? []);
     const response: HelloYourself = {
       connection_settings: localSettings,
-      metadata: options.metadata ?? [],
+      metadata: helloMetadata,
     };
     await conduit.send(messageHelloYourself(response));
     const core = new SessionCore(
       conduit,
       localSettings,
       hello.connection_settings,
+      metadataSupportsRetry(hello.metadata),
       options.onConnection,
     );
     core.rootConnection();
