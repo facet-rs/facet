@@ -4,10 +4,9 @@
 // in the same browser tab, with no network involved.
 
 import init, { start_acceptor } from "../pkg/wasm_inprocess_tests.js";
-import { InProcessTransport } from "@bearcove/roam-inprocess";
+import { InProcessLink } from "@bearcove/roam-inprocess";
 import {
-  helloExchangeInitiator,
-  defaultHello,
+  session,
 } from "@bearcove/roam-core";
 import type { TestbedClient } from "@bearcove/roam-generated/testbed.ts";
 
@@ -326,28 +325,28 @@ async function runTests(): Promise<void> {
     await init();
     log("WASM module loaded. Setting up in-process transport...");
 
-    // Wire up the in-process transport:
-    // - TS creates InProcessTransport with a deliver callback
+    // Wire up the in-process link:
+    // - TS creates InProcessLink with a deliver callback
     // - Rust creates JsInProcessLink with an on_message callback
     let rustLink: ReturnType<typeof start_acceptor> | null = null;
-    const transport = new InProcessTransport((payload: Uint8Array) => {
+    const link = new InProcessLink((payload: Uint8Array) => {
       if (!rustLink) {
         throw new Error("rustLink not initialized");
       }
       rustLink.deliver(payload);
     });
     rustLink = start_acceptor((payload: Uint8Array) => {
-      transport.pushMessage(payload);
+      link.pushMessage(payload);
     });
 
-    log("Performing hello exchange as initiator...");
-    const connection = await helloExchangeInitiator(transport, defaultHello());
+    log("Establishing session as initiator...");
+    const established = await session.initiatorTransport(link, { conduit: "bare" });
 
     // Import the TestbedClient constructor dynamically to avoid circular issues
     const { TestbedClient } = await import(
       "@bearcove/roam-generated/testbed.ts"
     );
-    const client = new TestbedClient(connection.asCaller());
+    const client = new TestbedClient(established.rootConnection().caller());
 
     log("Connection established! Running tests...");
 

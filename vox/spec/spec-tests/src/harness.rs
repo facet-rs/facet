@@ -9,7 +9,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::os::fd::{AsRawFd, IntoRawFd};
 
 use roam::{Rx, Tx};
-use roam_core::{DriverReplySink, acceptor, initiator, memory_link_pair};
+use roam_core::{
+    DriverReplySink, StableConduit, acceptor, initiator, memory_link_pair,
+    prepare_acceptor_attachment, single_attachment_source,
+};
 use roam_shm::HostHub;
 use roam_shm::ShmLink;
 use roam_shm::bootstrap::{BootstrapStatus, decode_request, encode_request};
@@ -84,6 +87,12 @@ pub enum SubjectTestTransport {
 pub enum SubjectShmMode {
     GuestServer,
     HostServer,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubjectConduitMode {
+    Bare,
+    Stable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -182,6 +191,18 @@ fn shm_subject_mode() -> SubjectShmMode {
         SubjectShmMode::HostServer
     } else {
         SubjectShmMode::GuestServer
+    }
+}
+
+fn subject_conduit_mode() -> SubjectConduitMode {
+    match std::env::var("SPEC_CONDUIT")
+        .ok()
+        .unwrap_or_else(|| "bare".to_string())
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "stable" => SubjectConduitMode::Stable,
+        _ => SubjectConduitMode::Bare,
     }
 }
 
@@ -610,10 +631,26 @@ async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient, Child), String>
     };
     stream.set_nodelay(true).unwrap();
 
-    let (client, _sh) = acceptor(StreamLink::tcp(stream))
-        .establish::<TestbedClient>(NoopHandler)
+    let (client, _sh) = if subject_conduit_mode() == SubjectConduitMode::Stable {
+        let attachment = prepare_acceptor_attachment(StreamLink::tcp(stream))
+            .await
+            .map_err(|e| format!("stable acceptor attachment: {e}"))?;
+        let conduit = StableConduit::<roam_types::MessageFamily, _>::new(single_attachment_source(
+            attachment,
+        ))
         .await
-        .map_err(|e| format!("handshake: {e}"))?;
+        .map_err(|e| format!("stable conduit setup: {e}"))?;
+
+        acceptor(conduit)
+            .establish::<TestbedClient>(NoopHandler)
+            .await
+            .map_err(|e| format!("handshake: {e}"))?
+    } else {
+        acceptor(StreamLink::tcp(stream))
+            .establish::<TestbedClient>(NoopHandler)
+            .await
+            .map_err(|e| format!("handshake: {e}"))?
+    };
 
     Ok((client, child))
 }

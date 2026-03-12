@@ -89,3 +89,8 @@ export {
   encodeMessage,
   decodeMessage,
 } from "./codec.ts";
+
+export {
+  MessageSchema,
+  wireSchemaRegistry,
+} from "./schemas.ts";

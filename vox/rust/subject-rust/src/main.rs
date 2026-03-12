@@ -1,7 +1,7 @@
 //! Rust subject binary for the roam compliance suite.
 
 use roam::{Rx, Tx};
-use roam_core::initiator;
+use roam_core::{StableConduit, initiator, single_link_source};
 use roam_shm::bootstrap::{BootstrapStatus, encode_request};
 use roam_shm::segment::Segment;
 use roam_stream::StreamLink;
@@ -160,6 +160,13 @@ impl Testbed for TestbedService {
     }
 }
 
+fn use_stable_conduit() -> bool {
+    matches!(
+        std::env::var("SPEC_CONDUIT").ok().as_deref(),
+        Some("stable")
+    )
+}
+
 fn main() -> Result<(), String> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -191,10 +198,23 @@ async fn connect_and_serve() -> Result<(), String> {
         .map_err(|e| format!("connect failed: {e}"))?;
     stream.set_nodelay(true).unwrap();
 
-    let (root_caller_guard, _sh) = initiator(StreamLink::tcp(stream))
-        .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
+    let (root_caller_guard, _sh) = if use_stable_conduit() {
+        let conduit = StableConduit::<roam_types::MessageFamily, _>::new(single_link_source(
+            StreamLink::tcp(stream),
+        ))
         .await
-        .map_err(|e| format!("handshake failed: {e}"))?;
+        .map_err(|e| format!("stable conduit setup failed: {e}"))?;
+
+        initiator(conduit)
+            .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
+            .await
+            .map_err(|e| format!("handshake failed: {e}"))?
+    } else {
+        initiator(StreamLink::tcp(stream))
+            .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
+            .await
+            .map_err(|e| format!("handshake failed: {e}"))?
+    };
 
     let _root_caller_guard = root_caller_guard;
     std::future::pending::<()>().await;

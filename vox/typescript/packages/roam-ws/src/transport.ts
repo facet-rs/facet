@@ -1,70 +1,44 @@
-// WebSocket transport for roam messages.
-//
-// r[impl transport.message.one-to-one] - Each WebSocket message = one roam message.
-// r[impl transport.message.binary] - Uses binary WebSocket frames.
+import type { Link, LinkSource } from "@bearcove/roam-core";
 
-import type { MessageTransport } from "@bearcove/roam-core";
-
-/**
- * WebSocket transport for roam messages.
- *
- * Works in both browser (native WebSocket) and Node.js environments.
- * Messages are postcard-encoded directly without length-prefix framing
- * since WebSocket provides native message boundaries.
- */
-export class WsTransport implements MessageTransport {
-  private ws: WebSocket;
+export class WsLink implements Link {
+  lastReceived: Uint8Array | undefined;
   private pendingMessages: Uint8Array[] = [];
-  private waitingResolve: ((msg: Uint8Array | null) => void) | null = null;
+  private waitingResolve: ((payload: Uint8Array | null) => void) | null = null;
   private closed = false;
-  private error: Error | null = null;
 
-  /** Last decoded bytes (for error detection). */
-  lastDecoded: Uint8Array = new Uint8Array(0);
-
-  constructor(ws: WebSocket) {
-    this.ws = ws;
-
+  constructor(private readonly ws: WebSocket) {
     ws.binaryType = "arraybuffer";
 
     ws.addEventListener("message", (event: MessageEvent) => {
-      if (event.data instanceof ArrayBuffer) {
-        const data = new Uint8Array(event.data);
-        this.lastDecoded = data;
-
-        if (this.waitingResolve) {
-          this.waitingResolve(data);
-          this.waitingResolve = null;
-        } else {
-          this.pendingMessages.push(data);
-        }
+      if (!(event.data instanceof ArrayBuffer)) {
+        return;
       }
-      // Text frames are ignored (protocol violation but we handle gracefully)
-    });
-
-    ws.addEventListener("error", () => {
-      this.error = new Error("WebSocket error");
-      this.closed = true;
+      const payload = new Uint8Array(event.data);
+      this.lastReceived = payload;
       if (this.waitingResolve) {
-        this.waitingResolve(null);
+        const resolve = this.waitingResolve;
         this.waitingResolve = null;
+        resolve(payload);
+      } else {
+        this.pendingMessages.push(payload);
       }
     });
 
     ws.addEventListener("close", () => {
       this.closed = true;
-      if (this.waitingResolve) {
-        this.waitingResolve(null);
-        this.waitingResolve = null;
-      }
+      const resolve = this.waitingResolve;
+      this.waitingResolve = null;
+      resolve?.(null);
+    });
+
+    ws.addEventListener("error", () => {
+      this.closed = true;
+      const resolve = this.waitingResolve;
+      this.waitingResolve = null;
+      resolve?.(null);
     });
   }
 
-  /**
-   * Send a message over WebSocket.
-   *
-   * r[impl transport.message.binary] - Send as binary frame.
-   */
   async send(payload: Uint8Array): Promise<void> {
     if (this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("WebSocket not open");
@@ -72,75 +46,46 @@ export class WsTransport implements MessageTransport {
     this.ws.send(payload);
   }
 
-  /**
-   * Receive a message with timeout.
-   *
-   * Returns null if timeout expires or connection closes.
-   */
-  async recvTimeout(timeoutMs: number): Promise<Uint8Array | null> {
-    // Check for queued messages first
+  recv(): Promise<Uint8Array | null> {
     if (this.pendingMessages.length > 0) {
-      return this.pendingMessages.shift()!;
-    }
-
-    // Check for errors or closed connection
-    if (this.error) {
-      const err = this.error;
-      this.error = null;
-      throw err;
+      return Promise.resolve(this.pendingMessages.shift()!);
     }
     if (this.closed) {
-      return null;
+      return Promise.resolve(null);
     }
-
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.waitingResolve = null;
-        resolve(null);
-      }, timeoutMs);
-
-      this.waitingResolve = (msg) => {
-        clearTimeout(timer);
-        if (this.error) {
-          const err = this.error;
-          this.error = null;
-          reject(err);
-        } else {
-          resolve(msg);
-        }
-      };
+    return new Promise((resolve) => {
+      this.waitingResolve = resolve;
     });
   }
 
-  /**
-   * Close the WebSocket.
-   */
   close(): void {
+    this.closed = true;
     this.ws.close();
   }
 
-  /**
-   * Returns true if the WebSocket is permanently closed.
-   */
   isClosed(): boolean {
     return this.closed;
   }
 }
 
-/**
- * Connect to a WebSocket server and return a transport.
- */
-export function connectWs(url: string): Promise<WsTransport> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
-    ws.binaryType = "arraybuffer";
+export class WsLinkSource implements LinkSource<WsLink> {
+  constructor(private readonly url: string) {}
 
-    ws.addEventListener("open", () => {
-      resolve(new WsTransport(ws));
+  async nextLink(): Promise<{ link: WsLink }> {
+    const ws = await new Promise<WebSocket>((resolve, reject) => {
+      const socket = new WebSocket(this.url);
+      socket.binaryType = "arraybuffer";
+      socket.addEventListener("open", () => resolve(socket), { once: true });
+      socket.addEventListener(
+        "error",
+        () => reject(new Error(`failed to connect to ${this.url}`)),
+        { once: true },
+      );
     });
+    return { link: new WsLink(ws) };
+  }
+}
 
-    ws.addEventListener("error", () => {
-      reject(new Error(`Failed to connect to ${url}`));
-    });
-  });
+export function connectWs(url: string): LinkSource<WsLink> {
+  return new WsLinkSource(url);
 }

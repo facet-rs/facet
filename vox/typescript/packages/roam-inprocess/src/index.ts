@@ -1,3 +1,2 @@
-// In-process transport for roam — WASM ↔ TypeScript in the same browser tab.
+export { InProcessLink } from "./transport.ts";
 
-export { InProcessTransport } from "./transport.ts";

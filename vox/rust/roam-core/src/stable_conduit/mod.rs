@@ -160,6 +160,38 @@ pub trait LinkSource: Send + 'static {
     ) -> impl Future<Output = std::io::Result<Attachment<Self::Link>>> + Send + '_;
 }
 
+/// A one-shot [`LinkSource`] backed by a single attachment.
+pub struct SingleAttachmentSource<L> {
+    attachment: Option<Attachment<L>>,
+}
+
+/// Build a one-shot [`LinkSource`] from a prepared attachment.
+pub fn single_attachment_source<L: Link + Send + 'static>(
+    attachment: Attachment<L>,
+) -> SingleAttachmentSource<L> {
+    SingleAttachmentSource {
+        attachment: Some(attachment),
+    }
+}
+
+/// Build a one-shot initiator-side [`LinkSource`] from a raw link.
+pub fn single_link_source<L: Link + Send + 'static>(link: L) -> SingleAttachmentSource<L> {
+    single_attachment_source(Attachment::initiator(link))
+}
+
+impl<L: Link + Send + 'static> LinkSource for SingleAttachmentSource<L> {
+    type Link = L;
+
+    async fn next_link(&mut self) -> std::io::Result<Attachment<Self::Link>> {
+        self.attachment.take().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::ConnectionRefused,
+                "single-use LinkSource exhausted",
+            )
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // StableConduit
 // ---------------------------------------------------------------------------
@@ -175,6 +207,7 @@ struct Shared<LS: LinkSource> {
     inner: Mutex<Inner<LS>>,
     reconnecting: AtomicBool,
     reconnected: moire::sync::Notify,
+    tx_ready: moire::sync::Notify,
 }
 
 struct Inner<LS: LinkSource> {
@@ -184,6 +217,7 @@ struct Inner<LS: LinkSource> {
     link_generation: u64,
     tx: Option<<LS::Link as Link>::Tx>,
     rx: Option<<LS::Link as Link>::Rx>,
+    tx_checked_out: bool,
     resume_key: Option<ResumeKey>,
     // r[impl stable.seq]
     next_send_seq: PacketSeq,
@@ -207,6 +241,7 @@ impl<F: MsgFamily, LS: LinkSource> StableConduit<F, LS> {
             link_generation: 0,
             tx: Some(link_tx),
             rx: Some(link_rx),
+            tx_checked_out: false,
             resume_key: Some(resume_key),
             next_send_seq: PacketSeq(0),
             last_received: None,
@@ -218,6 +253,7 @@ impl<F: MsgFamily, LS: LinkSource> StableConduit<F, LS> {
                 inner: Mutex::new(inner),
                 reconnecting: AtomicBool::new(false),
                 reconnected: moire::sync::Notify::new("stable_conduit.reconnected"),
+                tx_ready: moire::sync::Notify::new("stable_conduit.tx_ready"),
             }),
             _phantom: PhantomData,
         })
@@ -327,7 +363,9 @@ impl<LS: LinkSource> Shared<LS> {
         inner.link_generation = inner.link_generation.wrapping_add(1);
         inner.tx = Some(new_tx);
         inner.rx = Some(new_rx);
+        inner.tx_checked_out = false;
         inner.resume_key = Some(new_resume_key);
+        self.tx_ready.notify_waiters();
 
         Ok(())
     }
@@ -441,7 +479,7 @@ fn fresh_key() -> Result<ResumeKey, StableConduitError> {
 
 impl<F: MsgFamily, LS: LinkSource> Conduit for StableConduit<F, LS>
 where
-    <LS::Link as Link>::Tx: Clone + Send + 'static,
+    <LS::Link as Link>::Tx: Send + 'static,
     <LS::Link as Link>::Rx: Send + 'static,
     LS: Send + 'static,
 {
@@ -474,7 +512,7 @@ pub struct StableConduitTx<F: MsgFamily, LS: LinkSource> {
 
 impl<F: MsgFamily, LS: LinkSource> ConduitTx for StableConduitTx<F, LS>
 where
-    <LS::Link as Link>::Tx: Clone + Send + 'static,
+    <LS::Link as Link>::Tx: Send + 'static,
     <LS::Link as Link>::Rx: Send + 'static,
     LS: Send + 'static,
 {
@@ -485,18 +523,40 @@ where
         Self: 'a;
 
     async fn reserve(&self) -> std::io::Result<Self::Permit<'_>> {
+        enum TxReservation<Tx> {
+            CheckedOut { tx: Tx, generation: u64 },
+            Wait,
+            Reconnect { generation: u64 },
+        }
+
         loop {
-            let (tx, generation) = {
-                let inner = self
+            let reservation = {
+                let mut inner = self
                     .shared
                     .lock_inner()
                     .map_err(|e| std::io::Error::other(e.to_string()))?;
-                (inner.tx.clone(), inner.link_generation)
+                match inner.tx.take() {
+                    Some(tx) => {
+                        inner.tx_checked_out = true;
+                        TxReservation::CheckedOut {
+                            tx,
+                            generation: inner.link_generation,
+                        }
+                    }
+                    None if inner.tx_checked_out => TxReservation::Wait,
+                    None => TxReservation::Reconnect {
+                        generation: inner.link_generation,
+                    },
+                }
             };
 
-            let tx = match tx {
-                Some(tx) => tx,
-                None => {
+            let (tx, generation) = match reservation {
+                TxReservation::CheckedOut { tx, generation } => (tx, generation),
+                TxReservation::Wait => {
+                    self.shared.tx_ready.notified().await;
+                    continue;
+                }
+                TxReservation::Reconnect { generation } => {
                     self.shared
                         .ensure_reconnected(generation)
                         .await
@@ -507,6 +567,25 @@ where
 
             match tx.reserve().await {
                 Ok(link_permit) => {
+                    let restore_ok = {
+                        let mut inner = self
+                            .shared
+                            .lock_inner()
+                            .map_err(|e| std::io::Error::other(e.to_string()))?;
+                        let restore_ok = inner.link_generation == generation && inner.tx.is_none();
+                        if restore_ok {
+                            inner.tx = Some(tx);
+                        }
+                        inner.tx_checked_out = false;
+                        self.shared.tx_ready.notify_waiters();
+                        restore_ok
+                    };
+
+                    if !restore_ok {
+                        drop(link_permit);
+                        continue;
+                    }
+
                     return Ok(StableConduitPermit {
                         shared: Arc::clone(&self.shared),
                         link_permit,
@@ -515,6 +594,16 @@ where
                     });
                 }
                 Err(_) => {
+                    {
+                        let mut inner = self
+                            .shared
+                            .lock_inner()
+                            .map_err(|e| std::io::Error::other(e.to_string()))?;
+                        if inner.link_generation == generation {
+                            inner.tx_checked_out = false;
+                        }
+                        self.shared.tx_ready.notify_waiters();
+                    }
                     self.shared
                         .ensure_reconnected(generation)
                         .await

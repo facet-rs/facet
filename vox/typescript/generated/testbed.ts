@@ -3,14 +3,16 @@
 
 import type {
   Caller,
-  ChannelingDispatcher,
+  Dispatcher,
   MethodDescriptor,
+  RequestContext,
   RoamCall,
   Schema,
   SchemaRegistry,
   ServiceDescriptor,
+  SessionTransportOptions,
 } from "@bearcove/roam-core";
-import { CallBuilder, defaultHello, helloExchangeInitiator } from "@bearcove/roam-core";
+import { session } from "@bearcove/roam-core";
 import { RpcError } from "@bearcove/roam-core";
 import { bindChannels, Rx, Tx } from "@bearcove/roam-core";
 import { connectWs } from "@bearcove/roam-ws";
@@ -131,49 +133,49 @@ export type SwapPairResponse = [string, number];
 // Caller interface for Testbed
 export interface TestbedCaller {
   /** Echoes the message back. */
-  echo(message: string): CallBuilder<string>;
+  echo(message: string): Promise<string>;
   /** Returns the message reversed. */
-  reverse(message: string): CallBuilder<string>;
+  reverse(message: string): Promise<string>;
   /** Divides two numbers, returning an error if divisor is zero. */
-  divide(dividend: bigint, divisor: bigint): CallBuilder<{ ok: true; value: bigint } | { ok: false; error: MathError }>;
+  divide(dividend: bigint, divisor: bigint): Promise<{ ok: true; value: bigint } | { ok: false; error: MathError }>;
   /** Looks up a user by ID, returning an error if not found. */
-  lookup(id: number): CallBuilder<{ ok: true; value: Person } | { ok: false; error: LookupError }>;
+  lookup(id: number): Promise<{ ok: true; value: Person } | { ok: false; error: LookupError }>;
   /**
    * Client sends numbers, server returns their sum.
    *
    * Tests: client→server streaming. Server receives via `Rx<T>`, returns scalar.
    */
-  sum(numbers: Rx<number>): CallBuilder<bigint>;
+  sum(numbers: Rx<number>): Promise<bigint>;
   /**
    * Server streams numbers back to client.
    *
    * Tests: server→client streaming. Server sends via `Tx<T>`.
    */
-  generate(count: number, output: Tx<number>): CallBuilder<void>;
+  generate(count: number, output: Tx<number>): Promise<void>;
   /**
    * Bidirectional: client sends strings, server echoes each back.
    *
    * Tests: bidirectional streaming. Server receives via `Rx<T>`, sends via `Tx<T>`.
    */
-  transform(input: Rx<string>, output: Tx<string>): CallBuilder<void>;
+  transform(input: Rx<string>, output: Tx<string>): Promise<void>;
   /** Echo a point back. */
-  echoPoint(point: Point): CallBuilder<Point>;
+  echoPoint(point: Point): Promise<Point>;
   /** Create a person and return it. */
-  createPerson(name: string, age: number, email: string | null): CallBuilder<Person>;
+  createPerson(name: string, age: number, email: string | null): Promise<Person>;
   /** Calculate the area of a rectangle. */
-  rectangleArea(rect: Rectangle): CallBuilder<number>;
+  rectangleArea(rect: Rectangle): Promise<number>;
   /** Get a color by name. */
-  parseColor(name: string): CallBuilder<Color | null>;
+  parseColor(name: string): Promise<Color | null>;
   /** Calculate the area of a shape. */
-  shapeArea(shape: Shape): CallBuilder<number>;
+  shapeArea(shape: Shape): Promise<number>;
   /** Create a canvas with given shapes. */
-  createCanvas(name: string, shapes: Shape[], background: Color): CallBuilder<Canvas>;
+  createCanvas(name: string, shapes: Shape[], background: Color): Promise<Canvas>;
   /** Process a message and return a response. */
-  processMessage(msg: Message): CallBuilder<Message>;
+  processMessage(msg: Message): Promise<Message>;
   /** Return multiple points. */
-  getPoints(count: number): CallBuilder<Point[]>;
+  getPoints(count: number): Promise<Point[]>;
   /** Test tuple types. */
-  swapPair(pair: [number, string]): CallBuilder<[string, number]>;
+  swapPair(pair: [number, string]): Promise<[string, number]>;
 }
 
 // Client implementation for Testbed
@@ -185,80 +187,68 @@ export class TestbedClient implements TestbedCaller {
   }
 
   /** Echoes the message back. */
-  echo(message: string): CallBuilder<string> {
+  async echo(message: string): Promise<string> {
     const descriptor = testbed_descriptor.methods[0];
-    return new CallBuilder(async (metadata) => {
-      const value = await this.caller.call({
-        method: "Testbed.echo",
-        args: { message },
-        descriptor,
-        schemaRegistry: testbed_descriptor.schema_registry,
-        metadata,
-      });
-      return value as string;
+    const value = await this.caller.call({
+      method: "Testbed.echo",
+      args: { message },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
     });
+    return value as string;
   }
 
   /** Returns the message reversed. */
-  reverse(message: string): CallBuilder<string> {
+  async reverse(message: string): Promise<string> {
     const descriptor = testbed_descriptor.methods[1];
-    return new CallBuilder(async (metadata) => {
-      const value = await this.caller.call({
-        method: "Testbed.reverse",
-        args: { message },
-        descriptor,
-        schemaRegistry: testbed_descriptor.schema_registry,
-        metadata,
-      });
-      return value as string;
+    const value = await this.caller.call({
+      method: "Testbed.reverse",
+      args: { message },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
     });
+    return value as string;
   }
 
   /** Divides two numbers, returning an error if divisor is zero. */
-  divide(
+  async divide(
     dividend: bigint,
     divisor: bigint,
-  ): CallBuilder<{ ok: true; value: bigint } | { ok: false; error: MathError }> {
+  ): Promise<{ ok: true; value: bigint } | { ok: false; error: MathError }> {
     const descriptor = testbed_descriptor.methods[2];
-    return new CallBuilder(async (metadata) => {
-      try {
-        const value = await this.caller.call({
-          method: "Testbed.divide",
-          args: { dividend, divisor },
-          descriptor,
-          schemaRegistry: testbed_descriptor.schema_registry,
-          metadata,
-        });
-        return { ok: true, value } as { ok: true; value: bigint } | { ok: false; error: MathError };
-      } catch (e) {
-        if (e instanceof RpcError && e.isUserError()) {
-          return { ok: false, error: e.userError } as { ok: true; value: bigint } | { ok: false; error: MathError };
-        }
-        throw e;
+    try {
+      const value = await this.caller.call({
+        method: "Testbed.divide",
+        args: { dividend, divisor },
+        descriptor,
+        schemaRegistry: testbed_descriptor.schema_registry,
+      });
+      return { ok: true, value } as { ok: true; value: bigint } | { ok: false; error: MathError };
+    } catch (e) {
+      if (e instanceof RpcError && e.isUserError()) {
+        return { ok: false, error: e.userError } as { ok: true; value: bigint } | { ok: false; error: MathError };
       }
-    });
+      throw e;
+    }
   }
 
   /** Looks up a user by ID, returning an error if not found. */
-  lookup(id: number): CallBuilder<{ ok: true; value: Person } | { ok: false; error: LookupError }> {
+  async lookup(id: number): Promise<{ ok: true; value: Person } | { ok: false; error: LookupError }> {
     const descriptor = testbed_descriptor.methods[3];
-    return new CallBuilder(async (metadata) => {
-      try {
-        const value = await this.caller.call({
-          method: "Testbed.lookup",
-          args: { id },
-          descriptor,
-          schemaRegistry: testbed_descriptor.schema_registry,
-          metadata,
-        });
-        return { ok: true, value } as { ok: true; value: Person } | { ok: false; error: LookupError };
-      } catch (e) {
-        if (e instanceof RpcError && e.isUserError()) {
-          return { ok: false, error: e.userError } as { ok: true; value: Person } | { ok: false; error: LookupError };
-        }
-        throw e;
+    try {
+      const value = await this.caller.call({
+        method: "Testbed.lookup",
+        args: { id },
+        descriptor,
+        schemaRegistry: testbed_descriptor.schema_registry,
+      });
+      return { ok: true, value } as { ok: true; value: Person } | { ok: false; error: LookupError };
+    } catch (e) {
+      if (e instanceof RpcError && e.isUserError()) {
+        return { ok: false, error: e.userError } as { ok: true; value: Person } | { ok: false; error: LookupError };
       }
-    });
+      throw e;
+    }
   }
 
   /**
@@ -266,7 +256,7 @@ export class TestbedClient implements TestbedCaller {
    *
    * Tests: client→server streaming. Server receives via `Rx<T>`, returns scalar.
    */
-  sum(numbers: Rx<number>): CallBuilder<bigint> {
+  async sum(numbers: Rx<number>): Promise<bigint> {
     const descriptor = testbed_descriptor.methods[4];
     // Bind any Tx/Rx channels in arguments and collect channel IDs
     const channels = bindChannels(
@@ -276,17 +266,14 @@ export class TestbedClient implements TestbedCaller {
       this.caller.getChannelRegistry(),
       testbed_descriptor.schema_registry,
     );
-    return new CallBuilder(async (metadata) => {
-      const value = await this.caller.call({
-        method: "Testbed.sum",
-        args: { numbers },
-        descriptor,
-        schemaRegistry: testbed_descriptor.schema_registry,
-        channels,
-        metadata,
-      });
-      return value as bigint;
+    const value = await this.caller.call({
+      method: "Testbed.sum",
+      args: { numbers },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
+      channels,
     });
+    return value as bigint;
   }
 
   /**
@@ -294,7 +281,7 @@ export class TestbedClient implements TestbedCaller {
    *
    * Tests: server→client streaming. Server sends via `Tx<T>`.
    */
-  generate(count: number, output: Tx<number>): CallBuilder<void> {
+  async generate(count: number, output: Tx<number>): Promise<void> {
     const descriptor = testbed_descriptor.methods[5];
     // Bind any Tx/Rx channels in arguments and collect channel IDs
     const channels = bindChannels(
@@ -304,17 +291,14 @@ export class TestbedClient implements TestbedCaller {
       this.caller.getChannelRegistry(),
       testbed_descriptor.schema_registry,
     );
-    return new CallBuilder(async (metadata) => {
-      const value = await this.caller.call({
-        method: "Testbed.generate",
-        args: { count, output },
-        descriptor,
-        schemaRegistry: testbed_descriptor.schema_registry,
-        channels,
-        metadata,
-      });
-      return value as void;
+    const value = await this.caller.call({
+      method: "Testbed.generate",
+      args: { count, output },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
+      channels,
     });
+    return value as void;
   }
 
   /**
@@ -322,7 +306,7 @@ export class TestbedClient implements TestbedCaller {
    *
    * Tests: bidirectional streaming. Server receives via `Rx<T>`, sends via `Tx<T>`.
    */
-  transform(input: Rx<string>, output: Tx<string>): CallBuilder<void> {
+  async transform(input: Rx<string>, output: Tx<string>): Promise<void> {
     const descriptor = testbed_descriptor.methods[6];
     // Bind any Tx/Rx channels in arguments and collect channel IDs
     const channels = bindChannels(
@@ -332,152 +316,122 @@ export class TestbedClient implements TestbedCaller {
       this.caller.getChannelRegistry(),
       testbed_descriptor.schema_registry,
     );
-    return new CallBuilder(async (metadata) => {
-      const value = await this.caller.call({
-        method: "Testbed.transform",
-        args: { input, output },
-        descriptor,
-        schemaRegistry: testbed_descriptor.schema_registry,
-        channels,
-        metadata,
-      });
-      return value as void;
+    const value = await this.caller.call({
+      method: "Testbed.transform",
+      args: { input, output },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
+      channels,
     });
+    return value as void;
   }
 
   /** Echo a point back. */
-  echoPoint(point: Point): CallBuilder<Point> {
+  async echoPoint(point: Point): Promise<Point> {
     const descriptor = testbed_descriptor.methods[7];
-    return new CallBuilder(async (metadata) => {
-      const value = await this.caller.call({
-        method: "Testbed.echoPoint",
-        args: { point },
-        descriptor,
-        schemaRegistry: testbed_descriptor.schema_registry,
-        metadata,
-      });
-      return value as Point;
+    const value = await this.caller.call({
+      method: "Testbed.echoPoint",
+      args: { point },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
     });
+    return value as Point;
   }
 
   /** Create a person and return it. */
-  createPerson(name: string, age: number, email: string | null): CallBuilder<Person> {
+  async createPerson(name: string, age: number, email: string | null): Promise<Person> {
     const descriptor = testbed_descriptor.methods[8];
-    return new CallBuilder(async (metadata) => {
-      const value = await this.caller.call({
-        method: "Testbed.createPerson",
-        args: { name, age, email },
-        descriptor,
-        schemaRegistry: testbed_descriptor.schema_registry,
-        metadata,
-      });
-      return value as Person;
+    const value = await this.caller.call({
+      method: "Testbed.createPerson",
+      args: { name, age, email },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
     });
+    return value as Person;
   }
 
   /** Calculate the area of a rectangle. */
-  rectangleArea(rect: Rectangle): CallBuilder<number> {
+  async rectangleArea(rect: Rectangle): Promise<number> {
     const descriptor = testbed_descriptor.methods[9];
-    return new CallBuilder(async (metadata) => {
-      const value = await this.caller.call({
-        method: "Testbed.rectangleArea",
-        args: { rect },
-        descriptor,
-        schemaRegistry: testbed_descriptor.schema_registry,
-        metadata,
-      });
-      return value as number;
+    const value = await this.caller.call({
+      method: "Testbed.rectangleArea",
+      args: { rect },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
     });
+    return value as number;
   }
 
   /** Get a color by name. */
-  parseColor(name: string): CallBuilder<Color | null> {
+  async parseColor(name: string): Promise<Color | null> {
     const descriptor = testbed_descriptor.methods[10];
-    return new CallBuilder(async (metadata) => {
-      const value = await this.caller.call({
-        method: "Testbed.parseColor",
-        args: { name },
-        descriptor,
-        schemaRegistry: testbed_descriptor.schema_registry,
-        metadata,
-      });
-      return value as Color | null;
+    const value = await this.caller.call({
+      method: "Testbed.parseColor",
+      args: { name },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
     });
+    return value as Color | null;
   }
 
   /** Calculate the area of a shape. */
-  shapeArea(shape: Shape): CallBuilder<number> {
+  async shapeArea(shape: Shape): Promise<number> {
     const descriptor = testbed_descriptor.methods[11];
-    return new CallBuilder(async (metadata) => {
-      const value = await this.caller.call({
-        method: "Testbed.shapeArea",
-        args: { shape },
-        descriptor,
-        schemaRegistry: testbed_descriptor.schema_registry,
-        metadata,
-      });
-      return value as number;
+    const value = await this.caller.call({
+      method: "Testbed.shapeArea",
+      args: { shape },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
     });
+    return value as number;
   }
 
   /** Create a canvas with given shapes. */
-  createCanvas(name: string, shapes: Shape[], background: Color): CallBuilder<Canvas> {
+  async createCanvas(name: string, shapes: Shape[], background: Color): Promise<Canvas> {
     const descriptor = testbed_descriptor.methods[12];
-    return new CallBuilder(async (metadata) => {
-      const value = await this.caller.call({
-        method: "Testbed.createCanvas",
-        args: { name, shapes, background },
-        descriptor,
-        schemaRegistry: testbed_descriptor.schema_registry,
-        metadata,
-      });
-      return value as Canvas;
+    const value = await this.caller.call({
+      method: "Testbed.createCanvas",
+      args: { name, shapes, background },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
     });
+    return value as Canvas;
   }
 
   /** Process a message and return a response. */
-  processMessage(msg: Message): CallBuilder<Message> {
+  async processMessage(msg: Message): Promise<Message> {
     const descriptor = testbed_descriptor.methods[13];
-    return new CallBuilder(async (metadata) => {
-      const value = await this.caller.call({
-        method: "Testbed.processMessage",
-        args: { msg },
-        descriptor,
-        schemaRegistry: testbed_descriptor.schema_registry,
-        metadata,
-      });
-      return value as Message;
+    const value = await this.caller.call({
+      method: "Testbed.processMessage",
+      args: { msg },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
     });
+    return value as Message;
   }
 
   /** Return multiple points. */
-  getPoints(count: number): CallBuilder<Point[]> {
+  async getPoints(count: number): Promise<Point[]> {
     const descriptor = testbed_descriptor.methods[14];
-    return new CallBuilder(async (metadata) => {
-      const value = await this.caller.call({
-        method: "Testbed.getPoints",
-        args: { count },
-        descriptor,
-        schemaRegistry: testbed_descriptor.schema_registry,
-        metadata,
-      });
-      return value as Point[];
+    const value = await this.caller.call({
+      method: "Testbed.getPoints",
+      args: { count },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
     });
+    return value as Point[];
   }
 
   /** Test tuple types. */
-  swapPair(pair: [number, string]): CallBuilder<[string, number]> {
+  async swapPair(pair: [number, string]): Promise<[string, number]> {
     const descriptor = testbed_descriptor.methods[15];
-    return new CallBuilder(async (metadata) => {
-      const value = await this.caller.call({
-        method: "Testbed.swapPair",
-        args: { pair },
-        descriptor,
-        schemaRegistry: testbed_descriptor.schema_registry,
-        metadata,
-      });
-      return value as [string, number];
+    const value = await this.caller.call({
+      method: "Testbed.swapPair",
+      args: { pair },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
     });
+    return value as [string, number];
   }
 }
 
@@ -486,10 +440,12 @@ export class TestbedClient implements TestbedCaller {
  * @param url - WebSocket URL (e.g., "ws://localhost:9000")
  * @returns A connected TestbedClient instance
  */
-export async function connectTestbed(url: string): Promise<TestbedClient> {
-  const transport = await connectWs(url);
-  const connection = await helloExchangeInitiator(transport, defaultHello());
-  return new TestbedClient(connection.asCaller());
+export async function connectTestbed(
+  url: string,
+  options: SessionTransportOptions = {},
+): Promise<TestbedClient> {
+  const established = await session.initiatorTransport(connectWs(url), options);
+  return new TestbedClient(established.rootConnection().caller());
 }
 
 // Handler interface for Testbed
@@ -524,14 +480,14 @@ export interface TestbedHandler {
 }
 
 // Dispatcher for Testbed
-export class TestbedDispatcher implements ChannelingDispatcher {
+export class TestbedDispatcher implements Dispatcher {
   constructor(private readonly handler: TestbedHandler) {}
 
   getDescriptor(): ServiceDescriptor {
     return testbed_descriptor;
   }
 
-  async dispatch(method: MethodDescriptor, args: unknown[], call: RoamCall): Promise<void> {
+  async dispatch(_context: RequestContext, method: MethodDescriptor, args: unknown[], call: RoamCall): Promise<void> {
     if (method.id === 0x9aabc4ba61fd5df3n) {
       try {
         const result = await this.handler.echo(args[0] as string);

@@ -159,6 +159,11 @@ interface IncomingCreditState {
   threshold: number;
 }
 
+interface PendingIncomingState {
+  items: Uint8Array[];
+  terminal: boolean;
+}
+
 function creditReplenishmentThreshold(initialCredit: number): number {
   return Math.max(1, Math.floor(initialCredit / 2));
 }
@@ -219,6 +224,7 @@ export class ChannelRegistry {
   /** Channels where we receive Data messages (backing Rx<T> handles). */
   private incoming = new Map<ChannelId, Channel<Uint8Array>>();
   private incomingCredit = new Map<ChannelId, IncomingCreditState>();
+  private pendingIncoming = new Map<ChannelId, PendingIncomingState>();
 
   /** Channels where we send Data messages (backing Tx<T> handles). */
   private outgoing = new Map<ChannelId, OutgoingState>();
@@ -241,11 +247,34 @@ export class ChannelRegistry {
     onConsumed?: (additional: number) => void,
   ): ChannelReceiver<Uint8Array> {
     const channel = createChannel<Uint8Array>(initialCredit);
-    this.incoming.set(channelId, channel);
-    this.incomingCredit.set(channelId, {
+    const creditState = {
       consumedSinceGrant: 0,
       threshold: creditReplenishmentThreshold(initialCredit),
-    });
+    };
+    const pending = this.pendingIncoming.get(channelId);
+    if (!pending?.terminal) {
+      this.incoming.set(channelId, channel);
+      this.incomingCredit.set(channelId, creditState);
+    }
+
+    if (pending) {
+      this.pendingIncoming.delete(channelId);
+      for (const payload of pending.items) {
+        if (!channel.send(payload)) {
+          throw ChannelError.overflow(channelId);
+        }
+      }
+      if (pending.terminal) {
+        channel.close();
+        this.incomingCredit.delete(channelId);
+        this.closed.add(channelId);
+      } else {
+        this.incomingCredit.set(channelId, creditState);
+      }
+    } else {
+      this.incomingCredit.set(channelId, creditState);
+    }
+
     return new ChannelReceiver(
       channel,
       this.keepaliveOwner,
@@ -304,7 +333,13 @@ export class ChannelRegistry {
 
     const channel = this.incoming.get(channelId);
     if (!channel) {
-      throw ChannelError.unknown(channelId);
+      const pending = this.pendingIncoming.get(channelId);
+      if (pending) {
+        pending.items.push(payload);
+        return;
+      }
+      this.pendingIncoming.set(channelId, { items: [payload], terminal: false });
+      return;
     }
 
     if (!channel.send(payload)) {
@@ -380,6 +415,11 @@ export class ChannelRegistry {
    * r[impl channeling.close] - Close terminates the channel.
    */
   close(channelId: ChannelId): void {
+    const pending = this.pendingIncoming.get(channelId);
+    if (pending) {
+      pending.terminal = true;
+    }
+
     const channel = this.incoming.get(channelId);
     if (channel) {
       channel.close();
@@ -396,9 +436,25 @@ export class ChannelRegistry {
     this.closed.add(channelId);
   }
 
+  closeAll(): void {
+    for (const channelId of this.incoming.keys()) {
+      this.close(channelId);
+    }
+    for (const channelId of this.outgoing.keys()) {
+      this.close(channelId);
+    }
+    this.pendingIncoming.clear();
+    this.pendingCredits.length = 0;
+    this.creditWaiter = null;
+  }
+
   /** Check if a channel ID is registered (either incoming or outgoing). */
   contains(channelId: ChannelId): boolean {
-    return this.incoming.has(channelId) || this.outgoing.has(channelId);
+    return (
+      this.incoming.has(channelId) ||
+      this.outgoing.has(channelId) ||
+      this.pendingIncoming.has(channelId)
+    );
   }
 
   /** Check if a channel has been closed. */
@@ -412,7 +468,12 @@ export class ChannelRegistry {
   }
 
   hasLiveChannels(): boolean {
-    return this.incoming.size > 0 || this.outgoing.size > 0 || this.pendingCredits.length > 0;
+    return (
+      this.incoming.size > 0 ||
+      this.outgoing.size > 0 ||
+      this.pendingIncoming.size > 0 ||
+      this.pendingCredits.length > 0
+    );
   }
 
   private ensureOutgoing(channelId: ChannelId, initialCredit: number): OutgoingState {

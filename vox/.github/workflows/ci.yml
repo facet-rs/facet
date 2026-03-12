@@ -210,6 +210,13 @@ jobs:
         run: >
           cargo nextest run -p spec-tests --test spec_matrix --run-ignored all -E 'test(lang_typescript_transport_tcp::)'
 
+      - name: Run TypeScript TCP stable-conduit cross-language tests
+        run: >
+          cargo nextest run -p spec-tests --test spec_matrix --run-ignored all
+          -E 'test(lang_typescript_transport_tcp::)'
+        env:
+          SPEC_CONDUIT: stable
+
   swift-conformance:
     name: Conformance / Swift
     runs-on: depot-macos-15

@@ -4,7 +4,7 @@
 // 4-byte little-endian length header.
 
 import net from "node:net";
-import { type MessageTransport } from "@bearcove/roam-core";
+import type { Link } from "@bearcove/roam-core";
 
 /**
  * A length-prefixed TCP connection.
@@ -14,7 +14,7 @@ import { type MessageTransport } from "@bearcove/roam-core";
  *
  * Implements the MessageTransport interface for use with Connection.
  */
-export class LengthPrefixedFramed implements MessageTransport {
+export class LengthPrefixedFramed implements Link {
   private socket: net.Socket;
   private buf: Buffer = Buffer.alloc(0);
   private pendingFrames: Uint8Array[] = [];

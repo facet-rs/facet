@@ -63,9 +63,7 @@ pub fn generate_caller_interface(service: &ServiceDescriptor) -> String {
         if let Some(doc) = &method.doc {
             out.push_str(&format_doc_comment(doc, "  "));
         }
-        out.push_str(&format!(
-            "  {method_name}({args}): CallBuilder<{ret_ty}>;\n"
-        ));
+        out.push_str(&format!("  {method_name}({args}): Promise<{ret_ty}>;\n"));
     }
 
     out.push_str("}\n\n");
@@ -128,7 +126,7 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             out.push_str(&format_doc_comment(doc, "  "));
         }
         out.push_str(&format!(
-            "  {method_name}({args}): CallBuilder<{ret_ty}> {{\n"
+            "  async {method_name}({args}): Promise<{ret_ty}> {{\n"
         ));
 
         // Get the method descriptor by index (known at codegen time)
@@ -150,8 +148,6 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             ));
         }
 
-        out.push_str("    return new CallBuilder(async (metadata) => {\n");
-
         let is_fallible = matches!(
             classify_shape(method.return_shape),
             ShapeKind::Result { .. }
@@ -172,7 +168,6 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             if has_streaming_args {
                 out.push_str("          channels,\n");
             }
-            out.push_str("          metadata,\n");
             out.push_str("        });\n");
             out.push_str(&format!(
                 "        return {{ ok: true, value }} as {ret_ty};\n"
@@ -185,7 +180,6 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             out.push_str("        }\n");
             out.push_str("        throw e;\n");
             out.push_str("      }\n");
-            out.push_str("    });\n");
         } else {
             out.push_str("      const value = await this.caller.call({\n");
             out.push_str(&format!(
@@ -200,10 +194,8 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             if has_streaming_args {
                 out.push_str("        channels,\n");
             }
-            out.push_str("        metadata,\n");
             out.push_str("      });\n");
             out.push_str(&format!("      return value as {ret_ty};\n"));
-            out.push_str("    });\n");
         }
 
         out.push_str("  }\n\n");
@@ -227,12 +219,13 @@ pub fn generate_connect_function(service: &ServiceDescriptor) -> String {
     ));
     out.push_str(" */\n");
     out.push_str(&format!(
-        "export async function connect{service_name}(url: string): Promise<{service_name}Client> {{\n"
+        "export async function connect{service_name}(\n  url: string,\n  options: SessionTransportOptions = {{}},\n): Promise<{service_name}Client> {{\n"
     ));
-    out.push_str("  const transport = await connectWs(url);\n");
-    out.push_str("  const connection = await helloExchangeInitiator(transport, defaultHello());\n");
+    out.push_str(
+        "  const established = await session.initiatorTransport(connectWs(url), options);\n",
+    );
     out.push_str(&format!(
-        "  return new {service_name}Client(connection.asCaller());\n"
+        "  return new {service_name}Client(established.rootConnection().caller());\n"
     ));
     out.push_str("}\n\n");
     out

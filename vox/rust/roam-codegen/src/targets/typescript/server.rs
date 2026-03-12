@@ -46,9 +46,9 @@ pub fn generate_handler_interface(service: &ServiceDescriptor) -> String {
 
 /// Generate the Dispatcher class.
 ///
-/// Implements `ChannelingDispatcher` from roam-core:
+/// Implements `Dispatcher` from roam-core:
 /// - `getDescriptor()` returns the service descriptor
-/// - `dispatch(method, args, call)` routes by method ID and calls handler methods
+/// - `dispatch(context, method, args, call)` routes by method ID and calls handler methods
 ///
 /// The runtime handles all arg decoding (using method.args tuple schema) and
 /// response encoding (using method.result schema via call.reply/replyErr).
@@ -62,7 +62,7 @@ pub fn generate_dispatcher_class(service: &ServiceDescriptor) -> String {
 
     out.push_str(&format!("// Dispatcher for {service_name}\n"));
     out.push_str(&format!(
-        "export class {service_name}Dispatcher implements ChannelingDispatcher {{\n"
+        "export class {service_name}Dispatcher implements Dispatcher {{\n"
     ));
     out.push_str(&format!(
         "  constructor(private readonly handler: {service_name}Handler) {{}}\n\n"
@@ -75,7 +75,7 @@ pub fn generate_dispatcher_class(service: &ServiceDescriptor) -> String {
 
     // dispatch()
     out.push_str(
-        "  async dispatch(method: MethodDescriptor, args: unknown[], call: RoamCall): Promise<void> {\n",
+        "  async dispatch(_context: RequestContext, method: MethodDescriptor, args: unknown[], call: RoamCall): Promise<void> {\n",
     );
 
     let mut first = true;
