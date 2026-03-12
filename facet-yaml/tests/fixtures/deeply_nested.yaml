@@ -1,0 +1,8 @@
+config:
+  database:
+    host: localhost
+    port: 5432
+  cache:
+    enabled: true
+    ttl: 3600
+name: test-app

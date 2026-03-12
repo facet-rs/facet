@@ -1,0 +1,9 @@
+---
+source: facet-typescript/src/lib.rs
+expression: ts_option
+---
+export interface FlattenOption {
+  name: string;
+  x?: number;
+  y?: number;
+}

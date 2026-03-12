@@ -1,0 +1,8 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+class Inner(TypedDict, total=False):
+    value: Required[int]
+
+type Wrapper = Inner

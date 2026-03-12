@@ -1,0 +1,7 @@
+---
+source: facet-typescript/src/lib.rs
+expression: ts
+---
+export type Message =
+  | { Simple: { text: string } }
+  | { Full: { text: string; metadata?: string; count?: number } };

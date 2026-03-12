@@ -1,0 +1,10 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 995
+expression: ts_arc
+---
+export interface FlattenArc {
+  name: string;
+  x: number;
+  y: number;
+}

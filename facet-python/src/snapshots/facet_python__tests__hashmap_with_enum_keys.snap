@@ -1,0 +1,8 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+type Priority = Literal["Low"] | Literal["Medium"] | Literal["High"]
+
+class TaskMap(TypedDict, total=False):
+    tasks: Required[dict[Priority, str]]

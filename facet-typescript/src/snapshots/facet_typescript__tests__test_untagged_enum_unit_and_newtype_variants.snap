@@ -1,0 +1,6 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 1509
+expression: ts
+---
+export type Enum = "Daily" | "Weekly" | number;

@@ -1,0 +1,7 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+class Config(TypedDict, total=False):
+    required: Required[str]
+    optional: str

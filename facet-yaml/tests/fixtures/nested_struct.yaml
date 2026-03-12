@@ -1,0 +1,7 @@
+id: 42
+child:
+  code: alpha
+  active: true
+tags:
+  - core
+  - json

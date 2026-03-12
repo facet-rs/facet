@@ -1,0 +1,7 @@
+---
+source: facet-typescript/src/lib.rs
+expression: ts
+---
+export type TransparentId = number;
+
+export type u64 = number;

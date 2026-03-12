@@ -1,0 +1,6 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 776
+expression: ts
+---
+export type Status = "Active" | "Inactive";

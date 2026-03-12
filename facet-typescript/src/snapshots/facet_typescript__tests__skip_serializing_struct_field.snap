@@ -1,0 +1,8 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 1250
+expression: ts
+---
+export interface Data {
+  visible: string;
+}

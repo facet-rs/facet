@@ -1,0 +1,6 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 1088
+expression: ts
+---
+export type Config = { name: string } | { name: string; description?: string; count?: number };

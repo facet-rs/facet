@@ -1,0 +1,10 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 1505
+expression: ts
+---
+export interface WithFlatten {
+  outer_field: string;
+  foo: string;
+  bar?: number;
+}
