@@ -183,8 +183,8 @@ mod tests {
 
     use super::generate_service;
     use facet::Facet;
-    use roam_hash::method_descriptor;
-    use roam_types::{Rx, ServiceDescriptor, Tx};
+    use roam_hash::{method_descriptor, method_descriptor_with_retry};
+    use roam_types::{RetryPolicy, Rx, ServiceDescriptor, Tx};
 
     #[derive(Facet)]
     struct RecursiveNode {
@@ -386,6 +386,40 @@ mod tests {
         assert!(
             generated.contains("{ kind: 'rx', initial_credit: 32, element: { kind: 'u32' } }"),
             "explicit Rx<T, N> credit must be emitted into the descriptor:\n{generated}"
+        );
+    }
+
+    #[test]
+    fn generated_typescript_emits_retry_policy_on_method_descriptors() {
+        let fetch = method_descriptor_with_retry::<(), u64>(
+            "RetrySvc",
+            "fetch",
+            &[],
+            None,
+            RetryPolicy::IDEM,
+        );
+        let effect = method_descriptor_with_retry::<(), Result<u64, String>>(
+            "RetrySvc",
+            "effect",
+            &[],
+            None,
+            RetryPolicy::PERSIST,
+        );
+        let methods = Box::leak(vec![fetch, effect].into_boxed_slice());
+        let service = ServiceDescriptor {
+            service_name: "RetrySvc",
+            methods,
+            doc: None,
+        };
+
+        let generated = generate_service(&service);
+        assert!(
+            generated.contains("retry: { persist: false, idem: true }"),
+            "generated TypeScript must include retry policy for idem methods:\n{generated}"
+        );
+        assert!(
+            generated.contains("retry: { persist: true, idem: false }"),
+            "generated TypeScript must include retry policy for persist methods:\n{generated}"
         );
     }
 

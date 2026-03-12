@@ -21,6 +21,11 @@ use moire::sync::mpsc;
 
 type ResponseSlot = moire::sync::oneshot::Sender<SelfRef<RequestMessage<'static>>>;
 
+struct InFlightHandler {
+    handle: moire::task::JoinHandle<()>,
+    retry: roam_types::RetryPolicy,
+}
+
 /// State shared between the driver loop and any DriverCaller/DriverChannelSink handles.
 struct DriverShared {
     pending_responses: SyncMutex<BTreeMap<RequestId, ResponseSlot>>,
@@ -543,7 +548,7 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     shared: Arc<DriverShared>,
     /// In-flight server-side handler tasks, keyed by request ID.
     /// Used to abort handlers on cancel.
-    in_flight_handlers: BTreeMap<RequestId, moire::task::JoinHandle<()>>,
+    in_flight_handlers: BTreeMap<RequestId, InFlightHandler>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
     drop_control_seed: Option<mpsc::UnboundedSender<DropControlRequest>>,
     drop_control_request: DropControlRequest,
@@ -720,8 +725,10 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             }
         }
 
-        for (_, handle) in std::mem::take(&mut self.in_flight_handlers) {
-            handle.abort();
+        for (_, in_flight) in std::mem::take(&mut self.in_flight_handlers) {
+            if !in_flight.retry.persist {
+                in_flight.handle.abort();
+            }
         }
         self.shared.pending_responses.lock().clear();
 
@@ -798,13 +805,20 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 _ => unreachable!(),
             });
             let handler = Arc::clone(&self.handler);
+            let retry = handler.retry_policy(call.method_id);
             let join_handle = moire::task::spawn(
                 async move {
                     handler.handle(call, reply).await;
                 }
                 .named("handler"),
             );
-            self.in_flight_handlers.insert(req_id, join_handle);
+            self.in_flight_handlers.insert(
+                req_id,
+                InFlightHandler {
+                    handle: join_handle,
+                    retry,
+                },
+            );
         } else if is_response {
             // r[impl rpc.response.one-per-request]
             if let Some(tx) = self.shared.pending_responses.lock().remove(&req_id) {
@@ -815,8 +829,15 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             // r[impl rpc.cancel.channels]
             // Abort the in-flight handler task. Channels are intentionally left
             // intact — they have independent lifecycles per spec.
-            if let Some(handle) = self.in_flight_handlers.remove(&req_id) {
-                handle.abort();
+            let should_abort = self
+                .in_flight_handlers
+                .get(&req_id)
+                .map(|in_flight| !in_flight.retry.persist)
+                .unwrap_or(false);
+            if should_abort {
+                if let Some(in_flight) = self.in_flight_handlers.remove(&req_id) {
+                    in_flight.handle.abort();
+                }
             }
             // The response is sent automatically: aborting drops DriverReplySink →
             // mark_failure fires → failures_rx arm sends RoamError::Cancelled.

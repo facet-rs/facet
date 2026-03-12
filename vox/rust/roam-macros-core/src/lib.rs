@@ -193,6 +193,8 @@ fn generate_service_descriptor_fn(parsed: &ServiceTrait, roam: &TokenStream2) ->
 
             let return_type = m.return_type();
             let return_ty_tokens = to_static_type_tokens(&return_type);
+            let retry_persist = m.is_persist();
+            let retry_idem = m.is_idem();
 
             let method_doc_expr = match m.doc() {
                 Some(d) => quote! { Some(#d) },
@@ -200,11 +202,15 @@ fn generate_service_descriptor_fn(parsed: &ServiceTrait, roam: &TokenStream2) ->
             };
 
             quote! {
-                #roam::hash::method_descriptor::<#args_tuple_ty, #return_ty_tokens>(
+                #roam::hash::method_descriptor_with_retry::<#args_tuple_ty, #return_ty_tokens>(
                     #service_name,
                     #method_name_str,
                     &[#(#arg_name_strs),*],
                     #method_doc_expr,
+                    #roam::RetryPolicy {
+                        persist: #retry_persist,
+                        idem: #retry_idem,
+                    },
                 )
             }
         })
@@ -326,6 +332,22 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
         .enumerate()
         .map(|(i, m)| generate_dispatch_arm(m, i, roam, &descriptor_fn_name))
         .collect();
+    let retry_policy_arms: Vec<TokenStream2> = parsed
+        .methods()
+        .enumerate()
+        .map(|(i, m)| {
+            let persist = m.is_persist();
+            let idem = m.is_idem();
+            quote! {
+                if method_id == #descriptor_fn_name().methods[#i].id {
+                    return #roam::RetryPolicy {
+                        persist: #persist,
+                        idem: #idem,
+                    };
+                }
+            }
+        })
+        .collect();
 
     let no_methods = dispatch_arms.is_empty();
 
@@ -400,6 +422,11 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
             H: #trait_name + Clone + Send + Sync + 'static,
             R: #roam::ReplySink,
         {
+            fn retry_policy(&self, method_id: #roam::MethodId) -> #roam::RetryPolicy {
+                #(#retry_policy_arms)*
+                #roam::RetryPolicy::default()
+            }
+
             async fn handle(&self, call: #roam::SelfRef<#roam::RequestCall<'static>>, reply: R) {
                 #dispatch_body
             }
@@ -888,6 +915,19 @@ mod tests {
                 async fn record(&self, payload: String) -> &'roam str;
 
                 async fn ping(&self) -> u64;
+            }
+        }));
+    }
+
+    #[test]
+    fn method_retry_helper_attributes() {
+        assert_snapshot!(generate(quote! {
+            trait Billing {
+                #[roam(idem)]
+                async fn get_balance(&self, account: String) -> u64;
+
+                #[roam(persist)]
+                async fn send_money(&self, from: String, to: String) -> Result<u64, TransferError>;
             }
         }));
     }

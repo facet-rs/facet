@@ -5,6 +5,13 @@
 
 import type { TupleSchema, EnumSchema, SchemaRegistry } from "./schema.ts";
 
+export interface RetryPolicy {
+  /** Whether an admitted operation must persist once started. */
+  persist: boolean;
+  /** Whether re-executing the same logical operation is semantically safe. */
+  idem: boolean;
+}
+
 /**
  * Describes a single RPC method at runtime.
  *
@@ -16,6 +23,8 @@ export interface MethodDescriptor {
   name: string;
   /** Method ID hash for wire protocol routing. */
   id: bigint;
+  /** Static retry policy declared for this method. */
+  retry: RetryPolicy;
   /** Tuple schema for all arguments (decoded once before dispatch). */
   args: TupleSchema;
   /**

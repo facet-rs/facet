@@ -6,33 +6,7 @@ expression: "generate(quote!\n{\n    trait WordLab\n    {\n        async fn is_s
 pub fn word_lab_service_descriptor() -> &'static ::roam::session::ServiceDescriptor {
     static DESCRIPTOR: std::sync::OnceLock<&'static ::roam::session::ServiceDescriptor> =
         std::sync::OnceLock::new();
-    DESCRIPTOR.get_or_init(|| {
-        let methods: Vec<&'static ::roam::session::MethodDescriptor> = vec![
-            ::roam::hash::method_descriptor::<(&'static str,), bool>(
-                "WordLab",
-                "is_short",
-                &["word"],
-                None,
-            ),
-            ::roam::hash::method_descriptor::<(String,), &'static str>(
-                "WordLab",
-                "classify",
-                &["word"],
-                None,
-            ),
-            ::roam::hash::method_descriptor::<(&'static str, Rx<String>, Tx<String>), u32>(
-                "WordLab",
-                "transform",
-                &["prefix", "input", "output"],
-                None,
-            ),
-        ];
-        Box::leak(Box::new(::roam::session::ServiceDescriptor {
-            service_name: "WordLab",
-            methods: Box::leak(methods.into_boxed_slice()),
-            doc: None,
-        }))
-    })
+    DESCRIPTOR . get_or_init (|| { let methods : Vec < & 'static :: roam :: session :: MethodDescriptor > = vec ! [:: roam :: hash :: method_descriptor_with_retry :: < (& 'static str ,) , bool > ("WordLab" , "is_short" , & ["word"] , None , :: roam :: RetryPolicy { persist : false , idem : false , } ,) , :: roam :: hash :: method_descriptor_with_retry :: < (String ,) , & 'static str > ("WordLab" , "classify" , & ["word"] , None , :: roam :: RetryPolicy { persist : false , idem : false , } ,) , :: roam :: hash :: method_descriptor_with_retry :: < (& 'static str , Rx < String > , Tx < String > ,) , u32 > ("WordLab" , "transform" , & ["prefix" , "input" , "output"] , None , :: roam :: RetryPolicy { persist : false , idem : false , } ,)] ; Box :: leak (Box :: new (:: roam :: session :: ServiceDescriptor { service_name : "WordLab" , methods : Box :: leak (methods . into_boxed_slice ()) , doc : None , })) })
 }
 pub trait WordLab
 where
@@ -96,6 +70,27 @@ where
     H: WordLab + Clone + Send + Sync + 'static,
     R: ::roam::ReplySink,
 {
+    fn retry_policy(&self, method_id: ::roam::MethodId) -> ::roam::RetryPolicy {
+        if method_id == word_lab_service_descriptor().methods[0usize].id {
+            return ::roam::RetryPolicy {
+                persist: false,
+                idem: false,
+            };
+        }
+        if method_id == word_lab_service_descriptor().methods[1usize].id {
+            return ::roam::RetryPolicy {
+                persist: false,
+                idem: false,
+            };
+        }
+        if method_id == word_lab_service_descriptor().methods[2usize].id {
+            return ::roam::RetryPolicy {
+                persist: false,
+                idem: false,
+            };
+        }
+        ::roam::RetryPolicy::default()
+    }
     async fn handle(&self, call: ::roam::SelfRef<::roam::RequestCall<'static>>, reply: R) {
         let method_id = call.method_id;
         let args_bytes = match &call.args {

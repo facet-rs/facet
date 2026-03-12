@@ -64,6 +64,7 @@ pub use roam_types::{
     RequestContext,
     RequestResponse,
     ResponseParts,
+    RetryPolicy,
     RoamError,
     RpcPlan,
     Rx,
@@ -93,5 +94,5 @@ pub use roam_types::{bind_channels_callee_args, bind_channels_caller_args};
 
 // Re-export the session module (generated code uses `roam::session::ServiceDescriptor`)
 pub mod session {
-    pub use roam_types::{MethodDescriptor, ServiceDescriptor};
+    pub use roam_types::{MethodDescriptor, RetryPolicy, ServiceDescriptor};
 }

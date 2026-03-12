@@ -141,6 +141,11 @@ impl From<DriverCaller> for NoopCaller {
 }
 
 /// Wasm-only driver. No channel support.
+struct InFlightHandler {
+    handle: moire::task::JoinHandle<()>,
+    retry: roam_types::RetryPolicy,
+}
+
 pub struct Driver<H: Handler<DriverReplySink>> {
     sender: ConnectionSender,
     rx: mpsc::Receiver<SelfRef<ConnectionMessage<'static>>>,
@@ -148,7 +153,7 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     closed_rx: watch::Receiver<bool>,
     handler: Arc<H>,
     shared: Arc<DriverShared>,
-    in_flight_handlers: BTreeMap<RequestId, moire::task::JoinHandle<()>>,
+    in_flight_handlers: BTreeMap<RequestId, InFlightHandler>,
     drop_control_seed: Option<mpsc::UnboundedSender<DropControlRequest>>,
     drop_control_request: DropControlRequest,
     drop_guard: SyncMutex<Option<Weak<CallerDropGuard>>>,
@@ -264,17 +269,31 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 _ => unreachable!(),
             });
             let handler = Arc::clone(&self.handler);
+            let retry = handler.retry_policy(call.method_id);
             let join_handle = moire::task::spawn(async move {
                 handler.handle(call, reply).await;
             });
-            self.in_flight_handlers.insert(req_id, join_handle);
+            self.in_flight_handlers.insert(
+                req_id,
+                InFlightHandler {
+                    handle: join_handle,
+                    retry,
+                },
+            );
         } else if is_response {
             if let Some(tx) = self.shared.pending_responses.lock().remove(&req_id) {
                 let _: Result<(), _> = tx.send(msg);
             }
         } else if is_cancel {
-            if let Some(handle) = self.in_flight_handlers.remove(&req_id) {
-                handle.abort();
+            let should_abort = self
+                .in_flight_handlers
+                .get(&req_id)
+                .map(|in_flight| !in_flight.retry.persist)
+                .unwrap_or(false);
+            if should_abort {
+                if let Some(in_flight) = self.in_flight_handlers.remove(&req_id) {
+                    in_flight.handle.abort();
+                }
             }
         }
     }

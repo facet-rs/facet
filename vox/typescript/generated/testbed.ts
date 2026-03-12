@@ -671,6 +671,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "echo",
       id: 0x9aabc4ba61fd5df3n,
+      retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "string" }] },
       result: {
         kind: "enum",
@@ -689,6 +690,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "reverse",
       id: 0xcba154600f640175n,
+      retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "string" }] },
       result: {
         kind: "enum",
@@ -707,6 +709,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "divide",
       id: 0xc3964cbee4b1d590n,
+      retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "i64" }, { kind: "i64" }] },
       result: {
         kind: "enum",
@@ -727,6 +730,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "lookup",
       id: 0xe71a0faedd014e59n,
+      retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "u32" }] },
       result: {
         kind: "enum",
@@ -747,6 +751,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "sum",
       id: 0x855b3a25d97bfefdn,
+      retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "rx", initial_credit: 16, element: { kind: "i32" } }] },
       result: {
         kind: "enum",
@@ -765,6 +770,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "generate",
       id: 0x54d2273d8cdb9c38n,
+      retry: { persist: false, idem: false },
       args: {
         kind: "tuple",
         elements: [{ kind: "u32" }, { kind: "tx", initial_credit: 16, element: { kind: "i32" } }],
@@ -786,6 +792,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "transform",
       id: 0x5d9895604eb18b19n,
+      retry: { persist: false, idem: false },
       args: {
         kind: "tuple",
         elements: [{ kind: "rx", initial_credit: 16, element: { kind: "string" } }, {
@@ -811,6 +818,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "echoPoint",
       id: 0x453fa9bf6932528cn,
+      retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "ref", name: "Point" }] },
       result: {
         kind: "enum",
@@ -829,6 +837,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "createPerson",
       id: 0x3dd231f57b1bca21n,
+      retry: { persist: false, idem: false },
       args: {
         kind: "tuple",
         elements: [{ kind: "string" }, { kind: "u8" }, { kind: "option", inner: { kind: "string" } }],
@@ -850,6 +859,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "rectangleArea",
       id: 0xba75c48683f1d9e6n,
+      retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "ref", name: "Rectangle" }] },
       result: {
         kind: "enum",
@@ -868,6 +878,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "parseColor",
       id: 0xe285f31c6dfffbfcn,
+      retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "string" }] },
       result: {
         kind: "enum",
@@ -886,6 +897,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "shapeArea",
       id: 0x6e706354167c00c2n,
+      retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "ref", name: "Shape" }] },
       result: {
         kind: "enum",
@@ -904,6 +916,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "createCanvas",
       id: 0xa914982e7d3c7b55n,
+      retry: { persist: false, idem: false },
       args: {
         kind: "tuple",
         elements: [{ kind: "string" }, { kind: "vec", element: { kind: "ref", name: "Shape" } }, {
@@ -928,6 +941,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "processMessage",
       id: 0xed1dc0c625889d30n,
+      retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "ref", name: "Message" }] },
       result: {
         kind: "enum",
@@ -946,6 +960,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "getPoints",
       id: 0x5c8707f5ae4ccbccn,
+      retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "u32" }] },
       result: {
         kind: "enum",
@@ -964,6 +979,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     {
       name: "swapPair",
       id: 0xacd19a29fe0d470cn,
+      retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "tuple", elements: [{ kind: "i32" }, { kind: "string" }] }] },
       result: {
         kind: "enum",

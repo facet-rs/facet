@@ -7,7 +7,7 @@
 
 use facet_core::{Def, Facet, ScalarType, Shape, StructKind, Type, UserType};
 use heck::ToKebabCase;
-use roam_types::{ArgDescriptor, MethodDescriptor, MethodId};
+use roam_types::{ArgDescriptor, MethodDescriptor, MethodId, RetryPolicy};
 use roam_types::{is_rx, is_tx};
 use std::collections::HashSet;
 
@@ -311,6 +311,23 @@ pub fn method_descriptor<'a, 'r, A: Facet<'a>, R: Facet<'r>>(
     arg_names: &[&'static str],
     doc: Option<&'static str>,
 ) -> &'static MethodDescriptor {
+    method_descriptor_with_retry::<A, R>(
+        service_name,
+        method_name,
+        arg_names,
+        doc,
+        RetryPolicy::default(),
+    )
+}
+
+/// Build and leak a `MethodDescriptor` with an explicit retry policy.
+pub fn method_descriptor_with_retry<'a, 'r, A: Facet<'a>, R: Facet<'r>>(
+    service_name: &'static str,
+    method_name: &'static str,
+    arg_names: &[&'static str],
+    doc: Option<&'static str>,
+    retry: RetryPolicy,
+) -> &'static MethodDescriptor {
     assert!(
         !shape_contains_channel(R::SHAPE),
         "channels are not allowed in return types: {service_name}.{method_name}"
@@ -348,6 +365,7 @@ pub fn method_descriptor<'a, 'r, A: Facet<'a>, R: Facet<'r>>(
         method_name,
         args,
         return_shape: R::SHAPE,
+        retry,
         doc,
     }))
 }

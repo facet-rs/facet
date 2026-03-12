@@ -370,6 +370,11 @@ impl Caller for ErasedCaller {
 }
 
 pub trait Handler<R: ReplySink>: MaybeSend + MaybeSync + 'static {
+    /// Return the static retry policy for a method ID served by this handler.
+    fn retry_policy(&self, _method_id: crate::MethodId) -> crate::RetryPolicy {
+        crate::RetryPolicy::default()
+    }
+
     /// Dispatch an incoming call to the appropriate method implementation.
     fn handle(
         &self,

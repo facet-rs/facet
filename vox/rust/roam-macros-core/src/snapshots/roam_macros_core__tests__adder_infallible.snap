@@ -7,13 +7,18 @@ pub fn adder_service_descriptor() -> &'static ::roam::session::ServiceDescriptor
     static DESCRIPTOR: std::sync::OnceLock<&'static ::roam::session::ServiceDescriptor> =
         std::sync::OnceLock::new();
     DESCRIPTOR.get_or_init(|| {
-        let methods: Vec<&'static ::roam::session::MethodDescriptor> =
-            vec![::roam::hash::method_descriptor::<(i32, i32), i32>(
+        let methods: Vec<&'static ::roam::session::MethodDescriptor> = vec![
+            ::roam::hash::method_descriptor_with_retry::<(i32, i32), i32>(
                 "Adder",
                 "add",
                 &["a", "b"],
                 None,
-            )];
+                ::roam::RetryPolicy {
+                    persist: false,
+                    idem: false,
+                },
+            ),
+        ];
         Box::leak(Box::new(::roam::session::ServiceDescriptor {
             service_name: "Adder",
             methods: Box::leak(methods.into_boxed_slice()),
@@ -72,6 +77,15 @@ where
     H: Adder + Clone + Send + Sync + 'static,
     R: ::roam::ReplySink,
 {
+    fn retry_policy(&self, method_id: ::roam::MethodId) -> ::roam::RetryPolicy {
+        if method_id == adder_service_descriptor().methods[0usize].id {
+            return ::roam::RetryPolicy {
+                persist: false,
+                idem: false,
+            };
+        }
+        ::roam::RetryPolicy::default()
+    }
     async fn handle(&self, call: ::roam::SelfRef<::roam::RequestCall<'static>>, reply: R) {
         let method_id = call.method_id;
         let args_bytes = match &call.args {

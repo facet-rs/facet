@@ -8,11 +8,18 @@ pub fn streamer_service_descriptor() -> &'static ::roam::session::ServiceDescrip
         std::sync::OnceLock::new();
     DESCRIPTOR.get_or_init(|| {
         let methods: Vec<&'static ::roam::session::MethodDescriptor> =
-            vec![::roam::hash::method_descriptor::<(i32, Tx<i32>), i32>(
+            vec![::roam::hash::method_descriptor_with_retry::<
+                (i32, Tx<i32>),
+                i32,
+            >(
                 "Streamer",
                 "count_up",
                 &["start", "output"],
                 None,
+                ::roam::RetryPolicy {
+                    persist: false,
+                    idem: false,
+                },
             )];
         Box::leak(Box::new(::roam::session::ServiceDescriptor {
             service_name: "Streamer",
@@ -76,6 +83,15 @@ where
     H: Streamer + Clone + Send + Sync + 'static,
     R: ::roam::ReplySink,
 {
+    fn retry_policy(&self, method_id: ::roam::MethodId) -> ::roam::RetryPolicy {
+        if method_id == streamer_service_descriptor().methods[0usize].id {
+            return ::roam::RetryPolicy {
+                persist: false,
+                idem: false,
+            };
+        }
+        ::roam::RetryPolicy::default()
+    }
     async fn handle(&self, call: ::roam::SelfRef<::roam::RequestCall<'static>>, reply: R) {
         let method_id = call.method_id;
         let args_bytes = match &call.args {

@@ -448,6 +448,16 @@ impl ServiceMethod {
     pub fn wants_context(&self) -> bool {
         has_attr_path(&self.attributes, &["roam", "context"])
     }
+
+    /// Check whether this method explicitly declares rerun-safe semantics.
+    pub fn is_idem(&self) -> bool {
+        has_attr_helper(&self.attributes, &["roam"], "idem")
+    }
+
+    /// Check whether this method explicitly declares persistent admission.
+    pub fn is_persist(&self) -> bool {
+        has_attr_helper(&self.attributes, &["roam"], "persist")
+    }
 }
 
 // ============================================================================
@@ -510,6 +520,12 @@ fn has_attr_path(attrs: &Any<RawAttribute>, expected: &[&str]) -> bool {
         .any(|attr| attr_path_matches(&attr.value, expected))
 }
 
+fn has_attr_helper(attrs: &Any<RawAttribute>, path: &[&str], helper: &str) -> bool {
+    attrs
+        .iter()
+        .any(|attr| attr_helper_matches(&attr.value, path, helper))
+}
+
 fn attr_path_matches(attr: &RawAttribute, expected: &[&str]) -> bool {
     let mut iter = attr.body.content.clone().to_token_iter();
     let Ok(path) = TypePath::parse(&mut iter) else {
@@ -518,7 +534,36 @@ fn attr_path_matches(attr: &RawAttribute, expected: &[&str]) -> bool {
     if EndOfStream::parse(&mut iter).is_err() {
         return false;
     }
+    path_matches(&path, expected)
+}
 
+fn attr_helper_matches(attr: &RawAttribute, expected_path: &[&str], expected_helper: &str) -> bool {
+    let mut iter = attr.body.content.clone().to_token_iter();
+    let Ok(path) = TypePath::parse(&mut iter) else {
+        return false;
+    };
+    if !path_matches(&path, expected_path) {
+        return false;
+    }
+
+    let Ok(group) = ParenthesisGroupContaining::<TokenStream>::parse(&mut iter) else {
+        return false;
+    };
+    if EndOfStream::parse(&mut iter).is_err() {
+        return false;
+    }
+
+    let mut inner = group.content.to_token_iter();
+    let Ok(helper) = Ident::parse(&mut inner) else {
+        return false;
+    };
+    if EndOfStream::parse(&mut inner).is_err() {
+        return false;
+    }
+    helper == expected_helper
+}
+
+fn path_matches(path: &TypePath, expected: &[&str]) -> bool {
     let actual = std::iter::once(path.first.to_string())
         .chain(path.rest.iter().map(|seg| seg.value.second.to_string()))
         .collect::<Vec<_>>();
@@ -624,6 +669,35 @@ mod tests {
         let mut methods = trait_def.methods();
         assert!(methods.next().expect("contextual method").wants_context());
         assert!(!methods.next().expect("plain method").wants_context());
+    }
+
+    #[test]
+    fn method_helpers_detect_retry_helper_attributes() {
+        let trait_def = parse(
+            r#"
+            trait Svc {
+                #[roam(idem)]
+                async fn cached(&self) -> u32;
+
+                #[roam(persist)]
+                async fn durable(&self) -> u32;
+
+                async fn plain(&self) -> u32;
+            }
+            "#,
+        );
+        let mut methods = trait_def.methods();
+        let cached = methods.next().expect("cached");
+        assert!(cached.is_idem());
+        assert!(!cached.is_persist());
+
+        let durable = methods.next().expect("durable");
+        assert!(!durable.is_idem());
+        assert!(durable.is_persist());
+
+        let plain = methods.next().expect("plain");
+        assert!(!plain.is_idem());
+        assert!(!plain.is_persist());
     }
 
     #[test]

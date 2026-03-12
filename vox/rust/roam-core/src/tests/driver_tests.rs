@@ -8,7 +8,7 @@ use roam_types::{
     ChannelMessage, ChannelSink, Conduit, ConduitRx, ConnectionSettings, Handler,
     IncomingChannelMessage, Message, MessageFamily, MessagePayload, Metadata, MethodId, Parity,
     Payload, ReplySink, RequestBody, RequestCall, RequestCancel, RequestMessage, RequestResponse,
-    RoamError, RpcPlan, SelfRef, Tx, bind_channels_caller_args, channel,
+    RetryPolicy, RoamError, RpcPlan, SelfRef, Tx, bind_channels_caller_args, channel,
 };
 
 use crate::session::{
@@ -111,9 +111,14 @@ impl Handler<DriverReplySink> for EchoHandler {
 /// Tracks whether cancellation occurred via a drop guard.
 struct BlockingHandler {
     was_cancelled: Arc<AtomicBool>,
+    retry: RetryPolicy,
 }
 
 impl Handler<DriverReplySink> for BlockingHandler {
+    fn retry_policy(&self, _method_id: MethodId) -> RetryPolicy {
+        self.retry
+    }
+
     async fn handle(&self, _call: SelfRef<RequestCall<'static>>, reply: DriverReplySink) {
         let was_cancelled = self.was_cancelled.clone();
         // Hold the reply to prevent premature DriverReplySink::drop
@@ -128,6 +133,51 @@ impl Handler<DriverReplySink> for BlockingHandler {
         let _guard = DropGuard(was_cancelled);
         // Block forever — only cancellation (abort) will stop this
         std::future::pending::<()>().await;
+    }
+}
+
+struct PersistentReplyingHandler {
+    was_cancelled: Arc<AtomicBool>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+impl Handler<DriverReplySink> for PersistentReplyingHandler {
+    fn retry_policy(&self, _method_id: MethodId) -> RetryPolicy {
+        RetryPolicy::PERSIST
+    }
+
+    async fn handle(&self, _call: SelfRef<RequestCall<'static>>, reply: DriverReplySink) {
+        let was_cancelled = Arc::clone(&self.was_cancelled);
+        let release = Arc::clone(&self.release);
+        let completed = Arc::new(AtomicBool::new(false));
+
+        struct DropGuard {
+            was_cancelled: Arc<AtomicBool>,
+            completed: Arc<AtomicBool>,
+        }
+
+        impl Drop for DropGuard {
+            fn drop(&mut self) {
+                if !self.completed.load(Ordering::SeqCst) {
+                    self.was_cancelled.store(true, Ordering::SeqCst);
+                }
+            }
+        }
+
+        let _guard = DropGuard {
+            was_cancelled,
+            completed: Arc::clone(&completed),
+        };
+
+        release.notified().await;
+        completed.store(true, Ordering::SeqCst);
+        reply
+            .send_reply(RequestResponse {
+                ret: Payload::outgoing(&123_u32),
+                channels: vec![],
+                metadata: Default::default(),
+            })
+            .await;
     }
 }
 
@@ -424,7 +474,10 @@ async fn cancel_aborts_in_flight_handler() {
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor(server_conduit)
-                .establish::<DriverCaller>(BlockingHandler { was_cancelled })
+                .establish::<DriverCaller>(BlockingHandler {
+                    was_cancelled,
+                    retry: RetryPolicy::default(),
+                })
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -504,6 +557,84 @@ async fn cancel_aborts_in_flight_handler() {
 }
 
 #[tokio::test]
+async fn cancel_does_not_abort_persist_handler() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let was_cancelled = Arc::new(AtomicBool::new(false));
+    let was_cancelled_check = Arc::clone(&was_cancelled);
+    let release = Arc::new(tokio::sync::Notify::new());
+    let release_server = Arc::clone(&release);
+
+    let server_task = moire::task::spawn(
+        async move {
+            let (server_caller, _sh) = acceptor(server_conduit)
+                .establish::<DriverCaller>(PersistentReplyingHandler {
+                    was_cancelled,
+                    release: release_server,
+                })
+                .await
+                .expect("server handshake failed");
+            server_caller
+        }
+        .named("server_setup"),
+    );
+
+    let (caller, _sh) = initiator(client_conduit)
+        .establish::<DriverCaller>(())
+        .await
+        .expect("client handshake failed");
+    let client_sender = caller.connection_sender().clone();
+
+    let _server_caller_guard = server_task.await.expect("server setup failed");
+
+    let call_task = moire::task::spawn(
+        async move {
+            caller
+                .call(RequestCall {
+                    method_id: MethodId(1),
+                    args: Payload::outgoing(&99_u32),
+                    channels: vec![],
+                    metadata: Default::default(),
+                })
+                .await
+        }
+        .named("client_call_persist"),
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    client_sender
+        .send(ConnectionMessage::Request(RequestMessage {
+            id: roam_types::RequestId(1),
+            body: RequestBody::Cancel(RequestCancel {
+                metadata: Metadata::default(),
+            }),
+        }))
+        .await
+        .expect("send cancel");
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(
+        !was_cancelled_check.load(Ordering::SeqCst),
+        "persist handler should not be cancelled by explicit cancel"
+    );
+
+    release.notify_waiters();
+
+    let response = tokio::time::timeout(std::time::Duration::from_millis(500), call_task)
+        .await
+        .expect("timed out waiting for persist handler to finish")
+        .expect("call task join")
+        .expect("persist call should still receive a response");
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let value: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    assert_eq!(value, 123);
+}
+
+#[tokio::test]
 async fn in_flight_call_returns_cancelled_when_peer_closes() {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
@@ -518,7 +649,10 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
                     let handle = moire::task::spawn(fut);
                     let _ = session_tx.send(handle);
                 })
-                .establish::<DriverCaller>(BlockingHandler { was_cancelled })
+                .establish::<DriverCaller>(BlockingHandler {
+                    was_cancelled,
+                    retry: RetryPolicy::default(),
+                })
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -584,6 +718,7 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
             let (server_caller, _sh) = acceptor(server_conduit)
                 .establish::<DriverCaller>(BlockingHandler {
                     was_cancelled: Arc::new(AtomicBool::new(false)),
+                    retry: RetryPolicy::default(),
                 })
                 .await
                 .expect("server handshake failed");

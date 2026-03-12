@@ -393,6 +393,10 @@ pub fn generate_descriptor(service: &ServiceDescriptor) -> String {
         out.push_str("    {\n");
         out.push_str(&format!("      name: '{method_name}',\n"));
         out.push_str(&format!("      id: {}n,\n", hex_u64(id)));
+        out.push_str(&format!(
+            "      retry: {{ persist: {}, idem: {} }},\n",
+            method.retry.persist, method.retry.idem
+        ));
         out.push_str(&format!("      args: {args_schema},\n"));
         out.push_str(&format!("      result: {result_schema},\n"));
         out.push_str("    },\n");
