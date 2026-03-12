@@ -60,18 +60,7 @@ test *args:
 
 test-i686:
     rustup target add i686-unknown-linux-gnu
-    cargo nextest run -p facet-value --target i686-unknown-linux-gnu --tests --lib < /dev/null
-
-asan-facet-value:
-    #!/usr/bin/env -S bash -euo pipefail
-    rustup toolchain install nightly
-    cargo +nightly test -Zsanitizer=address -p facet-value --lib --tests -- --test-threads=1
-
-asan-facet-value-ci:
-    #!/usr/bin/env -S bash -euo pipefail
-    source .envrc
-    rustup toolchain install nightly
-    cmd_group "cargo +nightly test -Zsanitizer=address -p facet-value --lib --tests -- --test-threads=1"
+    cargo nextest run --target i686-unknown-linux-gnu --tests --lib < /dev/null
 
 valgrind *args:
     cargo nextest run --profile valgrind --features jit {{ args }}
@@ -109,7 +98,7 @@ doc-tests-ci *args:
 miri *args:
     #!/usr/bin/env -S bash -euo pipefail
     source miri-env.sh
-    cargo miri nextest run --target-dir target/miri -p facet-reflect -p facet-core -p facet-value {{ args }}
+    cargo miri nextest run --target-dir target/miri -p facet-reflect -p facet-core {{ args }}
 
 miri-json *args:
     #!/usr/bin/env -S bash -euo pipefail
@@ -125,7 +114,7 @@ miri-ci *args:
     echo -e "\033[1;31m🧪 Running tests under Miri with strict provenance...\033[0m"
 
     export CARGO_TARGET_DIR=target/miri
-    cmd_group "cargo miri nextest run -p facet-reflect -p facet-core -p facet-value {{ args }}"
+    cmd_group "cargo miri nextest run -p facet-reflect -p facet-core {{ args }}"
 
 absolve:
     ./facet-dev/absolve.sh
