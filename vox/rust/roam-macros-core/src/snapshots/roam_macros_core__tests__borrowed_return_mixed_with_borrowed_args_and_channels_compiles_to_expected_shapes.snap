@@ -240,6 +240,14 @@ impl WordLabClient {
             caller: ::roam::ErasedCaller::new(caller),
         }
     }
+    #[doc = r" Append a client middleware to this client."]
+    pub fn with_middleware(self, middleware: impl ::roam::ClientMiddleware) -> Self {
+        Self {
+            caller: self
+                .caller
+                .with_middleware(word_lab_service_descriptor(), middleware),
+        }
+    }
     #[doc = r" Resolve when the underlying connection closes."]
     pub async fn closed(&self) {
         ::roam::Caller::closed(&self.caller).await;

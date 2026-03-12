@@ -1,6 +1,9 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
-use crate::{MaybeSend, MaybeSync, Metadata, RequestCall, RequestResponse, RoamError, SelfRef};
+use crate::{
+    ClientCallOutcome, ClientContext, ClientMiddleware, ClientRequest, Extensions, MaybeSend,
+    MaybeSync, Metadata, RequestCall, RequestResponse, RoamError, SelfRef, ServiceDescriptor,
+};
 
 // As a recap, a service defined like so:
 //
@@ -278,23 +281,72 @@ impl<C: Caller> ErasedCallerDyn for C {
 #[derive(Clone)]
 pub struct ErasedCaller {
     inner: Arc<dyn ErasedCallerDyn>,
+    service: Option<&'static ServiceDescriptor>,
+    middlewares: Vec<Arc<dyn ClientMiddleware>>,
 }
 
 impl ErasedCaller {
     pub fn new<C: Caller>(caller: C) -> Self {
         Self {
             inner: Arc::new(caller),
+            service: None,
+            middlewares: vec![],
         }
+    }
+
+    pub fn with_middleware(
+        mut self,
+        service: &'static ServiceDescriptor,
+        middleware: impl ClientMiddleware,
+    ) -> Self {
+        if let Some(existing_service) = self.service {
+            assert_eq!(
+                existing_service.service_name, service.service_name,
+                "ErasedCaller middleware service mismatch"
+            );
+        } else {
+            self.service = Some(service);
+        }
+        self.middlewares.push(Arc::new(middleware));
+        self
     }
 }
 
 impl Caller for ErasedCaller {
     fn call<'a>(
         &'a self,
-        call: RequestCall<'a>,
+        mut call: RequestCall<'a>,
     ) -> impl Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + MaybeSend + 'a
     {
-        self.inner.call(call)
+        async move {
+            let Some(service) = self.service else {
+                return self.inner.call(call).await;
+            };
+
+            let extensions = Extensions::new();
+            let method = service.by_id(call.method_id);
+            let context = ClientContext::new(method, call.method_id, &extensions);
+            let mut owned_metadata = crate::client_middleware::OwnedMetadata::default();
+
+            if !self.middlewares.is_empty() {
+                for middleware in &self.middlewares {
+                    let mut request = ClientRequest::new(&mut call, &mut owned_metadata);
+                    middleware.pre(&context, &mut request).await;
+                }
+            }
+
+            let result = self.inner.call(call).await;
+            if !self.middlewares.is_empty() {
+                let outcome = match &result {
+                    Ok(_) => ClientCallOutcome::Response,
+                    Err(error) => ClientCallOutcome::Error(error),
+                };
+                for middleware in self.middlewares.iter().rev() {
+                    middleware.post(&context, outcome).await;
+                }
+            }
+            result
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

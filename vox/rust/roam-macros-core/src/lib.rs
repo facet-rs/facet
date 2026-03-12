@@ -602,6 +602,15 @@ fn generate_client(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStream2 {
                 }
             }
 
+            /// Append a client middleware to this client.
+            pub fn with_middleware(self, middleware: impl #roam::ClientMiddleware) -> Self {
+                Self {
+                    caller: self
+                        .caller
+                        .with_middleware(#descriptor_fn_name(), middleware),
+                }
+            }
+
             /// Resolve when the underlying connection closes.
             pub async fn closed(&self) {
                 #roam::Caller::closed(&self.caller).await;

@@ -40,6 +40,28 @@ impl ContextProbe for ContextProbeService {
 }
 
 #[roam::service]
+trait ClientMiddlewareProbe {
+    #[roam::context]
+    async fn inspect(&self) -> String;
+}
+
+#[derive(Clone)]
+struct ClientMiddlewareProbeService;
+
+impl ClientMiddlewareProbe for ClientMiddlewareProbeService {
+    async fn inspect(&self, cx: &roam::RequestContext<'_>) -> String {
+        cx.metadata()
+            .iter()
+            .find(|entry| entry.key == "x-client-value")
+            .and_then(|entry| match entry.value {
+                roam::MetadataValue::String(value) => Some(value.to_string()),
+                _ => None,
+            })
+            .expect("client middleware should inject request metadata")
+    }
+}
+
+#[roam::service]
 trait MiddlewareProbe {
     #[roam::context]
     async fn inspect(&self) -> String;
@@ -108,6 +130,71 @@ impl roam::ServerMiddleware for RecordingMiddleware {
 
 fn record_event(events: &Arc<Mutex<Vec<String>>>, event: String) {
     events.lock().expect("events mutex poisoned").push(event);
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ClientMiddlewareSeed(String);
+
+#[derive(Clone)]
+struct RecordingClientMiddleware {
+    name: &'static str,
+    events: Arc<Mutex<Vec<String>>>,
+    inject_metadata: bool,
+}
+
+impl roam::ClientMiddleware for RecordingClientMiddleware {
+    fn pre<'a, 'call>(
+        &'a self,
+        context: &'a roam::ClientContext<'a>,
+        request: &'a mut roam::ClientRequest<'call, 'a>,
+    ) -> roam::BoxMiddlewareFuture<'a> {
+        Box::pin(async move {
+            record_event(&self.events, format!("{}:pre", self.name));
+            match self.name {
+                "first" => {
+                    context
+                        .extensions()
+                        .insert(ClientMiddlewareSeed(self.name.to_string()));
+                }
+                "second" => {
+                    assert_eq!(
+                        context.extensions().get_cloned::<ClientMiddlewareSeed>(),
+                        Some(ClientMiddlewareSeed("first".to_string()))
+                    );
+                    assert_eq!(
+                        context.method().map(|method| method.method_name),
+                        Some("inspect")
+                    );
+                }
+                _ => {}
+            }
+
+            if self.inject_metadata {
+                request.push_string_metadata(
+                    "x-client-value",
+                    format!("{}-value", self.name),
+                    roam::MetadataFlags::NONE,
+                );
+            }
+        })
+    }
+
+    fn post<'a>(
+        &'a self,
+        _context: &'a roam::ClientContext<'a>,
+        outcome: roam::ClientCallOutcome<'a>,
+    ) -> roam::BoxMiddlewareFuture<'a> {
+        Box::pin(async move {
+            record_event(
+                &self.events,
+                format!(
+                    "{}:post:{}",
+                    self.name,
+                    if outcome.is_ok() { "ok" } else { "err" }
+                ),
+            );
+        })
+    }
 }
 
 pub async fn run_adder_end_to_end<L>(
@@ -243,6 +330,65 @@ pub async fn run_server_middleware_end_to_end<L>(
             "second:pre".to_string(),
             "second:post:Replied".to_string(),
             "first:post:Replied".to_string(),
+        ]
+    );
+
+    server_task.abort();
+}
+
+pub async fn run_client_middleware_end_to_end<L>(
+    message_conduit_pair: impl FnOnce() -> (MessageConduit<L>, MessageConduit<L>),
+) where
+    L: Link + Send + 'static,
+    L::Tx: Send + 'static,
+    L::Rx: Send + 'static,
+{
+    let (client_conduit, server_conduit) = message_conduit_pair();
+    let events = Arc::new(Mutex::new(Vec::new()));
+
+    let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let server_task = tokio::task::spawn(async move {
+        let (server_caller_guard, _sh) = acceptor(server_conduit)
+            .establish::<ClientMiddlewareProbeClient>(ClientMiddlewareProbeDispatcher::new(
+                ClientMiddlewareProbeService,
+            ))
+            .await
+            .expect("server handshake failed");
+        let _ = server_ready_tx.send(());
+        let _server_caller_guard = server_caller_guard;
+        std::future::pending::<()>().await;
+    });
+
+    let (client, _sh) = initiator(client_conduit)
+        .establish::<ClientMiddlewareProbeClient>(())
+        .await
+        .expect("client handshake failed");
+
+    server_ready_rx.await.expect("server setup failed");
+
+    let client = client
+        .with_middleware(RecordingClientMiddleware {
+            name: "first",
+            events: Arc::clone(&events),
+            inject_metadata: true,
+        })
+        .with_middleware(RecordingClientMiddleware {
+            name: "second",
+            events: Arc::clone(&events),
+            inject_metadata: false,
+        });
+
+    let observed = client.inspect().await.expect("inspect call should succeed");
+    assert_eq!(observed, "first-value");
+
+    let events = events.lock().expect("events mutex poisoned").clone();
+    assert_eq!(
+        events,
+        vec![
+            "first:pre".to_string(),
+            "second:pre".to_string(),
+            "second:post:ok".to_string(),
+            "first:post:ok".to_string(),
         ]
     );
 

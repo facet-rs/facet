@@ -23,3 +23,8 @@ async fn request_context_opt_in_end_to_end() {
 async fn server_middleware_end_to_end() {
     service_macro_shared::run_server_middleware_end_to_end(message_conduit_pair).await;
 }
+
+#[tokio::test]
+async fn client_middleware_end_to_end() {
+    service_macro_shared::run_client_middleware_end_to_end(message_conduit_pair).await;
+}

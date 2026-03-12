@@ -100,6 +100,9 @@ pub use request_context::*;
 mod server_middleware;
 pub use server_middleware::*;
 
+mod client_middleware;
+pub use client_middleware::*;
+
 mod calls;
 pub use calls::*;
 

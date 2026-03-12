@@ -3,9 +3,11 @@
 //! This is the facade crate. It re-exports everything needed by both
 //! hand-written code and `#[roam::service]` macro-generated code.
 
+mod client_logging;
 mod server_logging;
 
 // Re-export the proc macro
+pub use client_logging::{ClientLogging, ClientLoggingOptions};
 pub use roam_service_macros::service;
 pub use server_logging::{ServerLogging, ServerLoggingOptions};
 
@@ -27,6 +29,10 @@ pub use roam_types::{
     Caller,
     // Descriptors
     ChannelId,
+    ClientCallOutcome,
+    ClientContext,
+    ClientMiddleware,
+    ClientRequest,
     Conduit,
     ConduitAcceptor,
     ConduitRx,
@@ -49,6 +55,7 @@ pub use roam_types::{
     MetadataValue,
     MethodDescriptor,
     MethodId,
+    MiddlewareCaller,
     MsgFamily,
     Parity,
     Payload,
