@@ -80,40 +80,6 @@ jobs:
           export CI=true
           just miri
 
-  miri-json:
-    runs-on: depot-ubuntu-24.04-64
-
-    container:
-      image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: ✨ Run miri for facet-json
-        shell: bash
-        run: |
-          export CI=true
-          just miri-json
-
-  valgrind:
-    runs-on: depot-ubuntu-24.04-32
-
-    container:
-      image: ghcr.io/facet-rs/facet-ci:latest-amd64
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install valgrind and nodejs
-        run: apt-get update && apt-get install -y valgrind nodejs
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: ✨ Run facet-json tests under valgrind
-        shell: bash
-        run: |
-          just valgrind -p facet-json
-
   nightly:
     runs-on: depot-ubuntu-24.04-32
 
@@ -209,7 +175,7 @@ jobs:
         with:
           manifest-path: Cargo.toml
           baseline-rev: origin/main
-          exclude: facet-json-classics,facet-testattrs
+          exclude: facet-testattrs
           verbose: true
 
   test-aarch64-apple-darwin:

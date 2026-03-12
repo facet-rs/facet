@@ -1,9 +1,0 @@
----
-source: facet-typescript/src/lib.rs
-assertion_line: 982
-expression: ts
----
-/**
- * A user ID that serializes as a string
- */
-export type UserId = string;

@@ -47,13 +47,13 @@
 //!
 //! In terms of data formats, we have:
 //!
-//! - [facet-json](https://github.com/facet-rs/facet/tree/main/facet-json): JSON format support
-//! - [facet-toml](https://github.com/facet-rs/facet/tree/main/facet-toml): TOML format support
-//! - [facet-yaml](https://github.com/facet-rs/facet/tree/main/facet-yaml): YAML format support
-//! - [facet-msgpack](https://github.com/facet-rs/facet/tree/main/facet-msgpack): MessagePack deserialization
-//! - [facet-asn1](https://github.com/facet-rs/facet/tree/main/facet-asn1): ASN.1 format support
-//! - [facet-xdr](https://github.com/facet-rs/facet/tree/main/facet-xdr): XDR format support
-//! - [facet-csv](https://github.com/facet-rs/facet/tree/main/facet-csv): CSV format support
+//! - [facet-json](https://github.com/facet-rs/facet-format/tree/main/facet-json): JSON format support
+//! - [facet-toml](https://github.com/facet-rs/facet-format/tree/main/facet-toml): TOML format support
+//! - [facet-yaml](https://github.com/facet-rs/facet-format/tree/main/facet-yaml): YAML format support
+//! - [facet-msgpack](https://github.com/facet-rs/facet-format/tree/main/facet-msgpack): MessagePack deserialization
+//! - [facet-asn1](https://github.com/facet-rs/facet-format/tree/main/facet-asn1): ASN.1 format support
+//! - [facet-xdr](https://github.com/facet-rs/facet-format/tree/main/facet-xdr): XDR format support
+//! - [facet-csv](https://github.com/facet-rs/facet-format/tree/main/facet-csv): CSV format support
 //!
 //! Still adjacent to serialization/deserialization, we have:
 //!

@@ -21,7 +21,7 @@ facet = { path = "../facet", version = "0.44.1" }
 regex = { version = "1", default-features = false, features = ["std"] }
 
 [dev-dependencies]
-facet-json = { path = "../facet-json" }
+facet-json = { git = "https://github.com/facet-rs/facet-format", branch = "main", version = "0.44.1" }
 
 [lints]
 workspace = true

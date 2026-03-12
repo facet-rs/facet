@@ -1,6 +1,0 @@
----
-source: facet-typescript/src/lib.rs
-expression: ts
----
-export type Event =
-  | { Data: { visible: string } };

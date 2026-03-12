@@ -83,10 +83,10 @@ fuzz-smoke-inline:
     cargo fuzz run fuzz_inline_string -- -runs=1000
 
 afl-build-postcard:
-    cd facet-postcard/fuzz-afl && cargo afl build --bin from_slice
+    cd ../facet-format/facet-postcard/fuzz-afl && cargo afl build --bin from_slice
 
 afl-fuzz-postcard:
-    cd facet-postcard/fuzz-afl && mkdir -p in out && cargo afl fuzz -i in -o out target/debug/from_slice
+    cd ../facet-format/facet-postcard/fuzz-afl && mkdir -p in out && cargo afl fuzz -i in -o out target/debug/from_slice
 
 test-ci *args:
     #!/usr/bin/env -S bash -euo pipefail
@@ -115,6 +115,7 @@ miri-json *args:
     #!/usr/bin/env -S bash -euo pipefail
     source miri-env.sh
     # Exclude jit tests (Cranelift) and tendril tests (integer-to-pointer casts)
+    cd ../facet-format
     cargo miri nextest run --target-dir target/miri -p facet-json -E 'not test(/jit/) and not test(/tendril/)' {{ args }}
 
 miri-ci *args:
