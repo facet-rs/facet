@@ -225,7 +225,7 @@ fn set_string_value_inner<'input, const BORROW: bool>(
         }
         match s {
             Cow::Borrowed(borrowed) => {
-                wip = wip.set(borrowed).map_err(&reflect_err)?;
+                wip = wip.set(borrowed).map_err(reflect_err)?;
                 return Ok(wip);
             }
             Cow::Owned(_) => {
@@ -240,7 +240,7 @@ fn set_string_value_inner<'input, const BORROW: bool>(
         && matches!(ptr_def.known, Some(KnownPointer::Cow))
         && ptr_def.pointee().is_some_and(|p| *p == *str::SHAPE)
     {
-        wip = wip.set(s).map_err(&reflect_err)?;
+        wip = wip.set(s).map_err(reflect_err)?;
         return Ok(wip);
     }
 
@@ -252,13 +252,13 @@ fn set_string_value_inner<'input, const BORROW: bool>(
         )
         && ptr_def.pointee().is_some_and(|p| *p == *str::SHAPE)
     {
-        wip = wip.begin_smart_ptr().map_err(&reflect_err)?;
-        wip = wip.set(s.into_owned()).map_err(&reflect_err)?;
-        wip = wip.end().map_err(&reflect_err)?;
+        wip = wip.begin_smart_ptr().map_err(reflect_err)?;
+        wip = wip.set(s.into_owned()).map_err(reflect_err)?;
+        wip = wip.end().map_err(reflect_err)?;
         return Ok(wip);
     }
 
-    wip = wip.set(s.into_owned()).map_err(&reflect_err)?;
+    wip = wip.set(s.into_owned()).map_err(reflect_err)?;
     Ok(wip)
 }
 
@@ -288,7 +288,7 @@ pub fn set_bytes_value<'input, const BORROW: bool>(
         }
         match b {
             Cow::Borrowed(borrowed) => {
-                wip = wip.set(borrowed).map_err(&reflect_err)?;
+                wip = wip.set(borrowed).map_err(reflect_err)?;
                 return Ok(wip);
             }
             Cow::Owned(_) => {
@@ -305,10 +305,10 @@ pub fn set_bytes_value<'input, const BORROW: bool>(
         && matches!(ptr_def.known, Some(KnownPointer::Cow))
         && ptr_def.pointee().is_some_and(is_byte_slice)
     {
-        wip = wip.set(b).map_err(&reflect_err)?;
+        wip = wip.set(b).map_err(reflect_err)?;
         return Ok(wip);
     }
 
-    wip = wip.set(b.into_owned()).map_err(&reflect_err)?;
+    wip = wip.set(b.into_owned()).map_err(reflect_err)?;
     Ok(wip)
 }

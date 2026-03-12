@@ -63,7 +63,6 @@ facet-format-suite = { path = "../facet-format-suite", version = "0.44.1", featu
 indoc = { workspace = true }
 libtest-mimic = "0.8.1"
 smol_str = { workspace = true }
-tracing = { workspace = true }
 
 [[test]]
 name = "format_suite"
@@ -114,6 +113,9 @@ yoke = ["facet/yoke", "facet-format-suite/yoke"]
 
 # smallvec support
 smallvec = ["facet/smallvec"]
+
+[package.metadata.cargo-shear]
+ignored = ["tracing"]
 
 [lints]
 workspace = true
