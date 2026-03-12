@@ -1,0 +1,8 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 1655
+expression: ts
+---
+export type Rr =
+  | { type: "Mat" }
+  | { type: "Sp"; first_roll: number; long_last: boolean };

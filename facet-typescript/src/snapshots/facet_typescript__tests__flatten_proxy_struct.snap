@@ -1,0 +1,9 @@
+---
+source: facet-typescript/src/lib.rs
+expression: ts
+---
+export interface Shape {
+  name: string;
+  x: number;
+  y: number;
+}

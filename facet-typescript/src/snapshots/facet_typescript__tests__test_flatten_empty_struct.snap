@@ -1,0 +1,6 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 1413
+expression: ts
+---
+export type Wrapper = object;

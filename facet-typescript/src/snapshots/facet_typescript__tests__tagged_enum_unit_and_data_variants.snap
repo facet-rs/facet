@@ -1,0 +1,9 @@
+---
+source: facet-typescript/src/lib.rs
+expression: ts
+---
+export type ResponseStatus =
+  | "pending"
+  | { ok: string }
+  | { error: { message: string } }
+  | "cancelled";

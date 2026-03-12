@@ -1,0 +1,6 @@
+---
+source: facet-python/src/lib.rs
+assertion_line: 1007
+expression: py
+---
+EmptyTuple = None

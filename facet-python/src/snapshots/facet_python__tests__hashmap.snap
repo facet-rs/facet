@@ -1,0 +1,6 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+class Registry(TypedDict, total=False):
+    entries: Required[dict[str, int]]

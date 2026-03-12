@@ -1,0 +1,12 @@
+---
+source: facet-typescript/src/lib.rs
+assertion_line: 683
+expression: ts
+---
+export type Shape =
+  | { Line: [Point, Point] };
+
+export interface Point {
+  x: number;
+  y: number;
+}
