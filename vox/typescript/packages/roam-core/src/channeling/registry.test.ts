@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { ChannelRegistry } from "./registry.ts";
 
 describe("ChannelRegistry", () => {
+  // r[verify rpc.channel.binding]
+  // r[verify rpc.channel.item]
   it("buffers incoming data until the receiver is registered", async () => {
     const registry = new ChannelRegistry();
     const channelId = 7n;
@@ -17,6 +19,8 @@ describe("ChannelRegistry", () => {
     await expect(rx.recv()).resolves.toEqual(second);
   });
 
+  // r[verify rpc.channel.close]
+  // r[verify rpc.channel.reset]
   it("preserves buffered terminal close before the receiver is registered", async () => {
     const registry = new ChannelRegistry();
     const channelId = 9n;

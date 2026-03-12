@@ -89,6 +89,8 @@ async function makeSessionConduit(
   transport: SessionTransport,
   options: SessionTransportOptions,
 ): Promise<Conduit<Message>> {
+  // r[impl conduit.bare]
+  // r[impl conduit.stable]
   const conduit = options.conduit ?? "bare";
   if (isLinkSource(transport)) {
     if (conduit === "stable") {
@@ -189,6 +191,7 @@ class SessionCore {
     settings: ConnectionSettings,
     metadata: Metadata = [],
   ): Promise<ConnectionHandle> {
+    // r[impl connection.open]
     this.assertOpen();
     const connectionId = this.allocateConnectionId();
     const result = deferred<ConnectionHandle>();
@@ -208,6 +211,7 @@ class SessionCore {
   }
 
   async closeConnection(connectionId: bigint, metadata: Metadata = []): Promise<void> {
+    // r[impl connection.close]
     if (connectionId === 0n) {
       throw new SessionError("cannot close root connection");
     }
@@ -271,6 +275,7 @@ class SessionCore {
   }
 
   private async run(): Promise<void> {
+    // r[impl session.message]
     while (!this.closed) {
       const message = await this.conduit.recv();
       if (!message) {
@@ -323,6 +328,9 @@ class SessionCore {
     connectionId: bigint,
     value: { connection_settings: ConnectionSettings; metadata: Metadata },
   ): Promise<void> {
+    // r[impl connection.open]
+    // r[impl connection.open.rejection]
+    // r[impl session.connection-settings.open]
     if (!this.onConnection) {
       await this.sendMessage({
         connection_id: connectionId,
@@ -387,6 +395,9 @@ class SessionCore {
     connectionId: bigint,
     request: RequestMessage,
   ): Promise<void> {
+    // r[impl rpc.request]
+    // r[impl rpc.response]
+    // r[impl rpc.cancel]
     const connection = this.getConnection(connectionId);
     switch (request.body.tag) {
       case "Call":
@@ -412,6 +423,10 @@ class SessionCore {
     connectionId: bigint,
     channel: ChannelMessage,
   ): void {
+    // r[impl rpc.channel.item]
+    // r[impl rpc.channel.close]
+    // r[impl rpc.channel.reset]
+    // r[impl rpc.flow-control.credit.grant]
     const connection = this.getConnection(connectionId);
     switch (channel.body.tag) {
       case "Item":
@@ -704,6 +719,9 @@ export class Session {
     conduit: Conduit<Message>,
     options: SessionBuilderOptions = {},
   ): Promise<Session> {
+    // r[impl session.handshake]
+    // r[impl session.connection-settings.hello]
+    // r[impl session.parity]
     const localSettings: ConnectionSettings = {
       parity: parityOdd(),
       max_concurrent_requests: options.maxConcurrentRequests ?? 64,
@@ -725,6 +743,9 @@ export class Session {
     conduit: Conduit<Message>,
     options: SessionBuilderOptions = {},
   ): Promise<Session> {
+    // r[impl session.handshake]
+    // r[impl session.connection-settings.hello]
+    // r[impl session.parity]
     const hello = await waitForHello(conduit);
     const localSettings: ConnectionSettings = {
       parity: parityEven(),

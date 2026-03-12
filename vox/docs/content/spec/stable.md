@@ -11,6 +11,10 @@ weight = 14
 > layer above it sees a reliable, ordered stream of items, even when the
 > underlying link fails and is replaced.
 
+StableConduit continuity is below the RPC retry layer. It preserves conduit
+items; it does not by itself define when an RPC should be retried, resumed, or
+replayed as the same logical operation. See [Retry](./retry/).
+
 > r[stable.link-source]
 >
 > A StableConduit is constructed with a LinkSource — an async provider
@@ -141,3 +145,7 @@ weight = 14
 > expired or the server restarted), it MUST reject the resume attempt.
 > The client MUST treat this as a session loss and surface an error to
 > the layers above.
+
+What happens after that session loss is governed by [Retry](./retry/): stable
+reconnection stops at conduit continuity, while operation-level retry and
+session resumption are defined separately there.

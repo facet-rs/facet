@@ -174,6 +174,10 @@ weight = 11
 > `StableConduit` provides automatic reconnection (over fresh links) and replay of
 > missed messages. It comes with its own Packet framing.
 
+`StableConduit` continuity does not, by itself, answer what happens to an RPC
+whose outcome is now ambiguous. Operation-level retry and session resumption
+semantics are defined in [Retry](./retry/).
+
 > r[conduit.split]
 >
 > Conduits can be passed around whole, but before use, they MUST be split into

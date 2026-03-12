@@ -12,6 +12,10 @@ If you're coming from roam v6 APIs, see the
 > The RPC layer sits on top of connections. It defines how requests are made,
 > how responses are returned, and how data flows over channels.
 
+Transparent retry is specified separately in [Retry](./retry/). The RPC layer
+defines the request/response/channel model for a single attempt; the retry
+layer defines when multiple attempts address the same logical operation.
+
 > r[rpc.service]
 >
 > A service is a set of methods. In Rust, a service is defined as a trait
@@ -179,6 +183,9 @@ registered on the session builder; otherwise they are rejected.
 >   * A list of channel IDs for channels that appear in the arguments,
 >     allocated by the caller
 >   * Metadata (key-value pairs for tracing, auth, deadlines, etc.)
+
+When retry support is active, request metadata also carries the operation
+identity described in [Retry](./retry/).
 
 > r[rpc.response]
 >

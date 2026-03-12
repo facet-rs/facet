@@ -186,6 +186,8 @@ export class StableConduit implements Conduit<Message> {
   constructor(private readonly source: LinkSource) {}
 
   static async connect(source: LinkSource): Promise<StableConduit> {
+    // r[impl stable]
+    // r[impl stable.link-source]
     const conduit = new StableConduit(source);
     await conduit.attachFreshLink();
     conduit.ensureRecvLoop();
@@ -193,6 +195,9 @@ export class StableConduit implements Conduit<Message> {
   }
 
   async send(item: Message): Promise<void> {
+    // r[impl stable.framing]
+    // r[impl stable.ack]
+    // r[impl stable.replay-buffer]
     const itemBytes = encodeMessage(item);
     while (!this.closed) {
       try {
@@ -215,6 +220,8 @@ export class StableConduit implements Conduit<Message> {
   }
 
   async recv(): Promise<Message | null> {
+    // r[impl stable.seq.monotonic]
+    // r[impl stable.ack.trim]
     const queued = this.recvQueue.shift();
     if (queued) {
       return queued;
@@ -244,6 +251,12 @@ export class StableConduit implements Conduit<Message> {
   }
 
   private async attachFreshLink(): Promise<void> {
+    // r[impl stable.handshake]
+    // r[impl stable.reconnect]
+    // r[impl stable.reconnect.server-replay]
+    // r[impl stable.reconnect.client-replay]
+    // r[impl stable.replay-buffer.order]
+    // r[impl retry.reconnect.stable-conduit]
     const attachment = await this.source.nextLink();
     const link = attachment.link;
 
@@ -355,6 +368,8 @@ export class StableConduit implements Conduit<Message> {
   }
 
   private async ensureReconnected(): Promise<void> {
+    // r[impl stable.reconnect]
+    // r[impl stable.reconnect.failure]
     if (this.closed) {
       throw new Error("StableConduit closed");
     }

@@ -212,8 +212,6 @@ export class OutgoingSender {
  *
  * Handles both incoming channels (Data from wire → Rx<T>) and
  * outgoing channels (Tx<T> → Data to wire).
- *
- * r[impl channeling.unknown] - Unknown channel IDs cause Goodbye.
  */
 export class ChannelRegistry {
   constructor(
@@ -239,7 +237,8 @@ export class ChannelRegistry {
   /**
    * Register an incoming channel and return the receiver for Rx<T>.
    *
-   * r[impl channeling.allocation.caller] - Caller allocates channel IDs.
+   * r[impl rpc.channel.allocation] - Caller allocates channel IDs.
+   * r[impl rpc.channel.binding.callee-args.rx] - Callee binds incoming Rx by channel ID.
    */
   registerIncoming(
     channelId: ChannelId,
@@ -302,7 +301,8 @@ export class ChannelRegistry {
   /**
    * Register an outgoing channel and return the sender for Tx<T>.
    *
-   * r[impl channeling.allocation.caller] - Caller allocates channel IDs.
+   * r[impl rpc.channel.allocation] - Caller allocates channel IDs.
+   * r[impl rpc.channel.binding.callee-args.tx] - Callee binds outgoing Tx by channel ID.
    */
   registerOutgoing(
     channelId: ChannelId,
@@ -322,8 +322,9 @@ export class ChannelRegistry {
   /**
    * Route a Data message payload to the appropriate incoming channel.
    *
-   * r[impl channeling.data] - Data messages routed by channel_id.
-   * r[impl channeling.data-after-close] - Reject data on closed channels.
+   * r[impl rpc.channel.item] - Channel items route by channel ID.
+   * r[impl rpc.channel.binding] - Items may arrive before the callee registers the Rx handle.
+   * r[impl rpc.channel.close] - Data after close is rejected.
    */
   routeData(channelId: ChannelId, payload: Uint8Array): void {
     // Check for data-after-close
@@ -412,7 +413,8 @@ export class ChannelRegistry {
   /**
    * Close an incoming channel.
    *
-   * r[impl channeling.close] - Close terminates the channel.
+   * r[impl rpc.channel.close] - Close terminates the channel.
+   * r[impl rpc.channel.reset] - Reset also terminates the channel locally.
    */
   close(channelId: ChannelId): void {
     const pending = this.pendingIncoming.get(channelId);

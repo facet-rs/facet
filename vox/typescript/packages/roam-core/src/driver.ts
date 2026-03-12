@@ -101,6 +101,7 @@ export class Driver {
   }
 
   async run(): Promise<void> {
+    // r[impl rpc.session-setup]
     let pendingIncoming: Promise<IncomingCall | null> | null = null;
 
     while (true) {
@@ -166,6 +167,8 @@ export class Driver {
   }
 
   private async handleCall(incoming: IncomingCall): Promise<void> {
+    // r[impl rpc.unknown-method]
+    // r[impl rpc.response.one-per-request]
     const descriptor = this.dispatcher.getDescriptor();
     const method = descriptor.methods.find((candidate) => candidate.id === incoming.methodId);
     if (!method) {
@@ -227,6 +230,9 @@ export class Driver {
     incoming: IncomingCall,
     taskSender: TaskSender,
   ): unknown[] {
+    // r[impl rpc.channel.binding]
+    // r[impl rpc.channel.binding.callee-args.rx]
+    // r[impl rpc.channel.binding.callee-args.tx]
     const decoded = decodeWithSchema(
       incoming.args,
       0,

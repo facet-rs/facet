@@ -14,6 +14,16 @@ specs (
                 name swift
                 include (swift/roam-runtime/**/*.swift)
             }
+            {
+                name typescript
+                include (
+                    typescript/packages/roam-core/src/session.ts
+                    typescript/packages/roam-core/src/stable_conduit.ts
+                    typescript/packages/roam-core/src/driver.ts
+                    typescript/packages/roam-core/src/channeling/registry.ts
+                    typescript/packages/roam-core/src/channeling/registry.test.ts
+                )
+            }
         )
     }
 )
