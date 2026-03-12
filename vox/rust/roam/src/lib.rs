@@ -49,6 +49,7 @@ pub use roam_types::{
     Payload,
     ReplySink,
     RequestCall,
+    RequestContext,
     RequestResponse,
     ResponseParts,
     RoamError,

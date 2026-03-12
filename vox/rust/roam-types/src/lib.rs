@@ -94,6 +94,9 @@ pub use conduit::*;
 mod metadata;
 pub use metadata::*;
 
+mod request_context;
+pub use request_context::*;
+
 mod calls;
 pub use calls::*;
 

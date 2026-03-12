@@ -13,3 +13,8 @@ fn message_conduit_pair() -> (MessageConduit, MessageConduit) {
 async fn adder_service_macro_end_to_end() {
     service_macro_shared::run_adder_end_to_end(message_conduit_pair).await;
 }
+
+#[tokio::test]
+async fn request_context_opt_in_end_to_end() {
+    service_macro_shared::run_request_context_end_to_end(message_conduit_pair).await;
+}

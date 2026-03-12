@@ -1,0 +1,215 @@
+---
+source: rust/roam-macros-core/src/lib.rs
+assertion_line: 835
+expression: "generate(quote!\n{\n    trait Audit\n    {\n        #[roam::context] async fn record(&self, payload: String) -> &'roam\n        str; async fn ping(&self) -> u64;\n    }\n})"
+---
+#[allow(non_snake_case, clippy::all)]
+pub fn audit_service_descriptor() -> &'static ::roam::session::ServiceDescriptor {
+    static DESCRIPTOR: std::sync::OnceLock<&'static ::roam::session::ServiceDescriptor> =
+        std::sync::OnceLock::new();
+    DESCRIPTOR.get_or_init(|| {
+        let methods: Vec<&'static ::roam::session::MethodDescriptor> = vec![
+            ::roam::hash::method_descriptor::<(String,), &'static str>(
+                "Audit",
+                "record",
+                &["payload"],
+                None,
+            ),
+            ::roam::hash::method_descriptor::<(), u64>("Audit", "ping", &[], None),
+        ];
+        Box::leak(Box::new(::roam::session::ServiceDescriptor {
+            service_name: "Audit",
+            methods: Box::leak(methods.into_boxed_slice()),
+            doc: None,
+        }))
+    })
+}
+pub trait Audit
+where
+    Self: Send + Sync,
+{
+    fn record<'roam>(
+        &self,
+        cx: &::roam::RequestContext<'_>,
+        call: impl ::roam::Call<'roam, &'roam str, ::core::convert::Infallible>,
+        payload: String,
+    ) -> impl std::future::Future<Output = ()> + Send;
+    fn ping(&self) -> impl std::future::Future<Output = u64> + Send;
+}
+#[doc = r" Dispatcher for this service."]
+#[doc = r""]
+#[doc = r" Wraps a handler and implements [`#roam::Handler`] by routing incoming"]
+#[doc = r" calls to the appropriate trait method by method ID."]
+#[derive(Clone)]
+pub struct AuditDispatcher<H> {
+    handler: H,
+}
+impl<H> AuditDispatcher<H>
+where
+    H: Audit + Clone + Send + Sync + 'static,
+{
+    #[doc = r" Create a new dispatcher wrapping the given handler."]
+    pub fn new(handler: H) -> Self {
+        Self { handler }
+    }
+}
+impl<H, R> ::roam::Handler<R> for AuditDispatcher<H>
+where
+    H: Audit + Clone + Send + Sync + 'static,
+    R: ::roam::ReplySink,
+{
+    async fn handle(&self, call: ::roam::SelfRef<::roam::RequestCall<'static>>, reply: R) {
+        let method_id = call.method_id;
+        let args_bytes = match &call.args {
+            ::roam::Payload::Incoming(bytes) => bytes,
+            _ => {
+                reply
+                    .send_error(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)
+                    .await;
+                return;
+            }
+        };
+        if method_id == audit_service_descriptor().methods[0usize].id {
+            let args: (String,) = match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
+                Ok(v) => v,
+                Err(_) => {
+                    reply
+                        .send_error(
+                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload,
+                        )
+                        .await;
+                    return;
+                }
+            };
+            let (payload,) = args;
+            let context = ::roam::RequestContext::new(
+                audit_service_descriptor().methods[0usize],
+                &call.metadata,
+            );
+            let sink_call = ::roam::SinkCall::new(reply);
+            self.handler.record(&context, sink_call, payload).await;
+            return;
+        }
+        if method_id == audit_service_descriptor().methods[1usize].id {
+            let args: () = match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
+                Ok(v) => v,
+                Err(_) => {
+                    reply
+                        .send_error(
+                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload,
+                        )
+                        .await;
+                    return;
+                }
+            };
+            let () = args;
+            let value = self.handler.ping().await;
+            let sink_call = ::roam::SinkCall::new(reply);
+            ::roam::Call::<'_, u64, ::core::convert::Infallible>::ok(sink_call, value).await;
+            return;
+        }
+        reply
+            .send_error(::roam::RoamError::<::core::convert::Infallible>::UnknownMethod)
+            .await;
+    }
+}
+#[doc = "Client for the `Audit` service.\n\nStores a type-erased [`Caller`](:: roam::Caller) implementation."]
+#[must_use = "Dropping this client may close the connection if it is the last caller."]
+#[derive(Clone)]
+pub struct AuditClient {
+    caller: ::roam::ErasedCaller,
+}
+impl AuditClient {
+    #[doc = r" Create a new client wrapping the given caller."]
+    pub fn new(caller: impl ::roam::Caller) -> Self {
+        Self {
+            caller: ::roam::ErasedCaller::new(caller),
+        }
+    }
+    #[doc = r" Resolve when the underlying connection closes."]
+    pub async fn closed(&self) {
+        ::roam::Caller::closed(&self.caller).await;
+    }
+    #[doc = r" Return whether the underlying connection is still considered connected."]
+    pub fn is_connected(&self) -> bool {
+        ::roam::Caller::is_connected(&self.caller)
+    }
+    pub async fn record(
+        &self,
+        payload: String,
+    ) -> Result<::roam::SelfRef<&'static str>, ::roam::RoamError> {
+        let method_id = audit_service_descriptor().methods[0usize].id;
+        let args = (payload,);
+        let channels = vec![];
+        let req = ::roam::RequestCall {
+            method_id,
+            args: ::roam::Payload::outgoing(&args),
+            channels,
+            metadata: Default::default(),
+        };
+        let response = ::roam::Caller::call(&self.caller, req)
+            .await
+            .map_err(|e| match e {
+                ::roam::RoamError::UnknownMethod => {
+                    ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
+                }
+                ::roam::RoamError::InvalidPayload => {
+                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+                }
+                ::roam::RoamError::Cancelled => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                }
+                ::roam::RoamError::User(never) => match never {},
+            })?;
+        response.try_repack(|resp, _bytes| {
+            let ret_bytes = match &resp.ret {
+                ::roam::Payload::Incoming(bytes) => bytes,
+                _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
+            };
+            let result: Result<&'static str, ::roam::RoamError<::core::convert::Infallible>> =
+                ::roam::facet_postcard::from_slice_borrowed(ret_bytes).map_err(|_| {
+                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+                })?;
+            let ret = result?;
+            Ok(ret)
+        })
+    }
+    pub async fn ping(&self) -> Result<u64, ::roam::RoamError> {
+        let method_id = audit_service_descriptor().methods[1usize].id;
+        let args = ();
+        let channels = vec![];
+        let req = ::roam::RequestCall {
+            method_id,
+            args: ::roam::Payload::outgoing(&args),
+            channels,
+            metadata: Default::default(),
+        };
+        let response = ::roam::Caller::call(&self.caller, req)
+            .await
+            .map_err(|e| match e {
+                ::roam::RoamError::UnknownMethod => {
+                    ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
+                }
+                ::roam::RoamError::InvalidPayload => {
+                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+                }
+                ::roam::RoamError::Cancelled => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                }
+                ::roam::RoamError::User(never) => match never {},
+            })?;
+        let ret_bytes = match &response.ret {
+            ::roam::Payload::Incoming(bytes) => bytes,
+            _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
+        };
+        let result: Result<u64, ::roam::RoamError<::core::convert::Infallible>> =
+            ::roam::facet_postcard::from_slice(ret_bytes)
+                .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
+        result
+    }
+}
+impl From<::roam::DriverCaller> for AuditClient {
+    fn from(caller: ::roam::DriverCaller) -> Self {
+        Self::new(caller)
+    }
+}

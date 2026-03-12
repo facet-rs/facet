@@ -443,6 +443,11 @@ impl ServiceMethod {
     pub fn has_generics(&self) -> bool {
         !self.generics.is_empty()
     }
+
+    /// Check whether this method explicitly opts into request context injection.
+    pub fn wants_context(&self) -> bool {
+        has_attr_path(&self.attributes, &["roam", "context"])
+    }
 }
 
 // ============================================================================
@@ -497,6 +502,32 @@ fn collect_doc_string(attrs: &Any<RawAttribute>) -> Option<String> {
     } else {
         Some(docs.join("\n"))
     }
+}
+
+fn has_attr_path(attrs: &Any<RawAttribute>, expected: &[&str]) -> bool {
+    attrs
+        .iter()
+        .any(|attr| attr_path_matches(&attr.value, expected))
+}
+
+fn attr_path_matches(attr: &RawAttribute, expected: &[&str]) -> bool {
+    let mut iter = attr.body.content.clone().to_token_iter();
+    let Ok(path) = TypePath::parse(&mut iter) else {
+        return false;
+    };
+    if EndOfStream::parse(&mut iter).is_err() {
+        return false;
+    }
+
+    let actual = std::iter::once(path.first.to_string())
+        .chain(path.rest.iter().map(|seg| seg.value.second.to_string()))
+        .collect::<Vec<_>>();
+
+    actual.len() == expected.len()
+        && actual
+            .iter()
+            .zip(expected.iter())
+            .all(|(actual, expected)| actual == expected)
 }
 
 /// Parse a trait definition from a token stream.
@@ -576,6 +607,23 @@ mod tests {
         let method = trait_def.methods().next().expect("method");
         assert!(method.has_generics());
         assert!(method.is_mut_receiver());
+    }
+
+    #[test]
+    fn method_helpers_detect_explicit_request_context_opt_in() {
+        let trait_def = parse(
+            r#"
+            trait Svc {
+                #[roam::context]
+                async fn contextual(&self) -> u32;
+
+                async fn plain(&self) -> u32;
+            }
+            "#,
+        );
+        let mut methods = trait_def.methods();
+        assert!(methods.next().expect("contextual method").wants_context());
+        assert!(!methods.next().expect("plain method").wants_context());
     }
 
     #[test]

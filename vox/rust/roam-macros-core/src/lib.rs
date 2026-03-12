@@ -260,6 +260,7 @@ fn generate_service_trait(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenSt
 fn generate_trait_method(method: &ServiceMethod, roam: &TokenStream2) -> TokenStream2 {
     let method_name = format_ident!("{}", method.name().to_snake_case());
     let method_doc = method.doc().map(|d| quote! { #[doc = #d] });
+    let wants_context = method.wants_context();
 
     let return_type = method.return_type();
     let (ok_ty_ref, err_ty_ref) = method_ok_and_err_types(&return_type);
@@ -279,20 +280,33 @@ fn generate_trait_method(method: &ServiceMethod, roam: &TokenStream2) -> TokenSt
         })
         .collect();
 
+    let context_param = wants_context.then(|| quote! { cx: &#roam::RequestContext<'_> });
+
     if ok_has_roam_lifetime {
         let ok_ty = ok_ty_ref.to_token_stream();
         let err_ty = err_ty_ref
             .map(Type::to_token_stream)
             .unwrap_or_else(|| quote! { ::core::convert::Infallible });
+        let mut signature_params = Vec::new();
+        if let Some(context_param) = context_param.clone() {
+            signature_params.push(context_param);
+        }
+        signature_params.push(quote! { call: impl #roam::Call<'roam, #ok_ty, #err_ty> });
+        signature_params.extend(params);
         quote! {
             #method_doc
-            fn #method_name #method_lifetime (&self, call: impl #roam::Call<'roam, #ok_ty, #err_ty>, #(#params),*) -> impl std::future::Future<Output = ()> + Send;
+            fn #method_name #method_lifetime (&self, #(#signature_params),*) -> impl std::future::Future<Output = ()> + Send;
         }
     } else {
         let output_ty = return_type.to_token_stream();
+        let mut signature_params = Vec::new();
+        if let Some(context_param) = context_param {
+            signature_params.push(context_param);
+        }
+        signature_params.extend(params);
         quote! {
             #method_doc
-            fn #method_name (&self, #(#params),*) -> impl std::future::Future<Output = #output_ty> + Send;
+            fn #method_name (&self, #(#signature_params),*) -> impl std::future::Future<Output = #output_ty> + Send;
         }
     }
 }
@@ -375,6 +389,7 @@ fn generate_dispatch_arm(
 ) -> TokenStream2 {
     let method_fn = format_ident!("{}", method.name().to_snake_case());
     let idx = method_index;
+    let wants_context = method.wants_context();
 
     // Build args tuple type for deserialization
     let arg_types: Vec<TokenStream2> = method
@@ -450,20 +465,42 @@ fn generate_dispatch_arm(
         .map(Type::to_token_stream)
         .unwrap_or_else(|| quote! { ::core::convert::Infallible });
 
+    let context_setup = if wants_context {
+        quote! {
+            let context = #roam::RequestContext::new(
+                #descriptor_fn_name().methods[#idx],
+                &call.metadata,
+            );
+        }
+    } else {
+        quote! {}
+    };
+
+    let plain_handler_args: Vec<TokenStream2> = std::iter::empty()
+        .chain(wants_context.then(|| quote! { &context }))
+        .chain(arg_names.iter().map(|name| quote! { #name }))
+        .collect();
+
+    let borrowed_handler_args: Vec<TokenStream2> = std::iter::empty()
+        .chain(wants_context.then(|| quote! { &context }))
+        .chain(std::iter::once(quote! { sink_call }))
+        .chain(arg_names.iter().map(|name| quote! { #name }))
+        .collect();
+
     let invoke_and_reply = if ok_has_roam_lifetime {
         quote! {
             let sink_call = #roam::SinkCall::new(reply);
-            self.handler.#method_fn(sink_call, #(#arg_names),*).await;
+            self.handler.#method_fn(#(#borrowed_handler_args),*).await;
         }
     } else if is_fallible {
         quote! {
-            let result = self.handler.#method_fn(#(#arg_names),*).await;
+            let result = self.handler.#method_fn(#(#plain_handler_args),*).await;
             let sink_call = #roam::SinkCall::new(reply);
             #roam::Call::<'_, #ok_ty, #err_ty>::reply(sink_call, result).await;
         }
     } else {
         quote! {
-            let value = self.handler.#method_fn(#(#arg_names),*).await;
+            let value = self.handler.#method_fn(#(#plain_handler_args),*).await;
             let sink_call = #roam::SinkCall::new(reply);
             #roam::Call::<'_, #ok_ty, #err_ty>::ok(sink_call, value).await;
         }
@@ -480,6 +517,7 @@ fn generate_dispatch_arm(
             };
             #channel_binding
             #destructure
+            #context_setup
             #invoke_and_reply
             return;
         }
@@ -789,6 +827,18 @@ mod tests {
     fn no_args() {
         assert_snapshot!(generate(quote! {
             trait Ping { async fn ping(&self) -> u64; }
+        }));
+    }
+
+    #[test]
+    fn explicit_request_context_opt_in() {
+        assert_snapshot!(generate(quote! {
+            trait Audit {
+                #[roam::context]
+                async fn record(&self, payload: String) -> &'roam str;
+
+                async fn ping(&self) -> u64;
+            }
         }));
     }
 
