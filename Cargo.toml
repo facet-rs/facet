@@ -77,14 +77,12 @@ divan = "^0.1.21"
 eyre = "^0.6.12"
 http = "^1.4.0"
 indexmap = { version = "^2.12.1", default-features = false }
-indoc = "^2.0.7"
 insta = "^1.44.3"
 jiff = "^0.2.16"
 log = { version = "^0.4.29", features = ["std"] }
 owo-colors = "^4.2.3"
 proc-macro2 = "1"
 quote = "1"
-serde = { version = "^1.0.228", default-features = false, features = ["alloc", "derive"] }
 serde_json = { version = "^1.0.145", features = ["alloc"] }
 smartstring = { version = "^1.0.1", default-features = false }
 smol_str = { version = "^0.3.4", default-features = false }
@@ -92,7 +90,6 @@ static_assertions = "^1.1.0"
 strsim = "0.11"
 tempfile = "^3.23.0"
 time = { version = "^0.3.44", features = ["formatting", "macros", "parsing"] }
-tokio = { version = "^1.48.0", default-features = false, features = ["macros"] }
 tracing = { version = "^0.1.43", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "^0.3.22", default-features = false, features = ["fmt", "std"] }
 ulid = "^1.2.1"
@@ -101,7 +98,6 @@ uuid = "^1.19.0"
 rust_decimal = { version = "^1.38.0", default-features = false, features = ["std"] }
 smallvec = { version = "^1.15", default-features = false }
 iddqd = { version = "^0.3", default-features = false }
-libtest-mimic = "^0.8.1"
 
 # Allow the facet_no_doc cfg in generated code
 # See: https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html
