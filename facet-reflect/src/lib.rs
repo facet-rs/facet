@@ -20,7 +20,7 @@
 //! This allows, respectively, serialization and deserialization, without risking breaking
 //! invariants in types that implement `Facet`.
 //!
-#![doc = include_str!("../../docs/readme-footer.md")]
+#![doc = include_str!("../README-footer.md")]
 
 extern crate alloc;
 

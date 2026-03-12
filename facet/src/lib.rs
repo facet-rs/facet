@@ -82,7 +82,7 @@
 //! - [facet_generate](https://github.com/redbadger/facet-generate) reflects Facet types into Java, Swift and TypeScript
 //! - [multi-array-list](https://lib.rs/crates/multi-array-list) provides an experimental `MultiArrayList` type
 //!
-#![doc = include_str!("../../docs/readme-footer.md")]
+#![doc = include_str!("../README-footer.md")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, feature(builtin_syntax))]
 #![cfg_attr(docsrs, feature(prelude_import))]
