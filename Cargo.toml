@@ -64,7 +64,6 @@ facet-core = { path = "facet-core" }
 facet-pretty = { path = "facet-pretty" }
 arborium = { version = "^2.4.5", default-features = false, features = ["lang-json"] }
 autocfg = "^1.5.0"
-bolero = "^0.13.4"
 bytes = { version = "^1.11.0", default-features = false }
 bytestring = { version = "^1.4.0", default-features = false }
 camino = "^1.2.1"
@@ -80,7 +79,6 @@ log = { version = "^0.4.29", features = ["std"] }
 owo-colors = "^4.2.3"
 proc-macro2 = "1"
 quote = "1"
-serde_json = { version = "^1.0.145", features = ["alloc"] }
 smartstring = { version = "^1.0.1", default-features = false }
 smol_str = { version = "^0.3.4", default-features = false }
 static_assertions = "^1.1.0"
