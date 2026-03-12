@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.2](https://github.com/facet-rs/facet/compare/facet-core-v0.44.1...facet-core-v0.44.2) - 2026-03-12
+
+### Added
+
+- *(crates)* address Copilot's review comments
+- *(crates)* add support for `semver`
+
+### Other
+
+- remove captain readme templates and README.md.in files
+- drop duplicate crate title headings in reedme docs
+- template shared readme footer with reedme
+- migrate crate docs/readmes to cargo-reedme
+
 ## [0.44.1](https://github.com/facet-rs/facet/compare/facet-core-v0.44.0...facet-core-v0.44.1) - 2026-03-03
 
 ### Other
