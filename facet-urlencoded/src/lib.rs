@@ -8,7 +8,7 @@
 //!
 //! Provides URL-encoded form data deserialization for Facet types.
 //!
-#![doc = include_str!("../README-footer.md")]
+#![doc = include_str!("../readme-footer.md")]
 
 use facet_core::{Def, Facet, Type, UserType};
 use facet_reflect::{AllocError, Partial, ReflectError, ShapeMismatchError, TypePlan};
