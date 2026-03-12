@@ -88,11 +88,6 @@ changelog_path = "CHANGELOG.md"
 
 # Utilities
 [[package]]
-name = "facet-value"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
 name = "facet-path"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
