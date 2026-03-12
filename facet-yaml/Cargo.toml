@@ -35,8 +35,11 @@ datatest-stable = "0.3"
 divan = { workspace = true }
 facet = { workspace = true, features = ["std", "doc", "net", "iddqd"] }
 facet-default = { workspace = true }
-facet-format = { path = "../facet-format", version = "0.44.1", features = ["net"] }
-facet-format-suite = { path = "../facet-format-suite", version = "0.44.1", features = ["third-party", "net"] }
+facet-format = { path = "../facet-format", features = ["net"] }
+facet-format-suite = { path = "../facet-format-suite", version = "0.44.1", features = [
+  "third-party",
+  "net",
+] }
 facet-json-classics = { path = "../facet-json-classics", version = "0.44.1" }
 indoc = { workspace = true }
 libtest-mimic = "0.8.1"

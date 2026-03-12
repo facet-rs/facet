@@ -28,8 +28,12 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 [dev-dependencies]
 divan = { workspace = true }
 facet = { workspace = true, features = ["std", "all-impls", "iddqd"] }
-facet-format = { path = "../facet-format", version = "0.44.1", features = ["jit", "net"] }
-facet-format-suite = { path = "../facet-format-suite", version = "0.44.1", features = ["third-party", "msgpack", "net"] }
+facet-format = { path = "../facet-format", features = ["jit", "net"] }
+facet-format-suite = { path = "../facet-format-suite", version = "0.44.1", features = [
+  "third-party",
+  "msgpack",
+  "net",
+] }
 facet-json-classics = { path = "../facet-json-classics", version = "0.44.1" }
 libtest-mimic = "0.8"
 rmp-serde = "1"
