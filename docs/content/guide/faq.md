@@ -46,8 +46,6 @@ facet targets the latest stable Rust. Check the CI configuration for the current
 
 If you need a generic value type that can hold any facet-compatible data, use [`facet_value::Value`](https://docs.rs/facet-value).
 
-If you need to compare, diff, or store shapes at runtime, see [facet-shapelike](https://docs.rs/facet-shapelike). This crate provides `ShapeLike`, a fully owned and serializable version of `Shape`. It omits function pointers, `TypeId`, and vtables — data that would be meaningless or unsafe across process boundaries.
-
 ## Usage
 
 ### How do I deserialize from JSON?
