@@ -19,37 +19,24 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [features]
 default = ["std", "regex"]
 std = ["alloc", "facet-core/std", "facet-path/std"] # Enable the standard library features
-alloc = [
-    "facet-core/alloc",
-    "facet-path/alloc",
-] # Enable the allocation features
+alloc = ["facet-core/alloc", "facet-path/alloc"] # Enable the allocation features
 tracing = [
-    "dep:tracing",
+  "dep:tracing",
 ] # Enable logging of reflection operations (mostly for internal development)
 regex = ["dep:regex"] # Enable regex-based validators (email, url, regex pattern matching)
 slow-tests = [] # Enable slow tests (compile tests)
 ci = ["slow-tests"] # CI feature
 fuzz-tests = [] # Test-only feature to keep fuzz cfgs compiling
 camino = [
-    "alloc",
-    "dep:camino",
-    "facet-core/camino",
+  "alloc",
+  "dep:camino",
+  "facet-core/camino",
 ] # Enable Facet implementation for camino path types
-uuid = [
-    "alloc",
-    "dep:uuid",
-    "facet-core/uuid",
-] # Enable Facet implementation for UUID types
-ulid = [
-    "alloc",
-    "dep:ulid",
-    "facet-core/ulid",
-] # Enable Facet implementation for ULID types
+uuid = ["alloc", "dep:uuid", "facet-core/uuid"] # Enable Facet implementation for UUID types
+ulid = ["alloc", "dep:ulid", "facet-core/ulid"] # Enable Facet implementation for ULID types
 time = ["facet-core/time"] # Enable Facet implementation for time types
 jiff02 = ["facet-core/jiff02"] # Enable Facet implementation for jiff 0.2 types
-fn-ptr = [
-    "facet-core/fn-ptr",
-] # Enable Facet implementation for function pointers
+fn-ptr = ["facet-core/fn-ptr"] # Enable Facet implementation for function pointers
 
 [dependencies]
 camino = { workspace = true, optional = true }
@@ -66,7 +53,6 @@ uuid = { workspace = true, optional = true }
 eyre = { workspace = true }
 facet = { path = "../facet", features = ["net", "nonzero"] }
 facet-testhelpers = { path = "../facet-testhelpers" }
-facet-value = { path = "../facet-value" }
 insta = { workspace = true }
 proptest = "1.9"
 tempfile = { workspace = true }

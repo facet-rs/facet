@@ -37,7 +37,6 @@ members = [
   "facet-urlencoded",
 
   # utilities
-  "facet-value",
   "facet-path",
   "facet-validate",
 
@@ -130,4 +129,3 @@ facet-pretty = { path = "facet-pretty" }
 facet-reflect = { path = "facet-reflect" }
 facet-solver = { path = "facet-solver" }
 facet-testhelpers = { path = "facet-testhelpers" }
-facet-value = { path = "facet-value" }
