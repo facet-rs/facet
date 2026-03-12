@@ -17,7 +17,7 @@
 //!
 //! This crate is foundational to facet's reflection capabilities, providing the type system that enables runtime type manipulation.
 //!
-#![doc = include_str!("../README-footer.md")]
+#![doc = include_str!("../readme-footer.md")]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;

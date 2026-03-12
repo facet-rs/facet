@@ -6,7 +6,7 @@
 //!
 //! Implements the `Facet` derive macro for facet. Uses [unsynn](https://crates.io/crates/unsynn) to provide fast compilation times.
 //!
-#![doc = include_str!("../README-footer.md")]
+#![doc = include_str!("../readme-footer.md")]
 
 #[proc_macro_derive(Facet, attributes(facet))]
 pub fn facet_macros(input: proc_macro::TokenStream) -> proc_macro::TokenStream {

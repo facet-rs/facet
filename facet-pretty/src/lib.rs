@@ -38,7 +38,7 @@
 //!   age: 30,
 //! }
 //! ```
-#![doc = include_str!("../README-footer.md")]
+#![doc = include_str!("../readme-footer.md")]
 
 extern crate alloc;
 

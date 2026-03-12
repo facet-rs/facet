@@ -43,7 +43,7 @@
 //! cargo nextest run
 //! ```
 //!
-#![doc = include_str!("../README-footer.md")]
+#![doc = include_str!("../readme-footer.md")]
 
 pub use facet_testhelpers_macros::test;
 

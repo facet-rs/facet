@@ -11,7 +11,7 @@
 //!
 //! This crate provides the internal implementation for `#[derive(Facet)]` and related procedural macros. It's used by `facet-macros` (the proc-macro crate) and should not be used directly.
 //!
-#![doc = include_str!("../README-footer.md")]
+#![doc = include_str!("../readme-footer.md")]
 
 // ============================================================================
 // RE-EXPORTS FROM FACET-MACRO-TYPES (grammar) AND FACET-MACRO-PARSE (parsed types)
