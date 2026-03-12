@@ -24,12 +24,13 @@ bytestring = { workspace = true, optional = true }
 camino = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true, features = ["clock"] }
 compact_str = { workspace = true, optional = true }
-facet = { path = "../../facet/facet", version = "0.44.1", features = [
+facet = { workspace = true, features = [
+  "std",
   "doc",
   "all-impls",
 ] } # facet-format-suite is meant to be comprehensive
-facet-pretty = { path = "../../facet/facet-pretty", version = "0.44.1" }
-facet-value = { path = "../../facet/facet-value", version = "0.44.1", optional = true }
+facet-pretty = { workspace = true }
+facet-value = { workspace = true, optional = true }
 indoc = { workspace = true }
 jiff = { workspace = true, optional = true }
 ordered-float = { version = "5.0.0", optional = true, default-features = false }

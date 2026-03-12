@@ -1,64 +1,26 @@
 # facet-dessert
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-dessert/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-dessert.svg)](https://crates.io/crates/facet-dessert)
-[![documentation](https://docs.rs/facet-dessert/badge.svg)](https://docs.rs/facet-dessert)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-dessert.svg)](./LICENSE)
-[![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+<!-- cargo-reedme: start -->
 
-# facet-dessert
+<!-- cargo-reedme: info-start
 
-Sweet helpers for facet deserialization - shared between facet-format and facet-dom.
+    Do not edit this region by hand
+    ===============================
 
-Provides common setter functions for handling string, bytes, and scalar values
-when deserializing into facet types.
+    This region was generated from Rust documentation comments by `cargo-reedme` using this command:
 
-## Sponsors
+        cargo +nightly reedme --workspace
 
-Thanks to all individual sponsors:
+    for more info: https://github.com/nik-rev/cargo-reedme
 
-<p> <a href="https://github.com/sponsors/fasterthanlime">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/github-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/github-light.svg" height="40" alt="GitHub Sponsors">
-</picture>
-</a> <a href="https://patreon.com/fasterthanlime">
-    <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/patreon-dark.svg">
-    <img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/patreon-light.svg" height="40" alt="Patreon">
-    </picture>
-</a> </p>
+cargo-reedme: info-end -->
 
-...along with corporate sponsors:
+Sweet helpers for facet deserialization.
 
-<p> <a href="https://aws.amazon.com">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/aws-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/aws-light.svg" height="40" alt="AWS">
-</picture>
-</a> <a href="https://zed.dev">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/zed-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/zed-light.svg" height="40" alt="Zed">
-</picture>
-</a> <a href="https://depot.dev?utm_source=facet">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/depot-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/depot-light.svg" height="40" alt="Depot">
-</picture>
-</a> </p>
+This crate provides common setter functions for handling string, bytes, and scalar values
+when deserializing into facet types. It’s used by both `facet-format` and `facet-dom`.
 
-...without whom this work could not exist.
+By extracting these functions into a non-generic crate, we reduce monomorphization bloat
+in format deserializers. See <https://github.com/bearcove/facet/issues/1924> for details.
 
-## Special thanks
-
-The facet logo was drawn by [Misiasart](https://misiasart.com/).
-
-## License
-
-Licensed under either of:
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/facet-rs/facet/blob/main/LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
-- MIT license ([LICENSE-MIT](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
-
-at your option.
+<!-- cargo-reedme: end -->

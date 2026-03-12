@@ -1,59 +1,35 @@
 # facet-csv
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-csv/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-csv.svg)](https://crates.io/crates/facet-csv)
-[![documentation](https://docs.rs/facet-csv/badge.svg)](https://docs.rs/facet-csv)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-csv.svg)](./LICENSE)
-[![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+<!-- cargo-reedme: start -->
 
-Provides CSV serialization and deserialization for Facet types using the `facet-format` framework.
+<!-- cargo-reedme: info-start
 
-## Sponsors
+    Do not edit this region by hand
+    ===============================
 
-Thanks to all individual sponsors:
+    This region was generated from Rust documentation comments by `cargo-reedme` using this command:
 
-<p> <a href="https://github.com/sponsors/fasterthanlime">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/github-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/github-light.svg" height="40" alt="GitHub Sponsors">
-</picture>
-</a> <a href="https://patreon.com/fasterthanlime">
-    <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/patreon-dark.svg">
-    <img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/patreon-light.svg" height="40" alt="Patreon">
-    </picture>
-</a> </p>
+        cargo +nightly reedme --workspace
 
-...along with corporate sponsors:
+    for more info: https://github.com/nik-rev/cargo-reedme
 
-<p> <a href="https://aws.amazon.com">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/aws-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/aws-light.svg" height="40" alt="AWS">
-</picture>
-</a> <a href="https://zed.dev">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/zed-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/zed-light.svg" height="40" alt="Zed">
-</picture>
-</a> <a href="https://depot.dev?utm_source=facet">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/depot-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/depot-light.svg" height="40" alt="Depot">
-</picture>
-</a> </p>
+cargo-reedme: info-end -->
 
-...without whom this work could not exist.
+CSV parser and serializer using facet-format.
 
-## Special thanks
+**Note:** CSV is a fundamentally different format from JSON/XML/YAML.
+While those formats are tree-structured and map naturally to nested types,
+CSV is a flat, row-based format where each row represents a single record
+and each column represents a field.
 
-The facet logo was drawn by [Misiasart](https://misiasart.com/).
+This crate provides basic CSV support via the `FormatParser` trait, but
+has significant limitations:
 
-## License
+- No support for nested structures (CSV is inherently flat)
+- No support for arrays/sequences as field values
+- No support for enums beyond unit variants (encoded as strings)
+- All values are strings and must be parseable to target types
 
-Licensed under either of:
+For more sophisticated CSV handling, consider a dedicated CSV library.
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/facet-rs/facet/blob/main/LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
-- MIT license ([LICENSE-MIT](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
-
-at your option.
+<!-- cargo-reedme: end -->

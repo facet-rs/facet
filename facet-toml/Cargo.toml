@@ -17,9 +17,9 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet-core = { path = "../../facet/facet-core", version = "0.44.1" }
+facet-core = { workspace = true }
 facet-format = { path = "../facet-format", version = "0.44.1" }
-facet-reflect = { path = "../../facet/facet-reflect", version = "0.44.1" }
+facet-reflect = { workspace = true }
 zmij = { version = "1", optional = true }
 itoa = { version = "1", optional = true }
 
@@ -34,13 +34,13 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
 divan = { workspace = true }
-facet = { path = "../../facet/facet", features = ["doc", "net", "iddqd"] }
+facet = { workspace = true, features = ["std", "doc", "net", "iddqd"] }
 facet-format = { path = "../facet-format", features = ["jit", "net", "tracing"] }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "net"] }
 facet-json-classics = { path = "../facet-json-classics" }
-facet-value = { path = "../../facet/facet-value" }
-facet-testhelpers = { path = "../../facet/facet-testhelpers" }
-facet-reflect = { path = "../../facet/facet-reflect", features = ["tracing"] }
+facet-value = { workspace = true }
+facet-testhelpers = { workspace = true }
+facet-reflect = { workspace = true, features = ["tracing"] }
 libtest-mimic = "0.8.1"
 indoc = { workspace = true }
 serde = { workspace = true }

@@ -1,59 +1,59 @@
 # facet-xdr
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-xdr/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-xdr.svg)](https://crates.io/crates/facet-xdr)
-[![documentation](https://docs.rs/facet-xdr/badge.svg)](https://docs.rs/facet-xdr)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-xdr.svg)](./LICENSE)
-[![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+<!-- cargo-reedme: start -->
 
-Provides XDR (External Data Representation) serialization and deserialization for Facet types using the `facet-format` framework.
+<!-- cargo-reedme: info-start
 
-## Sponsors
+    Do not edit this region by hand
+    ===============================
 
-Thanks to all individual sponsors:
+    This region was generated from Rust documentation comments by `cargo-reedme` using this command:
 
-<p> <a href="https://github.com/sponsors/fasterthanlime">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/github-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/github-light.svg" height="40" alt="GitHub Sponsors">
-</picture>
-</a> <a href="https://patreon.com/fasterthanlime">
-    <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/patreon-dark.svg">
-    <img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/patreon-light.svg" height="40" alt="Patreon">
-    </picture>
-</a> </p>
+        cargo +nightly reedme --workspace
 
-...along with corporate sponsors:
+    for more info: https://github.com/nik-rev/cargo-reedme
 
-<p> <a href="https://aws.amazon.com">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/aws-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/aws-light.svg" height="40" alt="AWS">
-</picture>
-</a> <a href="https://zed.dev">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/zed-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/zed-light.svg" height="40" alt="Zed">
-</picture>
-</a> <a href="https://depot.dev?utm_source=facet">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/depot-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/depot-light.svg" height="40" alt="Depot">
-</picture>
-</a> </p>
+cargo-reedme: info-end -->
 
-...without whom this work could not exist.
+XDR (External Data Representation) format support via facet-format.
 
-## Special thanks
+XDR is a binary format defined in RFC 4506 for encoding structured data.
+It is primarily used in Sun RPC (ONC RPC) protocols.
 
-The facet logo was drawn by [Misiasart](https://misiasart.com/).
+Key characteristics:
+- Big-endian byte order
+- Fixed-size integers (4 bytes for i32/u32, 8 bytes for i64/u64)
+- No support for i128/u128
+- Strings are length-prefixed with 4-byte aligned padding
+- Arrays have explicit length prefixes
 
-## License
+## Serialization
 
-Licensed under either of:
+```rust
+use facet::Facet;
+use facet_xdr::to_vec;
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/facet-rs/facet/blob/main/LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
-- MIT license ([LICENSE-MIT](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+#[derive(Facet)]
+struct Point { x: i32, y: i32 }
 
-at your option.
+let point = Point { x: 10, y: 20 };
+let bytes = to_vec(&point).unwrap();
+```
+
+## Deserialization
+
+```rust
+use facet::Facet;
+use facet_xdr::from_slice;
+
+#[derive(Facet, Debug, PartialEq)]
+struct Point { x: i32, y: i32 }
+
+// XDR encoding of Point { x: 10, y: 20 }
+let bytes = &[0, 0, 0, 10, 0, 0, 0, 20];
+let point: Point = from_slice(bytes).unwrap();
+assert_eq!(point.x, 10);
+assert_eq!(point.y, 20);
+```
+
+<!-- cargo-reedme: end -->

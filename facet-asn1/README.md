@@ -1,64 +1,71 @@
 # facet-asn1
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-asn1/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-asn1.svg)](https://crates.io/crates/facet-asn1)
-[![documentation](https://docs.rs/facet-asn1/badge.svg)](https://docs.rs/facet-asn1)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-asn1.svg)](./LICENSE)
-[![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+<!-- cargo-reedme: start -->
 
-# facet-asn1
+<!-- cargo-reedme: info-start
+
+    Do not edit this region by hand
+    ===============================
+
+    This region was generated from Rust documentation comments by `cargo-reedme` using this command:
+
+        cargo +nightly reedme --workspace
+
+    for more info: https://github.com/nik-rev/cargo-reedme
+
+cargo-reedme: info-end -->
 
 ASN.1 DER/BER serialization and deserialization for facet.
 
 This crate provides ASN.1 DER (Distinguished Encoding Rules) support via the
 `FormatParser` and `FormatSerializer` traits.
 
-## Sponsors
+## ASN.1 Overview
 
-Thanks to all individual sponsors:
+ASN.1 (Abstract Syntax Notation One) is a standard interface description language
+for defining data structures that can be serialized and deserialized in a
+cross-platform way. DER is a specific encoding rule that ensures canonical encoding.
 
-<p> <a href="https://github.com/sponsors/fasterthanlime">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/github-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/github-light.svg" height="40" alt="GitHub Sponsors">
-</picture>
-</a> <a href="https://patreon.com/fasterthanlime">
-    <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/patreon-dark.svg">
-    <img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/patreon-light.svg" height="40" alt="Patreon">
-    </picture>
-</a> </p>
+## Serialization
 
-...along with corporate sponsors:
+```rust
+use facet::Facet;
+use facet_asn1::to_vec;
 
-<p> <a href="https://aws.amazon.com">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/aws-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/aws-light.svg" height="40" alt="AWS">
-</picture>
-</a> <a href="https://zed.dev">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/zed-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/zed-light.svg" height="40" alt="Zed">
-</picture>
-</a> <a href="https://depot.dev?utm_source=facet">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/depot-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/depot-light.svg" height="40" alt="Depot">
-</picture>
-</a> </p>
+#[derive(Facet)]
+struct Point { x: i32, y: i32 }
 
-...without whom this work could not exist.
+let point = Point { x: 10, y: 20 };
+let bytes = to_vec(&point).unwrap();
+```
 
-## Special thanks
+## Deserialization
 
-The facet logo was drawn by [Misiasart](https://misiasart.com/).
+```rust
+use facet::Facet;
+use facet_asn1::from_slice;
 
-## License
+#[derive(Facet)]
+struct Point { x: i32, y: i32 }
 
-Licensed under either of:
+// DER encoding of Point { x: 10, y: 20 }
+let bytes = &[0x30, 0x06, 0x02, 0x01, 0x0A, 0x02, 0x01, 0x14];
+let point: Point = from_slice(bytes).unwrap();
+```
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/facet-rs/facet/blob/main/LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
-- MIT license ([LICENSE-MIT](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+## Type Mapping
 
-at your option.
+| Rust Type | ASN.1 Type |
+|-----------|------------|
+| `bool` | BOOLEAN |
+| `i8`, `i16`, `i32`, `i64` | INTEGER |
+| `u8`, `u16`, `u32`, `u64` | INTEGER |
+| `f32`, `f64` | REAL |
+| `String`, `&str` | UTF8String |
+| `Vec<u8>`, `&[u8]` | OCTET STRING |
+| struct | SEQUENCE |
+| `Vec<T>` | SEQUENCE OF |
+| `Option<T>` | Optional field |
+| `()` | NULL |
+
+<!-- cargo-reedme: end -->

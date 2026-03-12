@@ -1,59 +1,44 @@
 # facet-yaml
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-yaml/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-yaml.svg)](https://crates.io/crates/facet-yaml)
-[![documentation](https://docs.rs/facet-yaml/badge.svg)](https://docs.rs/facet-yaml)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-yaml.svg)](./LICENSE)
-[![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+<!-- cargo-reedme: start -->
 
-Provides YAML serialization and deserialization for Facet types using the `facet-format` framework.
+<!-- cargo-reedme: info-start
 
-## Sponsors
+    Do not edit this region by hand
+    ===============================
 
-Thanks to all individual sponsors:
+    This region was generated from Rust documentation comments by `cargo-reedme` using this command:
 
-<p> <a href="https://github.com/sponsors/fasterthanlime">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/github-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/github-light.svg" height="40" alt="GitHub Sponsors">
-</picture>
-</a> <a href="https://patreon.com/fasterthanlime">
-    <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/patreon-dark.svg">
-    <img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/patreon-light.svg" height="40" alt="Patreon">
-    </picture>
-</a> </p>
+        cargo +nightly reedme --workspace
 
-...along with corporate sponsors:
+    for more info: https://github.com/nik-rev/cargo-reedme
 
-<p> <a href="https://aws.amazon.com">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/aws-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/aws-light.svg" height="40" alt="AWS">
-</picture>
-</a> <a href="https://zed.dev">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/zed-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/zed-light.svg" height="40" alt="Zed">
-</picture>
-</a> <a href="https://depot.dev?utm_source=facet">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/depot-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/depot-light.svg" height="40" alt="Depot">
-</picture>
-</a> </p>
+cargo-reedme: info-end -->
 
-...without whom this work could not exist.
+YAML parser and serializer using facet-format.
 
-## Special thanks
+This crate provides YAML support via the `FormatParser` trait,
+using saphyr-parser for streaming event-based parsing.
 
-The facet logo was drawn by [Misiasart](https://misiasart.com/).
+## Example
 
-## License
+```rust
+use facet::Facet;
+use facet_yaml::{from_str, to_string};
 
-Licensed under either of:
+#[derive(Facet, Debug, PartialEq)]
+struct Config {
+    name: String,
+    port: u16,
+}
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/facet-rs/facet/blob/main/LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
-- MIT license ([LICENSE-MIT](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+let yaml = "name: myapp\nport: 8080";
+let config: Config = from_str(yaml).unwrap();
+assert_eq!(config.name, "myapp");
+assert_eq!(config.port, 8080);
 
-at your option.
+let output = to_string(&config).unwrap();
+assert!(output.contains("name: myapp"));
+```
+
+<!-- cargo-reedme: end -->
