@@ -54,7 +54,7 @@
 //!
 //!
 //!
-#![doc = include_str!("../../docs/readme-footer.md")]
+#![doc = include_str!("../README-footer.md")]
 
 extern crate alloc;
 
