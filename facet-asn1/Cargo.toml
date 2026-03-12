@@ -29,7 +29,7 @@ facet-reflect = { workspace = true, features = ["alloc"] }
 [dev-dependencies]
 facet = { workspace = true, features = ["std", "all-impls", "iddqd"] }
 facet-testhelpers = { workspace = true }
-facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "net"] }
+facet-format-suite = { path = "../facet-format-suite", version = "0.44.1", features = ["third-party", "net"] }
 libtest-mimic = "0.8"
 
 [[test]]

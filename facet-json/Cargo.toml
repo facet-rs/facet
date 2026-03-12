@@ -38,16 +38,16 @@ mime = { version = "0.3", optional = true }
 
 [dev-dependencies]
 compact_str = { workspace = true }
-facet-json-classics = { path = "../facet-json-classics" }
+facet-json-classics = { path = "../facet-json-classics", version = "0.44.1" }
 divan = { workspace = true }
 facet = { workspace = true, features = ["std", "doc", "net", "compact_str", "smol_str", "iddqd", "tendril"] }
 serde = { workspace = true }
 tendril = "0.5.0"
-facet-format = { path = "../facet-format", features = ["jit", "net", "tracing"] }
+facet-format = { path = "../facet-format", version = "0.44.1", features = ["jit", "net", "tracing"] }
 facet-reflect = { workspace = true, features = ["tracing"] }
 facet-testhelpers = { workspace = true }
 serde_json = { workspace = true }
-facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "net", "tokio"] }
+facet-format-suite = { path = "../facet-format-suite", version = "0.44.1", features = ["third-party", "net", "tokio"] }
 indoc = { workspace = true }
 libtest-mimic = "0.8.1"
 smol_str = { workspace = true }
