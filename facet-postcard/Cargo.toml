@@ -29,7 +29,6 @@ http = { workspace = true, optional = true }
 http-body-util = { version = "0.1", default-features = false, optional = true }
 
 # Optional type support
-bytes = { workspace = true, optional = true }
 bytestring = { workspace = true, optional = true }
 camino = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
@@ -81,7 +80,7 @@ axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
 # External type support
 net = ["facet-format/net", "facet-core/net"]
-bytes = ["facet-core/bytes", "dep:bytes"]
+bytes = ["facet-core/bytes"]
 bytestring = ["facet-core/bytestring", "dep:bytestring"]
 camino = ["facet-core/camino", "dep:camino"]
 compact_str = ["facet-core/compact_str", "dep:compact_str"]
@@ -92,6 +91,9 @@ ordered-float = ["facet-core/ordered-float", "dep:ordered-float"]
 jiff02 = ["facet-core/jiff02", "dep:jiff"]
 time = ["facet-core/time", "dep:time"]
 chrono = ["facet-core/chrono", "dep:chrono"]
+
+[package.metadata.cargo-shear]
+ignored = ["facet-path"]
 
 [lints]
 workspace = true
