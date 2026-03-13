@@ -187,7 +187,7 @@ mod unix_demo {
 
         match service {
             GuestService::Adder => {
-                let (guard, _) = roam::initiator(link)
+                let (guard, _) = roam::initiator_conduit(link)
                     .establish::<DriverCaller>(AdderDispatcher::new(AdderService))
                     .await
                     .map_err(|e| eyre!("guest adder handshake failed: {e:?}"))?;
@@ -196,7 +196,7 @@ mod unix_demo {
                 std::future::pending::<()>().await;
             }
             GuestService::StringReverser => {
-                let (guard, _) = roam::initiator(link)
+                let (guard, _) = roam::initiator_conduit(link)
                     .establish::<DriverCaller>(StringReverserDispatcher::new(StringReverserService))
                     .await
                     .map_err(|e| eyre!("guest reverser handshake failed: {e:?}"))?;

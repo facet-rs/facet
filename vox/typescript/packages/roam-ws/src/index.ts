@@ -1,2 +1,1 @@
-export { WsLink, WsLinkSource, connectWs } from "./transport.ts";
-
+export { WsLink, WsLinkSource, wsConnector, connectWs } from "./transport.ts";

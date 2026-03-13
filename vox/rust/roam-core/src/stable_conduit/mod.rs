@@ -112,6 +112,10 @@ impl<L> Attachment<L> {
             client_hello: None,
         }
     }
+
+    pub(crate) fn into_link(self) -> L {
+        self.link
+    }
 }
 
 /// Link wrapper that re-combines pre-split Tx/Rx halves into a [`Link`].

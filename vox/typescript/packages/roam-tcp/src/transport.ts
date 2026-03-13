@@ -26,11 +26,14 @@ export class TcpLinkSource implements LinkSource<LengthPrefixedFramed> {
   }
 }
 
-export function connectTcp(addr: string): TcpLinkSource {
+export function tcpConnector(addr: string): TcpLinkSource {
   return new TcpLinkSource(addr);
+}
+
+export function connectTcp(addr: string): TcpLinkSource {
+  return tcpConnector(addr);
 }
 
 export function acceptTcp(socket: net.Socket) {
   return singleLinkSource(new LengthPrefixedFramed(socket));
 }
-

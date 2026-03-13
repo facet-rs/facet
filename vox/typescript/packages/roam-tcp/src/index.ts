@@ -1,3 +1,2 @@
 export { LengthPrefixedFramed } from "./framing.ts";
-export { TcpLinkSource, connectTcp, acceptTcp } from "./transport.ts";
-
+export { TcpLinkSource, tcpConnector, connectTcp, acceptTcp } from "./transport.ts";

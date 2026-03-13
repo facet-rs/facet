@@ -111,7 +111,7 @@ fn generate_imports(service: &ServiceDescriptor, w: &mut CodeWriter<&mut String>
     cw_writeln!(w, "import {{ session }} from \"@bearcove/roam-core\";").unwrap();
 
     // WebSocket transport for connect helper
-    cw_writeln!(w, "import {{ connectWs }} from \"@bearcove/roam-ws\";").unwrap();
+    cw_writeln!(w, "import {{ wsConnector }} from \"@bearcove/roam-ws\";").unwrap();
 
     // RpcError for fallible client methods
     if has_fallible {

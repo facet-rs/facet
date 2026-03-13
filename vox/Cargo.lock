@@ -2462,6 +2462,7 @@ name = "roam-stream"
 version = "7.3.0"
 dependencies = [
  "moire",
+ "roam-core",
  "roam-types",
  "tempfile",
  "tokio",

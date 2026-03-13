@@ -6,15 +6,16 @@ use roam_types::{
     Metadata, Parity, SplitLink,
 };
 
-use crate::{BareConduit, IntoConduit, TransportMode, accept_transport, initiate_transport};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{
-    StableConduit, prepare_acceptor_attachment, single_attachment_source, single_link_source,
+    Attachment, LinkSource, StableConduit, prepare_acceptor_attachment, single_attachment_source,
+    single_link_source,
 };
+use crate::{BareConduit, IntoConduit, TransportMode, accept_transport, initiate_transport};
 
 use super::{
-    CloseRequest, ConnectionAcceptor, OpenRequest, Session, SessionError, SessionHandle,
-    SessionKeepaliveConfig,
+    CloseRequest, ConduitRecoverer, ConnectionAcceptor, OpenRequest, Session, SessionError,
+    SessionHandle, SessionKeepaliveConfig,
 };
 use crate::{Driver, DriverCaller, DriverReplySink};
 
@@ -46,8 +47,18 @@ fn default_spawn_fn() -> SpawnFn {
 
 // r[impl rpc.session-setup]
 // r[impl session.role]
-pub fn initiator<I: IntoConduit>(into_conduit: I) -> SessionInitiatorBuilder<'static, I::Conduit> {
+pub fn initiator_conduit<I: IntoConduit>(
+    into_conduit: I,
+) -> SessionInitiatorBuilder<'static, I::Conduit> {
     SessionInitiatorBuilder::new(into_conduit.into_conduit())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn initiator<S>(source: S, mode: TransportMode) -> SessionSourceInitiatorBuilder<'static, S>
+where
+    S: LinkSource,
+{
+    SessionSourceInitiatorBuilder::new(source, mode)
 }
 
 // r[impl session.role]
@@ -55,15 +66,32 @@ pub fn acceptor<I: IntoConduit>(into_conduit: I) -> SessionAcceptorBuilder<'stat
     SessionAcceptorBuilder::new(into_conduit.into_conduit())
 }
 
-pub fn initiator_transport<L: Link>(
+pub fn acceptor_conduit<I: IntoConduit>(
+    into_conduit: I,
+) -> SessionAcceptorBuilder<'static, I::Conduit> {
+    acceptor(into_conduit)
+}
+
+pub fn initiator_on<L: Link>(
     link: L,
     mode: TransportMode,
 ) -> SessionTransportInitiatorBuilder<'static, L> {
     SessionTransportInitiatorBuilder::new(link, mode)
 }
 
-pub fn acceptor_transport<L: Link>(link: L) -> SessionTransportAcceptorBuilder<'static, L> {
+pub fn initiator_transport<L: Link>(
+    link: L,
+    mode: TransportMode,
+) -> SessionTransportInitiatorBuilder<'static, L> {
+    initiator_on(link, mode)
+}
+
+pub fn acceptor_on<L: Link>(link: L) -> SessionTransportAcceptorBuilder<'static, L> {
     SessionTransportAcceptorBuilder::new(link)
+}
+
+pub fn acceptor_transport<L: Link>(link: L) -> SessionTransportAcceptorBuilder<'static, L> {
+    acceptor_on(link)
 }
 
 pub struct SessionInitiatorBuilder<'a, C> {
@@ -73,6 +101,7 @@ pub struct SessionInitiatorBuilder<'a, C> {
     on_connection: Option<Box<dyn ConnectionAcceptor>>,
     keepalive: Option<SessionKeepaliveConfig>,
     resumable: bool,
+    recoverer: Option<Box<dyn ConduitRecoverer>>,
     spawn_fn: SpawnFn,
 }
 
@@ -88,6 +117,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             on_connection: None,
             keepalive: None,
             resumable: false,
+            recoverer: None,
             spawn_fn: default_spawn_fn(),
         }
     }
@@ -169,6 +199,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             control_rx,
             self.keepalive,
             self.resumable,
+            self.recoverer,
         );
         let handle = session
             .establish_as_initiator(self.root_settings, self.metadata)
@@ -187,6 +218,154 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move { driver.run().await });
         Ok((client, session_handle))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub struct SessionSourceInitiatorBuilder<'a, S> {
+    source: S,
+    mode: TransportMode,
+    root_settings: ConnectionSettings,
+    metadata: Metadata<'a>,
+    on_connection: Option<Box<dyn ConnectionAcceptor>>,
+    keepalive: Option<SessionKeepaliveConfig>,
+    resumable: bool,
+    spawn_fn: SpawnFn,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
+    fn new(source: S, mode: TransportMode) -> Self {
+        Self {
+            source,
+            mode,
+            root_settings: ConnectionSettings {
+                parity: Parity::Odd,
+                max_concurrent_requests: 64,
+            },
+            metadata: vec![],
+            on_connection: None,
+            keepalive: None,
+            resumable: true,
+            spawn_fn: default_spawn_fn(),
+        }
+    }
+
+    pub fn parity(mut self, parity: Parity) -> Self {
+        self.root_settings.parity = parity;
+        self
+    }
+
+    pub fn root_settings(mut self, settings: ConnectionSettings) -> Self {
+        self.root_settings = settings;
+        self
+    }
+
+    pub fn max_concurrent_requests(mut self, max_concurrent_requests: u32) -> Self {
+        self.root_settings.max_concurrent_requests = max_concurrent_requests;
+        self
+    }
+
+    pub fn metadata(mut self, metadata: Metadata<'a>) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
+    pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
+        self.on_connection = Some(Box::new(acceptor));
+        self
+    }
+
+    pub fn keepalive(mut self, keepalive: SessionKeepaliveConfig) -> Self {
+        self.keepalive = Some(keepalive);
+        self
+    }
+
+    pub fn resumable(mut self) -> Self {
+        self.resumable = true;
+        self
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + Send + 'static) -> Self {
+        self.spawn_fn = Box::new(f);
+        self
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + 'static) -> Self {
+        self.spawn_fn = Box::new(f);
+        self
+    }
+
+    pub async fn establish<Client: From<DriverCaller>>(
+        self,
+        handler: impl Handler<DriverReplySink> + 'static,
+    ) -> Result<(Client, SessionHandle), SessionError>
+    where
+        S: LinkSource,
+        S::Link: Link + Send + 'static,
+        <S::Link as Link>::Tx: MaybeSend + MaybeSync + Send + 'static,
+        <<S::Link as Link>::Tx as roam_types::LinkTx>::Permit: MaybeSend,
+        <S::Link as Link>::Rx: MaybeSend + Send + 'static,
+    {
+        let Self {
+            mut source,
+            mode,
+            root_settings,
+            metadata,
+            on_connection,
+            keepalive,
+            resumable,
+            spawn_fn,
+        } = self;
+
+        match mode {
+            TransportMode::Bare => {
+                let attachment = source.next_link().await.map_err(SessionError::Io)?;
+                let link = initiate_transport(attachment.into_link(), TransportMode::Bare)
+                    .await
+                    .map_err(session_error_from_transport)?;
+                let builder =
+                    SessionInitiatorBuilder::new(BareConduit::<MessageFamily, _>::new(link));
+                let recoverer = Box::new(BareSourceRecoverer { source });
+                SessionTransportInitiatorBuilder::<S::Link>::apply_common_parts(
+                    builder,
+                    root_settings,
+                    metadata,
+                    on_connection,
+                    keepalive,
+                    resumable,
+                    Some(recoverer),
+                    spawn_fn,
+                )
+                .establish(handler)
+                .await
+            }
+            TransportMode::Stable => {
+                let conduit = StableConduit::<MessageFamily, _>::new(TransportedLinkSource {
+                    source,
+                    mode: TransportMode::Stable,
+                })
+                .await
+                .map_err(|error| {
+                    SessionError::Protocol(format!("stable conduit setup failed: {error}"))
+                })?;
+                let builder = SessionInitiatorBuilder::new(conduit);
+                SessionTransportInitiatorBuilder::<S::Link>::apply_common_parts(
+                    builder,
+                    root_settings,
+                    metadata,
+                    on_connection,
+                    keepalive,
+                    resumable,
+                    None,
+                    spawn_fn,
+                )
+                .establish(handler)
+                .await
+            }
+        }
     }
 }
 
@@ -387,6 +566,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
             on_connection,
             keepalive,
             resumable,
+            None,
             spawn_fn,
         )
         .establish(handler)
@@ -426,6 +606,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
             on_connection,
             keepalive,
             resumable,
+            None,
             spawn_fn,
         )
         .establish(handler)
@@ -439,6 +620,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         on_connection: Option<Box<dyn ConnectionAcceptor>>,
         keepalive: Option<SessionKeepaliveConfig>,
         resumable: bool,
+        recoverer: Option<Box<dyn ConduitRecoverer>>,
         spawn_fn: SpawnFn,
     ) -> SessionInitiatorBuilder<'a, C> {
         builder.root_settings = root_settings;
@@ -446,8 +628,76 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         builder.on_connection = on_connection;
         builder.keepalive = keepalive;
         builder.resumable = resumable;
+        builder.recoverer = recoverer;
         builder.spawn_fn = spawn_fn;
         builder
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct BareSourceRecoverer<S> {
+    source: S,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<S> ConduitRecoverer for BareSourceRecoverer<S>
+where
+    S: LinkSource,
+    S::Link: Link + Send + 'static,
+    <S::Link as Link>::Tx: MaybeSend + MaybeSync + Send + 'static,
+    <<S::Link as Link>::Tx as roam_types::LinkTx>::Permit: MaybeSend,
+    <S::Link as Link>::Rx: MaybeSend + Send + 'static,
+{
+    fn next_conduit<'b>(
+        &'b mut self,
+    ) -> super::BoxFuture<
+        'b,
+        Result<
+            (
+                std::sync::Arc<dyn crate::DynConduitTx>,
+                Box<dyn crate::DynConduitRx>,
+            ),
+            SessionError,
+        >,
+    > {
+        Box::pin(async move {
+            let attachment = self.source.next_link().await.map_err(SessionError::Io)?;
+            let link = initiate_transport(attachment.into_link(), TransportMode::Bare)
+                .await
+                .map_err(session_error_from_transport)?;
+            let conduit = BareConduit::<MessageFamily, _>::new(link);
+            let (tx, rx) = conduit.split();
+            Ok((
+                std::sync::Arc::new(tx) as std::sync::Arc<dyn crate::DynConduitTx>,
+                Box::new(rx) as Box<dyn crate::DynConduitRx>,
+            ))
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct TransportedLinkSource<S> {
+    source: S,
+    mode: TransportMode,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<S> LinkSource for TransportedLinkSource<S>
+where
+    S: LinkSource,
+    S::Link: Link + Send + 'static,
+    <S::Link as Link>::Tx: MaybeSend + MaybeSync + Send + 'static,
+    <<S::Link as Link>::Tx as roam_types::LinkTx>::Permit: MaybeSend,
+    <S::Link as Link>::Rx: MaybeSend + Send + 'static,
+{
+    type Link = SplitLink<<S::Link as Link>::Tx, <S::Link as Link>::Rx>;
+
+    async fn next_link(&mut self) -> std::io::Result<Attachment<Self::Link>> {
+        let attachment = self.source.next_link().await?;
+        let link = initiate_transport(attachment.into_link(), self.mode)
+            .await
+            .map_err(std::io::Error::other)?;
+        Ok(Attachment::initiator(link))
     }
 }
 
@@ -550,6 +800,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             control_rx,
             self.keepalive,
             self.resumable,
+            None,
         );
         let handle = session
             .establish_as_acceptor(self.root_settings, self.metadata)
@@ -592,7 +843,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
             metadata: vec![],
             on_connection: None,
             keepalive: None,
-            resumable: false,
+            resumable: true,
             spawn_fn: default_spawn_fn(),
         }
     }

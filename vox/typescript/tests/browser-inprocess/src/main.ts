@@ -340,7 +340,7 @@ async function runTests(): Promise<void> {
     });
 
     log("Establishing session as initiator...");
-    const established = await session.initiatorTransport(link, { conduit: "bare" });
+    const established = await session.initiatorOn(link, { transport: "bare" });
 
     // Import the TestbedClient constructor dynamically to avoid circular issues
     const { TestbedClient } = await import(

@@ -7,7 +7,7 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use roam_core::{TransportMode, initiator_transport};
+use roam_core::{TransportMode, initiator_on};
 use roam_websocket::WsLink;
 use spec_proto::{Color, LookupError, MathError, Message, Point, Rectangle, Shape, TestbedClient};
 use wasm_bindgen::prelude::*;
@@ -88,7 +88,7 @@ pub async fn run_tests(ws_url: &str) -> TestResults {
 
     console_log!("Connected! Performing handshake...");
 
-    let (client, _sh) = match initiator_transport(link, TransportMode::Bare)
+    let (client, _sh) = match initiator_on(link, TransportMode::Bare)
         .establish::<TestbedClient>(())
         .await
     {

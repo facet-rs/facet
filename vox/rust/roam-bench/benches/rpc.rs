@@ -25,7 +25,10 @@ const ZEROCOPY_PAYLOAD_SIZES: &[usize] = &[
 
 mod roam_zerocopy_bench {
     use moire::task::FutureExt;
-    use roam_core::{NoopCaller, acceptor, initiator, memory_link_pair};
+    use roam_core::{
+        NoopCaller, TransportMode, acceptor, acceptor_on, initiator_conduit, initiator_on,
+        memory_link_pair,
+    };
     use roam_shm::varslot::SizeClassConfig;
     use roam_shm::{Segment, SegmentConfig, create_test_link_pair};
     use roam_stream::StreamLink;
@@ -68,7 +71,7 @@ mod roam_zerocopy_bench {
             .named("server_setup"),
         );
 
-        let (client, _sh) = initiator(a)
+        let (client, _sh) = initiator_conduit(a)
             .establish::<ZerocopyClient>(())
             .await
             .expect("client handshake failed");
@@ -132,7 +135,7 @@ mod roam_zerocopy_bench {
             .named("server_setup"),
         );
 
-        let (client, _sh) = initiator(a)
+        let (client, _sh) = initiator_conduit(a)
             .establish::<ZerocopyClient>(())
             .await
             .expect("client handshake failed");
@@ -151,7 +154,7 @@ mod roam_zerocopy_bench {
             async move {
                 let (stream, _) = listener.accept().await.unwrap();
                 stream.set_nodelay(true).unwrap();
-                let (_caller, _sh) = acceptor(StreamLink::tcp(stream))
+                let (_caller, _sh) = acceptor_on(StreamLink::tcp(stream))
                     .establish::<NoopCaller>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -164,7 +167,7 @@ mod roam_zerocopy_bench {
         let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         stream.set_nodelay(true).unwrap();
 
-        let (client, _sh) = initiator(StreamLink::tcp(stream))
+        let (client, _sh) = initiator_on(StreamLink::tcp(stream), TransportMode::Bare)
             .establish::<ZerocopyClient>(())
             .await
             .expect("client handshake failed");
@@ -234,7 +237,7 @@ define_zerocopy_transport_benches!(
 
 mod roam_bench {
     use moire::task::FutureExt;
-    use roam_core::{NoopCaller, acceptor, initiator, memory_link_pair};
+    use roam_core::{NoopCaller, acceptor, initiator_conduit, memory_link_pair};
 
     #[roam::service]
     pub trait Bench {
@@ -279,7 +282,7 @@ mod roam_bench {
             .named("server_setup"),
         );
 
-        let (client, _sh) = initiator(a)
+        let (client, _sh) = initiator_conduit(a)
             .establish::<BenchClient>(())
             .await
             .expect("client handshake failed");
@@ -345,7 +348,7 @@ mod roam_shm_bench {
     use std::sync::Arc;
 
     use moire::task::FutureExt;
-    use roam_core::{NoopCaller, acceptor, initiator};
+    use roam_core::{NoopCaller, acceptor, initiator_conduit};
     use roam_shm::varslot::SizeClassConfig;
     use roam_shm::{Segment, SegmentConfig, create_test_link_pair};
 
@@ -400,7 +403,7 @@ mod roam_shm_bench {
             .named("server_setup"),
         );
 
-        let (client, _sh) = initiator(a)
+        let (client, _sh) = initiator_conduit(a)
             .establish::<BenchClient>(())
             .await
             .expect("client handshake failed");
@@ -464,7 +467,7 @@ fn roam_shm_stream(bencher: divan::Bencher, n: usize) {
 
 mod roam_tcp_bench {
     use moire::task::FutureExt;
-    use roam_core::{NoopCaller, acceptor, initiator};
+    use roam_core::{NoopCaller, TransportMode, acceptor_on, initiator_on};
     use roam_stream::StreamLink;
 
     use tokio::net::TcpListener;
@@ -480,7 +483,7 @@ mod roam_tcp_bench {
             async move {
                 let (stream, _) = listener.accept().await.unwrap();
                 stream.set_nodelay(true).unwrap();
-                let (_caller, _sh) = acceptor(StreamLink::tcp(stream))
+                let (_caller, _sh) = acceptor_on(StreamLink::tcp(stream))
                     .establish::<NoopCaller>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -493,7 +496,7 @@ mod roam_tcp_bench {
         let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         stream.set_nodelay(true).unwrap();
 
-        let (client, _sh) = initiator(StreamLink::tcp(stream))
+        let (client, _sh) = initiator_on(StreamLink::tcp(stream), TransportMode::Bare)
             .establish::<BenchClient>(())
             .await
             .expect("client handshake failed");

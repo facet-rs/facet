@@ -22,6 +22,7 @@ diagnostics = []
 
 [dependencies]
 moire.workspace = true
+roam-core.workspace = true
 roam-types.workspace = true
 tokio = { workspace = true, features = ["net", "io-util", "io-std", "rt", "sync"] }
 

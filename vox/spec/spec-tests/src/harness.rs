@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::os::fd::{AsRawFd, IntoRawFd};
 
 use roam::{Rx, Tx};
-use roam_core::{DriverReplySink, acceptor, acceptor_transport, initiator, memory_link_pair};
+use roam_core::{DriverReplySink, acceptor, acceptor_transport, memory_link_pair};
 use roam_shm::HostHub;
 use roam_shm::ShmLink;
 use roam_shm::bootstrap::{BootstrapStatus, decode_request, encode_request};
@@ -545,7 +545,7 @@ where
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator(client_link)
+    let (client, _sh) = roam_core::initiator_conduit(client_link)
         .establish::<TestbedClient>(NoopHandler)
         .await
         .map_err(|e| format!("client handshake: {e}"))?;
@@ -1101,7 +1101,7 @@ async fn accept_subject_shm_subject_is_host(cmd: &str) -> Result<(TestbedClient,
             .map_err(|e| format!("guest_link_from_names: {e}"))?
         };
 
-        let (client, _sh) = initiator(link)
+        let (client, _sh) = roam_core::initiator_conduit(link)
             .establish::<TestbedClient>(NoopHandler)
             .await
             .map_err(|e| format!("handshake: {e}"))?;

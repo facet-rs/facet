@@ -15,7 +15,7 @@ import type {
 import { session } from "@bearcove/roam-core";
 import { RpcError } from "@bearcove/roam-core";
 import { bindChannels, Rx, Tx } from "@bearcove/roam-core";
-import { connectWs } from "@bearcove/roam-ws";
+import { wsConnector } from "@bearcove/roam-ws";
 
 // Named type definitions
 export type MathError =
@@ -444,7 +444,7 @@ export async function connectTestbed(
   url: string,
   options: SessionTransportOptions = {},
 ): Promise<TestbedClient> {
-  const established = await session.initiatorTransport(connectWs(url), options);
+  const established = await session.initiator(wsConnector(url), options);
   return new TestbedClient(established.rootConnection().caller());
 }
 

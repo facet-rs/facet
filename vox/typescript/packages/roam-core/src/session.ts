@@ -96,6 +96,7 @@ export interface SessionBuilderOptions {
 export type SessionConduitKind = "bare" | "stable";
 
 export interface SessionTransportOptions extends SessionBuilderOptions {
+  transport?: SessionConduitKind;
   conduit?: SessionConduitKind;
 }
 
@@ -140,7 +141,7 @@ async function makeInitiatorSessionConduit(
   transport: SessionTransport,
   options: SessionTransportOptions,
 ): Promise<Conduit<Message>> {
-  const conduit = options.conduit ?? "bare";
+  const conduit = options.transport ?? options.conduit ?? "bare";
   if (isLinkSource(transport)) {
     const attachment = await transport.nextLink();
     await requestTransportMode(attachment.link, conduit);
@@ -211,6 +212,7 @@ class SessionCore {
   private peerSupportsRetry: boolean;
   private readonly resumable: boolean;
   private sessionResumeKey: Uint8Array | null;
+  private readonly recoverConduit?: () => Promise<Conduit<Message>>;
   private readonly pendingResumes: Array<{
     conduit: Conduit<Message>;
     result: Deferred<void>;
@@ -224,12 +226,14 @@ class SessionCore {
     peerSupportsRetry: boolean,
     resumable: boolean,
     sessionResumeKey: Uint8Array | null,
+    recoverConduit: (() => Promise<Conduit<Message>>) | undefined,
     private readonly onConnection?: (connection: ConnectionHandle) => void | Promise<void>,
   ) {
     this.conduit = conduit;
     this.peerSupportsRetry = peerSupportsRetry;
     this.resumable = resumable;
     this.sessionResumeKey = sessionResumeKey?.slice() ?? null;
+    this.recoverConduit = recoverConduit;
     this.nextConnectionId = firstIdForParity(localRootSettings.parity);
     this.sessionHandle = new SessionHandle(this);
   }
@@ -408,6 +412,19 @@ class SessionCore {
   private async handleConduitBreak(): Promise<boolean> {
     if (!this.resumable) {
       return false;
+    }
+
+    if (this.recoverConduit) {
+      try {
+        const conduit = await this.recoverConduit();
+        this.disconnected = true;
+        await this.resumeOnConduit(conduit);
+        this.disconnected = false;
+        this.notifyConnectionsResumed();
+        return true;
+      } catch {
+        return false;
+      }
     }
 
     this.disconnected = true;
@@ -1058,9 +1075,17 @@ class ConnectionHandleCaller implements Caller {
 export class Session {
   private constructor(private readonly core: SessionCore) {}
 
+  static async establishInitiatorOn(
+    conduit: Conduit<Message>,
+    options: SessionBuilderOptions = {},
+  ): Promise<Session> {
+    return Session.establishInitiator(conduit, options, undefined);
+  }
+
   static async establishInitiator(
     conduit: Conduit<Message>,
     options: SessionBuilderOptions = {},
+    recoverConduit?: () => Promise<Conduit<Message>>,
   ): Promise<Session> {
     // r[impl session.handshake]
     // r[impl session.connection-settings.hello]
@@ -1085,6 +1110,7 @@ export class Session {
       metadataSupportsRetry(helloYourself.metadata),
       options.resumable ?? false,
       sessionResumeKey,
+      recoverConduit,
       options.onConnection,
     );
     core.rootConnection();
@@ -1122,6 +1148,7 @@ export class Session {
       metadataSupportsRetry(hello.metadata),
       options.resumable ?? false,
       sessionResumeKey,
+      undefined,
       options.onConnection,
     );
     core.rootConnection();
@@ -1175,20 +1202,53 @@ function randomSessionResumeKey(): Uint8Array {
 }
 
 export const session = {
-  initiator(conduit: Conduit<Message>, options: SessionBuilderOptions = {}): Promise<Session> {
-    return Session.establishInitiator(conduit, options);
+  async initiator(
+    transport: SessionTransport,
+    options: SessionTransportOptions = {},
+  ): Promise<Session> {
+    const conduit = await makeInitiatorSessionConduit(transport, options);
+    const resumable = options.resumable ?? isLinkSource(transport);
+    const recoverConduit = isLinkSource(transport)
+      ? () => makeInitiatorSessionConduit(transport, options)
+      : undefined;
+    return Session.establishInitiator(
+      conduit,
+      {
+        ...options,
+        resumable,
+      },
+      recoverConduit,
+    );
   },
 
   acceptor(conduit: Conduit<Message>, options: SessionBuilderOptions = {}): Promise<Session> {
     return Session.establishAcceptor(conduit, options);
   },
 
+  async initiatorOn(
+    transport: Link,
+    options: SessionTransportOptions = {},
+  ): Promise<Session> {
+    const conduit = await makeInitiatorSessionConduit(transport, options);
+    return Session.establishInitiatorOn(conduit, options);
+  },
+
+  async acceptorOn(
+    transport: Link,
+    options: SessionTransportOptions = {},
+  ): Promise<Session> {
+    const conduit = await makeAcceptorSessionConduit(transport);
+    return Session.establishAcceptor(conduit, {
+      ...options,
+      resumable: options.resumable ?? true,
+    });
+  },
+
   async initiatorTransport(
     transport: SessionTransport,
     options: SessionTransportOptions = {},
   ): Promise<Session> {
-    const conduit = await makeInitiatorSessionConduit(transport, options);
-    return Session.establishInitiator(conduit, options);
+    return session.initiator(transport, options);
   },
 
   async acceptorTransport(
@@ -1196,7 +1256,10 @@ export const session = {
     options: SessionTransportOptions = {},
   ): Promise<Session> {
     const conduit = await makeAcceptorSessionConduit(transport);
-    return Session.establishAcceptor(conduit, options);
+    return Session.establishAcceptor(conduit, {
+      ...options,
+      resumable: options.resumable ?? true,
+    });
   },
 
   rootSettings(role: Role, maxConcurrentRequests = 64): ConnectionSettings {

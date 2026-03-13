@@ -16,7 +16,7 @@ import type {
   LookupError,
 } from "@bearcove/roam-generated/testbed.ts";
 import { TestbedClient, TestbedDispatcher } from "@bearcove/roam-generated/testbed.ts";
-import { connectTcp } from "@bearcove/roam-tcp";
+import { tcpConnector } from "@bearcove/roam-tcp";
 import {
   Driver,
   SessionError,
@@ -170,8 +170,8 @@ async function runServer() {
   const acceptConnections = process.env.ACCEPT_CONNECTIONS === "1";
 
   console.error(`server mode: connecting to ${addr}, acceptConnections=${acceptConnections}`);
-  const established = await session.initiatorTransport(connectTcp(addr), {
-    conduit: subjectConduit(),
+  const established = await session.initiator(tcpConnector(addr), {
+    transport: subjectConduit(),
     onConnection: acceptConnections
       ? (connection) => {
           const driver = new Driver(
@@ -205,8 +205,8 @@ async function runClient() {
   const scenario = process.env.CLIENT_SCENARIO ?? "echo";
   console.error(`client mode: connecting to ${addr}, scenario=${scenario}`);
 
-  const established = await session.initiatorTransport(connectTcp(addr), {
-    conduit: subjectConduit(),
+  const established = await session.initiator(tcpConnector(addr), {
+    transport: subjectConduit(),
   });
   const client = new TestbedClient(established.rootConnection().caller());
 

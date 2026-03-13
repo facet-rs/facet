@@ -12,6 +12,9 @@ use tokio::task::JoinHandle;
 
 use roam_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
 
+#[cfg(not(target_arch = "wasm32"))]
+use roam_core::{Attachment, LinkSource};
+
 /// A [`Link`] over a byte stream with length-prefix framing.
 ///
 /// Wraps an `AsyncRead + AsyncWrite` pair. Each message is framed as
@@ -36,6 +39,43 @@ impl StreamLink<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>
     pub fn tcp(stream: tokio::net::TcpStream) -> Self {
         let (r, w) = stream.into_split();
         Self::new(r, w)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub struct TcpConnector {
+    addr: String,
+    nodelay: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn tcp_connector(addr: impl Into<String>) -> TcpConnector {
+    TcpConnector::new(addr)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl TcpConnector {
+    pub fn new(addr: impl Into<String>) -> Self {
+        Self {
+            addr: addr.into(),
+            nodelay: true,
+        }
+    }
+
+    pub fn nodelay(mut self, nodelay: bool) -> Self {
+        self.nodelay = nodelay;
+        self
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl LinkSource for TcpConnector {
+    type Link = StreamLink<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>;
+
+    async fn next_link(&mut self) -> io::Result<Attachment<Self::Link>> {
+        let stream = tokio::net::TcpStream::connect(&self.addr).await?;
+        stream.set_nodelay(self.nodelay)?;
+        Ok(Attachment::initiator(StreamLink::tcp(stream)))
     }
 }
 

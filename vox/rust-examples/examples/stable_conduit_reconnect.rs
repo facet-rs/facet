@@ -258,7 +258,7 @@ async fn run_demo() -> Result<()> {
         std::future::pending::<()>().await;
     });
 
-    let (client, _) = roam::initiator(client_conduit)
+    let (client, _) = roam::initiator_conduit(client_conduit)
         .root_settings(ConnectionSettings {
             parity: Parity::Odd,
             max_concurrent_requests: 64,

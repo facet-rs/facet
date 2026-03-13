@@ -9,7 +9,7 @@ use roam_types::{
 };
 use shm_primitives::FileCleanup;
 
-use crate::session::{acceptor, initiator};
+use crate::session::{acceptor, initiator_conduit};
 use crate::{BareConduit, DriverCaller, DriverReplySink};
 
 type MessageConduit = BareConduit<MessageFamily, ShmLink>;
@@ -77,7 +77,7 @@ async fn echo_call_across_shm_link() {
         .named("server_setup"),
     );
 
-    let (caller, _sh) = initiator(client_conduit)
+    let (caller, _sh) = initiator_conduit(client_conduit)
         .establish::<DriverCaller>(())
         .await
         .expect("client handshake failed");
@@ -138,7 +138,7 @@ async fn echo_blob_stress_over_shm_link() {
         .named("server_setup"),
     );
 
-    let (caller, _sh) = initiator(client_conduit)
+    let (caller, _sh) = initiator_conduit(client_conduit)
         .establish::<DriverCaller>(())
         .await
         .expect("client handshake failed");

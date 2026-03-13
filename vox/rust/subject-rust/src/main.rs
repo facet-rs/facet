@@ -1,10 +1,10 @@
 //! Rust subject binary for the roam compliance suite.
 
 use roam::{Rx, Tx};
-use roam_core::{TransportMode, initiator, initiator_transport};
+use roam_core::{TransportMode, initiator, initiator_conduit};
 use roam_shm::bootstrap::{BootstrapStatus, encode_request};
 use roam_shm::segment::Segment;
-use roam_stream::StreamLink;
+use roam_stream::tcp_connector;
 use spec_proto::{
     Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape, Testbed,
     TestbedClient, TestbedDispatcher,
@@ -193,16 +193,10 @@ async fn connect_and_serve() -> Result<(), String> {
     let addr = std::env::var("PEER_ADDR").map_err(|_| "PEER_ADDR env var not set".to_string())?;
     info!("connecting to {addr}");
 
-    let stream = tokio::net::TcpStream::connect(&addr)
+    let (root_caller_guard, _sh) = initiator(tcp_connector(addr), requested_transport_mode())
+        .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
         .await
-        .map_err(|e| format!("connect failed: {e}"))?;
-    stream.set_nodelay(true).unwrap();
-
-    let (root_caller_guard, _sh) =
-        initiator_transport(StreamLink::tcp(stream), requested_transport_mode())
-            .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
-            .await
-            .map_err(|e| format!("handshake failed: {e}"))?;
+        .map_err(|e| format!("handshake failed: {e}"))?;
 
     let _root_caller_guard = root_caller_guard;
     std::future::pending::<()>().await;
@@ -331,7 +325,7 @@ async fn connect_and_serve_shm() -> Result<(), String> {
         .map_err(|e| format!("guest_link_from_names: {e}"))?
     };
 
-    let (root_caller_guard, _sh) = initiator(link)
+    let (root_caller_guard, _sh) = initiator_conduit(link)
         .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
         .await
         .map_err(|e| format!("handshake failed: {e}"))?;

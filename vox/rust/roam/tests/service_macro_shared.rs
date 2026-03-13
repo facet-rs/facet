@@ -1,4 +1,4 @@
-use roam_core::{BareConduit, acceptor, initiator};
+use roam_core::{BareConduit, acceptor, initiator_conduit};
 use roam_types::Link;
 use std::sync::{Arc, Mutex};
 
@@ -217,7 +217,7 @@ pub async fn run_adder_end_to_end<L>(
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator(client_conduit)
+    let (client, _sh) = initiator_conduit(client_conduit)
         .establish::<AdderClient>(())
         .await
         .expect("client handshake failed");
@@ -251,7 +251,7 @@ pub async fn run_request_context_end_to_end<L>(
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator(client_conduit)
+    let (client, _sh) = initiator_conduit(client_conduit)
         .establish::<ContextProbeClient>(())
         .await
         .expect("client handshake failed");
@@ -305,7 +305,7 @@ pub async fn run_server_middleware_end_to_end<L>(
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator(client_conduit)
+    let (client, _sh) = initiator_conduit(client_conduit)
         .establish::<MiddlewareProbeClient>(())
         .await
         .expect("client handshake failed");
@@ -359,7 +359,7 @@ pub async fn run_client_middleware_end_to_end<L>(
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator(client_conduit)
+    let (client, _sh) = initiator_conduit(client_conduit)
         .establish::<ClientMiddlewareProbeClient>(())
         .await
         .expect("client handshake failed");

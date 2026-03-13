@@ -258,6 +258,7 @@ pub struct Session {
     /// Optional proactive keepalive runtime config for connection ID 0.
     keepalive: Option<SessionKeepaliveConfig>,
     resume_notifier: watch::Sender<u64>,
+    recoverer: Option<Box<dyn ConduitRecoverer>>,
 }
 
 #[derive(Debug)]
@@ -582,6 +583,7 @@ impl Session {
         control_rx: mpsc::UnboundedReceiver<DropControlRequest>,
         keepalive: Option<SessionKeepaliveConfig>,
         resumable: bool,
+        recoverer: Option<Box<dyn ConduitRecoverer>>,
     ) -> Self
     where
         Tx: ConduitTx<Msg = MessageFamily> + MaybeSend + MaybeSync + 'static,
@@ -616,6 +618,7 @@ impl Session {
             control_rx,
             keepalive,
             resume_notifier,
+            recoverer,
         }
     }
 
@@ -886,6 +889,24 @@ impl Session {
     ) -> bool {
         if !self.resumable {
             return false;
+        }
+
+        if let Some(recoverer) = self.recoverer.as_mut() {
+            match recoverer.next_conduit().await {
+                Ok((tx, rx)) => {
+                    let result = self.resume_session(tx, rx).await;
+                    match result {
+                        Ok(()) => {
+                            let next_generation = self.resume_notifier.borrow().wrapping_add(1);
+                            let _ = self.resume_notifier.send(next_generation);
+                            *keepalive_runtime = self.make_keepalive_runtime();
+                            return true;
+                        }
+                        Err(_) => return false,
+                    }
+                }
+                Err(_) => return false,
+            }
         }
 
         loop {
@@ -1473,6 +1494,20 @@ type BoxFuture<'a, T> = Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>
 type BoxFuture<'a, T> = Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) trait ConduitRecoverer: Send {
+    fn next_conduit<'a>(
+        &'a mut self,
+    ) -> BoxFuture<'a, Result<(Arc<dyn DynConduitTx>, Box<dyn DynConduitRx>), SessionError>>;
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) trait ConduitRecoverer {
+    fn next_conduit<'a>(
+        &'a mut self,
+    ) -> BoxFuture<'a, Result<(Arc<dyn DynConduitTx>, Box<dyn DynConduitRx>), SessionError>>;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub trait DynConduitTx: Send + Sync {
     fn send_msg<'a>(&'a self, msg: Message<'a>) -> BoxFuture<'a, std::io::Result<()>>;
 }
@@ -1544,7 +1579,7 @@ mod tests {
         let (_resume_tx, resume_rx) = mpsc::channel::<ResumeRequest>("session.resume.test", 1);
         let (control_tx, control_rx) = mpsc::unbounded_channel("session.control.test");
         Session::pre_handshake(
-            tx, rx, None, open_rx, close_rx, resume_rx, control_tx, control_rx, None, false,
+            tx, rx, None, open_rx, close_rx, resume_rx, control_tx, control_rx, None, false, None,
         )
     }
 

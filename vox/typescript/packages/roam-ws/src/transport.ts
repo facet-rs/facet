@@ -86,6 +86,10 @@ export class WsLinkSource implements LinkSource<WsLink> {
   }
 }
 
-export function connectWs(url: string): LinkSource<WsLink> {
+export function wsConnector(url: string): LinkSource<WsLink> {
   return new WsLinkSource(url);
+}
+
+export function connectWs(url: string): LinkSource<WsLink> {
+  return wsConnector(url);
 }

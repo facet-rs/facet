@@ -163,7 +163,7 @@ async fn run_demo() -> Result<()> {
     });
 
     println!("[host] establishing session to guest-b");
-    let (_host_root_to_b_guard, upstream_session_handle) = roam::initiator(host_b_link)
+    let (_host_root_to_b_guard, upstream_session_handle) = roam::initiator_conduit(host_b_link)
         .establish::<DriverCaller>(())
         .await
         .map_err(|e| eyre!("host<->guest-b establish failed: {e:?}"))?;
@@ -184,7 +184,7 @@ async fn run_demo() -> Result<()> {
     });
 
     println!("[guest-a] establishing root session to host");
-    let (_guest_a_root_guard, guest_a_session_handle) = roam::initiator(guest_a_link)
+    let (_guest_a_root_guard, guest_a_session_handle) = roam::initiator_conduit(guest_a_link)
         .establish::<DriverCaller>(())
         .await
         .map_err(|e| eyre!("guest-a<->host establish failed: {e:?}"))?;
