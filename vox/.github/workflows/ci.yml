@@ -111,12 +111,17 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
 
       - name: Build subject
         run: cargo build -p subject-rust
@@ -181,12 +186,17 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
 
       - name: Install TypeScript dependencies
         run: cd typescript && pnpm install

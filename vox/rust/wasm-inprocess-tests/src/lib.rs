@@ -7,7 +7,7 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use roam_core::acceptor;
+use roam_core::acceptor_on;
 use roam_inprocess::JsInProcessLink;
 use roam_types::{Rx, Tx};
 use spec_proto::{
@@ -158,7 +158,7 @@ pub fn start_acceptor(on_message: js_sys::Function) -> JsInProcessLink {
     wasm_bindgen_futures::spawn_local(async move {
         console_log!("In-process acceptor: starting handshake...");
 
-        match acceptor(link)
+        match acceptor_on(link)
             .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
             .await
         {
