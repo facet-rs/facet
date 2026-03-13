@@ -23,255 +23,15 @@ use tokio::sync::watch;
 use crate::session::{
     ConnectionHandle, ConnectionMessage, ConnectionSender, DropControlRequest, FailureDisposition,
 };
+use crate::{InMemoryOperationStore, OperationAdmit, OperationCancel, OperationStore};
 
 type ResponseSlot = moire::sync::oneshot::Sender<SelfRef<RequestMessage<'static>>>;
-
-#[derive(Clone, PartialEq, Eq)]
-struct OperationSignature {
-    method_id: roam_types::MethodId,
-    args: Arc<[u8]>,
-}
-
-impl OperationSignature {
-    fn matches_call(&self, method_id: roam_types::MethodId, args: &[u8]) -> bool {
-        self.method_id == method_id && self.args.as_ref() == args
-    }
-}
-
-struct StoredOperation {
-    signature: OperationSignature,
-    retry: roam_types::RetryPolicy,
-}
-
-struct LiveOperation {
-    stored: StoredOperation,
-    owner_request_id: RequestId,
-    waiters: Vec<RequestId>,
-}
-
-struct SealedOperation {
-    stored: StoredOperation,
-    encoded_response: Arc<[u8]>,
-}
-
-enum OperationState {
-    Live(LiveOperation),
-    Released(StoredOperation),
-    Sealed(SealedOperation),
-    Indeterminate(StoredOperation),
-}
-
-enum OperationAdmit {
-    Start,
-    Attached,
-    Replay(Arc<[u8]>),
-    Conflict,
-    Indeterminate,
-}
-
-enum OperationCancel {
-    None,
-    DetachOnly,
-    Release {
-        owner_request_id: RequestId,
-        waiters: Vec<RequestId>,
-    },
-}
-
-#[derive(Default)]
-struct OperationRegistry {
-    states: BTreeMap<u64, OperationState>,
-    request_to_operation: BTreeMap<RequestId, u64>,
-}
-
-impl OperationRegistry {
-    fn admit(
-        &mut self,
-        operation_id: u64,
-        method_id: roam_types::MethodId,
-        args: &[u8],
-        retry: roam_types::RetryPolicy,
-        request_id: RequestId,
-    ) -> OperationAdmit {
-        let signature = OperationSignature {
-            method_id,
-            args: Arc::<[u8]>::from(args.to_vec()),
-        };
-        let Some(existing) = self.states.remove(&operation_id) else {
-            self.request_to_operation.insert(request_id, operation_id);
-            self.states.insert(
-                operation_id,
-                OperationState::Live(LiveOperation {
-                    stored: StoredOperation { signature, retry },
-                    owner_request_id: request_id,
-                    waiters: vec![request_id],
-                }),
-            );
-            return OperationAdmit::Start;
-        };
-
-        match existing {
-            OperationState::Live(mut live) => {
-                if !live.stored.signature.matches_call(method_id, args) {
-                    self.states.insert(operation_id, OperationState::Live(live));
-                    return OperationAdmit::Conflict;
-                }
-                live.waiters.push(request_id);
-                self.request_to_operation.insert(request_id, operation_id);
-                self.states.insert(operation_id, OperationState::Live(live));
-                OperationAdmit::Attached
-            }
-            OperationState::Sealed(sealed) => {
-                let replay = if sealed.stored.signature.matches_call(method_id, args) {
-                    OperationAdmit::Replay(Arc::clone(&sealed.encoded_response))
-                } else {
-                    OperationAdmit::Conflict
-                };
-                self.states
-                    .insert(operation_id, OperationState::Sealed(sealed));
-                replay
-            }
-            OperationState::Released(stored) => {
-                let matches_call = stored.signature.matches_call(method_id, args);
-                if !matches_call || !stored.retry.idem {
-                    self.states
-                        .insert(operation_id, OperationState::Released(stored));
-                    return if matches_call {
-                        OperationAdmit::Indeterminate
-                    } else {
-                        OperationAdmit::Conflict
-                    };
-                }
-                self.request_to_operation.insert(request_id, operation_id);
-                self.states.insert(
-                    operation_id,
-                    OperationState::Live(LiveOperation {
-                        stored: StoredOperation {
-                            signature,
-                            retry: stored.retry,
-                        },
-                        owner_request_id: request_id,
-                        waiters: vec![request_id],
-                    }),
-                );
-                OperationAdmit::Start
-            }
-            OperationState::Indeterminate(stored) => {
-                let matches_call = stored.signature.matches_call(method_id, args);
-                if !matches_call || !stored.retry.idem {
-                    self.states
-                        .insert(operation_id, OperationState::Indeterminate(stored));
-                    return if matches_call {
-                        OperationAdmit::Indeterminate
-                    } else {
-                        OperationAdmit::Conflict
-                    };
-                }
-                self.request_to_operation.insert(request_id, operation_id);
-                self.states.insert(
-                    operation_id,
-                    OperationState::Live(LiveOperation {
-                        stored: StoredOperation {
-                            signature,
-                            retry: stored.retry,
-                        },
-                        owner_request_id: request_id,
-                        waiters: vec![request_id],
-                    }),
-                );
-                OperationAdmit::Start
-            }
-        }
-    }
-
-    fn seal(
-        &mut self,
-        operation_id: u64,
-        owner_request_id: RequestId,
-        encoded_response: Arc<[u8]>,
-    ) -> Vec<RequestId> {
-        let Some(OperationState::Live(live)) = self.states.remove(&operation_id) else {
-            return vec![];
-        };
-        if live.owner_request_id != owner_request_id {
-            self.states.insert(operation_id, OperationState::Live(live));
-            return vec![];
-        }
-        for waiter in &live.waiters {
-            self.request_to_operation.remove(waiter);
-        }
-        let waiters = live.waiters.clone();
-        self.states.insert(
-            operation_id,
-            OperationState::Sealed(SealedOperation {
-                stored: live.stored,
-                encoded_response,
-            }),
-        );
-        waiters
-    }
-
-    fn fail_without_reply(
-        &mut self,
-        operation_id: u64,
-        owner_request_id: RequestId,
-    ) -> Vec<RequestId> {
-        let Some(OperationState::Live(live)) = self.states.remove(&operation_id) else {
-            return vec![];
-        };
-        if live.owner_request_id != owner_request_id {
-            self.states.insert(operation_id, OperationState::Live(live));
-            return vec![];
-        }
-        for waiter in &live.waiters {
-            self.request_to_operation.remove(waiter);
-        }
-        let waiters = live.waiters.clone();
-        let next = if live.stored.retry.persist {
-            OperationState::Indeterminate(live.stored)
-        } else {
-            OperationState::Released(live.stored)
-        };
-        self.states.insert(operation_id, next);
-        waiters
-    }
-
-    fn cancel(&mut self, request_id: RequestId) -> OperationCancel {
-        let Some(operation_id) = self.request_to_operation.get(&request_id).copied() else {
-            return OperationCancel::None;
-        };
-        let Some(OperationState::Live(live)) = self.states.get_mut(&operation_id) else {
-            self.request_to_operation.remove(&request_id);
-            return OperationCancel::None;
-        };
-
-        if live.stored.retry.persist {
-            live.waiters.retain(|candidate| *candidate != request_id);
-            self.request_to_operation.remove(&request_id);
-            return OperationCancel::DetachOnly;
-        }
-
-        let Some(OperationState::Live(live)) = self.states.remove(&operation_id) else {
-            return OperationCancel::None;
-        };
-        for waiter in &live.waiters {
-            self.request_to_operation.remove(waiter);
-        }
-        let waiters = live.waiters.clone();
-        self.states
-            .insert(operation_id, OperationState::Released(live.stored));
-        OperationCancel::Release {
-            owner_request_id: live.owner_request_id,
-            waiters,
-        }
-    }
-}
 
 struct DriverShared {
     pending_responses: SyncMutex<BTreeMap<RequestId, ResponseSlot>>,
     request_ids: SyncMutex<IdAllocator<RequestId>>,
     next_operation_id: AtomicU64,
-    operations: Arc<SyncMutex<OperationRegistry>>,
+    operations: Arc<dyn OperationStore>,
 }
 
 struct CallerDropGuard {
@@ -291,7 +51,7 @@ pub struct DriverReplySink {
     request_id: RequestId,
     retry: roam_types::RetryPolicy,
     operation_id: Option<u64>,
-    operations: Option<Arc<SyncMutex<OperationRegistry>>>,
+    operations: Option<Arc<dyn OperationStore>>,
 }
 
 fn send_encoded_response(
@@ -317,11 +77,8 @@ impl ReplySink for DriverReplySink {
             let encoded_response: Arc<[u8]> = facet_postcard::to_vec(&response)
                 .expect("serialize operation response")
                 .into();
-            let waiters = operations.lock().seal(
-                operation_id,
-                self.request_id,
-                Arc::clone(&encoded_response),
-            );
+            let waiters =
+                operations.seal(operation_id, self.request_id, Arc::clone(&encoded_response));
             for waiter in waiters {
                 if send_encoded_response(sender.clone(), waiter, Arc::clone(&encoded_response))
                     .await
@@ -342,9 +99,7 @@ impl Drop for DriverReplySink {
             if let (Some(operation_id), Some(operations)) =
                 (self.operation_id, self.operations.take())
             {
-                let waiters = operations
-                    .lock()
-                    .fail_without_reply(operation_id, self.request_id);
+                let waiters = operations.fail_without_reply(operation_id, self.request_id);
                 let disposition = if self.retry.persist {
                     FailureDisposition::Indeterminate
                 } else {
@@ -518,6 +273,14 @@ pub struct Driver<H: Handler<DriverReplySink>> {
 
 impl<H: Handler<DriverReplySink>> Driver<H> {
     pub fn new(handle: ConnectionHandle, handler: H) -> Self {
+        Self::with_operation_store(handle, handler, Arc::new(InMemoryOperationStore::default()))
+    }
+
+    pub fn with_operation_store(
+        handle: ConnectionHandle,
+        handler: H,
+        operation_store: Arc<dyn OperationStore>,
+    ) -> Self {
         let conn_id = handle.connection_id();
         let ConnectionHandle {
             sender,
@@ -541,10 +304,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 pending_responses: SyncMutex::new("driver.pending_responses", BTreeMap::new()),
                 request_ids: SyncMutex::new("driver.request_ids", IdAllocator::new(parity)),
                 next_operation_id: AtomicU64::new(1),
-                operations: Arc::new(SyncMutex::new(
-                    "driver.operations",
-                    OperationRegistry::default(),
-                )),
+                operations: operation_store,
             }),
             peer_supports_retry,
             in_flight_handlers: BTreeMap::new(),
@@ -646,7 +406,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         panic!("incoming request payload should always be incoming bytes")
                     }
                 };
-                match self.shared.operations.lock().admit(
+                match self.shared.operations.admit(
                     operation_id,
                     call.method_id,
                     args,
@@ -727,7 +487,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 let _: Result<(), _> = tx.send(msg);
             }
         } else if is_cancel {
-            match self.shared.operations.lock().cancel(req_id) {
+            match self.shared.operations.cancel(req_id) {
                 OperationCancel::None => {
                     let should_abort = self
                         .in_flight_handlers

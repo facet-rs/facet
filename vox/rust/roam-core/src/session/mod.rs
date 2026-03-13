@@ -184,13 +184,17 @@ impl SessionHandle {
         <I::Conduit as Conduit>::Rx: MaybeSend + 'static,
     {
         let (tx, rx) = into_conduit.into_conduit().split();
+        self.resume_parts(Arc::new(tx), Box::new(rx)).await
+    }
+
+    pub(crate) async fn resume_parts(
+        &self,
+        tx: Arc<dyn DynConduitTx>,
+        rx: Box<dyn DynConduitRx>,
+    ) -> Result<(), SessionError> {
         let (result_tx, result_rx) = moire::sync::oneshot::channel("session.resume_result");
         self.resume_tx
-            .send(ResumeRequest {
-                tx: Arc::new(tx),
-                rx: Box::new(rx),
-                result_tx,
-            })
+            .send(ResumeRequest { tx, rx, result_tx })
             .await
             .map_err(|_| SessionError::Protocol("session closed".into()))?;
         result_rx
@@ -620,6 +624,10 @@ impl Session {
             resume_notifier,
             recoverer,
         }
+    }
+
+    pub(crate) fn resume_key(&self) -> Option<SessionResumeKey> {
+        self.session_resume_key
     }
 
     // r[impl session.handshake]

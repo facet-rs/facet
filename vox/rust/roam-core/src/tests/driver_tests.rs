@@ -10,15 +10,20 @@ use roam_types::{
     ChannelItem, ChannelMessage, ChannelSink, Conduit, ConduitRx, ConnectionSettings, Handler,
     IncomingChannelMessage, Link, LinkRx, LinkTx, LinkTxPermit, Message, MessageFamily,
     MessagePayload, Metadata, MethodId, Parity, Payload, ReplySink, RequestBody, RequestCall,
-    RequestCancel, RequestMessage, RequestResponse, RetryPolicy, RoamError, RpcPlan, SelfRef, Tx,
-    WriteSlot, bind_channels_caller_args, channel, ensure_operation_id, metadata_operation_id,
+    RequestCancel, RequestId, RequestMessage, RequestResponse, RetryPolicy, RoamError, RpcPlan,
+    SelfRef, Tx, WriteSlot, bind_channels_caller_args, channel, ensure_operation_id,
+    metadata_operation_id,
 };
 
 use crate::session::{
-    AcceptedConnection, ConnectionAcceptor, ConnectionMessage, SessionError, SessionHandle,
-    SessionKeepaliveConfig, acceptor, initiator_conduit, proxy_connections,
+    AcceptedConnection, ConnectionAcceptor, ConnectionMessage, SessionAcceptOutcome, SessionError,
+    SessionHandle, SessionKeepaliveConfig, SessionRegistry, acceptor, acceptor_on,
+    initiator_conduit, initiator_on, proxy_connections,
 };
-use crate::{BareConduit, Driver, DriverCaller, DriverReplySink, memory_link_pair};
+use crate::{
+    BareConduit, Driver, DriverCaller, DriverReplySink, InMemoryOperationStore, OperationAdmit,
+    OperationCancel, OperationStore, TransportMode, initiate_transport, memory_link_pair,
+};
 
 type MessageConduit = BareConduit<MessageFamily, crate::MemoryLink>;
 
@@ -294,6 +299,54 @@ impl Handler<DriverReplySink> for OperationIdHandler {
 struct ReplayHandler {
     runs: Arc<std::sync::atomic::AtomicUsize>,
     release: Arc<tokio::sync::Notify>,
+}
+
+struct CountingOperationStore {
+    inner: InMemoryOperationStore,
+    admits: AtomicUsize,
+}
+
+impl CountingOperationStore {
+    fn new() -> Self {
+        Self {
+            inner: InMemoryOperationStore::default(),
+            admits: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl OperationStore for CountingOperationStore {
+    fn admit(
+        &self,
+        operation_id: u64,
+        method_id: MethodId,
+        args: &[u8],
+        retry: RetryPolicy,
+        request_id: RequestId,
+    ) -> OperationAdmit {
+        self.admits.fetch_add(1, Ordering::SeqCst);
+        self.inner
+            .admit(operation_id, method_id, args, retry, request_id)
+    }
+
+    fn seal(
+        &self,
+        operation_id: u64,
+        owner_request_id: RequestId,
+        encoded_response: Arc<[u8]>,
+    ) -> Vec<RequestId> {
+        self.inner
+            .seal(operation_id, owner_request_id, encoded_response)
+    }
+
+    fn fail_without_reply(&self, operation_id: u64, owner_request_id: RequestId) -> Vec<RequestId> {
+        self.inner
+            .fail_without_reply(operation_id, owner_request_id)
+    }
+
+    fn cancel(&self, request_id: RequestId) -> OperationCancel {
+        self.inner.cancel(request_id)
+    }
 }
 
 impl Handler<DriverReplySink> for ReplayHandler {
@@ -905,6 +958,44 @@ async fn caller_injects_operation_id_when_peer_supports_retry() {
 }
 
 #[tokio::test]
+async fn builder_uses_custom_operation_store() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+    let store = Arc::new(CountingOperationStore::new());
+    let store_check = Arc::clone(&store);
+
+    let server_task = moire::task::spawn(
+        async move {
+            let (server_caller, _sh) = acceptor(server_conduit)
+                .operation_store(store)
+                .establish::<DriverCaller>(OperationIdHandler)
+                .await
+                .expect("server handshake failed");
+            server_caller
+        }
+        .named("server_setup"),
+    );
+
+    let (caller, _sh) = initiator_conduit(client_conduit)
+        .establish::<DriverCaller>(())
+        .await
+        .expect("client handshake failed");
+
+    let _server_caller_guard = server_task.await.expect("server setup failed");
+
+    let _response = caller
+        .call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&7_u32),
+            channels: vec![],
+            metadata: Default::default(),
+        })
+        .await
+        .expect("call should succeed");
+
+    assert_ne!(store_check.admits.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
@@ -1087,6 +1178,106 @@ async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
 
     let _ = client_session_handle.shutdown();
     let _ = server_session_handle.shutdown();
+    client_break2.close().await;
+    server_break2.close().await;
+}
+
+#[tokio::test]
+async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume() {
+    let registry = SessionRegistry::default();
+    let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
+    let started = Arc::new(tokio::sync::Notify::new());
+    let started_for_wait = Arc::clone(&started);
+    let started_wait = started_for_wait.notified();
+    let release = Arc::new(tokio::sync::Notify::new());
+
+    let (server_established, client_established) = tokio::try_join!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            acceptor_on(server_link1)
+                .session_registry(registry.clone())
+                .establish_or_resume::<DriverCaller>(ResumableReplyingHandler {
+                    started,
+                    release: Arc::clone(&release),
+                }),
+        ),
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            initiator_on(client_link1, TransportMode::Bare)
+                .resumable()
+                .establish::<DriverCaller>(()),
+        ),
+    )
+    .expect("initial session establishment timed out");
+    let (server_caller, _server_session_handle) =
+        match server_established.expect("server handshake failed") {
+            SessionAcceptOutcome::Established(client, handle) => (client, handle),
+            SessionAcceptOutcome::Resumed => panic!("first accept should establish a new session"),
+        };
+    let (caller, client_session_handle) = client_established.expect("client handshake failed");
+
+    let call_task = moire::task::spawn(
+        async move {
+            caller
+                .call(RequestCall {
+                    method_id: MethodId(1),
+                    args: Payload::outgoing(&66_u32),
+                    channels: vec![],
+                    metadata: Default::default(),
+                })
+                .await
+        }
+        .named("registry_resume_pending_call"),
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), started_wait)
+        .await
+        .expect("timed out waiting for handler start");
+
+    client_break1.close().await;
+    server_break1.close().await;
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    let (client_link2, client_break2, server_link2, server_break2) = breakable_link_pair(64);
+    let (resume_result, server_accept_result) = tokio::join!(
+        async {
+            let resumed_link = initiate_transport(client_link2, TransportMode::Bare)
+                .await
+                .expect("client transport prologue should succeed");
+            client_session_handle
+                .resume(BareConduit::new(resumed_link))
+                .await
+        },
+        acceptor_on(server_link2)
+            .session_registry(registry.clone())
+            .establish_or_resume::<DriverCaller>(ResumableReplyingHandler {
+                started: Arc::new(tokio::sync::Notify::new()),
+                release: Arc::clone(&release),
+            }),
+    );
+    resume_result.expect("client session resume should succeed");
+    match server_accept_result.expect("server accept should succeed") {
+        SessionAcceptOutcome::Resumed => {}
+        SessionAcceptOutcome::Established(_, _) => {
+            panic!("registry accept should have resumed the existing session")
+        }
+    }
+
+    release.notify_waiters();
+
+    let response = call_task
+        .await
+        .expect("call task join")
+        .expect("call should succeed after registry-driven session resume");
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let value: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    assert_eq!(value, 66);
+
+    drop(server_caller);
+    let _ = client_session_handle.shutdown();
     client_break2.close().await;
     server_break2.close().await;
 }

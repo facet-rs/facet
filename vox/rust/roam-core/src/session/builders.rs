@@ -1,9 +1,15 @@
-use std::{future::Future, pin::Pin};
+use std::{
+    collections::HashMap,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use moire::sync::mpsc;
 use roam_types::{
-    Conduit, ConduitTx, ConnectionSettings, Handler, Link, MaybeSend, MaybeSync, MessageFamily,
-    Metadata, Parity, SplitLink,
+    Conduit, ConduitRx, ConduitTx, ConnectionSettings, Handler, Link, MaybeSend, MaybeSync,
+    Message, MessageFamily, MessagePayload, Metadata, Parity, SelfRef, SessionResumeKey, SplitLink,
+    metadata_session_resume_key,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -11,7 +17,9 @@ use crate::{
     Attachment, LinkSource, StableConduit, prepare_acceptor_attachment, single_attachment_source,
     single_link_source,
 };
-use crate::{BareConduit, IntoConduit, TransportMode, accept_transport, initiate_transport};
+use crate::{
+    BareConduit, IntoConduit, OperationStore, TransportMode, accept_transport, initiate_transport,
+};
 
 use super::{
     CloseRequest, ConduitRecoverer, ConnectionAcceptor, OpenRequest, Session, SessionError,
@@ -94,6 +102,86 @@ pub fn acceptor_transport<L: Link>(link: L) -> SessionTransportAcceptorBuilder<'
     acceptor_on(link)
 }
 
+#[derive(Clone, Default)]
+pub struct SessionRegistry {
+    inner: Arc<Mutex<HashMap<SessionResumeKey, SessionHandle>>>,
+}
+
+impl SessionRegistry {
+    fn get(&self, key: &SessionResumeKey) -> Option<SessionHandle> {
+        self.inner
+            .lock()
+            .expect("session registry poisoned")
+            .get(key)
+            .cloned()
+    }
+
+    fn insert(&self, key: SessionResumeKey, handle: SessionHandle) {
+        self.inner
+            .lock()
+            .expect("session registry poisoned")
+            .insert(key, handle);
+    }
+
+    fn remove(&self, key: &SessionResumeKey) {
+        self.inner
+            .lock()
+            .expect("session registry poisoned")
+            .remove(key);
+    }
+}
+
+pub enum SessionAcceptOutcome<Client> {
+    Established(Client, SessionHandle),
+    Resumed,
+}
+
+struct PrefetchedConduitRx<Rx> {
+    first: Option<SelfRef<Message<'static>>>,
+    inner: Rx,
+}
+
+impl<Rx> PrefetchedConduitRx<Rx> {
+    fn new(first: SelfRef<Message<'static>>, inner: Rx) -> Self {
+        Self {
+            first: Some(first),
+            inner,
+        }
+    }
+}
+
+impl<Rx> ConduitRx for PrefetchedConduitRx<Rx>
+where
+    Rx: ConduitRx<Msg = MessageFamily> + MaybeSend,
+{
+    type Msg = MessageFamily;
+    type Error = Rx::Error;
+
+    fn recv(
+        &mut self,
+    ) -> impl Future<Output = Result<Option<SelfRef<Message<'static>>>, Self::Error>> + MaybeSend + '_
+    {
+        async move {
+            if let Some(first) = self.first.take() {
+                return Ok(Some(first));
+            }
+            self.inner.recv().await
+        }
+    }
+}
+
+fn resume_key_from_first_message(
+    first: &SelfRef<Message<'static>>,
+) -> Result<Option<SessionResumeKey>, SessionError> {
+    match &first.payload {
+        MessagePayload::Hello(hello) => Ok(metadata_session_resume_key(&hello.metadata)),
+        MessagePayload::ProtocolError(error) => {
+            Err(SessionError::Protocol(error.description.to_owned()))
+        }
+        _ => Err(SessionError::Protocol("expected Hello".into())),
+    }
+}
+
 pub struct SessionInitiatorBuilder<'a, C> {
     conduit: C,
     root_settings: ConnectionSettings,
@@ -102,6 +190,7 @@ pub struct SessionInitiatorBuilder<'a, C> {
     keepalive: Option<SessionKeepaliveConfig>,
     resumable: bool,
     recoverer: Option<Box<dyn ConduitRecoverer>>,
+    operation_store: Option<Arc<dyn OperationStore>>,
     spawn_fn: SpawnFn,
 }
 
@@ -118,6 +207,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             keepalive: None,
             resumable: false,
             recoverer: None,
+            operation_store: None,
             spawn_fn: default_spawn_fn(),
         }
     }
@@ -154,6 +244,11 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
 
     pub fn resumable(mut self) -> Self {
         self.resumable = true;
+        self
+    }
+
+    pub fn operation_store(mut self, operation_store: Arc<dyn OperationStore>) -> Self {
+        self.operation_store = Some(operation_store);
         self
     }
 
@@ -210,7 +305,10 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             resume_tx,
             control_tx,
         };
-        let mut driver = Driver::new(handle, handler);
+        let mut driver = match self.operation_store {
+            Some(operation_store) => Driver::with_operation_store(handle, handler, operation_store),
+            None => Driver::new(handle, handler),
+        };
         let client = Client::from(driver.caller());
         (self.spawn_fn)(Box::pin(async move { session.run().await }));
         #[cfg(not(target_arch = "wasm32"))]
@@ -230,6 +328,7 @@ pub struct SessionSourceInitiatorBuilder<'a, S> {
     on_connection: Option<Box<dyn ConnectionAcceptor>>,
     keepalive: Option<SessionKeepaliveConfig>,
     resumable: bool,
+    operation_store: Option<Arc<dyn OperationStore>>,
     spawn_fn: SpawnFn,
 }
 
@@ -247,6 +346,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
             on_connection: None,
             keepalive: None,
             resumable: true,
+            operation_store: None,
             spawn_fn: default_spawn_fn(),
         }
     }
@@ -283,6 +383,11 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
 
     pub fn resumable(mut self) -> Self {
         self.resumable = true;
+        self
+    }
+
+    pub fn operation_store(mut self, operation_store: Arc<dyn OperationStore>) -> Self {
+        self.operation_store = Some(operation_store);
         self
     }
 
@@ -317,6 +422,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
             on_connection,
             keepalive,
             resumable,
+            operation_store,
             spawn_fn,
         } = self;
 
@@ -337,6 +443,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
                     keepalive,
                     resumable,
                     Some(recoverer),
+                    operation_store,
                     spawn_fn,
                 )
                 .establish(handler)
@@ -360,6 +467,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
                     keepalive,
                     resumable,
                     None,
+                    operation_store,
                     spawn_fn,
                 )
                 .establish(handler)
@@ -377,6 +485,7 @@ pub struct SessionTransportInitiatorBuilder<'a, L> {
     on_connection: Option<Box<dyn ConnectionAcceptor>>,
     keepalive: Option<SessionKeepaliveConfig>,
     resumable: bool,
+    operation_store: Option<Arc<dyn OperationStore>>,
     spawn_fn: SpawnFn,
 }
 
@@ -393,6 +502,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
             on_connection: None,
             keepalive: None,
             resumable: false,
+            operation_store: None,
             spawn_fn: default_spawn_fn(),
         }
     }
@@ -432,6 +542,11 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         self
     }
 
+    pub fn operation_store(mut self, operation_store: Arc<dyn OperationStore>) -> Self {
+        self.operation_store = Some(operation_store);
+        self
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + Send + 'static) -> Self {
         self.spawn_fn = Box::new(f);
@@ -463,6 +578,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
             on_connection,
             keepalive,
             resumable,
+            operation_store,
             spawn_fn,
         } = self;
         match mode {
@@ -477,6 +593,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
                     on_connection,
                     keepalive,
                     resumable,
+                    operation_store,
                     spawn_fn,
                     handler,
                 )
@@ -490,6 +607,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
                     on_connection,
                     keepalive,
                     resumable,
+                    operation_store,
                     spawn_fn,
                     handler,
                 )
@@ -517,6 +635,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
             on_connection,
             keepalive,
             resumable,
+            operation_store,
             spawn_fn,
         } = self;
         match mode {
@@ -531,6 +650,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
                     on_connection,
                     keepalive,
                     resumable,
+                    operation_store,
                     spawn_fn,
                     handler,
                 )
@@ -549,6 +669,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         on_connection: Option<Box<dyn ConnectionAcceptor>>,
         keepalive: Option<SessionKeepaliveConfig>,
         resumable: bool,
+        operation_store: Option<Arc<dyn OperationStore>>,
         spawn_fn: SpawnFn,
         handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<(Client, SessionHandle), SessionError>
@@ -567,6 +688,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
             keepalive,
             resumable,
             None,
+            operation_store,
             spawn_fn,
         )
         .establish(handler)
@@ -581,6 +703,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         on_connection: Option<Box<dyn ConnectionAcceptor>>,
         keepalive: Option<SessionKeepaliveConfig>,
         resumable: bool,
+        operation_store: Option<Arc<dyn OperationStore>>,
         spawn_fn: SpawnFn,
         handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<(Client, SessionHandle), SessionError>
@@ -607,6 +730,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
             keepalive,
             resumable,
             None,
+            operation_store,
             spawn_fn,
         )
         .establish(handler)
@@ -621,6 +745,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         keepalive: Option<SessionKeepaliveConfig>,
         resumable: bool,
         recoverer: Option<Box<dyn ConduitRecoverer>>,
+        operation_store: Option<Arc<dyn OperationStore>>,
         spawn_fn: SpawnFn,
     ) -> SessionInitiatorBuilder<'a, C> {
         builder.root_settings = root_settings;
@@ -629,6 +754,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         builder.keepalive = keepalive;
         builder.resumable = resumable;
         builder.recoverer = recoverer;
+        builder.operation_store = operation_store;
         builder.spawn_fn = spawn_fn;
         builder
     }
@@ -708,6 +834,8 @@ pub struct SessionAcceptorBuilder<'a, C> {
     on_connection: Option<Box<dyn ConnectionAcceptor>>,
     keepalive: Option<SessionKeepaliveConfig>,
     resumable: bool,
+    session_registry: Option<SessionRegistry>,
+    operation_store: Option<Arc<dyn OperationStore>>,
     spawn_fn: SpawnFn,
 }
 
@@ -723,6 +851,8 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             on_connection: None,
             keepalive: None,
             resumable: false,
+            session_registry: None,
+            operation_store: None,
             spawn_fn: default_spawn_fn(),
         }
     }
@@ -754,6 +884,16 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
 
     pub fn resumable(mut self) -> Self {
         self.resumable = true;
+        self
+    }
+
+    pub fn session_registry(mut self, session_registry: SessionRegistry) -> Self {
+        self.session_registry = Some(session_registry);
+        self
+    }
+
+    pub fn operation_store(mut self, operation_store: Arc<dyn OperationStore>) -> Self {
+        self.operation_store = Some(operation_store);
         self
     }
 
@@ -784,7 +924,164 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         for<'p> <C::Tx as ConduitTx>::Permit<'p>: MaybeSend,
         C::Rx: MaybeSend + 'static,
     {
-        let (tx, rx) = self.conduit.split();
+        let Self {
+            conduit,
+            root_settings,
+            metadata,
+            on_connection,
+            keepalive,
+            resumable,
+            session_registry: _session_registry,
+            operation_store,
+            spawn_fn,
+        } = self;
+        Self::establish_from_parts(
+            conduit,
+            root_settings,
+            metadata,
+            on_connection,
+            keepalive,
+            resumable,
+            operation_store,
+            spawn_fn,
+            handler,
+        )
+        .await
+    }
+
+    #[moire::instrument]
+    pub async fn establish_or_resume<Client: From<DriverCaller>>(
+        self,
+        handler: impl Handler<DriverReplySink> + 'static,
+    ) -> Result<SessionAcceptOutcome<Client>, SessionError>
+    where
+        C: Conduit<Msg = MessageFamily> + 'static,
+        C::Tx: MaybeSend + MaybeSync + 'static,
+        for<'p> <C::Tx as ConduitTx>::Permit<'p>: MaybeSend,
+        C::Rx: MaybeSend + 'static,
+    {
+        let Self {
+            conduit,
+            root_settings,
+            metadata,
+            on_connection,
+            keepalive,
+            resumable,
+            session_registry,
+            operation_store,
+            spawn_fn,
+        } = self;
+
+        let Some(session_registry) = session_registry else {
+            let (client, handle) = Self::establish_from_parts(
+                conduit,
+                root_settings,
+                metadata,
+                on_connection,
+                keepalive,
+                resumable,
+                operation_store,
+                spawn_fn,
+                handler,
+            )
+            .await?;
+            return Ok(SessionAcceptOutcome::Established(client, handle));
+        };
+
+        let (tx, mut rx) = conduit.split();
+        let Some(first) = rx
+            .recv()
+            .await
+            .map_err(|error| SessionError::Protocol(error.to_string()))?
+        else {
+            return Err(SessionError::Protocol(
+                "peer closed during handshake".into(),
+            ));
+        };
+
+        if let Some(resume_key) = resume_key_from_first_message(&first)? {
+            if let Some(handle) = session_registry.get(&resume_key) {
+                if let Err(error) = handle
+                    .resume_parts(Arc::new(tx), Box::new(PrefetchedConduitRx::new(first, rx)))
+                    .await
+                {
+                    session_registry.remove(&resume_key);
+                    return Err(error);
+                }
+                return Ok(SessionAcceptOutcome::Resumed);
+            }
+            return Err(SessionError::Protocol("unknown session resume key".into()));
+        }
+
+        let (client, handle, resume_key) = Self::establish_from_parts_with_prefetched_hello(
+            tx,
+            PrefetchedConduitRx::new(first, rx),
+            root_settings,
+            metadata,
+            on_connection,
+            keepalive,
+            resumable,
+            operation_store,
+            spawn_fn,
+            handler,
+        )
+        .await?;
+        if let Some(resume_key) = resume_key {
+            session_registry.insert(resume_key, handle.clone());
+        }
+        Ok(SessionAcceptOutcome::Established(client, handle))
+    }
+
+    async fn establish_from_parts<Client: From<DriverCaller>, Tx, Rx>(
+        conduit: impl Conduit<Msg = MessageFamily, Tx = Tx, Rx = Rx> + 'static,
+        root_settings: ConnectionSettings,
+        metadata: Metadata<'a>,
+        on_connection: Option<Box<dyn ConnectionAcceptor>>,
+        keepalive: Option<SessionKeepaliveConfig>,
+        resumable: bool,
+        operation_store: Option<Arc<dyn OperationStore>>,
+        spawn_fn: SpawnFn,
+        handler: impl Handler<DriverReplySink> + 'static,
+    ) -> Result<(Client, SessionHandle), SessionError>
+    where
+        Tx: ConduitTx<Msg = MessageFamily> + MaybeSend + MaybeSync + 'static,
+        for<'p> <Tx as ConduitTx>::Permit<'p>: MaybeSend,
+        Rx: ConduitRx<Msg = MessageFamily> + MaybeSend + 'static,
+    {
+        let (tx, rx) = conduit.split();
+        let (client, handle, _resume_key) = Self::establish_from_parts_with_prefetched_hello(
+            tx,
+            rx,
+            root_settings,
+            metadata,
+            on_connection,
+            keepalive,
+            resumable,
+            operation_store,
+            spawn_fn,
+            handler,
+        )
+        .await?;
+        Ok((client, handle))
+    }
+
+    async fn establish_from_parts_with_prefetched_hello<Client: From<DriverCaller>, Tx, Rx>(
+        tx: Tx,
+        rx: Rx,
+        root_settings: ConnectionSettings,
+        metadata: Metadata<'a>,
+        on_connection: Option<Box<dyn ConnectionAcceptor>>,
+        keepalive: Option<SessionKeepaliveConfig>,
+        resumable: bool,
+        operation_store: Option<Arc<dyn OperationStore>>,
+        spawn_fn: SpawnFn,
+        handler: impl Handler<DriverReplySink> + 'static,
+    ) -> Result<(Client, SessionHandle, Option<SessionResumeKey>), SessionError>
+    where
+        Tx: ConduitTx<Msg = MessageFamily> + MaybeSend + MaybeSync + 'static,
+        for<'p> <Tx as ConduitTx>::Permit<'p>: MaybeSend,
+        Rx: ConduitRx<Msg = MessageFamily> + MaybeSend + 'static,
+    {
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
         let (resume_tx, resume_rx) = mpsc::channel::<super::ResumeRequest>("session.resume", 1);
@@ -792,33 +1089,37 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         let mut session = Session::pre_handshake(
             tx,
             rx,
-            self.on_connection,
+            on_connection,
             open_rx,
             close_rx,
             resume_rx,
             control_tx.clone(),
             control_rx,
-            self.keepalive,
-            self.resumable,
+            keepalive,
+            resumable,
             None,
         );
         let handle = session
-            .establish_as_acceptor(self.root_settings, self.metadata)
+            .establish_as_acceptor(root_settings, metadata)
             .await?;
+        let resume_key = session.resume_key();
         let session_handle = SessionHandle {
             open_tx,
             close_tx,
             resume_tx,
             control_tx,
         };
-        let mut driver = Driver::new(handle, handler);
+        let mut driver = match operation_store {
+            Some(operation_store) => Driver::with_operation_store(handle, handler, operation_store),
+            None => Driver::new(handle, handler),
+        };
         let client = Client::from(driver.caller());
-        (self.spawn_fn)(Box::pin(async move { session.run().await }));
+        (spawn_fn)(Box::pin(async move { session.run().await }));
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move { driver.run().await });
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move { driver.run().await });
-        Ok((client, session_handle))
+        Ok((client, session_handle, resume_key))
     }
 }
 
@@ -829,6 +1130,8 @@ pub struct SessionTransportAcceptorBuilder<'a, L: Link> {
     on_connection: Option<Box<dyn ConnectionAcceptor>>,
     keepalive: Option<SessionKeepaliveConfig>,
     resumable: bool,
+    session_registry: Option<SessionRegistry>,
+    operation_store: Option<Arc<dyn OperationStore>>,
     spawn_fn: SpawnFn,
 }
 
@@ -844,6 +1147,8 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
             on_connection: None,
             keepalive: None,
             resumable: true,
+            session_registry: None,
+            operation_store: None,
             spawn_fn: default_spawn_fn(),
         }
     }
@@ -878,6 +1183,16 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         self
     }
 
+    pub fn session_registry(mut self, session_registry: SessionRegistry) -> Self {
+        self.session_registry = Some(session_registry);
+        self
+    }
+
+    pub fn operation_store(mut self, operation_store: Arc<dyn OperationStore>) -> Self {
+        self.operation_store = Some(operation_store);
+        self
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + Send + 'static) -> Self {
         self.spawn_fn = Box::new(f);
@@ -909,6 +1224,8 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
             on_connection,
             keepalive,
             resumable,
+            session_registry,
+            operation_store,
             spawn_fn,
         } = self;
         let (mode, link) = accept_transport(link)
@@ -925,6 +1242,8 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                     on_connection,
                     keepalive,
                     resumable,
+                    session_registry,
+                    operation_store,
                     spawn_fn,
                 )
                 .establish(handler)
@@ -938,11 +1257,74 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                     on_connection,
                     keepalive,
                     resumable,
+                    session_registry,
+                    operation_store,
                     spawn_fn,
                     handler,
                 )
                 .await
             }
+        }
+    }
+
+    #[moire::instrument]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn establish_or_resume<Client: From<DriverCaller>>(
+        self,
+        handler: impl Handler<DriverReplySink> + 'static,
+    ) -> Result<SessionAcceptOutcome<Client>, SessionError>
+    where
+        L: Link + Send + 'static,
+        L::Tx: MaybeSend + MaybeSync + 'static,
+        <L::Tx as roam_types::LinkTx>::Permit: MaybeSend,
+        L::Rx: MaybeSend + 'static,
+    {
+        let Self {
+            link,
+            root_settings,
+            metadata,
+            on_connection,
+            keepalive,
+            resumable,
+            session_registry,
+            operation_store,
+            spawn_fn,
+        } = self;
+        let (mode, link) = accept_transport(link)
+            .await
+            .map_err(session_error_from_transport)?;
+        match mode {
+            TransportMode::Bare => {
+                let builder =
+                    SessionAcceptorBuilder::new(BareConduit::<MessageFamily, _>::new(link));
+                Self::apply_common_parts(
+                    builder,
+                    root_settings,
+                    metadata,
+                    on_connection,
+                    keepalive,
+                    resumable,
+                    session_registry,
+                    operation_store,
+                    spawn_fn,
+                )
+                .establish_or_resume(handler)
+                .await
+            }
+            TransportMode::Stable => Self::finish_with_stable_parts(
+                link,
+                root_settings,
+                metadata,
+                on_connection,
+                keepalive,
+                resumable,
+                session_registry,
+                operation_store,
+                spawn_fn,
+                handler,
+            )
+            .await
+            .map(|(client, handle)| SessionAcceptOutcome::Established(client, handle)),
         }
     }
 
@@ -964,6 +1346,8 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
             on_connection,
             keepalive,
             resumable,
+            session_registry,
+            operation_store,
             spawn_fn,
         } = self;
         let (mode, link) = accept_transport(link)
@@ -980,9 +1364,60 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                     on_connection,
                     keepalive,
                     resumable,
+                    session_registry,
+                    operation_store,
                     spawn_fn,
                 )
                 .establish(handler)
+                .await
+            }
+            TransportMode::Stable => Err(SessionError::Protocol(
+                "stable conduit transport selection is unsupported on wasm".into(),
+            )),
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub async fn establish_or_resume<Client: From<DriverCaller>>(
+        self,
+        handler: impl Handler<DriverReplySink> + 'static,
+    ) -> Result<SessionAcceptOutcome<Client>, SessionError>
+    where
+        L: Link + 'static,
+        L::Tx: MaybeSend + MaybeSync + 'static,
+        <L::Tx as roam_types::LinkTx>::Permit: MaybeSend,
+        L::Rx: MaybeSend + 'static,
+    {
+        let Self {
+            link,
+            root_settings,
+            metadata,
+            on_connection,
+            keepalive,
+            resumable,
+            session_registry,
+            operation_store,
+            spawn_fn,
+        } = self;
+        let (mode, link) = accept_transport(link)
+            .await
+            .map_err(session_error_from_transport)?;
+        match mode {
+            TransportMode::Bare => {
+                let builder =
+                    SessionAcceptorBuilder::new(BareConduit::<MessageFamily, _>::new(link));
+                Self::apply_common_parts(
+                    builder,
+                    root_settings,
+                    metadata,
+                    on_connection,
+                    keepalive,
+                    resumable,
+                    session_registry,
+                    operation_store,
+                    spawn_fn,
+                )
+                .establish_or_resume(handler)
                 .await
             }
             TransportMode::Stable => Err(SessionError::Protocol(
@@ -999,6 +1434,8 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         on_connection: Option<Box<dyn ConnectionAcceptor>>,
         keepalive: Option<SessionKeepaliveConfig>,
         resumable: bool,
+        session_registry: Option<SessionRegistry>,
+        operation_store: Option<Arc<dyn OperationStore>>,
         spawn_fn: SpawnFn,
         handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<(Client, SessionHandle), SessionError>
@@ -1024,6 +1461,8 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
             on_connection,
             keepalive,
             resumable,
+            session_registry,
+            operation_store,
             spawn_fn,
         )
         .establish(handler)
@@ -1037,6 +1476,8 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         on_connection: Option<Box<dyn ConnectionAcceptor>>,
         keepalive: Option<SessionKeepaliveConfig>,
         resumable: bool,
+        session_registry: Option<SessionRegistry>,
+        operation_store: Option<Arc<dyn OperationStore>>,
         spawn_fn: SpawnFn,
     ) -> SessionAcceptorBuilder<'a, C> {
         builder.root_settings = root_settings;
@@ -1044,6 +1485,8 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         builder.on_connection = on_connection;
         builder.keepalive = keepalive;
         builder.resumable = resumable;
+        builder.session_registry = session_registry;
+        builder.operation_store = operation_store;
         builder.spawn_fn = spawn_fn;
         builder
     }

@@ -114,3 +114,37 @@ test("browser can connect to Rust WebSocket server and call echo methods", async
     expect(result.passed, `Test "${result.name}" failed: ${result.error}`).toBe(true);
   }
 });
+
+test("browser reconnects and resumes an in-flight WebSocket call", async ({ page }) => {
+  page.on("console", (msg) => {
+    console.log(`[browser ${msg.type()}] ${msg.text()}`);
+  });
+
+  page.on("pageerror", (err) => {
+    console.log(`[browser pageerror] ${err.message}`);
+  });
+
+  page.on("requestfailed", (req) => {
+    console.log(`[browser requestfailed] ${req.url()} - ${req.failure()?.errorText}`);
+  });
+
+  console.log(`Navigating to reconnect test page (vite=${vitePort}, ws=${wsPort})...`);
+  await page.goto(
+    `http://127.0.0.1:${vitePort}/?ws=ws://127.0.0.1:${wsPort}&scenario=reconnect`,
+    { waitUntil: "networkidle" },
+  );
+  console.log("Navigation complete, waiting for reconnect testsComplete...");
+
+  await page.waitForFunction(() => (window as any).testsComplete === true, { timeout: 10000 });
+  console.log("reconnect testsComplete is true");
+
+  const results = await page.evaluate(() => (window as any).testResults);
+  console.log("Reconnect test results:", results);
+
+  expect(results).toBeInstanceOf(Array);
+  expect(results.length).toBeGreaterThan(0);
+
+  for (const result of results) {
+    expect(result.passed, `Test "${result.name}" failed: ${result.error}`).toBe(true);
+  }
+});
