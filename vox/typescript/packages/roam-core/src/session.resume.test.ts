@@ -3,7 +3,13 @@ import { RpcErrorCode } from "@bearcove/roam-wire";
 import { BareConduit } from "./conduit.ts";
 import { Driver, type Dispatcher } from "./driver.ts";
 import { RequestContext } from "./request_context.ts";
-import { Session, SessionError, type SessionHandle } from "./session.ts";
+import {
+  Session,
+  SessionError,
+  SessionRegistry,
+  type SessionAcceptOutcome,
+  type SessionHandle,
+} from "./session.ts";
 import type { MethodDescriptor, ServiceDescriptor } from "./channeling/index.ts";
 
 class MemoryLink {
@@ -340,5 +346,73 @@ describe("session resumption", () => {
     serverSession.handle().shutdown();
 
     await Promise.allSettled([serverRun, serverSession.closed(), clientSession.closed()]);
+  });
+
+  it("keeps a pending call alive across registry-driven acceptor resume", async () => {
+    const registry = new SessionRegistry();
+    const [clientLink1, serverLink1] = memoryLinkPair();
+    const clientConduit1 = new BareConduit(clientLink1);
+    const serverConduit1 = new BareConduit(serverLink1);
+    const started = makeDeferred<void>();
+    const release = makeDeferred<void>();
+
+    const dispatcher: Dispatcher = {
+      getDescriptor() {
+        return descriptorFor(PERSIST_METHOD);
+      },
+      async dispatch(_context: RequestContext, _method, args, call) {
+        started.resolve();
+        await release.promise;
+        call.reply(args[0]);
+      },
+    };
+
+    const [firstAccepted, clientSession] = await withTimeout(
+      Promise.all([
+        Session.establishAcceptorOrResume(serverConduit1, registry, { resumable: true }),
+        Session.establishInitiator(clientConduit1, { resumable: true }),
+      ]),
+      "initial session establishment",
+    );
+    expect(firstAccepted.tag).toBe("Established");
+    const firstSession = (firstAccepted as Extract<SessionAcceptOutcome, { tag: "Established" }>).session;
+    const serverDriver = new Driver(firstSession.rootConnection(), dispatcher);
+    const serverRun = serverDriver.run();
+
+    const call = clientSession.rootConnection().caller().call({
+      method: "Test.echo",
+      args: { value: 66 },
+      descriptor: PERSIST_METHOD,
+    });
+
+    await withTimeout(started.promise, "handler start");
+
+    clientLink1.close();
+    serverLink1.close();
+
+    const [clientLink2, serverLink2] = memoryLinkPair();
+    const clientConduit2 = new BareConduit(clientLink2);
+    const serverConduit2 = new BareConduit(serverLink2);
+
+    const [acceptResult] = await withTimeout(
+      Promise.all([
+        Session.establishAcceptorOrResume(serverConduit2, registry, { resumable: true }),
+        resumeWhenReady(clientSession.handle(), clientConduit2),
+      ]),
+      "registry resume",
+    );
+
+    expect(acceptResult.tag).toBe("Resumed");
+
+    release.resolve();
+
+    await expect(withTimeout(call, "registry-resumed call")).resolves.toBe(66);
+
+    clientLink2.close();
+    serverLink2.close();
+    clientSession.handle().shutdown();
+    firstSession.handle().shutdown();
+
+    await Promise.allSettled([serverRun, firstSession.closed(), clientSession.closed()]);
   });
 });

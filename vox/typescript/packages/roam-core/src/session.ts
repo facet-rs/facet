@@ -93,6 +93,26 @@ export interface SessionBuilderOptions {
   resumable?: boolean;
 }
 
+export class SessionRegistry {
+  private readonly sessions = new Map<string, SessionHandle>();
+
+  get(key: Uint8Array): SessionHandle | undefined {
+    return this.sessions.get(sessionResumeKeyId(key));
+  }
+
+  insert(key: Uint8Array, handle: SessionHandle): void {
+    this.sessions.set(sessionResumeKeyId(key), handle);
+  }
+
+  remove(key: Uint8Array): void {
+    this.sessions.delete(sessionResumeKeyId(key));
+  }
+}
+
+export type SessionAcceptOutcome =
+  | { tag: "Established"; session: Session }
+  | { tag: "Resumed" };
+
 export type SessionConduitKind = "bare" | "stable";
 
 export interface SessionTransportOptions extends SessionBuilderOptions {
@@ -116,6 +136,10 @@ function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
     }
   }
   return true;
+}
+
+function sessionResumeKeyId(key: Uint8Array): string {
+  return Array.from(key, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function cloneMetadataValue(value: MetadataEntry["value"]): MetadataEntry["value"] {
@@ -240,6 +264,10 @@ class SessionCore {
 
   sessionHandleValue(): SessionHandle {
     return this.sessionHandle;
+  }
+
+  sessionResumeKeyValue(): Uint8Array | null {
+    return this.sessionResumeKey?.slice() ?? null;
   }
 
   defaultConnectionSettings(): ConnectionSettings {
@@ -403,6 +431,16 @@ class SessionCore {
     }
     if (!this.disconnected) {
       throw SessionError.protocol("resume is only valid while the session is disconnected");
+    }
+    const result = deferred<void>();
+    this.enqueueResume({ conduit, result });
+    await result.promise;
+  }
+
+  async acceptResumedConduit(conduit: Conduit<Message>): Promise<void> {
+    this.assertOpen();
+    if (!this.resumable) {
+      throw SessionError.protocol("session is not resumable");
     }
     const result = deferred<void>();
     this.enqueueResume({ conduit, result });
@@ -728,6 +766,10 @@ export class SessionHandle {
 
   resume(conduit: Conduit<Message>): Promise<void> {
     return this.core.resume(conduit);
+  }
+
+  acceptResumedConduit(conduit: Conduit<Message>): Promise<void> {
+    return this.core.acceptResumedConduit(conduit);
   }
 
   shutdown(): void {
@@ -1075,6 +1117,10 @@ class ConnectionHandleCaller implements Caller {
 export class Session {
   private constructor(private readonly core: SessionCore) {}
 
+  private resumeKey(): Uint8Array | null {
+    return this.core.sessionResumeKeyValue();
+  }
+
   static async establishInitiatorOn(
     conduit: Conduit<Message>,
     options: SessionBuilderOptions = {},
@@ -1156,6 +1202,43 @@ export class Session {
     return new Session(core);
   }
 
+  static async establishAcceptorOrResume(
+    conduit: Conduit<Message>,
+    registry: SessionRegistry,
+    options: SessionBuilderOptions = {},
+  ): Promise<SessionAcceptOutcome> {
+    const first = await conduit.recv();
+    if (!first) {
+      throw SessionError.closed();
+    }
+
+    if (first.payload.tag !== "Hello") {
+      throw SessionError.protocol("expected Hello during session establishment");
+    }
+
+    const resumeKey = metadataSessionResumeKey(first.payload.value.metadata);
+    if (resumeKey) {
+      const handle = registry.get(resumeKey);
+      if (!handle) {
+        throw SessionError.protocol("unknown session resume key");
+      }
+      try {
+        await handle.acceptResumedConduit(new PrefetchedConduit(first, conduit));
+      } catch (error) {
+        registry.remove(resumeKey);
+        throw error;
+      }
+      return { tag: "Resumed" };
+    }
+
+    const session = await Session.establishAcceptor(new PrefetchedConduit(first, conduit), options);
+    const establishedKey = session.resumeKey();
+    if (establishedKey) {
+      registry.insert(establishedKey, session.handle());
+    }
+    return { tag: "Established", session };
+  }
+
   rootConnection(): ConnectionHandle {
     return this.core.rootConnection();
   }
@@ -1166,6 +1249,38 @@ export class Session {
 
   closed(): Promise<void> {
     return this.core.closedPromise();
+  }
+}
+
+class PrefetchedConduit implements Conduit<Message> {
+  private first: Message | null;
+
+  constructor(
+    first: Message,
+    private readonly inner: Conduit<Message>,
+  ) {
+    this.first = first;
+  }
+
+  send(item: Message): Promise<void> {
+    return this.inner.send(item);
+  }
+
+  async recv(): Promise<Message | null> {
+    if (this.first) {
+      const first = this.first;
+      this.first = null;
+      return first;
+    }
+    return this.inner.recv();
+  }
+
+  close(): void {
+    this.inner.close();
+  }
+
+  isClosed(): boolean {
+    return this.inner.isClosed();
   }
 }
 
@@ -1225,6 +1340,14 @@ export const session = {
     return Session.establishAcceptor(conduit, options);
   },
 
+  acceptorOrResume(
+    conduit: Conduit<Message>,
+    registry: SessionRegistry,
+    options: SessionBuilderOptions = {},
+  ): Promise<SessionAcceptOutcome> {
+    return Session.establishAcceptorOrResume(conduit, registry, options);
+  },
+
   async initiatorOn(
     transport: Link,
     options: SessionTransportOptions = {},
@@ -1244,6 +1367,18 @@ export const session = {
     });
   },
 
+  async acceptorOnOrResume(
+    transport: Link,
+    registry: SessionRegistry,
+    options: SessionTransportOptions = {},
+  ): Promise<SessionAcceptOutcome> {
+    const conduit = await makeAcceptorSessionConduit(transport);
+    return Session.establishAcceptorOrResume(conduit, registry, {
+      ...options,
+      resumable: options.resumable ?? true,
+    });
+  },
+
   async initiatorTransport(
     transport: SessionTransport,
     options: SessionTransportOptions = {},
@@ -1257,6 +1392,18 @@ export const session = {
   ): Promise<Session> {
     const conduit = await makeAcceptorSessionConduit(transport);
     return Session.establishAcceptor(conduit, {
+      ...options,
+      resumable: options.resumable ?? true,
+    });
+  },
+
+  async acceptorTransportOrResume(
+    transport: SessionTransport,
+    registry: SessionRegistry,
+    options: SessionTransportOptions = {},
+  ): Promise<SessionAcceptOutcome> {
+    const conduit = await makeAcceptorSessionConduit(transport);
+    return Session.establishAcceptorOrResume(conduit, registry, {
       ...options,
       resumable: options.resumable ?? true,
     });

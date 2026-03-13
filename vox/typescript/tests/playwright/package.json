@@ -7,6 +7,10 @@
     "test": "playwright test"
   },
   "devDependencies": {
-    "@playwright/test": "^1"
+    "@bearcove/roam-core": "workspace:*",
+    "@bearcove/roam-generated": "workspace:*",
+    "@playwright/test": "^1",
+    "@types/ws": "^8.18.1",
+    "ws": "^8.19.0"
   }
 }
