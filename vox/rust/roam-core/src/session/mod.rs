@@ -5,8 +5,9 @@ use roam_types::{
     ChannelMessage, Conduit, ConduitRx, ConduitTx, ConduitTxPermit, ConnectionAccept,
     ConnectionClose, ConnectionId, ConnectionOpen, ConnectionReject, ConnectionSettings,
     IdAllocator, MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload, Metadata, Parity,
-    RequestBody, RequestId, RequestMessage, RequestResponse, SelfRef, SessionRole,
-    append_retry_support_metadata, metadata_supports_retry,
+    RequestBody, RequestId, RequestMessage, RequestResponse, SelfRef, SessionResumeKey,
+    SessionRole, append_retry_support_metadata, append_session_resume_key_metadata,
+    metadata_session_resume_key, metadata_supports_retry,
 };
 use tokio::sync::watch;
 use tracing::{debug, warn};
@@ -72,6 +73,12 @@ struct CloseRequest {
     result_tx: moire::sync::oneshot::Sender<Result<(), SessionError>>,
 }
 
+struct ResumeRequest {
+    tx: Arc<dyn DynConduitTx>,
+    rx: Box<dyn DynConduitRx>,
+    result_tx: moire::sync::oneshot::Sender<Result<(), SessionError>>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum DropControlRequest {
     Shutdown,
@@ -108,6 +115,7 @@ fn send_drop_control(
 pub struct SessionHandle {
     open_tx: mpsc::Sender<OpenRequest>,
     close_tx: mpsc::Sender<CloseRequest>,
+    resume_tx: mpsc::Sender<ResumeRequest>,
     control_tx: mpsc::UnboundedSender<DropControlRequest>,
 }
 
@@ -162,6 +170,28 @@ impl SessionHandle {
             .map_err(|_| SessionError::Protocol("session closed".into()))?
     }
 
+    pub async fn resume<I: crate::IntoConduit>(&self, into_conduit: I) -> Result<(), SessionError>
+    where
+        I::Conduit: Conduit<Msg = MessageFamily> + 'static,
+        <I::Conduit as Conduit>::Tx: MaybeSend + MaybeSync + 'static,
+        for<'p> <<I::Conduit as Conduit>::Tx as ConduitTx>::Permit<'p>: MaybeSend,
+        <I::Conduit as Conduit>::Rx: MaybeSend + 'static,
+    {
+        let (tx, rx) = into_conduit.into_conduit().split();
+        let (result_tx, result_rx) = moire::sync::oneshot::channel("session.resume_result");
+        self.resume_tx
+            .send(ResumeRequest {
+                tx: Arc::new(tx),
+                rx: Box::new(rx),
+                result_tx,
+            })
+            .await
+            .map_err(|_| SessionError::Protocol("session closed".into()))?;
+        result_rx
+            .await
+            .map_err(|_| SessionError::Protocol("session closed".into()))?
+    }
+
     /// Request shutdown of the entire session (root + all virtual connections).
     pub fn shutdown(&self) -> Result<(), SessionError> {
         send_drop_control(&self.control_tx, DropControlRequest::Shutdown)
@@ -176,9 +206,9 @@ impl SessionHandle {
 /// Session state machine.
 // r[impl session]
 // r[impl rpc.one-service-per-connection]
-pub struct Session<C: Conduit> {
+pub struct Session {
     /// Conduit receiver
-    rx: C::Rx,
+    rx: Box<dyn DynConduitRx>,
 
     // r[impl session.role]
     role: SessionRole,
@@ -190,6 +220,10 @@ pub struct Session<C: Conduit> {
     /// Shared core (for sending) — also held by all ConnectionSenders.
     sess_core: Arc<SessionCore>,
     peer_supports_retry: bool,
+    local_root_settings: ConnectionSettings,
+    peer_root_settings: Option<ConnectionSettings>,
+    resumable: bool,
+    session_resume_key: Option<SessionResumeKey>,
 
     /// Connection state (active, pending inbound, pending outbound).
     conns: BTreeMap<ConnectionId, ConnectionSlot>,
@@ -207,6 +241,9 @@ pub struct Session<C: Conduit> {
 
     /// Receiver for close requests from SessionHandle.
     close_rx: mpsc::Receiver<CloseRequest>,
+
+    /// Receiver for resume requests from SessionHandle.
+    resume_rx: mpsc::Receiver<ResumeRequest>,
 
     /// Sender/receiver for drop-driven session/connection control requests.
     control_tx: mpsc::UnboundedSender<DropControlRequest>,
@@ -498,6 +535,7 @@ pub enum SessionError {
     Io(std::io::Error),
     Protocol(String),
     Rejected(Metadata<'static>),
+    NotResumable,
 }
 
 impl std::fmt::Display for SessionError {
@@ -506,43 +544,63 @@ impl std::fmt::Display for SessionError {
             Self::Io(e) => write!(f, "io error: {e}"),
             Self::Protocol(msg) => write!(f, "protocol error: {msg}"),
             Self::Rejected(_) => write!(f, "connection rejected"),
+            Self::NotResumable => write!(f, "session is not resumable"),
         }
     }
 }
 
 impl std::error::Error for SessionError {}
 
-impl<C> Session<C>
-where
-    C: Conduit<Msg = MessageFamily>,
-    C::Tx: MaybeSend + MaybeSync + 'static,
-    for<'p> <C::Tx as ConduitTx>::Permit<'p>: MaybeSend,
-    C::Rx: MaybeSend,
-{
+fn fresh_session_resume_key() -> Result<SessionResumeKey, SessionError> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|error| {
+        SessionError::Protocol(format!("failed to generate session key: {error}"))
+    })?;
+    Ok(SessionResumeKey(bytes))
+}
+
+impl Session {
     #[allow(clippy::too_many_arguments)]
-    fn pre_handshake(
-        tx: C::Tx,
-        rx: C::Rx,
+    fn pre_handshake<Tx, Rx>(
+        tx: Tx,
+        rx: Rx,
         on_connection: Option<Box<dyn ConnectionAcceptor>>,
         open_rx: mpsc::Receiver<OpenRequest>,
         close_rx: mpsc::Receiver<CloseRequest>,
+        resume_rx: mpsc::Receiver<ResumeRequest>,
         control_tx: mpsc::UnboundedSender<DropControlRequest>,
         control_rx: mpsc::UnboundedReceiver<DropControlRequest>,
         keepalive: Option<SessionKeepaliveConfig>,
-    ) -> Self {
-        let sess_core = Arc::new(SessionCore { tx: Box::new(tx) });
+        resumable: bool,
+    ) -> Self
+    where
+        Tx: ConduitTx<Msg = MessageFamily> + MaybeSend + MaybeSync + 'static,
+        for<'p> <Tx as ConduitTx>::Permit<'p>: MaybeSend,
+        Rx: ConduitRx<Msg = MessageFamily> + MaybeSend + 'static,
+    {
+        let sess_core = Arc::new(SessionCore {
+            tx: std::sync::Mutex::new(Arc::new(tx) as Arc<dyn DynConduitTx>),
+        });
         Session {
-            rx,
+            rx: Box::new(rx),
             role: SessionRole::Initiator, // overwritten in establish_as_*
             parity: Parity::Odd,          // overwritten in establish_as_*
             sess_core,
             peer_supports_retry: false,
+            local_root_settings: ConnectionSettings {
+                parity: Parity::Odd,
+                max_concurrent_requests: 64,
+            },
+            peer_root_settings: None,
+            resumable,
+            session_resume_key: None,
             conns: BTreeMap::new(),
             root_closed_internal: false,
             conn_ids: IdAllocator::new(Parity::Odd), // overwritten in establish_as_*
             on_connection,
             open_rx,
             close_rx,
+            resume_rx,
             control_tx,
             control_rx,
             keepalive,
@@ -560,6 +618,7 @@ where
         self.role = SessionRole::Initiator;
         self.parity = settings.parity;
         self.conn_ids = IdAllocator::new(settings.parity);
+        self.local_root_settings = settings.clone();
 
         let mut hello_metadata = metadata.to_vec();
         append_retry_support_metadata(&mut hello_metadata);
@@ -578,30 +637,37 @@ where
             .map_err(|_| SessionError::Protocol("failed to send Hello".into()))?;
 
         // Receive HelloYourself
-        let (peer_settings, peer_supports_retry) = match self.rx.recv().await {
-            Ok(Some(msg)) => {
-                let payload = msg.map(|m| m.payload);
-                match &*payload {
-                    MessagePayload::HelloYourself(hy) => (
-                        hy.connection_settings.clone(),
-                        metadata_supports_retry(&hy.metadata),
-                    ),
-                    MessagePayload::ProtocolError(e) => {
-                        return Err(SessionError::Protocol(e.description.to_owned()));
-                    }
-                    _ => {
-                        return Err(SessionError::Protocol("expected HelloYourself".into()));
+        let (peer_settings, peer_supports_retry, session_resume_key) =
+            match self.rx.recv_msg().await {
+                Ok(Some(msg)) => {
+                    let payload = msg.map(|m| m.payload);
+                    match &*payload {
+                        MessagePayload::HelloYourself(hy) => (
+                            hy.connection_settings.clone(),
+                            metadata_supports_retry(&hy.metadata),
+                            metadata_session_resume_key(&hy.metadata),
+                        ),
+                        MessagePayload::ProtocolError(e) => {
+                            return Err(SessionError::Protocol(e.description.to_owned()));
+                        }
+                        _ => {
+                            return Err(SessionError::Protocol("expected HelloYourself".into()));
+                        }
                     }
                 }
-            }
-            Ok(None) => {
-                return Err(SessionError::Protocol(
-                    "peer closed during handshake".into(),
-                ));
-            }
-            Err(e) => return Err(SessionError::Protocol(e.to_string())),
-        };
+                Ok(None) => {
+                    return Err(SessionError::Protocol(
+                        "peer closed during handshake".into(),
+                    ));
+                }
+                Err(e) => return Err(SessionError::Protocol(e.to_string())),
+            };
         self.peer_supports_retry = peer_supports_retry;
+        self.peer_root_settings = Some(peer_settings.clone());
+        self.session_resume_key = session_resume_key;
+        if self.resumable && self.session_resume_key.is_none() {
+            return Err(SessionError::NotResumable);
+        }
 
         Ok(self.make_root_handle(settings, peer_settings))
     }
@@ -618,7 +684,7 @@ where
         self.role = SessionRole::Acceptor;
 
         // Receive Hello
-        let (peer_settings, peer_supports_retry) = match self.rx.recv().await {
+        let (peer_settings, peer_supports_retry) = match self.rx.recv_msg().await {
             Ok(Some(msg)) => {
                 let payload = msg.map(|m| m.payload);
                 match &*payload {
@@ -658,9 +724,20 @@ where
         };
         self.parity = our_settings.parity;
         self.conn_ids = IdAllocator::new(our_settings.parity);
+        self.local_root_settings = our_settings.clone();
+        self.peer_root_settings = Some(peer_settings.clone());
 
         let mut hello_metadata = metadata.to_vec();
         append_retry_support_metadata(&mut hello_metadata);
+        if self.resumable {
+            self.session_resume_key = Some(fresh_session_resume_key()?);
+            append_session_resume_key_metadata(
+                &mut hello_metadata,
+                self.session_resume_key
+                    .as_ref()
+                    .expect("resumable acceptor must set a session key"),
+            );
+        }
 
         // Send HelloYourself
         self.sess_core
@@ -739,16 +816,20 @@ where
 
         loop {
             tokio::select! {
-                msg = self.rx.recv() => {
+                msg = self.rx.recv_msg() => {
                     match msg {
                         Ok(Some(msg)) => self.handle_message(msg, &mut keepalive_runtime).await,
                         Ok(None) => {
                             warn!("session recv loop ended: conduit returned EOF");
-                            break;
+                            if !self.handle_conduit_break(&mut keepalive_runtime).await {
+                                break;
+                            }
                         }
                         Err(error) => {
                             warn!(error = %error, "session recv loop ended: conduit recv error");
-                            break;
+                            if !self.handle_conduit_break(&mut keepalive_runtime).await {
+                                break;
+                            }
                         }
                     }
                 }
@@ -757,6 +838,11 @@ where
                 }
                 Some(req) = self.close_rx.recv() => {
                     self.handle_close_request(req).await;
+                }
+                Some(req) = self.resume_rx.recv() => {
+                    let _ = req.result_tx.send(Err(SessionError::Protocol(
+                        "resume is only valid while the session is disconnected".into(),
+                    )));
                 }
                 Some(req) = self.control_rx.recv() => {
                     if !self.handle_drop_control_request(req).await {
@@ -778,6 +864,161 @@ where
         // Drop all connection slots so per-connection drivers exit immediately.
         self.close_all_connections();
         debug!("session recv loop exited");
+    }
+
+    async fn handle_conduit_break(
+        &mut self,
+        keepalive_runtime: &mut Option<KeepaliveRuntime>,
+    ) -> bool {
+        if !self.resumable {
+            return false;
+        }
+
+        loop {
+            tokio::select! {
+                Some(req) = self.resume_rx.recv() => {
+                    let result = self.resume_session(req.tx, req.rx).await;
+                    let ok = result.is_ok();
+                    let _ = req.result_tx.send(result);
+                    if ok {
+                        *keepalive_runtime = self.make_keepalive_runtime();
+                        return true;
+                    }
+                }
+                Some(req) = self.control_rx.recv() => {
+                    if !self.handle_drop_control_request(req).await {
+                        return false;
+                    }
+                }
+                Some(req) = self.open_rx.recv() => {
+                    let _ = req.result_tx.send(Err(SessionError::Protocol(
+                        "session is disconnected; resume before opening connections".into(),
+                    )));
+                }
+                Some(req) = self.close_rx.recv() => {
+                    let _ = req.result_tx.send(Err(SessionError::Protocol(
+                        "session is disconnected; resume before closing connections".into(),
+                    )));
+                }
+                else => return false,
+            }
+        }
+    }
+
+    async fn resume_session(
+        &mut self,
+        tx: Arc<dyn DynConduitTx>,
+        mut rx: Box<dyn DynConduitRx>,
+    ) -> Result<(), SessionError> {
+        let Some(peer_settings) = self.peer_root_settings.clone() else {
+            return Err(SessionError::Protocol("missing peer root settings".into()));
+        };
+
+        match self.role {
+            SessionRole::Initiator => {
+                let Some(session_resume_key) = self.session_resume_key else {
+                    return Err(SessionError::NotResumable);
+                };
+                let mut metadata = Vec::new();
+                append_retry_support_metadata(&mut metadata);
+                append_session_resume_key_metadata(&mut metadata, &session_resume_key);
+                tx.send_msg(Message {
+                    connection_id: ConnectionId::ROOT,
+                    payload: MessagePayload::Hello(roam_types::Hello {
+                        version: PROTOCOL_VERSION,
+                        connection_settings: self.local_root_settings.clone(),
+                        metadata,
+                    }),
+                })
+                .await
+                .map_err(SessionError::Io)?;
+
+                let msg = rx.recv_msg().await.map_err(SessionError::Io)?;
+                let Some(msg) = msg else {
+                    return Err(SessionError::Protocol(
+                        "peer closed during session resume".into(),
+                    ));
+                };
+                let payload = msg.map(|m| m.payload);
+                let hy = match &*payload {
+                    MessagePayload::HelloYourself(hy) => hy,
+                    MessagePayload::ProtocolError(e) => {
+                        return Err(SessionError::Protocol(e.description.to_owned()));
+                    }
+                    _ => {
+                        return Err(SessionError::Protocol(
+                            "expected HelloYourself during session resume".into(),
+                        ));
+                    }
+                };
+                if hy.connection_settings != peer_settings {
+                    return Err(SessionError::Protocol(
+                        "peer root settings changed across session resume".into(),
+                    ));
+                }
+                self.peer_supports_retry = metadata_supports_retry(&hy.metadata);
+                self.session_resume_key =
+                    metadata_session_resume_key(&hy.metadata).or(self.session_resume_key);
+            }
+            SessionRole::Acceptor => {
+                let msg = rx.recv_msg().await.map_err(SessionError::Io)?;
+                let Some(msg) = msg else {
+                    return Err(SessionError::Protocol(
+                        "peer closed during session resume".into(),
+                    ));
+                };
+                let payload = msg.map(|m| m.payload);
+                let hello = match &*payload {
+                    MessagePayload::Hello(hello) => hello,
+                    MessagePayload::ProtocolError(e) => {
+                        return Err(SessionError::Protocol(e.description.to_owned()));
+                    }
+                    _ => {
+                        return Err(SessionError::Protocol(
+                            "expected Hello during session resume".into(),
+                        ));
+                    }
+                };
+                if hello.version != PROTOCOL_VERSION {
+                    return Err(SessionError::Protocol(format!(
+                        "version mismatch: got {}, expected {PROTOCOL_VERSION}",
+                        hello.version
+                    )));
+                }
+                if hello.connection_settings != peer_settings {
+                    return Err(SessionError::Protocol(
+                        "peer root settings changed across session resume".into(),
+                    ));
+                }
+                let Some(expected_key) = self.session_resume_key else {
+                    return Err(SessionError::NotResumable);
+                };
+                let Some(actual_key) = metadata_session_resume_key(&hello.metadata) else {
+                    return Err(SessionError::Protocol("missing session resume key".into()));
+                };
+                if actual_key != expected_key {
+                    return Err(SessionError::Protocol("session resume key mismatch".into()));
+                }
+                self.peer_supports_retry = metadata_supports_retry(&hello.metadata);
+
+                let mut metadata = Vec::new();
+                append_retry_support_metadata(&mut metadata);
+                append_session_resume_key_metadata(&mut metadata, &expected_key);
+                tx.send_msg(Message {
+                    connection_id: ConnectionId::ROOT,
+                    payload: MessagePayload::HelloYourself(roam_types::HelloYourself {
+                        connection_settings: self.local_root_settings.clone(),
+                        metadata,
+                    }),
+                })
+                .await
+                .map_err(SessionError::Io)?;
+            }
+        }
+
+        self.sess_core.replace_tx(tx);
+        self.rx = rx;
+        Ok(())
     }
 
     async fn handle_message(
@@ -1196,12 +1437,17 @@ where
 }
 
 pub(crate) struct SessionCore {
-    tx: Box<dyn DynConduitTx>,
+    tx: std::sync::Mutex<Arc<dyn DynConduitTx>>,
 }
 
 impl SessionCore {
     pub(crate) async fn send<'a>(&self, msg: Message<'a>) -> Result<(), ()> {
-        self.tx.send_msg(msg).await.map_err(|_| ())
+        let tx = self.tx.lock().expect("session tx mutex poisoned").clone();
+        tx.send_msg(msg).await.map_err(|_| ())
+    }
+
+    fn replace_tx(&self, tx: Arc<dyn DynConduitTx>) {
+        *self.tx.lock().expect("session tx mutex poisoned") = tx;
     }
 }
 
@@ -1217,6 +1463,19 @@ pub trait DynConduitTx: Send + Sync {
 #[cfg(target_arch = "wasm32")]
 pub trait DynConduitTx {
     fn send_msg<'a>(&'a self, msg: Message<'a>) -> BoxFuture<'a, std::io::Result<()>>;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub trait DynConduitRx: Send {
+    fn recv_msg<'a>(
+        &'a mut self,
+    ) -> BoxFuture<'a, std::io::Result<Option<SelfRef<Message<'static>>>>>;
+}
+#[cfg(target_arch = "wasm32")]
+pub trait DynConduitRx {
+    fn recv_msg<'a>(
+        &'a mut self,
+    ) -> BoxFuture<'a, std::io::Result<Option<SelfRef<Message<'static>>>>>;
 }
 
 // r[impl zerocopy.send]
@@ -1236,18 +1495,29 @@ where
     }
 }
 
+impl<T> DynConduitRx for T
+where
+    T: ConduitRx<Msg = MessageFamily> + MaybeSend,
+{
+    fn recv_msg<'a>(
+        &'a mut self,
+    ) -> BoxFuture<'a, std::io::Result<Option<SelfRef<Message<'static>>>>> {
+        Box::pin(async move {
+            self.recv()
+                .await
+                .map_err(|error| std::io::Error::other(error.to_string()))
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use moire::sync::mpsc;
-    use roam_types::{
-        Backing, Conduit, ConnectionAccept, ConnectionReject, MessageFamily, SelfRef,
-    };
+    use roam_types::{Backing, Conduit, ConnectionAccept, ConnectionReject, SelfRef};
 
     use super::*;
 
-    type TestConduit = crate::BareConduit<MessageFamily, crate::MemoryLink>;
-
-    fn make_session() -> Session<TestConduit> {
+    fn make_session() -> Session {
         let (a, b) = crate::memory_link_pair(32);
         // Keep the peer link alive so sess_core sends don't fail with broken pipe.
         std::mem::forget(b);
@@ -1255,9 +1525,10 @@ mod tests {
         let (tx, rx) = conduit.split();
         let (_open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open.test", 4);
         let (_close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close.test", 4);
+        let (_resume_tx, resume_rx) = mpsc::channel::<ResumeRequest>("session.resume.test", 1);
         let (control_tx, control_rx) = mpsc::unbounded_channel("session.control.test");
         Session::pre_handshake(
-            tx, rx, None, open_rx, close_rx, control_tx, control_rx, None,
+            tx, rx, None, open_rx, close_rx, resume_rx, control_tx, control_rx, None, false,
         )
     }
 

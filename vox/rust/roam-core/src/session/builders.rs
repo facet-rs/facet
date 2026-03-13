@@ -57,6 +57,7 @@ pub struct SessionInitiatorBuilder<'a, C> {
     metadata: Metadata<'a>,
     on_connection: Option<Box<dyn ConnectionAcceptor>>,
     keepalive: Option<SessionKeepaliveConfig>,
+    resumable: bool,
     spawn_fn: SpawnFn,
 }
 
@@ -71,6 +72,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             metadata: vec![],
             on_connection: None,
             keepalive: None,
+            resumable: false,
             spawn_fn: default_spawn_fn(),
         }
     }
@@ -105,6 +107,11 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
         self
     }
 
+    pub fn resumable(mut self) -> Self {
+        self.resumable = true;
+        self
+    }
+
     /// Override the function used to spawn the session background task.
     /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
     #[cfg(not(target_arch = "wasm32"))]
@@ -134,16 +141,19 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
         let (tx, rx) = self.conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
+        let (resume_tx, resume_rx) = mpsc::channel::<super::ResumeRequest>("session.resume", 1);
         let (control_tx, control_rx) = mpsc::unbounded_channel("session.control");
-        let mut session: Session<C> = Session::pre_handshake(
+        let mut session = Session::pre_handshake(
             tx,
             rx,
             self.on_connection,
             open_rx,
             close_rx,
+            resume_rx,
             control_tx.clone(),
             control_rx,
             self.keepalive,
+            self.resumable,
         );
         let handle = session
             .establish_as_initiator(self.root_settings, self.metadata)
@@ -151,6 +161,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
         let session_handle = SessionHandle {
             open_tx,
             close_tx,
+            resume_tx,
             control_tx,
         };
         let mut driver = Driver::new(handle, handler);
@@ -170,6 +181,7 @@ pub struct SessionAcceptorBuilder<'a, C> {
     metadata: Metadata<'a>,
     on_connection: Option<Box<dyn ConnectionAcceptor>>,
     keepalive: Option<SessionKeepaliveConfig>,
+    resumable: bool,
     spawn_fn: SpawnFn,
 }
 
@@ -184,6 +196,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             metadata: vec![],
             on_connection: None,
             keepalive: None,
+            resumable: false,
             spawn_fn: default_spawn_fn(),
         }
     }
@@ -210,6 +223,11 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
 
     pub fn keepalive(mut self, keepalive: SessionKeepaliveConfig) -> Self {
         self.keepalive = Some(keepalive);
+        self
+    }
+
+    pub fn resumable(mut self) -> Self {
+        self.resumable = true;
         self
     }
 
@@ -243,16 +261,19 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         let (tx, rx) = self.conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
+        let (resume_tx, resume_rx) = mpsc::channel::<super::ResumeRequest>("session.resume", 1);
         let (control_tx, control_rx) = mpsc::unbounded_channel("session.control");
-        let mut session: Session<C> = Session::pre_handshake(
+        let mut session = Session::pre_handshake(
             tx,
             rx,
             self.on_connection,
             open_rx,
             close_rx,
+            resume_rx,
             control_tx.clone(),
             control_rx,
             self.keepalive,
+            self.resumable,
         );
         let handle = session
             .establish_as_acceptor(self.root_settings, self.metadata)
@@ -260,6 +281,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         let session_handle = SessionHandle {
             open_tx,
             close_tx,
+            resume_tx,
             control_tx,
         };
         let mut driver = Driver::new(handle, handler);

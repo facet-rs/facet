@@ -23,6 +23,9 @@ pub struct ConnectionSettings {
     pub max_concurrent_requests: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SessionResumeKey(pub [u8; 16]);
+
 impl<'payload> Message<'payload> {
     // Message has no methods on purpose. it's all just plain data.
     // Adding constructors or getters is forbidden.

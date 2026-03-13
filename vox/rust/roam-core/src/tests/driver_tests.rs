@@ -1,15 +1,17 @@
 use facet::Facet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Duration;
 
+use moire::sync::mpsc;
 use moire::task::FutureExt;
 use roam_types::{
-    Caller, ChannelBinder, ChannelBody, ChannelClose, ChannelGrantCredit, ChannelId, ChannelItem,
-    ChannelMessage, ChannelSink, Conduit, ConduitRx, ConnectionSettings, Handler,
-    IncomingChannelMessage, Message, MessageFamily, MessagePayload, Metadata, MethodId, Parity,
-    Payload, ReplySink, RequestBody, RequestCall, RequestCancel, RequestMessage, RequestResponse,
-    RetryPolicy, RoamError, RpcPlan, SelfRef, Tx, bind_channels_caller_args, channel,
-    ensure_operation_id, metadata_operation_id,
+    Backing, Caller, ChannelBinder, ChannelBody, ChannelClose, ChannelGrantCredit, ChannelId,
+    ChannelItem, ChannelMessage, ChannelSink, Conduit, ConduitRx, ConnectionSettings, Handler,
+    IncomingChannelMessage, Link, LinkRx, LinkTx, LinkTxPermit, Message, MessageFamily,
+    MessagePayload, Metadata, MethodId, Parity, Payload, ReplySink, RequestBody, RequestCall,
+    RequestCancel, RequestMessage, RequestResponse, RetryPolicy, RoamError, RpcPlan, SelfRef, Tx,
+    WriteSlot, bind_channels_caller_args, channel, ensure_operation_id, metadata_operation_id,
 };
 
 use crate::session::{
@@ -23,6 +25,126 @@ type MessageConduit = BareConduit<MessageFamily, crate::MemoryLink>;
 fn message_conduit_pair() -> (MessageConduit, MessageConduit) {
     let (a, b) = memory_link_pair(64);
     (BareConduit::new(a), BareConduit::new(b))
+}
+
+struct BreakableLink {
+    tx: mpsc::Sender<Option<Vec<u8>>>,
+    rx: mpsc::Receiver<Option<Vec<u8>>>,
+}
+
+#[derive(Clone)]
+struct BreakHandle {
+    tx: mpsc::Sender<Option<Vec<u8>>>,
+}
+
+fn breakable_link_pair(buffer: usize) -> (BreakableLink, BreakHandle, BreakableLink, BreakHandle) {
+    let (tx_a, rx_b) = mpsc::channel("breakable_link.a→b", buffer);
+    let (tx_b, rx_a) = mpsc::channel("breakable_link.b→a", buffer);
+
+    let a_handle = BreakHandle { tx: tx_b.clone() };
+    let b_handle = BreakHandle { tx: tx_a.clone() };
+
+    (
+        BreakableLink { tx: tx_a, rx: rx_a },
+        a_handle,
+        BreakableLink { tx: tx_b, rx: rx_b },
+        b_handle,
+    )
+}
+
+impl BreakHandle {
+    async fn close(&self) {
+        let _ = self.tx.send(None).await;
+    }
+}
+
+impl Link for BreakableLink {
+    type Tx = BreakableLinkTx;
+    type Rx = BreakableLinkRx;
+
+    fn split(self) -> (Self::Tx, Self::Rx) {
+        (
+            BreakableLinkTx { tx: self.tx },
+            BreakableLinkRx { rx: self.rx },
+        )
+    }
+}
+
+#[derive(Clone)]
+struct BreakableLinkTx {
+    tx: mpsc::Sender<Option<Vec<u8>>>,
+}
+
+struct BreakableLinkTxPermit {
+    permit: mpsc::OwnedPermit<Option<Vec<u8>>>,
+}
+
+impl LinkTx for BreakableLinkTx {
+    type Permit = BreakableLinkTxPermit;
+
+    async fn reserve(&self) -> std::io::Result<Self::Permit> {
+        let permit = self.tx.clone().reserve_owned().await.map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::ConnectionReset, "receiver dropped")
+        })?;
+        Ok(BreakableLinkTxPermit { permit })
+    }
+
+    async fn close(self) -> std::io::Result<()> {
+        drop(self.tx);
+        Ok(())
+    }
+}
+
+struct BreakableWriteSlot {
+    buf: Vec<u8>,
+    permit: mpsc::OwnedPermit<Option<Vec<u8>>>,
+}
+
+impl LinkTxPermit for BreakableLinkTxPermit {
+    type Slot = BreakableWriteSlot;
+
+    fn alloc(self, len: usize) -> std::io::Result<Self::Slot> {
+        Ok(BreakableWriteSlot {
+            buf: vec![0u8; len],
+            permit: self.permit,
+        })
+    }
+}
+
+impl WriteSlot for BreakableWriteSlot {
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        &mut self.buf
+    }
+
+    fn commit(self) {
+        drop(self.permit.send(Some(self.buf)));
+    }
+}
+
+struct BreakableLinkRx {
+    rx: mpsc::Receiver<Option<Vec<u8>>>,
+}
+
+#[derive(Debug)]
+struct BreakableLinkRxError;
+
+impl std::fmt::Display for BreakableLinkRxError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "breakable link rx error")
+    }
+}
+
+impl std::error::Error for BreakableLinkRxError {}
+
+impl LinkRx for BreakableLinkRx {
+    type Error = BreakableLinkRxError;
+
+    async fn recv(&mut self) -> Result<Option<Backing>, Self::Error> {
+        match self.rx.recv().await {
+            Some(Some(bytes)) => Ok(Some(Backing::Boxed(bytes.into_boxed_slice()))),
+            Some(None) | None => Ok(None),
+        }
+    }
 }
 
 /// Conduit wrapper used by keepalive tests: drops inbound Pong messages.
@@ -142,6 +264,11 @@ struct PersistentReplyingHandler {
     release: Arc<tokio::sync::Notify>,
 }
 
+struct ResumableReplyingHandler {
+    started: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
 struct OperationIdHandler;
 
 impl Handler<DriverReplySink> for OperationIdHandler {
@@ -218,6 +345,30 @@ impl Handler<DriverReplySink> for PersistentReplyingHandler {
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&123_u32),
+                channels: vec![],
+                metadata: Default::default(),
+            })
+            .await;
+    }
+}
+
+impl Handler<DriverReplySink> for ResumableReplyingHandler {
+    fn retry_policy(&self, _method_id: MethodId) -> RetryPolicy {
+        RetryPolicy::PERSIST
+    }
+
+    async fn handle(&self, call: SelfRef<RequestCall<'static>>, reply: DriverReplySink) {
+        self.started.notify_waiters();
+        self.release.notified().await;
+
+        let args_bytes = match &call.args {
+            Payload::Incoming(bytes) => *bytes,
+            _ => panic!("expected incoming payload"),
+        };
+        let result: u32 = facet_postcard::from_slice(args_bytes).expect("deserialize args");
+        reply
+            .send_reply(RequestResponse {
+                ret: Payload::outgoing(&result),
                 channels: vec![],
                 metadata: Default::default(),
             })
@@ -822,6 +973,87 @@ async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
     let value: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(value, 11);
     assert_eq!(runs_check.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
+    let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
+    let client_conduit1 = BareConduit::new(client_link1);
+    let server_conduit1 = BareConduit::new(server_link1);
+
+    let started = Arc::new(tokio::sync::Notify::new());
+    let started_for_wait = Arc::clone(&started);
+    let started_wait = started_for_wait.notified();
+    let release = Arc::new(tokio::sync::Notify::new());
+
+    let (server_established, client_established) = tokio::try_join!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            acceptor(server_conduit1)
+                .resumable()
+                .establish::<DriverCaller>(ResumableReplyingHandler {
+                    started,
+                    release: Arc::clone(&release),
+                }),
+        ),
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            initiator(client_conduit1)
+                .resumable()
+                .establish::<DriverCaller>(()),
+        ),
+    )
+    .expect("initial session establishment timed out");
+    let (_server_caller, server_session_handle) =
+        server_established.expect("server handshake failed");
+    let (caller, client_session_handle) = client_established.expect("client handshake failed");
+
+    let call_task = moire::task::spawn(
+        async move {
+            caller
+                .call(RequestCall {
+                    method_id: MethodId(1),
+                    args: Payload::outgoing(&55_u32),
+                    channels: vec![],
+                    metadata: Default::default(),
+                })
+                .await
+        }
+        .named("resume_pending_call"),
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), started_wait)
+        .await
+        .expect("timed out waiting for handler start");
+
+    client_break1.close().await;
+    server_break1.close().await;
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    let (client_link2, client_break2, server_link2, server_break2) = breakable_link_pair(64);
+    tokio::try_join!(
+        client_session_handle.resume(BareConduit::new(client_link2)),
+        server_session_handle.resume(BareConduit::new(server_link2)),
+    )
+    .expect("session resume should succeed");
+
+    release.notify_waiters();
+
+    let response = call_task
+        .await
+        .expect("call task join")
+        .expect("call should succeed after session resume");
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let value: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    assert_eq!(value, 55);
+
+    let _ = client_session_handle.shutdown();
+    let _ = server_session_handle.shutdown();
+    client_break2.close().await;
+    server_break2.close().await;
 }
 
 #[tokio::test]

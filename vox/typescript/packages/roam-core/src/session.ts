@@ -46,6 +46,10 @@ import {
   metadataSupportsRetry,
 } from "./retry.ts";
 import {
+  appendSessionResumeKeyMetadata,
+  metadataSessionResumeKey,
+} from "./session_resume.ts";
+import {
   firstIdForParity,
   oppositeParity,
   parityFromRole,
@@ -76,6 +80,7 @@ export interface SessionBuilderOptions {
   maxConcurrentRequests?: number;
   metadata?: Metadata;
   onConnection?: (connection: ConnectionHandle) => void | Promise<void>;
+  resumable?: boolean;
 }
 
 export type SessionConduitKind = "bare" | "stable";
@@ -88,6 +93,18 @@ type SessionTransport = Link | LinkSource;
 
 function isLinkSource(value: SessionTransport): value is LinkSource {
   return typeof (value as LinkSource).nextLink === "function";
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let i = 0; i < left.length; i++) {
+    if (left[i] !== right[i]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 async function makeSessionConduit(
@@ -129,6 +146,7 @@ export class SessionError extends Error {
 }
 
 class SessionCore {
+  private conduit: Conduit<Message>;
   private readonly connections = new Map<bigint, ConnectionHandle>();
   private readonly pendingConnections = new Map<
     bigint,
@@ -141,19 +159,32 @@ class SessionCore {
   private sendChain: Promise<void> = Promise.resolve();
   private nextConnectionId: bigint;
   private closed = false;
+  private disconnected = false;
   private closeError: SessionError | null = null;
   private rootConnectionValue: ConnectionHandle | null = null;
   private runPromise: Promise<void> | null = null;
-  private readonly peerSupportsRetry: boolean;
+  private peerSupportsRetry: boolean;
+  private readonly resumable: boolean;
+  private sessionResumeKey: Uint8Array | null;
+  private readonly pendingResumes: Array<{
+    conduit: Conduit<Message>;
+    result: Deferred<void>;
+  }> = [];
+  private resumeWaiter: ((request: { conduit: Conduit<Message>; result: Deferred<void> } | null) => void) | null = null;
 
   constructor(
-    private readonly conduit: Conduit<Message>,
+    conduit: Conduit<Message>,
     private readonly localRootSettings: ConnectionSettings,
     private readonly peerRootSettings: ConnectionSettings,
     peerSupportsRetry: boolean,
+    resumable: boolean,
+    sessionResumeKey: Uint8Array | null,
     private readonly onConnection?: (connection: ConnectionHandle) => void | Promise<void>,
   ) {
+    this.conduit = conduit;
     this.peerSupportsRetry = peerSupportsRetry;
+    this.resumable = resumable;
+    this.sessionResumeKey = sessionResumeKey?.slice() ?? null;
     this.nextConnectionId = firstIdForParity(localRootSettings.parity);
     this.sessionHandle = new SessionHandle(this);
   }
@@ -201,7 +232,7 @@ class SessionCore {
     metadata: Metadata = [],
   ): Promise<ConnectionHandle> {
     // r[impl connection.open]
-    this.assertOpen();
+    this.assertConnected("resume before opening connections");
     const connectionId = this.allocateConnectionId();
     const result = deferred<ConnectionHandle>();
     this.pendingConnections.set(connectionId, {
@@ -221,6 +252,7 @@ class SessionCore {
 
   async closeConnection(connectionId: bigint, metadata: Metadata = []): Promise<void> {
     // r[impl connection.close]
+    this.assertConnected("resume before closing connections");
     if (connectionId === 0n) {
       throw new SessionError("cannot close root connection");
     }
@@ -236,7 +268,7 @@ class SessionCore {
   }
 
   async sendMessage(message: Message): Promise<void> {
-    this.assertOpen();
+    this.assertConnected("resume before sending");
 
     const op = this.sendChain.then(() => this.conduit.send(message));
     this.sendChain = op.then(() => undefined, () => undefined);
@@ -251,6 +283,7 @@ class SessionCore {
     this.closed = true;
     this.closeError = error;
     this.conduit.close();
+    this.rejectPendingResumes(error);
 
     for (const pending of this.pendingConnections.values()) {
       pending.result.reject(error);
@@ -263,9 +296,20 @@ class SessionCore {
     this.connections.clear();
   }
 
+  shutdown(): void {
+    this.fail(SessionError.closed());
+  }
+
   private assertOpen(): void {
     if (this.closed) {
       throw this.closeError ?? SessionError.closed();
+    }
+  }
+
+  private assertConnected(reason: string): void {
+    this.assertOpen();
+    if (this.disconnected) {
+      throw SessionError.protocol(`session is disconnected; ${reason}`);
     }
   }
 
@@ -288,9 +332,151 @@ class SessionCore {
     while (!this.closed) {
       const message = await this.conduit.recv();
       if (!message) {
+        if (await this.handleConduitBreak()) {
+          continue;
+        }
         throw SessionError.closed();
       }
       await this.handleMessage(message);
+    }
+  }
+
+  async resume(conduit: Conduit<Message>): Promise<void> {
+    this.assertOpen();
+    if (!this.resumable) {
+      throw SessionError.protocol("session is not resumable");
+    }
+    if (!this.disconnected) {
+      throw SessionError.protocol("resume is only valid while the session is disconnected");
+    }
+    const result = deferred<void>();
+    this.enqueueResume({ conduit, result });
+    await result.promise;
+  }
+
+  private async handleConduitBreak(): Promise<boolean> {
+    if (!this.resumable) {
+      return false;
+    }
+
+    this.disconnected = true;
+    while (!this.closed) {
+      const pending = await this.nextResume();
+      if (!pending) {
+        return false;
+      }
+      try {
+        await this.resumeOnConduit(pending.conduit);
+        this.disconnected = false;
+        pending.result.resolve();
+        return true;
+      } catch (error) {
+        pending.result.reject(
+          error instanceof SessionError ? error : new SessionError(String(error)),
+        );
+      }
+    }
+
+    return false;
+  }
+
+  private async resumeOnConduit(conduit: Conduit<Message>): Promise<void> {
+    const resumeKey = this.sessionResumeKey;
+    if (!resumeKey) {
+      throw SessionError.protocol("session is not resumable");
+    }
+
+    if (this.localRootSettings.parity.tag === "Odd") {
+      const helloMetadata = appendSessionResumeKeyMetadata(
+        appendRetrySupportMetadata([]),
+        resumeKey,
+      );
+      await conduit.send(
+        messageHello(
+          helloV7(
+            this.localRootSettings.parity,
+            this.localRootSettings.max_concurrent_requests,
+            helloMetadata,
+          ),
+        ),
+      );
+      const helloYourself = await waitForHelloYourself(conduit);
+      if (
+        helloYourself.connection_settings.parity.tag !== this.peerRootSettings.parity.tag
+        || helloYourself.connection_settings.max_concurrent_requests
+          !== this.peerRootSettings.max_concurrent_requests
+      ) {
+        throw SessionError.protocol(
+          `peer root settings changed across session resume: expected ${JSON.stringify(this.peerRootSettings)}, got ${JSON.stringify(helloYourself.connection_settings)}`,
+        );
+      }
+      const echoedKey = metadataSessionResumeKey(helloYourself.metadata);
+      if (!echoedKey || !sameBytes(echoedKey, resumeKey)) {
+        throw SessionError.protocol("session resume key mismatch");
+      }
+      this.peerSupportsRetry = metadataSupportsRetry(helloYourself.metadata);
+      this.conduit = conduit;
+      return;
+    }
+
+    const hello = await waitForHello(conduit);
+    if (
+      hello.connection_settings.parity.tag !== this.peerRootSettings.parity.tag
+      || hello.connection_settings.max_concurrent_requests
+        !== this.peerRootSettings.max_concurrent_requests
+    ) {
+      throw SessionError.protocol(
+        `peer root settings changed across session resume: expected ${JSON.stringify(this.peerRootSettings)}, got ${JSON.stringify(hello.connection_settings)}`,
+      );
+    }
+    const actualKey = metadataSessionResumeKey(hello.metadata);
+    if (!actualKey || !sameBytes(actualKey, resumeKey)) {
+      throw SessionError.protocol("session resume key mismatch");
+    }
+
+    const helloMetadata = appendSessionResumeKeyMetadata(
+      appendRetrySupportMetadata([]),
+      resumeKey,
+    );
+    await conduit.send(
+      messageHelloYourself({
+        connection_settings: this.localRootSettings,
+        metadata: helloMetadata,
+      }),
+    );
+    this.peerSupportsRetry = metadataSupportsRetry(hello.metadata);
+    this.conduit = conduit;
+  }
+
+  private enqueueResume(request: { conduit: Conduit<Message>; result: Deferred<void> }): void {
+    const waiter = this.resumeWaiter;
+    if (waiter) {
+      this.resumeWaiter = null;
+      waiter(request);
+      return;
+    }
+    this.pendingResumes.push(request);
+  }
+
+  private async nextResume(): Promise<{ conduit: Conduit<Message>; result: Deferred<void> } | null> {
+    const pending = this.pendingResumes.shift();
+    if (pending) {
+      return pending;
+    }
+    if (this.closed) {
+      return null;
+    }
+    return new Promise((resolve) => {
+      this.resumeWaiter = resolve;
+    });
+  }
+
+  private rejectPendingResumes(error: SessionError): void {
+    const waiter = this.resumeWaiter;
+    this.resumeWaiter = null;
+    waiter?.(null);
+    for (const pending of this.pendingResumes.splice(0)) {
+      pending.result.reject(error);
     }
   }
 
@@ -469,6 +655,14 @@ export class SessionHandle {
 
   closeConnection(connectionId: bigint, metadata: Metadata = []): Promise<void> {
     return this.core.closeConnection(connectionId, metadata);
+  }
+
+  resume(conduit: Conduit<Message>): Promise<void> {
+    return this.core.resume(conduit);
+  }
+
+  shutdown(): void {
+    this.core.shutdown();
   }
 
   closed(): Promise<void> {
@@ -759,11 +953,17 @@ export class Session {
       messageHello(helloV7(localSettings.parity, localSettings.max_concurrent_requests, helloMetadata)),
     );
     const helloYourself = await waitForHelloYourself(conduit);
+    const sessionResumeKey = metadataSessionResumeKey(helloYourself.metadata);
+    if (options.resumable && !sessionResumeKey) {
+      throw SessionError.protocol("peer did not advertise session resumption");
+    }
     const core = new SessionCore(
       conduit,
       localSettings,
       helloYourself.connection_settings,
       metadataSupportsRetry(helloYourself.metadata),
+      options.resumable ?? false,
+      sessionResumeKey,
       options.onConnection,
     );
     core.rootConnection();
@@ -783,7 +983,12 @@ export class Session {
       parity: parityEven(),
       max_concurrent_requests: options.maxConcurrentRequests ?? 64,
     };
-    const helloMetadata = appendRetrySupportMetadata(options.metadata ?? []);
+    let helloMetadata = appendRetrySupportMetadata(options.metadata ?? []);
+    let sessionResumeKey: Uint8Array | null = null;
+    if (options.resumable) {
+      sessionResumeKey = randomSessionResumeKey();
+      helloMetadata = appendSessionResumeKeyMetadata(helloMetadata, sessionResumeKey);
+    }
     const response: HelloYourself = {
       connection_settings: localSettings,
       metadata: helloMetadata,
@@ -794,6 +999,8 @@ export class Session {
       localSettings,
       hello.connection_settings,
       metadataSupportsRetry(hello.metadata),
+      options.resumable ?? false,
+      sessionResumeKey,
       options.onConnection,
     );
     core.rootConnection();
@@ -834,6 +1041,16 @@ async function waitForHelloYourself(conduit: Conduit<Message>): Promise<HelloYou
     throw SessionError.protocol("expected HelloYourself during session establishment");
   }
   return message.payload.value;
+}
+
+function randomSessionResumeKey(): Uint8Array {
+  const bytes = new Uint8Array(16);
+  const cryptoApi = globalThis.crypto;
+  if (!cryptoApi) {
+    throw SessionError.protocol("crypto.getRandomValues is unavailable");
+  }
+  cryptoApi.getRandomValues(bytes);
+  return bytes;
 }
 
 export const session = {
