@@ -11,6 +11,10 @@ weight = 14
 > layer above it sees a reliable, ordered stream of items, even when the
 > underlying link fails and is replaced.
 
+StableConduit is entered only after the transport prologue has accepted the
+`stable` conduit mode. The stable-conduit handshake specified on this page is
+therefore not the first exchange on a fresh link attachment.
+
 StableConduit continuity is below the RPC retry layer. It preserves conduit
 items; it does not by itself define when an RPC should be retried, resumed, or
 replayed as the same logical operation. See [Retry](./retry/).
@@ -25,9 +29,10 @@ replayed as the same logical operation. See [Retry](./retry/).
 
 > r[stable.handshake]
 >
-> Every link begins with a handshake. The client sends a `ClientHello`,
-> the server responds with a `ServerHello`. These messages are
-> postcard-encoded and sent as raw link payloads (not wrapped in frames).
+> Every stable-conduit attachment begins with a stable handshake after the
+> transport prologue has accepted `stable`. The client sends a `ClientHello`,
+> the server responds with a `ServerHello`. These messages are postcard-encoded
+> and sent as raw link payloads (not wrapped in stable frames).
 
 > r[stable.handshake.client-hello]
 >

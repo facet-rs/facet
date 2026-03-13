@@ -13,6 +13,10 @@ weight = 10
 If you're upgrading an existing codebase, read the
 [v6 -> v7 migration guide](../v6-to-v7/).
 
+This specification describes the current roam v9 protocol model. The v9 line
+introduces a transport prologue below the conduit/session layers so conduit
+mode is selected on the wire before session establishment.
+
 ## Defining a service
 
 An application named `fantastic` would typically define services in `*-proto`
@@ -80,7 +84,9 @@ shared memory; but a roam connection sits several layers above a "TCP connection
 +------------------------+
 | Session                |  set of connections over a conduit
 +------------------------+
-| Conduit                |  serialization, reconnection
+| Conduit                |  serialization, replay, session-facing continuity
++------------------------+
+| Transport Prologue     |  conduit mode request / accept / reject
 +------------------------+
 | Link                   |  TCP, SHM, WebSocket, etc.
 +------------------------+
@@ -89,6 +95,8 @@ shared memory; but a roam connection sits several layers above a "TCP connection
 The layers have distinct continuity boundaries:
 
 - A **Link** is one concrete transport attachment.
+- A **Transport Prologue** selects which conduit protocol, if any, will run on
+  that link attachment.
 - A **Conduit** may hide some link failures and replacement internally.
 - A **Session** is above any one conduit instance and may survive conduit
   replacement.

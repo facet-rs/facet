@@ -8,6 +8,7 @@ The Roam specification defines the protocol and runtime model across layers:
 
 - Requests and channels
 - Connections and sessions
+- Transport prologue and conduit selection
 - Conduit behavior
 - Retry semantics and operation continuity
 - Link transports (stream, WebSocket, shared memory)

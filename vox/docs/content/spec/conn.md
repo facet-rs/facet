@@ -152,6 +152,58 @@ weight = 11
 > When the peer has closed the link, `recv` MUST return `Ok(None)`. After `Ok(None)`
 > is returned once, all subsequent `recv` calls MUST return `Ok(None)` as well.
 
+# Transport prologue
+
+> r[transport.prologue]
+>
+> Every fresh link attachment begins with a **transport prologue** before any
+> conduit-specific traffic is sent.
+
+> r[transport.prologue.first-payload]
+>
+> The transport prologue MUST be the first payload observed on a fresh link in
+> each direction. Session `Hello` / `HelloYourself` messages MUST NOT appear
+> before the transport prologue has completed successfully.
+
+> r[transport.prologue.request]
+>
+> The initiator sends a `TransportHello` that includes:
+>
+>   * a transport-prologue magic number
+>   * a transport-prologue version
+>   * the requested conduit mode
+
+> r[transport.prologue.requested-mode]
+>
+> The requested conduit mode is an exact request, not a preference list. This
+> spec defines two conduit modes:
+>
+>   * `bare`
+>   * `stable`
+
+> r[transport.prologue.accept]
+>
+> The acceptor MUST reply with either:
+>
+>   * `TransportAccept`, acknowledging the requested conduit mode, or
+>   * `TransportReject`, refusing the request
+
+> r[transport.prologue.no-fallback]
+>
+> If the acceptor does not support the requested conduit mode, it MUST reject
+> the transport prologue. It MUST NOT silently fall back to a different conduit
+> mode.
+
+> r[transport.prologue.post-accept]
+>
+> After `TransportAccept`, all subsequent payloads on that link attachment are
+> interpreted according to the selected conduit mode.
+
+> r[transport.prologue.reject-close]
+>
+> After `TransportReject`, the link attachment is unusable for roam traffic and
+> MUST be closed or abandoned by the peers.
+
 # Conduits
 
 > r[conduit]
@@ -167,12 +219,18 @@ weight = 11
 
 > r[conduit.bare]
 >
-> `BareConduit` does not provide any feature on top of serialization/deserialization.
+> `BareConduit` does not provide any feature on top of
+> serialization/deserialization. It begins immediately after the transport
+> prologue has accepted `bare`.
 
 > r[conduit.stable]
 >
 > `StableConduit` provides automatic reconnection (over fresh links) and replay of
 > missed messages. It comes with its own Packet framing.
+
+`StableConduit` begins only after the transport prologue has accepted `stable`.
+Its own stable-conduit handshake is separate from, and ordered after, the
+transport prologue.
 
 `StableConduit` continuity does not, by itself, answer what happens to an RPC
 whose outcome is now ambiguous. Operation-level retry and session resumption
@@ -212,6 +270,9 @@ documentation for more information.
 > Sessions are established between two peers on top of a conduit. They keep track of
 > any number of connections, on which calls (requests) can be made, and data can be
 > exchanged over channels.
+
+The transport prologue selects the conduit mode first. Session establishment
+starts only after that conduit has been selected and initialized.
 
 > r[session.outlives-conduit]
 >
