@@ -5,7 +5,7 @@
 //! provide a real roam peer for the TypeScript client to talk to.
 
 use roam::{Rx, Tx};
-use roam_core::acceptor;
+use roam_core::acceptor_transport;
 use roam_websocket::WsLink;
 use spec_proto::{Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape};
 use spec_proto::{Testbed, TestbedClient, TestbedDispatcher};
@@ -164,7 +164,7 @@ async fn main() {
                 }
             };
 
-            let (root_caller_guard, _sh) = match acceptor(ws_link)
+            let (root_caller_guard, _sh) = match acceptor_transport(ws_link)
                 .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
                 .await
             {

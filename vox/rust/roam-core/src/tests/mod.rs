@@ -10,7 +10,9 @@ use roam_types::{
 };
 use tokio::sync::{Notify, mpsc};
 
-use crate::{BareConduit, MemoryLink, memory_link_pair};
+use crate::{
+    BareConduit, MemoryLink, TransportMode, accept_transport, initiate_transport, memory_link_pair,
+};
 
 struct StringFamily;
 
@@ -28,6 +30,26 @@ type StringConduit = BareConduit<StringFamily, MemoryLink>;
 fn conduit_pair() -> (StringConduit, StringConduit) {
     let (a, b) = memory_link_pair(16);
     (BareConduit::new(a), BareConduit::new(b))
+}
+
+#[tokio::test]
+async fn transport_prologue_accepts_bare_mode() {
+    let (client, server) = memory_link_pair(16);
+    let acceptor = tokio::spawn(async move { accept_transport(server).await.unwrap().0 });
+    let _initiator = initiate_transport(client, TransportMode::Bare)
+        .await
+        .unwrap();
+    assert_eq!(acceptor.await.unwrap(), TransportMode::Bare);
+}
+
+#[tokio::test]
+async fn transport_prologue_accepts_stable_mode() {
+    let (client, server) = memory_link_pair(16);
+    let acceptor = tokio::spawn(async move { accept_transport(server).await.unwrap().0 });
+    let _initiator = initiate_transport(client, TransportMode::Stable)
+        .await
+        .unwrap();
+    assert_eq!(acceptor.await.unwrap(), TransportMode::Stable);
 }
 
 #[tokio::test]

@@ -59,6 +59,10 @@ import { BareConduit } from "./conduit.ts";
 import type { Link, LinkSource } from "./link.ts";
 import { singleLinkSource } from "./link.ts";
 import { StableConduit } from "./stable_conduit.ts";
+import {
+  acceptTransportMode,
+  requestTransportMode,
+} from "./transport_prologue.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -132,27 +136,43 @@ function cloneMetadata(metadata: Metadata): Metadata {
   }));
 }
 
-async function makeSessionConduit(
+async function makeInitiatorSessionConduit(
   transport: SessionTransport,
   options: SessionTransportOptions,
 ): Promise<Conduit<Message>> {
-  // r[impl conduit.bare]
-  // r[impl conduit.stable]
   const conduit = options.conduit ?? "bare";
   if (isLinkSource(transport)) {
-    if (conduit === "stable") {
-      return StableConduit.connect(transport);
-    }
-
     const attachment = await transport.nextLink();
+    await requestTransportMode(attachment.link, conduit);
+    if (conduit === "stable") {
+      return StableConduit.connect(singleLinkSource(attachment.link));
+    }
     return new BareConduit(attachment.link);
   }
 
+  await requestTransportMode(transport, conduit);
   if (conduit === "stable") {
     return StableConduit.connect(singleLinkSource(transport));
   }
 
   return new BareConduit(transport);
+}
+
+async function makeAcceptorSessionConduit(
+  transport: SessionTransport,
+): Promise<Conduit<Message>> {
+  const attachment = isLinkSource(transport)
+    ? await transport.nextLink()
+    : { link: transport };
+  const requestedMode = await acceptTransportMode(attachment.link);
+  if (requestedMode === "stable") {
+    const clientHello = await attachment.link.recv();
+    if (!clientHello) {
+      throw SessionError.protocol("expected StableConduit ClientHello after transport accept");
+    }
+    return StableConduit.connect(singleLinkSource(attachment.link, clientHello));
+  }
+  return new BareConduit(attachment.link);
 }
 
 export class SessionError extends Error {
@@ -1167,7 +1187,7 @@ export const session = {
     transport: SessionTransport,
     options: SessionTransportOptions = {},
   ): Promise<Session> {
-    const conduit = await makeSessionConduit(transport, options);
+    const conduit = await makeInitiatorSessionConduit(transport, options);
     return Session.establishInitiator(conduit, options);
   },
 
@@ -1175,7 +1195,7 @@ export const session = {
     transport: SessionTransport,
     options: SessionTransportOptions = {},
   ): Promise<Session> {
-    const conduit = await makeSessionConduit(transport, options);
+    const conduit = await makeAcceptorSessionConduit(transport);
     return Session.establishAcceptor(conduit, options);
   },
 

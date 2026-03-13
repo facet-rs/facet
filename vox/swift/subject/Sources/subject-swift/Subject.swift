@@ -186,6 +186,10 @@ func log(_ message: String) {
     NSLog("%@", "[\(pid)] \(message)")
 }
 
+func subjectConduit() -> TransportConduitKind {
+    ProcessInfo.processInfo.environment["SPEC_CONDUIT"] == "stable" ? .stable : .bare
+}
+
 // MARK: - Server Mode
 
 /// In "server" mode, the subject acts as the RPC server (handler).
@@ -207,7 +211,7 @@ func runServer() async throws {
     let host = String(parts[0])
 
     // Use roam-runtime's connect function
-    let transport = try await connect(host: host, port: port)
+    let transport = try await connect(host: host, port: port, conduit: subjectConduit())
     log("connected")
 
     // r[impl core.conn.accept-required] - Check if we should accept incoming virtual connections.
@@ -359,7 +363,7 @@ func runClient() async throws {
     let host = String(parts[0])
 
     // Use roam-runtime's connect function
-    let transport = try await connect(host: host, port: port)
+    let transport = try await connect(host: host, port: port, conduit: subjectConduit())
     log("connected")
 
     let handler = TestbedService()

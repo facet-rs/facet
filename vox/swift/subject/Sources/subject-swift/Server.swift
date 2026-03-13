@@ -21,7 +21,9 @@ public struct Server {
             throw ServerError.invalidPeerAddr(peerAddr)
         }
 
-        let transport = try await connect(host: host, port: port)
+        let conduit: TransportConduitKind =
+            ProcessInfo.processInfo.environment["SPEC_CONDUIT"] == "stable" ? .stable : .bare
+        let transport = try await connect(host: host, port: port, conduit: conduit)
 
         // r[impl core.conn.accept-required] - Check if we should accept incoming virtual connections.
         let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] == "1"
