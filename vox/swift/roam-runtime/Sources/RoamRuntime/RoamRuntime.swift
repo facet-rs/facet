@@ -122,6 +122,7 @@ public enum RoamError: Error {
     case connectionClosed
     case timeout
     case cancelled
+    case indeterminate
 }
 
 // MARK: - Response Encoding Helpers

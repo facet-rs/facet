@@ -799,6 +799,7 @@ fn generate_client_method(
                     #roam::RoamError::UnknownMethod => #roam::RoamError::<#err_ty>::UnknownMethod,
                     #roam::RoamError::InvalidPayload => #roam::RoamError::<#err_ty>::InvalidPayload,
                     #roam::RoamError::Cancelled => #roam::RoamError::<#err_ty>::Cancelled,
+                    #roam::RoamError::Indeterminate => #roam::RoamError::<#err_ty>::Indeterminate,
                     #roam::RoamError::User(never) => match never {},
                 })?;
                 response.try_repack(|resp, _bytes| {
@@ -831,6 +832,7 @@ fn generate_client_method(
                     #roam::RoamError::UnknownMethod => #roam::RoamError::<#err_ty>::UnknownMethod,
                     #roam::RoamError::InvalidPayload => #roam::RoamError::<#err_ty>::InvalidPayload,
                     #roam::RoamError::Cancelled => #roam::RoamError::<#err_ty>::Cancelled,
+                    #roam::RoamError::Indeterminate => #roam::RoamError::<#err_ty>::Indeterminate,
                     #roam::RoamError::User(never) => match never {},
                 })?;
                 let ret_bytes = match &response.ret {

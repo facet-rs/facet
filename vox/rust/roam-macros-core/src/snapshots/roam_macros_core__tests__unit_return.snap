@@ -1,5 +1,6 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
+assertion_line: 939
 expression: "generate(quote! { trait Notifier { async fn notify(&self, msg: String); } })"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -183,6 +184,9 @@ impl NotifierClient {
                 }
                 ::roam::RoamError::Cancelled => {
                     ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                }
+                ::roam::RoamError::Indeterminate => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
                 }
                 ::roam::RoamError::User(never) => match never {},
             })?;

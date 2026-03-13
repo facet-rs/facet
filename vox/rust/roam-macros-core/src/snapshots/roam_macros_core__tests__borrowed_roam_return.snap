@@ -1,5 +1,6 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
+assertion_line: 1009
 expression: "generate(quote!\n{ trait Hasher { async fn hash(&self, payload: String) -> &'roam str; } })"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -192,6 +193,9 @@ impl HasherClient {
                 }
                 ::roam::RoamError::Cancelled => {
                     ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                }
+                ::roam::RoamError::Indeterminate => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
                 }
                 ::roam::RoamError::User(never) => match never {},
             })?;

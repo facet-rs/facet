@@ -85,6 +85,12 @@ pub(crate) enum DropControlRequest {
     Close(ConnectionId),
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum FailureDisposition {
+    Cancelled,
+    Indeterminate,
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn send_drop_control(
     tx: &mpsc::UnboundedSender<DropControlRequest>,
@@ -251,6 +257,7 @@ pub struct Session {
 
     /// Optional proactive keepalive runtime config for connection ID 0.
     keepalive: Option<SessionKeepaliveConfig>,
+    resume_notifier: watch::Sender<u64>,
 }
 
 #[derive(Debug)]
@@ -305,7 +312,7 @@ impl std::fmt::Debug for PendingOutboundData {
 pub(crate) struct ConnectionSender {
     connection_id: ConnectionId,
     sess_core: Arc<SessionCore>,
-    failures: Arc<mpsc::UnboundedSender<(RequestId, &'static str)>>,
+    failures: Arc<mpsc::UnboundedSender<(RequestId, FailureDisposition)>>,
 }
 
 fn forwarded_payload<'a>(payload: &'a roam_types::Payload<'static>) -> roam_types::Payload<'a> {
@@ -415,17 +422,18 @@ impl ConnectionSender {
 
     /// Mark a request as failed by removing any pending response slot.
     /// Called when a send error occurs or no reply was sent.
-    pub fn mark_failure(&self, request_id: RequestId, reason: &'static str) {
-        let _ = self.failures.send((request_id, reason));
+    pub fn mark_failure(&self, request_id: RequestId, disposition: FailureDisposition) {
+        let _ = self.failures.send((request_id, disposition));
     }
 }
 
 pub struct ConnectionHandle {
     pub(crate) sender: ConnectionSender,
     pub(crate) rx: mpsc::Receiver<SelfRef<ConnectionMessage<'static>>>,
-    pub(crate) failures_rx: mpsc::UnboundedReceiver<(RequestId, &'static str)>,
+    pub(crate) failures_rx: mpsc::UnboundedReceiver<(RequestId, FailureDisposition)>,
     pub(crate) control_tx: Option<mpsc::UnboundedSender<DropControlRequest>>,
     pub(crate) closed_rx: watch::Receiver<bool>,
+    pub(crate) resumed_rx: watch::Receiver<u64>,
     /// The parity this side should use for allocating request/channel IDs.
     pub parity: Parity,
     pub(crate) peer_supports_retry: bool,
@@ -487,6 +495,7 @@ pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) 
         failures_rx: _left_failures_rx,
         control_tx: left_control_tx,
         closed_rx: _left_closed_rx,
+        resumed_rx: _left_resumed_rx,
         parity: _left_parity,
         peer_supports_retry: _left_peer_supports_retry,
     } = left;
@@ -496,6 +505,7 @@ pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) 
         failures_rx: _right_failures_rx,
         control_tx: right_control_tx,
         closed_rx: _right_closed_rx,
+        resumed_rx: _right_resumed_rx,
         parity: _right_parity,
         peer_supports_retry: _right_peer_supports_retry,
     } = right;
@@ -581,6 +591,7 @@ impl Session {
         let sess_core = Arc::new(SessionCore {
             tx: std::sync::Mutex::new(Arc::new(tx) as Arc<dyn DynConduitTx>),
         });
+        let (resume_notifier, _resume_rx) = watch::channel(0_u64);
         Session {
             rx: Box::new(rx),
             role: SessionRole::Initiator, // overwritten in establish_as_*
@@ -604,6 +615,7 @@ impl Session {
             control_tx,
             control_rx,
             keepalive,
+            resume_notifier,
         }
     }
 
@@ -772,6 +784,7 @@ impl Session {
         let (conn_tx, conn_rx) = mpsc::channel::<SelfRef<ConnectionMessage<'static>>>(&label, 64);
         let (failures_tx, failures_rx) = mpsc::unbounded_channel(format!("{label}.failures"));
         let (closed_tx, closed_rx) = watch::channel(false);
+        let resumed_rx = self.resume_notifier.subscribe();
 
         let sender = ConnectionSender {
             connection_id: conn_id,
@@ -797,6 +810,7 @@ impl Session {
             failures_rx,
             control_tx: Some(self.control_tx.clone()),
             closed_rx,
+            resumed_rx,
             parity,
             peer_supports_retry: self.peer_supports_retry,
         }
@@ -881,6 +895,8 @@ impl Session {
                     let ok = result.is_ok();
                     let _ = req.result_tx.send(result);
                     if ok {
+                        let next_generation = self.resume_notifier.borrow().wrapping_add(1);
+                        let _ = self.resume_notifier.send(next_generation);
                         *keepalive_runtime = self.make_keepalive_runtime();
                         return true;
                     }

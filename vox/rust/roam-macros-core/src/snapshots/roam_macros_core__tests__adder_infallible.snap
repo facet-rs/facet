@@ -1,5 +1,6 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
+assertion_line: 893
 expression: "generate(quote!\n{ pub trait Adder { async fn add(&self, a: i32, b: i32) -> i32; } })"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -184,6 +185,9 @@ impl AdderClient {
                 }
                 ::roam::RoamError::Cancelled => {
                     ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                }
+                ::roam::RoamError::Indeterminate => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
                 }
                 ::roam::RoamError::User(never) => match never {},
             })?;

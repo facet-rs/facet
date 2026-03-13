@@ -179,6 +179,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw RoamError.decodeError("invalid payload")
       case 3:
         throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
       default:
         throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
       }
@@ -210,6 +212,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw RoamError.decodeError("invalid payload")
       case 3:
         throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
       default:
         throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
       }
@@ -252,6 +256,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw RoamError.decodeError("invalid payload")
       case 3:
         throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
       default:
         throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
       }
@@ -298,6 +304,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw RoamError.decodeError("invalid payload")
       case 3:
         throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
       default:
         throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
       }
@@ -342,6 +350,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw RoamError.decodeError("invalid payload")
       case 3:
         throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
       default:
         throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
       }
@@ -387,6 +397,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw RoamError.decodeError("invalid payload")
       case 3:
         throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
       default:
         throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
       }
@@ -432,6 +444,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw RoamError.decodeError("invalid payload")
       case 3:
         throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
       default:
         throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
       }
@@ -465,6 +479,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw RoamError.decodeError("invalid payload")
       case 3:
         throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
       default:
         throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
       }
@@ -503,6 +519,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw RoamError.decodeError("invalid payload")
       case 3:
         throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
       default:
         throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
       }
@@ -536,6 +554,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw RoamError.decodeError("invalid payload")
       case 3:
         throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
       default:
         throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
       }
@@ -583,6 +603,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw RoamError.decodeError("invalid payload")
       case 3:
         throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
       default:
         throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
       }
@@ -623,6 +645,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw RoamError.decodeError("invalid payload")
       case 3:
         throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
       default:
         throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
       }
@@ -711,6 +735,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw RoamError.decodeError("invalid payload")
       case 3:
         throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
       default:
         throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
       }
@@ -765,6 +791,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw RoamError.decodeError("invalid payload")
       case 3:
         throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
       default:
         throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
       }
@@ -802,6 +830,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw RoamError.decodeError("invalid payload")
       case 3:
         throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
       default:
         throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
       }
@@ -836,6 +866,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw RoamError.decodeError("invalid payload")
       case 3:
         throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
       default:
         throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
       }

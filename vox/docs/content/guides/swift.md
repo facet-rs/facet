@@ -30,6 +30,20 @@ Generated Swift files import:
 - `Foundation`
 - `RoamRuntime`
 
+## 1.5) Build the Rust SHM staticlib before testing
+
+`RoamRuntime` links against `libroam_shm_ffi.a`, which is produced by the Rust
+workspace.
+
+From the Roam workspace root:
+
+```bash
+cargo build --release -p roam-shm-ffi
+swift test --no-parallel -Xlinker -L$(pwd)/target/release
+```
+
+That root-level `swift test` command is the same validation path used in CI.
+
 ## 2) Generate Swift bindings from Rust
 
 Use `roam-codegen` directly from your own Rust generator/build step:

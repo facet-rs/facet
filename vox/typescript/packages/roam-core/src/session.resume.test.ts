@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Message } from "@bearcove/roam-wire";
+import { RpcErrorCode } from "@bearcove/roam-wire";
 import { BareConduit } from "./conduit.ts";
 import { Driver, type Dispatcher } from "./driver.ts";
 import { RequestContext } from "./request_context.ts";
@@ -107,35 +107,44 @@ async function resumeWhenReady(
   throw new Error("session never became disconnected");
 }
 
-const METHOD: MethodDescriptor = {
-  name: "echo",
-  id: 1n,
-  retry: { persist: true, idem: false },
-  args: { kind: "tuple", elements: [{ kind: "u32" }] },
-  result: {
-    kind: "enum",
-    variants: [
-      { name: "Ok", fields: { kind: "u32" } },
-      {
-        name: "Err",
-        fields: {
-          kind: "enum",
-          variants: [
-            { name: "User", fields: null },
-            { name: "UnknownMethod", fields: null },
-            { name: "InvalidPayload", fields: null },
-            { name: "Cancelled", fields: null },
-          ],
+function makeMethod(retry: MethodDescriptor["retry"]): MethodDescriptor {
+  return {
+    name: "echo",
+    id: 1n,
+    retry,
+    args: { kind: "tuple", elements: [{ kind: "u32" }] },
+    result: {
+      kind: "enum",
+      variants: [
+        { name: "Ok", fields: { kind: "u32" } },
+        {
+          name: "Err",
+          fields: {
+            kind: "enum",
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
+          },
         },
-      },
-    ],
-  },
-};
+      ],
+    },
+  };
+}
 
-const DESCRIPTOR: ServiceDescriptor = {
-  service_name: "Test",
-  methods: [METHOD],
-};
+const PERSIST_METHOD = makeMethod({ persist: true, idem: false });
+const IDEM_METHOD = makeMethod({ persist: false, idem: true });
+const VOLATILE_METHOD = makeMethod({ persist: false, idem: false });
+
+function descriptorFor(method: MethodDescriptor): ServiceDescriptor {
+  return {
+    service_name: "Test",
+    methods: [method],
+  };
+}
 
 describe("session resumption", () => {
   it("keeps a pending call alive across manual resume on a new conduit", async () => {
@@ -147,7 +156,7 @@ describe("session resumption", () => {
 
     const dispatcher: Dispatcher = {
       getDescriptor() {
-        return DESCRIPTOR;
+        return descriptorFor(PERSIST_METHOD);
       },
       async dispatch(_context: RequestContext, _method, args, call) {
         started.resolve();
@@ -169,7 +178,7 @@ describe("session resumption", () => {
     const call = clientSession.rootConnection().caller().call({
       method: "Test.echo",
       args: { value: 55 },
-      descriptor: METHOD,
+      descriptor: PERSIST_METHOD,
     });
 
     await withTimeout(started.promise, "handler start");
@@ -198,10 +207,138 @@ describe("session resumption", () => {
     clientSession.handle().shutdown();
     serverSession.handle().shutdown();
 
-    await Promise.allSettled([
-      serverRun,
-      serverSession.closed(),
-      clientSession.closed(),
-    ]);
+    await Promise.allSettled([serverRun, serverSession.closed(), clientSession.closed()]);
+  });
+
+  it("automatically reruns a released idem call after manual resume", async () => {
+    const [clientLink1, serverLink1] = memoryLinkPair();
+    const clientConduit1 = new BareConduit(clientLink1);
+    const serverConduit1 = new BareConduit(serverLink1);
+    const firstStarted = makeDeferred<void>();
+    const dropFirst = makeDeferred<void>();
+    let runs = 0;
+
+    const dispatcher: Dispatcher = {
+      getDescriptor() {
+        return descriptorFor(IDEM_METHOD);
+      },
+      async dispatch(_context: RequestContext, _method, args, call) {
+        runs += 1;
+        if (runs === 1) {
+          firstStarted.resolve();
+          await dropFirst.promise;
+          return;
+        }
+        call.reply(args[0]);
+      },
+    };
+
+    const [serverSession, clientSession] = await withTimeout(
+      Promise.all([
+        Session.establishAcceptor(serverConduit1, { resumable: true }),
+        Session.establishInitiator(clientConduit1, { resumable: true }),
+      ]),
+      "initial session establishment",
+    );
+    const serverDriver = new Driver(serverSession.rootConnection(), dispatcher);
+    const serverRun = serverDriver.run();
+
+    const call = clientSession.rootConnection().caller().call({
+      method: "Test.echo",
+      args: { value: 77 },
+      descriptor: IDEM_METHOD,
+    });
+
+    await withTimeout(firstStarted.promise, "first handler start");
+    clientLink1.close();
+    serverLink1.close();
+    dropFirst.resolve();
+
+    const [clientLink2, serverLink2] = memoryLinkPair();
+    const clientConduit2 = new BareConduit(clientLink2);
+    const serverConduit2 = new BareConduit(serverLink2);
+
+    await withTimeout(
+      Promise.all([
+        resumeWhenReady(serverSession.handle(), serverConduit2),
+        resumeWhenReady(clientSession.handle(), clientConduit2),
+      ]),
+      "session resume",
+    );
+
+    await expect(withTimeout(call, "retried idem call")).resolves.toBe(77);
+    expect(runs).toBe(2);
+
+    clientLink2.close();
+    serverLink2.close();
+    clientSession.handle().shutdown();
+    serverSession.handle().shutdown();
+
+    await Promise.allSettled([serverRun, serverSession.closed(), clientSession.closed()]);
+  });
+
+  it("returns indeterminate for a released non-idem call after manual resume", async () => {
+    const [clientLink1, serverLink1] = memoryLinkPair();
+    const clientConduit1 = new BareConduit(clientLink1);
+    const serverConduit1 = new BareConduit(serverLink1);
+    const firstStarted = makeDeferred<void>();
+    const dropFirst = makeDeferred<void>();
+    let runs = 0;
+
+    const dispatcher: Dispatcher = {
+      getDescriptor() {
+        return descriptorFor(VOLATILE_METHOD);
+      },
+      async dispatch(_context: RequestContext, _method, _args, _call) {
+        runs += 1;
+        firstStarted.resolve();
+        await dropFirst.promise;
+      },
+    };
+
+    const [serverSession, clientSession] = await withTimeout(
+      Promise.all([
+        Session.establishAcceptor(serverConduit1, { resumable: true }),
+        Session.establishInitiator(clientConduit1, { resumable: true }),
+      ]),
+      "initial session establishment",
+    );
+    const serverDriver = new Driver(serverSession.rootConnection(), dispatcher);
+    const serverRun = serverDriver.run();
+
+    const call = clientSession.rootConnection().caller().call({
+      method: "Test.echo",
+      args: { value: 88 },
+      descriptor: VOLATILE_METHOD,
+    });
+
+    await withTimeout(firstStarted.promise, "first handler start");
+    clientLink1.close();
+    serverLink1.close();
+    dropFirst.resolve();
+
+    const [clientLink2, serverLink2] = memoryLinkPair();
+    const clientConduit2 = new BareConduit(clientLink2);
+    const serverConduit2 = new BareConduit(serverLink2);
+
+    await withTimeout(
+      Promise.all([
+        resumeWhenReady(serverSession.handle(), serverConduit2),
+        resumeWhenReady(clientSession.handle(), clientConduit2),
+      ]),
+      "session resume",
+    );
+
+    await expect(withTimeout(call, "retried non-idem call")).rejects.toMatchObject({
+      code: RpcErrorCode.INDETERMINATE,
+    });
+    expect(runs).toBe(1);
+
+    clientLink2.close();
+    serverLink2.close();
+    clientSession.handle().shutdown();
+    serverSession.handle().shutdown();
+
+    await Promise.allSettled([serverRun, serverSession.closed(), clientSession.closed()]);
   });
 });

@@ -96,6 +96,7 @@ const METHOD: MethodDescriptor = {
             { name: "UnknownMethod", fields: null },
             { name: "InvalidPayload", fields: null },
             { name: "Cancelled", fields: null },
+            { name: "Indeterminate", fields: null },
           ],
         },
       },

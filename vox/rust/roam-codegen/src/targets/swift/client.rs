@@ -362,6 +362,8 @@ fn generate_response_decode(
             .unwrap();
         w.writeln("case 3:").unwrap();
         w.writeln("    throw RoamError.cancelled").unwrap();
+        w.writeln("case 4:").unwrap();
+        w.writeln("    throw RoamError.indeterminate").unwrap();
         w.writeln("default:").unwrap();
         cw_writeln!(
             w,

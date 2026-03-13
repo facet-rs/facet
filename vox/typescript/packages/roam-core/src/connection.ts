@@ -1506,6 +1506,8 @@ export class ConnectionCaller<T extends MessageTransport = MessageTransport> imp
           throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
         case "Cancelled":
           throw new RpcError(RpcErrorCode.CANCELLED);
+        case "Indeterminate":
+          throw new RpcError(RpcErrorCode.INDETERMINATE);
         default:
           throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
       }

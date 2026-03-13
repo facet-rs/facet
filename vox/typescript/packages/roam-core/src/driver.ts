@@ -72,7 +72,8 @@ type OperationAdmit =
   | { kind: "start" }
   | { kind: "attached" }
   | { kind: "replay"; payload: Uint8Array }
-  | { kind: "reject" };
+  | { kind: "conflict" }
+  | { kind: "indeterminate" };
 
 type OperationCancel =
   | { kind: "none" }
@@ -129,20 +130,22 @@ class OperationRegistry {
     switch (existing.kind) {
       case "live":
         if (!sameSignature(existing.stored.signature, methodId, args)) {
-          return { kind: "reject" };
+          return { kind: "conflict" };
         }
         existing.waiters.push(requestId);
         this.requestToOperation.set(requestId, operationId);
         return { kind: "attached" };
       case "sealed":
         if (!sameSignature(existing.stored.signature, methodId, args)) {
-          return { kind: "reject" };
+          return { kind: "conflict" };
         }
         return { kind: "replay", payload: existing.payload.slice() };
       case "released":
       case "indeterminate":
         if (!sameSignature(existing.stored.signature, methodId, args) || !existing.stored.retry.idem) {
-          return { kind: "reject" };
+          return sameSignature(existing.stored.signature, methodId, args)
+            ? { kind: "indeterminate" }
+            : { kind: "conflict" };
         }
         this.requestToOperation.set(requestId, operationId);
         this.states.set(operationId, {
@@ -365,16 +368,16 @@ export class Driver {
       const message = this.taskQueue.shift()!;
       switch (message.kind) {
         case "data":
-          await this.connection.sendChannelData(message.channelId, message.payload);
+          await this.connection.sendChannelData(message.channelId, message.payload).catch(() => {});
           break;
         case "close":
-          await this.connection.sendChannelClose(message.channelId);
+          await this.connection.sendChannelClose(message.channelId).catch(() => {});
           break;
         case "grantCredit":
-          await this.connection.sendChannelCredit(message.channelId, message.additional);
+          await this.connection.sendChannelCredit(message.channelId, message.additional).catch(() => {});
           break;
         case "response":
-          await this.connection.sendResponse(message.requestId, message.payload);
+          await this.connection.sendResponse(message.requestId, message.payload).catch(() => {});
           break;
       }
     }
@@ -405,8 +408,11 @@ export class Driver {
         case "replay":
           await this.connection.sendResponse(incoming.requestId, admit.payload);
           return;
-        case "reject":
+        case "conflict":
           await this.connection.sendResponse(incoming.requestId, encodeInvalidPayload());
+          return;
+        case "indeterminate":
+          await this.connection.sendResponse(incoming.requestId, encodeIndeterminate());
           return;
         case "start":
           break;
@@ -450,20 +456,42 @@ export class Driver {
         if (operationId !== undefined) {
           const waiters = this.operations.failWithoutReply(operationId, incoming.requestId);
           for (const waiter of waiters) {
-            taskSender({ kind: "response", requestId: waiter, payload: encodeCancelled() });
+            taskSender({
+              kind: "response",
+              requestId: waiter,
+              payload: method.retry.persist ? encodeIndeterminate() : encodeCancelled(),
+            });
           }
+        } else if (method.retry.persist) {
+          this.taskQueue.push({
+            kind: "response",
+            requestId: incoming.requestId,
+            payload: encodeIndeterminate(),
+          });
+        } else {
+          call.replyInternalError();
         }
-        call.replyInternalError();
       }
     } catch (error) {
       if (!call.didReply()) {
         if (operationId !== undefined) {
           const waiters = this.operations.failWithoutReply(operationId, incoming.requestId);
           for (const waiter of waiters) {
-            taskSender({ kind: "response", requestId: waiter, payload: encodeCancelled() });
+            taskSender({
+              kind: "response",
+              requestId: waiter,
+              payload: method.retry.persist ? encodeIndeterminate() : encodeCancelled(),
+            });
           }
+        } else if (method.retry.persist) {
+          this.taskQueue.push({
+            kind: "response",
+            requestId: incoming.requestId,
+            payload: encodeIndeterminate(),
+          });
+        } else {
+          call.replyInternalError();
         }
-        call.replyInternalError();
       }
       outcome = { kind: "failed", error };
     }
@@ -566,4 +594,8 @@ function encodeInvalidPayload(): Uint8Array {
 
 function encodeCancelled(): Uint8Array {
   return new Uint8Array([0x01, 0x03]);
+}
+
+function encodeIndeterminate(): Uint8Array {
+  return new Uint8Array([0x01, 0x04]);
 }

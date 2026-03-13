@@ -1,5 +1,6 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
+assertion_line: 946
 expression: "generate(quote!\n{\n    trait Streamer\n    { async fn count_up(&self, start: i32, output: Tx<i32>) -> i32; }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -219,6 +220,9 @@ impl StreamerClient {
                 }
                 ::roam::RoamError::Cancelled => {
                     ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                }
+                ::roam::RoamError::Indeterminate => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
                 }
                 ::roam::RoamError::User(never) => match never {},
             })?;

@@ -269,6 +269,13 @@ struct ResumableReplyingHandler {
     release: Arc<tokio::sync::Notify>,
 }
 
+struct RetryAfterResumeHandler {
+    retry: RetryPolicy,
+    runs: Arc<AtomicUsize>,
+    first_started: Arc<tokio::sync::Notify>,
+    drop_first: Arc<tokio::sync::Notify>,
+}
+
 struct OperationIdHandler;
 
 impl Handler<DriverReplySink> for OperationIdHandler {
@@ -360,6 +367,34 @@ impl Handler<DriverReplySink> for ResumableReplyingHandler {
     async fn handle(&self, call: SelfRef<RequestCall<'static>>, reply: DriverReplySink) {
         self.started.notify_waiters();
         self.release.notified().await;
+
+        let args_bytes = match &call.args {
+            Payload::Incoming(bytes) => *bytes,
+            _ => panic!("expected incoming payload"),
+        };
+        let result: u32 = facet_postcard::from_slice(args_bytes).expect("deserialize args");
+        reply
+            .send_reply(RequestResponse {
+                ret: Payload::outgoing(&result),
+                channels: vec![],
+                metadata: Default::default(),
+            })
+            .await;
+    }
+}
+
+impl Handler<DriverReplySink> for RetryAfterResumeHandler {
+    fn retry_policy(&self, _method_id: MethodId) -> RetryPolicy {
+        self.retry
+    }
+
+    async fn handle(&self, call: SelfRef<RequestCall<'static>>, reply: DriverReplySink) {
+        let run = self.runs.fetch_add(1, Ordering::SeqCst);
+        if run == 0 {
+            self.first_started.notify_waiters();
+            self.drop_first.notified().await;
+            return;
+        }
 
         let args_bytes = match &call.args {
             Payload::Incoming(bytes) => *bytes,
@@ -1049,6 +1084,175 @@ async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
     };
     let value: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(value, 55);
+
+    let _ = client_session_handle.shutdown();
+    let _ = server_session_handle.shutdown();
+    client_break2.close().await;
+    server_break2.close().await;
+}
+
+#[tokio::test]
+async fn resumable_session_reruns_released_idem_call_after_manual_resume() {
+    let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
+    let client_conduit1 = BareConduit::new(client_link1);
+    let server_conduit1 = BareConduit::new(server_link1);
+
+    let first_started = Arc::new(tokio::sync::Notify::new());
+    let first_started_waiter = Arc::clone(&first_started);
+    let first_started_wait = first_started_waiter.notified();
+    let drop_first = Arc::new(tokio::sync::Notify::new());
+    let runs = Arc::new(AtomicUsize::new(0));
+
+    let (server_established, client_established) = tokio::try_join!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            acceptor(server_conduit1)
+                .resumable()
+                .establish::<DriverCaller>(RetryAfterResumeHandler {
+                    retry: RetryPolicy::IDEM,
+                    runs: Arc::clone(&runs),
+                    first_started,
+                    drop_first: Arc::clone(&drop_first),
+                }),
+        ),
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            initiator(client_conduit1)
+                .resumable()
+                .establish::<DriverCaller>(()),
+        ),
+    )
+    .expect("initial session establishment timed out");
+    let (_server_caller, server_session_handle) =
+        server_established.expect("server handshake failed");
+    let (caller, client_session_handle) = client_established.expect("client handshake failed");
+
+    let call_task = moire::task::spawn(
+        async move {
+            caller
+                .call(RequestCall {
+                    method_id: MethodId(1),
+                    args: Payload::outgoing(&77_u32),
+                    channels: vec![],
+                    metadata: Default::default(),
+                })
+                .await
+        }
+        .named("resume_retry_idem"),
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), first_started_wait)
+        .await
+        .expect("timed out waiting for first handler start");
+
+    client_break1.close().await;
+    server_break1.close().await;
+    drop_first.notify_waiters();
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    let (client_link2, client_break2, server_link2, server_break2) = breakable_link_pair(64);
+    tokio::try_join!(
+        client_session_handle.resume(BareConduit::new(client_link2)),
+        server_session_handle.resume(BareConduit::new(server_link2)),
+    )
+    .expect("session resume should succeed");
+
+    let response = call_task
+        .await
+        .expect("call task join")
+        .expect("idem call should succeed after retry");
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let value: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    assert_eq!(value, 77);
+    assert_eq!(runs.load(Ordering::SeqCst), 2);
+
+    let _ = client_session_handle.shutdown();
+    let _ = server_session_handle.shutdown();
+    client_break2.close().await;
+    server_break2.close().await;
+}
+
+#[tokio::test]
+async fn resumable_session_returns_indeterminate_for_released_non_idem_call_after_manual_resume() {
+    let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
+    let client_conduit1 = BareConduit::new(client_link1);
+    let server_conduit1 = BareConduit::new(server_link1);
+
+    let first_started = Arc::new(tokio::sync::Notify::new());
+    let first_started_waiter = Arc::clone(&first_started);
+    let first_started_wait = first_started_waiter.notified();
+    let drop_first = Arc::new(tokio::sync::Notify::new());
+    let runs = Arc::new(AtomicUsize::new(0));
+
+    let (server_established, client_established) = tokio::try_join!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            acceptor(server_conduit1)
+                .resumable()
+                .establish::<DriverCaller>(RetryAfterResumeHandler {
+                    retry: RetryPolicy::VOLATILE,
+                    runs: Arc::clone(&runs),
+                    first_started,
+                    drop_first: Arc::clone(&drop_first),
+                }),
+        ),
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            initiator(client_conduit1)
+                .resumable()
+                .establish::<DriverCaller>(()),
+        ),
+    )
+    .expect("initial session establishment timed out");
+    let (_server_caller, server_session_handle) =
+        server_established.expect("server handshake failed");
+    let (caller, client_session_handle) = client_established.expect("client handshake failed");
+
+    let call_task = moire::task::spawn(
+        async move {
+            caller
+                .call(RequestCall {
+                    method_id: MethodId(1),
+                    args: Payload::outgoing(&88_u32),
+                    channels: vec![],
+                    metadata: Default::default(),
+                })
+                .await
+        }
+        .named("resume_retry_non_idem"),
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), first_started_wait)
+        .await
+        .expect("timed out waiting for first handler start");
+
+    client_break1.close().await;
+    server_break1.close().await;
+    drop_first.notify_waiters();
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    let (client_link2, client_break2, server_link2, server_break2) = breakable_link_pair(64);
+    tokio::try_join!(
+        client_session_handle.resume(BareConduit::new(client_link2)),
+        server_session_handle.resume(BareConduit::new(server_link2)),
+    )
+    .expect("session resume should succeed");
+
+    let response = call_task
+        .await
+        .expect("call task join")
+        .expect("runtime should return a response envelope");
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let result: Result<u32, RoamError> =
+        facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    assert!(matches!(result, Err(RoamError::Indeterminate)));
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
 
     let _ = client_session_handle.shutdown();
     let _ = server_session_handle.shutdown();

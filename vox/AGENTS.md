@@ -70,6 +70,18 @@ If you find yourself:
 
 If any codegen is missing functionality, FIX THE CODEGEN.
 
+## Swift Validation Reminder
+
+Swift package tests link against `libroam_shm_ffi.a`, which is built by Rust.
+
+Before running Swift build or test commands that link SHM support:
+
+1. Run `cargo build --release -p roam-shm-ffi`
+2. Prefer the same root-level test command CI uses:
+   `swift test --no-parallel -Xlinker -L$(pwd)/target/release`
+
+Do not treat a missing `roam_shm_ffi` link error as an external environment problem until you have run that documented prebuild step and command shape.
+
 ## Final Note
 
 Your job is to build a correct, complete implementation. Not to make tests green. A green test that tests manual code is worthless. A failing test that reveals missing codegen functionality is valuable—it shows you what to fix next.

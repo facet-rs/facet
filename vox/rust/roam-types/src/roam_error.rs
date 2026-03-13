@@ -20,4 +20,7 @@ pub enum RoamError<E = ::core::convert::Infallible> {
 
     /// The call was cancelled before completion.
     Cancelled,
+
+    /// The runtime refused to guess after recovery.
+    Indeterminate,
 }

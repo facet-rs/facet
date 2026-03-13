@@ -276,18 +276,20 @@ fn generate_scalar_schema(scalar: ScalarType) -> String {
 
 /// Generate the `RoamError<E>` enum schema.
 ///
-/// Always has four variants at fixed indices:
+/// Always has five variants at fixed indices:
 /// - 0: User(E)        — user-defined error (null for infallible)
 /// - 1: UnknownMethod  — unit
 /// - 2: InvalidPayload — unit
 /// - 3: Cancelled      — unit
+/// - 4: Indeterminate  — unit
 fn generate_roam_error_schema(err_schema: &str) -> String {
     format!(
         "{{ kind: 'enum', variants: [\
           {{ name: 'User', fields: {err_schema} }}, \
           {{ name: 'UnknownMethod', fields: null }}, \
           {{ name: 'InvalidPayload', fields: null }}, \
-          {{ name: 'Cancelled', fields: null }}\
+          {{ name: 'Cancelled', fields: null }}, \
+          {{ name: 'Indeterminate', fields: null }}\
         ] }}"
     )
 }

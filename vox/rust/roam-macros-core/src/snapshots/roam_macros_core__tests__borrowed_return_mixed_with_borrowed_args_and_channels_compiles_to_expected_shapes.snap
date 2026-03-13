@@ -1,5 +1,6 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
+assertion_line: 1032
 expression: "generate(quote!\n{\n    trait WordLab\n    {\n        async fn is_short(&self, word: &str) -> bool; async fn\n        classify(&self, word: String) -> &'roam str; async fn\n        transform(&self, prefix: &str, input: Rx<String>, output: Tx<String>)\n        -> u32;\n    }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -273,6 +274,9 @@ impl WordLabClient {
                 ::roam::RoamError::Cancelled => {
                     ::roam::RoamError::<::core::convert::Infallible>::Cancelled
                 }
+                ::roam::RoamError::Indeterminate => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
+                }
                 ::roam::RoamError::User(never) => match never {},
             })?;
         let ret_bytes = match &response.ret {
@@ -308,6 +312,9 @@ impl WordLabClient {
                 }
                 ::roam::RoamError::Cancelled => {
                     ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                }
+                ::roam::RoamError::Indeterminate => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
                 }
                 ::roam::RoamError::User(never) => match never {},
             })?;
@@ -361,6 +368,9 @@ impl WordLabClient {
                 }
                 ::roam::RoamError::Cancelled => {
                     ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                }
+                ::roam::RoamError::Indeterminate => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
                 }
                 ::roam::RoamError::User(never) => match never {},
             })?;

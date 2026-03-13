@@ -14,6 +14,8 @@ export const RpcErrorCode = {
   INVALID_PAYLOAD: 2,
   /** Call was cancelled */
   CANCELLED: 3,
+  /** Recovery completed, but the runtime refused to guess */
+  INDETERMINATE: 4,
 } as const;
 
 export type RpcErrorCode = (typeof RpcErrorCode)[keyof typeof RpcErrorCode];
@@ -60,6 +62,8 @@ export class RpcError extends Error {
         return "Invalid payload";
       case RpcErrorCode.CANCELLED:
         return "Cancelled";
+      case RpcErrorCode.INDETERMINATE:
+        return "Indeterminate";
       default:
         return `Unknown error code: ${code}`;
     }

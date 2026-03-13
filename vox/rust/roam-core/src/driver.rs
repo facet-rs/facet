@@ -19,7 +19,9 @@ use roam_types::{
     SelfRef, TxError, ensure_operation_id, metadata_operation_id,
 };
 
-use crate::session::{ConnectionHandle, ConnectionMessage, ConnectionSender, DropControlRequest};
+use crate::session::{
+    ConnectionHandle, ConnectionMessage, ConnectionSender, DropControlRequest, FailureDisposition,
+};
 use moire::sync::mpsc;
 
 type ResponseSlot = moire::sync::oneshot::Sender<SelfRef<RequestMessage<'static>>>;
@@ -68,7 +70,8 @@ enum OperationAdmit {
     Start,
     Attached,
     Replay(Arc<[u8]>),
-    Reject,
+    Conflict,
+    Indeterminate,
 }
 
 enum OperationCancel {
@@ -116,7 +119,7 @@ impl OperationRegistry {
             OperationState::Live(mut live) => {
                 if !live.stored.signature.matches_call(method_id, args) {
                     self.states.insert(operation_id, OperationState::Live(live));
-                    return OperationAdmit::Reject;
+                    return OperationAdmit::Conflict;
                 }
                 live.waiters.push(request_id);
                 self.request_to_operation.insert(request_id, operation_id);
@@ -127,7 +130,7 @@ impl OperationRegistry {
                 let replay = if sealed.stored.signature.matches_call(method_id, args) {
                     OperationAdmit::Replay(Arc::clone(&sealed.encoded_response))
                 } else {
-                    OperationAdmit::Reject
+                    OperationAdmit::Conflict
                 };
                 self.states
                     .insert(operation_id, OperationState::Sealed(sealed));
@@ -135,9 +138,14 @@ impl OperationRegistry {
             }
             OperationState::Released(stored) => {
                 if !stored.signature.matches_call(method_id, args) || !stored.retry.idem {
+                    let admit = if stored.signature.matches_call(method_id, args) {
+                        OperationAdmit::Indeterminate
+                    } else {
+                        OperationAdmit::Conflict
+                    };
                     self.states
                         .insert(operation_id, OperationState::Released(stored));
-                    return OperationAdmit::Reject;
+                    return admit;
                 }
                 self.request_to_operation.insert(request_id, operation_id);
                 self.states.insert(
@@ -155,9 +163,14 @@ impl OperationRegistry {
             }
             OperationState::Indeterminate(stored) => {
                 if !stored.signature.matches_call(method_id, args) || !stored.retry.idem {
+                    let admit = if stored.signature.matches_call(method_id, args) {
+                        OperationAdmit::Indeterminate
+                    } else {
+                        OperationAdmit::Conflict
+                    };
                     self.states
                         .insert(operation_id, OperationState::Indeterminate(stored));
-                    return OperationAdmit::Reject;
+                    return admit;
                 }
                 self.request_to_operation.insert(request_id, operation_id);
                 self.states.insert(
@@ -353,6 +366,7 @@ mod tests {
 pub struct DriverReplySink {
     sender: Option<ConnectionSender>,
     request_id: RequestId,
+    retry: roam_types::RetryPolicy,
     operation_id: Option<u64>,
     operations: Option<Arc<SyncMutex<OperationRegistry>>>,
     binder: DriverChannelBinder,
@@ -400,11 +414,11 @@ impl ReplySink for DriverReplySink {
                     .await
                     .is_err()
                 {
-                    sender.mark_failure(waiter, "send_response failed");
+                    sender.mark_failure(waiter, FailureDisposition::Cancelled);
                 }
             }
         } else if let Err(_e) = sender.send_response(self.request_id, response).await {
-            sender.mark_failure(self.request_id, "send_response failed");
+            sender.mark_failure(self.request_id, FailureDisposition::Cancelled);
         }
     }
 
@@ -423,11 +437,21 @@ impl Drop for DriverReplySink {
                 let waiters = operations
                     .lock()
                     .fail_without_reply(operation_id, self.request_id);
+                let disposition = if self.retry.persist {
+                    FailureDisposition::Indeterminate
+                } else {
+                    FailureDisposition::Cancelled
+                };
                 for waiter in waiters {
-                    sender.mark_failure(waiter, "no reply sent");
+                    sender.mark_failure(waiter, disposition);
                 }
             } else {
-                sender.mark_failure(self.request_id, "no reply sent");
+                let disposition = if self.retry.persist {
+                    FailureDisposition::Indeterminate
+                } else {
+                    FailureDisposition::Cancelled
+                };
+                sender.mark_failure(self.request_id, disposition);
             }
         }
     }
@@ -626,6 +650,7 @@ pub struct DriverCaller {
     shared: Arc<DriverShared>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
     closed_rx: watch::Receiver<bool>,
+    resumed_rx: watch::Receiver<u64>,
     peer_supports_retry: bool,
     _drop_guard: Option<Arc<CallerDropGuard>>,
 }
@@ -758,7 +783,7 @@ impl Caller for DriverCaller {
     ) -> impl std::future::Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>>
     + MaybeSend
     + 'a {
-        async {
+        async move {
             if self.peer_supports_retry {
                 let operation_id = self
                     .shared
@@ -766,6 +791,10 @@ impl Caller for DriverCaller {
                     .fetch_add(1, Ordering::Relaxed);
                 ensure_operation_id(&mut call.metadata, operation_id);
             }
+
+            let encoded_call: Arc<[u8]> = facet_postcard::to_vec(&call)
+                .map_err(|_| RoamError::InvalidPayload)?
+                .into();
 
             // Allocate a request ID.
             let req_id = self.shared.request_ids.lock().alloc();
@@ -775,27 +804,59 @@ impl Caller for DriverCaller {
             let (tx, rx) = moire::sync::oneshot::channel("driver.response");
             self.shared.pending_responses.lock().insert(req_id, tx);
 
-            // Send the call. This awaits the conduit permit and serializes
-            // the borrowed payload all the way to the link's write buffer.
-            let send_result = self
+            let resend_call: RequestCall<'_> =
+                facet_postcard::from_slice_borrowed(encoded_call.as_ref())
+                    .map_err(|_| RoamError::<core::convert::Infallible>::InvalidPayload)?;
+            if self
                 .sender
                 .send(ConnectionMessage::Request(RequestMessage {
                     id: req_id,
-                    body: RequestBody::Call(call),
+                    body: RequestBody::Call(resend_call),
                 }))
-                .await;
-
-            if send_result.is_err() {
-                // Clean up the pending slot.
+                .await
+                .is_err()
+            {
                 self.shared.pending_responses.lock().remove(&req_id);
                 return Err(RoamError::Cancelled);
             }
 
-            // Await the response from the driver loop.
-            let response_msg: SelfRef<RequestMessage<'static>> = rx
-                .named("awaiting_response")
-                .await
-                .map_err(|_| RoamError::Cancelled)?;
+            let mut resumed_rx = self.resumed_rx.clone();
+            let mut seen_resume_generation = *resumed_rx.borrow();
+            let mut closed_rx = self.closed_rx.clone();
+            let mut response = std::pin::pin!(rx.named("awaiting_response"));
+
+            let response_msg: SelfRef<RequestMessage<'static>> = loop {
+                tokio::select! {
+                    result = &mut response => {
+                        break result.map_err(|_| RoamError::Cancelled)?;
+                    }
+                    changed = resumed_rx.changed(), if self.peer_supports_retry => {
+                        if changed.is_err() {
+                            self.shared.pending_responses.lock().remove(&req_id);
+                            return Err(RoamError::Cancelled);
+                        }
+                        let generation = *resumed_rx.borrow();
+                        if generation == seen_resume_generation {
+                            continue;
+                        }
+                        seen_resume_generation = generation;
+                        let resend_call: Result<RequestCall<'_>, _> =
+                            facet_postcard::from_slice_borrowed(encoded_call.as_ref());
+                        if let Ok(resend_call) = resend_call {
+                            let _ = self.sender.send(ConnectionMessage::Request(RequestMessage {
+                                id: req_id,
+                                body: RequestBody::Call(resend_call),
+                            })).await;
+                        }
+                    }
+                    changed = closed_rx.changed() => {
+                        if changed.is_err() || *closed_rx.borrow() {
+                            self.shared.pending_responses.lock().remove(&req_id);
+                            return Err(RoamError::Cancelled);
+                        }
+                    }
+                }
+            };
 
             // Extract the Response variant from the RequestMessage.
             let response = response_msg.map(|m| match m.body {
@@ -840,8 +901,9 @@ impl Caller for DriverCaller {
 pub struct Driver<H: Handler<DriverReplySink>> {
     sender: ConnectionSender,
     rx: mpsc::Receiver<SelfRef<ConnectionMessage<'static>>>,
-    failures_rx: mpsc::UnboundedReceiver<(RequestId, &'static str)>,
+    failures_rx: mpsc::UnboundedReceiver<(RequestId, FailureDisposition)>,
     closed_rx: watch::Receiver<bool>,
+    resumed_rx: watch::Receiver<u64>,
     peer_supports_retry: bool,
     local_control_rx: mpsc::UnboundedReceiver<DriverLocalControl>,
     handler: Arc<H>,
@@ -913,6 +975,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             failures_rx,
             control_tx,
             closed_rx,
+            resumed_rx,
             parity,
             peer_supports_retry,
         } = handle;
@@ -923,6 +986,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             rx,
             failures_rx,
             closed_rx,
+            resumed_rx,
             peer_supports_retry,
             local_control_rx,
             handler: Arc::new(handler),
@@ -984,6 +1048,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             shared: Arc::clone(&self.shared),
             local_control_tx: self.local_control_tx.clone(),
             closed_rx: self.closed_rx.clone(),
+            resumed_rx: self.resumed_rx.clone(),
             peer_supports_retry: self.peer_supports_retry,
             _drop_guard: drop_guard,
         }
@@ -1011,15 +1076,19 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         None => break,
                     }
                 }
-                Some((req_id, _reason)) = self.failures_rx.recv() => {
+                Some((req_id, disposition)) = self.failures_rx.recv() => {
                     // Clean up the handler tracking entry.
                     self.in_flight_handlers.remove(&req_id);
                     if self.shared.pending_responses.lock().remove(&req_id).is_none() {
                         // Incoming call — handler failed to reply.
                         // Wire format is always Result<T, RoamError<E>>, so encode
-                        // Cancelled as Err(...) in that envelope.
+                        // the runtime outcome as Err(...) in that envelope.
+                        let roam_error = match disposition {
+                            FailureDisposition::Cancelled => RoamError::Cancelled,
+                            FailureDisposition::Indeterminate => RoamError::Indeterminate,
+                        };
                         let error: Result<(), RoamError<core::convert::Infallible>> =
-                            Err(RoamError::Cancelled);
+                            Err(roam_error);
                         let _ = self.sender.send_response(req_id, RequestResponse {
                             ret: Payload::outgoing(&error),
                             channels: vec![],
@@ -1129,14 +1198,14 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                                     .await
                                     .is_err()
                                 {
-                                    sender.mark_failure(req_id, "send_response failed");
+                                    sender.mark_failure(req_id, FailureDisposition::Cancelled);
                                 }
                             }
                             .named("operation_replay"),
                         );
                         return;
                     }
-                    OperationAdmit::Reject => {
+                    OperationAdmit::Conflict => {
                         let sender = self.sender.clone();
                         moire::task::spawn(
                             async move {
@@ -1157,12 +1226,34 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         );
                         return;
                     }
+                    OperationAdmit::Indeterminate => {
+                        let sender = self.sender.clone();
+                        moire::task::spawn(
+                            async move {
+                                let error: Result<(), RoamError<core::convert::Infallible>> =
+                                    Err(RoamError::Indeterminate);
+                                let _ = sender
+                                    .send_response(
+                                        req_id,
+                                        RequestResponse {
+                                            ret: Payload::outgoing(&error),
+                                            channels: vec![],
+                                            metadata: Default::default(),
+                                        },
+                                    )
+                                    .await;
+                            }
+                            .named("operation_indeterminate"),
+                        );
+                        return;
+                    }
                     OperationAdmit::Start => {}
                 }
             }
             let reply = DriverReplySink {
                 sender: Some(self.sender.clone()),
                 request_id: req_id,
+                retry,
                 operation_id,
                 operations: operation_id.map(|_| Arc::clone(&self.shared.operations)),
                 binder: self.internal_binder(),
@@ -1210,7 +1301,8 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         in_flight.handle.abort();
                     }
                     for waiter in waiters {
-                        self.sender.mark_failure(waiter, "operation released");
+                        self.sender
+                            .mark_failure(waiter, FailureDisposition::Cancelled);
                     }
                 }
             }

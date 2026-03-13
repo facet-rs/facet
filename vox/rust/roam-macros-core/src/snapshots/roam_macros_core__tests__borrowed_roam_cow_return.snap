@@ -1,5 +1,6 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
+assertion_line: 1023
 expression: "generate(quote!\n{\n    trait TextSvc\n    {\n        async fn normalize(&self, input: String) -> ::std::borrow::Cow<'roam,\n        str>;\n    }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -192,6 +193,9 @@ impl TextSvcClient {
                 }
                 ::roam::RoamError::Cancelled => {
                     ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                }
+                ::roam::RoamError::Indeterminate => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
                 }
                 ::roam::RoamError::User(never) => match never {},
             })?;

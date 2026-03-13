@@ -44,9 +44,17 @@ just swift
 just rust-ffi
 # or: cargo build --release -p roam-shm-ffi
 
-# Run roam-runtime unit tests
+# Run root Swift package tests the same way CI does
 cargo build --release -p roam-shm-ffi
-swift test --package-path swift/roam-runtime
+swift test --no-parallel -Xlinker -L$(pwd)/target/release
+
+# Build the Swift subject package
+swift build -c release --package-path swift/subject
+
+# If you specifically want the roam-runtime package path form, build the Rust
+# staticlib first. The root-level `swift test ... -L$(pwd)/target/release`
+# command is the preferred validation path in this repo.
+swift test --package-path swift/roam-runtime --no-parallel -Xlinker -L$(pwd)/target/release
 
 # Run SHM cross-language tests (Rust host, Swift guest)
 cargo nextest run -p roam-shm --test bootstrap_cross_language
@@ -59,6 +67,7 @@ RoamRuntime depends on `libroam_shm_ffi.a`, a Rust staticlib. Consumers must:
 1. Build the staticlib: `cargo build --release -p roam-shm-ffi` (from the roam workspace root)
 2. Tell the linker where to find it:
    - **SPM CLI**: `swift build -Xlinker -L<path-to-roam>/target/release`
+   - **SPM test**: `swift test -Xlinker -L<path-to-roam>/target/release`
    - **Xcode**: Add `<path-to-roam>/target/release` to `LIBRARY_SEARCH_PATHS`
 
 ### Code Generation

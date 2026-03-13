@@ -1,5 +1,6 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
+assertion_line: 926
 expression: "generate(quote!\n{\n    trait Billing\n    {\n        #[roam(idem)] async fn get_balance(&self, account: String) -> u64;\n        #[roam(persist)] async fn send_money(&self, from: String, to: String)\n        -> Result<u64, TransferError>;\n    }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -242,6 +243,9 @@ impl BillingClient {
                 ::roam::RoamError::Cancelled => {
                     ::roam::RoamError::<::core::convert::Infallible>::Cancelled
                 }
+                ::roam::RoamError::Indeterminate => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
+                }
                 ::roam::RoamError::User(never) => match never {},
             })?;
         let ret_bytes = match &response.ret {
@@ -277,6 +281,9 @@ impl BillingClient {
                     ::roam::RoamError::<TransferError>::InvalidPayload
                 }
                 ::roam::RoamError::Cancelled => ::roam::RoamError::<TransferError>::Cancelled,
+                ::roam::RoamError::Indeterminate => {
+                    ::roam::RoamError::<TransferError>::Indeterminate
+                }
                 ::roam::RoamError::User(never) => match never {},
             })?;
         let ret_bytes = match &response.ret {

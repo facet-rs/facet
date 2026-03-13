@@ -230,4 +230,6 @@ public enum RpcErrorCode: UInt8, Sendable {
     case invalidPayload = 2
     /// Call was cancelled
     case cancelled = 3
+    /// Runtime refused to guess after recovery
+    case indeterminate = 4
 }

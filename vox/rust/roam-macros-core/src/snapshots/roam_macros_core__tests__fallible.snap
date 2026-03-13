@@ -1,5 +1,6 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
+assertion_line: 900
 expression: "generate(quote!\n{\n    trait Calc\n    { async fn div(&self, a: f64, b: f64) -> Result<f64, DivError>; }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -185,6 +186,7 @@ impl CalcClient {
                 ::roam::RoamError::UnknownMethod => ::roam::RoamError::<DivError>::UnknownMethod,
                 ::roam::RoamError::InvalidPayload => ::roam::RoamError::<DivError>::InvalidPayload,
                 ::roam::RoamError::Cancelled => ::roam::RoamError::<DivError>::Cancelled,
+                ::roam::RoamError::Indeterminate => ::roam::RoamError::<DivError>::Indeterminate,
                 ::roam::RoamError::User(never) => match never {},
             })?;
         let ret_bytes = match &response.ret {

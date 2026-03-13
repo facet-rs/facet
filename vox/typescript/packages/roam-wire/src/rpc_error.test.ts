@@ -9,6 +9,7 @@ describe("RpcErrorCode", () => {
     expect(RpcErrorCode.UNKNOWN_METHOD).toBe(1);
     expect(RpcErrorCode.INVALID_PAYLOAD).toBe(2);
     expect(RpcErrorCode.CANCELLED).toBe(3);
+    expect(RpcErrorCode.INDETERMINATE).toBe(4);
   });
 });
 
@@ -52,6 +53,16 @@ describe("RpcError", () => {
     expect(error.isUserError()).toBe(false);
     expect(error.isProtocolError()).toBe(true);
     expect(error.message).toBe("Cancelled");
+  });
+
+  it("creates indeterminate error", () => {
+    const error = new RpcError(RpcErrorCode.INDETERMINATE);
+
+    expect(error.code).toBe(RpcErrorCode.INDETERMINATE);
+    expect(error.payload).toBeNull();
+    expect(error.isUserError()).toBe(false);
+    expect(error.isProtocolError()).toBe(true);
+    expect(error.message).toBe("Indeterminate");
   });
 
   it("is an Error instance", () => {

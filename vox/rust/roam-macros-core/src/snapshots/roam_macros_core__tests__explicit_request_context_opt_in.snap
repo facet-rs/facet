@@ -1,5 +1,6 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
+assertion_line: 914
 expression: "generate(quote!\n{\n    trait Audit\n    {\n        #[roam::context] async fn record(&self, payload: String) -> &'roam\n        str; async fn ping(&self) -> u64;\n    }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -241,6 +242,9 @@ impl AuditClient {
                 ::roam::RoamError::Cancelled => {
                     ::roam::RoamError::<::core::convert::Infallible>::Cancelled
                 }
+                ::roam::RoamError::Indeterminate => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
+                }
                 ::roam::RoamError::User(never) => match never {},
             })?;
         response.try_repack(|resp, _bytes| {
@@ -277,6 +281,9 @@ impl AuditClient {
                 }
                 ::roam::RoamError::Cancelled => {
                     ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                }
+                ::roam::RoamError::Indeterminate => {
+                    ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
                 }
                 ::roam::RoamError::User(never) => match never {},
             })?;

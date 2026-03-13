@@ -66,6 +66,12 @@ interface PendingResponse {
   resolve: (payload: Uint8Array) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  methodId: bigint;
+  payload: Uint8Array;
+  metadata: Metadata;
+  channels: bigint[];
+  requestIds: Set<bigint>;
+  settled: boolean;
 }
 
 export interface IncomingCall {
@@ -105,6 +111,25 @@ function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
     }
   }
   return true;
+}
+
+function cloneMetadataValue(value: MetadataEntry["value"]): MetadataEntry["value"] {
+  switch (value.tag) {
+    case "Bytes":
+      return { tag: "Bytes", value: value.value.slice() };
+    case "String":
+      return { tag: "String", value: value.value };
+    case "U64":
+      return { tag: "U64", value: value.value };
+  }
+}
+
+function cloneMetadata(metadata: Metadata): Metadata {
+  return metadata.map((entry) => ({
+    key: entry.key,
+    value: cloneMetadataValue(entry.value),
+    flags: entry.flags,
+  }));
 }
 
 async function makeSessionConduit(
@@ -212,6 +237,12 @@ class SessionCore {
       this.connections.set(0n, this.rootConnectionValue);
     }
     return this.rootConnectionValue;
+  }
+
+  notifyConnectionsResumed(): void {
+    for (const connection of this.connections.values()) {
+      connection.onSessionResumed();
+    }
   }
 
   start(): void {
@@ -368,6 +399,7 @@ class SessionCore {
       try {
         await this.resumeOnConduit(pending.conduit);
         this.disconnected = false;
+        this.notifyConnectionsResumed();
         pending.result.resolve();
         return true;
       } catch (error) {
@@ -737,29 +769,25 @@ export class ConnectionHandle {
     this.nextRequestId += 2n;
 
     const responsePayload = await new Promise<Uint8Array>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pendingResponses.delete(requestId);
-        reject(new SessionError("timeout waiting for response"));
-      }, request.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-      this.pendingResponses.set(requestId, { resolve, reject, timer });
+      const state: PendingResponse = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          this.clearPendingState(state);
+          reject(new SessionError("timeout waiting for response"));
+        }, request.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+        methodId: request.descriptor.id,
+        payload: payload.slice(),
+        metadata: cloneMetadata(metadata),
+        channels: [...channels],
+        requestIds: new Set(),
+        settled: false,
+      };
 
-      void this.session
-        .sendMessage(
-          messageRequest(
-            requestId,
-            request.descriptor.id,
-            payload,
-            metadata,
-            channels,
-            this.id,
-          ),
-        )
-        .then(() => this.flushOutgoing())
-        .catch((error) => {
-          clearTimeout(timer);
-          this.pendingResponses.delete(requestId);
-          reject(error instanceof Error ? error : new SessionError(String(error)));
-        });
+      this.pendingResponses.set(requestId, state);
+      state.requestIds.add(requestId);
+
+      void this.sendPendingRequest(state, requestId, true);
     });
 
     const decoded = decodeWithSchema(
@@ -783,6 +811,8 @@ export class ConnectionHandle {
         throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
       case "Cancelled":
         throw new RpcError(RpcErrorCode.CANCELLED);
+      case "Indeterminate":
+        throw new RpcError(RpcErrorCode.INDETERMINATE);
       default:
         throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
     }
@@ -830,13 +860,12 @@ export class ConnectionHandle {
   }
 
   resolveResponse(requestId: bigint, payload: Uint8Array): void {
-    const pending = this.pendingResponses.get(requestId);
-    if (!pending) {
+    const state = this.pendingResponses.get(requestId);
+    if (!state || state.settled) {
       return;
     }
-    clearTimeout(pending.timer);
-    this.pendingResponses.delete(requestId);
-    pending.resolve(payload);
+    this.clearPendingState(state);
+    state.resolve(payload);
   }
 
   routeChannelData(channelId: bigint, payload: Uint8Array): void {
@@ -867,11 +896,83 @@ export class ConnectionHandle {
     this.incomingCalls.close();
     this.incomingCancels.close();
     this.channelRegistry.closeAll();
-    for (const [requestId, pending] of this.pendingResponses) {
+    const pendingStates = new Set(this.pendingResponses.values());
+    this.pendingResponses.clear();
+    for (const pending of pendingStates) {
+      if (pending.settled) {
+        continue;
+      }
+      pending.settled = true;
       clearTimeout(pending.timer);
+      pending.requestIds.clear();
       pending.reject(error);
+    }
+  }
+
+  onSessionResumed(): void {
+    if (this.closed || !this.peerSupportsRetry) {
+      return;
+    }
+    const states = new Set(this.pendingResponses.values());
+    for (const state of states) {
+      if (state.settled) {
+        continue;
+      }
+      void this.sendPendingRequest(state);
+    }
+  }
+
+  private clearPendingState(state: PendingResponse): void {
+    if (state.settled) {
+      return;
+    }
+    state.settled = true;
+    clearTimeout(state.timer);
+    for (const requestId of state.requestIds) {
       this.pendingResponses.delete(requestId);
     }
+    state.requestIds.clear();
+  }
+
+  private async sendPendingRequest(
+    state: PendingResponse,
+    requestId = this.allocateRequestId(),
+    rejectOnFailure = false,
+  ): Promise<void> {
+    if (state.settled || this.closed) {
+      return;
+    }
+
+    this.pendingResponses.set(requestId, state);
+    state.requestIds.add(requestId);
+
+    try {
+      await this.session.sendMessage(
+        messageRequest(
+          requestId,
+          state.methodId,
+          state.payload,
+          cloneMetadata(state.metadata),
+          [...state.channels],
+          this.id,
+        ),
+      );
+      await this.flushOutgoing();
+    } catch (error) {
+      state.requestIds.delete(requestId);
+      this.pendingResponses.delete(requestId);
+      if (!rejectOnFailure || state.settled) {
+        return;
+      }
+      this.clearPendingState(state);
+      state.reject(error instanceof Error ? error : new SessionError(String(error)));
+    }
+  }
+
+  private allocateRequestId(): bigint {
+    const requestId = this.nextRequestId;
+    this.nextRequestId += 2n;
+    return requestId;
   }
 
   async flushOutgoing(): Promise<void> {

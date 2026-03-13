@@ -37,6 +37,7 @@ export interface MethodDescriptor {
    *   - UnknownMethod (index 1): no fields
    *   - InvalidPayload (index 2): no fields
    *   - Cancelled (index 3): no fields
+   *   - Indeterminate (index 4): no fields
    */
   result: EnumSchema;
 }

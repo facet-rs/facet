@@ -679,10 +679,13 @@ export const testbed_descriptor: ServiceDescriptor = {
           name: "Err",
           fields: {
             kind: "enum",
-            variants: [{ name: "User", fields: null }, { name: "UnknownMethod", fields: null }, {
-              name: "InvalidPayload",
-              fields: null,
-            }, { name: "Cancelled", fields: null }],
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
           },
         }],
       },
@@ -698,10 +701,13 @@ export const testbed_descriptor: ServiceDescriptor = {
           name: "Err",
           fields: {
             kind: "enum",
-            variants: [{ name: "User", fields: null }, { name: "UnknownMethod", fields: null }, {
-              name: "InvalidPayload",
-              fields: null,
-            }, { name: "Cancelled", fields: null }],
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
           },
         }],
       },
@@ -722,6 +728,7 @@ export const testbed_descriptor: ServiceDescriptor = {
               { name: "UnknownMethod", fields: null },
               { name: "InvalidPayload", fields: null },
               { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
             ],
           },
         }],
@@ -743,6 +750,7 @@ export const testbed_descriptor: ServiceDescriptor = {
               { name: "UnknownMethod", fields: null },
               { name: "InvalidPayload", fields: null },
               { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
             ],
           },
         }],
@@ -759,10 +767,13 @@ export const testbed_descriptor: ServiceDescriptor = {
           name: "Err",
           fields: {
             kind: "enum",
-            variants: [{ name: "User", fields: null }, { name: "UnknownMethod", fields: null }, {
-              name: "InvalidPayload",
-              fields: null,
-            }, { name: "Cancelled", fields: null }],
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
           },
         }],
       },
@@ -781,10 +792,13 @@ export const testbed_descriptor: ServiceDescriptor = {
           name: "Err",
           fields: {
             kind: "enum",
-            variants: [{ name: "User", fields: null }, { name: "UnknownMethod", fields: null }, {
-              name: "InvalidPayload",
-              fields: null,
-            }, { name: "Cancelled", fields: null }],
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
           },
         }],
       },
@@ -807,10 +821,13 @@ export const testbed_descriptor: ServiceDescriptor = {
           name: "Err",
           fields: {
             kind: "enum",
-            variants: [{ name: "User", fields: null }, { name: "UnknownMethod", fields: null }, {
-              name: "InvalidPayload",
-              fields: null,
-            }, { name: "Cancelled", fields: null }],
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
           },
         }],
       },
@@ -826,10 +843,13 @@ export const testbed_descriptor: ServiceDescriptor = {
           name: "Err",
           fields: {
             kind: "enum",
-            variants: [{ name: "User", fields: null }, { name: "UnknownMethod", fields: null }, {
-              name: "InvalidPayload",
-              fields: null,
-            }, { name: "Cancelled", fields: null }],
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
           },
         }],
       },
@@ -848,10 +868,13 @@ export const testbed_descriptor: ServiceDescriptor = {
           name: "Err",
           fields: {
             kind: "enum",
-            variants: [{ name: "User", fields: null }, { name: "UnknownMethod", fields: null }, {
-              name: "InvalidPayload",
-              fields: null,
-            }, { name: "Cancelled", fields: null }],
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
           },
         }],
       },
@@ -867,10 +890,13 @@ export const testbed_descriptor: ServiceDescriptor = {
           name: "Err",
           fields: {
             kind: "enum",
-            variants: [{ name: "User", fields: null }, { name: "UnknownMethod", fields: null }, {
-              name: "InvalidPayload",
-              fields: null,
-            }, { name: "Cancelled", fields: null }],
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
           },
         }],
       },
@@ -886,10 +912,13 @@ export const testbed_descriptor: ServiceDescriptor = {
           name: "Err",
           fields: {
             kind: "enum",
-            variants: [{ name: "User", fields: null }, { name: "UnknownMethod", fields: null }, {
-              name: "InvalidPayload",
-              fields: null,
-            }, { name: "Cancelled", fields: null }],
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
           },
         }],
       },
@@ -905,10 +934,13 @@ export const testbed_descriptor: ServiceDescriptor = {
           name: "Err",
           fields: {
             kind: "enum",
-            variants: [{ name: "User", fields: null }, { name: "UnknownMethod", fields: null }, {
-              name: "InvalidPayload",
-              fields: null,
-            }, { name: "Cancelled", fields: null }],
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
           },
         }],
       },
@@ -930,10 +962,13 @@ export const testbed_descriptor: ServiceDescriptor = {
           name: "Err",
           fields: {
             kind: "enum",
-            variants: [{ name: "User", fields: null }, { name: "UnknownMethod", fields: null }, {
-              name: "InvalidPayload",
-              fields: null,
-            }, { name: "Cancelled", fields: null }],
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
           },
         }],
       },
@@ -949,10 +984,13 @@ export const testbed_descriptor: ServiceDescriptor = {
           name: "Err",
           fields: {
             kind: "enum",
-            variants: [{ name: "User", fields: null }, { name: "UnknownMethod", fields: null }, {
-              name: "InvalidPayload",
-              fields: null,
-            }, { name: "Cancelled", fields: null }],
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
           },
         }],
       },
@@ -968,10 +1006,13 @@ export const testbed_descriptor: ServiceDescriptor = {
           name: "Err",
           fields: {
             kind: "enum",
-            variants: [{ name: "User", fields: null }, { name: "UnknownMethod", fields: null }, {
-              name: "InvalidPayload",
-              fields: null,
-            }, { name: "Cancelled", fields: null }],
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
           },
         }],
       },
@@ -987,10 +1028,13 @@ export const testbed_descriptor: ServiceDescriptor = {
           name: "Err",
           fields: {
             kind: "enum",
-            variants: [{ name: "User", fields: null }, { name: "UnknownMethod", fields: null }, {
-              name: "InvalidPayload",
-              fields: null,
-            }, { name: "Cancelled", fields: null }],
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
           },
         }],
       },
