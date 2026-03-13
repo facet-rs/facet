@@ -9,7 +9,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 
-use roam_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, SharedBacking, WriteSlot};
+use roam_types::{
+    Backing, Link, LinkRx, LinkTx, LinkTxPermit, SharedBacking, TransportMode, WriteSlot,
+};
 use shm_primitives::{BipBuf, PeerId};
 use shm_primitives_async::{Doorbell, SignalResult};
 use tracing::{debug, trace, warn};
@@ -380,6 +382,13 @@ impl Link for ShmLink {
                 mmap_attachments: self.mmap_attachments,
             },
         )
+    }
+
+    fn supports_transport_mode(mode: TransportMode) -> bool
+    where
+        Self: Sized,
+    {
+        matches!(mode, TransportMode::Bare)
     }
 }
 

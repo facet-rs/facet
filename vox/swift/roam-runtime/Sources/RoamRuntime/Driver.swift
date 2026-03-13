@@ -1278,11 +1278,13 @@ public func establishShmGuest<D: ServiceDispatcher>(
     transport: ShmGuestTransport,
     dispatcher: D,
     role: Role = .initiator,
+    conduit: TransportConduitKind = .bare,
     acceptConnections: Bool = false,
     keepalive: DriverKeepaliveConfig? = nil
 ) async throws -> (ConnectionHandle, Driver) {
     switch role {
     case .initiator:
+        try await performInitiatorTransportPrologue(transport: transport, conduit: conduit)
         return try await establishInitiator(
             transport: transport,
             dispatcher: dispatcher,
@@ -1291,6 +1293,7 @@ public func establishShmGuest<D: ServiceDispatcher>(
             keepalive: keepalive
         )
     case .acceptor:
+        _ = try await performAcceptorTransportPrologue(transport: transport, supportedConduit: .bare)
         return try await establishAcceptor(
             transport: transport,
             dispatcher: dispatcher,

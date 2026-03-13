@@ -303,9 +303,11 @@ struct ShmHostRuntimeTests {
         }
 
         let hostTask = Task {
+            _ = try await performAcceptorTransportPrologue(transport: host, supportedConduit: .bare)
             try await establishAcceptor(transport: host, dispatcher: ShmHostNoopDispatcher())
         }
         let guestTask = Task {
+            try await performInitiatorTransportPrologue(transport: guest, conduit: .bare)
             try await establishInitiator(transport: guest, dispatcher: ShmHostNoopDispatcher())
         }
 

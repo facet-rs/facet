@@ -10,6 +10,7 @@
 
 mod bare_conduit;
 pub use bare_conduit::*;
+pub use roam_types::TransportMode;
 
 mod into_conduit;
 pub use into_conduit::*;

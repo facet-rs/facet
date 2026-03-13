@@ -192,6 +192,16 @@ private func hostReadMessage(
     from guestToHost: ShmBipBuffer,
     timeoutMs: UInt64 = 1_000
 ) async throws -> MessageV7? {
+    guard let payload = try await hostReadRawPayload(from: guestToHost, timeoutMs: timeoutMs) else {
+        return nil
+    }
+    return try MessageV7.decode(from: Data(payload))
+}
+
+private func hostReadRawPayload(
+    from guestToHost: ShmBipBuffer,
+    timeoutMs: UInt64 = 1_000
+) async throws -> [UInt8]? {
     let start = ContinuousClock.now
     let timeout = Duration.milliseconds(Int64(timeoutMs))
     while ContinuousClock.now - start < timeout {
@@ -201,7 +211,7 @@ private func hostReadMessage(
             switch decoded {
             case .inline(let header, let payload):
                 try guestToHost.release(header.totalLen)
-                return try MessageV7.decode(from: Data(payload))
+                return payload
             case .slotRef(let header, _):
                 try guestToHost.release(header.totalLen)
                 throw ShmHarnessError.unexpectedFrame("host received slot-ref frame in test harness")
@@ -221,7 +231,16 @@ private func hostSendMessage(
     doorbell: ShmDoorbell,
     timeoutMs: UInt64 = 1_000
 ) async throws {
-    let frame = encodeShmInlineFrame(payload: message.encode())
+    try await hostSendRawPayload(message.encode(), to: hostToGuest, doorbell: doorbell, timeoutMs: timeoutMs)
+}
+
+private func hostSendRawPayload(
+    _ payload: [UInt8],
+    to hostToGuest: ShmBipBuffer,
+    doorbell: ShmDoorbell,
+    timeoutMs: UInt64 = 1_000
+) async throws {
+    let frame = encodeShmInlineFrame(payload: payload)
     let frameLen = UInt32(frame.count)
     let start = ContinuousClock.now
     let timeout = Duration.milliseconds(Int64(timeoutMs))
@@ -261,6 +280,19 @@ private func establishShmInitiator(
             role: .initiator
         )
     }
+
+    guard let transportHello = try await hostReadRawPayload(from: guestToHost) else {
+        throw ShmHarnessError.timeout("did not receive transport hello")
+    }
+    let requested = try decodeTransportHello(transportHello)
+    guard requested == .bare else {
+        throw ShmHarnessError.unexpectedFrame("expected bare transport hello")
+    }
+    try await hostSendRawPayload(
+        encodeTransportAccept(.bare),
+        to: hostToGuest,
+        doorbell: hostDoorbell
+    )
 
     guard let hello = try await hostReadMessage(from: guestToHost) else {
         throw ShmHarnessError.timeout("did not receive initiator hello")

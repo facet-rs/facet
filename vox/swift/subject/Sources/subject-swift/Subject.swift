@@ -408,7 +408,8 @@ func runShmClient() async throws {
     let dispatcher = TestbedDispatcherAdapter(handler: handler)
     let (handle, driver) = try await establishShmGuest(
         transport: transport,
-        dispatcher: dispatcher
+        dispatcher: dispatcher,
+        conduit: subjectConduit()
     )
 
     let driverTask = Task {
@@ -449,6 +450,7 @@ func runShmServer() async throws {
         transport: transport,
         dispatcher: dispatcher,
         role: .initiator,
+        conduit: subjectConduit(),
         acceptConnections: acceptConnections
     )
     try await driver.run()
@@ -516,6 +518,10 @@ func runShmHostServer() async throws {
     try prepared.sendBootstrapSuccess(controlFd: clientFd, hubPath: hubPath)
 
     let transport = try prepared.intoTransport()
+    _ = try await performAcceptorTransportPrologue(
+        transport: transport,
+        supportedConduit: .bare
+    )
     let handler = TestbedService()
     let dispatcher = TestbedDispatcherAdapter(handler: handler)
 

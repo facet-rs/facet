@@ -83,6 +83,11 @@ public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
 
     public func send(_ message: MessageV7) async throws {
         let frame = try messageToShmFrame(message)
+        try await sendRawPrologue(frame.payload)
+    }
+
+    public func sendRawPrologue(_ bytes: [UInt8]) async throws {
+        let frame = ShmGuestFrame(payload: bytes)
         do {
             try lock.withLock {
                 if closed {
@@ -116,6 +121,13 @@ public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
     }
 
     public func recv() async throws -> MessageV7? {
+        guard let payload = try await recvRawPrologue() else {
+            return nil
+        }
+        return try shmFrameToMessage(ShmGuestFrame(payload: payload))
+    }
+
+    public func recvRawPrologue() async throws -> [UInt8]? {
         while true {
             var frameToDecode: ShmGuestFrame?
             var sawHostGoodbye = false
@@ -149,7 +161,7 @@ public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
                 } catch {
                     throw TransportError.transportIO("doorbell signal failed: \(error)")
                 }
-                return try shmFrameToMessage(frame)
+                return frame.payload
             }
 
             if sawHostGoodbye {
@@ -214,6 +226,8 @@ public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
         }
     }
 }
+
+extension ShmGuestTransport: RawTransportPrologueIO {}
 
 private extension NSLock {
     func withLock<T>(_ body: () throws -> T) rethrows -> T {

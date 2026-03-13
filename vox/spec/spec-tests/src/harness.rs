@@ -9,7 +9,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::os::fd::{AsRawFd, IntoRawFd};
 
 use roam::{Rx, Tx};
-use roam_core::{DriverReplySink, acceptor, acceptor_transport, memory_link_pair};
+use roam_core::{
+    DriverReplySink, TransportMode, acceptor, acceptor_on, acceptor_transport, initiator_on,
+    memory_link_pair,
+};
 use roam_shm::HostHub;
 use roam_shm::ShmLink;
 use roam_shm::bootstrap::{BootstrapStatus, decode_request, encode_request};
@@ -170,6 +173,13 @@ fn subject_transport() -> SubjectTestTransport {
     {
         "shm" => SubjectTestTransport::Shm,
         _ => SubjectTestTransport::Tcp,
+    }
+}
+
+fn requested_transport_mode() -> TransportMode {
+    match std::env::var("SPEC_CONDUIT").ok().as_deref() {
+        Some("stable") => TransportMode::Stable,
+        _ => TransportMode::Bare,
     }
 }
 
@@ -814,7 +824,7 @@ async fn accept_subject_shm_subject_is_guest(cmd: &str) -> Result<(TestbedClient
         eprintln!("[harness] accept_doorbell ok");
     }
     eprintln!("[harness] handshake...");
-    let (client, _sh) = acceptor(link)
+    let (client, _sh) = acceptor_on(link)
         .establish::<TestbedClient>(NoopHandler)
         .await
         .map_err(|e| format!("handshake: {e}"))?;
@@ -1101,7 +1111,7 @@ async fn accept_subject_shm_subject_is_host(cmd: &str) -> Result<(TestbedClient,
             .map_err(|e| format!("guest_link_from_names: {e}"))?
         };
 
-        let (client, _sh) = roam_core::initiator_conduit(link)
+        let (client, _sh) = initiator_on(link, requested_transport_mode())
             .establish::<TestbedClient>(NoopHandler)
             .await
             .map_err(|e| format!("handshake: {e}"))?;

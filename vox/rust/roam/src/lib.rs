@@ -77,6 +77,7 @@ pub use roam_types::{
     ServerMiddleware,
     ServiceDescriptor,
     SinkCall,
+    TransportMode,
     // Channels
     Tx,
     TxError,

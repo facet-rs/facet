@@ -1,7 +1,7 @@
 //! Rust subject binary for the roam compliance suite.
 
 use roam::{Rx, Tx};
-use roam_core::{TransportMode, initiator, initiator_conduit};
+use roam_core::{TransportMode, initiator, initiator_on};
 use roam_shm::bootstrap::{BootstrapStatus, encode_request};
 use roam_shm::segment::Segment;
 use roam_stream::tcp_connector;
@@ -325,7 +325,7 @@ async fn connect_and_serve_shm() -> Result<(), String> {
         .map_err(|e| format!("guest_link_from_names: {e}"))?
     };
 
-    let (root_caller_guard, _sh) = initiator_conduit(link)
+    let (root_caller_guard, _sh) = initiator_on(link, requested_transport_mode())
         .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
         .await
         .map_err(|e| format!("handshake failed: {e}"))?;

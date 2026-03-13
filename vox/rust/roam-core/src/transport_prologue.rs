@@ -1,4 +1,4 @@
-use roam_types::{Link, LinkRx, LinkTx, LinkTxPermit, SplitLink, WriteSlot};
+use roam_types::{Link, LinkRx, LinkTx, LinkTxPermit, SplitLink, TransportMode, WriteSlot};
 use zerocopy::FromBytes;
 use zerocopy::little_endian::U32 as LeU32;
 
@@ -8,28 +8,20 @@ const TRANSPORT_REJECT_MAGIC: u32 = u32::from_le_bytes(*b"ROTR");
 const TRANSPORT_VERSION: u8 = 9;
 const REJECT_UNSUPPORTED_MODE: u8 = 1;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransportMode {
-    Bare,
-    Stable,
+fn transport_mode_as_u8(mode: TransportMode) -> u8 {
+    match mode {
+        TransportMode::Bare => 0,
+        TransportMode::Stable => 1,
+    }
 }
 
-impl TransportMode {
-    fn as_u8(self) -> u8 {
-        match self {
-            Self::Bare => 0,
-            Self::Stable => 1,
-        }
-    }
-
-    fn from_u8(value: u8) -> Result<Self, TransportPrologueError> {
-        match value {
-            0 => Ok(Self::Bare),
-            1 => Ok(Self::Stable),
-            _ => Err(TransportPrologueError::Protocol(format!(
-                "unknown conduit mode {value}"
-            ))),
-        }
+fn transport_mode_from_u8(value: u8) -> Result<TransportMode, TransportPrologueError> {
+    match value {
+        0 => Ok(TransportMode::Bare),
+        1 => Ok(TransportMode::Stable),
+        _ => Err(TransportPrologueError::Protocol(format!(
+            "unknown conduit mode {value}"
+        ))),
     }
 }
 
@@ -119,29 +111,42 @@ pub async fn initiate_transport<L: Link>(
     link: L,
     requested_mode: TransportMode,
 ) -> Result<SplitLink<L::Tx, L::Rx>, TransportPrologueError> {
+    if !L::supports_transport_mode(requested_mode) {
+        return Err(TransportPrologueError::Rejected(
+            TransportRejectReason::UnsupportedMode,
+        ));
+    }
+
     let (tx, mut rx) = link.split();
     let hello = TransportHello {
         magic: LeU32::new(TRANSPORT_HELLO_MAGIC),
         version: TRANSPORT_VERSION,
-        requested_mode: requested_mode.as_u8(),
+        requested_mode: transport_mode_as_u8(requested_mode),
         reserved: [0; 2],
     };
     send_message(&tx, &hello).await?;
 
     let raw = recv_bytes(&mut rx).await?;
-    if let Ok(accept) = TransportAccept::read_from_bytes(raw.as_bytes()) {
-        if accept.magic.get() != TRANSPORT_ACCEPT_MAGIC {
-            return Err(TransportPrologueError::Protocol(
-                "transport accept magic mismatch".into(),
-            ));
-        }
+    let bytes = raw.as_bytes();
+    let magic = bytes
+        .get(..4)
+        .and_then(|prefix| prefix.try_into().ok())
+        .map(u32::from_le_bytes)
+        .ok_or_else(|| {
+            TransportPrologueError::Protocol("transport prologue message size mismatch".into())
+        })?;
+
+    if magic == TRANSPORT_ACCEPT_MAGIC {
+        let accept = TransportAccept::read_from_bytes(bytes).map_err(|_| {
+            TransportPrologueError::Protocol("transport prologue message size mismatch".into())
+        })?;
         if accept.version != TRANSPORT_VERSION {
             return Err(TransportPrologueError::Protocol(format!(
                 "unsupported transport version {}",
                 accept.version
             )));
         }
-        let selected_mode = TransportMode::from_u8(accept.selected_mode)?;
+        let selected_mode = transport_mode_from_u8(accept.selected_mode)?;
         if selected_mode != requested_mode {
             return Err(TransportPrologueError::Protocol(format!(
                 "transport selected {selected_mode:?}, requested {requested_mode:?}"
@@ -150,12 +155,10 @@ pub async fn initiate_transport<L: Link>(
         return Ok(SplitLink { tx, rx });
     }
 
-    if let Ok(reject) = TransportReject::read_from_bytes(raw.as_bytes()) {
-        if reject.magic.get() != TRANSPORT_REJECT_MAGIC {
-            return Err(TransportPrologueError::Protocol(
-                "transport reject magic mismatch".into(),
-            ));
-        }
+    if magic == TRANSPORT_REJECT_MAGIC {
+        let reject = TransportReject::read_from_bytes(bytes).map_err(|_| {
+            TransportPrologueError::Protocol("transport prologue message size mismatch".into())
+        })?;
         if reject.version != TRANSPORT_VERSION {
             return Err(TransportPrologueError::Protocol(format!(
                 "unsupported transport version {}",
@@ -194,19 +197,22 @@ pub async fn accept_transport<L: Link>(
             hello.version
         )));
     }
-    let requested_mode = TransportMode::from_u8(hello.requested_mode)?;
-    match requested_mode {
-        TransportMode::Bare | TransportMode::Stable => {
-            let accept = TransportAccept {
-                magic: LeU32::new(TRANSPORT_ACCEPT_MAGIC),
-                version: TRANSPORT_VERSION,
-                selected_mode: requested_mode.as_u8(),
-                reserved: [0; 2],
-            };
-            send_message(&tx, &accept).await?;
-            Ok((requested_mode, SplitLink { tx, rx }))
-        }
+    let requested_mode = transport_mode_from_u8(hello.requested_mode)?;
+    if !L::supports_transport_mode(requested_mode) {
+        reject_transport(&tx, TransportRejectReason::UnsupportedMode).await?;
+        return Err(TransportPrologueError::Rejected(
+            TransportRejectReason::UnsupportedMode,
+        ));
     }
+
+    let accept = TransportAccept {
+        magic: LeU32::new(TRANSPORT_ACCEPT_MAGIC),
+        version: TRANSPORT_VERSION,
+        selected_mode: transport_mode_as_u8(requested_mode),
+        reserved: [0; 2],
+    };
+    send_message(&tx, &accept).await?;
+    Ok((requested_mode, SplitLink { tx, rx }))
 }
 
 pub async fn reject_transport<L: LinkTx>(

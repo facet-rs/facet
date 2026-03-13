@@ -782,6 +782,11 @@ public final class ShmHostTransport: MessageTransport, @unchecked Sendable {
 
     public func send(_ message: MessageV7) async throws {
         let frame = try messageToShmFrame(message)
+        try await sendRawPrologue(frame.payload)
+    }
+
+    public func sendRawPrologue(_ bytes: [UInt8]) async throws {
+        let frame = ShmGuestFrame(payload: bytes)
         do {
             try withHostLock(lock) {
                 if closed {
@@ -817,6 +822,13 @@ public final class ShmHostTransport: MessageTransport, @unchecked Sendable {
     }
 
     public func recv() async throws -> MessageV7? {
+        guard let payload = try await recvRawPrologue() else {
+            return nil
+        }
+        return try shmFrameToMessage(ShmGuestFrame(payload: payload))
+    }
+
+    public func recvRawPrologue() async throws -> [UInt8]? {
         while true {
             var frameToDecode: ShmGuestFrame?
             var sawGoodbye = false
@@ -853,7 +865,7 @@ public final class ShmHostTransport: MessageTransport, @unchecked Sendable {
                 } catch {
                     throw TransportError.transportIO("doorbell signal failed: \(error)")
                 }
-                return try shmFrameToMessage(frame)
+                return frame.payload
             }
 
             if sawGoodbye {
@@ -898,6 +910,8 @@ public final class ShmHostTransport: MessageTransport, @unchecked Sendable {
         }
     }
 }
+
+extension ShmHostTransport: RawTransportPrologueIO {}
 
 @inline(__always)
 private func makeStreamSocketPair() throws -> [Int32] {
@@ -1131,9 +1145,17 @@ public final class ShmHostTransport: MessageTransport, @unchecked Sendable {
     public func recv() async throws -> MessageV7? {
         throw TransportError.transportIO("unsupported platform")
     }
+    public func sendRawPrologue(_ bytes: [UInt8]) async throws {
+        _ = bytes
+        throw TransportError.transportIO("unsupported platform")
+    }
+    public func recvRawPrologue() async throws -> [UInt8]? {
+        throw TransportError.transportIO("unsupported platform")
+    }
     public func setMaxFrameSize(_ size: Int) async throws {
         _ = size
     }
     public func close() async throws {}
 }
+extension ShmHostTransport: RawTransportPrologueIO {}
 #endif

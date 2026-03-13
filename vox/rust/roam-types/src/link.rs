@@ -4,6 +4,13 @@ use std::future::Future;
 
 use crate::Backing;
 
+/// Requested conduit mode for the transport prologue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportMode {
+    Bare,
+    Stable,
+}
+
 /// Marker trait that requires [`Send`] on native targets, nothing on wasm32.
 #[cfg(not(target_arch = "wasm32"))]
 pub trait MaybeSend: Send {}
@@ -40,6 +47,19 @@ pub trait Link {
 
     // r[impl link.split]
     fn split(self) -> (Self::Tx, Self::Rx);
+
+    /// Whether this link supports the requested transport mode.
+    ///
+    /// Most links support both `bare` and `stable`. Special transports may
+    /// override this to reject unsupported modes during the v9 transport
+    /// prologue.
+    fn supports_transport_mode(mode: TransportMode) -> bool
+    where
+        Self: Sized,
+    {
+        let _ = mode;
+        true
+    }
 }
 
 /// A permit for allocating exactly one outbound payload.
