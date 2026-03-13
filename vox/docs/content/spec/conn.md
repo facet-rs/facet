@@ -213,6 +213,17 @@ documentation for more information.
 > any number of connections, on which calls (requests) can be made, and data can be
 > exchanged over channels.
 
+> r[session.outlives-conduit]
+>
+> A session is not owned by any one conduit attachment. A session MAY survive
+> conduit failure and continue on a replacement conduit.
+
+> r[session.resumption.runtime-managed]
+>
+> Session resumption is managed by the runtime. It MUST NOT require
+> application-level handlers, callers, or peer-specific user code to
+> collaborate in the resume protocol.
+
 > r[session.peer]
 >
 > When talking about peers, the local peer is simply called "peer" and the remote
@@ -272,6 +283,12 @@ documentation for more information.
 >
 > The counterpart MUST assert that the version is set to 7, adopt the opposite
 > parity, and send back a `HelloYourself` message.
+
+> r[session.handshake.resume]
+>
+> After initial establishment, the runtime MAY bind a replacement conduit onto
+> the same session. Resumption preserves the session's connection namespace and
+> any operation records attached to that session.
 
 > r[session.parity]
 >

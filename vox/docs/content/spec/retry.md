@@ -9,6 +9,15 @@ client does not know whether the server received, started, completed, or lost
 an operation. It sits above transport/session continuity and below application
 logic.
 
+This layer assumes the runtime stack `Link -> Conduit -> Session -> Connection`.
+Conduit continuity and session continuity are separate concerns:
+
+- A **conduit** may hide some link replacement internally.
+- A **session** may survive conduit failure and later continue on a replacement
+  conduit.
+- Retry decisions are evaluated against the session's operation table, not
+  against an individual conduit attachment.
+
 # The fundamental ambiguity
 
 After any communication failure, the client faces irreducible uncertainty.
@@ -41,6 +50,12 @@ Any retry model must handle all five as possible realities behind a single
 >
 > Operation IDs are scoped to a session. When a session ends cleanly, operation
 > records for that session may be evicted.
+
+> r[retry.op-id.scope.resume]
+>
+> If a session resumes on a replacement conduit, the operation ID scope does
+> not change. The same operation table continues to govern retries for that
+> session.
 
 > r[retry.op-id.payload-binding]
 >
@@ -79,6 +94,11 @@ The server maintains a record mapping operation IDs to states:
 >
 > **Live.** The operation has been admitted and is not yet terminal. There
 > MUST be at most one live execution owner for any operation ID.
+
+> r[retry.state.live.session-owned]
+>
+> Live state belongs to the session operation table, not to any one conduit
+> attachment. Conduit replacement alone MUST NOT discard Live state.
 
 > r[retry.state.released]
 >
@@ -120,6 +140,24 @@ invocation.
 > A method declared `persist` is non-volatile. Once admitted, the runtime MUST
 > NOT release it merely because the caller dropped interest, disconnected, or
 > sent a cancellation request.
+
+> r[retry.policy.persist.admission]
+>
+> Admitting a `persist` operation creates a durability obligation. From
+> admission onward, the runtime and method implementation MUST preserve enough
+> durable state to distinguish Sealed from Indeterminate after crash recovery.
+
+> r[retry.policy.persist.seal]
+>
+> A `persist` operation MUST NOT be reported as Sealed unless the sealed outcome
+> has been durably recorded in a form that can be recovered after process
+> restart.
+
+> r[retry.policy.persist.crash]
+>
+> After admitting a `persist` operation, an implementation MUST NOT later treat
+> that operation ID as Absent unless it can prove that neither the admission nor
+> any externally visible effect survived the crash.
 
 ## Idem vs non-idem
 
@@ -179,8 +217,8 @@ The two dimensions produce four static method classes:
 > r[retry.duplicate.released.non-idem]
 >
 > If the operation is Released and the method is not `idem`, the runtime MUST
-> fail closed. It MUST NOT silently turn the same operation ID into a fresh
-> re-execution.
+> fail closed with `Indeterminate`. It MUST NOT silently turn the same
+> operation ID into a fresh re-execution.
 
 > r[retry.duplicate.indeterminate.idem]
 >
@@ -190,7 +228,8 @@ The two dimensions produce four static method classes:
 > r[retry.duplicate.indeterminate.non-idem]
 >
 > If the operation is Indeterminate and the method is not `idem`, the runtime
-> MUST fail closed unless it can recover a sealed outcome from durable state.
+> MUST either recover a sealed outcome from durable state or fail closed with
+> `Indeterminate`.
 
 # Sealed outcomes
 
@@ -210,6 +249,11 @@ Returning from the handler seals the operation.
 >
 > Sealed is absorbing. Once an operation is Sealed, later cancel, drop, or
 > retry attempts MUST NOT unseal it.
+
+> r[retry.seal.persist.recoverable]
+>
+> For a `persist` operation, the sealed outcome record MUST outlive any crash
+> point after which the method's externally visible effects might survive.
 
 # Cancellation and dropped interest
 
@@ -240,6 +284,34 @@ Cancellation is an event in the retry state machine, not rollback magic.
 > Cancellation races with sealing. Whichever state transition wins first
 > determines the result observed by later retries.
 
+# Caller-visible runtime outcomes
+
+> r[retry.outcome.sealed-vs-runtime]
+>
+> A sealed application failure is part of the logical operation's terminal
+> outcome. It MUST be replayed as that same sealed failure, not reclassified as
+> a transport or recovery error.
+
+> r[retry.outcome.indeterminate]
+>
+> `Indeterminate` is a first-class runtime outcome. It means the runtime
+> refused to guess because the logical operation could not be safely continued,
+> replayed, or re-executed under the method's retry policy.
+
+> r[retry.outcome.indeterminate.distinct]
+>
+> `Indeterminate` MUST be distinguishable from:
+>
+> - a sealed application failure
+> - a transport failure before recovery
+> - cancellation
+
+> r[retry.outcome.indeterminate.recovery]
+>
+> When session recovery completes but an in-flight operation cannot safely
+> continue under the operation table and method policy, the caller MUST observe
+> `Indeterminate`.
+
 # Session resumption and retry
 
 Transport/session continuity can hide some failures, but it does not define
@@ -252,9 +324,31 @@ logical operation semantics.
 
 > r[retry.reconnect.session-resume]
 >
-> Session resumption keeps operation identity alive across a conduit break. When
-> a resumed session cannot prove the outcome of an in-flight operation, retry is
-> expressed by sending the same operation ID again.
+> Session resumption keeps operation identity alive across a conduit break. A
+> session outlives any individual conduit attachment.
+
+> r[retry.reconnect.session-resume.runtime]
+>
+> Session resumption is runtime-managed. It MUST NOT require application-level
+> peer collaboration.
+
+> r[retry.reconnect.session-resume.evaluate]
+>
+> After session resumption, the runtime MUST evaluate every still-in-flight
+> operation against the session's operation table before making any retry
+> decision.
+
+> r[retry.reconnect.session-resume.live]
+>
+> If the operation is still Live after session resumption, later duplicates of
+> that operation ID MUST attach to the live operation rather than starting a
+> second execution owner.
+
+> r[retry.reconnect.session-resume.terminate]
+>
+> If an in-flight operation cannot safely continue after session resumption, the
+> runtime MUST terminate it with the caller-visible outcome required by the
+> operation state machine and method retry policy.
 
 > r[retry.layers.no-silent-retry]
 >
@@ -272,6 +366,12 @@ logical operation semantics.
 > r[retry.gc.live-protected]
 >
 > A Live operation MUST NOT be evicted.
+
+> r[retry.gc.persist-durable]
+>
+> Evicting a `persist` operation record is only valid after the runtime can no
+> longer be required to distinguish Sealed from Absent for that session's retry
+> window.
 
 > r[retry.gc.fail-closed]
 >

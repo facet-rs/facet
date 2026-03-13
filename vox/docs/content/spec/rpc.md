@@ -250,6 +250,8 @@ identity described in [Retry](./retry/).
 >   * `UnknownMethod` — no handler recognized the method ID
 >   * `InvalidPayload` — the arguments could not be deserialized
 >   * `Cancelled` — the call was cancelled before completion
+>   * `Indeterminate` — recovery completed, but the runtime could not safely
+>     continue, replay, or re-execute the logical operation
 
 > r[rpc.error.scope]
 >

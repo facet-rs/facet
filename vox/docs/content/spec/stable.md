@@ -19,7 +19,7 @@ replayed as the same logical operation. See [Retry](./retry/).
 >
 > A StableConduit is constructed with a LinkSource — an async provider
 > of fresh links. When the current link fails, the StableConduit obtains
-> a new link from the source and attempts to resume the session.
+> a new link from the source and attempts to resume conduit continuity.
 
 # Handshake
 
@@ -147,5 +147,6 @@ replayed as the same logical operation. See [Retry](./retry/).
 > the layers above.
 
 What happens after that session loss is governed by [Retry](./retry/): stable
-reconnection stops at conduit continuity, while operation-level retry and
-session resumption are defined separately there.
+reconnection stops at conduit continuity, while session continuity,
+operation-level retry, and caller-visible failure outcomes are defined
+separately there.

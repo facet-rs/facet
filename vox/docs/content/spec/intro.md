@@ -85,3 +85,11 @@ shared memory; but a roam connection sits several layers above a "TCP connection
 | Link                   |  TCP, SHM, WebSocket, etc.
 +------------------------+
 ```
+
+The layers have distinct continuity boundaries:
+
+- A **Link** is one concrete transport attachment.
+- A **Conduit** may hide some link failures and replacement internally.
+- A **Session** is above any one conduit instance and may survive conduit
+  replacement.
+- A **Connection** is scoped to a session, not to an individual conduit.
