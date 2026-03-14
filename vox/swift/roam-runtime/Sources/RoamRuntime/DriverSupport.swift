@@ -110,3 +110,45 @@ func makeDriverAndConnection(
 
     return (Connection(handle: handle), driver)
 }
+
+func makeSessionDriverAndConnection(
+    conduit: any Conduit,
+    dispatcher: any ServiceDispatcher,
+    role: Role,
+    negotiated: Negotiated,
+    peerSupportsRetry: Bool,
+    acceptConnections: Bool,
+    keepalive: DriverKeepaliveConfig? = nil,
+    resumable: Bool,
+    sessionResumeKey: [UInt8]?,
+    localRootSettings: ConnectionSettingsV7,
+    peerRootSettings: ConnectionSettingsV7,
+    recoverConduit: (@Sendable () async throws -> any Conduit)? = nil
+) -> (Connection, Driver, SessionHandle) {
+    let coordinator = SessionResumeCoordinator(
+        role: role,
+        localRootSettings: localRootSettings,
+        peerRootSettings: peerRootSettings,
+        resumable: resumable,
+        sessionResumeKey: sessionResumeKey,
+        recoverConduit: recoverConduit
+    )
+
+    let runtimeConduit: any Conduit
+    if resumable {
+        runtimeConduit = ResumableConduit(conduit: conduit, coordinator: coordinator)
+    } else {
+        runtimeConduit = conduit
+    }
+
+    let (connection, driver) = makeDriverAndConnection(
+        conduit: runtimeConduit,
+        dispatcher: dispatcher,
+        role: role,
+        negotiated: negotiated,
+        peerSupportsRetry: peerSupportsRetry,
+        acceptConnections: acceptConnections,
+        keepalive: keepalive
+    )
+    return (connection, driver, SessionHandle(coordinator: coordinator))
+}

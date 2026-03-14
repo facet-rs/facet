@@ -366,7 +366,7 @@ struct ShmGuestClientMain {
             let transport = ShmGuestTransport(runtime: guest)
             let driver: Driver
             do {
-                (_, driver) = try await establishShmGuest(
+                (_, driver, _, _) = try await establishShmGuest(
                     transport: transport,
                     dispatcher: dispatcher,
                     role: .acceptor,

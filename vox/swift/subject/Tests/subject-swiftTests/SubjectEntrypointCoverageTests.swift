@@ -557,7 +557,7 @@ struct SubjectEntrypointCoverageTests {
         let serverTask = Task {
             let link = await harness.waitForTransport()
             let dispatcher = TestbedDispatcherAdapter(handler: TestbedService())
-            let (_, driver) = try await establishAcceptor(
+            let (_, driver, _, _) = try await establishAcceptor(
                 conduit: BareConduit(link: link),
                 dispatcher: dispatcher
             )
@@ -786,7 +786,7 @@ struct SubjectEntrypointCoverageTests {
 
             guestTransport = try ShmGuestTransport.attach(ticket: try #require(ticket))
             let attachedTransport = try #require(guestTransport)
-            let (handle, driver) = try await withTimeout(milliseconds: 2_000) {
+            let (handle, driver, _, _) = try await withTimeout(milliseconds: 2_000) {
                 try await establishShmGuest(
                     transport: attachedTransport,
                     dispatcher: NoopDispatcher(),

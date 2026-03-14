@@ -311,7 +311,7 @@ private func establishShmInitiator(
         doorbell: hostDoorbell
     )
 
-    let (handle, driver) = try await establishTask.value
+    let (handle, driver, _, _) = try await establishTask.value
     return (transport, handle, driver)
 }
 
