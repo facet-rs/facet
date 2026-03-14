@@ -503,6 +503,7 @@ struct ShmGuestClientMain {
 
         case "message-v7":
             let transport = ShmGuestTransport(runtime: guest)
+            let conduit = transport.bareConduit()
 
             let metadata: MetadataV7 = [
                 MetadataEntryV7(key: "trace-id", value: .string("swift-trace"), flags: 0),
@@ -510,7 +511,7 @@ struct ShmGuestClientMain {
             ]
 
             do {
-                try await transport.send(
+                try await conduit.send(
                     .request(
                         connId: 2,
                         requestId: 11,
@@ -519,13 +520,13 @@ struct ShmGuestClientMain {
                         channels: [3, 5],
                         payload: Array("swift-request".utf8)
                     ))
-                try await transport.send(
+                try await conduit.send(
                     .close(
                         connId: 2,
                         channelId: 3,
                         metadata: [MetadataEntryV7(key: "reason", value: .string("swift-close"), flags: 0)]
                     ))
-                try await transport.send(.protocolError(description: "swift protocol violation"))
+                try await conduit.send(.protocolError(description: "swift protocol violation"))
             } catch {
                 fail("transport send failed: \(error)")
             }
@@ -536,7 +537,7 @@ struct ShmGuestClientMain {
 
             while Date() < deadline {
                 do {
-                    guard let msg = try await transport.recv() else {
+                    guard let msg = try await conduit.recv() else {
                         continue
                     }
                     switch msg.payload {
@@ -559,7 +560,7 @@ struct ShmGuestClientMain {
                         break
                     }
                     if sawResponse && sawCredit {
-                        try await transport.close()
+                        try await conduit.close()
                         guest.detach()
                         print("ok")
                         exit(0)
@@ -577,6 +578,7 @@ struct ShmGuestClientMain {
             }
 
             let transport = ShmGuestTransport(runtime: guest)
+            let conduit = transport.bareConduit()
             var handled = 0
             let deadline = Date().addingTimeInterval(30)
 
@@ -585,7 +587,7 @@ struct ShmGuestClientMain {
                     fail("timed out waiting for rpc-bench-echo requests")
                 }
                 do {
-                    guard let msg = try await transport.recv() else {
+                    guard let msg = try await conduit.recv() else {
                         continue
                     }
                     guard case .requestMessage(let request) = msg.payload else {
@@ -601,14 +603,14 @@ struct ShmGuestClientMain {
                         channels: [],
                         payload: call.args.bytes
                     )
-                    try await transport.send(response)
+                    try await conduit.send(response)
                     handled += 1
                 } catch {
                     fail("rpc-bench-echo failed: \(error)")
                 }
             }
 
-            try? await transport.close()
+            try? await conduit.close()
             print("ok")
             exit(0)
 

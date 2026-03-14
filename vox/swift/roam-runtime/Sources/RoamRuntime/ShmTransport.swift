@@ -40,7 +40,7 @@ func shmFrameToMessage(_ frame: ShmGuestFrame) throws -> MessageV7 {
 }
 
 // r[impl transport.shm]
-public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
+public final class ShmGuestTransport: Link, @unchecked Sendable {
     public let negotiated: Negotiated
 
     private let lock = NSLock()
@@ -81,9 +81,8 @@ public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
         ShmGuestTransport(runtime: try ShmGuestRuntime.attach(path: path))
     }
 
-    public func send(_ message: MessageV7) async throws {
-        let frame = try messageToShmFrame(message)
-        try await sendRawPrologue(frame.payload)
+    public func sendFrame(_ bytes: [UInt8]) async throws {
+        try await sendRawPrologue(bytes)
     }
 
     public func sendRawPrologue(_ bytes: [UInt8]) async throws {
@@ -120,11 +119,8 @@ public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
         }
     }
 
-    public func recv() async throws -> MessageV7? {
-        guard let payload = try await recvRawPrologue() else {
-            return nil
-        }
-        return try shmFrameToMessage(ShmGuestFrame(payload: payload))
+    public func recvFrame() async throws -> [UInt8]? {
+        try await recvRawPrologue()
     }
 
     public func recvRawPrologue() async throws -> [UInt8]? {
@@ -226,8 +222,6 @@ public final class ShmGuestTransport: MessageTransport, @unchecked Sendable {
         }
     }
 }
-
-extension ShmGuestTransport: RawTransportPrologueIO {}
 
 private extension NSLock {
     func withLock<T>(_ body: () throws -> T) rethrows -> T {

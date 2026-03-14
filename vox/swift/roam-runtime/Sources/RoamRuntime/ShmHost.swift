@@ -762,7 +762,7 @@ public final class ShmHostRuntime: @unchecked Sendable {
 }
 
 // r[impl transport.shm]
-public final class ShmHostTransport: MessageTransport, @unchecked Sendable {
+public final class ShmHostTransport: Link, @unchecked Sendable {
     public let negotiated: Negotiated
 
     private let lock = NSLock()
@@ -780,9 +780,8 @@ public final class ShmHostTransport: MessageTransport, @unchecked Sendable {
         )
     }
 
-    public func send(_ message: MessageV7) async throws {
-        let frame = try messageToShmFrame(message)
-        try await sendRawPrologue(frame.payload)
+    public func sendFrame(_ bytes: [UInt8]) async throws {
+        try await sendRawPrologue(bytes)
     }
 
     public func sendRawPrologue(_ bytes: [UInt8]) async throws {
@@ -821,11 +820,8 @@ public final class ShmHostTransport: MessageTransport, @unchecked Sendable {
         }
     }
 
-    public func recv() async throws -> MessageV7? {
-        guard let payload = try await recvRawPrologue() else {
-            return nil
-        }
-        return try shmFrameToMessage(ShmGuestFrame(payload: payload))
+    public func recvFrame() async throws -> [UInt8]? {
+        try await recvRawPrologue()
     }
 
     public func recvRawPrologue() async throws -> [UInt8]? {
@@ -910,8 +906,6 @@ public final class ShmHostTransport: MessageTransport, @unchecked Sendable {
         }
     }
 }
-
-extension ShmHostTransport: RawTransportPrologueIO {}
 
 @inline(__always)
 private func makeStreamSocketPair() throws -> [Int32] {
@@ -1133,16 +1127,16 @@ public final class ShmHostRuntime: @unchecked Sendable {
     }
 }
 
-public final class ShmHostTransport: MessageTransport, @unchecked Sendable {
+public final class ShmHostTransport: Link, @unchecked Sendable {
     public let negotiated = Negotiated(maxPayloadSize: 0, initialCredit: 0, maxConcurrentRequests: 0)
     public init(runtime: ShmHostRuntime) {
         _ = runtime
     }
-    public func send(_ message: MessageV7) async throws {
-        _ = message
+    public func sendFrame(_ bytes: [UInt8]) async throws {
+        _ = bytes
         throw TransportError.transportIO("unsupported platform")
     }
-    public func recv() async throws -> MessageV7? {
+    public func recvFrame() async throws -> [UInt8]? {
         throw TransportError.transportIO("unsupported platform")
     }
     public func sendRawPrologue(_ bytes: [UInt8]) async throws {
@@ -1157,5 +1151,4 @@ public final class ShmHostTransport: MessageTransport, @unchecked Sendable {
     }
     public func close() async throws {}
 }
-extension ShmHostTransport: RawTransportPrologueIO {}
 #endif

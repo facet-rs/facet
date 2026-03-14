@@ -55,6 +55,38 @@ private func collectValues<T: Sendable>(from rx: UnboundRx<T>) async throws -> [
     return values
 }
 
+private final class OrderedMessagePump<Message: Sendable>: @unchecked Sendable {
+    private let continuation: AsyncStream<Message>.Continuation
+    private let worker: Task<Void, Never>
+
+    init(handler: @escaping @Sendable (Message) async -> Void) {
+        var captured: AsyncStream<Message>.Continuation?
+        let stream = AsyncStream<Message> { continuation in
+            captured = continuation
+        }
+        self.continuation = captured!
+        self.worker = Task {
+            for await message in stream {
+                await handler(message)
+            }
+        }
+    }
+
+    func send(_ message: Message) {
+        continuation.yield(message)
+    }
+
+    deinit {
+        continuation.finish()
+        worker.cancel()
+    }
+}
+
+private struct ServerEnvelope: Sendable {
+    let message: TaskMessage
+    let inbox: TaskResponseInbox
+}
+
 private final class LoopbackConnection: RoamConnection, @unchecked Sendable {
     let channelAllocator = ChannelIdAllocator(role: .initiator)
     let incomingChannelRegistry = ChannelRegistry()
@@ -64,6 +96,16 @@ private final class LoopbackConnection: RoamConnection, @unchecked Sendable {
     private let lock = NSLock()
     private var nextRequestId: UInt64 = 1
 
+    private lazy var clientPump = OrderedMessagePump<TaskMessage> { [weak self] message in
+        guard let self else { return }
+        await self.routeClientTaskMessage(message)
+    }
+
+    private lazy var serverPump = OrderedMessagePump<ServerEnvelope> { [weak self] envelope in
+        guard let self else { return }
+        await self.routeServerTaskMessage(envelope.message, inbox: envelope.inbox)
+    }
+
     init(handler: TestbedHandler = TestbedService()) {
         self.adapter = TestbedDispatcherAdapter(handler: handler)
     }
@@ -71,7 +113,7 @@ private final class LoopbackConnection: RoamConnection, @unchecked Sendable {
     var taskSender: TaskSender {
         { [weak self] message in
             guard let self else { return }
-            Task { await self.routeClientTaskMessage(message) }
+            self.clientPump.send(message)
         }
     }
 
@@ -105,7 +147,7 @@ private final class LoopbackConnection: RoamConnection, @unchecked Sendable {
             registry: serverRegistry,
             taskTx: { [weak self] message in
                 guard let self else { return }
-                Task { await self.routeServerTaskMessage(message, inbox: inbox) }
+                self.serverPump.send(ServerEnvelope(message: message, inbox: inbox))
             }
         )
 

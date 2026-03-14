@@ -210,9 +210,8 @@ func runServer() async throws {
     }
     let host = String(parts[0])
 
-    // Use roam-runtime's connect function
-    let transport = try await connect(host: host, port: port, conduit: subjectConduit())
-    log("connected")
+    let connector = TcpConnector(host: host, port: port, transport: subjectConduit())
+    log("connecting via \(connector.transport)")
 
     // r[impl core.conn.accept-required] - Check if we should accept incoming virtual connections.
     let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"]
@@ -222,8 +221,8 @@ func runServer() async throws {
     let handler = TestbedService()
     let dispatcher = TestbedDispatcherAdapter(handler: handler)
 
-    let (_, driver) = try await establishInitiator(
-        transport: transport,
+    let session = try await Session.initiator(
+        connector,
         dispatcher: dispatcher,
         acceptConnections: acceptConnections
     )
@@ -231,7 +230,7 @@ func runServer() async throws {
     log("handshake complete, running driver")
 
     // Run driver
-    try await driver.run()
+    try await session.run()
 
     log("driver finished")
 }
@@ -362,15 +361,14 @@ func runClient() async throws {
     }
     let host = String(parts[0])
 
-    // Use roam-runtime's connect function
-    let transport = try await connect(host: host, port: port, conduit: subjectConduit())
-    log("connected")
+    let connector = TcpConnector(host: host, port: port, transport: subjectConduit())
+    log("connecting via \(connector.transport)")
 
     let handler = TestbedService()
     let dispatcher = TestbedDispatcherAdapter(handler: handler)
 
-    let (handle, driver) = try await establishInitiator(
-        transport: transport,
+    let session = try await Session.initiator(
+        connector,
         dispatcher: dispatcher
     )
 
@@ -379,14 +377,14 @@ func runClient() async throws {
     // Spawn driver
     Task {
         do {
-            try await driver.run()
+            try await session.run()
         } catch {
             log("driver error: \(error)")
         }
     }
 
     // Create client
-    let client = TestbedClient(connection: handle)
+    let client = TestbedClient(connection: session.connection)
     let scenario = ProcessInfo.processInfo.environment["CLIENT_SCENARIO"] ?? "echo"
     try await runClientScenario(client: client, scenario: scenario)
 }
@@ -522,11 +520,12 @@ func runShmHostServer() async throws {
         transport: transport,
         supportedConduit: .bare
     )
+    let conduit = BareConduit(link: transport)
     let handler = TestbedService()
     let dispatcher = TestbedDispatcherAdapter(handler: handler)
 
     let (_, driver) = try await establishAcceptor(
-        transport: transport,
+        conduit: conduit,
         dispatcher: dispatcher,
         acceptConnections: acceptConnections
     )

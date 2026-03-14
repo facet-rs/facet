@@ -21,20 +21,22 @@ public struct Server {
             throw ServerError.invalidPeerAddr(peerAddr)
         }
 
-        let conduit: TransportConduitKind =
-            ProcessInfo.processInfo.environment["SPEC_CONDUIT"] == "stable" ? .stable : .bare
-        let transport = try await connect(host: host, port: port, conduit: conduit)
+        let connector = TcpConnector(
+            host: host,
+            port: port,
+            transport: ProcessInfo.processInfo.environment["SPEC_CONDUIT"] == "stable" ? .stable : .bare
+        )
 
         // r[impl core.conn.accept-required] - Check if we should accept incoming virtual connections.
         let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] == "1"
 
-        let (_, driver) = try await establishAcceptor(
-            transport: transport,
+        let session = try await Session.acceptor(
+            connector,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections
         )
 
-        try await driver.run()
+        try await session.run()
     }
 }
 

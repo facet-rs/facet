@@ -149,6 +149,8 @@ struct ShmHostRuntimeTests {
         let ticket = try prepared.makeGuestTicket()
         let host = try prepared.intoTransport()
         let guest = try ShmGuestTransport.attach(ticket: ticket)
+        let guestConduit = guest.bareConduit()
+        let hostConduit = host.bareConduit()
 
         defer {
             close(ticket.doorbellFd)
@@ -164,9 +166,9 @@ struct ShmHostRuntimeTests {
             }
         }
 
-        try await guest.send(.protocolError(description: "guest-inline"))
+        try await guestConduit.send(.protocolError(description: "guest-inline"))
         let hostInline = try await withHostTimeout(milliseconds: 2_000) {
-            try await host.recv()
+            try await hostConduit.recv()
         }
         if let hostInline {
             #expect(protocolErrorDescription(hostInline) == "guest-inline")
@@ -174,9 +176,9 @@ struct ShmHostRuntimeTests {
             Issue.record("expected inline frame from guest")
         }
 
-        try await host.send(.protocolError(description: "host-inline"))
+        try await hostConduit.send(.protocolError(description: "host-inline"))
         let guestInline = try await withHostTimeout(milliseconds: 2_000) {
-            try await guest.recv()
+            try await guestConduit.recv()
         }
         if let guestInline {
             #expect(protocolErrorDescription(guestInline) == "host-inline")
@@ -185,9 +187,9 @@ struct ShmHostRuntimeTests {
         }
 
         let largeGuestText = String(repeating: "g", count: 12_000)
-        try await guest.send(.protocolError(description: largeGuestText))
+        try await guestConduit.send(.protocolError(description: largeGuestText))
         let hostLarge = try await withHostTimeout(milliseconds: 2_000) {
-            try await host.recv()
+            try await hostConduit.recv()
         }
         if let hostLarge {
             #expect(protocolErrorDescription(hostLarge) == largeGuestText)
@@ -196,9 +198,9 @@ struct ShmHostRuntimeTests {
         }
 
         let largeHostText = String(repeating: "h", count: 12_000)
-        try await host.send(.protocolError(description: largeHostText))
+        try await hostConduit.send(.protocolError(description: largeHostText))
         let guestLarge = try await withHostTimeout(milliseconds: 2_000) {
-            try await guest.recv()
+            try await guestConduit.recv()
         }
         if let guestLarge {
             #expect(protocolErrorDescription(guestLarge) == largeHostText)
@@ -304,11 +306,17 @@ struct ShmHostRuntimeTests {
 
         let hostTask = Task {
             _ = try await performAcceptorTransportPrologue(transport: host, supportedConduit: .bare)
-            try await establishAcceptor(transport: host, dispatcher: ShmHostNoopDispatcher())
+            _ = try await establishAcceptor(
+                conduit: BareConduit(link: host),
+                dispatcher: ShmHostNoopDispatcher()
+            )
         }
         let guestTask = Task {
             try await performInitiatorTransportPrologue(transport: guest, conduit: .bare)
-            try await establishInitiator(transport: guest, dispatcher: ShmHostNoopDispatcher())
+            _ = try await establishInitiator(
+                conduit: BareConduit(link: guest),
+                dispatcher: ShmHostNoopDispatcher()
+            )
         }
 
         _ = try await withHostTimeout(milliseconds: 2_000) { try await hostTask.value }

@@ -138,6 +138,13 @@ private struct HelloHarness {
             }
             defer { close(connFd) }
 
+            let transportHello = try readRawFrame(connFd)
+            guard let transportHello else {
+                return nil
+            }
+            let requested = try decodeTransportHello(transportHello)
+            try writeRawFrame(connFd, bytes: encodeTransportAccept(requested))
+
             let hello = MessageV7.hello(
                 HelloV7(
                     version: 7,
@@ -183,19 +190,22 @@ private func withTimeout<T: Sendable>(
     }
 }
 
-private func writeFrame(_ fd: Int32, message: MessageV7) throws {
-    let payload = message.encode()
+private func writeRawFrame(_ fd: Int32, bytes: [UInt8]) throws {
     var frame: [UInt8] = []
-    frame.reserveCapacity(4 + payload.count)
-    var len = UInt32(payload.count).littleEndian
+    frame.reserveCapacity(4 + bytes.count)
+    var len = UInt32(bytes.count).littleEndian
     withUnsafeBytes(of: &len) { raw in
         frame.append(contentsOf: raw)
     }
-    frame.append(contentsOf: payload)
+    frame.append(contentsOf: bytes)
     try writeAll(fd, bytes: frame)
 }
 
-private func readFrame(_ fd: Int32) throws -> MessageV7? {
+private func writeFrame(_ fd: Int32, message: MessageV7) throws {
+    try writeRawFrame(fd, bytes: message.encode())
+}
+
+private func readRawFrame(_ fd: Int32) throws -> [UInt8]? {
     let header = try readExactly(fd, count: 4)
     if header.isEmpty {
         return nil
@@ -203,7 +213,13 @@ private func readFrame(_ fd: Int32) throws -> MessageV7? {
     let frameLen = header.withUnsafeBytes { raw in
         UInt32(littleEndian: raw.load(as: UInt32.self))
     }
-    let payload = try readExactly(fd, count: Int(frameLen))
+    return try readExactly(fd, count: Int(frameLen))
+}
+
+private func readFrame(_ fd: Int32) throws -> MessageV7? {
+    guard let payload = try readRawFrame(fd) else {
+        return nil
+    }
     return try MessageV7.decode(from: Data(payload))
 }
 

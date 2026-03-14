@@ -20,7 +20,7 @@ private enum InboundEvent: Sendable {
     case closed
 }
 
-private actor ScriptedTransport: MessageTransport {
+private actor ScriptedTransport: Conduit {
     private var sentMessages: [MessageV7] = []
     private var inboundQueue: [InboundEvent] = []
     private var recvWaiters: [CheckedContinuation<InboundEvent, Never>] = []
@@ -337,7 +337,7 @@ struct ConnectionFailureTests {
     @Test func initiatorHelloCarriesConnectionCorrelationMetadata() async throws {
         let transport = ScriptedTransport()
         _ = try await establishInitiator(
-            transport: transport,
+            conduit: transport,
             dispatcher: NoopDispatcher()
         )
 
@@ -366,7 +366,7 @@ struct ConnectionFailureTests {
                     metadata: []
                 )))
         let (_, driver) = try await establishAcceptor(
-            transport: transport,
+            conduit: transport,
             dispatcher: ImmediateResponseDispatcher()
         )
         let driverTask: Task<Void, Error> = Task {
@@ -436,7 +436,7 @@ struct ConnectionFailureTests {
     @Test func immediateResponseAfterSendStillCompletesCall() async throws {
         let transport = ScriptedTransport(autoRespondRequestCount: 1)
         let (handle, driver) = try await establishInitiator(
-            transport: transport,
+            conduit: transport,
             dispatcher: NoopDispatcher()
         )
         let driverTask = Task {
@@ -456,7 +456,7 @@ struct ConnectionFailureTests {
     @Test func callFailsFastAfterDriverExit() async throws {
         let transport = ScriptedTransport()
         let (handle, driver) = try await establishInitiator(
-            transport: transport,
+            conduit: transport,
             dispatcher: NoopDispatcher()
         )
         let driverTask = Task {
@@ -480,7 +480,7 @@ struct ConnectionFailureTests {
     @Test func zeroTimeoutDoesNotOrphanContinuation() async throws {
         let transport = ScriptedTransport()
         let (handle, driver) = try await establishInitiator(
-            transport: transport,
+            conduit: transport,
             dispatcher: NoopDispatcher()
         )
         let driverTask = Task {
@@ -506,7 +506,7 @@ struct ConnectionFailureTests {
     @Test func callTimesOutAndSendsCancel() async throws {
         let transport = ScriptedTransport()
         let (handle, driver) = try await establishInitiator(
-            transport: transport,
+            conduit: transport,
             dispatcher: NoopDispatcher()
         )
         let driverTask = Task {
@@ -534,7 +534,7 @@ struct ConnectionFailureTests {
         await transport.setFailNextRequestSend()
 
         let (handle, driver) = try await establishInitiator(
-            transport: transport,
+            conduit: transport,
             dispatcher: NoopDispatcher()
         )
         let driverTask = Task {
@@ -555,7 +555,7 @@ struct ConnectionFailureTests {
     @Test func unknownResponseRequestIdClosesConnectionAndFailsPendingCalls() async throws {
         let transport = ScriptedTransport()
         let (handle, driver) = try await establishInitiator(
-            transport: transport,
+            conduit: transport,
             dispatcher: NoopDispatcher()
         )
         let driverTask = Task {
@@ -590,7 +590,7 @@ struct ConnectionFailureTests {
     @Test func lateResponseAfterTimeoutIsIgnoredAndConnectionStaysUsable() async throws {
         let transport = ScriptedTransport()
         let (handle, driver) = try await establishInitiator(
-            transport: transport,
+            conduit: transport,
             dispatcher: NoopDispatcher()
         )
         let driverTask = Task {
@@ -649,7 +649,7 @@ struct ConnectionFailureTests {
     @Test func duplicateResponseAfterSuccessIsIgnored() async throws {
         let transport = ScriptedTransport()
         let (handle, driver) = try await establishInitiator(
-            transport: transport,
+            conduit: transport,
             dispatcher: NoopDispatcher()
         )
         let driverTask = Task {
@@ -716,7 +716,7 @@ struct ConnectionFailureTests {
     @Test func protocolViolationFromIncomingMessageFailsPendingCalls() async throws {
         let transport = ScriptedTransport()
         let (handle, driver) = try await establishInitiator(
-            transport: transport,
+            conduit: transport,
             dispatcher: NoopDispatcher()
         )
         let driverTask = Task {
@@ -747,7 +747,7 @@ struct ConnectionFailureTests {
     @Test func manyCallsFailFastWhenConnectionDrops() async throws {
         let transport = ScriptedTransport(autoRespondRequestCount: 20, dropAfterRequestCount: 20)
         let (handle, driver) = try await establishInitiator(
-            transport: transport,
+            conduit: transport,
             dispatcher: NoopDispatcher()
         )
         let driverTask = Task {
@@ -812,7 +812,7 @@ struct ConnectionFailureTests {
     @Test func keepalivePingPongHealthyPath() async throws {
         let transport = ScriptedTransport(autoRespondPing: true)
         let (handle, driver) = try await establishInitiator(
-            transport: transport,
+            conduit: transport,
             dispatcher: NoopDispatcher(),
             keepalive: DriverKeepaliveConfig(pingInterval: 0.02, pongTimeout: 0.05)
         )
@@ -847,7 +847,7 @@ struct ConnectionFailureTests {
     @Test func keepaliveMissingPongClosesDriver() async throws {
         let transport = ScriptedTransport()
         let (_, driver) = try await establishInitiator(
-            transport: transport,
+            conduit: transport,
             dispatcher: NoopDispatcher(),
             keepalive: DriverKeepaliveConfig(pingInterval: 0.02, pongTimeout: 0.05)
         )
@@ -875,7 +875,7 @@ struct ConnectionFailureTests {
     @Test func keepaliveFailureFailsPendingCall() async throws {
         let transport = ScriptedTransport()
         let (handle, driver) = try await establishInitiator(
-            transport: transport,
+            conduit: transport,
             dispatcher: NoopDispatcher(),
             keepalive: DriverKeepaliveConfig(pingInterval: 0.02, pongTimeout: 0.05)
         )

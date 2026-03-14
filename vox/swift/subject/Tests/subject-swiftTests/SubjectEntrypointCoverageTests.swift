@@ -1,9 +1,9 @@
 #if os(macOS)
 import Darwin
 import Foundation
-import NIO
-import NIOCore
-import NIOPosix
+@preconcurrency import NIO
+@preconcurrency import NIOCore
+@preconcurrency import NIOPosix
 import Testing
 import CRoamShmFfi
 
@@ -80,60 +80,38 @@ private func withTimeout<T: Sendable>(
     milliseconds: UInt64,
     operation: @escaping @Sendable () async throws -> T
 ) async throws -> T {
-    try await withCheckedThrowingContinuation { continuation in
-        let operationTask = Task<Result<T, Error>, Never> {
-            do {
-                return .success(try await operation())
-            } catch {
-                return .failure(error)
-            }
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask {
+            try await operation()
         }
-
-        let timeoutTask = Task<Void, Never> {
-            do {
-                try await Task.sleep(nanoseconds: milliseconds * 1_000_000)
-            } catch {
-                return
-            }
-            operationTask.cancel()
-            continuation.resume(
-                throwing: EntrypointTestError.timeout(
-                    "operation timed out after \(milliseconds)ms"
-                )
-            )
+        group.addTask {
+            try await Task.sleep(nanoseconds: milliseconds * 1_000_000)
+            throw EntrypointTestError.timeout("operation timed out after \(milliseconds)ms")
         }
-
-        Task<Void, Never> {
-            let result = await operationTask.value
-            timeoutTask.cancel()
-            switch result {
-            case .success(let value):
-                continuation.resume(returning: value)
-            case .failure(let error):
-                continuation.resume(throwing: error)
-            }
-        }
+        let result = try await group.next()!
+        group.cancelAll()
+        return result
     }
 }
 
 private actor AcceptedTransportBox {
-    private var transport: NIOTransport?
-    private var waiters: [CheckedContinuation<NIOTransport, Never>] = []
+    private var link: NIOFrameLink?
+    private var waiters: [CheckedContinuation<NIOFrameLink, Never>] = []
 
-    func publish(_ transport: NIOTransport) {
-        if self.transport == nil {
-            self.transport = transport
+    func publish(_ link: NIOFrameLink) {
+        if self.link == nil {
+            self.link = link
         }
         let pending = waiters
         waiters.removeAll()
         for waiter in pending {
-            waiter.resume(returning: transport)
+            waiter.resume(returning: link)
         }
     }
 
-    func wait() async -> NIOTransport {
-        if let transport {
-            return transport
+    func wait() async -> NIOFrameLink {
+        if let link {
+            return link
         }
         return await withCheckedContinuation { cont in
             waiters.append(cont)
@@ -141,9 +119,62 @@ private actor AcceptedTransportBox {
     }
 
     func closeTransport() async {
-        if let transport {
-            try? await transport.close()
+        if let link {
+            try? await link.close()
         }
+    }
+}
+
+private final class HarnessTransportPrologueHandler: ChannelInboundHandler, RemovableChannelHandler, @unchecked Sendable {
+    typealias InboundIn = [UInt8]
+
+    private let accepted: AcceptedTransportBox
+    private let link: NIOFrameLink
+    private var didAccept = false
+
+    init(
+        accepted: AcceptedTransportBox,
+        link: NIOFrameLink
+    ) {
+        self.accepted = accepted
+        self.link = link
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        guard !didAccept else {
+            context.fireChannelRead(data)
+            return
+        }
+        didAccept = true
+
+        let bytes = unwrapInboundIn(data)
+        do {
+            let requested = try decodeTransportHello(bytes)
+            let channel = context.channel
+            context.pipeline.removeHandler(self).flatMap {
+                self.writeAccept(channel: channel, conduit: requested)
+            }.whenComplete { result in
+                switch result {
+                case .success:
+                    Task { await self.accepted.publish(self.link) }
+                case .failure(let error):
+                    context.fireErrorCaught(error)
+                }
+            }
+        } catch {
+            context.fireErrorCaught(error)
+        }
+    }
+
+    private func writeAccept(
+        channel: Channel,
+        conduit: TransportConduitKind
+    ) -> EventLoopFuture<Void> {
+        let bytes = encodeTransportAccept(conduit)
+        var buffer = channel.allocator.buffer(capacity: 4 + bytes.count)
+        buffer.writeInteger(UInt32(bytes.count), endianness: .little)
+        buffer.writeBytes(bytes)
+        return channel.writeAndFlush(buffer)
     }
 }
 
@@ -181,25 +212,28 @@ private struct TcpAcceptorHarness {
             .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { channel in
                 let frameLimit = FrameLimit(1024 * 1024)
-                var inboundContinuation: AsyncStream<Result<MessageV7, Error>>.Continuation!
-                let inboundStream = AsyncStream<Result<MessageV7, Error>> { continuation in
-                    inboundContinuation = continuation
+                var rawContinuation: AsyncStream<Result<[UInt8], Error>>.Continuation!
+                let rawStream = AsyncStream<Result<[UInt8], Error>> { continuation in
+                    rawContinuation = continuation
                 }
-                let capturedContinuation = inboundContinuation!
+                let capturedRawContinuation = rawContinuation!
+                let link = NIOFrameLink(
+                    channel: channel,
+                    frameLimit: frameLimit,
+                    inboundStream: rawStream
+                )
+                let rawHandler = RawFrameStreamHandler(continuation: capturedRawContinuation)
+                let prologueHandler = HarnessTransportPrologueHandler(
+                    accepted: accepted,
+                    link: link
+                )
 
                 return channel.pipeline.addHandler(
                     ByteToMessageHandler(LengthPrefixDecoder(frameLimit: frameLimit))
                 ).flatMap {
-                    channel.pipeline.addHandler(MessageDecoder())
+                    channel.pipeline.addHandler(prologueHandler)
                 }.flatMap {
-                    channel.pipeline.addHandler(MessageStreamHandler(continuation: capturedContinuation))
-                }.map {
-                    let transport = NIOTransport(
-                        channel: channel,
-                        frameLimit: frameLimit,
-                        inboundStream: inboundStream
-                    )
-                    Task { await accepted.publish(transport) }
+                    channel.pipeline.addHandler(rawHandler)
                 }
             }
 
@@ -213,7 +247,7 @@ private struct TcpAcceptorHarness {
         return TcpAcceptorHarness(group: group, listener: listener, accepted: accepted, port: local.port!)
     }
 
-    func waitForTransport() async -> NIOTransport {
+    func waitForTransport() async -> NIOFrameLink {
         await accepted.wait()
     }
 
@@ -521,10 +555,10 @@ struct SubjectEntrypointCoverageTests {
     @Test func runClientEchoEndToEndOverTcpHarness() async throws {
         let harness = try await TcpAcceptorHarness.start()
         let serverTask = Task {
-            let transport = await harness.waitForTransport()
+            let link = await harness.waitForTransport()
             let dispatcher = TestbedDispatcherAdapter(handler: TestbedService())
             let (_, driver) = try await establishAcceptor(
-                transport: transport,
+                conduit: BareConduit(link: link),
                 dispatcher: dispatcher
             )
             try await driver.run()
@@ -753,7 +787,11 @@ struct SubjectEntrypointCoverageTests {
             guestTransport = try ShmGuestTransport.attach(ticket: try #require(ticket))
             let attachedTransport = try #require(guestTransport)
             let (handle, driver) = try await withTimeout(milliseconds: 2_000) {
-                try await establishInitiator(transport: attachedTransport, dispatcher: NoopDispatcher())
+                try await establishShmGuest(
+                    transport: attachedTransport,
+                    dispatcher: NoopDispatcher(),
+                    conduit: .bare
+                )
             }
             driverTask = Task {
                 try await driver.run()

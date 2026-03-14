@@ -66,10 +66,11 @@ struct TransportTests {
     @Test func connectEnablesSocketKeepalive() async throws {
         let server = try await startLocalServer()
         do {
-            let transport = try await connect(host: "127.0.0.1", port: server.port)
-            let keepalive = try await transport.socketKeepaliveEnabled()
+            let link = try await connectLink(host: "127.0.0.1", port: server.port)
+            try await performInitiatorTransportPrologue(transport: link, conduit: .bare)
+            let keepalive = try await link.socketKeepaliveEnabled()
             #expect(keepalive)
-            try? await transport.close()
+            try? await link.close()
         } catch {
             await stopLocalServer(server)
             throw error

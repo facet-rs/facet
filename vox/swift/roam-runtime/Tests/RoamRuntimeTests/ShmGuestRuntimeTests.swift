@@ -269,7 +269,7 @@ private func establishShmInitiator(
     hostDoorbell: ShmDoorbell,
     guestToHost: ShmBipBuffer,
     hostToGuest: ShmBipBuffer
-) async throws -> (ShmGuestTransport, ConnectionHandle, Driver) {
+) async throws -> (ShmGuestTransport, Connection, Driver) {
     let transport = try ShmGuestTransport.attach(
         ticket: ShmBootstrapTicket(peerId: 1, hubPath: path, doorbellFd: guestDoorbellFd)
     )
@@ -624,6 +624,7 @@ struct ShmDoorbellAndPayloadTests {
         let prepared = try segment.reservePeer()
         let ticket = try prepared.makeGuestTicket()
         let host = try prepared.intoTransport()
+        let hostConduit = host.bareConduit()
         let guest = try ShmGuestRuntime.attach(ticket: ticket)
         defer {
             close(ticket.doorbellFd)
@@ -634,7 +635,7 @@ struct ShmDoorbellAndPayloadTests {
         defer { Task { try? await host.close() } }
 
         let expected = String(repeating: "m", count: 5_000)
-        try await host.send(.protocolError(description: expected))
+        try await hostConduit.send(.protocolError(description: expected))
 
         let frame = try #require(try guest.receive())
         let msg = try MessageV7.decode(from: Data(frame.payload))
@@ -664,6 +665,7 @@ struct ShmDoorbellAndPayloadTests {
         let prepared = try segment.reservePeer()
         let ticket = try prepared.makeGuestTicket()
         let host = try prepared.intoTransport()
+        let hostConduit = host.bareConduit()
         let guest = try ShmGuestRuntime.attach(ticket: ticket)
         defer {
             close(ticket.doorbellFd)
@@ -679,7 +681,7 @@ struct ShmDoorbellAndPayloadTests {
 
         let inbound = try await withThrowingTaskGroup(of: MessageV7?.self) { group in
             group.addTask {
-                try await host.recv()
+                try await hostConduit.recv()
             }
             group.addTask {
                 try await Task.sleep(nanoseconds: 1_000_000_000)
@@ -716,6 +718,7 @@ struct ShmDoorbellAndPayloadTests {
         let prepared = try segment.reservePeer()
         let ticket = try prepared.makeGuestTicket()
         let host = try prepared.intoTransport()
+        let hostConduit = host.bareConduit()
         let guest = try ShmGuestRuntime.attach(
             ticket: ShmBootstrapTicket(
                 peerId: ticket.peerId,
@@ -734,7 +737,7 @@ struct ShmDoorbellAndPayloadTests {
         defer { Task { try? await host.close() } }
 
         let expected = String(repeating: "x", count: 5_000)
-        try await host.send(.protocolError(description: expected))
+        try await hostConduit.send(.protocolError(description: expected))
 
         do {
             _ = try guest.receive()
@@ -848,10 +851,11 @@ struct ShmGuestRemapTests {
 
         let fixture = try makeSegmentFixture(path: path, classes: [ShmVarSlotClass(slotSize: 256, count: 2)])
         let transport = try ShmGuestTransport.attach(path: path)
+        let conduit = transport.bareConduit()
         try await transport.close()
 
         do {
-            try await transport.send(.cancel(connId: 0, requestId: 1))
+            try await conduit.send(.cancel(connId: 0, requestId: 1))
             Issue.record("expected connectionClosed")
         } catch {
             #expect(isConnectionClosedTransportError(error))
@@ -878,6 +882,7 @@ struct ShmGuestRemapTests {
         let transport = try ShmGuestTransport.attach(
             ticket: ShmBootstrapTicket(peerId: 1, hubPath: path, doorbellFd: pair.guest)
         )
+        let conduit = transport.bareConduit()
 
         close(pair.host)
         let start = ContinuousClock.now
@@ -885,7 +890,7 @@ struct ShmGuestRemapTests {
         do {
             _ = try await withThrowingTaskGroup(of: MessageV7?.self) { group in
                 group.addTask {
-                    try await transport.recv()
+                    try await conduit.recv()
                 }
                 group.addTask {
                     try await Task.sleep(nanoseconds: 300_000_000)
@@ -923,11 +928,12 @@ struct ShmGuestRemapTests {
         let transport = try ShmGuestTransport.attach(
             ticket: ShmBootstrapTicket(peerId: 1, hubPath: path, doorbellFd: pair.guest)
         )
+        let conduit = transport.bareConduit()
         defer { Task { try? await transport.close() } }
 
         let hostDoorbell = ShmDoorbell(fd: pair.host)
         let recvTask = Task<MessageV7?, Error> {
-            try await transport.recv()
+            try await conduit.recv()
         }
         defer { recvTask.cancel() }
 

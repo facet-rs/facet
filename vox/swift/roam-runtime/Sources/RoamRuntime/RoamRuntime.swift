@@ -75,36 +75,7 @@ public extension RoamConnection {
     }
 }
 
-// MARK: - ConnectionHandle RoamConnection Conformance
-
-extension ConnectionHandle: RoamConnection {
-    public func call(
-        methodId: UInt64,
-        metadata: [MetadataEntryV7],
-        payload: Data,
-        channels: [UInt64],
-        timeout: TimeInterval?
-    ) async throws -> Data {
-        let response = try await callRaw(
-            methodId: methodId,
-            metadata: metadata,
-            payload: Array(payload),
-            channels: channels,
-            timeout: timeout
-        )
-        return Data(response)
-    }
-
-    public var incomingChannelRegistry: ChannelRegistry {
-        channelRegistry
-    }
-
-    public var taskSender: TaskSender {
-        { [weak self] msg in
-            self?.sendTaskMessage(msg)
-        }
-    }
-}
+// MARK: - Connection RoamConnection Conformance
 
 // MARK: - RoamError
 
