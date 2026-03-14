@@ -95,6 +95,11 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
         let method_name = method.method_name.to_lower_camel_case();
 
         let has_streaming_args = method.args.iter().any(|a| is_tx(a.shape) || is_rx(a.shape));
+        let arg_names: Vec<_> = method
+            .args
+            .iter()
+            .map(|a| a.name.to_lower_camel_case())
+            .collect();
 
         let args = method
             .args
@@ -136,16 +141,27 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
 
         // Bind channel args if streaming
         if has_streaming_args {
-            let arg_names: Vec<_> = method
-                .args
-                .iter()
-                .map(|a| a.name.to_lower_camel_case())
-                .collect();
-            out.push_str("    // Bind any Tx/Rx channels in arguments and collect channel IDs\n");
+            out.push_str("    const prepareRetry = () => {\n");
+            out.push_str("      const channels = bindChannels(\n");
+            out.push_str("        descriptor.args.elements,\n");
+            out.push_str(&format!("        [{}],\n", arg_names.join(", ")));
+            out.push_str("        this.caller.getChannelAllocator(),\n");
+            out.push_str("        this.caller.getChannelRegistry(),\n");
             out.push_str(&format!(
-                "    const channels = bindChannels(\n      descriptor.args.elements,\n      [{}],\n      this.caller.getChannelAllocator(),\n      this.caller.getChannelRegistry(),\n      {service_name_lower}_descriptor.schema_registry,\n    );\n",
-                arg_names.join(", ")
+                "        {service_name_lower}_descriptor.schema_registry,\n"
             ));
+            out.push_str("      );\n");
+            out.push_str("      const values = Object.values({");
+            out.push_str(&arg_names.join(", "));
+            out.push_str("});\n");
+            out.push_str(
+                &format!(
+                    "      const payload = values.length === 0\n        ? new Uint8Array(0)\n        : encodeWithSchema(values, descriptor.args, {service_name_lower}_descriptor.schema_registry);\n"
+                ),
+            );
+            out.push_str("      return { payload, channels };\n");
+            out.push_str("    };\n");
+            out.push_str("    const { payload, channels } = prepareRetry();\n");
         }
 
         let is_fallible = matches!(
@@ -167,6 +183,11 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             ));
             if has_streaming_args {
                 out.push_str("          channels,\n");
+                out.push_str("          prepareRetry,\n");
+                out.push_str(&format!(
+                    "          finalizeChannels: () => finalizeBoundChannels(descriptor.args.elements, [{}], {service_name_lower}_descriptor.schema_registry),\n",
+                    arg_names.join(", ")
+                ));
             }
             out.push_str("        });\n");
             out.push_str(&format!(
@@ -193,6 +214,11 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             ));
             if has_streaming_args {
                 out.push_str("        channels,\n");
+                out.push_str("        prepareRetry,\n");
+                out.push_str(&format!(
+                    "        finalizeChannels: () => finalizeBoundChannels(descriptor.args.elements, [{}], {service_name_lower}_descriptor.schema_registry),\n",
+                    arg_names.join(", ")
+                ));
             }
             out.push_str("      });\n");
             out.push_str(&format!("      return value as {ret_ty};\n"));

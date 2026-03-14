@@ -50,6 +50,16 @@ export function bindChannels(
   return channelIds;
 }
 
+export function finalizeBoundChannels(
+  schemas: Schema[],
+  args: unknown[],
+  schemaRegistry?: SchemaRegistry,
+): void {
+  for (let i = 0; i < schemas.length; i++) {
+    finalizeValue(schemas[i], args[i], schemaRegistry);
+  }
+}
+
 /**
  * Bind a single value according to its schema.
  */
@@ -86,17 +96,28 @@ function bindValue(
       // So from client's perspective, this is INCOMING data
       // We need to bind the paired Rx (which client reads from)
       const tx = value as Tx<unknown>;
-      if (!tx.isBound) {
-        const channelId = allocator.next();
-        const elementSchema = resolved.element;
-        const initialCredit = resolved.initial_credit ?? DEFAULT_INITIAL_CREDIT;
+      const channelId = allocator.next();
+      const elementSchema = resolved.element;
+      const initialCredit = resolved.initial_credit ?? DEFAULT_INITIAL_CREDIT;
 
-        // Just set the channel ID on Tx (for wire encoding)
-        // Don't register as outgoing - client doesn't send on this channel
+      // Just set the channel ID on Tx (for wire encoding)
+      // Don't register as outgoing - client doesn't send on this channel
+      if (tx.isBound) {
+        tx.rebindChannelIdOnly(channelId);
+      } else {
         tx.setChannelIdOnly(channelId);
+      }
 
-        // Bind the paired Rx for receiving (this is what client reads from)
-        if (tx._pair && !tx._pair.isBound) {
+      // Bind the paired Rx for receiving (this is what client reads from)
+      if (tx._pair) {
+        if (tx._pair.isBound) {
+          tx._pair.rebind(
+            channelId,
+            registry,
+            (b: Uint8Array) => decodeWithSchema(b, 0, elementSchema, schemaRegistry).value,
+            initialCredit,
+          );
+        } else {
           tx._pair.bind(
             channelId,
             registry,
@@ -114,19 +135,35 @@ function bindValue(
       // Schema Rx in args means: server receives, client sends
       // So from client's perspective, this is OUTGOING data
       const rx = value as Rx<unknown>;
-      if (!rx.isBound) {
-        const channelId = allocator.next();
-        const elementSchema = resolved.element;
-        const initialCredit = resolved.initial_credit ?? DEFAULT_INITIAL_CREDIT;
+      const channelId = allocator.next();
+      const elementSchema = resolved.element;
+      const initialCredit = resolved.initial_credit ?? DEFAULT_INITIAL_CREDIT;
+      if (rx.isBound) {
+        rx.rebind(
+          channelId,
+          registry,
+          (b: Uint8Array) => decodeWithSchema(b, 0, elementSchema, schemaRegistry).value,
+          initialCredit,
+        );
+      } else {
         rx.bind(
           channelId,
           registry,
           (b: Uint8Array) => decodeWithSchema(b, 0, elementSchema, schemaRegistry).value,
           initialCredit,
         );
+      }
 
-        // Bind the paired Tx for sending (this is what client writes to)
-        if (rx._pair && !rx._pair.isBound) {
+      // Bind the paired Tx for sending (this is what client writes to)
+      if (rx._pair) {
+        if (rx._pair.isBound) {
+          rx._pair.rebind(
+            channelId,
+            registry,
+            (v: unknown) => encodeWithSchema(v, elementSchema, schemaRegistry),
+            initialCredit,
+          );
+        } else {
           rx._pair.bind(
             channelId,
             registry,
@@ -274,5 +311,104 @@ function bindValue(
       const _exhaustive: never = resolved;
       throw new Error(`Unknown schema kind: ${(resolved as Schema).kind}`);
     }
+  }
+}
+
+function finalizeValue(
+  schema: Schema,
+  value: unknown,
+  schemaRegistry?: SchemaRegistry,
+): void {
+  const resolved =
+    schema.kind === "ref" && schemaRegistry ? resolveSchema(schema, schemaRegistry) : schema;
+
+  switch (resolved.kind) {
+    case "tx": {
+      const tx = value as Tx<unknown>;
+      tx.finishRetryBinding();
+      tx._pair?.finishRetryBinding();
+      return;
+    }
+    case "rx": {
+      const rx = value as Rx<unknown>;
+      rx.finishRetryBinding();
+      rx._pair?.finishRetryBinding();
+      return;
+    }
+    case "vec": {
+      const arr = value as unknown[];
+      for (const item of arr) {
+        finalizeValue(resolved.element, item, schemaRegistry);
+      }
+      return;
+    }
+    case "option": {
+      if (value !== null && value !== undefined) {
+        finalizeValue(resolved.inner, value, schemaRegistry);
+      }
+      return;
+    }
+    case "map": {
+      const map = value as Map<unknown, unknown>;
+      for (const [k, v] of map) {
+        finalizeValue(resolved.key, k, schemaRegistry);
+        finalizeValue(resolved.value, v, schemaRegistry);
+      }
+      return;
+    }
+    case "struct": {
+      const obj = value as Record<string, unknown>;
+      for (const [fieldName, fieldSchema] of Object.entries(resolved.fields)) {
+        if (fieldName in obj) {
+          finalizeValue(fieldSchema, obj[fieldName], schemaRegistry);
+        }
+      }
+      return;
+    }
+    case "enum": {
+      const enumVal = value as { tag: string; [key: string]: unknown };
+      const variant = findVariantByName(resolved, enumVal.tag);
+      if (!variant) {
+        return;
+      }
+
+      if (isNewtypeVariant(variant)) {
+        const fieldValue = enumVal[variant.name.toLowerCase()] ?? enumVal.value;
+        if (fieldValue !== undefined) {
+          const fieldSchemas = getVariantFieldSchemas(variant);
+          if (fieldSchemas.length === 1) {
+            finalizeValue(fieldSchemas[0], fieldValue, schemaRegistry);
+          }
+        }
+      } else {
+        const fieldSchemas = getVariantFieldSchemas(variant);
+        const fieldNames = getVariantFieldNames(variant);
+        if (fieldNames) {
+          for (let i = 0; i < fieldSchemas.length; i++) {
+            const fieldValue = enumVal[fieldNames[i]];
+            if (fieldValue !== undefined) {
+              finalizeValue(fieldSchemas[i], fieldValue, schemaRegistry);
+            }
+          }
+        } else if (fieldSchemas.length > 0) {
+          const tupleValues = enumVal.values as unknown[] | undefined;
+          if (tupleValues) {
+            for (let i = 0; i < fieldSchemas.length; i++) {
+              finalizeValue(fieldSchemas[i], tupleValues[i], schemaRegistry);
+            }
+          }
+        }
+      }
+      return;
+    }
+    case "tuple": {
+      const arr = value as unknown[];
+      for (let i = 0; i < resolved.elements.length; i++) {
+        finalizeValue(resolved.elements[i], arr[i], schemaRegistry);
+      }
+      return;
+    }
+    default:
+      return;
   }
 }

@@ -122,7 +122,12 @@ fn generate_imports(service: &ServiceDescriptor, w: &mut CodeWriter<&mut String>
     if has_streaming {
         cw_writeln!(
             w,
-            "import {{ Tx, Rx, bindChannels }} from \"@bearcove/roam-core\";"
+            "import {{ Tx, Rx, bindChannels, finalizeBoundChannels }} from \"@bearcove/roam-core\";"
+        )
+        .unwrap();
+        cw_writeln!(
+            w,
+            "import {{ encodeWithSchema }} from \"@bearcove/roam-postcard\";"
         )
         .unwrap();
     }

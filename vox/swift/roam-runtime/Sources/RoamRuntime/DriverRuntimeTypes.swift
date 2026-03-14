@@ -1,5 +1,15 @@
 import Foundation
 
+public struct PreparedRetryRequest: Sendable {
+    public let payload: [UInt8]
+    public let channels: [UInt64]
+
+    public init(payload: [UInt8], channels: [UInt64]) {
+        self.payload = payload
+        self.channels = channels
+    }
+}
+
 struct DriverQueuedTaskMessage: Sendable {
     let message: MessageV7
 }
@@ -12,6 +22,7 @@ struct DriverQueuedCall: Sendable {
     let channels: [UInt64]
     let retry: RetryPolicy
     let timeout: TimeInterval?
+    let prepareRetry: (@Sendable () async -> PreparedRetryRequest)?
 }
 
 struct DriverKeepaliveRuntime {

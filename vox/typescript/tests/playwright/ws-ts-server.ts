@@ -110,6 +110,12 @@ function rawDataToUint8Array(data: RawData): Uint8Array {
 }
 
 class TestbedService implements TestbedHandler {
+  private async streamRetryProbeValues(count: number, output: Tx<number>): Promise<void> {
+    for (let i = 0; i < count; i++) {
+      await output.send(i);
+    }
+  }
+
   async echo(message: string): Promise<string> {
     if (message === "__roam_reconnect__") {
       await new Promise((resolve) => setTimeout(resolve, 250));
@@ -153,9 +159,15 @@ class TestbedService implements TestbedHandler {
   }
 
   async generate(count: number, output: Tx<number>): Promise<void> {
-    for (let i = 0; i < count; i++) {
-      await output.send(i);
-    }
+    await this.streamRetryProbeValues(count, output);
+  }
+
+  async generateRetryNonIdem(count: number, output: Tx<number>): Promise<void> {
+    await this.streamRetryProbeValues(count, output);
+  }
+
+  async generateRetryIdem(count: number, output: Tx<number>): Promise<void> {
+    await this.streamRetryProbeValues(count, output);
   }
 
   async transform(input: Rx<string>, output: Tx<string>): Promise<void> {

@@ -43,6 +43,17 @@ pub trait Testbed {
     /// Tests: server→client streaming. Server sends via `Tx<T>`.
     async fn generate(&self, count: u32, output: Tx<i32>);
 
+    /// Server streams numbers back to client on a non-idempotent retry probe.
+    ///
+    /// Tests: channel retry fails closed when the session breaks mid-stream.
+    async fn generate_retry_non_idem(&self, count: u32, output: Tx<i32>);
+
+    /// Server streams numbers back to client on an idempotent retry probe.
+    ///
+    /// Tests: channel retry reruns the method with fresh channel bindings.
+    #[roam(idem)]
+    async fn generate_retry_idem(&self, count: u32, output: Tx<i32>);
+
     /// Bidirectional: client sends strings, server echoes each back.
     ///
     /// Tests: bidirectional streaming. Server receives via `Rx<T>`, sends via `Tx<T>`.

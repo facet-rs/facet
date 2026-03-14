@@ -10,6 +10,7 @@ actor DriverState {
     }
 
     struct PendingCall: Sendable {
+        let request: DriverQueuedCall
         let responseTx: @Sendable (Result<[UInt8], ConnectionError>) -> Void
         var timeoutTask: Task<Void, Never>?
     }
@@ -22,13 +23,18 @@ actor DriverState {
 
     func addPendingResponse(
         _ requestId: UInt64,
+        request: DriverQueuedCall,
         _ handler: @escaping @Sendable (Result<[UInt8], ConnectionError>) -> Void,
         timeoutTask: Task<Void, Never>?
     ) -> Bool {
         guard !isClosed else {
             return false
         }
-        pendingResponses[requestId] = PendingCall(responseTx: handler, timeoutTask: timeoutTask)
+        pendingResponses[requestId] = PendingCall(
+            request: request,
+            responseTx: handler,
+            timeoutTask: timeoutTask
+        )
         return true
     }
 
@@ -127,6 +133,10 @@ actor DriverState {
             markFinalizedRequest(requestId, reason: reason)
         }
         return responses
+    }
+
+    func pendingCallsSnapshot() -> [DriverQueuedCall] {
+        pendingResponses.values.map(\.request)
     }
 
     func isConnectionClosed() -> Bool {

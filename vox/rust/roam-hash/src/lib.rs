@@ -332,6 +332,10 @@ pub fn method_descriptor_with_retry<'a, 'r, A: Facet<'a>, R: Facet<'r>>(
         !shape_contains_channel(R::SHAPE),
         "channels are not allowed in return types: {service_name}.{method_name}"
     );
+    assert!(
+        !(retry.persist && shape_contains_channel(A::SHAPE)),
+        "persist methods cannot carry channels: {service_name}.{method_name}"
+    );
 
     let id = method_id::<A, R>(service_name, method_name);
 
@@ -440,6 +444,18 @@ mod tests {
     #[should_panic(expected = "channels are not allowed in return types: TestSvc.nested")]
     fn rejects_nested_channel_in_return_types() {
         let _ = method_descriptor::<(Tx<u8>,), NestedRet>("TestSvc", "nested", &["input"], None);
+    }
+
+    #[test]
+    #[should_panic(expected = "persist methods cannot carry channels: TestSvc.streaming")]
+    fn rejects_persist_methods_with_channel_arguments() {
+        let _ = method_descriptor_with_retry::<(Tx<u8>,), u64>(
+            "TestSvc",
+            "streaming",
+            &["output"],
+            None,
+            RetryPolicy::PERSIST,
+        );
     }
 
     #[test]

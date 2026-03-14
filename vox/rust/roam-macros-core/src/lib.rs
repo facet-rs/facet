@@ -127,6 +127,16 @@ pub fn generate_service(parsed: &ServiceTrait, roam: &TokenStream2) -> Result<To
             ));
         }
 
+        if method.is_persist() && method.args().any(|arg| arg.ty.contains_channel()) {
+            return Err(Error::new(
+                proc_macro2::Span::call_site(),
+                format!(
+                    "method `{}` declares `#[roam(persist)]` but has Channel (Tx/Rx) arguments - persist methods cannot carry channels",
+                    method.name()
+                ),
+            ));
+        }
+
         let (ok_ty, err_ty) = method_ok_and_err_types(&return_type);
         if ok_ty.has_elided_reference_lifetime() {
             return Err(Error::new(
@@ -959,6 +969,23 @@ mod tests {
         assert_eq!(
             err.message,
             "method `stream` has Channel (Tx/Rx) in return type - channels are only allowed in method arguments"
+        );
+    }
+
+    #[test]
+    fn rejects_persist_methods_with_channel_arguments() {
+        let parsed = roam_macros_parse::parse_trait(&quote! {
+            trait Streamer {
+                #[roam(persist)]
+                async fn stream(&self, output: Tx<i32>) -> u64;
+            }
+        })
+        .unwrap();
+        let roam = quote! { ::roam };
+        let err = crate::generate_service(&parsed, &roam).unwrap_err();
+        assert_eq!(
+            err.message,
+            "method `stream` declares `#[roam(persist)]` but has Channel (Tx/Rx) arguments - persist methods cannot carry channels"
         );
     }
 

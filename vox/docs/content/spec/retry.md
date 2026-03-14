@@ -393,10 +393,48 @@ plain request/response pair does.
 > A method with channel arguments MUST NOT be declared `persist` until the
 > runtime defines channel continuity for sticky operations.
 
+> r[retry.channel.no-transparent-resume]
+>
+> Ordinary channels do not have transparent resume semantics. Session
+> resumption, conduit replacement, or operation retry MUST NOT be interpreted
+> as implicit continuation of the exact prior channel transcript.
+
+> r[retry.channel.disconnect.closes]
+>
+> If the connection carrying a channel breaks, channel handles from that
+> attempt become invalid. The runtime MUST surface them as closed, failed, or
+> otherwise unusable; it MUST NOT silently bind those handles to a replacement
+> stream.
+
+> r[retry.channel.recovery.non-idem]
+>
+> If a channel-bearing method becomes ambiguous and the method is not `idem`,
+> the runtime MUST fail closed with `Indeterminate`. It MUST NOT silently
+> re-execute the method to recreate channels.
+
 > r[retry.channel.volatile.rebinding]
 >
 > When an `idem` volatile method with channels is re-executed on retry, the
 > runtime MAY rebind fresh channel handles for the new execution attempt.
+
+> r[retry.channel.volatile.rebinding.fresh]
+>
+> Rebinding creates a new channel set for the retried execution. The runtime
+> MUST NOT promise preservation of prior channel IDs, credit state, partial
+> delivery state, close/reset races, or any exact stream position from the
+> interrupted attempt.
+
+> r[retry.channel.sealed-result]
+>
+> If the parent operation has already Sealed, retry replays the sealed
+> operation outcome in the ordinary way. That replay does not imply that
+> channels from the earlier attempt are resurrected.
+
+> r[retry.channel.stable-separate]
+>
+> Stronger stream-continuity semantics, if introduced in the future, MUST be a
+> separate channel abstraction or explicit opt-in mode. They MUST NOT be
+> retroactively implied for ordinary channels.
 
 # Summary
 

@@ -84,6 +84,10 @@ impl Testbed for TestbedService {
 
     async fn generate(&self, _count: u32, _output: Tx<i32>) {}
 
+    async fn generate_retry_non_idem(&self, _count: u32, _output: Tx<i32>) {}
+
+    async fn generate_retry_idem(&self, _count: u32, _output: Tx<i32>) {}
+
     async fn transform(&self, _input: Rx<String>, _output: Tx<String>) {}
 
     async fn echo_point(&self, point: Point) -> Point {

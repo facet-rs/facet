@@ -191,6 +191,7 @@ final actor ResumableConduit: Conduit {
     private var closed = false
     private var maxFrameSize: Int?
     private var replacementTask: Task<(any Conduit)?, Error>?
+    private var resumeGeneration: UInt64 = 0
 
     init(conduit: any Conduit, coordinator: SessionResumeCoordinator) {
         self.conduit = conduit
@@ -251,6 +252,10 @@ final actor ResumableConduit: Conduit {
         try await conduit?.close()
     }
 
+    func currentResumeGeneration() -> UInt64 {
+        resumeGeneration
+    }
+
     private func activeConduit() async throws -> any Conduit {
         if let conduit {
             return conduit
@@ -276,6 +281,9 @@ final actor ResumableConduit: Conduit {
         conduit = replacement
         if let replacement, let maxFrameSize {
             try await replacement.setMaxFrameSize(maxFrameSize)
+        }
+        if replacement != nil {
+            resumeGeneration &+= 1
         }
         return replacement
     }

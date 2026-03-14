@@ -14,7 +14,8 @@ import type {
 } from "@bearcove/roam-core";
 import { session } from "@bearcove/roam-core";
 import { RpcError } from "@bearcove/roam-core";
-import { bindChannels, Rx, Tx } from "@bearcove/roam-core";
+import { bindChannels, finalizeBoundChannels, Rx, Tx } from "@bearcove/roam-core";
+import { encodeWithSchema } from "@bearcove/roam-postcard";
 import { wsConnector } from "@bearcove/roam-ws";
 
 // Named type definitions
@@ -89,6 +90,18 @@ export type GenerateRequest = [
 ];
 export type GenerateResponse = void;
 
+export type GenerateRetryNonIdemRequest = [
+  number, // count
+  Tx<number>, // output
+];
+export type GenerateRetryNonIdemResponse = void;
+
+export type GenerateRetryIdemRequest = [
+  number, // count
+  Tx<number>, // output
+];
+export type GenerateRetryIdemResponse = void;
+
 export type TransformRequest = [
   Rx<string>, // input
   Tx<string>, // output
@@ -152,6 +165,18 @@ export interface TestbedCaller {
    * Tests: server→client streaming. Server sends via `Tx<T>`.
    */
   generate(count: number, output: Tx<number>): Promise<void>;
+  /**
+   * Server streams numbers back to client on a non-idempotent retry probe.
+   *
+   * Tests: channel retry fails closed when the session breaks mid-stream.
+   */
+  generateRetryNonIdem(count: number, output: Tx<number>): Promise<void>;
+  /**
+   * Server streams numbers back to client on an idempotent retry probe.
+   *
+   * Tests: channel retry reruns the method with fresh channel bindings.
+   */
+  generateRetryIdem(count: number, output: Tx<number>): Promise<void>;
   /**
    * Bidirectional: client sends strings, server echoes each back.
    *
@@ -258,20 +283,30 @@ export class TestbedClient implements TestbedCaller {
    */
   async sum(numbers: Rx<number>): Promise<bigint> {
     const descriptor = testbed_descriptor.methods[4];
-    // Bind any Tx/Rx channels in arguments and collect channel IDs
-    const channels = bindChannels(
-      descriptor.args.elements,
-      [numbers],
-      this.caller.getChannelAllocator(),
-      this.caller.getChannelRegistry(),
-      testbed_descriptor.schema_registry,
-    );
+    const prepareRetry = () => {
+      const channels = bindChannels(
+        descriptor.args.elements,
+        [numbers],
+        this.caller.getChannelAllocator(),
+        this.caller.getChannelRegistry(),
+        testbed_descriptor.schema_registry,
+      );
+      const values = Object.values({ numbers });
+      const payload = values.length === 0
+        ? new Uint8Array(0)
+        : encodeWithSchema(values, descriptor.args, testbed_descriptor.schema_registry);
+      return { payload, channels };
+    };
+    const { payload, channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.sum",
       args: { numbers },
       descriptor,
       schemaRegistry: testbed_descriptor.schema_registry,
       channels,
+      prepareRetry,
+      finalizeChannels: () =>
+        finalizeBoundChannels(descriptor.args.elements, [numbers], testbed_descriptor.schema_registry),
     });
     return value as bigint;
   }
@@ -283,20 +318,100 @@ export class TestbedClient implements TestbedCaller {
    */
   async generate(count: number, output: Tx<number>): Promise<void> {
     const descriptor = testbed_descriptor.methods[5];
-    // Bind any Tx/Rx channels in arguments and collect channel IDs
-    const channels = bindChannels(
-      descriptor.args.elements,
-      [count, output],
-      this.caller.getChannelAllocator(),
-      this.caller.getChannelRegistry(),
-      testbed_descriptor.schema_registry,
-    );
+    const prepareRetry = () => {
+      const channels = bindChannels(
+        descriptor.args.elements,
+        [count, output],
+        this.caller.getChannelAllocator(),
+        this.caller.getChannelRegistry(),
+        testbed_descriptor.schema_registry,
+      );
+      const values = Object.values({ count, output });
+      const payload = values.length === 0
+        ? new Uint8Array(0)
+        : encodeWithSchema(values, descriptor.args, testbed_descriptor.schema_registry);
+      return { payload, channels };
+    };
+    const { payload, channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.generate",
       args: { count, output },
       descriptor,
       schemaRegistry: testbed_descriptor.schema_registry,
       channels,
+      prepareRetry,
+      finalizeChannels: () =>
+        finalizeBoundChannels(descriptor.args.elements, [count, output], testbed_descriptor.schema_registry),
+    });
+    return value as void;
+  }
+
+  /**
+   * Server streams numbers back to client on a non-idempotent retry probe.
+   *
+   * Tests: channel retry fails closed when the session breaks mid-stream.
+   */
+  async generateRetryNonIdem(count: number, output: Tx<number>): Promise<void> {
+    const descriptor = testbed_descriptor.methods[6];
+    const prepareRetry = () => {
+      const channels = bindChannels(
+        descriptor.args.elements,
+        [count, output],
+        this.caller.getChannelAllocator(),
+        this.caller.getChannelRegistry(),
+        testbed_descriptor.schema_registry,
+      );
+      const values = Object.values({ count, output });
+      const payload = values.length === 0
+        ? new Uint8Array(0)
+        : encodeWithSchema(values, descriptor.args, testbed_descriptor.schema_registry);
+      return { payload, channels };
+    };
+    const { payload, channels } = prepareRetry();
+    const value = await this.caller.call({
+      method: "Testbed.generateRetryNonIdem",
+      args: { count, output },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
+      channels,
+      prepareRetry,
+      finalizeChannels: () =>
+        finalizeBoundChannels(descriptor.args.elements, [count, output], testbed_descriptor.schema_registry),
+    });
+    return value as void;
+  }
+
+  /**
+   * Server streams numbers back to client on an idempotent retry probe.
+   *
+   * Tests: channel retry reruns the method with fresh channel bindings.
+   */
+  async generateRetryIdem(count: number, output: Tx<number>): Promise<void> {
+    const descriptor = testbed_descriptor.methods[7];
+    const prepareRetry = () => {
+      const channels = bindChannels(
+        descriptor.args.elements,
+        [count, output],
+        this.caller.getChannelAllocator(),
+        this.caller.getChannelRegistry(),
+        testbed_descriptor.schema_registry,
+      );
+      const values = Object.values({ count, output });
+      const payload = values.length === 0
+        ? new Uint8Array(0)
+        : encodeWithSchema(values, descriptor.args, testbed_descriptor.schema_registry);
+      return { payload, channels };
+    };
+    const { payload, channels } = prepareRetry();
+    const value = await this.caller.call({
+      method: "Testbed.generateRetryIdem",
+      args: { count, output },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
+      channels,
+      prepareRetry,
+      finalizeChannels: () =>
+        finalizeBoundChannels(descriptor.args.elements, [count, output], testbed_descriptor.schema_registry),
     });
     return value as void;
   }
@@ -307,28 +422,38 @@ export class TestbedClient implements TestbedCaller {
    * Tests: bidirectional streaming. Server receives via `Rx<T>`, sends via `Tx<T>`.
    */
   async transform(input: Rx<string>, output: Tx<string>): Promise<void> {
-    const descriptor = testbed_descriptor.methods[6];
-    // Bind any Tx/Rx channels in arguments and collect channel IDs
-    const channels = bindChannels(
-      descriptor.args.elements,
-      [input, output],
-      this.caller.getChannelAllocator(),
-      this.caller.getChannelRegistry(),
-      testbed_descriptor.schema_registry,
-    );
+    const descriptor = testbed_descriptor.methods[8];
+    const prepareRetry = () => {
+      const channels = bindChannels(
+        descriptor.args.elements,
+        [input, output],
+        this.caller.getChannelAllocator(),
+        this.caller.getChannelRegistry(),
+        testbed_descriptor.schema_registry,
+      );
+      const values = Object.values({ input, output });
+      const payload = values.length === 0
+        ? new Uint8Array(0)
+        : encodeWithSchema(values, descriptor.args, testbed_descriptor.schema_registry);
+      return { payload, channels };
+    };
+    const { payload, channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.transform",
       args: { input, output },
       descriptor,
       schemaRegistry: testbed_descriptor.schema_registry,
       channels,
+      prepareRetry,
+      finalizeChannels: () =>
+        finalizeBoundChannels(descriptor.args.elements, [input, output], testbed_descriptor.schema_registry),
     });
     return value as void;
   }
 
   /** Echo a point back. */
   async echoPoint(point: Point): Promise<Point> {
-    const descriptor = testbed_descriptor.methods[7];
+    const descriptor = testbed_descriptor.methods[9];
     const value = await this.caller.call({
       method: "Testbed.echoPoint",
       args: { point },
@@ -340,7 +465,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Create a person and return it. */
   async createPerson(name: string, age: number, email: string | null): Promise<Person> {
-    const descriptor = testbed_descriptor.methods[8];
+    const descriptor = testbed_descriptor.methods[10];
     const value = await this.caller.call({
       method: "Testbed.createPerson",
       args: { name, age, email },
@@ -352,7 +477,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Calculate the area of a rectangle. */
   async rectangleArea(rect: Rectangle): Promise<number> {
-    const descriptor = testbed_descriptor.methods[9];
+    const descriptor = testbed_descriptor.methods[11];
     const value = await this.caller.call({
       method: "Testbed.rectangleArea",
       args: { rect },
@@ -364,7 +489,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Get a color by name. */
   async parseColor(name: string): Promise<Color | null> {
-    const descriptor = testbed_descriptor.methods[10];
+    const descriptor = testbed_descriptor.methods[12];
     const value = await this.caller.call({
       method: "Testbed.parseColor",
       args: { name },
@@ -376,7 +501,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Calculate the area of a shape. */
   async shapeArea(shape: Shape): Promise<number> {
-    const descriptor = testbed_descriptor.methods[11];
+    const descriptor = testbed_descriptor.methods[13];
     const value = await this.caller.call({
       method: "Testbed.shapeArea",
       args: { shape },
@@ -388,7 +513,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Create a canvas with given shapes. */
   async createCanvas(name: string, shapes: Shape[], background: Color): Promise<Canvas> {
-    const descriptor = testbed_descriptor.methods[12];
+    const descriptor = testbed_descriptor.methods[14];
     const value = await this.caller.call({
       method: "Testbed.createCanvas",
       args: { name, shapes, background },
@@ -400,7 +525,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Process a message and return a response. */
   async processMessage(msg: Message): Promise<Message> {
-    const descriptor = testbed_descriptor.methods[13];
+    const descriptor = testbed_descriptor.methods[15];
     const value = await this.caller.call({
       method: "Testbed.processMessage",
       args: { msg },
@@ -412,7 +537,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Return multiple points. */
   async getPoints(count: number): Promise<Point[]> {
-    const descriptor = testbed_descriptor.methods[14];
+    const descriptor = testbed_descriptor.methods[16];
     const value = await this.caller.call({
       method: "Testbed.getPoints",
       args: { count },
@@ -424,7 +549,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Test tuple types. */
   async swapPair(pair: [number, string]): Promise<[string, number]> {
-    const descriptor = testbed_descriptor.methods[15];
+    const descriptor = testbed_descriptor.methods[17];
     const value = await this.caller.call({
       method: "Testbed.swapPair",
       args: { pair },
@@ -467,6 +592,8 @@ export interface TestbedHandler {
   };
   sum(numbers: Rx<number>): Promise<bigint> | bigint;
   generate(count: number, output: Tx<number>): Promise<void> | void;
+  generateRetryNonIdem(count: number, output: Tx<number>): Promise<void> | void;
+  generateRetryIdem(count: number, output: Tx<number>): Promise<void> | void;
   transform(input: Rx<string>, output: Tx<string>): Promise<void> | void;
   echoPoint(point: Point): Promise<Point> | Point;
   createPerson(name: string, age: number, email: string | null): Promise<Person> | Person;
@@ -528,6 +655,22 @@ export class TestbedDispatcher implements Dispatcher {
     } else if (method.id === 0x54d2273d8cdb9c38n) {
       try {
         const result = await this.handler.generate(args[0] as number, args[1] as Tx<number>);
+        (args[1] as { close(): void }).close(); // close output before reply
+        call.reply(result);
+      } catch {
+        call.replyInternalError();
+      }
+    } else if (method.id === 0x8b2863690edf136en) {
+      try {
+        const result = await this.handler.generateRetryNonIdem(args[0] as number, args[1] as Tx<number>);
+        (args[1] as { close(): void }).close(); // close output before reply
+        call.reply(result);
+      } catch {
+        call.replyInternalError();
+      }
+    } else if (method.id === 0x3be5efd8db40b6f3n) {
+      try {
+        const result = await this.handler.generateRetryIdem(args[0] as number, args[1] as Tx<number>);
         (args[1] as { close(): void }).close(); // close output before reply
         call.reply(result);
       } catch {
@@ -782,6 +925,56 @@ export const testbed_descriptor: ServiceDescriptor = {
       name: "generate",
       id: 0x54d2273d8cdb9c38n,
       retry: { persist: false, idem: false },
+      args: {
+        kind: "tuple",
+        elements: [{ kind: "u32" }, { kind: "tx", initial_credit: 16, element: { kind: "i32" } }],
+      },
+      result: {
+        kind: "enum",
+        variants: [{ name: "Ok", fields: { kind: "struct", fields: {} } }, {
+          name: "Err",
+          fields: {
+            kind: "enum",
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
+          },
+        }],
+      },
+    },
+    {
+      name: "generateRetryNonIdem",
+      id: 0x8b2863690edf136en,
+      retry: { persist: false, idem: false },
+      args: {
+        kind: "tuple",
+        elements: [{ kind: "u32" }, { kind: "tx", initial_credit: 16, element: { kind: "i32" } }],
+      },
+      result: {
+        kind: "enum",
+        variants: [{ name: "Ok", fields: { kind: "struct", fields: {} } }, {
+          name: "Err",
+          fields: {
+            kind: "enum",
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
+          },
+        }],
+      },
+    },
+    {
+      name: "generateRetryIdem",
+      id: 0x3be5efd8db40b6f3n,
+      retry: { persist: false, idem: true },
       args: {
         kind: "tuple",
         elements: [{ kind: "u32" }, { kind: "tx", initial_credit: 16, element: { kind: "i32" } }],

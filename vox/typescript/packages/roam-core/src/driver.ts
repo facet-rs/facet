@@ -425,6 +425,7 @@ export class Driver {
       incoming.metadata,
       new Extensions(),
     );
+    const failClosedOnDrop = incoming.channels.length > 0 && !method.retry.idem;
 
     const taskSender: TaskSender = (message) => {
       this.taskQueue.push(message);
@@ -459,7 +460,7 @@ export class Driver {
             taskSender({
               kind: "response",
               requestId: waiter,
-              payload: method.retry.persist ? encodeIndeterminate() : encodeCancelled(),
+              payload: method.retry.persist || failClosedOnDrop ? encodeIndeterminate() : encodeCancelled(),
             });
           }
         } else if (method.retry.persist) {
@@ -480,7 +481,7 @@ export class Driver {
             taskSender({
               kind: "response",
               requestId: waiter,
-              payload: method.retry.persist ? encodeIndeterminate() : encodeCancelled(),
+              payload: method.retry.persist || failClosedOnDrop ? encodeIndeterminate() : encodeCancelled(),
             });
           }
         } else if (method.retry.persist) {

@@ -10,6 +10,7 @@ enum HandleCommand: Sendable {
         channels: [UInt64],
         retry: RetryPolicy,
         timeout: TimeInterval?,
+        prepareRetry: (@Sendable () async -> PreparedRetryRequest)?,
         responseTx: @Sendable (Result<[UInt8], ConnectionError>) -> Void
     )
 }

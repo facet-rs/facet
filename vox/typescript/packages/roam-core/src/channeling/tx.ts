@@ -115,15 +115,7 @@ export class Tx<T> {
     serialize: (value: T) => Uint8Array,
     initialCredit: number,
   ): void {
-    if (this._consumed) {
-      throw ChannelError.alreadyConsumed("Tx");
-    }
-
-    this._channelId = channelId;
-    const outgoing = registry.registerOutgoing(channelId, initialCredit);
-    this.sender = { mode: "client", sender: outgoing };
-    this.serialize = serialize;
-    this._consumed = true;
+    this.attachOutgoingBinding(channelId, registry, serialize, initialCredit, false);
   }
 
   /**
@@ -136,11 +128,20 @@ export class Tx<T> {
    * @param channelId - The allocated channel ID
    */
   setChannelIdOnly(channelId: ChannelId): void {
-    if (this._consumed) {
-      throw ChannelError.alreadyConsumed("Tx");
-    }
-    this._channelId = channelId;
-    this._consumed = true;
+    this.attachChannelIdOnly(channelId, false);
+  }
+
+  rebind(
+    channelId: ChannelId,
+    registry: ChannelRegistry,
+    serialize: (value: T) => Uint8Array,
+    initialCredit: number,
+  ): void {
+    this.attachOutgoingBinding(channelId, registry, serialize, initialCredit, true);
+  }
+
+  rebindChannelIdOnly(channelId: ChannelId): void {
+    this.attachChannelIdOnly(channelId, true);
   }
 
   /**
@@ -203,6 +204,36 @@ export class Tx<T> {
         channelId: this.sender.channelId,
       });
     }
+  }
+
+  finishRetryBinding(): void {
+    this.close();
+  }
+
+  private attachOutgoingBinding(
+    channelId: ChannelId,
+    registry: ChannelRegistry,
+    serialize: (value: T) => Uint8Array,
+    initialCredit: number,
+    allowRebind: boolean,
+  ): void {
+    if (this._consumed && !allowRebind) {
+      throw ChannelError.alreadyConsumed("Tx");
+    }
+    this._channelId = channelId;
+    const outgoing = registry.registerOutgoing(channelId, initialCredit);
+    this.sender = { mode: "client", sender: outgoing };
+    this.serialize = serialize;
+    this._consumed = true;
+    this.closed = false;
+  }
+
+  private attachChannelIdOnly(channelId: ChannelId, allowRebind: boolean): void {
+    if (this._consumed && !allowRebind) {
+      throw ChannelError.alreadyConsumed("Tx");
+    }
+    this._channelId = channelId;
+    this._consumed = true;
   }
 }
 

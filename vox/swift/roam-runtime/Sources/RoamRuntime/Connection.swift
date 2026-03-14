@@ -27,7 +27,9 @@ public final class Connection: @unchecked Sendable {
         payload: Data,
         channels: [UInt64],
         retry: RetryPolicy = .volatile,
-        timeout: TimeInterval?
+        timeout: TimeInterval?,
+        prepareRetry: (@Sendable () async -> PreparedRetryRequest)? = nil,
+        finalizeChannels: (@Sendable () -> Void)? = nil
     ) async throws -> Data {
         let response = try await callRaw(
             methodId: methodId,
@@ -35,7 +37,9 @@ public final class Connection: @unchecked Sendable {
             payload: Array(payload),
             channels: channels,
             retry: retry,
-            timeout: timeout
+            timeout: timeout,
+            prepareRetry: prepareRetry,
+            finalizeChannels: finalizeChannels
         )
         return Data(response)
     }
@@ -46,7 +50,9 @@ public final class Connection: @unchecked Sendable {
         payload: [UInt8],
         channels: [UInt64] = [],
         retry: RetryPolicy = .volatile,
-        timeout: TimeInterval? = nil
+        timeout: TimeInterval? = nil,
+        prepareRetry: (@Sendable () async -> PreparedRetryRequest)? = nil,
+        finalizeChannels: (@Sendable () -> Void)? = nil
     ) async throws -> [UInt8] {
         try await handle.callRaw(
             methodId: methodId,
@@ -54,7 +60,9 @@ public final class Connection: @unchecked Sendable {
             payload: payload,
             channels: channels,
             retry: retry,
-            timeout: timeout
+            timeout: timeout,
+            prepareRetry: prepareRetry,
+            finalizeChannels: finalizeChannels
         )
     }
 

@@ -17,9 +17,21 @@ use roam_shm::guest_link_from_names;
 use roam_shm::guest_link_from_raw;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
+use std::time::Duration;
 
 #[derive(Clone)]
 struct TestbedService;
+
+async fn stream_retry_probe_values(count: u32, output: Tx<i32>) {
+    for i in 0..count as i32 {
+        debug!(i, "sending value");
+        if let Err(e) = output.send(i).await {
+            error!(i, ?e, "send failed");
+            break;
+        }
+    }
+    output.close(Default::default()).await.ok();
+}
 
 impl Testbed for TestbedService {
     #[instrument(skip(self))]
@@ -82,14 +94,19 @@ impl Testbed for TestbedService {
     #[instrument(skip(self, output))]
     async fn generate(&self, count: u32, output: Tx<i32>) {
         info!(count, "generate called");
-        for i in 0..count as i32 {
-            debug!(i, "sending value");
-            if let Err(e) = output.send(i).await {
-                error!(i, ?e, "send failed");
-                break;
-            }
-        }
-        output.close(Default::default()).await.ok();
+        stream_retry_probe_values(count, output).await;
+    }
+
+    #[instrument(skip(self, output))]
+    async fn generate_retry_non_idem(&self, count: u32, output: Tx<i32>) {
+        info!(count, "generate_retry_non_idem called");
+        stream_retry_probe_values(count, output).await;
+    }
+
+    #[instrument(skip(self, output))]
+    async fn generate_retry_idem(&self, count: u32, output: Tx<i32>) {
+        info!(count, "generate_retry_idem called");
+        stream_retry_probe_values(count, output).await;
     }
 
     #[instrument(skip(self, input, output))]
@@ -184,6 +201,7 @@ fn main() -> Result<(), String> {
     let mode = std::env::var("SUBJECT_MODE").unwrap_or_else(|_| "server".to_string());
     match mode.as_str() {
         "server" => rt.block_on(connect_and_serve()),
+        "client" => rt.block_on(run_client()),
         "shm-server" => rt.block_on(connect_and_serve_shm()),
         other => Err(format!("unknown SUBJECT_MODE: {other}")),
     }
@@ -200,6 +218,135 @@ async fn connect_and_serve() -> Result<(), String> {
 
     let _root_caller_guard = root_caller_guard;
     std::future::pending::<()>().await;
+    Ok(())
+}
+
+async fn run_client() -> Result<(), String> {
+    const ITEM_COUNT: u32 = 40;
+
+    let addr = std::env::var("PEER_ADDR").map_err(|_| "PEER_ADDR env var not set".to_string())?;
+    let scenario = std::env::var("CLIENT_SCENARIO").unwrap_or_else(|_| "echo".to_string());
+    info!("client mode: connecting to {addr}, scenario={scenario}");
+
+    let (client, _sh) = initiator(tcp_connector(addr), requested_transport_mode())
+        .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
+        .await
+        .map_err(|e| format!("handshake failed: {e}"))?;
+
+    match scenario.as_str() {
+        "echo" => {
+            let result = client
+                .echo("hello from client".to_string())
+                .await
+                .map_err(|e| format!("echo failed: {e:?}"))?;
+            info!("echo result: {result}");
+        }
+        "channel_retry_non_idem" => {
+            let (tx, mut rx) = roam::channel::<i32>();
+            let call = tokio::spawn({
+                let client = client.clone();
+                async move {
+                    info!("starting channel_retry_non_idem call");
+                    client.generate_retry_non_idem(ITEM_COUNT, tx).await
+                }
+            });
+            let recv = tokio::spawn(async move {
+                let mut received = Vec::new();
+                loop {
+                    match rx.recv().await {
+                        Ok(Some(n)) => {
+                            info!(value = *n, "channel_retry_idem recv");
+                            received.push(*n);
+                        }
+                        Ok(None) => {
+                            info!("channel_retry_idem recv reached close");
+                            break;
+                        }
+                        Err(err) => {
+                            info!("channel_retry_idem recv error: {err}");
+                            break;
+                        }
+                    }
+                }
+                received
+            });
+
+            let result = tokio::time::timeout(Duration::from_secs(5), call)
+                .await
+                .map_err(|_| "timed out waiting for non-idem call".to_string())?
+                .map_err(|e| format!("non-idem call task: {e}"))?;
+            let received = tokio::time::timeout(Duration::from_secs(5), recv)
+                .await
+                .map_err(|_| "timed out draining non-idem channel".to_string())?
+                .map_err(|e| format!("non-idem recv task: {e}"))?;
+
+            if !matches!(result, Err(roam::RoamError::Indeterminate)) {
+                return Err(format!(
+                    "expected non-idem channel retry to fail with Indeterminate, got {result:?}"
+                ));
+            }
+
+            let expected: Vec<i32> = (0..received.len() as i32).collect();
+            if received != expected {
+                return Err(format!(
+                    "expected sequential non-idem prefix {expected:?}, got {received:?}"
+                ));
+            }
+        }
+        "channel_retry_idem" => {
+            let (tx, mut rx) = roam::channel::<i32>();
+            let call = tokio::spawn({
+                let client = client.clone();
+                async move {
+                    info!("starting channel_retry_idem call");
+                    client.generate_retry_idem(ITEM_COUNT, tx).await
+                }
+            });
+            let recv = tokio::spawn(async move {
+                let mut received = Vec::new();
+                while let Ok(Some(n)) = rx.recv().await {
+                    received.push(*n);
+                }
+                received
+            });
+
+            tokio::time::timeout(Duration::from_secs(5), call)
+                .await
+                .map_err(|_| "timed out waiting for idem call".to_string())?
+                .map_err(|e| format!("idem call task: {e}"))?
+                .map_err(|e| format!("idem retry call failed: {e:?}"))?;
+
+            let received = tokio::time::timeout(Duration::from_secs(5), recv)
+                .await
+                .map_err(|_| "timed out draining idem channel".to_string())?
+                .map_err(|e| format!("idem recv task: {e}"))?;
+
+            let restart = received
+                .iter()
+                .enumerate()
+                .skip(1)
+                .find_map(|(idx, value)| (*value == 0).then_some(idx))
+                .ok_or_else(|| format!("expected retry stream restart, got {received:?}"))?;
+
+            let expected_prefix: Vec<i32> = (0..restart as i32).collect();
+            if received[..restart] != expected_prefix {
+                return Err(format!(
+                    "expected first attempt prefix {expected_prefix:?}, got {:?}",
+                    &received[..restart]
+                ));
+            }
+
+            let expected_rerun: Vec<i32> = (0..ITEM_COUNT as i32).collect();
+            if received[restart..] != expected_rerun {
+                return Err(format!(
+                    "expected rerun suffix {expected_rerun:?}, got {:?}",
+                    &received[restart..]
+                ));
+            }
+        }
+        other => return Err(format!("unknown CLIENT_SCENARIO: {other}")),
+    }
+
     Ok(())
 }
 

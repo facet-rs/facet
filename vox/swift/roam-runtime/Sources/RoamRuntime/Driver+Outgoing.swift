@@ -81,15 +81,27 @@ extension Driver {
         switch cmd {
         case .call(
             let requestId, let methodId, let metadata, let payload, let channels, let retry,
-            let timeout, let responseTx):
+            let timeout, let prepareRetry, let responseTx):
             let isClosed = await state.isConnectionClosed()
             guard !isClosed else {
                 responseTx(.failure(.connectionClosed))
                 return
             }
 
+            let queuedCall = DriverQueuedCall(
+                requestId: requestId,
+                methodId: methodId,
+                metadata: metadata,
+                payload: payload,
+                channels: channels,
+                retry: retry,
+                timeout: timeout,
+                prepareRetry: prepareRetry
+            )
+
             let inserted = await state.addPendingResponse(
                 requestId,
+                request: queuedCall,
                 responseTx,
                 timeoutTask: nil
             )
@@ -109,16 +121,7 @@ extension Driver {
             do {
                 try await conduit.send(msg)
             } catch TransportError.wouldBlock {
-                pendingCalls.append(
-                    DriverQueuedCall(
-                        requestId: requestId,
-                        methodId: methodId,
-                        metadata: metadata,
-                        payload: payload,
-                        channels: channels,
-                        retry: retry,
-                        timeout: timeout
-                    ))
+                pendingCalls.append(queuedCall)
                 return
             } catch {
                 let pending = await state.claimPendingResponse(
@@ -170,22 +173,40 @@ extension Driver {
         }
 
         while let call = pendingCalls.first {
+            let replayCall: DriverQueuedCall
+            if let prepareRetry = call.prepareRetry {
+                let rebuilt = await prepareRetry()
+                replayCall = DriverQueuedCall(
+                    requestId: call.requestId,
+                    methodId: call.methodId,
+                    metadata: call.metadata,
+                    payload: rebuilt.payload,
+                    channels: rebuilt.channels,
+                    retry: call.retry,
+                    timeout: call.timeout,
+                    prepareRetry: call.prepareRetry
+                )
+            } else {
+                replayCall = call
+            }
+
             let msg = MessageV7.request(
                 connId: 0,
-                requestId: call.requestId,
-                methodId: call.methodId,
-                metadata: call.metadata,
-                channels: call.channels,
-                payload: call.payload
+                requestId: replayCall.requestId,
+                methodId: replayCall.methodId,
+                metadata: replayCall.metadata,
+                channels: replayCall.channels,
+                payload: replayCall.payload
             )
 
             do {
                 try await conduit.send(msg)
             } catch TransportError.wouldBlock {
+                pendingCalls[0] = replayCall
                 return
             } catch {
                 let pending = await state.claimPendingResponse(
-                    call.requestId,
+                    replayCall.requestId,
                     reason: "conduit-send-failed"
                 )
                 pending?.timeoutTask?.cancel()
@@ -198,14 +219,14 @@ extension Driver {
 
             pendingCalls.removeFirst()
 
-            guard let timeout = call.timeout else {
+            guard let timeout = replayCall.timeout else {
                 continue
             }
 
             let timeoutNs = Self.timeoutToNanoseconds(timeout)
             let capturedState = state
             let capturedConduit = conduit
-            let requestId = call.requestId
+            let requestId = replayCall.requestId
             let timeoutTask = Task {
                 do {
                     try await Task.sleep(nanoseconds: timeoutNs)
@@ -227,6 +248,25 @@ extension Driver {
             if !installed {
                 timeoutTask.cancel()
             }
+        }
+    }
+
+    func replayPendingCallsAfterResume() async {
+        let inFlight = await state.pendingCallsSnapshot()
+        pendingCalls.removeAll()
+        for call in inFlight {
+            if !call.channels.isEmpty && !call.retry.idem {
+                guard let pending = await state.claimPendingResponse(
+                    call.requestId,
+                    reason: "resume-channel-indeterminate"
+                ) else {
+                    continue
+                }
+                pending.timeoutTask?.cancel()
+                pending.responseTx(.success(encodeIndeterminateError()))
+                continue
+            }
+            pendingCalls.append(call)
         }
     }
 

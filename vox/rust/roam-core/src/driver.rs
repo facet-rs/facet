@@ -16,7 +16,8 @@ use roam_types::{
     ChannelCreditReplenisherHandle, ChannelId, ChannelItem, ChannelLivenessHandle, ChannelMessage,
     ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage, MaybeSend, Payload,
     ReplySink, RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse, RoamError,
-    SelfRef, TxError, ensure_operation_id, metadata_operation_id,
+    RpcPlan, SelfRef, TxError, ensure_operation_id, finalize_channels_caller_args,
+    metadata_operation_id,
 };
 
 use crate::session::{
@@ -30,6 +31,8 @@ type ResponseSlot = moire::sync::oneshot::Sender<SelfRef<RequestMessage<'static>
 struct InFlightHandler {
     handle: moire::task::JoinHandle<()>,
     retry: roam_types::RetryPolicy,
+    has_channels: bool,
+    operation_id: Option<u64>,
 }
 
 /// State shared between the driver loop and any DriverCaller/DriverChannelSink handles.
@@ -52,6 +55,10 @@ struct DriverShared {
     /// Credit semaphores for outbound channels (Tx on our side).
     /// The driver's GrantCredit handler adds permits to these.
     channel_credits: SyncMutex<BTreeMap<ChannelId, Arc<Semaphore>>>,
+}
+
+fn payload_is_runtime_error(payload: &Payload<'_>) -> bool {
+    matches!(payload, Payload::Incoming(bytes) if bytes.len() >= 2 && bytes[0] == 1 && bytes[1] != 0)
 }
 
 struct CallerDropGuard {
@@ -403,6 +410,7 @@ pub struct DriverCaller {
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
     closed_rx: watch::Receiver<bool>,
     resumed_rx: watch::Receiver<u64>,
+    resume_processed_rx: watch::Receiver<u64>,
     peer_supports_retry: bool,
     _drop_guard: Option<Arc<CallerDropGuard>>,
 }
@@ -536,6 +544,15 @@ impl Caller for DriverCaller {
     + MaybeSend
     + 'a {
         async move {
+            let caller_channel_plan = match &call.args {
+                Payload::Outgoing { ptr, shape, .. } => {
+                    let plan = RpcPlan::for_shape(shape);
+                    (!plan.channel_locations.is_empty())
+                        .then_some((ptr.raw_ptr() as usize, plan))
+                }
+                Payload::Incoming(_) => None,
+            };
+
             if self.peer_supports_retry {
                 let operation_id = self
                     .shared
@@ -569,22 +586,37 @@ impl Caller for DriverCaller {
                 .is_err()
             {
                 self.shared.pending_responses.lock().remove(&req_id);
+                if let Some((args_ptr, plan)) = caller_channel_plan {
+                    unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
+                }
                 return Err(RoamError::Cancelled);
             }
 
             let mut resumed_rx = self.resumed_rx.clone();
             let mut seen_resume_generation = *resumed_rx.borrow();
+            let mut resume_processed_rx = self.resume_processed_rx.clone();
             let mut closed_rx = self.closed_rx.clone();
             let mut response = std::pin::pin!(rx.named("awaiting_response"));
 
             let response_msg: SelfRef<RequestMessage<'static>> = loop {
                 tokio::select! {
                     result = &mut response => {
-                        break result.map_err(|_| RoamError::Cancelled)?;
+                        match result {
+                            Ok(msg) => break msg,
+                            Err(_) => {
+                                if let Some((args_ptr, plan)) = caller_channel_plan {
+                                    unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
+                                }
+                                return Err(RoamError::Cancelled);
+                            }
+                        }
                     }
                     changed = resumed_rx.changed(), if self.peer_supports_retry => {
                         if changed.is_err() {
                             self.shared.pending_responses.lock().remove(&req_id);
+                            if let Some((args_ptr, plan)) = caller_channel_plan {
+                                unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
+                            }
                             return Err(RoamError::Cancelled);
                         }
                         let generation = *resumed_rx.borrow();
@@ -592,18 +624,59 @@ impl Caller for DriverCaller {
                             continue;
                         }
                         seen_resume_generation = generation;
-                        let resend_call: Result<RequestCall<'_>, _> =
-                            facet_postcard::from_slice_borrowed(encoded_call.as_ref());
-                        if let Ok(resend_call) = resend_call {
+                        while *resume_processed_rx.borrow() < generation {
+                            if resume_processed_rx.changed().await.is_err() {
+                                self.shared.pending_responses.lock().remove(&req_id);
+                                if let Some((args_ptr, plan)) = caller_channel_plan {
+                                    unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
+                                }
+                                return Err(RoamError::Cancelled);
+                            }
+                        }
+                        if let Some((args_ptr, plan)) = caller_channel_plan {
+                            if let Some(binder) = self.channel_binder() {
+                                let channels = unsafe {
+                                    roam_types::bind_channels_caller_args(
+                                        args_ptr as *mut u8,
+                                        plan,
+                                        binder,
+                                    )
+                                };
+                                call.channels = channels;
+                            }
+                            let resend_args = match &call.args {
+                                Payload::Outgoing { ptr, shape, .. } => unsafe {
+                                    Payload::outgoing_unchecked(*ptr, shape)
+                                },
+                                Payload::Incoming(bytes) => Payload::Incoming(bytes),
+                            };
+                            let resend_call = RequestCall {
+                                method_id: call.method_id,
+                                args: resend_args,
+                                channels: call.channels.clone(),
+                                metadata: call.metadata.clone(),
+                            };
                             let _ = self.sender.send(ConnectionMessage::Request(RequestMessage {
                                 id: req_id,
                                 body: RequestBody::Call(resend_call),
                             })).await;
+                        } else {
+                            let resend_call: Result<RequestCall<'_>, _> =
+                                facet_postcard::from_slice_borrowed(encoded_call.as_ref());
+                            if let Ok(resend_call) = resend_call {
+                            let _ = self.sender.send(ConnectionMessage::Request(RequestMessage {
+                                id: req_id,
+                                body: RequestBody::Call(resend_call),
+                            })).await;
+                            }
                         }
                     }
                     changed = closed_rx.changed() => {
                         if changed.is_err() || *closed_rx.borrow() {
                             self.shared.pending_responses.lock().remove(&req_id);
+                            if let Some((args_ptr, plan)) = caller_channel_plan {
+                                unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
+                            }
                             return Err(RoamError::Cancelled);
                         }
                     }
@@ -616,6 +689,11 @@ impl Caller for DriverCaller {
                 _ => unreachable!("pending_responses only gets Response variants"),
             });
 
+            if let Some((args_ptr, plan)) = caller_channel_plan
+                && payload_is_runtime_error(&response.ret)
+            {
+                unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
+            }
             Ok(response)
         }
         .named("Caller::call")
@@ -656,6 +734,7 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     failures_rx: mpsc::UnboundedReceiver<(RequestId, FailureDisposition)>,
     closed_rx: watch::Receiver<bool>,
     resumed_rx: watch::Receiver<u64>,
+    resume_processed_tx: watch::Sender<u64>,
     peer_supports_retry: bool,
     local_control_rx: mpsc::UnboundedReceiver<DriverLocalControl>,
     handler: Arc<H>,
@@ -719,6 +798,35 @@ impl ChannelCreditReplenisher for DriverChannelCreditReplenisher {
 }
 
 impl<H: Handler<DriverReplySink>> Driver<H> {
+    fn close_all_channel_runtime_state(&self) {
+        for semaphore in self.shared.channel_credits.lock().values() {
+            semaphore.close();
+        }
+        self.shared.channel_senders.lock().clear();
+        self.shared.channel_buffers.lock().clear();
+        self.shared.channel_credits.lock().clear();
+    }
+
+    fn close_outbound_channel(&self, channel_id: ChannelId) {
+        if let Some(semaphore) = self.shared.channel_credits.lock().remove(&channel_id) {
+            semaphore.close();
+        }
+    }
+
+    fn abort_channel_handlers(&mut self) {
+        for (req_id, in_flight) in &self.in_flight_handlers {
+            if in_flight.has_channels {
+                if let Some(operation_id) = in_flight.operation_id {
+                    let _ = self
+                        .shared
+                        .operations
+                        .fail_without_reply(operation_id, *req_id);
+                }
+                in_flight.handle.abort();
+            }
+        }
+    }
+
     pub fn new(handle: ConnectionHandle, handler: H) -> Self {
         Self::with_operation_store(handle, handler, Arc::new(InMemoryOperationStore::default()))
     }
@@ -741,12 +849,14 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         } = handle;
         let drop_control_request = DropControlRequest::Close(conn_id);
         let (local_control_tx, local_control_rx) = mpsc::unbounded_channel("driver.local_control");
+        let (resume_processed_tx, _resume_processed_rx) = watch::channel(0_u64);
         Self {
             sender,
             rx,
             failures_rx,
             closed_rx,
             resumed_rx,
+            resume_processed_tx,
             peer_supports_retry,
             local_control_rx,
             handler: Arc::new(handler),
@@ -806,6 +916,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             local_control_tx: self.local_control_tx.clone(),
             closed_rx: self.closed_rx.clone(),
             resumed_rx: self.resumed_rx.clone(),
+            resume_processed_rx: self.resume_processed_tx.subscribe(),
             peer_supports_retry: self.peer_supports_retry,
             _drop_guard: drop_guard,
         }
@@ -825,8 +936,23 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
     /// Handler calls run as spawned tasks — we don't block the driver
     /// loop waiting for a handler to finish.
     pub async fn run(&mut self) {
+        let mut resumed_rx = self.resumed_rx.clone();
+        let mut seen_resume_generation = *resumed_rx.borrow();
         loop {
             tokio::select! {
+                biased;
+                changed = resumed_rx.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                    let generation = *resumed_rx.borrow();
+                    if generation != seen_resume_generation {
+                        seen_resume_generation = generation;
+                        self.close_all_channel_runtime_state();
+                        self.abort_channel_handlers();
+                        let _ = self.resume_processed_tx.send(generation);
+                    }
+                }
                 msg = self.rx.recv() => {
                     match msg {
                         Some(msg) => self.handle_msg(msg),
@@ -834,13 +960,29 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     }
                 }
                 Some((req_id, disposition)) = self.failures_rx.recv() => {
+                    let reply_disposition = self
+                        .in_flight_handlers
+                        .get(&req_id)
+                        .map(|in_flight| {
+                            if in_flight.has_channels && !in_flight.retry.idem {
+                                Some(FailureDisposition::Indeterminate)
+                            } else if in_flight.has_channels && in_flight.retry.idem {
+                                None
+                            } else {
+                                Some(disposition)
+                            }
+                        })
+                        .unwrap_or(Some(disposition));
                     // Clean up the handler tracking entry.
                     self.in_flight_handlers.remove(&req_id);
                     if self.shared.pending_responses.lock().remove(&req_id).is_none() {
+                        let Some(reply_disposition) = reply_disposition else {
+                            continue;
+                        };
                         // Incoming call — handler failed to reply.
                         // Wire format is always Result<T, RoamError<E>>, so encode
                         // the runtime outcome as Err(...) in that envelope.
-                        let roam_error = match disposition {
+                        let roam_error = match reply_disposition {
                             FailureDisposition::Cancelled => RoamError::Cancelled,
                             FailureDisposition::Indeterminate => RoamError::Indeterminate,
                         };
@@ -867,10 +1009,9 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         self.shared.pending_responses.lock().clear();
 
         // Connection is gone: drop channel runtime state so any registered Rx
-        // receivers observe closure instead of hanging on recv().
-        self.shared.channel_senders.lock().clear();
-        self.shared.channel_buffers.lock().clear();
-        self.shared.channel_credits.lock().clear();
+        // receivers observe closure instead of hanging on recv(), and wake any
+        // outbound Tx handles waiting for grant-credit.
+        self.close_all_channel_runtime_state();
     }
 
     async fn handle_local_control(&mut self, control: DriverLocalControl) {
@@ -1015,6 +1156,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 operations: operation_id.map(|_| Arc::clone(&self.shared.operations)),
                 binder: self.internal_binder(),
             };
+            let has_channels = !call.channels.is_empty();
             let join_handle = moire::task::spawn(
                 async move {
                     handler.handle(call, reply).await;
@@ -1026,6 +1168,8 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 InFlightHandler {
                     handle: join_handle,
                     retry,
+                    has_channels,
+                    operation_id,
                 },
             );
         } else if is_response {
@@ -1121,7 +1265,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         .push(IncomingChannelMessage::Close(close));
                 }
                 self.shared.channel_senders.lock().remove(&chan_id);
-                self.shared.channel_credits.lock().remove(&chan_id);
+                self.close_outbound_channel(chan_id);
             }
             // r[impl rpc.channel.reset]
             ChannelBody::Reset(_reset) => {
@@ -1145,7 +1289,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         .push(IncomingChannelMessage::Reset(reset));
                 }
                 self.shared.channel_senders.lock().remove(&chan_id);
-                self.shared.channel_credits.lock().remove(&chan_id);
+                self.close_outbound_channel(chan_id);
             }
             // r[impl rpc.flow-control.credit.grant]
             // r[impl rpc.flow-control.credit.grant.additive]

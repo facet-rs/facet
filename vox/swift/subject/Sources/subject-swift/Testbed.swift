@@ -13,6 +13,8 @@ public enum TestbedMethodId {
   public static let lookup: UInt64 = 0xe71a_0fae_dd01_4e59
   public static let sum: UInt64 = 0x855b_3a25_d97b_fefd
   public static let generate: UInt64 = 0x54d2_273d_8cdb_9c38
+  public static let generateRetryNonIdem: UInt64 = 0x8b28_6369_0edf_136e
+  public static let generateRetryIdem: UInt64 = 0x3be5_efd8_db40_b6f3
   public static let transform: UInt64 = 0x5d98_9560_4eb1_8b19
   public static let echoPoint: UInt64 = 0x453f_a9bf_6932_528c
   public static let createPerson: UInt64 = 0x3dd2_31f5_7b1b_ca21
@@ -123,6 +125,14 @@ public protocol TestbedCaller {
   ///
   ///  Tests: server→client streaming. Server sends via `Tx<T>`.
   func generate(count: UInt32, output: UnboundTx<Int32>) async throws
+  ///  Server streams numbers back to client on a non-idempotent retry probe.
+  ///
+  ///  Tests: channel retry fails closed when the session breaks mid-stream.
+  func generateRetryNonIdem(count: UInt32, output: UnboundTx<Int32>) async throws
+  ///  Server streams numbers back to client on an idempotent retry probe.
+  ///
+  ///  Tests: channel retry reruns the method with fresh channel bindings.
+  func generateRetryIdem(count: UInt32, output: UnboundTx<Int32>) async throws
   ///  Bidirectional: client sends strings, server echoes each back.
   ///
   ///  Tests: bidirectional streaming. Server receives via `Rx<T>`, sends via `Tx<T>`.
@@ -319,25 +329,29 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func sum(numbers: UnboundRx<Int32>) async throws -> Int64 {
-    // Bind channels using schema
-    await bindChannels(
-      schemas: testbed_schemas["sum"]!.args,
-      args: [numbers],
-      allocator: connection.channelAllocator,
-      incomingRegistry: connection.incomingChannelRegistry,
-      taskSender: connection.taskSender,
-      serializers: TestbedSerializers()
-    )
+    let prepareRetry: @Sendable () async -> PreparedRetryRequest = { [connection] in
+      await bindChannels(
+        schemas: testbed_schemas["sum"]!.args,
+        args: [numbers],
+        allocator: connection.channelAllocator,
+        incomingRegistry: connection.incomingChannelRegistry,
+        taskSender: connection.taskSender,
+        serializers: TestbedSerializers()
+      )
 
-    // Encode payload with channel IDs
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeVarint(numbers.channelId)
-    let payload = Data(payloadBytes)
-    let channels = collectChannelIds(schemas: testbed_schemas["sum"]!.args, args: [numbers])
+      var payloadBytes: [UInt8] = []
+      let payload = Data(payloadBytes)
+      let channels = collectChannelIds(schemas: testbed_schemas["sum"]!.args, args: [numbers])
+      return PreparedRetryRequest(payload: Array(payload), channels: channels)
+    }
+    let prepared = await prepareRetry()
 
     let response = try await connection.call(
-      methodId: 0x855b_3a25_d97b_fefd, payload: payload, channels: channels, retry: .volatile,
-      timeout: timeout)
+      methodId: 0x855b_3a25_d97b_fefd, payload: Data(prepared.payload), channels: prepared.channels,
+      retry: .volatile, timeout: timeout, prepareRetry: prepareRetry,
+      finalizeChannels: {
+        finalizeBoundChannels(schemas: testbed_schemas["sum"]!.args, args: [numbers])
+      })
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -366,27 +380,137 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func generate(count: UInt32, output: UnboundTx<Int32>) async throws {
-    // Bind channels using schema
-    await bindChannels(
-      schemas: testbed_schemas["generate"]!.args,
-      args: [count, output],
-      allocator: connection.channelAllocator,
-      incomingRegistry: connection.incomingChannelRegistry,
-      taskSender: connection.taskSender,
-      serializers: TestbedSerializers()
-    )
+    let prepareRetry: @Sendable () async -> PreparedRetryRequest = { [connection] in
+      await bindChannels(
+        schemas: testbed_schemas["generate"]!.args,
+        args: [count, output],
+        allocator: connection.channelAllocator,
+        incomingRegistry: connection.incomingChannelRegistry,
+        taskSender: connection.taskSender,
+        serializers: TestbedSerializers()
+      )
 
-    // Encode payload with channel IDs
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeU32(count)
-    payloadBytes += encodeVarint(output.channelId)
-    let payload = Data(payloadBytes)
-    let channels = collectChannelIds(
-      schemas: testbed_schemas["generate"]!.args, args: [count, output])
+      var payloadBytes: [UInt8] = []
+      payloadBytes += encodeU32(count)
+      let payload = Data(payloadBytes)
+      let channels = collectChannelIds(
+        schemas: testbed_schemas["generate"]!.args, args: [count, output])
+      return PreparedRetryRequest(payload: Array(payload), channels: channels)
+    }
+    let prepared = await prepareRetry()
 
     let response = try await connection.call(
-      methodId: 0x54d2_273d_8cdb_9c38, payload: payload, channels: channels, retry: .volatile,
-      timeout: timeout)
+      methodId: 0x54d2_273d_8cdb_9c38, payload: Data(prepared.payload), channels: prepared.channels,
+      retry: .volatile, timeout: timeout, prepareRetry: prepareRetry,
+      finalizeChannels: {
+        finalizeBoundChannels(schemas: testbed_schemas["generate"]!.args, args: [count, output])
+      })
+    var cursor = 0
+    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    switch _cursor_resultDisc {
+    case 0:
+      return
+    case 1:
+      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      switch _cursor_errorCode {
+      case 0:
+        throw RoamError.decodeError("unexpected user error for infallible method")
+      case 1:
+        throw RoamError.unknownMethod
+      case 2:
+        throw RoamError.decodeError("invalid payload")
+      case 3:
+        throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
+      default:
+        throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
+      }
+    default:
+      throw RoamError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
+    }
+  }
+
+  public func generateRetryNonIdem(count: UInt32, output: UnboundTx<Int32>) async throws {
+    let prepareRetry: @Sendable () async -> PreparedRetryRequest = { [connection] in
+      await bindChannels(
+        schemas: testbed_schemas["generateRetryNonIdem"]!.args,
+        args: [count, output],
+        allocator: connection.channelAllocator,
+        incomingRegistry: connection.incomingChannelRegistry,
+        taskSender: connection.taskSender,
+        serializers: TestbedSerializers()
+      )
+
+      var payloadBytes: [UInt8] = []
+      payloadBytes += encodeU32(count)
+      let payload = Data(payloadBytes)
+      let channels = collectChannelIds(
+        schemas: testbed_schemas["generateRetryNonIdem"]!.args, args: [count, output])
+      return PreparedRetryRequest(payload: Array(payload), channels: channels)
+    }
+    let prepared = await prepareRetry()
+
+    let response = try await connection.call(
+      methodId: 0x8b28_6369_0edf_136e, payload: Data(prepared.payload), channels: prepared.channels,
+      retry: .volatile, timeout: timeout, prepareRetry: prepareRetry,
+      finalizeChannels: {
+        finalizeBoundChannels(
+          schemas: testbed_schemas["generateRetryNonIdem"]!.args, args: [count, output])
+      })
+    var cursor = 0
+    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    switch _cursor_resultDisc {
+    case 0:
+      return
+    case 1:
+      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      switch _cursor_errorCode {
+      case 0:
+        throw RoamError.decodeError("unexpected user error for infallible method")
+      case 1:
+        throw RoamError.unknownMethod
+      case 2:
+        throw RoamError.decodeError("invalid payload")
+      case 3:
+        throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
+      default:
+        throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
+      }
+    default:
+      throw RoamError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
+    }
+  }
+
+  public func generateRetryIdem(count: UInt32, output: UnboundTx<Int32>) async throws {
+    let prepareRetry: @Sendable () async -> PreparedRetryRequest = { [connection] in
+      await bindChannels(
+        schemas: testbed_schemas["generateRetryIdem"]!.args,
+        args: [count, output],
+        allocator: connection.channelAllocator,
+        incomingRegistry: connection.incomingChannelRegistry,
+        taskSender: connection.taskSender,
+        serializers: TestbedSerializers()
+      )
+
+      var payloadBytes: [UInt8] = []
+      payloadBytes += encodeU32(count)
+      let payload = Data(payloadBytes)
+      let channels = collectChannelIds(
+        schemas: testbed_schemas["generateRetryIdem"]!.args, args: [count, output])
+      return PreparedRetryRequest(payload: Array(payload), channels: channels)
+    }
+    let prepared = await prepareRetry()
+
+    let response = try await connection.call(
+      methodId: 0x3be5_efd8_db40_b6f3, payload: Data(prepared.payload), channels: prepared.channels,
+      retry: .idem, timeout: timeout, prepareRetry: prepareRetry,
+      finalizeChannels: {
+        finalizeBoundChannels(
+          schemas: testbed_schemas["generateRetryIdem"]!.args, args: [count, output])
+      })
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -414,27 +538,30 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func transform(input: UnboundRx<String>, output: UnboundTx<String>) async throws {
-    // Bind channels using schema
-    await bindChannels(
-      schemas: testbed_schemas["transform"]!.args,
-      args: [input, output],
-      allocator: connection.channelAllocator,
-      incomingRegistry: connection.incomingChannelRegistry,
-      taskSender: connection.taskSender,
-      serializers: TestbedSerializers()
-    )
+    let prepareRetry: @Sendable () async -> PreparedRetryRequest = { [connection] in
+      await bindChannels(
+        schemas: testbed_schemas["transform"]!.args,
+        args: [input, output],
+        allocator: connection.channelAllocator,
+        incomingRegistry: connection.incomingChannelRegistry,
+        taskSender: connection.taskSender,
+        serializers: TestbedSerializers()
+      )
 
-    // Encode payload with channel IDs
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeVarint(input.channelId)
-    payloadBytes += encodeVarint(output.channelId)
-    let payload = Data(payloadBytes)
-    let channels = collectChannelIds(
-      schemas: testbed_schemas["transform"]!.args, args: [input, output])
+      var payloadBytes: [UInt8] = []
+      let payload = Data(payloadBytes)
+      let channels = collectChannelIds(
+        schemas: testbed_schemas["transform"]!.args, args: [input, output])
+      return PreparedRetryRequest(payload: Array(payload), channels: channels)
+    }
+    let prepared = await prepareRetry()
 
     let response = try await connection.call(
-      methodId: 0x5d98_9560_4eb1_8b19, payload: payload, channels: channels, retry: .volatile,
-      timeout: timeout)
+      methodId: 0x5d98_9560_4eb1_8b19, payload: Data(prepared.payload), channels: prepared.channels,
+      retry: .volatile, timeout: timeout, prepareRetry: prepareRetry,
+      finalizeChannels: {
+        finalizeBoundChannels(schemas: testbed_schemas["transform"]!.args, args: [input, output])
+      })
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -915,6 +1042,14 @@ public protocol TestbedHandler {
   ///
   ///  Tests: server→client streaming. Server sends via `Tx<T>`.
   func generate(count: UInt32, output: Tx<Int32>) async throws
+  ///  Server streams numbers back to client on a non-idempotent retry probe.
+  ///
+  ///  Tests: channel retry fails closed when the session breaks mid-stream.
+  func generateRetryNonIdem(count: UInt32, output: Tx<Int32>) async throws
+  ///  Server streams numbers back to client on an idempotent retry probe.
+  ///
+  ///  Tests: channel retry reruns the method with fresh channel bindings.
+  func generateRetryIdem(count: UInt32, output: Tx<Int32>) async throws
   ///  Bidirectional: client sends strings, server echoes each back.
   ///
   ///  Tests: bidirectional streaming. Server receives via `Rx<T>`, sends via `Tx<T>`.
@@ -967,6 +1102,11 @@ public final class TestbedChannelingDispatcher {
       await dispatch_sum(requestId: requestId, channels: channels, payload: payload)
     case 0x54d2_273d_8cdb_9c38:
       await dispatch_generate(requestId: requestId, channels: channels, payload: payload)
+    case 0x8b28_6369_0edf_136e:
+      await dispatch_generateRetryNonIdem(
+        requestId: requestId, channels: channels, payload: payload)
+    case 0x3be5_efd8_db40_b6f3:
+      await dispatch_generateRetryIdem(requestId: requestId, channels: channels, payload: payload)
     case 0x5d98_9560_4eb1_8b19:
       await dispatch_transform(requestId: requestId, channels: channels, payload: payload)
     case 0x453f_a9bf_6932_528c:
@@ -1006,6 +1146,10 @@ public final class TestbedChannelingDispatcher {
       return .volatile
     case 0x54d2_273d_8cdb_9c38:
       return .volatile
+    case 0x8b28_6369_0edf_136e:
+      return .volatile
+    case 0x3be5_efd8_db40_b6f3:
+      return .idem
     case 0x5d98_9560_4eb1_8b19:
       return .volatile
     case 0x453f_a9bf_6932_528c:
@@ -1212,6 +1356,62 @@ public final class TestbedChannelingDispatcher {
         serialize: ({ encodeI32($0) }))
       do {
         try await handler.generate(count: count, output: output)
+        output.close()
+        taskSender(
+          .response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
+    } catch {
+      taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+    }
+  }
+
+  private func dispatch_generateRetryNonIdem(requestId: UInt64, channels: [UInt64], payload: Data)
+    async
+  {
+    do {
+      var cursor = 0
+      var channelCursor = 0
+      let count = try decodeU32(from: payload, offset: &cursor)
+      guard channelCursor < channels.count else {
+        throw RoamError.decodeError("missing channel id for output")
+      }
+      let outputChannelId = channels[channelCursor]
+      channelCursor += 1
+      let output = await createServerTx(
+        channelId: outputChannelId, taskSender: taskSender, registry: registry, initialCredit: 16,
+        serialize: ({ encodeI32($0) }))
+      do {
+        try await handler.generateRetryNonIdem(count: count, output: output)
+        output.close()
+        taskSender(
+          .response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
+    } catch {
+      taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+    }
+  }
+
+  private func dispatch_generateRetryIdem(requestId: UInt64, channels: [UInt64], payload: Data)
+    async
+  {
+    do {
+      var cursor = 0
+      var channelCursor = 0
+      let count = try decodeU32(from: payload, offset: &cursor)
+      guard channelCursor < channels.count else {
+        throw RoamError.decodeError("missing channel id for output")
+      }
+      let outputChannelId = channels[channelCursor]
+      channelCursor += 1
+      let output = await createServerTx(
+        channelId: outputChannelId, taskSender: taskSender, registry: registry, initialCredit: 16,
+        serialize: ({ encodeI32($0) }))
+      do {
+        try await handler.generateRetryIdem(count: count, output: output)
         output.close()
         taskSender(
           .response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))
@@ -1573,6 +1773,8 @@ public let testbed_schemas: [String: MethodSchema] = [
   "lookup": MethodSchema(args: [.u32]),
   "sum": MethodSchema(args: [.rx(initialCredit: 16, element: .i32)]),
   "generate": MethodSchema(args: [.u32, .tx(initialCredit: 16, element: .i32)]),
+  "generateRetryNonIdem": MethodSchema(args: [.u32, .tx(initialCredit: 16, element: .i32)]),
+  "generateRetryIdem": MethodSchema(args: [.u32, .tx(initialCredit: 16, element: .i32)]),
   "transform": MethodSchema(args: [
     .rx(initialCredit: 16, element: .string), .tx(initialCredit: 16, element: .string),
   ]),

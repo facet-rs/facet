@@ -17,7 +17,9 @@ public protocol RoamConnection: Sendable {
         payload: Data,
         channels: [UInt64],
         retry: RetryPolicy,
-        timeout: TimeInterval?
+        timeout: TimeInterval?,
+        prepareRetry: (@Sendable () async -> PreparedRetryRequest)?,
+        finalizeChannels: (@Sendable () -> Void)?
     ) async throws -> Data
 
     /// Get the channel allocator.
@@ -44,7 +46,30 @@ public extension RoamConnection {
             payload: payload,
             channels: channels,
             retry: retry,
-            timeout: timeout
+            timeout: timeout,
+            prepareRetry: nil,
+            finalizeChannels: nil
+        )
+    }
+
+    func call(
+        methodId: UInt64,
+        payload: Data,
+        channels: [UInt64],
+        retry: RetryPolicy,
+        timeout: TimeInterval?,
+        prepareRetry: (@Sendable () async -> PreparedRetryRequest)?,
+        finalizeChannels: (@Sendable () -> Void)?
+    ) async throws -> Data {
+        try await call(
+            methodId: methodId,
+            metadata: [],
+            payload: payload,
+            channels: channels,
+            retry: retry,
+            timeout: timeout,
+            prepareRetry: prepareRetry,
+            finalizeChannels: finalizeChannels
         )
     }
 
@@ -61,7 +86,9 @@ public extension RoamConnection {
             payload: payload,
             channels: channels,
             retry: .volatile,
-            timeout: timeout
+            timeout: timeout,
+            prepareRetry: nil,
+            finalizeChannels: nil
         )
     }
 
@@ -72,7 +99,9 @@ public extension RoamConnection {
             payload: payload,
             channels: [],
             retry: .volatile,
-            timeout: nil
+            timeout: nil,
+            prepareRetry: nil,
+            finalizeChannels: nil
         )
     }
 
@@ -83,7 +112,9 @@ public extension RoamConnection {
             payload: payload,
             channels: [],
             retry: .volatile,
-            timeout: timeout
+            timeout: timeout,
+            prepareRetry: nil,
+            finalizeChannels: nil
         )
     }
 
@@ -99,7 +130,9 @@ public extension RoamConnection {
             payload: payload,
             channels: [],
             retry: .volatile,
-            timeout: timeout
+            timeout: timeout,
+            prepareRetry: nil,
+            finalizeChannels: nil
         )
     }
 
@@ -115,7 +148,9 @@ public extension RoamConnection {
             payload: payload,
             channels: channels,
             retry: .volatile,
-            timeout: timeout
+            timeout: timeout,
+            prepareRetry: nil,
+            finalizeChannels: nil
         )
     }
 }

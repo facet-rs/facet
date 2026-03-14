@@ -9,6 +9,7 @@ export {
   Rx,
   channel,
   bindChannels,
+  finalizeBoundChannels,
   type Schema,
   type SchemaRegistry,
   type MethodDescriptor,

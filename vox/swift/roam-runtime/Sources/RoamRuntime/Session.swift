@@ -34,7 +34,7 @@ public final class Session: @unchecked Sendable {
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
         keepalive: DriverKeepaliveConfig? = nil,
-        resumable: Bool = false
+        resumable: Bool = true
     ) async throws -> Session {
         let conduit = try await connector.openConduit()
         let recoverConduit: (@Sendable () async throws -> any Conduit)?

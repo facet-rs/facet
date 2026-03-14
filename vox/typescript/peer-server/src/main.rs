@@ -17,6 +17,13 @@ use tokio::net::TcpListener;
 #[derive(Clone)]
 struct TestbedService;
 
+async fn stream_retry_probe_values(count: u32, output: Tx<i32>) {
+    for i in 0..count as i32 {
+        let _ = output.send(i).await;
+    }
+    let _ = output.close(Default::default()).await;
+}
+
 impl Testbed for TestbedService {
     async fn echo(&self, message: String) -> String {
         if message == "__roam_reconnect__" {
@@ -67,10 +74,15 @@ impl Testbed for TestbedService {
     }
 
     async fn generate(&self, count: u32, output: Tx<i32>) {
-        for i in 0..count as i32 {
-            let _ = output.send(i).await;
-        }
-        let _ = output.close(Default::default()).await;
+        stream_retry_probe_values(count, output).await;
+    }
+
+    async fn generate_retry_non_idem(&self, count: u32, output: Tx<i32>) {
+        stream_retry_probe_values(count, output).await;
+    }
+
+    async fn generate_retry_idem(&self, count: u32, output: Tx<i32>) {
+        stream_retry_probe_values(count, output).await;
     }
 
     async fn transform(&self, mut input: Rx<String>, output: Tx<String>) {

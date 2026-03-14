@@ -40,7 +40,9 @@ final class ConnectionHandle: @unchecked Sendable {
         payload: [UInt8],
         channels: [UInt64] = [],
         retry: RetryPolicy = .volatile,
-        timeout: TimeInterval? = nil
+        timeout: TimeInterval? = nil,
+        prepareRetry: (@Sendable () async -> PreparedRetryRequest)? = nil,
+        finalizeChannels: (@Sendable () -> Void)? = nil
     ) async throws -> [UInt8] {
         if let semaphore = requestSemaphore {
             try await semaphore.acquire()
@@ -58,6 +60,7 @@ final class ConnectionHandle: @unchecked Sendable {
         return try await withCheckedThrowingContinuation { continuation in
             let semaphore = requestSemaphore
             let responseTx = SingleResume<[UInt8]> { result in
+                finalizeChannels?()
                 if let semaphore {
                     Task { await semaphore.release() }
                 }
@@ -72,6 +75,7 @@ final class ConnectionHandle: @unchecked Sendable {
                     channels: channels,
                     retry: retry,
                     timeout: timeout,
+                    prepareRetry: prepareRetry,
                     responseTx: { result in responseTx(result) }
                 ))
             guard accepted else {

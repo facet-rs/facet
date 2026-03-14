@@ -50,4 +50,4 @@ export {
   isRefSchema,
 } from "./schema.ts";
 
-export { bindChannels } from "./binding.ts";
+export { bindChannels, finalizeBoundChannels } from "./binding.ts";

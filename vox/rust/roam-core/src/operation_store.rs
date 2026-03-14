@@ -199,7 +199,11 @@ impl OperationRegistry {
         owner_request_id: RequestId,
         encoded_response: Arc<[u8]>,
     ) -> Vec<RequestId> {
-        let Some(OperationState::Live(live)) = self.states.remove(&operation_id) else {
+        let Some(existing) = self.states.remove(&operation_id) else {
+            return vec![];
+        };
+        let OperationState::Live(live) = existing else {
+            self.states.insert(operation_id, existing);
             return vec![];
         };
         if live.owner_request_id != owner_request_id {
@@ -225,7 +229,11 @@ impl OperationRegistry {
         operation_id: u64,
         owner_request_id: RequestId,
     ) -> Vec<RequestId> {
-        let Some(OperationState::Live(live)) = self.states.remove(&operation_id) else {
+        let Some(existing) = self.states.remove(&operation_id) else {
+            return vec![];
+        };
+        let OperationState::Live(live) = existing else {
+            self.states.insert(operation_id, existing);
             return vec![];
         };
         if live.owner_request_id != owner_request_id {

@@ -105,7 +105,7 @@ pub unsafe fn bind_channels_caller_args(
                         && let Ok(slot) = core_field.get_mut::<CoreSlot>()
                         && let Some(core) = &slot.inner
                     {
-                        core.set_binding(ChannelBinding::Receiver(bound));
+                        core.bind_retryable_receiver(bound);
                     }
                 }
             },
@@ -117,6 +117,38 @@ pub unsafe fn bind_channels_caller_args(
     }
 
     channel_ids
+}
+
+/// Finalize caller-side channel bindings after a request settles.
+///
+/// This closes any retryable paired-channel state so callers blocked on a
+/// paired `Rx` observe stream termination once the parent request is done.
+///
+/// # Safety
+///
+/// `args_ptr` must point to valid, initialized memory for a value whose
+/// shape matches `plan.shape`.
+#[allow(unsafe_code)]
+pub unsafe fn finalize_channels_caller_args(args_ptr: *mut u8, plan: &RpcPlan) {
+    let shape = plan.shape;
+
+    for loc in plan.channel_locations {
+        let poke = unsafe { facet::Poke::from_raw_parts(PtrMut::new(args_ptr), shape) };
+
+        match poke.at_path_mut(&loc.path) {
+            Ok(channel_poke) => {
+                if let Ok(mut ps) = channel_poke.into_struct()
+                    && let Ok(mut core_field) = ps.field_by_name("core")
+                    && let Ok(slot) = core_field.get_mut::<CoreSlot>()
+                    && let Some(core) = &slot.inner
+                {
+                    core.finish_retry_binding();
+                }
+            }
+            Err(PathAccessError::OptionIsNone { .. }) => {}
+            Err(_) => {}
+        }
+    }
 }
 
 // r[impl rpc.channel.binding]

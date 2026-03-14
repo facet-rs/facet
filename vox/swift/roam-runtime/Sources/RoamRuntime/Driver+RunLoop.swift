@@ -15,6 +15,7 @@ extension Driver {
     /// Run the driver until connection closes.
     public func run() async throws {
         var keepaliveRuntime = makeKeepaliveRuntime()
+        var seenResumeGeneration: UInt64 = 0
 
         let cont = eventContinuation
         let conduit = self.conduit
@@ -60,6 +61,13 @@ extension Driver {
                     break
 
                 case .retryTick:
+                    if let resumable = conduit as? ResumableConduit {
+                        let generation = await resumable.currentResumeGeneration()
+                        if generation != seenResumeGeneration {
+                            seenResumeGeneration = generation
+                            await replayPendingCallsAfterResume()
+                        }
+                    }
                     try await handleKeepaliveTick(keepaliveRuntime: &keepaliveRuntime)
 
                 case .conduitClosed:

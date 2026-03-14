@@ -10,6 +10,12 @@ import RoamRuntime
 
 /// Implementation of the Testbed service.
 struct TestbedService: TestbedHandler {
+    private func streamRetryProbeValues(count: UInt32, output: Tx<Int32>) async throws {
+        for i in 0..<Int32(count) {
+            log("  sending: \(i)")
+            try await output.send(i)
+        }
+    }
 
     func echo(message: String) async throws -> String {
         log("echo called: \(message)")
@@ -56,11 +62,20 @@ struct TestbedService: TestbedHandler {
 
     func generate(count: UInt32, output: Tx<Int32>) async throws {
         log("generate called: count=\(count)")
-        for i in 0..<Int32(count) {
-            log("  sending: \(i)")
-            try await output.send(i)
-        }
+        try await streamRetryProbeValues(count: count, output: output)
         log("generate complete, about to return (close will be sent by dispatcher)")
+    }
+
+    func generateRetryNonIdem(count: UInt32, output: Tx<Int32>) async throws {
+        log("generateRetryNonIdem called: count=\(count)")
+        try await streamRetryProbeValues(count: count, output: output)
+        log("generateRetryNonIdem complete, about to return (close will be sent by dispatcher)")
+    }
+
+    func generateRetryIdem(count: UInt32, output: Tx<Int32>) async throws {
+        log("generateRetryIdem called: count=\(count)")
+        try await streamRetryProbeValues(count: count, output: output)
+        log("generateRetryIdem complete, about to return (close will be sent by dispatcher)")
     }
 
     func transform(input: Rx<String>, output: Tx<String>) async throws {
@@ -194,6 +209,8 @@ func subjectConduit() -> TransportConduitKind {
     ProcessInfo.processInfo.environment["SPEC_CONDUIT"] == "stable" ? .stable : .bare
 }
 
+let retryProbeItemCount: UInt32 = 40
+
 // MARK: - Server Mode
 
 /// In "server" mode, the subject acts as the RPC server (handler).
@@ -294,6 +311,78 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
             throw SubjectError.invalidResponse
         }
         log("generate result OK: \(received)")
+    case "channel_retry_non_idem":
+        let (tx, rx) = channel(
+            serialize: { encodeI32($0) },
+            deserialize: { bytes in
+                var offset = 0
+                return try decodeI32(from: Data(bytes), offset: &offset)
+            }
+        )
+
+        let callTask = Task {
+            try await client.generateRetryNonIdem(count: retryProbeItemCount, output: tx)
+        }
+        let receiveTask = Task { () throws -> [Int32] in
+            var received: [Int32] = []
+            for try await n in rx {
+                received.append(n)
+            }
+            return received
+        }
+
+        do {
+            try await callTask.value
+            log("channel_retry_non_idem expected indeterminate")
+            throw SubjectError.invalidResponse
+        } catch RoamError.indeterminate {
+        } catch {
+            log("channel_retry_non_idem unexpected error: \(error)")
+            throw error
+        }
+
+        let received = try await receiveTask.value
+        let expected = (0..<Int32(received.count)).map { $0 }
+        guard received == expected else {
+            log("channel_retry_non_idem expected prefix \(expected), got \(received)")
+            throw SubjectError.invalidResponse
+        }
+    case "channel_retry_idem":
+        let (tx, rx) = channel(
+            serialize: { encodeI32($0) },
+            deserialize: { bytes in
+                var offset = 0
+                return try decodeI32(from: Data(bytes), offset: &offset)
+            }
+        )
+
+        let callTask = Task {
+            try await client.generateRetryIdem(count: retryProbeItemCount, output: tx)
+        }
+        let receiveTask = Task { () throws -> [Int32] in
+            var received: [Int32] = []
+            for try await n in rx {
+                received.append(n)
+            }
+            return received
+        }
+
+        try await callTask.value
+        let received = try await receiveTask.value
+        guard let restart = received.enumerated().dropFirst().first(where: { $0.element == 0 })?.offset else {
+            log("channel_retry_idem expected retry restart, got \(received)")
+            throw SubjectError.invalidResponse
+        }
+        let expectedPrefix = (0..<Int32(restart)).map { $0 }
+        guard Array(received[..<restart]) == expectedPrefix else {
+            log("channel_retry_idem expected prefix \(expectedPrefix), got \(Array(received[..<restart]))")
+            throw SubjectError.invalidResponse
+        }
+        let expectedRerun = (0..<Int32(retryProbeItemCount)).map { $0 }
+        guard Array(received[restart...]) == expectedRerun else {
+            log("channel_retry_idem expected rerun \(expectedRerun), got \(Array(received[restart...]))")
+            throw SubjectError.invalidResponse
+        }
     case "divide_error":
         let result = try await client.divide(dividend: 10, divisor: 0)
         guard case .failure(.divisionByZero) = result else {
