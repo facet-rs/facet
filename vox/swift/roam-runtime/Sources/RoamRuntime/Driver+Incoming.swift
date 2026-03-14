@@ -91,7 +91,17 @@ extension Driver {
                 pending.timeoutTask?.cancel()
                 pending.responseTx(.success(payload))
             case .cancel:
-                let _ = await state.removeInFlight(request.id)
+                switch await operations.cancel(requestId: request.id) {
+                case .none, .detach:
+                    let _ = await state.removeInFlight(request.id)
+                case .keepLive:
+                    break
+                case .release(_, let waiters):
+                    let taskTx = taskSender()
+                    for waiter in waiters {
+                        taskTx(.response(requestId: waiter, payload: encodeCancelledError()))
+                    }
+                }
             }
         case .channelMessage(let channel):
             switch channel.body {
@@ -120,6 +130,7 @@ extension Driver {
         channels: [UInt64],
         payload: [UInt8]
     ) async throws {
+        let retry = dispatcher.retryPolicy(methodId: methodId)
         let inserted = await state.addInFlight(
             requestId,
             connectionId: connId,
@@ -136,14 +147,37 @@ extension Driver {
             throw ConnectionError.protocolViolation(rule: "rpc.flow-control.credit.exhaustion")
         }
 
+        let taskTx = taskSender()
+        if let operationId = metadataOperationId(metadata) {
+            switch await operations.admit(
+                operationId: operationId,
+                methodId: methodId,
+                args: payload,
+                retry: retry,
+                requestId: requestId
+            ) {
+            case .start:
+                break
+            case .attached:
+                return
+            case .replay(let replayPayload):
+                taskTx(.response(requestId: requestId, payload: replayPayload))
+                return
+            case .conflict:
+                taskTx(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+                return
+            case .indeterminate:
+                taskTx(.response(requestId: requestId, payload: encodeIndeterminateError()))
+                return
+            }
+        }
+
         await dispatcher.preregister(
             methodId: methodId,
             payload: payload,
             channels: channels,
             registry: serverRegistry
         )
-
-        let taskTx = taskSender()
 
         Task {
             await dispatcher.dispatch(

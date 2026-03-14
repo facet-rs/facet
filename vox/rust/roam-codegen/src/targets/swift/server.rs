@@ -13,6 +13,15 @@ use crate::code_writer::CodeWriter;
 use crate::cw_writeln;
 use crate::render::hex_u64;
 
+fn swift_retry_policy_literal(method: &MethodDescriptor) -> &'static str {
+    match (method.retry.persist, method.retry.idem) {
+        (false, false) => ".volatile",
+        (false, true) => ".idem",
+        (true, false) => ".persist",
+        (true, true) => ".persistIdem",
+    }
+}
+
 fn dispatch_helper_name(method_name: &str) -> String {
     format!("dispatch_{method_name}")
 }
@@ -146,6 +155,24 @@ fn generate_channeling_dispatcher(service: &ServiceDescriptor) -> String {
         w.writeln("}").unwrap();
         w.blank_line().unwrap();
 
+        w.writeln("public static func retryPolicy(methodId: UInt64) -> RetryPolicy {")
+            .unwrap();
+        {
+            let _indent = w.indent();
+            w.writeln("switch methodId {").unwrap();
+            for method in service.methods {
+                let method_id = crate::method_id(method);
+                let retry_policy = swift_retry_policy_literal(method);
+                cw_writeln!(w, "case {}:", hex_u64(method_id)).unwrap();
+                cw_writeln!(w, "    return {retry_policy}").unwrap();
+            }
+            w.writeln("default:").unwrap();
+            w.writeln("    return .volatile").unwrap();
+            w.writeln("}").unwrap();
+        }
+        w.writeln("}").unwrap();
+        w.blank_line().unwrap();
+
         // Generate preregisterChannels method
         generate_preregister_channels(&mut w, service);
         w.blank_line().unwrap();
@@ -222,6 +249,11 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
     let method_name = method.method_name.to_lower_camel_case();
     let dispatch_name = dispatch_helper_name(&method_name);
     let has_channeling = method.args.iter().any(|a| is_channel(a.shape));
+    let handler_error_payload = if method.retry.persist {
+        "encodeIndeterminateError()"
+    } else {
+        "encodeInvalidPayloadError()"
+    };
 
     cw_writeln!(
         w,
@@ -249,7 +281,6 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
                 w.writeln("var channelCursor = 0").unwrap();
             }
 
-            // Decode arguments - channel IDs come from Request.channels.
             for arg in method.args {
                 let arg_name = arg.name.to_lower_camel_case();
                 generate_channeling_decode_arg(
@@ -261,8 +292,6 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
                     Some("channelCursor"),
                 );
             }
-
-            // Call handler
             let arg_names: Vec<String> = method
                 .args
                 .iter()
@@ -274,46 +303,44 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
 
             let ret_type = swift_type_server_return(method.return_shape);
 
-            if has_channeling {
-                // For channeling methods, close any Tx channels after handler completes
-                if ret_type == "Void" {
-                    cw_writeln!(
-                        w,
-                        "try await handler.{method_name}({})",
-                        arg_names.join(", ")
-                    )
-                    .unwrap();
-                } else {
-                    cw_writeln!(
-                        w,
-                        "let result = try await handler.{method_name}({})",
-                        arg_names.join(", ")
-                    )
-                    .unwrap();
-                }
-
-                // Close any Tx channels
-                for arg in method.args {
-                    if is_tx(arg.shape) {
-                        let arg_name = arg.name.to_lower_camel_case();
-                        cw_writeln!(w, "{arg_name}.close()").unwrap();
+            w.writeln("do {").unwrap();
+            {
+                let _indent = w.indent();
+                if has_channeling {
+                    if ret_type == "Void" {
+                        cw_writeln!(
+                            w,
+                            "try await handler.{method_name}({})",
+                            arg_names.join(", ")
+                        )
+                        .unwrap();
+                    } else {
+                        cw_writeln!(
+                            w,
+                            "let result = try await handler.{method_name}({})",
+                            arg_names.join(", ")
+                        )
+                        .unwrap();
                     }
-                }
 
-                // Send response
-                if ret_type == "Void" {
-                    w.writeln("taskSender(.response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))").unwrap();
-                } else {
-                    let encode_closure = generate_encode_closure(method.return_shape);
-                    cw_writeln!(
-                        w,
-                        "taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: {encode_closure})))"
-                    )
-                    .unwrap();
-                }
-            } else {
-                // Non-channeling method
-                if ret_type == "Void" {
+                    for arg in method.args {
+                        if is_tx(arg.shape) {
+                            let arg_name = arg.name.to_lower_camel_case();
+                            cw_writeln!(w, "{arg_name}.close()").unwrap();
+                        }
+                    }
+
+                    if ret_type == "Void" {
+                        w.writeln("taskSender(.response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))").unwrap();
+                    } else {
+                        let encode_closure = generate_encode_closure(method.return_shape);
+                        cw_writeln!(
+                            w,
+                            "taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: {encode_closure})))"
+                        )
+                        .unwrap();
+                    }
+                } else if ret_type == "Void" {
                     cw_writeln!(
                         w,
                         "try await handler.{method_name}({})",
@@ -328,11 +355,9 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
                         arg_names.join(", ")
                     )
                     .unwrap();
-                    // Check if return type is Result<T, E> - if so, encode as Result<T, RoamError<User(E)>>
                     if let ShapeKind::Result { ok, err } = classify_shape(method.return_shape) {
                         let ok_encode = generate_encode_closure(ok);
                         let err_encode = generate_encode_closure(err);
-                        // Wire format: [0] + T for success, [1, 0] + E for User error
                         cw_writeln!(
                             w,
                             "taskSender(.response(requestId: requestId, payload: {{ switch result {{ case .success(let v): return [UInt8(0)] + {ok_encode}(v); case .failure(let e): return [UInt8(1), UInt8(0)] + {err_encode}(e) }} }}()))"
@@ -348,6 +373,16 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
                     }
                 }
             }
+            w.writeln("} catch {").unwrap();
+            {
+                let _indent = w.indent();
+                cw_writeln!(
+                    w,
+                    "taskSender(.response(requestId: requestId, payload: {handler_error_payload}))"
+                )
+                .unwrap();
+            }
+            w.writeln("}").unwrap();
         }
         w.writeln("} catch {").unwrap();
         {

@@ -16,6 +16,7 @@ public protocol RoamConnection: Sendable {
         metadata: [MetadataEntryV7],
         payload: Data,
         channels: [UInt64],
+        retry: RetryPolicy,
         timeout: TimeInterval?
     ) async throws -> Data
 
@@ -30,8 +31,49 @@ public protocol RoamConnection: Sendable {
 }
 
 public extension RoamConnection {
+    func call(
+        methodId: UInt64,
+        payload: Data,
+        channels: [UInt64],
+        retry: RetryPolicy,
+        timeout: TimeInterval?
+    ) async throws -> Data {
+        try await call(
+            methodId: methodId,
+            metadata: [],
+            payload: payload,
+            channels: channels,
+            retry: retry,
+            timeout: timeout
+        )
+    }
+
+    func call(
+        methodId: UInt64,
+        metadata: [MetadataEntryV7],
+        payload: Data,
+        channels: [UInt64],
+        timeout: TimeInterval?
+    ) async throws -> Data {
+        try await call(
+            methodId: methodId,
+            metadata: metadata,
+            payload: payload,
+            channels: channels,
+            retry: .volatile,
+            timeout: timeout
+        )
+    }
+
     func call(methodId: UInt64, payload: Data) async throws -> Data {
-        try await call(methodId: methodId, metadata: [], payload: payload, channels: [], timeout: nil)
+        try await call(
+            methodId: methodId,
+            metadata: [],
+            payload: payload,
+            channels: [],
+            retry: .volatile,
+            timeout: nil
+        )
     }
 
     func call(methodId: UInt64, payload: Data, timeout: TimeInterval?) async throws -> Data {
@@ -40,6 +82,7 @@ public extension RoamConnection {
             metadata: [],
             payload: payload,
             channels: [],
+            retry: .volatile,
             timeout: timeout
         )
     }
@@ -55,6 +98,7 @@ public extension RoamConnection {
             metadata: metadata,
             payload: payload,
             channels: [],
+            retry: .volatile,
             timeout: timeout
         )
     }
@@ -70,6 +114,7 @@ public extension RoamConnection {
             metadata: [],
             payload: payload,
             channels: channels,
+            retry: .volatile,
             timeout: timeout
         )
     }
@@ -120,6 +165,16 @@ public func encodeUnknownMethodError() -> [UInt8] {
 /// r[impl rpc.error.scope] - InvalidPayload when payload fails to decode.
 public func encodeInvalidPayloadError() -> [UInt8] {
     [1, 2]  // Err discriminant + InvalidPayload variant
+}
+
+/// Encode a cancelled error.
+public func encodeCancelledError() -> [UInt8] {
+    [1, 3]
+}
+
+/// Encode an indeterminate error.
+public func encodeIndeterminateError() -> [UInt8] {
+    [1, 4]
 }
 
 // MARK: - Server-side Channel Helpers

@@ -29,6 +29,7 @@ private final class CapturingConnection: RoamConnection, @unchecked Sendable {
         metadata _: [MetadataEntryV7],
         payload _: Data,
         channels _: [UInt64],
+        retry _: RetryPolicy,
         timeout: TimeInterval?
     ) async throws -> Data {
         await recorder.append(methodId: methodId, timeout: timeout)

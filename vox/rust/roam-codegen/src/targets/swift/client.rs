@@ -12,6 +12,15 @@ use crate::code_writer::CodeWriter;
 use crate::cw_writeln;
 use crate::render::hex_u64;
 
+fn swift_retry_policy_literal(method: &MethodDescriptor) -> &'static str {
+    match (method.retry.persist, method.retry.idem) {
+        (false, false) => ".volatile",
+        (false, true) => ".idem",
+        (true, false) => ".persist",
+        (true, true) => ".persistIdem",
+    }
+}
+
 /// Generate complete client code (caller protocol + client implementation).
 pub fn generate_client(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
@@ -126,6 +135,7 @@ fn generate_client_method(
 
     let ret_type = swift_type_client_return(method.return_shape);
     let has_streaming = method.args.iter().any(|a| is_channel(a.shape));
+    let retry_policy = swift_retry_policy_literal(method);
 
     // Method signature
     if ret_type == "Void" {
@@ -149,7 +159,14 @@ fn generate_client_method(
         let cursor_var = unique_decode_cursor_name(method.args);
 
         if has_streaming {
-            generate_streaming_client_body(w, method, service_name, &method_id_name, &cursor_var);
+            generate_streaming_client_body(
+                w,
+                method,
+                service_name,
+                &method_id_name,
+                &cursor_var,
+                retry_policy,
+            );
         } else {
             // Encode arguments
             generate_encode_args(w, method.args);
@@ -158,8 +175,8 @@ fn generate_client_method(
             let method_id = crate::method_id(method);
             cw_writeln!(
                 w,
-                "let response = try await connection.call(methodId: {}, payload: payload, timeout: timeout)",
-                hex_u64(method_id)
+                "let response = try await connection.call(methodId: {}, payload: payload, channels: [], retry: {retry_policy}, timeout: timeout)",
+                hex_u64(method_id),
             )
             .unwrap();
             generate_response_decode(w, method, &cursor_var, "response");
@@ -191,6 +208,7 @@ fn generate_streaming_client_body(
     service_name: &str,
     method_id_name: &str,
     cursor_var: &str,
+    retry_policy: &str,
 ) {
     let service_name_lower = service_name.to_lower_camel_case();
 
@@ -250,7 +268,7 @@ fn generate_streaming_client_body(
     let _ = ret_type;
     cw_writeln!(
         w,
-        "let response = try await connection.call(methodId: {}, payload: payload, channels: channels, timeout: timeout)",
+        "let response = try await connection.call(methodId: {}, payload: payload, channels: channels, retry: {retry_policy}, timeout: timeout)",
         hex_u64(method_id)
     )
     .unwrap();

@@ -1,6 +1,23 @@
 import Foundation
 
 extension Driver {
+    private func responseMessage(
+        requestId: UInt64,
+        payload: [UInt8]
+    ) async -> MessageV7? {
+        let responseContext = await state.removeInFlight(requestId)
+        guard responseContext.removed else {
+            return nil
+        }
+        return .response(
+            connId: responseContext.connectionId,
+            requestId: requestId,
+            metadata: responseContext.responseMetadata,
+            channels: [],
+            payload: payload
+        )
+    }
+
     /// Get the task sender for handlers to send responses.
     func taskSender() -> @Sendable (TaskMessage) -> Void {
         let cont = eventContinuation
@@ -24,25 +41,33 @@ extension Driver {
         case .grantCredit(let channelId, let bytes):
             wireMsg = .credit(connId: 0, channelId: channelId, bytes: bytes)
         case .response(let requestId, let payload):
-            let responseContext = await state.removeInFlight(requestId)
-            guard responseContext.removed else {
-                return
-            }
             let checkedPayload: [UInt8]
             if payload.count > Int(negotiated.maxPayloadSize) {
                 debugLog(
                     "outgoing response for request \(requestId) exceeds max_payload_size "
                         + "(\(payload.count) > \(negotiated.maxPayloadSize)), sending Cancelled")
-                checkedPayload = [1, 3]
+                checkedPayload = encodeCancelledError()
             } else {
                 checkedPayload = payload
             }
-            wireMsg = .response(
-                connId: responseContext.connectionId,
-                requestId: requestId,
-                metadata: responseContext.responseMetadata,
-                channels: [],
-                payload: checkedPayload)
+            let waiters = await operations.seal(ownerRequestId: requestId, payload: checkedPayload)
+            if !waiters.isEmpty {
+                for waiter in waiters {
+                    guard let replay = await responseMessage(requestId: waiter, payload: checkedPayload) else {
+                        continue
+                    }
+                    do {
+                        try await conduit.send(replay)
+                    } catch TransportError.wouldBlock {
+                        pendingTaskMessages.append(DriverQueuedTaskMessage(message: replay))
+                    }
+                }
+                return
+            }
+            guard let response = await responseMessage(requestId: requestId, payload: checkedPayload) else {
+                return
+            }
+            wireMsg = response
         }
         do {
             try await conduit.send(wireMsg)
@@ -55,8 +80,8 @@ extension Driver {
     func handleCommand(_ cmd: HandleCommand) async {
         switch cmd {
         case .call(
-            let requestId, let methodId, let metadata, let payload, let channels, let timeout,
-            let responseTx):
+            let requestId, let methodId, let metadata, let payload, let channels, let retry,
+            let timeout, let responseTx):
             let isClosed = await state.isConnectionClosed()
             guard !isClosed else {
                 responseTx(.failure(.connectionClosed))
@@ -91,6 +116,7 @@ extension Driver {
                         metadata: metadata,
                         payload: payload,
                         channels: channels,
+                        retry: retry,
                         timeout: timeout
                     ))
                 return

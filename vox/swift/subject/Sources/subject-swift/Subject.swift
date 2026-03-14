@@ -140,6 +140,10 @@ final class TestbedDispatcherAdapter: ServiceDispatcher, @unchecked Sendable {
         self.handler = handler
     }
 
+    func retryPolicy(methodId: UInt64) -> RetryPolicy {
+        TestbedChannelingDispatcher.retryPolicy(methodId: methodId)
+    }
+
     func preregister(
         methodId: UInt64,
         payload: [UInt8],

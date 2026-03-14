@@ -26,6 +26,7 @@ public final class Connection: @unchecked Sendable {
         metadata: [MetadataEntryV7],
         payload: Data,
         channels: [UInt64],
+        retry: RetryPolicy = .volatile,
         timeout: TimeInterval?
     ) async throws -> Data {
         let response = try await callRaw(
@@ -33,6 +34,7 @@ public final class Connection: @unchecked Sendable {
             metadata: metadata,
             payload: Array(payload),
             channels: channels,
+            retry: retry,
             timeout: timeout
         )
         return Data(response)
@@ -43,6 +45,7 @@ public final class Connection: @unchecked Sendable {
         metadata: [MetadataEntryV7] = [],
         payload: [UInt8],
         channels: [UInt64] = [],
+        retry: RetryPolicy = .volatile,
         timeout: TimeInterval? = nil
     ) async throws -> [UInt8] {
         try await handle.callRaw(
@@ -50,6 +53,7 @@ public final class Connection: @unchecked Sendable {
             metadata: metadata,
             payload: payload,
             channels: channels,
+            retry: retry,
             timeout: timeout
         )
     }

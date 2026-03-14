@@ -161,7 +161,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += encodeString(message)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0x9aab_c4ba_61fd_5df3, payload: payload, timeout: timeout)
+      methodId: 0x9aab_c4ba_61fd_5df3, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -194,7 +195,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += encodeString(message)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0xcba1_5460_0f64_0175, payload: payload, timeout: timeout)
+      methodId: 0xcba1_5460_0f64_0175, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -228,7 +230,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += encodeI64(divisor)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0xc396_4cbe_e4b1_d590, payload: payload, timeout: timeout)
+      methodId: 0xc396_4cbe_e4b1_d590, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -271,7 +274,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += encodeU32(id)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0xe71a_0fae_dd01_4e59, payload: payload, timeout: timeout)
+      methodId: 0xe71a_0fae_dd01_4e59, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -332,7 +336,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let channels = collectChannelIds(schemas: testbed_schemas["sum"]!.args, args: [numbers])
 
     let response = try await connection.call(
-      methodId: 0x855b_3a25_d97b_fefd, payload: payload, channels: channels, timeout: timeout)
+      methodId: 0x855b_3a25_d97b_fefd, payload: payload, channels: channels, retry: .volatile,
+      timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -380,7 +385,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
       schemas: testbed_schemas["generate"]!.args, args: [count, output])
 
     let response = try await connection.call(
-      methodId: 0x54d2_273d_8cdb_9c38, payload: payload, channels: channels, timeout: timeout)
+      methodId: 0x54d2_273d_8cdb_9c38, payload: payload, channels: channels, retry: .volatile,
+      timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -427,7 +433,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
       schemas: testbed_schemas["transform"]!.args, args: [input, output])
 
     let response = try await connection.call(
-      methodId: 0x5d98_9560_4eb1_8b19, payload: payload, channels: channels, timeout: timeout)
+      methodId: 0x5d98_9560_4eb1_8b19, payload: payload, channels: channels, retry: .volatile,
+      timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -459,7 +466,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += encodeI32(point.x) + encodeI32(point.y)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0x453f_a9bf_6932_528c, payload: payload, timeout: timeout)
+      methodId: 0x453f_a9bf_6932_528c, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -496,7 +504,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += encodeOption(email, encoder: { encodeString($0) })
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0x3dd2_31f5_7b1b_ca21, payload: payload, timeout: timeout)
+      methodId: 0x3dd2_31f5_7b1b_ca21, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -536,7 +545,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
       + encodeI32(rect.bottomRight.y) + encodeOption(rect.label, encoder: { encodeString($0) })
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0xba75_c486_83f1_d9e6, payload: payload, timeout: timeout)
+      methodId: 0xba75_c486_83f1_d9e6, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -569,7 +579,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += encodeString(name)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0xe285_f31c_6dff_fbfc, payload: payload, timeout: timeout)
+      methodId: 0xe285_f31c_6dff_fbfc, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -627,7 +638,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     }(shape)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0x6e70_6354_167c_00c2, payload: payload, timeout: timeout)
+      methodId: 0x6e70_6354_167c_00c2, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -683,7 +695,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     }(background)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0xa914_982e_7d3c_7b55, payload: payload, timeout: timeout)
+      methodId: 0xa914_982e_7d3c_7b55, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -759,7 +772,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     }(msg)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0xed1d_c0c6_2588_9d30, payload: payload, timeout: timeout)
+      methodId: 0xed1d_c0c6_2588_9d30, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -806,7 +820,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += encodeU32(count)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0x5c87_07f5_ae4c_cbcc, payload: payload, timeout: timeout)
+      methodId: 0x5c87_07f5_ae4c_cbcc, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -845,7 +860,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += { encodeI32($0) }(pair.0) + { encodeString($0) }(pair.1)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0xacd1_9a29_fe0d_470c, payload: payload, timeout: timeout)
+      methodId: 0xacd1_9a29_fe0d_470c, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
     switch _cursor_resultDisc {
@@ -976,6 +992,45 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
+  public static func retryPolicy(methodId: UInt64) -> RetryPolicy {
+    switch methodId {
+    case 0x9aab_c4ba_61fd_5df3:
+      return .volatile
+    case 0xcba1_5460_0f64_0175:
+      return .volatile
+    case 0xc396_4cbe_e4b1_d590:
+      return .volatile
+    case 0xe71a_0fae_dd01_4e59:
+      return .volatile
+    case 0x855b_3a25_d97b_fefd:
+      return .volatile
+    case 0x54d2_273d_8cdb_9c38:
+      return .volatile
+    case 0x5d98_9560_4eb1_8b19:
+      return .volatile
+    case 0x453f_a9bf_6932_528c:
+      return .volatile
+    case 0x3dd2_31f5_7b1b_ca21:
+      return .volatile
+    case 0xba75_c486_83f1_d9e6:
+      return .volatile
+    case 0xe285_f31c_6dff_fbfc:
+      return .volatile
+    case 0x6e70_6354_167c_00c2:
+      return .volatile
+    case 0xa914_982e_7d3c_7b55:
+      return .volatile
+    case 0xed1d_c0c6_2588_9d30:
+      return .volatile
+    case 0x5c87_07f5_ae4c_cbcc:
+      return .volatile
+    case 0xacd1_9a29_fe0d_470c:
+      return .volatile
+    default:
+      return .volatile
+    }
+  }
+
   /// Pre-register Rx channel IDs from request channels.
   /// Call this synchronously before spawning the dispatch task to avoid
   /// race conditions where Data arrives before channels are registered.
@@ -1010,10 +1065,14 @@ public final class TestbedChannelingDispatcher {
     do {
       var cursor = 0
       let message = try decodeString(from: payload, offset: &cursor)
-      let result = try await handler.echo(message: message)
-      taskSender(
-        .response(
-          requestId: requestId, payload: encodeResultOk(result, encoder: { encodeString($0) })))
+      do {
+        let result = try await handler.echo(message: message)
+        taskSender(
+          .response(
+            requestId: requestId, payload: encodeResultOk(result, encoder: { encodeString($0) })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
     } catch {
       taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
     }
@@ -1023,10 +1082,14 @@ public final class TestbedChannelingDispatcher {
     do {
       var cursor = 0
       let message = try decodeString(from: payload, offset: &cursor)
-      let result = try await handler.reverse(message: message)
-      taskSender(
-        .response(
-          requestId: requestId, payload: encodeResultOk(result, encoder: { encodeString($0) })))
+      do {
+        let result = try await handler.reverse(message: message)
+        taskSender(
+          .response(
+            requestId: requestId, payload: encodeResultOk(result, encoder: { encodeString($0) })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
     } catch {
       taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
     }
@@ -1037,25 +1100,29 @@ public final class TestbedChannelingDispatcher {
       var cursor = 0
       let dividend = try decodeI64(from: payload, offset: &cursor)
       let divisor = try decodeI64(from: payload, offset: &cursor)
-      let result = try await handler.divide(dividend: dividend, divisor: divisor)
-      taskSender(
-        .response(
-          requestId: requestId,
-          payload: {
-            switch result {
-            case .success(let v): return [UInt8(0)] + { encodeI64($0) }(v)
-            case .failure(let e):
-              return [UInt8(1), UInt8(0)]
-                + { v in
-                  switch v {
-                  case .divisionByZero:
-                    return encodeVarint(UInt64(0))
-                  case .overflow:
-                    return encodeVarint(UInt64(1))
-                  }
-                }(e)
-            }
-          }()))
+      do {
+        let result = try await handler.divide(dividend: dividend, divisor: divisor)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: {
+              switch result {
+              case .success(let v): return [UInt8(0)] + { encodeI64($0) }(v)
+              case .failure(let e):
+                return [UInt8(1), UInt8(0)]
+                  + { v in
+                    switch v {
+                    case .divisionByZero:
+                      return encodeVarint(UInt64(0))
+                    case .overflow:
+                      return encodeVarint(UInt64(1))
+                    }
+                  }(e)
+              }
+            }()))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
     } catch {
       taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
     }
@@ -1065,30 +1132,34 @@ public final class TestbedChannelingDispatcher {
     do {
       var cursor = 0
       let id = try decodeU32(from: payload, offset: &cursor)
-      let result = try await handler.lookup(id: id)
-      taskSender(
-        .response(
-          requestId: requestId,
-          payload: {
-            switch result {
-            case .success(let v):
-              return [UInt8(0)]
-                + {
-                  encodeString($0.name) + encodeU8($0.age)
-                    + encodeOption($0.email, encoder: { encodeString($0) })
-                }(v)
-            case .failure(let e):
-              return [UInt8(1), UInt8(0)]
-                + { v in
-                  switch v {
-                  case .notFound:
-                    return encodeVarint(UInt64(0))
-                  case .accessDenied:
-                    return encodeVarint(UInt64(1))
-                  }
-                }(e)
-            }
-          }()))
+      do {
+        let result = try await handler.lookup(id: id)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: {
+              switch result {
+              case .success(let v):
+                return [UInt8(0)]
+                  + {
+                    encodeString($0.name) + encodeU8($0.age)
+                      + encodeOption($0.email, encoder: { encodeString($0) })
+                  }(v)
+              case .failure(let e):
+                return [UInt8(1), UInt8(0)]
+                  + { v in
+                    switch v {
+                    case .notFound:
+                      return encodeVarint(UInt64(0))
+                    case .accessDenied:
+                      return encodeVarint(UInt64(1))
+                    }
+                  }(e)
+              }
+            }()))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
     } catch {
       taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
     }
@@ -1113,10 +1184,14 @@ public final class TestbedChannelingDispatcher {
           var off = 0
           return try decodeI32(from: Data(bytes), offset: &off)
         })
-      let result = try await handler.sum(numbers: numbers)
-      taskSender(
-        .response(requestId: requestId, payload: encodeResultOk(result, encoder: { encodeI64($0) }))
-      )
+      do {
+        let result = try await handler.sum(numbers: numbers)
+        taskSender(
+          .response(
+            requestId: requestId, payload: encodeResultOk(result, encoder: { encodeI64($0) })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
     } catch {
       taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
     }
@@ -1135,9 +1210,14 @@ public final class TestbedChannelingDispatcher {
       let output = await createServerTx(
         channelId: outputChannelId, taskSender: taskSender, registry: registry, initialCredit: 16,
         serialize: ({ encodeI32($0) }))
-      try await handler.generate(count: count, output: output)
-      output.close()
-      taskSender(.response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))
+      do {
+        try await handler.generate(count: count, output: output)
+        output.close()
+        taskSender(
+          .response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
     } catch {
       taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
     }
@@ -1170,9 +1250,14 @@ public final class TestbedChannelingDispatcher {
       let output = await createServerTx(
         channelId: outputChannelId, taskSender: taskSender, registry: registry, initialCredit: 16,
         serialize: ({ encodeString($0) }))
-      try await handler.transform(input: input, output: output)
-      output.close()
-      taskSender(.response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))
+      do {
+        try await handler.transform(input: input, output: output)
+        output.close()
+        taskSender(
+          .response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
     } catch {
       taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
     }
@@ -1184,11 +1269,15 @@ public final class TestbedChannelingDispatcher {
       let _point_x = try decodeI32(from: payload, offset: &cursor)
       let _point_y = try decodeI32(from: payload, offset: &cursor)
       let point = Point(x: _point_x, y: _point_y)
-      let result = try await handler.echoPoint(point: point)
-      taskSender(
-        .response(
-          requestId: requestId,
-          payload: encodeResultOk(result, encoder: { encodeI32($0.x) + encodeI32($0.y) })))
+      do {
+        let result = try await handler.echoPoint(point: point)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeResultOk(result, encoder: { encodeI32($0.x) + encodeI32($0.y) })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
     } catch {
       taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
     }
@@ -1202,16 +1291,20 @@ public final class TestbedChannelingDispatcher {
       let email = try decodeOption(
         from: payload, offset: &cursor,
         decoder: { data, off in try decodeString(from: data, offset: &off) })
-      let result = try await handler.createPerson(name: name, age: age, email: email)
-      taskSender(
-        .response(
-          requestId: requestId,
-          payload: encodeResultOk(
-            result,
-            encoder: {
-              encodeString($0.name) + encodeU8($0.age)
-                + encodeOption($0.email, encoder: { encodeString($0) })
-            })))
+      do {
+        let result = try await handler.createPerson(name: name, age: age, email: email)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeResultOk(
+              result,
+              encoder: {
+                encodeString($0.name) + encodeU8($0.age)
+                  + encodeOption($0.email, encoder: { encodeString($0) })
+              })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
     } catch {
       taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
     }
@@ -1231,10 +1324,14 @@ public final class TestbedChannelingDispatcher {
         decoder: { data, off in try decodeString(from: data, offset: &off) })
       let rect = Rectangle(
         topLeft: _rect_topLeft, bottomRight: _rect_bottomRight, label: _rect_label)
-      let result = try await handler.rectangleArea(rect: rect)
-      taskSender(
-        .response(requestId: requestId, payload: encodeResultOk(result, encoder: { encodeF64($0) }))
-      )
+      do {
+        let result = try await handler.rectangleArea(rect: rect)
+        taskSender(
+          .response(
+            requestId: requestId, payload: encodeResultOk(result, encoder: { encodeF64($0) })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
     } catch {
       taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
     }
@@ -1244,26 +1341,30 @@ public final class TestbedChannelingDispatcher {
     do {
       var cursor = 0
       let name = try decodeString(from: payload, offset: &cursor)
-      let result = try await handler.parseColor(name: name)
-      taskSender(
-        .response(
-          requestId: requestId,
-          payload: encodeResultOk(
-            result,
-            encoder: {
-              encodeOption(
-                $0,
-                encoder: { v in
-                  switch v {
-                  case .red:
-                    return encodeVarint(UInt64(0))
-                  case .green:
-                    return encodeVarint(UInt64(1))
-                  case .blue:
-                    return encodeVarint(UInt64(2))
-                  }
-                })
-            })))
+      do {
+        let result = try await handler.parseColor(name: name)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeResultOk(
+              result,
+              encoder: {
+                encodeOption(
+                  $0,
+                  encoder: { v in
+                    switch v {
+                    case .red:
+                      return encodeVarint(UInt64(0))
+                    case .green:
+                      return encodeVarint(UInt64(1))
+                    case .blue:
+                      return encodeVarint(UInt64(2))
+                    }
+                  })
+              })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
     } catch {
       taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
     }
@@ -1287,10 +1388,14 @@ public final class TestbedChannelingDispatcher {
       default:
         throw RoamError.decodeError("unknown enum variant")
       }
-      let result = try await handler.shapeArea(shape: shape)
-      taskSender(
-        .response(requestId: requestId, payload: encodeResultOk(result, encoder: { encodeF64($0) }))
-      )
+      do {
+        let result = try await handler.shapeArea(shape: shape)
+        taskSender(
+          .response(
+            requestId: requestId, payload: encodeResultOk(result, encoder: { encodeF64($0) })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
     } catch {
       taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
     }
@@ -1332,38 +1437,42 @@ public final class TestbedChannelingDispatcher {
       default:
         throw RoamError.decodeError("unknown enum variant")
       }
-      let result = try await handler.createCanvas(
-        name: name, shapes: shapes, background: background)
-      taskSender(
-        .response(
-          requestId: requestId,
-          payload: encodeResultOk(
-            result,
-            encoder: {
-              encodeString($0.name)
-                + encodeVec(
-                  $0.shapes,
-                  encoder: { v in
+      do {
+        let result = try await handler.createCanvas(
+          name: name, shapes: shapes, background: background)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeResultOk(
+              result,
+              encoder: {
+                encodeString($0.name)
+                  + encodeVec(
+                    $0.shapes,
+                    encoder: { v in
+                      switch v {
+                      case .circle(let radius):
+                        return encodeVarint(UInt64(0)) + encodeF64(radius)
+                      case .rectangle(let width, let height):
+                        return encodeVarint(UInt64(1)) + encodeF64(width) + encodeF64(height)
+                      case .point:
+                        return encodeVarint(UInt64(2))
+                      }
+                    })
+                  + { v in
                     switch v {
-                    case .circle(let radius):
-                      return encodeVarint(UInt64(0)) + encodeF64(radius)
-                    case .rectangle(let width, let height):
-                      return encodeVarint(UInt64(1)) + encodeF64(width) + encodeF64(height)
-                    case .point:
+                    case .red:
+                      return encodeVarint(UInt64(0))
+                    case .green:
+                      return encodeVarint(UInt64(1))
+                    case .blue:
                       return encodeVarint(UInt64(2))
                     }
-                  })
-                + { v in
-                  switch v {
-                  case .red:
-                    return encodeVarint(UInt64(0))
-                  case .green:
-                    return encodeVarint(UInt64(1))
-                  case .blue:
-                    return encodeVarint(UInt64(2))
-                  }
-                }($0.background)
-            })))
+                  }($0.background)
+              })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
     } catch {
       taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
     }
@@ -1387,22 +1496,26 @@ public final class TestbedChannelingDispatcher {
       default:
         throw RoamError.decodeError("unknown enum variant")
       }
-      let result = try await handler.processMessage(msg: msg)
-      taskSender(
-        .response(
-          requestId: requestId,
-          payload: encodeResultOk(
-            result,
-            encoder: { v in
-              switch v {
-              case .text(let val):
-                return encodeVarint(UInt64(0)) + encodeString(val)
-              case .number(let val):
-                return encodeVarint(UInt64(1)) + encodeI64(val)
-              case .data(let val):
-                return encodeVarint(UInt64(2)) + encodeBytes(Array(val))
-              }
-            })))
+      do {
+        let result = try await handler.processMessage(msg: msg)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeResultOk(
+              result,
+              encoder: { v in
+                switch v {
+                case .text(let val):
+                  return encodeVarint(UInt64(0)) + encodeString(val)
+                case .number(let val):
+                  return encodeVarint(UInt64(1)) + encodeI64(val)
+                case .data(let val):
+                  return encodeVarint(UInt64(2)) + encodeBytes(Array(val))
+                }
+              })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
     } catch {
       taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
     }
@@ -1412,12 +1525,16 @@ public final class TestbedChannelingDispatcher {
     do {
       var cursor = 0
       let count = try decodeU32(from: payload, offset: &cursor)
-      let result = try await handler.getPoints(count: count)
-      taskSender(
-        .response(
-          requestId: requestId,
-          payload: encodeResultOk(
-            result, encoder: { encodeVec($0, encoder: { encodeI32($0.x) + encodeI32($0.y) }) })))
+      do {
+        let result = try await handler.getPoints(count: count)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeResultOk(
+              result, encoder: { encodeVec($0, encoder: { encodeI32($0.x) + encodeI32($0.y) }) })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
     } catch {
       taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
     }
@@ -1430,12 +1547,16 @@ public final class TestbedChannelingDispatcher {
         from: payload, offset: &cursor,
         decoderA: { data, off in try decodeI32(from: data, offset: &off) },
         decoderB: { data, off in try decodeString(from: data, offset: &off) })
-      let result = try await handler.swapPair(pair: pair)
-      taskSender(
-        .response(
-          requestId: requestId,
-          payload: encodeResultOk(
-            result, encoder: { { encodeString($0) }($0.0) + { encodeI32($0) }($0.1) })))
+      do {
+        let result = try await handler.swapPair(pair: pair)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeResultOk(
+              result, encoder: { { encodeString($0) }($0.0) + { encodeI32($0) }($0.1) })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
     } catch {
       taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
     }

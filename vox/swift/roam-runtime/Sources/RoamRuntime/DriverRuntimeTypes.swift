@@ -10,6 +10,7 @@ struct DriverQueuedCall: Sendable {
     let metadata: [MetadataEntryV7]
     let payload: [UInt8]
     let channels: [UInt64]
+    let retry: RetryPolicy
     let timeout: TimeInterval?
 }
 

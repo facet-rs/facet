@@ -122,6 +122,7 @@ private final class LoopbackConnection: RoamConnection, @unchecked Sendable {
         metadata _: [MetadataEntryV7],
         payload: Data,
         channels: [UInt64],
+        retry _: RetryPolicy,
         timeout _: TimeInterval?
     ) async throws -> Data {
         let requestId: UInt64 = lock.withLock {

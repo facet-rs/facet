@@ -5,7 +5,9 @@ final class ConnectionHandle: @unchecked Sendable {
     private let commandTx: @Sendable (HandleCommand) -> Bool
     private let taskTx: @Sendable (TaskMessage) -> Bool
     private let requestIdAllocator = RequestIdAllocator()
+    private let operationIdAllocator = RequestIdAllocator()
     private let requestSemaphore: AsyncSemaphore?
+    private let peerSupportsRetry: Bool
 
     let channelAllocator: ChannelIdAllocator
     let channelRegistry: ChannelRegistry
@@ -14,10 +16,12 @@ final class ConnectionHandle: @unchecked Sendable {
         commandTx: @escaping @Sendable (HandleCommand) -> Bool,
         taskTx: @escaping @Sendable (TaskMessage) -> Bool,
         role: Role,
+        peerSupportsRetry: Bool,
         maxConcurrentRequests: UInt32 = UInt32.max
     ) {
         self.commandTx = commandTx
         self.taskTx = taskTx
+        self.peerSupportsRetry = peerSupportsRetry
         self.channelAllocator = ChannelIdAllocator(role: role)
         self.channelRegistry = ChannelRegistry()
         if maxConcurrentRequests < UInt32.max {
@@ -35,6 +39,7 @@ final class ConnectionHandle: @unchecked Sendable {
         metadata: [MetadataEntryV7] = [],
         payload: [UInt8],
         channels: [UInt64] = [],
+        retry: RetryPolicy = .volatile,
         timeout: TimeInterval? = nil
     ) async throws -> [UInt8] {
         if let semaphore = requestSemaphore {
@@ -42,6 +47,13 @@ final class ConnectionHandle: @unchecked Sendable {
         }
 
         let requestId = await requestIdAllocator.allocate()
+        let outboundMetadata: [MetadataEntryV7]
+        if peerSupportsRetry {
+            let operationId = await operationIdAllocator.allocate()
+            outboundMetadata = ensureOperationId(metadata, operationId: operationId)
+        } else {
+            outboundMetadata = metadata
+        }
 
         return try await withCheckedThrowingContinuation { continuation in
             let semaphore = requestSemaphore
@@ -55,9 +67,10 @@ final class ConnectionHandle: @unchecked Sendable {
                 .call(
                     requestId: requestId,
                     methodId: methodId,
-                    metadata: metadata,
+                    metadata: outboundMetadata,
                     payload: payload,
                     channels: channels,
+                    retry: retry,
                     timeout: timeout,
                     responseTx: { result in responseTx(result) }
                 ))

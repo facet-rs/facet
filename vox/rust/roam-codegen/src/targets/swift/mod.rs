@@ -131,7 +131,7 @@ mod tests {
     use super::generate_service;
     use roam::{Rx, Tx};
     use roam_hash::method_descriptor;
-    use roam_types::ServiceDescriptor;
+    use roam_types::{MethodDescriptor, RetryPolicy, ServiceDescriptor};
 
     #[test]
     fn generated_swift_preserves_channel_initial_credit() {
@@ -157,6 +157,42 @@ mod tests {
         assert!(
             generated.contains(".rx(initialCredit: 32, element: .u32)"),
             "generated Swift should preserve custom channel credit:\n{generated}"
+        );
+    }
+
+    #[test]
+    fn generated_swift_emits_retry_policy_for_client_and_dispatcher() {
+        let base = method_descriptor::<(u32,), ()>("RetrySvc", "rerun", &["value"], None);
+        let method = Box::leak(Box::new(MethodDescriptor {
+            id: base.id,
+            service_name: base.service_name,
+            method_name: base.method_name,
+            args: base.args,
+            return_shape: base.return_shape,
+            retry: RetryPolicy::PERSIST_IDEM,
+            doc: None,
+        }));
+        let methods: &'static [&'static MethodDescriptor] =
+            Box::leak(vec![method as &'static MethodDescriptor].into_boxed_slice());
+        let service = ServiceDescriptor {
+            service_name: "RetrySvc",
+            methods,
+            doc: None,
+        };
+
+        let generated = generate_service(&service);
+
+        assert!(
+            generated.contains("retry: .persistIdem"),
+            "generated Swift client should pass retry policy:\n{generated}"
+        );
+        assert!(
+            generated.contains("public static func retryPolicy(methodId: UInt64) -> RetryPolicy"),
+            "generated Swift dispatcher should expose retry policy lookup:\n{generated}"
+        );
+        assert!(
+            generated.contains("return .persistIdem"),
+            "generated Swift dispatcher should return the method retry policy:\n{generated}"
         );
     }
 }

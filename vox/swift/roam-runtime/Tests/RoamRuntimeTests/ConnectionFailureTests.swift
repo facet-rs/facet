@@ -188,6 +188,62 @@ private struct ImmediateResponseDispatcher: ServiceDispatcher {
     }
 }
 
+private actor BlockingDispatchProbe {
+    private var dispatchCount = 0
+    private var released = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func waitForRelease() async {
+        dispatchCount += 1
+        guard !released else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        released = true
+        let waiters = waiters
+        self.waiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func count() -> Int {
+        dispatchCount
+    }
+}
+
+private struct BlockingResponseDispatcher: ServiceDispatcher {
+    let probe: BlockingDispatchProbe
+
+    func retryPolicy(methodId _: UInt64) -> RetryPolicy {
+        .persistIdem
+    }
+
+    func preregister(
+        methodId _: UInt64,
+        payload _: [UInt8],
+        channels _: [UInt64],
+        registry _: ChannelRegistry
+    ) async {}
+
+    func dispatch(
+        methodId _: UInt64,
+        payload _: [UInt8],
+        channels _: [UInt64],
+        requestId: UInt64,
+        registry _: ChannelRegistry,
+        taskTx: @escaping @Sendable (TaskMessage) -> Void
+    ) async {
+        await probe.waitForRelease()
+        taskTx(.response(requestId: requestId, payload: [0x42]))
+    }
+}
+
 private func metadataString(_ metadata: [MetadataEntryV7], key: String) -> String? {
     for entry in metadata where entry.key == key {
         if case .string(let value) = entry.value {
@@ -248,6 +304,28 @@ private func awaitProtocolReason(
         for msg in sent {
             if case .protocolError(let err) = msg.payload {
                 return err.description
+            }
+        }
+        try? await Task.sleep(nanoseconds: 5_000_000)
+    }
+    return nil
+}
+
+private func awaitResponsePayload(
+    _ transport: ScriptedTransport,
+    requestId: UInt64,
+    timeoutMs: UInt64 = 1_000
+) async -> [UInt8]? {
+    let start = ContinuousClock.now
+    let timeout = Duration.milliseconds(Int64(timeoutMs))
+    while ContinuousClock.now - start < timeout {
+        let sent = await transport.sent()
+        for message in sent {
+            if case .requestMessage(let request) = message.payload,
+                case .response(let response) = request.body,
+                request.id == requestId
+            {
+                return response.ret.bytes
             }
         }
         try? await Task.sleep(nanoseconds: 5_000_000)
@@ -355,6 +433,132 @@ struct ConnectionFailureTests {
         let correlationId = metadataString(metadata, key: peepsConnectionCorrelationIdMetadataKey)
         #expect(correlationId != nil)
         #expect(correlationId?.isEmpty == false)
+        #expect(metadataSupportsRetry(metadata))
+    }
+
+    @Test func callerInjectsOperationIdWhenPeerSupportsRetry() async throws {
+        let transport = ScriptedTransport(
+            autoRespondRequestCount: 1,
+            initialMessage: .helloYourself(
+                HelloYourselfV7(
+                    connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
+                    metadata: appendRetrySupportMetadata([])
+                )))
+        let (handle, driver) = try await establishInitiator(
+            conduit: transport,
+            dispatcher: NoopDispatcher()
+        )
+        let driverTask = Task {
+            try await driver.run()
+        }
+        defer {
+            Task {
+                try? await transport.close()
+            }
+            driverTask.cancel()
+        }
+
+        _ = try await handle.callRaw(methodId: 1, payload: [0x01], retry: .persist, timeout: 1.0)
+
+        let sent = await transport.sent()
+        guard let request = sent.first(where: { message in
+            if case .requestMessage(let request) = message.payload,
+                case .call = request.body
+            {
+                return request.id == 1
+            }
+            return false
+        }) else {
+            Issue.record("expected request to be sent")
+            return
+        }
+        guard case .requestMessage(let outboundRequest) = request.payload,
+            case .call(let call) = outboundRequest.body
+        else {
+            Issue.record("expected outbound request call")
+            return
+        }
+
+        #expect(metadataOperationId(call.metadata) != nil)
+    }
+
+    @Test func duplicateOperationIdAttachesLiveAndReplaysSealedOutcome() async throws {
+        let transport = ScriptedTransport(
+            initialMessage: .hello(
+                HelloV7(
+                    version: 7,
+                    connectionSettings: ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: 64),
+                    metadata: appendRetrySupportMetadata([])
+                )))
+        let probe = BlockingDispatchProbe()
+        let (_, driver) = try await establishAcceptor(
+            conduit: transport,
+            dispatcher: BlockingResponseDispatcher(probe: probe)
+        )
+        let driverTask = Task {
+            try await driver.run()
+        }
+        defer {
+            Task {
+                try? await transport.close()
+            }
+            driverTask.cancel()
+        }
+
+        let operationMetadata = ensureOperationId([], operationId: 99)
+
+        await transport.enqueueMessage(
+            .request(
+                connId: 0,
+                requestId: 11,
+                methodId: 7,
+                metadata: operationMetadata,
+                channels: [],
+                payload: [0xAB]
+            )
+        )
+
+        let start = ContinuousClock.now
+        while ContinuousClock.now - start < .milliseconds(250) {
+            if await probe.count() == 1 {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        #expect(await probe.count() == 1)
+
+        await transport.enqueueMessage(
+            .request(
+                connId: 0,
+                requestId: 13,
+                methodId: 7,
+                metadata: operationMetadata,
+                channels: [],
+                payload: [0xAB]
+            )
+        )
+
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        #expect(await probe.count() == 1)
+
+        await probe.release()
+
+        #expect(await awaitResponsePayload(transport, requestId: 11) == [0x42])
+        #expect(await awaitResponsePayload(transport, requestId: 13) == [0x42])
+
+        await transport.enqueueMessage(
+            .request(
+                connId: 0,
+                requestId: 15,
+                methodId: 7,
+                metadata: operationMetadata,
+                channels: [],
+                payload: [0xAB]
+            )
+        )
+
+        #expect(await awaitResponsePayload(transport, requestId: 15) == [0x42])
+        #expect(await probe.count() == 1)
     }
 
     @Test func serverResponsePreservesPeepsRequestMetadata() async throws {

@@ -8,6 +8,7 @@ enum HandleCommand: Sendable {
         metadata: [MetadataEntryV7],
         payload: [UInt8],
         channels: [UInt64],
+        retry: RetryPolicy,
         timeout: TimeInterval?,
         responseTx: @Sendable (Result<[UInt8], ConnectionError>) -> Void
     )

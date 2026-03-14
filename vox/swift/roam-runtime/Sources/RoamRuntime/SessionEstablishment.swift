@@ -69,13 +69,13 @@ public func establishInitiator(
     let ourHello = HelloV7(
         version: 7,
         connectionSettings: ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: 64),
-        metadata: [
+        metadata: appendRetrySupportMetadata([
             MetadataEntryV7(
                 key: sessionEstablishmentConnectionCorrelationKey,
                 value: .string(ourCorrelationId),
                 flags: sessionEstablishmentMetadataFlagsNone
             )
-        ]
+        ])
     )
     try await conduit.send(.hello(ourHello))
 
@@ -92,6 +92,7 @@ public func establishInitiator(
         peerHello.metadata,
         key: sessionEstablishmentConnectionCorrelationKey
     )
+    let peerSupportsRetry = metadataSupportsRetry(peerHello.metadata)
     let canonicalCorrelationId = ourCorrelationId.isEmpty ? peerCorrelationId : ourCorrelationId
     _ = canonicalCorrelationId
 
@@ -114,6 +115,7 @@ public func establishInitiator(
         dispatcher: dispatcher,
         role: .initiator,
         negotiated: negotiated,
+        peerSupportsRetry: peerSupportsRetry,
         acceptConnections: acceptConnections,
         keepalive: keepalive
     )
@@ -144,17 +146,18 @@ public func establishAcceptor(
 
     let ourHello = HelloYourselfV7(
         connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
-        metadata: [
+        metadata: appendRetrySupportMetadata([
             MetadataEntryV7(
                 key: sessionEstablishmentConnectionCorrelationKey,
                 value: .string(ourCorrelationId),
                 flags: sessionEstablishmentMetadataFlagsNone
             )
-        ]
+        ])
     )
     try await conduit.send(.helloYourself(ourHello))
 
     let peerCorrelationId = establishmentHelloCorrelationId(peerHello)
+    let peerSupportsRetry = metadataSupportsRetry(peerHello.metadata)
     let canonicalCorrelationId = peerCorrelationId ?? ourCorrelationId
     _ = canonicalCorrelationId
 
@@ -177,6 +180,7 @@ public func establishAcceptor(
         dispatcher: dispatcher,
         role: .acceptor,
         negotiated: negotiated,
+        peerSupportsRetry: peerSupportsRetry,
         acceptConnections: acceptConnections,
         keepalive: keepalive
     )
