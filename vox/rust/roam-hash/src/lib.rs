@@ -67,6 +67,14 @@ fn encode_str(s: &str, out: &mut Vec<u8>) {
     out.extend_from_slice(s.as_bytes());
 }
 
+/// Encode a `Shape` into its canonical signature byte representation,
+/// returning the bytes.
+pub fn encode_shape_bytes(shape: &'static Shape) -> Vec<u8> {
+    let mut out = Vec::new();
+    encode_shape(shape, &mut out);
+    out
+}
+
 /// Encode a `Shape` into its canonical signature byte representation.
 // r[impl signature.primitive]
 // r[impl signature.container]
