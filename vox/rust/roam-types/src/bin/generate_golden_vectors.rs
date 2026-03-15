@@ -217,6 +217,7 @@ fn main() {
             payload: MessagePayload::Hello(Hello {
                 version: 7,
                 connection_settings: conn_settings.clone(),
+                schema_exchange: false,
                 metadata: meta.clone(),
             }),
         }),
@@ -231,6 +232,7 @@ fn main() {
                     parity: Parity::Even,
                     max_concurrent_requests: 32,
                 },
+                schema_exchange: false,
                 metadata: meta.clone(),
             }),
         }),

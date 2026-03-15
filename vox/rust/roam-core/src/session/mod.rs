@@ -653,6 +653,7 @@ impl Session {
                 payload: MessagePayload::Hello(Hello {
                     version: PROTOCOL_VERSION,
                     connection_settings: settings.clone(),
+                    schema_exchange: false,
                     metadata: hello_metadata,
                 }),
             })
@@ -768,6 +769,7 @@ impl Session {
                 connection_id: ConnectionId::ROOT,
                 payload: MessagePayload::HelloYourself(HelloYourself {
                     connection_settings: our_settings.clone(),
+                    schema_exchange: false,
                     metadata: hello_metadata,
                 }),
             })
