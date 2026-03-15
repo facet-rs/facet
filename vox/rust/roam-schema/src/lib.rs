@@ -684,4 +684,69 @@ mod tests {
             other => panic!("expected Array, got {other:?}"),
         }
     }
+
+    #[test]
+    fn tracker_prepare_send_returns_some_then_none() {
+        let tracker = SchemaTracker::new();
+        let first = tracker.prepare_send(<u32 as Facet>::SHAPE);
+        assert!(first.is_some(), "first prepare_send should return Some");
+        let second = tracker.prepare_send(<u32 as Facet>::SHAPE);
+        assert!(
+            second.is_none(),
+            "second prepare_send for same shape should return None"
+        );
+    }
+
+    #[test]
+    fn tracker_prepare_send_includes_transitive_deps() {
+        #[derive(Facet)]
+        struct Outer {
+            inner: u32,
+            name: String,
+        }
+
+        let tracker = SchemaTracker::new();
+        let schemas = tracker
+            .prepare_send(Outer::SHAPE)
+            .expect("should return schemas");
+        // Should include u32, String, and Outer
+        assert!(
+            schemas.len() >= 3,
+            "should include transitive deps, got {}",
+            schemas.len()
+        );
+
+        // Sending u32 again should return None since it was already sent as a transitive dep
+        let u32_again = tracker.prepare_send(<u32 as Facet>::SHAPE);
+        assert!(
+            u32_again.is_none(),
+            "u32 was already sent as transitive dep"
+        );
+    }
+
+    #[test]
+    fn tracker_record_and_has_received() {
+        let tracker = SchemaTracker::new();
+        let id = type_id_of(<u32 as Facet>::SHAPE);
+        assert!(!tracker.has_received(&id));
+        tracker.record_received(&[id]);
+        assert!(tracker.has_received(&id));
+    }
+
+    #[test]
+    fn cbor_round_trip() {
+        #[derive(Facet)]
+        struct Point {
+            x: f64,
+            y: f64,
+        }
+
+        let schemas = extract_schemas(Point::SHAPE);
+        let bytes = build_schema_message(&schemas);
+        let parsed = parse_schema_message(&bytes).expect("should parse CBOR");
+        assert_eq!(parsed.len(), schemas.len());
+        for (original, decoded) in schemas.iter().zip(parsed.iter()) {
+            assert_eq!(original.type_id, decoded.type_id);
+        }
+    }
 }
