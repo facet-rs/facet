@@ -309,6 +309,21 @@ pub fn method_id<'a, 'r, A: Facet<'a>, R: Facet<'r>>(
     MethodId(u64::from_le_bytes(first8))
 }
 
+/// Compute a name-only method ID for use with schema exchange.
+///
+/// When schema exchange is active, the method ID excludes the type signature
+/// hash and is computed solely from the service and method names in kebab-case.
+// r[impl schema.method-id]
+pub fn method_id_name_only(service_name: &str, method_name: &str) -> MethodId {
+    let mut input = Vec::new();
+    input.extend_from_slice(service_name.to_kebab_case().as_bytes());
+    input.push(b'.');
+    input.extend_from_slice(method_name.to_kebab_case().as_bytes());
+    let h = blake3::hash(&input);
+    let first8: [u8; 8] = h.as_bytes()[0..8].try_into().expect("slice len");
+    MethodId(u64::from_le_bytes(first8))
+}
+
 /// Build and leak a `MethodDescriptor` from type parameters and arg names.
 ///
 /// Called once per method inside a `OnceLock::get_or_init` in macro-generated code.
