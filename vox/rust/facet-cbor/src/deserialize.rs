@@ -27,6 +27,14 @@ fn deserialize_into<'facet>(
 ) -> Result<Partial<'facet, false>, CborError> {
     let shape = partial.shape();
 
+    // Unwrap transparent wrappers (newtypes, NonZero, etc.) to match serialization
+    if shape.is_transparent() {
+        let re = |e: facet_reflect::ReflectError| CborError::ReflectError(e.to_string());
+        let partial = partial.begin_inner().map_err(re)?;
+        let partial = deserialize_into(partial, input, offset)?;
+        return partial.end().map_err(re);
+    }
+
     // Check for scalar types first
     if let Some(scalar_type) = shape.scalar_type() {
         return deserialize_scalar(partial, scalar_type, input, offset);
@@ -44,6 +52,9 @@ fn deserialize_into<'facet>(
                 return deserialize_byte_list(partial, input, offset);
             }
             return deserialize_list(partial, input, offset);
+        }
+        Def::Array(array_def) => {
+            return deserialize_array(partial, array_def.n, input, offset);
         }
         Def::Map(_) => {
             return deserialize_map(partial, input, offset);
@@ -208,6 +219,30 @@ fn deserialize_byte_list<'facet>(
     // Build Vec<u8> from the byte string and set it directly
     let vec: Vec<u8> = bytes.to_vec();
     partial.set(vec).map_err(re)
+}
+
+fn deserialize_array<'facet>(
+    partial: Partial<'facet, false>,
+    expected_len: usize,
+    input: &[u8],
+    offset: &mut usize,
+) -> Result<Partial<'facet, false>, CborError> {
+    let re = |e: facet_reflect::ReflectError| CborError::ReflectError(e.to_string());
+    let len = decode::read_array_header(input, offset)? as usize;
+    if len != expected_len {
+        return Err(CborError::TypeMismatch {
+            expected: format!("array of length {expected_len}"),
+            got: format!("array of length {len}"),
+        });
+    }
+    // Fixed-size arrays use begin_nth_field like tuples
+    let mut partial = partial;
+    for i in 0..len {
+        partial = partial.begin_nth_field(i).map_err(re)?;
+        partial = deserialize_into(partial, input, offset)?;
+        partial = partial.end().map_err(re)?;
+    }
+    Ok(partial)
 }
 
 fn deserialize_map<'facet>(
