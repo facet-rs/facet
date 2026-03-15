@@ -1,6 +1,8 @@
-use roam_core::{BareConduit, acceptor, initiator_conduit};
-use roam_types::Link;
+use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
+
+use roam_core::{BareConduit, acceptor, initiator, initiator_conduit};
+use roam_types::Link;
 
 type MessageConduit<L> = BareConduit<roam_types::MessageFamily, L>;
 
@@ -70,6 +72,63 @@ trait MiddlewareProbe {
 #[derive(Clone)]
 struct MiddlewareProbeService;
 
+#[repr(u8)]
+#[derive(Clone, Copy, facet::Facet)]
+pub enum BorrowedPayloadKind {
+    Inline = 1,
+    SlotRef = 2,
+    MmapRef = 3,
+}
+
+const INLINE_PAYLOAD_LEN: usize = 64;
+const SLOT_REF_PAYLOAD_LEN: usize = 1024;
+const MMAP_REF_PAYLOAD_LEN: usize = 8192;
+
+#[roam::service]
+trait BorrowedPayloadProbe {
+    async fn payload(&self, kind: BorrowedPayloadKind) -> &'roam str;
+}
+
+#[derive(Clone)]
+struct BorrowedPayloadProbeService {
+    inline: &'static str,
+    slot_ref: &'static str,
+    mmap_ref: &'static str,
+}
+
+impl BorrowedPayloadProbeService {
+    fn new() -> Self {
+        Self {
+            inline: Box::leak(patterned_payload(INLINE_PAYLOAD_LEN, b'i').into_boxed_str()),
+            slot_ref: Box::leak(patterned_payload(SLOT_REF_PAYLOAD_LEN, b's').into_boxed_str()),
+            mmap_ref: Box::leak(patterned_payload(MMAP_REF_PAYLOAD_LEN, b'm').into_boxed_str()),
+        }
+    }
+
+    fn expected_text(kind: BorrowedPayloadKind) -> String {
+        match kind {
+            BorrowedPayloadKind::Inline => patterned_payload(INLINE_PAYLOAD_LEN, b'i'),
+            BorrowedPayloadKind::SlotRef => patterned_payload(SLOT_REF_PAYLOAD_LEN, b's'),
+            BorrowedPayloadKind::MmapRef => patterned_payload(MMAP_REF_PAYLOAD_LEN, b'm'),
+        }
+    }
+}
+
+impl BorrowedPayloadProbe for BorrowedPayloadProbeService {
+    async fn payload<'roam>(
+        &self,
+        call: impl roam::Call<'roam, &'roam str, Infallible>,
+        kind: BorrowedPayloadKind,
+    ) {
+        let text = match kind {
+            BorrowedPayloadKind::Inline => self.inline,
+            BorrowedPayloadKind::SlotRef => self.slot_ref,
+            BorrowedPayloadKind::MmapRef => self.mmap_ref,
+        };
+        call.ok(text).await;
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct MiddlewareValue(String);
 
@@ -130,6 +189,12 @@ impl roam::ServerMiddleware for RecordingMiddleware {
 
 fn record_event(events: &Arc<Mutex<Vec<String>>>, event: String) {
     events.lock().expect("events mutex poisoned").push(event);
+}
+
+fn patterned_payload(len: usize, seed: u8) -> String {
+    (0..len)
+        .map(|index| (seed + (index % 26) as u8) as char)
+        .collect()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -393,4 +458,48 @@ pub async fn run_client_middleware_end_to_end<L>(
     );
 
     server_task.abort();
+}
+
+pub async fn run_borrowed_return_survives_teardown_over_generated_client<L>(
+    message_conduit_pair: impl FnOnce() -> (MessageConduit<L>, MessageConduit<L>),
+    kind: BorrowedPayloadKind,
+) where
+    L: Link + Send + 'static,
+    L::Tx: Send + 'static,
+    L::Rx: Send + 'static,
+{
+    let (client_conduit, server_conduit) = message_conduit_pair();
+    let expected = BorrowedPayloadProbeService::expected_text(kind);
+
+    let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let server_task = tokio::task::spawn(async move {
+        let (server_caller_guard, _sh) = acceptor(server_conduit)
+            .establish::<BorrowedPayloadProbeClient>(BorrowedPayloadProbeDispatcher::new(
+                BorrowedPayloadProbeService::new(),
+            ))
+            .await
+            .expect("server handshake failed");
+        let _ = server_ready_tx.send(());
+        let _server_caller_guard = server_caller_guard;
+        std::future::pending::<()>().await;
+    });
+
+    let (client, client_session_handle) = initiator(client_conduit)
+        .establish::<BorrowedPayloadProbeClient>(())
+        .await
+        .expect("client handshake failed");
+
+    server_ready_rx.await.expect("server setup failed");
+
+    let payload = client
+        .payload(kind)
+        .await
+        .expect("borrowed payload call should succeed");
+
+    drop(client);
+    drop(client_session_handle);
+    server_task.abort();
+    let _ = server_task.await;
+
+    assert_eq!(&*payload, &expected);
 }

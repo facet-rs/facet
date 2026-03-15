@@ -60,3 +60,33 @@ async fn client_middleware_end_to_end_over_shm() {
     let (a, b, _dir) = message_conduit_pair().await;
     service_macro_shared::run_client_middleware_end_to_end(|| (a, b)).await;
 }
+
+#[tokio::test]
+async fn borrowed_return_survives_teardown_inline_over_shm() {
+    let (a, b, _dir) = message_conduit_pair().await;
+    service_macro_shared::run_borrowed_return_survives_teardown_over_generated_client(
+        || (a, b),
+        service_macro_shared::BorrowedPayloadKind::Inline,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn borrowed_return_survives_teardown_slot_ref_over_shm() {
+    let (a, b, _dir) = message_conduit_pair().await;
+    service_macro_shared::run_borrowed_return_survives_teardown_over_generated_client(
+        || (a, b),
+        service_macro_shared::BorrowedPayloadKind::SlotRef,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn borrowed_return_survives_teardown_mmap_ref_over_shm() {
+    let (a, b, _dir) = message_conduit_pair().await;
+    service_macro_shared::run_borrowed_return_survives_teardown_over_generated_client(
+        || (a, b),
+        service_macro_shared::BorrowedPayloadKind::MmapRef,
+    )
+    .await;
+}
