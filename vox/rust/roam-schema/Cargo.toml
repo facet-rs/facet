@@ -22,3 +22,4 @@ facet-core = { workspace = true }
 roam-types = { workspace = true }
 roam-hash = { workspace = true }
 blake3 = { workspace = true }
+facet-cbor = { path = "../facet-cbor" }
