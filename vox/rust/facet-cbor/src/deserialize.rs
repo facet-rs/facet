@@ -7,7 +7,8 @@ use crate::error::CborError;
 
 /// Deserialize a CBOR byte slice into a value of type `T`.
 pub fn from_slice<T: Facet<'static>>(bytes: &[u8]) -> Result<T, CborError> {
-    let partial = Partial::alloc::<T>().map_err(|e| CborError::ReflectError(e.to_string()))?;
+    let partial =
+        Partial::alloc_owned::<T>().map_err(|e| CborError::ReflectError(e.to_string()))?;
     let mut offset = 0;
     let partial = deserialize_into(partial, bytes, &mut offset)?;
     let heap_value = partial
