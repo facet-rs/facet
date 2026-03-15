@@ -1,0 +1,483 @@
++++
+title = "Schema Exchange"
+description = "Backwards-compatible type evolution without changing the wire format"
+weight = 14
++++
+
+Postcard is roam's data wire format. It is compact and fast, but positional —
+fields are identified by their order, not by name. This means that adding,
+removing, or reordering fields changes the byte layout, and a peer reading
+with a different type definition silently gets garbage.
+
+Schema exchange solves this without replacing postcard. The data bytes stay
+the same. What changes is that peers describe their types to each other
+using self-describing schemas, and the receiving side builds a **translation
+plan** that maps remote field positions to local field positions before
+deserializing.
+
+The result: postcard remains the fast path for serialization and
+deserialization, but peers with different versions of the same types can
+communicate safely. Incompatibilities are detected early — when the
+translation plan is built — not mid-stream when a field has the wrong value.
+
+# Design principles
+
+> r[schema.principles.no-roundtrips]
+>
+> Schema exchange MUST NOT require request-response negotiation. The sender
+> proactively includes schemas before data when the receiver has not seen
+> them. No round trips, no handshake, no "do you have this schema?" queries.
+
+> r[schema.principles.sender-driven]
+>
+> Each peer tracks which schemas it has sent to the other side. When a peer
+> is about to send data of a type the other side has not seen, it sends the
+> schema first. The receiver never requests schemas — the sender pushes them.
+
+> r[schema.principles.cbor]
+>
+> Schemas MUST be encoded using CBOR (RFC 8949). CBOR is self-describing
+> and does not require a schema to parse — avoiding the chicken-and-egg
+> problem of needing a schema to read a schema. Postcard is used for data;
+> CBOR is used for metadata about data.
+
+> r[schema.principles.once-per-type]
+>
+> A schema for a given type ID MUST be sent at most once per connection.
+> Once a peer has sent a schema, it records the type ID as "sent" and does
+> not send it again for the lifetime of the connection.
+
+# Type identity
+
+Every type in schema exchange has a unique structural identifier. Two types
+with the same fields, in the same order, with the same field names and field
+types, have the same type ID — regardless of what the type is called.
+
+> r[schema.type-id]
+>
+> A type ID is 16 bytes, computed as the first 16 bytes of a BLAKE3 hash of
+> the type's canonical CBOR-encoded schema. Type IDs are structural — they
+> depend on the type's shape (fields, variants, containers, primitives),
+> not its name.
+
+> r[schema.type-id.structural]
+>
+> Two types with identical structure (same fields, same field names, same
+> field types in the same order, same variants) MUST produce the same type
+> ID, even if their Rust type names differ. Conversely, any structural
+> difference — a renamed field, a reordered field, an added variant — MUST
+> produce a different type ID.
+
+> r[schema.type-id.deterministic]
+>
+> The canonical CBOR encoding used for type ID computation MUST be
+> deterministic. Implementations MUST produce identical bytes for the same
+> type structure, regardless of platform, language, or compiler version.
+> CBOR deterministic encoding follows RFC 8949 §4.2 (Core Deterministic
+> Encoding Requirements).
+
+This means renaming a Rust struct (but keeping its fields) does not change
+the type ID. Adding a field does. This is intentional — the type ID captures
+what matters for wire compatibility: structure.
+
+# Schema format
+
+A schema describes a single type. Schemas are CBOR-encoded and
+self-contained — every type referenced by a schema is either a primitive
+or is referenced by its type ID.
+
+> r[schema.format]
+>
+> A schema MUST be a CBOR map containing:
+>
+>   * `kind` — one of: `"struct"`, `"enum"`, `"tuple"`, `"list"`, `"map"`,
+>     `"set"`, `"array"`, `"option"`, `"primitive"`
+>   * Kind-specific fields as defined below
+
+> r[schema.format.struct]
+>
+> A struct schema MUST contain:
+>
+>   * `kind`: `"struct"`
+>   * `fields`: a CBOR array of field descriptors, each a map with:
+>     - `name`: field name (UTF-8 string)
+>     - `type_id`: the 16-byte type ID of the field's type
+>     - `required`: boolean — `true` if the field has no default value
+>
+> Fields MUST be listed in declaration order (which is also postcard
+> serialization order).
+
+> r[schema.format.enum]
+>
+> An enum schema MUST contain:
+>
+>   * `kind`: `"enum"`
+>   * `variants`: a CBOR array of variant descriptors, each a map with:
+>     - `name`: variant name (UTF-8 string)
+>     - `index`: the postcard variant index (varint ordinal)
+>     - `payload`: one of:
+>       - `"unit"` — no payload
+>       - `{"newtype": type_id}` — single value
+>       - `{"struct": [field_descriptors...]}` — struct variant
+
+> r[schema.format.container]
+>
+> Container schemas MUST contain:
+>
+>   * `kind`: `"list"`, `"set"`, `"map"`, `"array"`, or `"option"`
+>   * `element`: type ID of the element type (for list, set, array, option)
+>   * `key` and `value`: type IDs (for map)
+>   * `length`: fixed length (for array only)
+
+> r[schema.format.primitive]
+>
+> A primitive schema MUST contain:
+>
+>   * `kind`: `"primitive"`
+>   * `type`: one of `"bool"`, `"u8"`, `"u16"`, `"u32"`, `"u64"`, `"u128"`,
+>     `"i8"`, `"i16"`, `"i32"`, `"i64"`, `"i128"`, `"f32"`, `"f64"`,
+>     `"char"`, `"string"`, `"unit"`, `"bytes"`
+
+> r[schema.format.tuple]
+>
+> A tuple schema MUST contain:
+>
+>   * `kind`: `"tuple"`
+>   * `elements`: a CBOR array of type IDs, one per element, in order
+
+## Recursive types
+
+Types can reference themselves — a tree node contains child tree nodes.
+Since schemas reference other types by type ID, and the type ID is computed
+from the schema, a naively recursive type would require computing the hash
+of a structure that contains its own hash.
+
+> r[schema.format.recursive]
+>
+> Recursive type references MUST use a backreference marker in the canonical
+> encoding. When computing a type ID, if the encoder encounters a type that
+> is already on the encoding stack, it MUST emit a backreference (the CBOR
+> string `"$self"` for direct recursion, or `"$ref:N"` for indirect recursion
+> at depth N) instead of re-encoding the type. This ensures the canonical
+> encoding is finite and deterministic.
+
+> r[schema.format.recursive.schema-body]
+>
+> In schema messages sent over the wire (as opposed to canonical encoding for
+> type ID computation), recursive references use the type ID of the
+> referenced type. Since the schema for the recursive type is being sent
+> in the same batch, the receiver can resolve the reference.
+
+## Self-contained schema messages
+
+> r[schema.format.self-contained]
+>
+> A schema message sent over the wire MUST be self-contained. If a struct
+> schema references a field whose type ID has not been previously sent to
+> this peer, the field type's schema MUST be included in the same schema
+> message. The receiver MUST be able to fully interpret every type ID
+> referenced in the message using only the schemas in that message plus
+> schemas previously received on this connection.
+
+> r[schema.format.batch]
+>
+> A schema message MUST be a CBOR array of `(type_id, schema)` pairs. The
+> schemas are ordered such that dependencies appear before dependents, except
+> for recursive cycles where backreferences break the dependency.
+
+# Schema tracking
+
+Each peer maintains two sets per connection:
+
+> r[schema.tracking.sent]
+>
+> Each peer MUST track the set of type IDs for which it has sent schemas to
+> the other peer. This set starts empty and grows monotonically over the
+> connection lifetime.
+
+> r[schema.tracking.received]
+>
+> Each peer MUST track the set of type IDs for which it has received schemas
+> from the other peer. This set starts empty and grows monotonically over
+> the connection lifetime.
+
+> r[schema.tracking.transitive]
+>
+> When a schema is sent, all type IDs transitively referenced by that schema
+> are also marked as sent. A schema message is self-contained
+> (see `r[schema.format.self-contained]`), so sending a struct schema
+> implicitly sends the schemas of all its field types, their field types,
+> and so on.
+
+# When schemas are exchanged
+
+Schema exchange is triggered by method invocation. The caller sends schemas
+for its argument types; the callee sends schemas for its response types. This
+is lazy — schemas are only exchanged for types actually used in calls, not
+for the entire service interface up front.
+
+> r[schema.exchange.caller]
+>
+> Before sending a `Request`, the caller MUST check whether the schemas for
+> the method's argument types have been sent to this peer. If any have not,
+> the caller MUST send a schema message containing all unsent schemas before
+> sending the `Request`.
+
+> r[schema.exchange.callee]
+>
+> Before sending a `Response`, the callee MUST check whether the schemas for
+> the method's return type (and error type, if fallible) have been sent to
+> this peer. If any have not, the callee MUST send a schema message before
+> sending the `Response`.
+
+> r[schema.exchange.channels]
+>
+> Channel element types are included in schema exchange. If a method's
+> arguments contain `Tx<T>` or `Rx<T>`, the schema for `T` MUST be included
+> in the caller's schema message. If the response contains channel types,
+> their element schemas MUST be included in the callee's schema message.
+
+> r[schema.exchange.ordering]
+>
+> Schema messages MUST arrive before the `Request` or `Response` that
+> references those types. The receiver MUST be able to build a translation
+> plan for the incoming data before deserializing it.
+
+> r[schema.exchange.idempotent]
+>
+> If the caller has already sent schemas for a method's argument types
+> (from a previous call to the same or different method using the same
+> types), no schema message is needed. The `r[schema.principles.once-per-type]`
+> rule applies — each type ID is sent at most once.
+
+# Method identity without signatures
+
+When schema exchange is active, method identity no longer needs to encode
+the full type signature. Two versions of a service may have the same method
+with evolved argument types — including the signature hash in the method ID
+would make these look like different methods, which is exactly what schema
+exchange is designed to avoid.
+
+> r[schema.method-id]
+>
+> When schema exchange is active, the method ID MUST be computed as:
+> ```
+> method_id = blake3(kebab(ServiceName) + "." + kebab(methodName))[0..8]
+> ```
+> The signature hash (`sig_bytes` from `r[signature.hash.algorithm]`) is
+> excluded. Only the service name and method name contribute to the method
+> ID.
+
+> r[schema.method-id.negotiation]
+>
+> Whether schema exchange is active MUST be negotiated during session setup.
+> Both peers MUST agree on whether to use schema-based method IDs or
+> legacy signature-based method IDs (see `r[method.identity.computation]`).
+> A session MUST NOT mix the two modes.
+
+> r[schema.method-id.fallback]
+>
+> If either peer does not support schema exchange, the session MUST fall
+> back to legacy signature-based method IDs. Schema exchange is opt-in —
+> existing peers that do not implement it continue to work unchanged.
+
+This means that with schema exchange, renaming a method is still a breaking
+change (the method ID changes), but changing argument or return types is
+no longer automatically breaking — it depends on whether the translation
+plan can bridge the difference.
+
+# Translation plans
+
+When a peer receives a schema for a remote type that it will deserialize
+into a local type, it builds a **translation plan**. The translation plan
+is a recipe for reading postcard bytes written by the remote type and
+populating the fields of the local type.
+
+Translation plans are built once per (remote type ID, local type) pair
+and cached for the connection lifetime.
+
+> r[schema.translation.field-matching]
+>
+> Fields MUST be matched by name, not by position. For each field in the
+> local type, the translation plan looks up the corresponding field in the
+> remote schema by name. If found, the plan records the remote field's
+> position so the deserializer knows which postcard field to read.
+
+> r[schema.translation.skip-unknown]
+>
+> If the remote schema contains fields that do not exist in the local type,
+> those fields MUST be skipped during deserialization. The translation plan
+> records how many bytes to skip for each unknown remote field, based on
+> the remote field's type schema.
+
+> r[schema.translation.fill-defaults]
+>
+> If the local type contains fields that do not exist in the remote schema,
+> those fields MUST be filled with their default values. Fields without
+> default values that are missing from the remote schema cause a
+> translation plan error (see `r[schema.errors.missing-required]`).
+
+> r[schema.translation.reorder]
+>
+> If fields exist in both the local and remote types but in different order,
+> the translation plan MUST handle the reordering. The deserializer reads
+> postcard bytes in remote field order but writes values into local field
+> positions.
+
+> r[schema.translation.type-compat]
+>
+> For each matched field, the remote field type and local field type MUST be
+> compatible. Two types are compatible if:
+>
+>   * They are the same primitive type
+>   * They are both containers of the same kind with compatible element types
+>   * They are both structs and a nested translation plan can be built
+>   * They are both enums and variant matching succeeds
+>     (see `r[schema.translation.enum]`)
+
+> r[schema.translation.serialization-unchanged]
+>
+> Schema exchange does NOT affect serialization. A peer always serializes
+> using its own local type definition and postcard. The translation plan
+> applies only on the deserialization side — the receiver adapts to the
+> sender's layout.
+
+# Enum evolution
+
+Enums follow the same principle as structs — match by name, not by position.
+This allows adding variants to an enum without breaking existing peers.
+
+> r[schema.translation.enum]
+>
+> Enum variants MUST be matched by name, not by variant index. The
+> translation plan maps remote variant names to local variant indices and
+> records how to deserialize each variant's payload.
+
+> r[schema.translation.enum.unknown-variant]
+>
+> If a remote enum has variants that the local type does not, those variants
+> are skippable in the schema but cause an error at runtime if actually
+> received. The translation plan records that these variants exist in the
+> remote schema; if a message arrives with an unknown variant, the
+> deserializer MUST return an error.
+
+> r[schema.translation.enum.missing-variant]
+>
+> If the local enum has variants that the remote schema does not, this is
+> fine — those variants will never appear in data from that remote peer.
+> No error is needed. The local peer can still use those variants when
+> sending data.
+
+> r[schema.translation.enum.payload-compat]
+>
+> For each variant that exists in both the remote and local types, the
+> variant payloads MUST be compatible: unit matches unit, newtype matches
+> newtype with a compatible inner type, struct matches struct with
+> compatible fields (same rules as top-level struct matching).
+
+# Error reporting
+
+Schema exchange detects incompatibilities early — when building the
+translation plan — rather than failing mid-stream on corrupt data.
+
+> r[schema.errors.early-detection]
+>
+> Type incompatibilities MUST be detected at translation-plan construction
+> time, not during deserialization of individual messages. When a peer
+> receives a schema and attempts to build a translation plan against a
+> local type, all structural incompatibilities MUST be reported before
+> any data of that type is processed.
+
+> r[schema.errors.missing-required]
+>
+> If a local struct has a required field (no default value) that is not
+> present in the remote schema, the translation plan MUST fail with an
+> error identifying the missing field by name and type.
+
+> r[schema.errors.type-mismatch]
+>
+> If a field exists in both the remote and local types but the types are
+> incompatible (e.g., remote has `u32`, local has `String`), the
+> translation plan MUST fail with an error identifying the field, the
+> remote type, and the local type.
+
+> r[schema.errors.unknown-variant-runtime]
+>
+> If a message arrives containing an enum variant that exists in the
+> remote schema but not in the local type, the deserializer MUST return
+> an error for that specific message. This is a runtime error because
+> the translation plan cannot predict which variant a given message
+> will contain.
+
+> r[schema.errors.content]
+>
+> All schema-related errors MUST include:
+>
+>   * The remote type ID
+>   * The local type name (for diagnostics)
+>   * The specific incompatibility (missing field, type mismatch, etc.)
+>   * For field-level errors: the field name and both the remote and local
+>     field types
+
+# Compatibility checking
+
+Schema exchange handles runtime differences gracefully, but it is still
+valuable to know about compatibility issues before deployment. Tooling
+can snapshot schemas and check changes as part of the development workflow.
+
+> r[schema.compat.snapshot]
+>
+> Implementations SHOULD provide tooling to snapshot the schemas of a
+> service's types. A snapshot captures the type IDs and full schemas for
+> every type used in the service's method signatures.
+
+> r[schema.compat.check]
+>
+> Implementations SHOULD provide tooling to compare two snapshots and
+> report:
+>
+>   * **Compatible changes** — changes where a translation plan can be
+>     built in both directions (e.g., adding an optional field)
+>   * **One-way compatible changes** — changes where old can read new but
+>     not vice versa (e.g., adding a required field with a default)
+>   * **Breaking changes** — changes where no translation plan can be
+>     built (e.g., removing a required field, changing a field's type
+>     incompatibly)
+
+> r[schema.compat.ci]
+>
+> Schema compatibility checks SHOULD be integrated into CI pipelines.
+> Breaking changes should fail the build unless explicitly acknowledged.
+
+> r[schema.compat.policy]
+>
+> A breaking change is one where a translation plan cannot be built between
+> the old and new versions. Whether a breaking change is acceptable depends
+> on the project's deployment model (rolling updates vs. coordinated
+> releases). The tooling reports facts; policy is up to the project.
+
+# Interaction with other spec areas
+
+Schema exchange is designed to be transparent to the rest of the protocol.
+
+> r[schema.interaction.channels]
+>
+> Channels are unaffected by schema exchange beyond their element types.
+> Channel semantics (creation, flow control, close, reset) are unchanged.
+> The element type's schema is exchanged as part of the method's argument
+> or response schemas (see `r[schema.exchange.channels]`), and translation
+> plans apply to channel items the same way they apply to request/response
+> payloads.
+
+> r[schema.interaction.retry]
+>
+> Retry semantics are unaffected by schema exchange. Operation IDs, the
+> commit point, and sealed replay all work identically. The translation
+> plan for a sealed response is the same one built when the type's schema
+> was first received — replayed responses use the same deserialization
+> path as live ones.
+
+> r[schema.interaction.metadata]
+>
+> Metadata is unaffected by schema exchange. Metadata key-value pairs are
+> not typed in the postcard sense and do not participate in schema exchange.
