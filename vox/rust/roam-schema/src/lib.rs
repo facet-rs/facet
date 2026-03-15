@@ -4,6 +4,65 @@ use facet::Facet;
 use facet_core::{Def, ScalarType, Shape, StructKind, Type, UserType};
 use roam_types::{is_rx, is_tx};
 use std::collections::HashSet;
+use std::sync::Mutex;
+
+/// Tracks schema exchange state for one session.
+// r[impl schema.tracking.sent]
+// r[impl schema.tracking.received]
+pub struct SchemaTracker {
+    sent: Mutex<HashSet<TypeId>>,
+    received: Mutex<HashSet<TypeId>>,
+}
+
+impl SchemaTracker {
+    pub fn new() -> Self {
+        SchemaTracker {
+            sent: Mutex::new(HashSet::new()),
+            received: Mutex::new(HashSet::new()),
+        }
+    }
+
+    /// Given a Shape, compute all schemas needed and return the ones
+    /// not yet sent. Marks them as sent atomically. Returns None if
+    /// all schemas were already sent.
+    // r[impl schema.tracking.transitive]
+    // r[impl schema.exchange.idempotent]
+    // r[impl schema.principles.once-per-type]
+    pub fn prepare_send(&self, shape: &'static Shape) -> Option<Vec<Schema>> {
+        let all_schemas = extract_schemas(shape);
+        let mut sent = self.sent.lock().unwrap();
+        let unsent: Vec<Schema> = all_schemas
+            .into_iter()
+            .filter(|s| !sent.contains(&s.type_id))
+            .collect();
+        if unsent.is_empty() {
+            return None;
+        }
+        for s in &unsent {
+            sent.insert(s.type_id);
+        }
+        Some(unsent)
+    }
+
+    /// Record that we received schemas for these type IDs.
+    pub fn record_received(&self, type_ids: &[TypeId]) {
+        let mut received = self.received.lock().unwrap();
+        for id in type_ids {
+            received.insert(*id);
+        }
+    }
+
+    /// Check if we've received a schema for this type ID.
+    pub fn has_received(&self, type_id: &TypeId) -> bool {
+        self.received.lock().unwrap().contains(type_id)
+    }
+}
+
+impl Default for SchemaTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Compute a TypeId from a Shape by hashing its canonical byte encoding with blake3.
 pub fn type_id_of(shape: &'static Shape) -> TypeId {
