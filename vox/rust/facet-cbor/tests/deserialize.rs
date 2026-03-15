@@ -130,6 +130,7 @@ fn test_nested_struct_round_trip() {
 // =============================================================================
 
 #[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
 enum Shape {
     Circle(f64),
     Rectangle { width: f64, height: f64 },
