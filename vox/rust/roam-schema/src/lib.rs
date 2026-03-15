@@ -378,3 +378,240 @@ pub enum PrimitiveType {
 pub struct SchemaMessage {
     pub schemas: Vec<Schema>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use facet::Facet;
+
+    #[test]
+    fn primitive_u32() {
+        let schemas = extract_schemas(<u32 as Facet>::SHAPE);
+        assert_eq!(schemas.len(), 1);
+        assert!(matches!(
+            schemas[0].kind,
+            SchemaKind::Primitive {
+                primitive_type: PrimitiveType::U32
+            }
+        ));
+    }
+
+    #[test]
+    fn primitive_string() {
+        let schemas = extract_schemas(<String as Facet>::SHAPE);
+        assert_eq!(schemas.len(), 1);
+        assert!(matches!(
+            schemas[0].kind,
+            SchemaKind::Primitive {
+                primitive_type: PrimitiveType::String
+            }
+        ));
+    }
+
+    #[test]
+    fn primitive_bool() {
+        let schemas = extract_schemas(<bool as Facet>::SHAPE);
+        assert_eq!(schemas.len(), 1);
+        assert!(matches!(
+            schemas[0].kind,
+            SchemaKind::Primitive {
+                primitive_type: PrimitiveType::Bool
+            }
+        ));
+    }
+
+    #[test]
+    fn simple_struct() {
+        #[derive(Facet)]
+        struct Point {
+            x: f64,
+            y: f64,
+        }
+
+        let schemas = extract_schemas(Point::SHAPE);
+        // f64 schema + Point schema
+        assert!(schemas.len() >= 2);
+
+        let point_schema = schemas.last().unwrap();
+        match &point_schema.kind {
+            SchemaKind::Struct { fields } => {
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields[0].name, "x");
+                assert_eq!(fields[1].name, "y");
+                assert!(fields[0].required);
+                // Both fields should reference the same f64 TypeId
+                assert_eq!(fields[0].type_id, fields[1].type_id);
+            }
+            other => panic!("expected Struct, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn simple_enum() {
+        #[derive(Facet)]
+        #[repr(u8)]
+        enum Color {
+            Red,
+            Green,
+            Blue,
+        }
+
+        let schemas = extract_schemas(Color::SHAPE);
+        let color_schema = schemas.last().unwrap();
+        match &color_schema.kind {
+            SchemaKind::Enum { variants } => {
+                assert_eq!(variants.len(), 3);
+                assert_eq!(variants[0].name, "Red");
+                assert_eq!(variants[1].name, "Green");
+                assert_eq!(variants[2].name, "Blue");
+                assert!(matches!(variants[0].payload, VariantPayload::Unit));
+            }
+            other => panic!("expected Enum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enum_with_payloads() {
+        #[derive(Facet)]
+        #[repr(u8)]
+        enum Shape {
+            Circle(f64),
+            Rect { w: f64, h: f64 },
+            Empty,
+        }
+
+        let schemas = extract_schemas(Shape::SHAPE);
+        let shape_schema = schemas.last().unwrap();
+        match &shape_schema.kind {
+            SchemaKind::Enum { variants } => {
+                assert_eq!(variants.len(), 3);
+                assert!(matches!(
+                    variants[0].payload,
+                    VariantPayload::Newtype { .. }
+                ));
+                match &variants[1].payload {
+                    VariantPayload::Struct { fields } => {
+                        assert_eq!(fields.len(), 2);
+                        assert_eq!(fields[0].name, "w");
+                        assert_eq!(fields[1].name, "h");
+                    }
+                    other => panic!("expected Struct variant, got {other:?}"),
+                }
+                assert!(matches!(variants[2].payload, VariantPayload::Unit));
+            }
+            other => panic!("expected Enum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn container_vec() {
+        let schemas = extract_schemas(<Vec<u32> as Facet>::SHAPE);
+        // u32 schema + Vec<u32> schema
+        assert_eq!(schemas.len(), 2);
+        assert!(matches!(
+            schemas[0].kind,
+            SchemaKind::Primitive {
+                primitive_type: PrimitiveType::U32
+            }
+        ));
+        assert!(matches!(schemas[1].kind, SchemaKind::List { .. }));
+    }
+
+    #[test]
+    fn container_option() {
+        let schemas = extract_schemas(<Option<String> as Facet>::SHAPE);
+        assert_eq!(schemas.len(), 2);
+        assert!(matches!(
+            schemas[0].kind,
+            SchemaKind::Primitive {
+                primitive_type: PrimitiveType::String
+            }
+        ));
+        assert!(matches!(schemas[1].kind, SchemaKind::Option { .. }));
+    }
+
+    #[test]
+    fn recursive_type_terminates() {
+        #[derive(Facet)]
+        struct Node {
+            value: u32,
+            next: Option<Box<Node>>,
+        }
+
+        let schemas = extract_schemas(Node::SHAPE);
+        // Should not infinite loop. Should contain at least u32, Option<Box<Node>>, Node.
+        assert!(schemas.len() >= 2);
+
+        // The root schema should be Node (last in dependency order)
+        let node_schema = schemas.last().unwrap();
+        assert!(matches!(node_schema.kind, SchemaKind::Struct { .. }));
+    }
+
+    #[test]
+    fn vec_u8_is_bytes() {
+        let schemas = extract_schemas(<Vec<u8> as Facet>::SHAPE);
+        assert_eq!(schemas.len(), 1);
+        assert!(matches!(
+            schemas[0].kind,
+            SchemaKind::Primitive {
+                primitive_type: PrimitiveType::Bytes
+            }
+        ));
+    }
+
+    #[test]
+    fn deduplication_two_u32_fields() {
+        #[derive(Facet)]
+        struct TwoU32 {
+            a: u32,
+            b: u32,
+        }
+
+        let schemas = extract_schemas(TwoU32::SHAPE);
+        // u32 should appear exactly once, plus the struct itself
+        let u32_count = schemas
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s.kind,
+                    SchemaKind::Primitive {
+                        primitive_type: PrimitiveType::U32
+                    }
+                )
+            })
+            .count();
+        assert_eq!(u32_count, 1, "u32 schema should appear exactly once");
+        assert_eq!(schemas.len(), 2); // u32 + TwoU32
+    }
+
+    #[test]
+    fn type_id_is_stable() {
+        let id1 = type_id_of(<u32 as Facet>::SHAPE);
+        let id2 = type_id_of(<u32 as Facet>::SHAPE);
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn type_id_differs_for_different_types() {
+        let id_u32 = type_id_of(<u32 as Facet>::SHAPE);
+        let id_u64 = type_id_of(<u64 as Facet>::SHAPE);
+        assert_ne!(id_u32, id_u64);
+    }
+
+    #[test]
+    fn container_map() {
+        let schemas = extract_schemas(<std::collections::HashMap<String, u32> as Facet>::SHAPE);
+        let map_schema = schemas.last().unwrap();
+        assert!(matches!(map_schema.kind, SchemaKind::Map { .. }));
+    }
+
+    #[test]
+    fn container_array() {
+        let schemas = extract_schemas(<[u32; 4] as Facet>::SHAPE);
+        let arr_schema = schemas.last().unwrap();
+        match &arr_schema.kind {
+            SchemaKind::Array { length, .. } => assert_eq!(*length, 4),
+            other => panic!("expected Array, got {other:?}"),
+        }
+    }
+}
