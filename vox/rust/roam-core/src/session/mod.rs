@@ -263,6 +263,9 @@ pub struct Session {
     keepalive: Option<SessionKeepaliveConfig>,
     resume_notifier: watch::Sender<u64>,
     recoverer: Option<Box<dyn ConduitRecoverer>>,
+
+    /// Whether schema exchange is active for this session (both peers agreed).
+    schema_exchange: bool,
 }
 
 #[derive(Debug)]
@@ -623,6 +626,7 @@ impl Session {
             keepalive,
             resume_notifier,
             recoverer,
+            schema_exchange: false,
         }
     }
 
@@ -661,7 +665,7 @@ impl Session {
             .map_err(|_| SessionError::Protocol("failed to send Hello".into()))?;
 
         // Receive HelloYourself
-        let (peer_settings, peer_supports_retry, session_resume_key) =
+        let (peer_settings, peer_supports_retry, session_resume_key, peer_schema_exchange) =
             match self.rx.recv_msg().await {
                 Ok(Some(msg)) => {
                     let payload = msg.map(|m| m.payload);
@@ -670,6 +674,7 @@ impl Session {
                             hy.connection_settings.clone(),
                             metadata_supports_retry(&hy.metadata),
                             metadata_session_resume_key(&hy.metadata),
+                            hy.schema_exchange,
                         ),
                         MessagePayload::ProtocolError(e) => {
                             return Err(SessionError::Protocol(e.description.to_owned()));
@@ -693,6 +698,9 @@ impl Session {
             return Err(SessionError::NotResumable);
         }
 
+        // Schema exchange is active only if both sides opted in
+        self.schema_exchange = false && peer_schema_exchange;
+
         Ok(self.make_root_handle(settings, peer_settings))
     }
 
@@ -708,7 +716,7 @@ impl Session {
         self.role = SessionRole::Acceptor;
 
         // Receive Hello
-        let (peer_settings, peer_supports_retry) = match self.rx.recv_msg().await {
+        let (peer_settings, peer_supports_retry, peer_schema_exchange) = match self.rx.recv_msg().await {
             Ok(Some(msg)) => {
                 let payload = msg.map(|m| m.payload);
                 match &*payload {
@@ -722,6 +730,7 @@ impl Session {
                         (
                             h.connection_settings.clone(),
                             metadata_supports_retry(&h.metadata),
+                            h.schema_exchange,
                         )
                     }
                     MessagePayload::ProtocolError(e) => {
@@ -775,6 +784,9 @@ impl Session {
             })
             .await
             .map_err(|_| SessionError::Protocol("failed to send HelloYourself".into()))?;
+
+        // Schema exchange is active only if both sides opted in
+        self.schema_exchange = false && peer_schema_exchange;
 
         Ok(self.make_root_handle(our_settings, peer_settings))
     }
