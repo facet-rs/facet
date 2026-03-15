@@ -2425,6 +2425,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "roam-schema"
+version = "7.3.0"
+dependencies = [
+ "facet",
+ "facet-core",
+]
+
+[[package]]
 name = "roam-service-macros"
 version = "7.3.0"
 dependencies = [

@@ -15,6 +15,7 @@ pub struct Schema {
 
 /// The structural kind of a type.
 #[derive(Facet, Clone, Debug)]
+#[repr(u8)]
 pub enum SchemaKind {
     Struct { fields: Vec<FieldSchema> },
     Enum { variants: Vec<VariantSchema> },
@@ -45,6 +46,7 @@ pub struct VariantSchema {
 
 /// The payload of an enum variant.
 #[derive(Facet, Clone, Debug)]
+#[repr(u8)]
 pub enum VariantPayload {
     Unit,
     Newtype { type_id: TypeId },
@@ -53,6 +55,7 @@ pub enum VariantPayload {
 
 /// Primitive types supported by the wire format.
 #[derive(Facet, Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
 pub enum PrimitiveType {
     Bool,
     U8,
