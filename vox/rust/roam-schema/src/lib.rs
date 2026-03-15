@@ -1,6 +1,16 @@
 #![deny(unsafe_code)]
 
 use facet::Facet;
+use facet_core::Shape;
+
+/// Compute a TypeId from a Shape by hashing its canonical byte encoding with blake3.
+pub fn type_id_of(shape: &'static Shape) -> TypeId {
+    let bytes = roam_hash::encode_shape_bytes(shape);
+    let hash = blake3::hash(&bytes);
+    let mut id = [0u8; 16];
+    id.copy_from_slice(&hash.as_bytes()[..16]);
+    TypeId(id)
+}
 
 /// A 16-byte identifier for a type.
 #[derive(Facet, Clone, Copy, PartialEq, Eq, Hash, Debug)]
