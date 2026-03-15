@@ -23,6 +23,98 @@ pub fn serialize_peek(peek: Peek<'_, '_>, out: &mut Vec<u8>) -> Result<(), CborE
         return serialize_scalar(peek, scalar_type, out);
     }
 
+    // Check def-based types first (Option, List, Map, etc.) before user types,
+    // because Option<T> is both Def::Option and UserType::Enum.
+    match peek.shape().def {
+        Def::Option(_) => {
+            let opt = peek
+                .into_option()
+                .map_err(|e| CborError::ReflectError(e.to_string()))?;
+            return match opt.value() {
+                Some(inner) => serialize_peek(inner, out),
+                None => {
+                    encode::write_null(out);
+                    Ok(())
+                }
+            };
+        }
+        Def::List(list_def) => {
+            // Special case: Vec<u8> → byte string
+            if list_def.t().is_type::<u8>() {
+                let list = peek
+                    .into_list()
+                    .map_err(|e| CborError::ReflectError(e.to_string()))?;
+                let len = list.len();
+                let mut bytes = Vec::with_capacity(len);
+                for i in 0..len {
+                    let elem = list.get(i).ok_or_else(|| {
+                        CborError::ReflectError("list index out of bounds".into())
+                    })?;
+                    let byte = elem
+                        .get::<u8>()
+                        .map_err(|e| CborError::ReflectError(e.to_string()))?;
+                    bytes.push(*byte);
+                }
+                encode::write_bytes(out, &bytes);
+            } else {
+                let list = peek
+                    .into_list()
+                    .map_err(|e| CborError::ReflectError(e.to_string()))?;
+                let len = list.len();
+                encode::write_array_header(out, len as u64);
+                for elem in list.iter() {
+                    serialize_peek(elem, out)?;
+                }
+            }
+            return Ok(());
+        }
+        Def::Array(_) | Def::Slice(_) => {
+            let list_like = peek
+                .into_list_like()
+                .map_err(|e| CborError::ReflectError(e.to_string()))?;
+            let len = list_like.len();
+            encode::write_array_header(out, len as u64);
+            for elem in list_like.iter() {
+                serialize_peek(elem, out)?;
+            }
+            return Ok(());
+        }
+        Def::Map(_) => {
+            let map = peek
+                .into_map()
+                .map_err(|e| CborError::ReflectError(e.to_string()))?;
+            encode::write_map_header(out, map.len() as u64);
+            for (key, value) in map.iter() {
+                serialize_peek(key, out)?;
+                serialize_peek(value, out)?;
+            }
+            return Ok(());
+        }
+        Def::Set(_) => {
+            let set = peek
+                .into_set()
+                .map_err(|e| CborError::ReflectError(e.to_string()))?;
+            encode::write_array_header(out, set.len() as u64);
+            for elem in set.iter() {
+                serialize_peek(elem, out)?;
+            }
+            return Ok(());
+        }
+        Def::Pointer(_) => {
+            let ptr = peek
+                .into_pointer()
+                .map_err(|e| CborError::ReflectError(e.to_string()))?;
+            return match ptr.borrow_inner() {
+                Some(inner) => serialize_peek(inner, out),
+                None => {
+                    encode::write_null(out);
+                    Ok(())
+                }
+            };
+        }
+        _ => {}
+    }
+
     // Try struct/enum (user types)
     match peek.shape().ty {
         Type::User(UserType::Struct(struct_type)) => match struct_type.kind {
@@ -130,96 +222,7 @@ pub fn serialize_peek(peek: Peek<'_, '_>, out: &mut Vec<u8>) -> Result<(), CborE
         _ => {}
     }
 
-    // Try def-based types
-    match peek.shape().def {
-        Def::List(list_def) => {
-            // Special case: Vec<u8> → byte string
-            if list_def.t().is_type::<u8>() {
-                let list = peek
-                    .into_list()
-                    .map_err(|e| CborError::ReflectError(e.to_string()))?;
-                let len = list.len();
-                let mut bytes = Vec::with_capacity(len);
-                for i in 0..len {
-                    let elem = list.get(i).ok_or_else(|| {
-                        CborError::ReflectError("list index out of bounds".into())
-                    })?;
-                    let byte = elem
-                        .get::<u8>()
-                        .map_err(|e| CborError::ReflectError(e.to_string()))?;
-                    bytes.push(*byte);
-                }
-                encode::write_bytes(out, &bytes);
-            } else {
-                let list = peek
-                    .into_list()
-                    .map_err(|e| CborError::ReflectError(e.to_string()))?;
-                let len = list.len();
-                encode::write_array_header(out, len as u64);
-                for elem in list.iter() {
-                    serialize_peek(elem, out)?;
-                }
-            }
-            Ok(())
-        }
-        Def::Array(_) | Def::Slice(_) => {
-            let list_like = peek
-                .into_list_like()
-                .map_err(|e| CborError::ReflectError(e.to_string()))?;
-            let len = list_like.len();
-            encode::write_array_header(out, len as u64);
-            for elem in list_like.iter() {
-                serialize_peek(elem, out)?;
-            }
-            Ok(())
-        }
-        Def::Map(_) => {
-            let map = peek
-                .into_map()
-                .map_err(|e| CborError::ReflectError(e.to_string()))?;
-            encode::write_map_header(out, map.len() as u64);
-            for (key, value) in map.iter() {
-                serialize_peek(key, out)?;
-                serialize_peek(value, out)?;
-            }
-            Ok(())
-        }
-        Def::Set(_) => {
-            let set = peek
-                .into_set()
-                .map_err(|e| CborError::ReflectError(e.to_string()))?;
-            encode::write_array_header(out, set.len() as u64);
-            for elem in set.iter() {
-                serialize_peek(elem, out)?;
-            }
-            Ok(())
-        }
-        Def::Option(_) => {
-            let opt = peek
-                .into_option()
-                .map_err(|e| CborError::ReflectError(e.to_string()))?;
-            match opt.value() {
-                Some(inner) => serialize_peek(inner, out),
-                None => {
-                    encode::write_null(out);
-                    Ok(())
-                }
-            }
-        }
-        Def::Pointer(_) => {
-            let ptr = peek
-                .into_pointer()
-                .map_err(|e| CborError::ReflectError(e.to_string()))?;
-            match ptr.borrow_inner() {
-                Some(inner) => serialize_peek(inner, out),
-                None => {
-                    encode::write_null(out);
-                    Ok(())
-                }
-            }
-        }
-        _ => Err(CborError::UnsupportedType(format!("{}", peek.shape()))),
-    }
+    Err(CborError::UnsupportedType(format!("{}", peek.shape())))
 }
 
 fn serialize_scalar(
