@@ -609,4 +609,30 @@ mod tests {
             "recursive encoding should contain BACKREF marker"
         );
     }
+
+    #[test]
+    fn method_id_name_only_is_stable_across_case_variations() {
+        let a = method_id_name_only("MyService", "DoThingFast");
+        let b = method_id_name_only("my-service", "do-thing-fast");
+        let c = method_id_name_only("MY_SERVICE", "DO_THING_FAST");
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+
+    #[test]
+    fn method_id_name_only_differs_from_legacy_method_id() {
+        let name_only = method_id_name_only("svc", "m");
+        let legacy = method_id::<(u32,), u64>("svc", "m");
+        assert_ne!(
+            name_only, legacy,
+            "name-only and legacy method IDs must differ for the same service+method"
+        );
+    }
+
+    #[test]
+    fn method_id_name_only_different_methods_produce_different_ids() {
+        let a = method_id_name_only("Svc", "alpha");
+        let b = method_id_name_only("Svc", "beta");
+        assert_ne!(a, b);
+    }
 }
