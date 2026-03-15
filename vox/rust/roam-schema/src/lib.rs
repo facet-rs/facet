@@ -438,6 +438,17 @@ pub struct SchemaMessage {
     pub schemas: Vec<Schema>,
 }
 
+/// Build a CBOR-encoded schema batch from a list of schemas.
+// r[impl schema.format.self-contained]
+pub fn build_schema_message(schemas: &[Schema]) -> Vec<u8> {
+    facet_cbor::to_vec(&schemas).expect("schema CBOR serialization should not fail")
+}
+
+/// Parse a CBOR-encoded schema batch.
+pub fn parse_schema_message(bytes: &[u8]) -> Result<Vec<Schema>, facet_cbor::CborError> {
+    facet_cbor::from_slice(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
