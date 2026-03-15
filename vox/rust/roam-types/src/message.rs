@@ -277,6 +277,21 @@ structstruck::strike! {
                     pub nonce: u64,
                 }),
 
+                // ========================================================================
+                // Schema exchange
+                // ========================================================================
+
+                /// CBOR-encoded schema batch for type evolution.
+                /// Sent on connection 0 (control) since schemas are session-wide.
+                // r[impl schema.principles.cbor]
+                // r[impl schema.format.batch]
+                SchemaMessage(pub struct SchemaMessage {
+                    /// CBOR-encoded array of (type_id, schema) pairs.
+                    /// The sender serializes schemas to CBOR, wraps them here,
+                    /// and the outer message is postcard-framed as usual.
+                    pub schemas: Vec<u8>,
+                }),
+
             },
     }
 
