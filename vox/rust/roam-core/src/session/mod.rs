@@ -1143,6 +1143,10 @@ impl Session {
                     self.handle_keepalive_pong(pong.nonce, keepalive_runtime);
                 }
             }
+            MessagePayload::SchemaMessage(_schema_msg) => {
+                // TODO: parse and record received schemas via SchemaTracker
+                debug!("received schema message (not yet processed)");
+            }
             // Hello, HelloYourself, ProtocolError: not valid post-handshake, drop.
         })
     }
