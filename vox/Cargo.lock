@@ -725,6 +725,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-cbor"
+version = "7.3.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-reflect",
+]
+
+[[package]]
 name = "facet-core"
 version = "0.44.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
