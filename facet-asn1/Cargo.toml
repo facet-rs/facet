@@ -19,7 +19,7 @@ std = ["facet-core/std", "facet-reflect/std"]
 iddqd = ["facet-core/iddqd"]
 
 # yoke support
-yoke = ["facet-core/yoke", "facet-format-suite/yoke"]
+yoke = ["facet-core/yoke"]
 
 [dependencies]
 facet-core = { workspace = true, features = ["alloc"] }
