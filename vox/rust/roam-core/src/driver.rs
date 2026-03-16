@@ -967,6 +967,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         let mut resumed_rx = self.resumed_rx.clone();
         let mut seen_resume_generation = *resumed_rx.borrow();
         loop {
+            tracing::trace!("driver select loop top");
             tokio::select! {
                 biased;
                 changed = resumed_rx.changed() => {
@@ -983,12 +984,19 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 }
                 msg = self.rx.recv() => {
                     match msg {
-                        Some(msg) => self.handle_msg(msg),
-                        None => break,
+                        Some(msg) => {
+                            tracing::debug!("driver rx received message");
+                            self.handle_msg(msg);
+                        }
+                        None => {
+                            tracing::debug!("driver rx closed, exiting loop");
+                            break;
+                        }
                     }
                 }
                 Some((req_id, disposition)) = self.failures_rx.recv() => {
                     tracing::debug!(%req_id, ?disposition, "failures_rx fired");
+                    let in_flight_found = self.in_flight_handlers.contains_key(&req_id);
                     let reply_disposition = self
                         .in_flight_handlers
                         .get(&req_id)
@@ -1002,15 +1010,17 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                             }
                         })
                         .unwrap_or(Some(disposition));
+                    tracing::debug!(%req_id, in_flight_found, ?reply_disposition, "failures_rx computed disposition");
                     // Clean up the handler tracking entry.
                     self.in_flight_handlers.remove(&req_id);
-                    if self.shared.pending_responses.lock().remove(&req_id).is_none() {
+                    let had_pending = self.shared.pending_responses.lock().remove(&req_id).is_some();
+                    tracing::debug!(%req_id, had_pending, "failures_rx checked pending_responses");
+                    if !had_pending {
                         let Some(reply_disposition) = reply_disposition else {
+                            tracing::debug!(%req_id, "failures_rx: no reply_disposition, skipping");
                             continue;
                         };
-                        // Incoming call — handler failed to reply.
-                        // Wire format is always Result<T, RoamError<E>>, so encode
-                        // the runtime outcome as Err(...) in that envelope.
+                        tracing::debug!(%req_id, ?reply_disposition, "failures_rx: sending error response");
                         let roam_error = match reply_disposition {
                             FailureDisposition::Cancelled => RoamError::Cancelled,
                             FailureDisposition::Indeterminate => RoamError::Indeterminate,
@@ -1022,6 +1032,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                             channels: vec![],
                             metadata: Default::default(),
                         }).await;
+                        tracing::debug!(%req_id, "failures_rx: error response sent");
                     }
                 }
                 Some(ctrl) = self.local_control_rx.recv() => {
@@ -1204,8 +1215,12 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             );
         } else if is_response {
             // r[impl rpc.response.one-per-request]
+            tracing::debug!(%req_id, "driver received response");
             if let Some(tx) = self.shared.pending_responses.lock().remove(&req_id) {
+                tracing::debug!(%req_id, "routing response to pending oneshot");
                 let _: Result<(), _> = tx.send(msg);
+            } else {
+                tracing::debug!(%req_id, "no pending response slot for this req_id");
             }
         } else if is_cancel {
             // r[impl rpc.cancel]

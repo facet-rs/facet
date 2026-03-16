@@ -899,7 +899,10 @@ impl Session {
             tokio::select! {
                 msg = self.rx.recv_msg() => {
                     match msg {
-                        Ok(Some(msg)) => self.handle_message(msg, &mut keepalive_runtime).await,
+                        Ok(Some(msg)) => {
+                            tracing::debug!(conn_id = msg.connection_id.0, "session received message");
+                            self.handle_message(msg, &mut keepalive_runtime).await;
+                        }
                         Ok(None) => {
                             warn!("session recv loop ended: conduit returned EOF");
                             if !self.handle_conduit_break(&mut keepalive_runtime).await {
