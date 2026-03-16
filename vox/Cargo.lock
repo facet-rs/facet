@@ -2362,6 +2362,7 @@ dependencies = [
  "facet-reflect",
  "getrandom 0.3.4",
  "moire",
+ "roam-schema",
  "roam-shm",
  "roam-types",
  "shm-primitives",

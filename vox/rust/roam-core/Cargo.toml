@@ -23,6 +23,7 @@ diagnostics = ["moire/diagnostics"]
 
 [dependencies]
 roam-types.workspace = true
+roam-schema.workspace = true
 facet.workspace = true
 facet-core.workspace = true
 facet-reflect.workspace = true

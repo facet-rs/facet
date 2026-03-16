@@ -268,6 +268,14 @@ pub struct Session {
     // r[impl schema.method-id.negotiation]
     // r[impl schema.method-id.fallback]
     schema_exchange: bool,
+
+    /// Schema tracker for outbound/inbound schema deduplication.
+    /// Only populated when schema_exchange is true.
+    schema_tracker: Option<Arc<roam_schema::SchemaTracker>>,
+
+    /// Registry of schemas received from the remote peer.
+    /// Used for building translation plans and skip_value during deserialization.
+    schema_registry: roam_schema::SchemaRegistry,
 }
 
 #[derive(Debug)]
@@ -435,6 +443,22 @@ impl ConnectionSender {
     pub fn mark_failure(&self, request_id: RequestId, disposition: FailureDisposition) {
         let _ = self.failures.send((request_id, disposition));
     }
+
+    /// Send a schema message on the root connection.
+    /// Called before sending request/response data when schema exchange is active.
+    // r[impl schema.exchange.ordering]
+    pub(crate) async fn send_schema_message(&self, schemas: &[roam_schema::Schema]) {
+        let cbor_bytes = roam_schema::build_schema_message(schemas);
+        let _ = self
+            .sess_core
+            .send(Message {
+                connection_id: ConnectionId::ROOT,
+                payload: MessagePayload::SchemaMessage(roam_types::SchemaMessage {
+                    schemas: cbor_bytes,
+                }),
+            })
+            .await;
+    }
 }
 
 pub struct ConnectionHandle {
@@ -447,6 +471,8 @@ pub struct ConnectionHandle {
     /// The parity this side should use for allocating request/channel IDs.
     pub parity: Parity,
     pub(crate) peer_supports_retry: bool,
+    /// Schema tracker for this session (shared across all connections).
+    pub(crate) schema_tracker: Option<Arc<roam_schema::SchemaTracker>>,
 }
 
 impl std::fmt::Debug for ConnectionHandle {
@@ -508,6 +534,7 @@ pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) 
         resumed_rx: _left_resumed_rx,
         parity: _left_parity,
         peer_supports_retry: _left_peer_supports_retry,
+        schema_tracker: _left_schema_tracker,
     } = left;
     let ConnectionHandle {
         sender: right_sender,
@@ -518,6 +545,7 @@ pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) 
         resumed_rx: _right_resumed_rx,
         parity: _right_parity,
         peer_supports_retry: _right_peer_supports_retry,
+        schema_tracker: _right_schema_tracker,
     } = right;
 
     loop {
@@ -629,6 +657,8 @@ impl Session {
             resume_notifier,
             recoverer,
             schema_exchange: false,
+            schema_tracker: None,
+            schema_registry: roam_schema::SchemaRegistry::new(),
         }
     }
 
@@ -703,6 +733,9 @@ impl Session {
         // r[impl schema.method-id.negotiation]
         // Schema exchange is active only if both sides opted in
         self.schema_exchange = false && peer_schema_exchange;
+        if self.schema_exchange {
+            self.schema_tracker = Some(Arc::new(roam_schema::SchemaTracker::new()));
+        }
 
         Ok(self.make_root_handle(settings, peer_settings))
     }
@@ -792,6 +825,9 @@ impl Session {
         // r[impl schema.method-id.negotiation]
         // Schema exchange is active only if both sides opted in
         self.schema_exchange = false && peer_schema_exchange;
+        if self.schema_exchange {
+            self.schema_tracker = Some(Arc::new(roam_schema::SchemaTracker::new()));
+        }
 
         Ok(self.make_root_handle(our_settings, peer_settings))
     }
@@ -843,6 +879,7 @@ impl Session {
             resumed_rx,
             parity,
             peer_supports_retry: self.peer_supports_retry,
+            schema_tracker: self.schema_tracker.clone(),
         }
     }
 
@@ -1150,9 +1187,23 @@ impl Session {
                     self.handle_keepalive_pong(pong.nonce, keepalive_runtime);
                 }
             }
-            MessagePayload::SchemaMessage(_schema_msg) => {
-                // TODO: parse and record received schemas via SchemaTracker
-                debug!("received schema message (not yet processed)");
+            // r[impl schema.exchange.ordering]
+            MessagePayload::SchemaMessage(schema_msg) => {
+                match roam_schema::parse_schema_message(&schema_msg.schemas) {
+                    Ok(schemas) => {
+                        let type_ids: Vec<roam_schema::TypeId> =
+                            schemas.iter().map(|s| s.type_id).collect();
+                        if let Some(tracker) = &self.schema_tracker {
+                            tracker.record_received(&type_ids);
+                        }
+                        for schema in schemas {
+                            self.schema_registry.insert(schema.type_id, schema);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("failed to parse schema message: {}", e);
+                    }
+                }
             }
             // Hello, HelloYourself, ProtocolError: not valid post-handshake, drop.
         })

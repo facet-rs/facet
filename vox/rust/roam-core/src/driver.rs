@@ -134,6 +134,7 @@ pub struct DriverReplySink {
     operation_id: Option<u64>,
     operations: Option<Arc<dyn OperationStore>>,
     binder: DriverChannelBinder,
+    schema_tracker: Option<Arc<roam_schema::SchemaTracker>>,
 }
 
 fn send_encoded_response(
@@ -163,6 +164,17 @@ impl ReplySink for DriverReplySink {
             .sender
             .take()
             .expect("unreachable: send_reply takes self by value");
+
+        // r[impl schema.exchange.callee]
+        // Send schemas for response types before the response data.
+        if let Some(tracker) = &self.schema_tracker {
+            if let Payload::Outgoing { shape, .. } = &response.ret {
+                if let Some(schemas) = tracker.prepare_send(shape) {
+                    sender.send_schema_message(&schemas).await;
+                }
+            }
+        }
+
         if let (Some(operation_id), Some(operations)) = (self.operation_id, self.operations.take())
         {
             let encoded_response: Arc<[u8]> = facet_postcard::to_vec(&response)
@@ -413,6 +425,7 @@ pub struct DriverCaller {
     resume_processed_rx: watch::Receiver<u64>,
     peer_supports_retry: bool,
     _drop_guard: Option<Arc<CallerDropGuard>>,
+    pub(crate) schema_tracker: Option<Arc<roam_schema::SchemaTracker>>,
 }
 
 impl DriverCaller {
@@ -559,6 +572,17 @@ impl Caller for DriverCaller {
                     .next_operation_id
                     .fetch_add(1, Ordering::Relaxed);
                 ensure_operation_id(&mut call.metadata, operation_id);
+            }
+
+            // r[impl schema.exchange.caller]
+            // r[impl schema.exchange.channels]
+            // Send schemas for arg types (and channel element types) before the request.
+            if let Some(tracker) = &self.schema_tracker {
+                if let Payload::Outgoing { shape, .. } = &call.args {
+                    if let Some(schemas) = tracker.prepare_send(shape) {
+                        self.sender.send_schema_message(&schemas).await;
+                    }
+                }
             }
 
             let encoded_call: Arc<[u8]> = facet_postcard::to_vec(&call)
@@ -746,6 +770,7 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     drop_control_seed: Option<mpsc::UnboundedSender<DropControlRequest>>,
     drop_control_request: DropControlRequest,
     drop_guard: SyncMutex<Option<Weak<CallerDropGuard>>>,
+    schema_tracker: Option<Arc<roam_schema::SchemaTracker>>,
 }
 
 enum DriverLocalControl {
@@ -846,6 +871,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             resumed_rx,
             parity,
             peer_supports_retry,
+            schema_tracker,
         } = handle;
         let drop_control_request = DropControlRequest::Close(conn_id);
         let (local_control_tx, local_control_rx) = mpsc::unbounded_channel("driver.local_control");
@@ -875,6 +901,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             drop_control_seed: control_tx,
             drop_control_request,
             drop_guard: SyncMutex::new("driver.drop_guard", None),
+            schema_tracker,
         }
     }
 
@@ -919,6 +946,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             resume_processed_rx: self.resume_processed_tx.subscribe(),
             peer_supports_retry: self.peer_supports_retry,
             _drop_guard: drop_guard,
+            schema_tracker: self.schema_tracker.clone(),
         }
     }
 
@@ -1155,6 +1183,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 operation_id,
                 operations: operation_id.map(|_| Arc::clone(&self.shared.operations)),
                 binder: self.internal_binder(),
+                schema_tracker: self.schema_tracker.clone(),
             };
             let has_channels = !call.channels.is_empty();
             let join_handle = moire::task::spawn(
