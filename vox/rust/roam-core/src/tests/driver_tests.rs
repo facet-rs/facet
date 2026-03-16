@@ -749,6 +749,7 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
 // r[verify rpc.cancel.channels]
 #[tokio::test]
 async fn cancel_aborts_in_flight_handler() {
+    facet_testhelpers::setup();
     let (client_conduit, server_conduit) = message_conduit_pair();
 
     let was_cancelled = Arc::new(AtomicBool::new(false));

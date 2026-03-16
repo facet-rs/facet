@@ -85,7 +85,7 @@ pub(crate) enum DropControlRequest {
     Close(ConnectionId),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum FailureDisposition {
     Cancelled,
     Indeterminate,

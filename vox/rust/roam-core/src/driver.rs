@@ -988,6 +988,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     }
                 }
                 Some((req_id, disposition)) = self.failures_rx.recv() => {
+                    tracing::debug!(%req_id, ?disposition, "failures_rx fired");
                     let reply_disposition = self
                         .in_flight_handlers
                         .get(&req_id)
@@ -1209,6 +1210,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         } else if is_cancel {
             // r[impl rpc.cancel]
             // r[impl rpc.cancel.channels]
+            tracing::debug!(%req_id, in_flight = self.in_flight_handlers.contains_key(&req_id), "received cancel");
             match self.shared.operations.cancel(req_id) {
                 OperationCancel::None => {
                     let should_abort = self
@@ -1216,8 +1218,10 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         .get(&req_id)
                         .map(|in_flight| !in_flight.retry.persist)
                         .unwrap_or(false);
+                    tracing::debug!(%req_id, should_abort, "cancel OperationCancel::None");
                     if should_abort {
                         if let Some(in_flight) = self.in_flight_handlers.remove(&req_id) {
+                            tracing::debug!(%req_id, "aborting handler");
                             in_flight.handle.abort();
                         }
                     }

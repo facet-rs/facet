@@ -46,3 +46,4 @@ roam-postcard = { path = "../roam-postcard" }
 shm-primitives = { path = "../shm-primitives" }
 roam-shm = { path = "../roam-shm" }
 tempfile.workspace = true
+facet-testhelpers.workspace = true
