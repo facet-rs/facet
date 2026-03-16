@@ -168,6 +168,15 @@ impl Params {
                 } else {
                     params.impls.serde = ImplOption::Implement.into();
                 }
+            } else if name == symbol::RUSQLITE {
+                if let Some(lit) = arg.value() {
+                    params.impls.rusqlite = parse_lit_into_string(symbol::RUSQLITE, lit)?
+                        .parse::<ImplOption>()
+                        .map_err(|e| e.to_string())?
+                        .into();
+                } else {
+                    params.impls.rusqlite = ImplOption::Implement.into();
+                }
             } else if name == symbol::NO_STD {
                 params.std_lib = StdLib::no_std(proc_macro2::Span::call_site());
             } else if name == symbol::NO_EXPOSE {
@@ -295,6 +304,15 @@ impl ParamsRef {
                         .into();
                 } else {
                     params.impls.serde = ImplOption::Implement.into();
+                }
+            } else if name == symbol::RUSQLITE {
+                if let Some(lit) = arg.value() {
+                    params.impls.rusqlite = parse_lit_into_string(symbol::RUSQLITE, lit)?
+                        .parse::<ImplOption>()
+                        .map_err(|e| e.to_string())?
+                        .into();
+                } else {
+                    params.impls.rusqlite = ImplOption::Implement.into();
                 }
             } else if name == symbol::NO_STD {
                 params.std_lib = StdLib::no_std(proc_macro2::Span::call_site());
