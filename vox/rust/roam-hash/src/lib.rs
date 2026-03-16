@@ -69,6 +69,8 @@ fn encode_str(s: &str, out: &mut Vec<u8>) {
 
 /// Encode a `Shape` into its canonical signature byte representation,
 /// returning the bytes.
+// r[impl schema.type-id.deterministic]
+// r[impl schema.type-id.structural]
 pub fn encode_shape_bytes(shape: &'static Shape) -> Vec<u8> {
     let mut out = Vec::new();
     encode_shape(shape, &mut out);
@@ -83,6 +85,8 @@ pub fn encode_shape_bytes(shape: &'static Shape) -> Vec<u8> {
 // r[impl signature.recursive]
 // r[impl signature.recursive.encoding]
 // r[impl signature.recursive.stack]
+// r[impl schema.format.recursive]
+// r[impl schema.format.recursive.schema-body]
 fn encode_shape(shape: &'static Shape, out: &mut Vec<u8>) {
     let mut stack: Vec<&'static Shape> = Vec::new();
     encode_shape_inner(shape, out, &mut stack);
@@ -595,6 +599,8 @@ mod tests {
         assert_eq!(head(<(u8, u16) as Facet>::SHAPE), sig::TUPLE);
     }
 
+    // r[verify schema.format.recursive]
+    // r[verify schema.format.recursive.schema-body]
     #[test]
     fn encode_shape_marks_recursive_types_with_backref() {
         #[derive(Facet)]
@@ -610,6 +616,7 @@ mod tests {
         );
     }
 
+    // r[verify schema.method-id]
     #[test]
     fn method_id_name_only_is_stable_across_case_variations() {
         let a = method_id_name_only("MyService", "DoThingFast");
@@ -619,6 +626,7 @@ mod tests {
         assert_eq!(b, c);
     }
 
+    // r[verify schema.method-id.fallback]
     #[test]
     fn method_id_name_only_differs_from_legacy_method_id() {
         let name_only = method_id_name_only("svc", "m");

@@ -65,6 +65,9 @@ impl Default for SchemaTracker {
 }
 
 /// Compute a TypeId from a Shape by hashing its canonical byte encoding with blake3.
+// r[impl schema.type-id]
+// r[impl schema.type-id.deterministic]
+// r[impl schema.type-id.structural]
 pub fn type_id_of(shape: &'static Shape) -> TypeId {
     let bytes = roam_hash::encode_shape_bytes(shape);
     let hash = blake3::hash(&bytes);
@@ -77,6 +80,7 @@ pub fn type_id_of(shape: &'static Shape) -> TypeId {
 ///
 /// Returns schemas in dependency order: dependencies appear before dependents.
 /// The root type's schema is last.
+// r[impl schema.format]
 pub fn extract_schemas(shape: &'static Shape) -> Vec<Schema> {
     let mut ctx = ExtractCtx {
         schemas: Vec::new(),
@@ -121,11 +125,13 @@ impl ExtractCtx {
             return type_id;
         }
 
+        // r[impl schema.format.recursive]
         // Cycle detection: if on the stack, return the id without re-entering.
         if self.stack.contains(&ptr) {
             return type_id;
         }
 
+        // r[impl schema.format.primitive]
         // Scalars
         if let Some(scalar) = shape.scalar_type() {
             if self.seen.insert(ptr) {
@@ -139,6 +145,7 @@ impl ExtractCtx {
             return type_id;
         }
 
+        // r[impl schema.format.container]
         // Containers
         match shape.def {
             Def::List(list_def) => {
@@ -232,6 +239,8 @@ impl ExtractCtx {
         self.stack.push(ptr);
 
         let kind = match shape.ty {
+            // r[impl schema.format.struct]
+            // r[impl schema.format.tuple]
             Type::User(UserType::Struct(struct_type)) => match struct_type.kind {
                 StructKind::Unit => SchemaKind::Primitive {
                     primitive_type: PrimitiveType::Unit,
@@ -257,6 +266,7 @@ impl ExtractCtx {
                     SchemaKind::Struct { fields }
                 }
             },
+            // r[impl schema.format.enum]
             Type::User(UserType::Enum(enum_type)) => {
                 let variants: Vec<VariantSchema> = enum_type
                     .variants
@@ -440,11 +450,15 @@ pub struct SchemaMessage {
 
 /// Build a CBOR-encoded schema batch from a list of schemas.
 // r[impl schema.format.self-contained]
+// r[impl schema.format.batch]
+// r[impl schema.principles.cbor]
 pub fn build_schema_message(schemas: &[Schema]) -> Vec<u8> {
     facet_cbor::to_vec(&schemas).expect("schema CBOR serialization should not fail")
 }
 
 /// Parse a CBOR-encoded schema batch.
+// r[impl schema.format.batch]
+// r[impl schema.principles.cbor]
 pub fn parse_schema_message(bytes: &[u8]) -> Result<Vec<Schema>, facet_cbor::CborError> {
     facet_cbor::from_slice(bytes)
 }
@@ -454,6 +468,7 @@ mod tests {
     use super::*;
     use facet::Facet;
 
+    // r[verify schema.format.primitive]
     #[test]
     fn primitive_u32() {
         let schemas = extract_schemas(<u32 as Facet>::SHAPE);
@@ -490,6 +505,7 @@ mod tests {
         ));
     }
 
+    // r[verify schema.format.struct]
     #[test]
     fn simple_struct() {
         #[derive(Facet)]
@@ -516,6 +532,7 @@ mod tests {
         }
     }
 
+    // r[verify schema.format.enum]
     #[test]
     fn simple_enum() {
         #[derive(Facet)]
@@ -540,6 +557,7 @@ mod tests {
         }
     }
 
+    // r[verify schema.format.enum]
     #[test]
     fn enum_with_payloads() {
         #[derive(Facet)]
@@ -573,6 +591,7 @@ mod tests {
         }
     }
 
+    // r[verify schema.format.container]
     #[test]
     fn container_vec() {
         let schemas = extract_schemas(<Vec<u32> as Facet>::SHAPE);
@@ -587,6 +606,7 @@ mod tests {
         assert!(matches!(schemas[1].kind, SchemaKind::List { .. }));
     }
 
+    // r[verify schema.format.container]
     #[test]
     fn container_option() {
         let schemas = extract_schemas(<Option<String> as Facet>::SHAPE);
@@ -600,6 +620,7 @@ mod tests {
         assert!(matches!(schemas[1].kind, SchemaKind::Option { .. }));
     }
 
+    // r[verify schema.format.recursive]
     #[test]
     fn recursive_type_terminates() {
         #[derive(Facet)]
@@ -617,6 +638,7 @@ mod tests {
         assert!(matches!(node_schema.kind, SchemaKind::Struct { .. }));
     }
 
+    // r[verify schema.format.primitive]
     #[test]
     fn vec_u8_is_bytes() {
         let schemas = extract_schemas(<Vec<u8> as Facet>::SHAPE);
@@ -629,6 +651,7 @@ mod tests {
         ));
     }
 
+    // r[verify schema.principles.once-per-type]
     #[test]
     fn deduplication_two_u32_fields() {
         #[derive(Facet)]
@@ -654,6 +677,8 @@ mod tests {
         assert_eq!(schemas.len(), 2); // u32 + TwoU32
     }
 
+    // r[verify schema.type-id]
+    // r[verify schema.type-id.deterministic]
     #[test]
     fn type_id_is_stable() {
         let id1 = type_id_of(<u32 as Facet>::SHAPE);
@@ -661,6 +686,7 @@ mod tests {
         assert_eq!(id1, id2);
     }
 
+    // r[verify schema.type-id.structural]
     #[test]
     fn type_id_differs_for_different_types() {
         let id_u32 = type_id_of(<u32 as Facet>::SHAPE);
@@ -668,6 +694,7 @@ mod tests {
         assert_ne!(id_u32, id_u64);
     }
 
+    // r[verify schema.format.container]
     #[test]
     fn container_map() {
         let schemas = extract_schemas(<std::collections::HashMap<String, u32> as Facet>::SHAPE);
@@ -675,6 +702,7 @@ mod tests {
         assert!(matches!(map_schema.kind, SchemaKind::Map { .. }));
     }
 
+    // r[verify schema.format.container]
     #[test]
     fn container_array() {
         let schemas = extract_schemas(<[u32; 4] as Facet>::SHAPE);
@@ -685,6 +713,36 @@ mod tests {
         }
     }
 
+    // r[verify schema.format.tuple]
+    #[test]
+    fn tuple_type() {
+        let schemas = extract_schemas(<(u32, String) as Facet>::SHAPE);
+        let tuple_schema = schemas.last().unwrap();
+        match &tuple_schema.kind {
+            SchemaKind::Tuple { elements } => {
+                assert_eq!(elements.len(), 2);
+                assert_ne!(elements[0], elements[1]);
+            }
+            other => panic!("expected Tuple, got {other:?}"),
+        }
+    }
+
+    // r[verify schema.format]
+    #[test]
+    fn extract_schemas_returns_all_kinds() {
+        #[derive(Facet)]
+        struct Mixed {
+            count: u32,
+            tags: Vec<String>,
+            pair: (u8, u8),
+        }
+
+        let schemas = extract_schemas(Mixed::SHAPE);
+        assert!(schemas.len() >= 4);
+    }
+
+    // r[verify schema.principles.once-per-type]
+    // r[verify schema.exchange.idempotent]
     #[test]
     fn tracker_prepare_send_returns_some_then_none() {
         let tracker = SchemaTracker::new();
@@ -697,6 +755,8 @@ mod tests {
         );
     }
 
+    // r[verify schema.tracking.transitive]
+    // r[verify schema.tracking.sent]
     #[test]
     fn tracker_prepare_send_includes_transitive_deps() {
         #[derive(Facet)]
@@ -724,6 +784,7 @@ mod tests {
         );
     }
 
+    // r[verify schema.tracking.received]
     #[test]
     fn tracker_record_and_has_received() {
         let tracker = SchemaTracker::new();
@@ -733,6 +794,9 @@ mod tests {
         assert!(tracker.has_received(&id));
     }
 
+    // r[verify schema.principles.cbor]
+    // r[verify schema.format.self-contained]
+    // r[verify schema.format.batch]
     #[test]
     fn cbor_round_trip() {
         #[derive(Facet)]

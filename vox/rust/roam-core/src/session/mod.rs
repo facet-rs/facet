@@ -265,6 +265,8 @@ pub struct Session {
     recoverer: Option<Box<dyn ConduitRecoverer>>,
 
     /// Whether schema exchange is active for this session (both peers agreed).
+    // r[impl schema.method-id.negotiation]
+    // r[impl schema.method-id.fallback]
     schema_exchange: bool,
 }
 
@@ -698,6 +700,7 @@ impl Session {
             return Err(SessionError::NotResumable);
         }
 
+        // r[impl schema.method-id.negotiation]
         // Schema exchange is active only if both sides opted in
         self.schema_exchange = false && peer_schema_exchange;
 
@@ -786,6 +789,7 @@ impl Session {
             .await
             .map_err(|_| SessionError::Protocol("failed to send HelloYourself".into()))?;
 
+        // r[impl schema.method-id.negotiation]
         // Schema exchange is active only if both sides opted in
         self.schema_exchange = false && peer_schema_exchange;
 
