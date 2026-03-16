@@ -716,38 +716,39 @@ impl Session {
         self.role = SessionRole::Acceptor;
 
         // Receive Hello
-        let (peer_settings, peer_supports_retry, peer_schema_exchange) = match self.rx.recv_msg().await {
-            Ok(Some(msg)) => {
-                let payload = msg.map(|m| m.payload);
-                match &*payload {
-                    MessagePayload::Hello(h) => {
-                        if h.version != PROTOCOL_VERSION {
-                            return Err(SessionError::Protocol(format!(
-                                "version mismatch: got {}, expected {PROTOCOL_VERSION}",
-                                h.version
-                            )));
+        let (peer_settings, peer_supports_retry, peer_schema_exchange) =
+            match self.rx.recv_msg().await {
+                Ok(Some(msg)) => {
+                    let payload = msg.map(|m| m.payload);
+                    match &*payload {
+                        MessagePayload::Hello(h) => {
+                            if h.version != PROTOCOL_VERSION {
+                                return Err(SessionError::Protocol(format!(
+                                    "version mismatch: got {}, expected {PROTOCOL_VERSION}",
+                                    h.version
+                                )));
+                            }
+                            (
+                                h.connection_settings.clone(),
+                                metadata_supports_retry(&h.metadata),
+                                h.schema_exchange,
+                            )
                         }
-                        (
-                            h.connection_settings.clone(),
-                            metadata_supports_retry(&h.metadata),
-                            h.schema_exchange,
-                        )
-                    }
-                    MessagePayload::ProtocolError(e) => {
-                        return Err(SessionError::Protocol(e.description.to_owned()));
-                    }
-                    _ => {
-                        return Err(SessionError::Protocol("expected Hello".into()));
+                        MessagePayload::ProtocolError(e) => {
+                            return Err(SessionError::Protocol(e.description.to_owned()));
+                        }
+                        _ => {
+                            return Err(SessionError::Protocol("expected Hello".into()));
+                        }
                     }
                 }
-            }
-            Ok(None) => {
-                return Err(SessionError::Protocol(
-                    "peer closed during handshake".into(),
-                ));
-            }
-            Err(e) => return Err(SessionError::Protocol(e.to_string())),
-        };
+                Ok(None) => {
+                    return Err(SessionError::Protocol(
+                        "peer closed during handshake".into(),
+                    ));
+                }
+                Err(e) => return Err(SessionError::Protocol(e.to_string())),
+            };
         self.peer_supports_retry = peer_supports_retry;
 
         // Acceptor parity is opposite of initiator
@@ -986,6 +987,7 @@ impl Session {
                     payload: MessagePayload::Hello(roam_types::Hello {
                         version: PROTOCOL_VERSION,
                         connection_settings: self.local_root_settings.clone(),
+                        schema_exchange: self.schema_exchange,
                         metadata,
                     }),
                 })
@@ -1067,6 +1069,7 @@ impl Session {
                     connection_id: ConnectionId::ROOT,
                     payload: MessagePayload::HelloYourself(roam_types::HelloYourself {
                         connection_settings: self.local_root_settings.clone(),
+                        schema_exchange: self.schema_exchange,
                         metadata,
                     }),
                 })
