@@ -40,7 +40,7 @@ facet-format-suite = { path = "../facet-format-suite", version = "0.44.2", featu
   "net",
 ] }
 facet-json-classics = { path = "../facet-json-classics", version = "0.44.2" }
-facet-value = { workspace = true }
+facet-value = { path = "../facet-value" }
 facet-testhelpers = { workspace = true }
 facet-reflect = { workspace = true, features = ["tracing"] }
 libtest-mimic = "0.8.1"
