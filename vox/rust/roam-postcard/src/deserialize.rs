@@ -141,7 +141,6 @@ fn deserialize_value_inner<'de, 'facet, const BORROW: bool>(
                 .sized_layout()
                 .map_err(|_| DeserializeError::ReflectError("proxy type must be sized".into()))?;
 
-            #[allow(unsafe_code)]
             let proxy_uninit = facet_core::alloc_for_layout(proxy_layout);
             #[allow(unsafe_code)]
             let proxy_partial = unsafe { Partial::from_raw_with_shape(proxy_uninit, proxy_shape) }
@@ -171,10 +170,10 @@ fn deserialize_value_inner<'de, 'facet, const BORROW: bool>(
             }
             .map_err(re)?;
 
-            // Clean up the proxy allocation
+            // Deallocate the proxy memory. convert_in consumed the value
+            // via ptr::read, so we must NOT call drop_in_place (double-free).
             #[allow(unsafe_code)]
             unsafe {
-                let _ = proxy_shape.call_drop_in_place(proxy_ptr);
                 facet_core::dealloc_for_layout(proxy_ptr, proxy_layout);
             }
 
