@@ -22,6 +22,7 @@ mod issue_2059;
 mod jit_deserialize;
 mod list_deferred_processing;
 mod metadata_container_flatten_map;
+mod mixed_tagged_untagged;
 mod nan_infinity;
 mod nested_flatten_map;
 mod nested_internal_tagging;

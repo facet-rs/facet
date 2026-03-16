@@ -1352,7 +1352,7 @@ impl<'s, S: FormatSerializer> SerializeContext<'s, S> {
         if numeric && tag.is_none() {
             return serialize_numeric_enum(self.serializer, variant);
         }
-        if untagged {
+        if untagged || variant.has_builtin_attr("untagged") {
             self.push(PathSegment::Variant(Cow::Borrowed(
                 variant.effective_name(),
             )));
