@@ -5,10 +5,7 @@ use facet_reflect::Peek;
 use crate::encode;
 use crate::error::SerializeError;
 
-/// Trait abstracting the output target for serialization.
-///
-/// `Vec<u8>` copies everything. `ScatterBuilder` keeps references
-/// to source data for zero-copy serialization.
+/// Trait for writing structural bytes during serialization.
 pub trait Writer {
     /// Write a single byte.
     fn write_byte(&mut self, byte: u8);
@@ -27,6 +24,42 @@ impl Writer for Vec<u8> {
     }
 }
 
+/// Extends `Writer` with zero-copy support for payload bytes borrowed from
+/// the source value.
+///
+/// `ScatterBuilder<'a>` keeps references; `CopyWriter` copies them.
+pub(crate) trait PostcardWriter<'a>: Writer {
+    /// Write payload bytes that are borrowed from the source value for lifetime `'a`.
+    fn write_referenced_bytes(&mut self, bytes: &'a [u8]);
+}
+
+/// Wraps any `Writer` and copies referenced bytes instead of keeping references.
+pub(crate) struct CopyWriter<'w, W: Writer + ?Sized> {
+    inner: &'w mut W,
+}
+
+impl<'w, W: Writer + ?Sized> CopyWriter<'w, W> {
+    pub(crate) fn new(inner: &'w mut W) -> Self {
+        Self { inner }
+    }
+}
+
+impl<W: Writer + ?Sized> Writer for CopyWriter<'_, W> {
+    fn write_byte(&mut self, byte: u8) {
+        self.inner.write_byte(byte);
+    }
+
+    fn write_bytes(&mut self, bytes: &[u8]) {
+        self.inner.write_bytes(bytes);
+    }
+}
+
+impl<'a, W: Writer + ?Sized> PostcardWriter<'a> for CopyWriter<'_, W> {
+    fn write_referenced_bytes(&mut self, bytes: &'a [u8]) {
+        self.inner.write_bytes(bytes);
+    }
+}
+
 /// Serialize any `Facet` type to postcard bytes.
 ///
 /// Serialization always uses the local type definition — no translation plan.
@@ -35,23 +68,52 @@ impl Writer for Vec<u8> {
 pub fn to_vec<'a, T: Facet<'a>>(value: &T) -> Result<Vec<u8>, SerializeError> {
     let peek = Peek::new(value);
     let mut out = Vec::new();
-    serialize_peek(peek, &mut out)?;
+    serialize_peek(peek, &mut CopyWriter::new(&mut out))?;
     Ok(out)
 }
 
 /// Serialize a `Peek` value to postcard, appending to the writer.
-pub fn serialize_peek(peek: Peek<'_, '_>, out: &mut impl Writer) -> Result<(), SerializeError> {
+pub(crate) fn serialize_peek<'a>(
+    peek: Peek<'a, '_>,
+    out: &mut impl PostcardWriter<'a>,
+) -> Result<(), SerializeError> {
     serialize_peek_inner(peek, out, false)
 }
 
-fn serialize_peek_inner(
-    peek: Peek<'_, '_>,
-    out: &mut impl Writer,
+fn serialize_peek_inner<'a>(
+    peek: Peek<'a, '_>,
+    out: &mut impl PostcardWriter<'a>,
     is_trailing: bool,
 ) -> Result<(), SerializeError> {
     let peek = peek.innermost_peek();
     fn re(e: impl std::fmt::Display) -> SerializeError {
         SerializeError::ReflectError(e.to_string())
+    }
+
+    // Handle proxy types (e.g. Rx<T>, Tx<T> with #[facet(proxy = ())])
+    if let Some(proxy_def) = peek.shape().proxy {
+        let proxy_shape = proxy_def.shape;
+        let proxy_layout = proxy_shape
+            .layout
+            .sized_layout()
+            .map_err(|_| SerializeError::ReflectError("proxy type must be sized".into()))?;
+
+        let proxy_uninit = facet_core::alloc_for_layout(proxy_layout);
+        #[allow(unsafe_code)]
+        let proxy_ptr = unsafe { (proxy_def.convert_out)(peek.data(), proxy_uninit) }
+            .map_err(|msg| SerializeError::ReflectError(msg))?;
+        #[allow(unsafe_code)]
+        let proxy_peek = unsafe { Peek::unchecked_new(proxy_ptr.as_const(), proxy_shape) };
+
+        let result = serialize_peek_inner(proxy_peek, out, is_trailing);
+
+        #[allow(unsafe_code)]
+        unsafe {
+            let _ = proxy_shape.call_drop_in_place(proxy_ptr);
+            facet_core::dealloc_for_layout(proxy_ptr, proxy_layout);
+        }
+
+        return result;
     }
 
     // Handle opaque adapters (e.g. Payload)
@@ -82,7 +144,7 @@ fn serialize_peek_inner(
         } else {
             // Non-trailing: wrap in length prefix.
             let mut tmp = Vec::new();
-            serialize_peek_inner(mapped_peek, &mut tmp, false)?;
+            serialize_peek_inner(mapped_peek, &mut CopyWriter::new(&mut tmp), false)?;
             encode::write_varint(out, tmp.len() as u64);
             out.write_bytes(&tmp);
             return Ok(());
@@ -129,7 +191,7 @@ fn serialize_peek_inner(
                 let list = peek.into_list().map_err(re)?;
                 if let Some(bytes) = peek.as_bytes() {
                     encode::write_varint(out, bytes.len() as u64);
-                    out.write_bytes(bytes);
+                    out.write_referenced_bytes(bytes);
                 } else {
                     let len = list.len();
                     let mut bytes = Vec::with_capacity(len);
@@ -237,10 +299,10 @@ fn serialize_peek_inner(
     }
 }
 
-fn serialize_scalar(
-    peek: Peek<'_, '_>,
+fn serialize_scalar<'a>(
+    peek: Peek<'a, '_>,
     scalar_type: ScalarType,
-    out: &mut impl Writer,
+    out: &mut impl PostcardWriter<'a>,
 ) -> Result<(), SerializeError> {
     let re = |e: facet_reflect::ReflectError| SerializeError::ReflectError(e.to_string());
     match scalar_type {
@@ -317,7 +379,7 @@ fn serialize_scalar(
                 .as_str()
                 .ok_or_else(|| SerializeError::ReflectError("failed to extract string".into()))?;
             encode::write_varint(out, s.len() as u64);
-            out.write_bytes(s.as_bytes());
+            out.write_referenced_bytes(s.as_bytes());
         }
         _ => {
             return Err(SerializeError::UnsupportedType(format!(

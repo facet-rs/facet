@@ -4,7 +4,7 @@
 use facet_reflect::Peek;
 
 use crate::error::SerializeError;
-use crate::serialize::Writer;
+use crate::serialize::{PostcardWriter, Writer};
 
 /// A segment of the serialized output.
 #[derive(Debug)]
@@ -59,13 +59,13 @@ impl<'a> ScatterPlan<'a> {
     }
 }
 
-pub(crate) struct ScatterBuilder {
+pub(crate) struct ScatterBuilder<'a> {
     staging: Vec<u8>,
-    segments: Vec<Segment<'static>>,
+    segments: Vec<Segment<'a>>,
     total_size: usize,
 }
 
-impl ScatterBuilder {
+impl<'a> ScatterBuilder<'a> {
     fn new() -> Self {
         Self {
             staging: Vec::new(),
@@ -74,28 +74,18 @@ impl ScatterBuilder {
         }
     }
 
-    fn finish(self) -> ScatterPlan<'static> {
+    fn finish(self) -> ScatterPlan<'a> {
         ScatterPlan {
             staging: self.staging,
             segments: self.segments,
             total_size: self.total_size,
         }
     }
-}
 
-impl Writer for ScatterBuilder {
-    fn write_byte(&mut self, byte: u8) {
-        self.write_bytes(&[byte]);
-    }
-
-    fn write_bytes(&mut self, bytes: &[u8]) {
-        if bytes.is_empty() {
+    fn push_staged_segment(&mut self, offset: usize, len: usize) {
+        if len == 0 {
             return;
         }
-        let offset = self.staging.len();
-        self.staging.extend_from_slice(bytes);
-        let len = bytes.len();
-
         // Merge with previous staged segment if contiguous
         if let Some(Segment::Staged {
             offset: prev_offset,
@@ -104,13 +94,39 @@ impl Writer for ScatterBuilder {
         {
             if *prev_offset + *prev_len == offset {
                 *prev_len += len;
-                self.total_size += len;
                 return;
             }
         }
-
         self.segments.push(Segment::Staged { offset, len });
-        self.total_size += len;
+    }
+}
+
+impl Writer for ScatterBuilder<'_> {
+    fn write_byte(&mut self, byte: u8) {
+        let offset = self.staging.len();
+        self.staging.push(byte);
+        self.total_size += 1;
+        self.push_staged_segment(offset, 1);
+    }
+
+    fn write_bytes(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        let offset = self.staging.len();
+        self.staging.extend_from_slice(bytes);
+        self.total_size += bytes.len();
+        self.push_staged_segment(offset, bytes.len());
+    }
+}
+
+impl<'a> PostcardWriter<'a> for ScatterBuilder<'a> {
+    fn write_referenced_bytes(&mut self, bytes: &'a [u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        self.segments.push(Segment::Reference { bytes });
+        self.total_size += bytes.len();
     }
 }
 
@@ -120,12 +136,5 @@ pub fn peek_to_scatter_plan<'input, 'facet>(
 ) -> Result<ScatterPlan<'input>, SerializeError> {
     let mut builder = ScatterBuilder::new();
     crate::serialize::serialize_peek(peek, &mut builder)?;
-    // SAFETY: ScatterBuilder only stores Staged segments (no Reference segments),
-    // so the 'static lifetime on segments is fine — we can widen to 'input.
-    let plan = builder.finish();
-    // Transmute the lifetime from 'static to 'input. This is safe because
-    // all segments are Staged (no borrowed references).
-    #[allow(unsafe_code)]
-    let plan = unsafe { std::mem::transmute::<ScatterPlan<'static>, ScatterPlan<'input>>(plan) };
-    Ok(plan)
+    Ok(builder.finish())
 }

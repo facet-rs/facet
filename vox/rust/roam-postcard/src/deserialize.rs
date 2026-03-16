@@ -130,6 +130,58 @@ fn deserialize_value_inner<'de, 'facet, const BORROW: bool>(
         return Ok(partial);
     }
 
+    // Proxy types (e.g. Rx<T>, Tx<T> with #[facet(proxy = ())])
+    if let Some(proxy_def) = shape.proxy {
+        let proxy_shape = proxy_def.shape;
+
+        // First, serialize the proxy value from the cursor into a temp buffer
+        {
+            let proxy_layout = proxy_shape
+                .layout
+                .sized_layout()
+                .map_err(|_| DeserializeError::ReflectError("proxy type must be sized".into()))?;
+
+            #[allow(unsafe_code)]
+            let proxy_uninit = facet_core::alloc_for_layout(proxy_layout);
+            #[allow(unsafe_code)]
+            let proxy_partial = unsafe { Partial::from_raw_with_shape(proxy_uninit, proxy_shape) }
+                .map_err(|e| DeserializeError::ReflectError(e.to_string()))?;
+            let proxy_plan = build_identity_plan(proxy_shape);
+            let proxy_partial =
+                deserialize_value::<BORROW>(proxy_partial, cursor, &proxy_plan, registry)?;
+            proxy_partial
+                .finish_in_place()
+                .map_err(|e| DeserializeError::ReflectError(e.to_string()))?;
+
+            // Now convert_in: proxy → target using set_from_function
+            let convert_in = proxy_def.convert_in;
+            #[allow(unsafe_code)]
+            let proxy_ptr = unsafe { proxy_uninit.assume_init() };
+            #[allow(unsafe_code)]
+            let partial = unsafe {
+                partial.set_from_function(move |target_uninit| {
+                    (convert_in)(proxy_ptr.as_const(), target_uninit)
+                        .map(|_| ())
+                        .map_err(|e| facet_reflect::ReflectErrorKind::InvariantViolation {
+                            invariant: Box::leak(
+                                format!("proxy convert_in failed: {e}").into_boxed_str(),
+                            ),
+                        })
+                })
+            }
+            .map_err(re)?;
+
+            // Clean up the proxy allocation
+            #[allow(unsafe_code)]
+            unsafe {
+                let _ = proxy_shape.call_drop_in_place(proxy_ptr);
+                facet_core::dealloc_for_layout(proxy_ptr, proxy_layout);
+            }
+
+            return Ok(partial);
+        };
+    }
+
     // Transparent wrappers
     if shape.is_transparent() {
         let partial = partial.begin_inner().map_err(re)?;
