@@ -1,6 +1,6 @@
 [package]
 name = "facet-yaml"
-version = "0.44.4"
+version = "0.44.5"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -19,7 +19,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 facet = { workspace = true }
 facet-core = { workspace = true }
-facet-format = { path = "../facet-format", version = "0.44.4" }
+facet-format = { path = "../facet-format", version = "0.44.5" }
 facet-reflect = { workspace = true }
 saphyr-parser = "0.0.6"
 zmij = { version = "1", optional = true }
