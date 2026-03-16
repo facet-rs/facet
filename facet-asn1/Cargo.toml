@@ -23,13 +23,13 @@ yoke = ["facet/yoke", "facet-format-suite/yoke"]
 
 [dependencies]
 facet-core = { workspace = true, features = ["alloc"] }
-facet-format = { path = "../facet-format", version = "0.44.2", default-features = false }
+facet-format = { path = "../facet-format", version = "0.44.3", default-features = false }
 facet-reflect = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
 facet = { workspace = true, features = ["std", "all-impls", "iddqd"] }
 facet-testhelpers = { workspace = true }
-facet-format-suite = { path = "../facet-format-suite", version = "0.44.2", features = ["third-party", "net"] }
+facet-format-suite = { path = "../facet-format-suite", version = "0.44.3", features = ["third-party", "net"] }
 libtest-mimic = "0.8"
 
 [[test]]
