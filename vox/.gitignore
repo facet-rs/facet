@@ -51,3 +51,4 @@ java/**/out/
 # Coverage artifacts
 .coverage/
 *.profraw
+.ship/
