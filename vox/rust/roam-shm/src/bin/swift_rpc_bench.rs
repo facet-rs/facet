@@ -11,7 +11,7 @@ fn main() {
     use std::time::SystemTime;
     use std::time::{Duration, Instant};
 
-    use facet_postcard::{from_slice_borrowed, to_vec};
+    use roam_postcard::{from_slice_borrowed, to_vec};
     use roam_shm::framing::{OwnedFrame, read_frame, write_inline};
     use roam_shm::segment::{Segment, SegmentConfig};
     use roam_shm::varslot::SizeClassConfig;

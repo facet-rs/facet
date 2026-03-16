@@ -6,7 +6,15 @@ use std::marker::PhantomData;
 
 use crate::{ChannelId, ConnectionId, Metadata, MethodId, RequestId};
 use facet::{Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst, Shape};
-use facet_postcard::opaque_encoded_borrowed;
+/// Create an `OpaqueSerialize` for already-encoded postcard bytes.
+/// The serializer will write these bytes directly (passthrough) with a length prefix.
+fn opaque_encoded_borrowed(bytes: &&[u8]) -> OpaqueSerialize {
+    static RAW_POSTCARD_BORROWED_SHAPE: &facet::Shape = <&[u8] as facet::Facet>::SHAPE;
+    OpaqueSerialize {
+        ptr: PtrConst::new((bytes as *const &[u8]).cast::<u8>()),
+        shape: RAW_POSTCARD_BORROWED_SHAPE,
+    }
+}
 
 /// Per-connection limits advertised by a peer.
 // r[impl session.connection-settings]

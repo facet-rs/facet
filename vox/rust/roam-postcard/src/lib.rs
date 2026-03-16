@@ -12,8 +12,8 @@ pub mod scatter;
 pub mod serialize;
 
 pub use deserialize::{
-    deserialize_into, from_slice, from_slice_borrowed, from_slice_borrowed_identity,
-    from_slice_identity,
+    deserialize_into, from_slice, from_slice_borrowed, from_slice_borrowed_with_plan,
+    from_slice_with_plan,
 };
 pub use error::{DeserializeError, SerializeError, TranslationError, TranslationErrorKind};
 pub use plan::{EnumTranslationPlan, FieldOp, TranslationPlan, build_identity_plan, build_plan};
@@ -29,18 +29,18 @@ mod tests {
     #[test]
     fn round_trip_u32() {
         let bytes = to_vec(&42u32).unwrap();
-        let result: u32 = from_slice_identity(&bytes).unwrap();
+        let result: u32 = from_slice(&bytes).unwrap();
         assert_eq!(result, 42);
     }
 
     #[test]
     fn round_trip_bool() {
         let bytes = to_vec(&true).unwrap();
-        let result: bool = from_slice_identity(&bytes).unwrap();
+        let result: bool = from_slice(&bytes).unwrap();
         assert!(result);
 
         let bytes = to_vec(&false).unwrap();
-        let result: bool = from_slice_identity(&bytes).unwrap();
+        let result: bool = from_slice(&bytes).unwrap();
         assert!(!result);
     }
 
@@ -48,7 +48,7 @@ mod tests {
     fn round_trip_string() {
         let s = "hello world".to_string();
         let bytes = to_vec(&s).unwrap();
-        let result: String = from_slice_identity(&bytes).unwrap();
+        let result: String = from_slice(&bytes).unwrap();
         assert_eq!(result, "hello world");
     }
 
@@ -56,7 +56,7 @@ mod tests {
     fn round_trip_empty_string() {
         let s = String::new();
         let bytes = to_vec(&s).unwrap();
-        let result: String = from_slice_identity(&bytes).unwrap();
+        let result: String = from_slice(&bytes).unwrap();
         assert_eq!(result, "");
     }
 
@@ -64,7 +64,7 @@ mod tests {
     fn round_trip_f64() {
         let v = std::f64::consts::PI;
         let bytes = to_vec(&v).unwrap();
-        let result: f64 = from_slice_identity(&bytes).unwrap();
+        let result: f64 = from_slice(&bytes).unwrap();
         assert_eq!(result, v);
     }
 
@@ -72,7 +72,7 @@ mod tests {
     fn round_trip_negative_i32() {
         let v: i32 = -12345;
         let bytes = to_vec(&v).unwrap();
-        let result: i32 = from_slice_identity(&bytes).unwrap();
+        let result: i32 = from_slice(&bytes).unwrap();
         assert_eq!(result, v);
     }
 
@@ -86,7 +86,7 @@ mod tests {
 
         let p = Point { x: 1.5, y: -2.5 };
         let bytes = to_vec(&p).unwrap();
-        let result: Point = from_slice_identity(&bytes).unwrap();
+        let result: Point = from_slice(&bytes).unwrap();
         assert_eq!(result, p);
     }
 
@@ -104,7 +104,7 @@ mod tests {
             let bytes = to_vec(&color).unwrap();
             // Varint discriminant
             assert_eq!(bytes[0], expected_disc);
-            let result: Color = from_slice_identity(&bytes).unwrap();
+            let result: Color = from_slice(&bytes).unwrap();
             assert_eq!(result, color);
         }
     }
@@ -127,7 +127,7 @@ mod tests {
 
         for shape in shapes {
             let bytes = to_vec(&shape).unwrap();
-            let result: Shape = from_slice_identity(&bytes).unwrap();
+            let result: Shape = from_slice(&bytes).unwrap();
             assert_eq!(result, shape);
         }
     }
@@ -136,7 +136,7 @@ mod tests {
     fn round_trip_vec() {
         let v: Vec<u32> = vec![1, 2, 3, 100, 0];
         let bytes = to_vec(&v).unwrap();
-        let result: Vec<u32> = from_slice_identity(&bytes).unwrap();
+        let result: Vec<u32> = from_slice(&bytes).unwrap();
         assert_eq!(result, v);
     }
 
@@ -144,7 +144,7 @@ mod tests {
     fn round_trip_vec_u8() {
         let v: Vec<u8> = vec![0xFF, 0x00, 0x42, 0xAB];
         let bytes = to_vec(&v).unwrap();
-        let result: Vec<u8> = from_slice_identity(&bytes).unwrap();
+        let result: Vec<u8> = from_slice(&bytes).unwrap();
         assert_eq!(result, v);
     }
 
@@ -154,11 +154,11 @@ mod tests {
         let none: Option<u32> = None;
 
         let bytes = to_vec(&some).unwrap();
-        let result: Option<u32> = from_slice_identity(&bytes).unwrap();
+        let result: Option<u32> = from_slice(&bytes).unwrap();
         assert_eq!(result, some);
 
         let bytes = to_vec(&none).unwrap();
-        let result: Option<u32> = from_slice_identity(&bytes).unwrap();
+        let result: Option<u32> = from_slice(&bytes).unwrap();
         assert_eq!(result, none);
     }
 
@@ -183,7 +183,7 @@ mod tests {
         };
 
         let bytes = to_vec(&val).unwrap();
-        let result: Outer = from_slice_identity(&bytes).unwrap();
+        let result: Outer = from_slice(&bytes).unwrap();
         assert_eq!(result, val);
     }
 
@@ -191,7 +191,7 @@ mod tests {
     fn round_trip_tuple() {
         let val: (u32, String, bool) = (42, "hello".to_string(), true);
         let bytes = to_vec(&val).unwrap();
-        let result: (u32, String, bool) = from_slice_identity(&bytes).unwrap();
+        let result: (u32, String, bool) = from_slice(&bytes).unwrap();
         assert_eq!(result, val);
     }
 
@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(ours, theirs, "Point struct encoding mismatch");
 
         // Deserialize theirs with ours
-        let result: Point = from_slice_identity(&theirs).unwrap();
+        let result: Point = from_slice(&theirs).unwrap();
         assert_eq!(result, val);
     }
 
@@ -313,7 +313,7 @@ mod tests {
             name: "hello".to_string(),
         };
         let bytes = to_vec(&val).unwrap();
-        let result: Msg = from_slice_borrowed_identity(&bytes).unwrap();
+        let result: Msg = from_slice_borrowed(&bytes).unwrap();
         assert_eq!(result, val);
     }
 
@@ -358,7 +358,7 @@ mod tests {
         let bytes = to_vec(&remote_val).unwrap();
 
         // Deserialize with plan into local type — y should be skipped
-        let local_val: LocalPoint = from_slice(&bytes, &plan, &registry).unwrap();
+        let local_val: LocalPoint = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
         assert_eq!(local_val, LocalPoint { x: 1.0, z: 3.0 });
     }
 
@@ -385,7 +385,7 @@ mod tests {
         let remote_val = RemotePoint { x: 42.0 };
         let bytes = to_vec(&remote_val).unwrap();
 
-        let local_val: LocalPoint = from_slice(&bytes, &plan, &registry).unwrap();
+        let local_val: LocalPoint = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
         assert_eq!(local_val, LocalPoint { x: 42.0, y: 0.0 });
     }
 
@@ -453,7 +453,7 @@ mod tests {
         };
         let bytes = to_vec(&remote_val).unwrap();
 
-        let local_val: LocalPair = from_slice(&bytes, &plan, &registry).unwrap();
+        let local_val: LocalPair = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
         assert_eq!(
             local_val,
             LocalPair {
@@ -491,7 +491,7 @@ mod tests {
         };
         let bytes = to_vec(&remote_val).unwrap();
 
-        let local_val: LocalMsg = from_slice(&bytes, &plan, &registry).unwrap();
+        let local_val: LocalMsg = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
         assert_eq!(
             local_val,
             LocalMsg {
@@ -505,7 +505,7 @@ mod tests {
     // r[verify schema.translation.type-compat]
     #[test]
     fn translation_identity_plan_matches_direct() {
-        // Identity plan should produce the same result as from_slice_identity
+        // Identity plan should produce the same result as from_slice
         #[derive(Facet, Debug, PartialEq)]
         struct Point {
             x: f64,
@@ -515,12 +515,12 @@ mod tests {
         let val = Point { x: 1.0, y: 2.0 };
         let bytes = to_vec(&val).unwrap();
 
-        let direct: Point = from_slice_identity(&bytes).unwrap();
+        let direct: Point = from_slice(&bytes).unwrap();
 
         let (schemas, registry) = schemas_and_registry(Point::SHAPE);
         let remote_root = schemas.last().unwrap();
         let plan = build_plan(remote_root, Point::SHAPE, &registry).unwrap();
-        let translated: Point = from_slice(&bytes, &plan, &registry).unwrap();
+        let translated: Point = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
 
         assert_eq!(direct, translated);
     }
@@ -554,7 +554,7 @@ mod tests {
         };
         let bytes = to_vec(&remote_val).unwrap();
 
-        let local_val: Local = from_slice(&bytes, &plan, &registry).unwrap();
+        let local_val: Local = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
         assert_eq!(
             local_val,
             Local {
@@ -650,7 +650,7 @@ mod tests {
         let plan = build_plan(remote_root, LocalCmd::SHAPE, &registry).unwrap();
 
         let bytes = to_vec(&RemoteCmd::Stop).unwrap();
-        let result: LocalCmd = from_slice(&bytes, &plan, &registry).unwrap();
+        let result: LocalCmd = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
         assert_eq!(result, LocalCmd::Stop);
     }
 
@@ -680,12 +680,12 @@ mod tests {
 
         // Sending Start/Stop works
         let bytes = to_vec(&RemoteCmd::Start).unwrap();
-        let result: LocalCmd = from_slice(&bytes, &plan, &registry).unwrap();
+        let result: LocalCmd = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
         assert_eq!(result, LocalCmd::Start);
 
         // Sending Restart (index 2) should fail at runtime
         let bytes = to_vec(&RemoteCmd::Restart).unwrap();
-        let result: Result<LocalCmd, _> = from_slice(&bytes, &plan, &registry);
+        let result: Result<LocalCmd, _> = from_slice_with_plan(&bytes, &plan, &registry);
         assert!(result.is_err());
     }
 }

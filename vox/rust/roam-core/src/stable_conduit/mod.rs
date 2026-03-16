@@ -687,15 +687,13 @@ impl<F: MsgFamily, LS: LinkSource> ConduitTxPermit for StableConduitPermit<F, LS
                 Frame::<F::Msg<'static>>::SHAPE,
             )
         };
-        let plan =
-            facet_postcard::peek_to_scatter_plan(peek).map_err(StableConduitError::Encode)?;
+        let plan = roam_postcard::peek_to_scatter_plan(peek).map_err(StableConduitError::Encode)?;
 
         let mut slot = link_permit
             .alloc(plan.total_size())
             .map_err(StableConduitError::Io)?;
         let slot_bytes = slot.as_mut_slice();
-        plan.write_into(slot_bytes)
-            .map_err(StableConduitError::Encode)?;
+        plan.write_into(slot_bytes);
 
         // Keep an owned copy for replay after reconnect.
         shared.lock_inner()?.replay.push(seq, slot_bytes.to_vec());
@@ -798,8 +796,8 @@ where
 
 #[derive(Debug)]
 pub enum StableConduitError {
-    Encode(facet_postcard::SerializeError),
-    Decode(facet_format::DeserializeError),
+    Encode(roam_postcard::SerializeError),
+    Decode(roam_postcard::DeserializeError),
     Io(std::io::Error),
     LinkDead,
     Setup(String),

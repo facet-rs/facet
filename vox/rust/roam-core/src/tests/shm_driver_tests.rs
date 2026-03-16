@@ -51,7 +51,7 @@ impl Handler<DriverReplySink> for EchoHandler {
             _ => panic!("expected incoming payload"),
         };
 
-        let result: u32 = facet_postcard::from_slice(args_bytes).expect("deserialize args");
+        let result: u32 = roam_postcard::from_slice(args_bytes).expect("deserialize args");
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&result),
@@ -99,7 +99,7 @@ async fn echo_call_across_shm_link() {
         Payload::Incoming(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
-    let result: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let result: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(result, 42);
 }
 
@@ -112,7 +112,7 @@ impl Handler<DriverReplySink> for BlobEchoHandler {
             _ => panic!("expected incoming payload"),
         };
 
-        let blob: Vec<u8> = facet_postcard::from_slice(args_bytes).expect("deserialize blob");
+        let blob: Vec<u8> = roam_postcard::from_slice(args_bytes).expect("deserialize blob");
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&blob),
@@ -164,7 +164,7 @@ async fn echo_blob_stress_over_shm_link() {
             _ => panic!("expected incoming payload in response"),
         };
         let echoed: Vec<u8> =
-            facet_postcard::from_slice(ret_bytes).expect("deserialize echoed blob");
+            roam_postcard::from_slice(ret_bytes).expect("deserialize echoed blob");
         assert_eq!(echoed, payload);
     }
 }

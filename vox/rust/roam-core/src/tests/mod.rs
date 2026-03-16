@@ -377,7 +377,7 @@ async fn rx_recv_decodes_channel_items() {
     let (tx_items, rx_items) = mpsc::channel(4);
     rx.bind(rx_items);
 
-    let payload_bytes = facet_postcard::to_vec(&42_u32).expect("serialize channel item");
+    let payload_bytes = roam_postcard::to_vec(&42_u32).expect("serialize channel item");
     let backing = Backing::Boxed(payload_bytes.into_boxed_slice());
     let item_ref = SelfRef::try_new(backing, |bytes| {
         Ok::<_, std::convert::Infallible>(ChannelItem {
@@ -439,7 +439,7 @@ fn test_deser_postcard_borrowed() {
         s: &'a str,
     }
 
-    let payload = facet_postcard::to_vec(&Reply {
+    let payload = roam_postcard::to_vec(&Reply {
         s: "IAMA borrowed string AMA",
     })
     .unwrap();

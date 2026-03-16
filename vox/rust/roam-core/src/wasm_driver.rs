@@ -61,7 +61,7 @@ fn send_encoded_response(
 ) -> impl std::future::Future<Output = Result<(), ()>> {
     async move {
         let response: RequestResponse<'_> =
-            facet_postcard::from_slice_borrowed(encoded_response.as_ref()).map_err(|_| ())?;
+            roam_postcard::from_slice_borrowed(encoded_response.as_ref()).map_err(|_| ())?;
         sender.send_response(request_id, response).await
     }
 }
@@ -74,7 +74,7 @@ impl ReplySink for DriverReplySink {
             .expect("unreachable: send_reply takes self by value");
         if let (Some(operation_id), Some(operations)) = (self.operation_id, self.operations.take())
         {
-            let encoded_response: Arc<[u8]> = facet_postcard::to_vec(&response)
+            let encoded_response: Arc<[u8]> = roam_postcard::to_vec(&response)
                 .expect("serialize operation response")
                 .into();
             let waiters =
@@ -147,7 +147,7 @@ impl Caller for DriverCaller {
                 ensure_operation_id(&mut call.metadata, operation_id);
             }
 
-            let encoded_call: Arc<[u8]> = facet_postcard::to_vec(&call)
+            let encoded_call: Arc<[u8]> = roam_postcard::to_vec(&call)
                 .map_err(|_| RoamError::InvalidPayload)?
                 .into();
 
@@ -156,7 +156,7 @@ impl Caller for DriverCaller {
             self.shared.pending_responses.lock().insert(req_id, tx);
 
             let resend_call: RequestCall<'_> =
-                facet_postcard::from_slice_borrowed(encoded_call.as_ref())
+                roam_postcard::from_slice_borrowed(encoded_call.as_ref())
                     .map_err(|_| RoamError::<core::convert::Infallible>::InvalidPayload)?;
             if self
                 .sender
@@ -192,7 +192,7 @@ impl Caller for DriverCaller {
                         }
                         seen_resume_generation = generation;
                         let resend_call: Result<RequestCall<'_>, _> =
-                            facet_postcard::from_slice_borrowed(encoded_call.as_ref());
+                            roam_postcard::from_slice_borrowed(encoded_call.as_ref());
                         if let Ok(resend_call) = resend_call {
                             let _ = self.sender.send(ConnectionMessage::Request(RequestMessage {
                                 id: req_id,

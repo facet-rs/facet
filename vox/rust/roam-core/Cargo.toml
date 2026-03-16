@@ -27,8 +27,7 @@ roam-schema.workspace = true
 facet.workspace = true
 facet-core.workspace = true
 facet-reflect.workspace = true
-facet-format.workspace = true
-facet-postcard.workspace = true
+roam-postcard.workspace = true
 tokio.workspace = true
 moire.workspace = true
 tracing.workspace = true
@@ -42,7 +41,7 @@ wasm-bindgen-futures.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-facet-postcard.workspace = true
+roam-postcard = { path = "../roam-postcard" }
 shm-primitives = { path = "../shm-primitives" }
 roam-shm = { path = "../roam-shm" }
 tempfile.workspace = true

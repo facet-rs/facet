@@ -64,7 +64,7 @@ async fn send_frame<LTx: LinkTx>(tx: &LTx, seq: u32, ack: Option<u32>, item: &st
         }),
         item: item.to_string(),
     };
-    let frame_bytes = facet_postcard::to_vec(&frame).unwrap();
+    let frame_bytes = roam_postcard::to_vec(&frame).unwrap();
 
     let permit = tx.reserve().await.unwrap();
     let mut slot = permit.alloc(frame_bytes.len()).unwrap();
@@ -74,7 +74,7 @@ async fn send_frame<LTx: LinkTx>(tx: &LTx, seq: u32, ack: Option<u32>, item: &st
 
 // Decode a raw frame payload into (seq, ack_max, item).
 fn decode_frame(bytes: &[u8]) -> (u32, Option<u32>, String) {
-    let frame: Frame<String> = facet_postcard::from_slice(bytes).unwrap();
+    let frame: Frame<String> = roam_postcard::from_slice(bytes).unwrap();
     (
         frame.seq.0,
         frame.ack.map(|a| a.max_delivered.0),

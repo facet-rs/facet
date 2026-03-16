@@ -44,8 +44,6 @@ mod wasm_driver;
 #[cfg(target_arch = "wasm32")]
 pub use wasm_driver::*;
 
-use facet_format::{FormatDeserializer, MetaSource};
-use facet_postcard::PostcardParser;
 use facet_reflect::Partial;
 use roam_types::{Backing, SelfRef};
 
@@ -61,7 +59,7 @@ pub fn rpc_plan<T: facet::Facet<'static>>() -> &'static roam_types::RpcPlan {
 // r[impl zerocopy.framing.value]
 pub(crate) fn deserialize_postcard<T: facet::Facet<'static>>(
     backing: Backing,
-) -> Result<SelfRef<T>, facet_format::DeserializeError> {
+) -> Result<SelfRef<T>, roam_postcard::DeserializeError> {
     // SAFETY: backing is heap-allocated with a stable address.
     // The SelfRef::try_new contract guarantees value is dropped before backing.
     SelfRef::try_new(backing, |bytes| {
@@ -71,15 +69,15 @@ pub(crate) fn deserialize_postcard<T: facet::Facet<'static>>(
         // SAFETY: ptr points to valid, aligned, properly-sized memory for T.
         #[allow(unsafe_code)]
         let partial: Partial<'_, true> = unsafe { Partial::from_raw_with_shape(ptr, T::SHAPE) }
-            .map_err(facet_format::DeserializeError::from)?;
+            .map_err(|e| roam_postcard::DeserializeError::ReflectError(e.to_string()))?;
 
-        let mut parser = PostcardParser::new(bytes);
-        let mut deserializer = FormatDeserializer::new(&mut parser);
-        let partial = deserializer.deserialize_into(partial, MetaSource::FromEvents)?;
+        let plan = roam_postcard::build_identity_plan(T::SHAPE);
+        let registry = roam_schema::SchemaRegistry::new();
+        let partial = roam_postcard::deserialize_into(partial, bytes, &plan, &registry)?;
 
         partial
             .finish_in_place()
-            .map_err(facet_format::DeserializeError::from)?;
+            .map_err(|e| roam_postcard::DeserializeError::ReflectError(e.to_string()))?;
 
         // SAFETY: finish_in_place succeeded, so value is fully initialized.
         #[allow(unsafe_code)]

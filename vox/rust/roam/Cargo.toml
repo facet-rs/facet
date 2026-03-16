@@ -27,7 +27,7 @@ roam-hash.workspace = true
 roam-service-macros.workspace = true
 roam-core = { workspace = true, optional = true }
 facet.workspace = true
-facet-postcard.workspace = true
+roam-postcard.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

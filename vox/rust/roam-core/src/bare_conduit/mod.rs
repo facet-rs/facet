@@ -121,14 +121,13 @@ impl<F: MsgFamily, LTx: LinkTx> ConduitTxPermit for BareConduitPermit<'_, F, LTx
         let peek = unsafe {
             Peek::unchecked_new(PtrConst::new((&raw const item).cast::<u8>()), self.shape)
         };
-        let plan = facet_postcard::peek_to_scatter_plan(peek).map_err(BareConduitError::Encode)?;
+        let plan = roam_postcard::peek_to_scatter_plan(peek).map_err(BareConduitError::Encode)?;
 
         let mut slot = self
             .permit
             .alloc(plan.total_size())
             .map_err(BareConduitError::Io)?;
-        plan.write_into(slot.as_mut_slice())
-            .map_err(BareConduitError::Encode)?;
+        plan.write_into(slot.as_mut_slice());
         slot.commit();
         Ok(())
     }
@@ -172,8 +171,8 @@ where
 
 #[derive(Debug)]
 pub enum BareConduitError {
-    Encode(facet_postcard::SerializeError),
-    Decode(facet_format::DeserializeError),
+    Encode(roam_postcard::SerializeError),
+    Decode(roam_postcard::DeserializeError),
     Io(std::io::Error),
     LinkDead,
 }

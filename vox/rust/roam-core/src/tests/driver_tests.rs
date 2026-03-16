@@ -224,7 +224,7 @@ impl Handler<DriverReplySink> for EchoHandler {
             _ => panic!("expected incoming payload"),
         };
 
-        let result: u32 = facet_postcard::from_slice(args_bytes).expect("deserialize args");
+        let result: u32 = roam_postcard::from_slice(args_bytes).expect("deserialize args");
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&result),
@@ -361,7 +361,7 @@ impl Handler<DriverReplySink> for ReplayHandler {
             Payload::Incoming(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
         };
-        let result: u32 = facet_postcard::from_slice(args_bytes).expect("deserialize args");
+        let result: u32 = roam_postcard::from_slice(args_bytes).expect("deserialize args");
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&result),
@@ -425,7 +425,7 @@ impl Handler<DriverReplySink> for ResumableReplyingHandler {
             Payload::Incoming(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
         };
-        let result: u32 = facet_postcard::from_slice(args_bytes).expect("deserialize args");
+        let result: u32 = roam_postcard::from_slice(args_bytes).expect("deserialize args");
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&result),
@@ -453,7 +453,7 @@ impl Handler<DriverReplySink> for RetryAfterResumeHandler {
             Payload::Incoming(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
         };
-        let result: u32 = facet_postcard::from_slice(args_bytes).expect("deserialize args");
+        let result: u32 = roam_postcard::from_slice(args_bytes).expect("deserialize args");
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&result),
@@ -523,7 +523,7 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
         Payload::Incoming(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
-    let echoed: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let echoed: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(echoed, 42);
 
     drop(caller);
@@ -633,7 +633,7 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
         Payload::Incoming(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
-    let echoed: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let echoed: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(echoed, 7);
 
     drop(vconn_caller);
@@ -818,7 +818,7 @@ async fn cancel_aborts_in_flight_handler() {
         _ => panic!("expected incoming payload in response"),
     };
     let error: Result<(), RoamError> =
-        facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+        roam_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert!(
         matches!(error, Err(RoamError::Cancelled)),
         "expected Err(RoamError::Cancelled) in response payload"
@@ -913,7 +913,7 @@ async fn cancel_does_not_abort_persist_handler() {
         Payload::Incoming(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
-    let value: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(value, 123);
 }
 
@@ -953,7 +953,7 @@ async fn caller_injects_operation_id_when_peer_supports_retry() {
         Payload::Incoming(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
-    let operation_id: u64 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let operation_id: u64 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_ne!(operation_id, 0);
 }
 
@@ -1078,7 +1078,7 @@ async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
             Payload::Incoming(bytes) => *bytes,
             _ => panic!("expected incoming payload in response"),
         };
-        let value: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+        let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
         assert_eq!(value, 11);
     }
     assert_eq!(runs_check.load(Ordering::SeqCst), 1);
@@ -1096,7 +1096,7 @@ async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
         Payload::Incoming(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
-    let value: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(value, 11);
     assert_eq!(runs_check.load(Ordering::SeqCst), 1);
 }
@@ -1173,7 +1173,7 @@ async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
         Payload::Incoming(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
-    let value: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(value, 55);
 
     let _ = client_session_handle.shutdown();
@@ -1273,7 +1273,7 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
         Payload::Incoming(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
-    let value: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(value, 66);
 
     drop(server_caller);
@@ -1356,7 +1356,7 @@ async fn resumable_session_reruns_released_idem_call_after_manual_resume() {
         Payload::Incoming(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
-    let value: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(value, 77);
     assert_eq!(runs.load(Ordering::SeqCst), 2);
 
@@ -1441,7 +1441,7 @@ async fn resumable_session_returns_indeterminate_for_released_non_idem_call_afte
         _ => panic!("expected incoming payload in response"),
     };
     let result: Result<u32, RoamError> =
-        facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+        roam_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert!(matches!(result, Err(RoamError::Indeterminate)));
     assert_eq!(runs.load(Ordering::SeqCst), 1);
 
@@ -1731,7 +1731,7 @@ async fn open_virtual_connection_and_call() {
         Payload::Incoming(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
-    let result: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let result: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(result, 123);
 }
 
@@ -2086,7 +2086,7 @@ async fn close_virtual_connection() {
         Payload::Incoming(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
     };
-    let result: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize");
+    let result: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize");
     assert_eq!(result, 42);
 
     // Close the virtual connection.
@@ -2209,7 +2209,7 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
         Payload::Incoming(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
-    let echoed: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let echoed: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(echoed, 11);
 
     drop(vconn_caller);
@@ -2327,7 +2327,7 @@ async fn echo_call_across_memory_link() {
         Payload::Incoming(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
-    let result: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let result: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(result, 42);
 }
 
@@ -2381,7 +2381,7 @@ async fn buffers_inbound_channel_items_until_rx_is_registered() {
         Payload::Incoming(bytes) => bytes,
         _ => panic!("expected incoming payload"),
     };
-    let decoded: u32 = facet_postcard::from_slice(bytes).expect("deserialize buffered item");
+    let decoded: u32 = roam_postcard::from_slice(bytes).expect("deserialize buffered item");
     assert_eq!(decoded, 123);
 }
 
@@ -2553,7 +2553,7 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
         Payload::Incoming(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
     };
-    let result: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize response");
+    let result: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(result, 42);
 }
 
@@ -2692,7 +2692,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
         Payload::Incoming(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
     };
-    let result: u32 = facet_postcard::from_slice(ret_bytes).expect("deserialize proxied response");
+    let result: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize proxied response");
     assert_eq!(result, args_value);
 
     guest_a_session

@@ -2298,9 +2298,9 @@ name = "roam"
 version = "7.3.0"
 dependencies = [
  "facet",
- "facet-postcard",
  "roam-core",
  "roam-hash",
+ "roam-postcard",
  "roam-service-macros",
  "roam-shm",
  "roam-stream",
@@ -2357,11 +2357,10 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-error",
- "facet-format",
- "facet-postcard",
  "facet-reflect",
  "getrandom 0.3.4",
  "moire",
+ "roam-postcard",
  "roam-schema",
  "roam-shm",
  "roam-types",
@@ -2469,9 +2468,9 @@ dependencies = [
 name = "roam-shm"
 version = "7.3.0"
 dependencies = [
- "facet-postcard",
  "libc",
  "loom",
+ "roam-postcard",
  "roam-types",
  "shm-primitives",
  "shm-primitives-async",
