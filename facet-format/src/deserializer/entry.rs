@@ -107,9 +107,14 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
                 return Err(DeserializeErrorKind::RawCaptureNotSupported { shape }
                     .with_span(self.last_span));
             };
+            let raw_cow = if BORROW {
+                Cow::Borrowed(raw)
+            } else {
+                Cow::Owned(raw.to_owned())
+            };
             return Ok(wip
                 .begin_nth_field(0)?
-                .with(|w| self.set_string_value(w, Cow::Borrowed(raw)))?
+                .with(|w| self.set_string_value(w, raw_cow))?
                 .end()?);
         }
 
