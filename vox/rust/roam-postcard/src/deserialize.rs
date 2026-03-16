@@ -94,10 +94,13 @@ fn deserialize_value<'de, 'facet, const BORROW: bool>(
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
 
     // Handle opaque adapters (e.g. Payload).
+    // The opaque adapter's deserialize_build receives the remaining bytes and
+    // produces the target value. For Payload, this creates Payload::Incoming(&[u8])
+    // wrapping all remaining bytes in the cursor.
     if let Some(adapter) = shape.opaque_adapter {
-        let bytes = cursor.read_byte_slice()?;
+        let remaining = cursor.read_bytes(cursor.remaining())?;
         let deser_fn = adapter.deserialize;
-        let input = facet::OpaqueDeserialize::Borrowed(bytes);
+        let input = facet::OpaqueDeserialize::Borrowed(remaining);
         #[allow(unsafe_code)]
         let partial = unsafe {
             partial.set_from_function(move |target_ptr| {

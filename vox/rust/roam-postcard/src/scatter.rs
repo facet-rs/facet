@@ -153,6 +153,7 @@ fn scatter_peek<'input, 'facet>(
             builder.write_referenced(bytes);
             return Ok(());
         }
+        // Recursively scatter the mapped value inline (no length prefix).
         #[allow(unsafe_code)]
         let mapped_peek = unsafe { Peek::unchecked_new(mapped.ptr, mapped.shape) };
         return scatter_peek(mapped_peek, builder);

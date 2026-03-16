@@ -35,7 +35,7 @@ pub fn serialize_peek(peek: Peek<'_, '_>, out: &mut Vec<u8>) -> Result<(), Seria
             out.extend_from_slice(bytes);
             return Ok(());
         }
-        // Otherwise, recursively serialize the mapped value
+        // Otherwise, recursively serialize the mapped value inline (no length prefix).
         #[allow(unsafe_code)]
         let mapped_peek = unsafe { Peek::unchecked_new(mapped.ptr, mapped.shape) };
         return serialize_peek(mapped_peek, out);
