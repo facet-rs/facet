@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use facet_core::{Def, Field, StructKind, Type, UserType};
+use facet_core::{Def, EnumType, Field, StructKind, Type, UserType};
 use facet_reflect::Partial;
 use facet_solver::VariantsByFormat;
 
@@ -403,6 +403,17 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             }
         };
 
+        // Check if any variants are marked #[facet(untagged)] — these act as
+        // fallbacks when the tag field is absent or doesn't match a tagged variant.
+        let has_untagged_variants = enum_def
+            .variants
+            .iter()
+            .any(|v| v.has_builtin_attr("untagged"));
+
+        // Track whether we selected an untagged variant (affects skip_keys later:
+        // untagged variants don't own the tag key, so it shouldn't be skipped).
+        let mut selected_untagged = false;
+
         if wip.shape().is_numeric() {
             let discriminant = find_tag_discriminant(&evidence, tag_key).ok_or_else(|| {
                 self.mk_err(
@@ -415,19 +426,39 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             })?;
             wip = wip.select_variant(discriminant)?;
         } else {
-            let variant_name = find_tag_value(&evidence, tag_key)
-                .ok_or_else(|| {
-                    self.mk_err(
-                        &wip,
-                        DeserializeErrorKind::MissingField {
-                            field: tag_key,
-                            container_shape: wip.shape(),
-                        },
-                    )
-                })?
-                .to_string();
-            let actual_variant = cow_redirect_variant_name::<BORROW>(enum_def, &variant_name);
-            wip = wip.select_variant_named(actual_variant)?;
+            let tag_value = find_tag_value(&evidence, tag_key).map(|v| v.to_string());
+
+            if let Some(ref variant_name) = tag_value {
+                // Tag field present — check if it matches a non-untagged variant.
+                let matched_tagged = enum_def.variants.iter().any(|v| {
+                    !v.has_builtin_attr("untagged") && v.effective_name() == variant_name.as_str()
+                });
+
+                if matched_tagged {
+                    let actual_variant =
+                        cow_redirect_variant_name::<BORROW>(enum_def, variant_name);
+                    wip = wip.select_variant_named(actual_variant)?;
+                } else if has_untagged_variants {
+                    // Tag value didn't match any tagged variant — try untagged fallbacks.
+                    selected_untagged = true;
+                    wip = self.select_untagged_variant(wip, enum_def, &evidence)?;
+                } else {
+                    // No untagged fallback — error via the normal path
+                    wip = wip.select_variant_named(variant_name)?;
+                }
+            } else if has_untagged_variants {
+                // No tag field at all — try untagged variants.
+                selected_untagged = true;
+                wip = self.select_untagged_variant(wip, enum_def, &evidence)?;
+            } else {
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::MissingField {
+                        field: tag_key,
+                        container_shape: wip.shape(),
+                    },
+                ));
+            }
         }
 
         // Get the selected variant info
@@ -482,7 +513,12 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         {
             // Collect every tag key that appears anywhere in the newtype chain so
             // we can skip them when reading data fields from the JSON object.
-            let mut skip_tag_keys: Vec<&'static str> = vec![tag_key];
+            // For untagged variants, the tag key is not meaningful — don't skip it.
+            let mut skip_tag_keys: Vec<&'static str> = if selected_untagged {
+                vec![]
+            } else {
+                vec![tag_key]
+            };
 
             // Walk down the newtype chain, calling begin_nth_field(0) at each
             // level, selecting variants for internally-tagged enums, until we
@@ -638,12 +674,74 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             return Ok(wip);
         }
 
-        wip = self.read_tagged_object_fields(wip, &[tag_key])?;
+        // For untagged variants, don't skip the tag key — it's not their tag.
+        let skip_keys: &[&str] = if selected_untagged { &[] } else { &[tag_key] };
+        wip = self.read_tagged_object_fields(wip, skip_keys)?;
 
         // Defaults for missing fields are applied automatically by facet-reflect's
         // fill_defaults() when build() or end() is called.
 
         Ok(wip)
+    }
+
+    /// Select one of the `#[facet(untagged)]` variants of an internally-tagged enum.
+    ///
+    /// When the tag field is absent or its value doesn't match any tagged variant,
+    /// this tries the untagged fallback variants. With a single untagged variant it
+    /// is selected directly. With multiple, evidence field names are compared against
+    /// variant fields to disambiguate.
+    fn select_untagged_variant(
+        &self,
+        wip: Partial<'input, BORROW>,
+        enum_def: &'static EnumType,
+        evidence: &[FieldEvidence<'_>],
+    ) -> Result<Partial<'input, BORROW>, DeserializeError> {
+        let untagged: Vec<_> = enum_def
+            .variants
+            .iter()
+            .filter(|v| v.has_builtin_attr("untagged"))
+            .collect();
+
+        if untagged.len() == 1 {
+            return wip
+                .select_variant_named(untagged[0].effective_name())
+                .map_err(Into::into);
+        }
+
+        // Multiple untagged variants — use evidence field names to pick the best match.
+        // Collect evidence field names for matching.
+        let evidence_fields: Vec<&str> = evidence.iter().map(|e| e.name.as_ref()).collect();
+
+        // Score each variant by how many of the evidence fields it recognizes.
+        // For newtype variants wrapping a struct, look through to the inner struct's fields.
+        let mut best: Option<(&facet_core::Variant, usize)> = None;
+        for variant in &untagged {
+            let fields = variant_leaf_fields(variant);
+            let score = evidence_fields
+                .iter()
+                .filter(|ef| fields.iter().any(|f| f.effective_name() == **ef))
+                .count();
+            if let Some((_, best_score)) = best {
+                if score > best_score {
+                    best = Some((variant, score));
+                }
+            } else {
+                best = Some((variant, score));
+            }
+        }
+
+        if let Some((variant, _)) = best {
+            wip.select_variant_named(variant.effective_name())
+                .map_err(Into::into)
+        } else {
+            Err(self.mk_err(
+                &wip,
+                DeserializeErrorKind::NoMatchingVariant {
+                    enum_shape: wip.shape(),
+                    input_kind: "struct (untagged fallback)",
+                },
+            ))
+        }
     }
 
     /// Read fields from a JSON object into `wip`, skipping any keys in `skip_keys`.
@@ -2087,6 +2185,25 @@ fn variant_accepts_sequence_arity(
     }
 
     true
+}
+
+/// Get the "leaf" fields for a variant, drilling through newtypes.
+///
+/// For struct variants, returns the variant's fields directly.
+/// For newtype variants wrapping a struct, returns the inner struct's fields.
+fn variant_leaf_fields(variant: &'static facet_core::Variant) -> &'static [Field] {
+    match variant.data.kind {
+        StructKind::Struct => variant.data.fields,
+        StructKind::TupleStruct | StructKind::Tuple if variant.data.fields.len() == 1 => {
+            let inner_shape = variant.data.fields[0].shape();
+            if let Type::User(UserType::Struct(s)) = &inner_shape.ty {
+                s.fields
+            } else {
+                variant.data.fields
+            }
+        }
+        _ => variant.data.fields,
+    }
 }
 
 fn infer_fixed_sequence_arity_for_variant(variant: &'static facet_core::Variant) -> Option<usize> {
