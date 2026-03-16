@@ -688,4 +688,101 @@ mod tests {
         let result: Result<LocalCmd, _> = from_slice_with_plan(&bytes, &plan, &registry);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn trailing_opaque_round_trip() {
+        use facet::{
+            Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst, Shape,
+        };
+        use std::marker::PhantomData;
+
+        // A minimal opaque adapter for testing trailing behavior.
+        #[derive(Debug, Facet)]
+        #[repr(u8)]
+        #[facet(opaque = TestPayloadAdapter, traits(Debug))]
+        enum TestPayload<'a> {
+            Outgoing {
+                ptr: PtrConst,
+                shape: &'static Shape,
+                _lt: PhantomData<&'a ()>,
+            },
+            Incoming(&'a [u8]),
+        }
+
+        struct TestPayloadAdapter;
+
+        fn opaque_encoded_borrowed(bytes: &&[u8]) -> OpaqueSerialize {
+            static RAW_POSTCARD_BORROWED_SHAPE: &facet::Shape = <&[u8] as facet::Facet>::SHAPE;
+            OpaqueSerialize {
+                ptr: PtrConst::new((bytes as *const &[u8]).cast::<u8>()),
+                shape: RAW_POSTCARD_BORROWED_SHAPE,
+            }
+        }
+
+        impl FacetOpaqueAdapter for TestPayloadAdapter {
+            type Error = String;
+            type SendValue<'a> = TestPayload<'a>;
+            type RecvValue<'de> = TestPayload<'de>;
+
+            fn serialize_map(value: &Self::SendValue<'_>) -> OpaqueSerialize {
+                match value {
+                    TestPayload::Outgoing { ptr, shape, .. } => {
+                        OpaqueSerialize { ptr: *ptr, shape }
+                    }
+                    TestPayload::Incoming(bytes) => opaque_encoded_borrowed(bytes),
+                }
+            }
+
+            fn deserialize_build<'de>(
+                input: OpaqueDeserialize<'de>,
+            ) -> Result<Self::RecvValue<'de>, Self::Error> {
+                match input {
+                    OpaqueDeserialize::Borrowed(bytes) => Ok(TestPayload::Incoming(bytes)),
+                    OpaqueDeserialize::Owned(_) => Err("must be borrowed".into()),
+                }
+            }
+        }
+
+        // A struct with a trailing opaque field, mimicking RequestCall.
+        #[derive(Debug, Facet)]
+        struct TestCall<'a> {
+            id: u32,
+            #[facet(trailing)]
+            payload: TestPayload<'a>,
+        }
+
+        // 1. Serialize with Outgoing payload (non-passthrough)
+        let val: u32 = 42;
+        let call = TestCall {
+            id: 7,
+            payload: TestPayload::Outgoing {
+                ptr: PtrConst::new((&val as *const u32).cast::<u8>()),
+                shape: <u32 as Facet>::SHAPE,
+                _lt: PhantomData,
+            },
+        };
+
+        let our_bytes = to_vec(&call).unwrap();
+        let fp_bytes = facet_postcard::to_vec(&call).unwrap();
+        eprintln!("outgoing - roam:  {:02x?}", our_bytes);
+        eprintln!("outgoing - facet: {:02x?}", fp_bytes);
+        assert_eq!(our_bytes, fp_bytes, "outgoing payload bytes must match");
+
+        // 2. Deserialize back (payload becomes Incoming)
+        let round_tripped: TestCall<'_> = from_slice_borrowed(&our_bytes).unwrap();
+        let payload_bytes = match round_tripped.payload {
+            TestPayload::Incoming(b) => b,
+            _ => panic!("expected incoming"),
+        };
+        let result: u32 = from_slice(payload_bytes).unwrap();
+        assert_eq!(result, 42, "payload should contain 42");
+
+        // 3. Re-serialize with Incoming payload (passthrough)
+        let reserialized = to_vec(&round_tripped).unwrap();
+        eprintln!("incoming - roam:  {:02x?}", reserialized);
+        assert_eq!(
+            reserialized, our_bytes,
+            "re-serialized incoming must match original outgoing"
+        );
+    }
 }

@@ -19,6 +19,14 @@ pub fn to_vec<'a, T: Facet<'a>>(value: &T) -> Result<Vec<u8>, SerializeError> {
 
 /// Serialize a `Peek` value to postcard, appending to `out`.
 pub fn serialize_peek(peek: Peek<'_, '_>, out: &mut Vec<u8>) -> Result<(), SerializeError> {
+    serialize_peek_inner(peek, out, false)
+}
+
+fn serialize_peek_inner(
+    peek: Peek<'_, '_>,
+    out: &mut Vec<u8>,
+    is_trailing: bool,
+) -> Result<(), SerializeError> {
     let peek = peek.innermost_peek();
 
     // Handle opaque adapters (e.g. Payload)
@@ -30,15 +38,30 @@ pub fn serialize_peek(peek: Peek<'_, '_>, out: &mut Vec<u8>) -> Result<(), Seria
         if let Some(bytes) =
             unsafe { crate::raw::try_decode_passthrough_bytes(mapped.ptr, mapped.shape) }
         {
-            // Write as length-prefixed bytes
-            encode::write_varint(out, bytes.len() as u64);
-            out.extend_from_slice(bytes);
+            if is_trailing {
+                // Trailing opaque fields omit outer length framing.
+                out.extend_from_slice(bytes);
+            } else {
+                // Non-trailing opaque fields get postcard byte-sequence framing.
+                encode::write_varint(out, bytes.len() as u64);
+                out.extend_from_slice(bytes);
+            }
             return Ok(());
         }
-        // Otherwise, recursively serialize the mapped value inline (no length prefix).
+        // Non-passthrough: serialize the mapped value.
         #[allow(unsafe_code)]
         let mapped_peek = unsafe { Peek::unchecked_new(mapped.ptr, mapped.shape) };
-        return serialize_peek(mapped_peek, out);
+        if is_trailing {
+            // Trailing: serialize inline (no outer length framing).
+            return serialize_peek_inner(mapped_peek, out, false);
+        } else {
+            // Non-trailing: wrap in length prefix.
+            let mut tmp = Vec::new();
+            serialize_peek_inner(mapped_peek, &mut tmp, false)?;
+            encode::write_varint(out, tmp.len() as u64);
+            out.extend_from_slice(&tmp);
+            return Ok(());
+        }
     }
 
     if let Some(scalar_type) = peek.scalar_type() {
@@ -159,7 +182,8 @@ pub fn serialize_peek(peek: Peek<'_, '_>, out: &mut Vec<u8>) -> Result<(), Seria
                     let field_peek = ps
                         .field(i)
                         .map_err(|e| SerializeError::ReflectError(e.to_string()))?;
-                    serialize_peek(field_peek, out)?;
+                    let trailing = struct_type.fields[i].has_builtin_attr("trailing");
+                    serialize_peek_inner(field_peek, out, trailing)?;
                 }
                 Ok(())
             }
@@ -188,7 +212,8 @@ pub fn serialize_peek(peek: Peek<'_, '_>, out: &mut Vec<u8>) -> Result<(), Seria
                             .ok_or_else(|| {
                                 SerializeError::ReflectError("missing variant field".into())
                             })?;
-                        serialize_peek(field_peek, out)?;
+                        let trailing = variant.data.fields[i].has_builtin_attr("trailing");
+                        serialize_peek_inner(field_peek, out, trailing)?;
                     }
                 }
             }

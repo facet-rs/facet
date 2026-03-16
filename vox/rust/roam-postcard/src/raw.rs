@@ -31,17 +31,21 @@ pub fn opaque_encoded_borrowed(bytes: &&[u8]) -> facet::OpaqueSerialize {
 /// Try to extract passthrough bytes from an `OpaqueSerialize` result.
 /// Returns `Some(bytes)` if this is already-encoded postcard data.
 ///
+/// Uses structural equality on shapes rather than pointer identity, because
+/// associated consts like `<&[u8]>::SHAPE` can be inlined per-crate and may
+/// have different addresses.
+///
 /// # Safety
 /// The caller must ensure `ptr` points to valid memory matching `shape`.
 pub unsafe fn try_decode_passthrough_bytes<'a>(
     ptr: PtrConst,
     shape: &'static Shape,
 ) -> Option<&'a [u8]> {
-    if std::ptr::eq(shape, RAW_POSTCARD_BORROWED_SHAPE) {
+    if shape == RAW_POSTCARD_BORROWED_SHAPE {
         let slice_ref: &'a &'a [u8] = unsafe { &*ptr.as_ptr::<u8>().cast::<&[u8]>() };
         return Some(slice_ref);
     }
-    if std::ptr::eq(shape, RAW_POSTCARD_OWNED_SHAPE) {
+    if shape == RAW_POSTCARD_OWNED_SHAPE {
         let vec_ref: &'a Vec<u8> = unsafe { &*ptr.as_ptr::<u8>().cast::<Vec<u8>>() };
         return Some(vec_ref.as_slice());
     }

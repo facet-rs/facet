@@ -124,15 +124,16 @@ pub fn peek_to_scatter_plan<'input, 'facet>(
     peek: Peek<'input, 'facet>,
 ) -> Result<ScatterPlan<'input>, SerializeError> {
     let mut builder = ScatterBuilder::new();
-    scatter_peek(peek, &mut builder)?;
+    scatter_peek(peek, &mut builder, false)?;
     Ok(builder.finish())
 }
 
 fn scatter_peek<'input, 'facet>(
     peek: Peek<'input, 'facet>,
     builder: &mut ScatterBuilder<'input>,
+    is_trailing: bool,
 ) -> Result<(), SerializeError> {
-    use facet_core::{Def, ScalarType, StructKind, Type, UserType};
+    use facet_core::{Def, StructKind, Type, UserType};
 
     let peek = peek.innermost_peek();
     fn re(e: impl std::fmt::Display) -> SerializeError {
@@ -147,16 +148,34 @@ fn scatter_peek<'input, 'facet>(
         if let Some(bytes) =
             unsafe { crate::raw::try_decode_passthrough_bytes(mapped.ptr, mapped.shape) }
         {
-            let mut len_buf = Vec::new();
-            encode::write_varint(&mut len_buf, bytes.len() as u64);
-            builder.write_bytes(&len_buf);
-            builder.write_referenced(bytes);
+            if is_trailing {
+                // Trailing opaque fields omit outer length framing.
+                builder.write_referenced(bytes);
+            } else {
+                // Non-trailing opaque fields get postcard byte-sequence framing.
+                let mut len_buf = Vec::new();
+                encode::write_varint(&mut len_buf, bytes.len() as u64);
+                builder.write_bytes(&len_buf);
+                builder.write_referenced(bytes);
+            }
             return Ok(());
         }
-        // Recursively scatter the mapped value inline (no length prefix).
+        // Non-passthrough: scatter the mapped value.
         #[allow(unsafe_code)]
         let mapped_peek = unsafe { Peek::unchecked_new(mapped.ptr, mapped.shape) };
-        return scatter_peek(mapped_peek, builder);
+        if is_trailing {
+            // Trailing: scatter inline (no outer length framing).
+            return scatter_peek(mapped_peek, builder, false);
+        } else {
+            // Non-trailing: wrap in length prefix.
+            let mut tmp = Vec::new();
+            crate::serialize::serialize_peek(mapped_peek, &mut tmp)?;
+            let mut len_buf = Vec::new();
+            encode::write_varint(&mut len_buf, tmp.len() as u64);
+            builder.write_bytes(&len_buf);
+            builder.write_bytes(&tmp);
+            return Ok(());
+        }
     }
 
     if let Some(scalar_type) = peek.scalar_type() {
@@ -169,7 +188,7 @@ fn scatter_peek<'input, 'facet>(
             return match opt.value() {
                 Some(inner) => {
                     builder.write_bytes(&[0x01]);
-                    scatter_peek(inner, builder)
+                    scatter_peek(inner, builder, false)
                 }
                 None => {
                     builder.write_bytes(&[0x00]);
@@ -208,7 +227,7 @@ fn scatter_peek<'input, 'facet>(
                 encode::write_varint(&mut len_buf, len as u64);
                 builder.write_bytes(&len_buf);
                 for elem in list.iter() {
-                    scatter_peek(elem, builder)?;
+                    scatter_peek(elem, builder, false)?;
                 }
             }
             return Ok(());
@@ -216,7 +235,7 @@ fn scatter_peek<'input, 'facet>(
         Def::Array(_) => {
             let list_like = peek.into_list_like().map_err(re)?;
             for elem in list_like.iter() {
-                scatter_peek(elem, builder)?;
+                scatter_peek(elem, builder, false)?;
             }
             return Ok(());
         }
@@ -227,7 +246,7 @@ fn scatter_peek<'input, 'facet>(
             encode::write_varint(&mut len_buf, len as u64);
             builder.write_bytes(&len_buf);
             for elem in list_like.iter() {
-                scatter_peek(elem, builder)?;
+                scatter_peek(elem, builder, false)?;
             }
             return Ok(());
         }
@@ -237,8 +256,8 @@ fn scatter_peek<'input, 'facet>(
             encode::write_varint(&mut len_buf, map.len() as u64);
             builder.write_bytes(&len_buf);
             for (key, value) in map.iter() {
-                scatter_peek(key, builder)?;
-                scatter_peek(value, builder)?;
+                scatter_peek(key, builder, false)?;
+                scatter_peek(value, builder, false)?;
             }
             return Ok(());
         }
@@ -248,14 +267,14 @@ fn scatter_peek<'input, 'facet>(
             encode::write_varint(&mut len_buf, set.len() as u64);
             builder.write_bytes(&len_buf);
             for elem in set.iter() {
-                scatter_peek(elem, builder)?;
+                scatter_peek(elem, builder, false)?;
             }
             return Ok(());
         }
         Def::Pointer(_) => {
             let ptr = peek.into_pointer().map_err(re)?;
             return match ptr.borrow_inner() {
-                Some(inner) => scatter_peek(inner, builder),
+                Some(inner) => scatter_peek(inner, builder, false),
                 None => Err(SerializeError::UnsupportedType("null pointer".into())),
             };
         }
@@ -268,7 +287,8 @@ fn scatter_peek<'input, 'facet>(
                 let ps = peek.into_struct().map_err(re)?;
                 for i in 0..ps.field_count() {
                     let field_peek = ps.field(i).map_err(re)?;
-                    scatter_peek(field_peek, builder)?;
+                    let trailing = struct_type.fields[i].has_builtin_attr("trailing");
+                    scatter_peek(field_peek, builder, trailing)?;
                 }
                 Ok(())
             }
@@ -290,7 +310,8 @@ fn scatter_peek<'input, 'facet>(
                         let field_peek = pe.field(i).map_err(re)?.ok_or_else(|| {
                             SerializeError::ReflectError("missing variant field".into())
                         })?;
-                        scatter_peek(field_peek, builder)?;
+                        let trailing = variant.data.fields[i].has_builtin_attr("trailing");
+                        scatter_peek(field_peek, builder, trailing)?;
                     }
                 }
             }
