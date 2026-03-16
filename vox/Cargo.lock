@@ -2434,6 +2434,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "roam-postcard"
+version = "7.3.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-postcard",
+ "facet-reflect",
+ "roam-schema",
+]
+
+[[package]]
 name = "roam-schema"
 version = "7.3.0"
 dependencies = [

@@ -3,7 +3,7 @@
 use facet::Facet;
 use facet_core::{Def, ScalarType, Shape, StructKind, Type, UserType};
 use roam_types::{is_rx, is_tx};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 /// Tracks schema exchange state for one session.
@@ -440,6 +440,15 @@ pub enum PrimitiveType {
     String,
     Unit,
     Bytes,
+}
+
+/// Lookup table mapping TypeId → Schema, used for resolving type references
+/// during deserialization with translation plans.
+pub type SchemaRegistry = HashMap<TypeId, Schema>;
+
+/// Build a SchemaRegistry from a list of schemas.
+pub fn build_registry(schemas: &[Schema]) -> SchemaRegistry {
+    schemas.iter().map(|s| (s.type_id, s.clone())).collect()
 }
 
 /// A batch of schemas sent over the wire.
