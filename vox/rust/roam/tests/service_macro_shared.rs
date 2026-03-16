@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 
-use roam_core::{BareConduit, acceptor, initiator, initiator_conduit};
+use roam_core::{BareConduit, acceptor, initiator_conduit};
 use roam_types::Link;
 
 type MessageConduit<L> = BareConduit<roam_types::MessageFamily, L>;
@@ -484,7 +484,7 @@ pub async fn run_borrowed_return_survives_teardown_over_generated_client<L>(
         std::future::pending::<()>().await;
     });
 
-    let (client, client_session_handle) = initiator(client_conduit)
+    let (client, client_session_handle) = initiator_conduit(client_conduit)
         .establish::<BorrowedPayloadProbeClient>(())
         .await
         .expect("client handshake failed");
