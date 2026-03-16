@@ -7,7 +7,7 @@ use crate::decode::{self, Cursor};
 use crate::error::DeserializeError;
 use crate::plan::{FieldOp, TranslationPlan, build_identity_plan};
 
-/// Deserialize postcard bytes into `T` using a translation plan.
+/// Deserialize postcard bytes into owned `T` using a translation plan.
 pub fn from_slice<T: Facet<'static>>(
     input: &[u8],
     plan: &TranslationPlan,
@@ -16,7 +16,7 @@ pub fn from_slice<T: Facet<'static>>(
     let partial =
         Partial::alloc_owned::<T>().map_err(|e| DeserializeError::ReflectError(e.to_string()))?;
     let mut cursor = Cursor::new(input);
-    let partial = deserialize_value(partial, &mut cursor, plan, registry)?;
+    let partial = deserialize_value::<false>(partial, &mut cursor, plan, registry)?;
     let heap_value = partial
         .build()
         .map_err(|e| DeserializeError::ReflectError(e.to_string()))?;
@@ -25,49 +25,103 @@ pub fn from_slice<T: Facet<'static>>(
         .map_err(|e| DeserializeError::ReflectError(e.to_string()))
 }
 
-/// Deserialize postcard bytes into `T` using identity plan (same types both sides).
+/// Deserialize postcard bytes into owned `T` using identity plan.
 pub fn from_slice_identity<T: Facet<'static>>(input: &[u8]) -> Result<T, DeserializeError> {
     let plan = build_identity_plan(T::SHAPE);
     let registry = SchemaRegistry::new();
     from_slice(input, &plan, &registry)
 }
 
+/// Deserialize postcard bytes into borrowed `T` using a translation plan.
+/// The returned value may borrow from `input`.
+pub fn from_slice_borrowed<'input, 'facet, T: Facet<'facet>>(
+    input: &'input [u8],
+    plan: &TranslationPlan,
+    registry: &SchemaRegistry,
+) -> Result<T, DeserializeError>
+where
+    'input: 'facet,
+{
+    let partial =
+        Partial::alloc::<T>().map_err(|e| DeserializeError::ReflectError(e.to_string()))?;
+    let mut cursor = Cursor::new(input);
+    let partial = deserialize_value::<true>(partial, &mut cursor, plan, registry)?;
+    let heap_value = partial
+        .build()
+        .map_err(|e| DeserializeError::ReflectError(e.to_string()))?;
+    heap_value
+        .materialize()
+        .map_err(|e| DeserializeError::ReflectError(e.to_string()))
+}
+
+/// Deserialize postcard bytes into borrowed `T` using identity plan.
+pub fn from_slice_borrowed_identity<'input, 'facet, T: Facet<'facet>>(
+    input: &'input [u8],
+) -> Result<T, DeserializeError>
+where
+    'input: 'facet,
+{
+    let plan = build_identity_plan(T::SHAPE);
+    let registry = SchemaRegistry::new();
+    from_slice_borrowed(input, &plan, &registry)
+}
+
+/// Deserialize postcard bytes into an existing Partial (for in-place deserialization).
+pub fn deserialize_into<'input, 'facet, const BORROW: bool>(
+    partial: Partial<'facet, BORROW>,
+    input: &'input [u8],
+    plan: &TranslationPlan,
+    registry: &SchemaRegistry,
+) -> Result<Partial<'facet, BORROW>, DeserializeError>
+where
+    'input: 'facet,
+{
+    let mut cursor = Cursor::new(input);
+    deserialize_value::<BORROW>(partial, &mut cursor, plan, registry)
+}
+
 /// Core deserialization: read postcard bytes into a Partial using the plan.
-fn deserialize_value<'facet>(
-    partial: Partial<'facet, false>,
+fn deserialize_value<'facet, const BORROW: bool>(
+    partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'_>,
     plan: &TranslationPlan,
     registry: &SchemaRegistry,
-) -> Result<Partial<'facet, false>, DeserializeError> {
+) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let shape = partial.shape();
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
 
     // Transparent wrappers
     if shape.is_transparent() {
         let partial = partial.begin_inner().map_err(re)?;
-        let partial = deserialize_value(partial, cursor, plan, registry)?;
+        let partial = deserialize_value::<BORROW>(partial, cursor, plan, registry)?;
         return partial.end().map_err(re);
     }
 
     // Scalars — leaf types, no plan needed
     if let Some(scalar_type) = shape.scalar_type() {
-        return deserialize_scalar(partial, cursor, scalar_type);
+        return deserialize_scalar::<BORROW>(partial, cursor, scalar_type);
     }
 
     // Def-based types before user types
     match shape.def {
-        Def::Option(_) => return deserialize_option(partial, cursor, plan, registry),
+        Def::Option(_) => {
+            return deserialize_option::<BORROW>(partial, cursor, plan, registry);
+        }
         Def::List(list_def) => {
             if list_def.t().is_type::<u8>() {
-                return deserialize_byte_list(partial, cursor);
+                return deserialize_byte_list::<BORROW>(partial, cursor);
             }
-            return deserialize_list(partial, cursor, registry);
+            return deserialize_list::<BORROW>(partial, cursor, registry);
         }
-        Def::Array(array_def) => return deserialize_array(partial, cursor, array_def.n, registry),
-        Def::Slice(_) => return deserialize_list(partial, cursor, registry),
-        Def::Map(_) => return deserialize_map(partial, cursor, registry),
-        Def::Set(_) => return deserialize_set(partial, cursor, registry),
-        Def::Pointer(_) => return deserialize_pointer(partial, cursor, plan, registry),
+        Def::Array(array_def) => {
+            return deserialize_array::<BORROW>(partial, cursor, array_def.n, registry);
+        }
+        Def::Slice(_) => return deserialize_list::<BORROW>(partial, cursor, registry),
+        Def::Map(_) => return deserialize_map::<BORROW>(partial, cursor, registry),
+        Def::Set(_) => return deserialize_set::<BORROW>(partial, cursor, registry),
+        Def::Pointer(_) => {
+            return deserialize_pointer::<BORROW>(partial, cursor, plan, registry);
+        }
         _ => {}
     }
 
@@ -75,22 +129,24 @@ fn deserialize_value<'facet>(
     match shape.ty {
         Type::User(UserType::Struct(struct_type)) => match struct_type.kind {
             StructKind::Struct | StructKind::TupleStruct | StructKind::Tuple => {
-                deserialize_struct_planned(partial, cursor, plan, registry)
+                deserialize_struct_planned::<BORROW>(partial, cursor, plan, registry)
             }
             StructKind::Unit => Ok(partial),
         },
-        Type::User(UserType::Enum(_)) => deserialize_enum_planned(partial, cursor, plan, registry),
+        Type::User(UserType::Enum(_)) => {
+            deserialize_enum_planned::<BORROW>(partial, cursor, plan, registry)
+        }
         _ => Err(DeserializeError::UnsupportedType(format!("{}", shape))),
     }
 }
 
 /// Struct deserialization — always plan-driven.
-fn deserialize_struct_planned<'facet>(
-    partial: Partial<'facet, false>,
+fn deserialize_struct_planned<'facet, const BORROW: bool>(
+    partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'_>,
     plan: &TranslationPlan,
     registry: &SchemaRegistry,
-) -> Result<Partial<'facet, false>, DeserializeError> {
+) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
     let mut partial = partial;
 
@@ -98,12 +154,11 @@ fn deserialize_struct_planned<'facet>(
         match op {
             FieldOp::Read { local_index } => {
                 partial = partial.begin_nth_field(*local_index).map_err(re)?;
-                // Use nested plan if available, otherwise identity
                 if let Some(nested_plan) = plan.nested.get(local_index) {
-                    partial = deserialize_value(partial, cursor, nested_plan, registry)?;
+                    partial = deserialize_value::<BORROW>(partial, cursor, nested_plan, registry)?;
                 } else {
                     let field_plan = build_identity_plan(partial.shape());
-                    partial = deserialize_value(partial, cursor, &field_plan, registry)?;
+                    partial = deserialize_value::<BORROW>(partial, cursor, &field_plan, registry)?;
                 }
                 partial = partial.end().map_err(re)?;
             }
@@ -116,17 +171,16 @@ fn deserialize_struct_planned<'facet>(
         }
     }
 
-    // Missing local fields get defaults via partial.build()
     Ok(partial)
 }
 
 /// Enum deserialization — plan-driven.
-fn deserialize_enum_planned<'facet>(
-    partial: Partial<'facet, false>,
+fn deserialize_enum_planned<'facet, const BORROW: bool>(
+    partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'_>,
     plan: &TranslationPlan,
     registry: &SchemaRegistry,
-) -> Result<Partial<'facet, false>, DeserializeError> {
+) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
 
     let remote_disc = cursor.read_varint()? as usize;
@@ -144,14 +198,14 @@ fn deserialize_enum_planned<'facet>(
 
         let mut partial = partial.select_nth_variant(local_idx).map_err(re)?;
 
-        // Deserialize variant fields using variant plan if available
         if let Some(variant_plan) = enum_plan.variant_plans.get(&remote_disc) {
             for op in &variant_plan.field_ops {
                 match op {
                     FieldOp::Read { local_index } => {
                         partial = partial.begin_nth_field(*local_index).map_err(re)?;
                         let field_plan = build_identity_plan(partial.shape());
-                        partial = deserialize_value(partial, cursor, &field_plan, registry)?;
+                        partial =
+                            deserialize_value::<BORROW>(partial, cursor, &field_plan, registry)?;
                         partial = partial.end().map_err(re)?;
                     }
                     FieldOp::Skip { type_id } => {
@@ -165,14 +219,14 @@ fn deserialize_enum_planned<'facet>(
                 }
             }
         } else {
-            // No variant plan — read fields by local shape order (identity)
             let variant = partial.shape();
             match variant.ty {
                 Type::User(UserType::Struct(struct_type)) => {
                     for i in 0..struct_type.fields.len() {
                         partial = partial.begin_nth_field(i).map_err(re)?;
                         let field_plan = build_identity_plan(partial.shape());
-                        partial = deserialize_value(partial, cursor, &field_plan, registry)?;
+                        partial =
+                            deserialize_value::<BORROW>(partial, cursor, &field_plan, registry)?;
                         partial = partial.end().map_err(re)?;
                     }
                 }
@@ -182,7 +236,6 @@ fn deserialize_enum_planned<'facet>(
 
         Ok(partial)
     } else {
-        // No enum plan — use local shape directly
         let shape = partial.shape();
         let enum_type = match shape.ty {
             Type::User(UserType::Enum(e)) => e,
@@ -204,18 +257,18 @@ fn deserialize_enum_planned<'facet>(
         for i in 0..field_count {
             partial = partial.begin_nth_field(i).map_err(re)?;
             let field_plan = build_identity_plan(partial.shape());
-            partial = deserialize_value(partial, cursor, &field_plan, registry)?;
+            partial = deserialize_value::<BORROW>(partial, cursor, &field_plan, registry)?;
             partial = partial.end().map_err(re)?;
         }
         Ok(partial)
     }
 }
 
-fn deserialize_scalar<'facet>(
-    partial: Partial<'facet, false>,
+fn deserialize_scalar<'facet, const BORROW: bool>(
+    partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'_>,
     scalar_type: ScalarType,
-) -> Result<Partial<'facet, false>, DeserializeError> {
+) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
     match scalar_type {
         ScalarType::Unit => partial.set(()).map_err(re),
@@ -301,6 +354,8 @@ fn deserialize_scalar<'facet>(
             partial.set(s.to_owned()).map_err(re)
         }
         ScalarType::Str => {
+            // For owned Partials, copy into String. For borrowed, this will
+            // still need to go through owned since Partial::set needs a concrete type.
             let s = cursor.read_str()?;
             partial.set(s.to_owned()).map_err(re)
         }
@@ -316,19 +371,19 @@ fn deserialize_scalar<'facet>(
     }
 }
 
-fn deserialize_option<'facet>(
-    partial: Partial<'facet, false>,
+fn deserialize_option<'facet, const BORROW: bool>(
+    partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'_>,
     plan: &TranslationPlan,
     registry: &SchemaRegistry,
-) -> Result<Partial<'facet, false>, DeserializeError> {
+) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
     let tag = cursor.read_byte()?;
     match tag {
-        0x00 => Ok(partial), // None — Partial leaves it as default None
+        0x00 => Ok(partial),
         0x01 => {
             let partial = partial.begin_some().map_err(re)?;
-            let partial = deserialize_value(partial, cursor, plan, registry)?;
+            let partial = deserialize_value::<BORROW>(partial, cursor, plan, registry)?;
             partial.end().map_err(re)
         }
         other => Err(DeserializeError::InvalidOptionTag {
@@ -338,97 +393,96 @@ fn deserialize_option<'facet>(
     }
 }
 
-fn deserialize_byte_list<'facet>(
-    partial: Partial<'facet, false>,
+fn deserialize_byte_list<'facet, const BORROW: bool>(
+    partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'_>,
-) -> Result<Partial<'facet, false>, DeserializeError> {
+) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
     let bytes = cursor.read_byte_slice()?;
     partial.set(bytes.to_vec()).map_err(re)
 }
 
-fn deserialize_list<'facet>(
-    partial: Partial<'facet, false>,
+fn deserialize_list<'facet, const BORROW: bool>(
+    partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'_>,
     registry: &SchemaRegistry,
-) -> Result<Partial<'facet, false>, DeserializeError> {
+) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
     let len = cursor.read_varint()? as usize;
     let mut partial = partial.init_list_with_capacity(len).map_err(re)?;
     for _ in 0..len {
         partial = partial.begin_list_item().map_err(re)?;
         let item_plan = build_identity_plan(partial.shape());
-        partial = deserialize_value(partial, cursor, &item_plan, registry)?;
+        partial = deserialize_value::<BORROW>(partial, cursor, &item_plan, registry)?;
         partial = partial.end().map_err(re)?;
     }
     Ok(partial)
 }
 
-fn deserialize_array<'facet>(
-    partial: Partial<'facet, false>,
+fn deserialize_array<'facet, const BORROW: bool>(
+    partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'_>,
     n: usize,
     registry: &SchemaRegistry,
-) -> Result<Partial<'facet, false>, DeserializeError> {
+) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
-    // No length prefix for fixed-size arrays
     let mut partial = partial;
     for i in 0..n {
         partial = partial.begin_nth_field(i).map_err(re)?;
         let item_plan = build_identity_plan(partial.shape());
-        partial = deserialize_value(partial, cursor, &item_plan, registry)?;
+        partial = deserialize_value::<BORROW>(partial, cursor, &item_plan, registry)?;
         partial = partial.end().map_err(re)?;
     }
     Ok(partial)
 }
 
-fn deserialize_map<'facet>(
-    partial: Partial<'facet, false>,
+fn deserialize_map<'facet, const BORROW: bool>(
+    partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'_>,
     registry: &SchemaRegistry,
-) -> Result<Partial<'facet, false>, DeserializeError> {
+) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
     let len = cursor.read_varint()? as usize;
     let mut partial = partial.init_map().map_err(re)?;
     for _ in 0..len {
         partial = partial.begin_key().map_err(re)?;
         let key_plan = build_identity_plan(partial.shape());
-        partial = deserialize_value(partial, cursor, &key_plan, registry)?;
+        partial = deserialize_value::<BORROW>(partial, cursor, &key_plan, registry)?;
         partial = partial.end().map_err(re)?;
 
         partial = partial.begin_value().map_err(re)?;
         let val_plan = build_identity_plan(partial.shape());
-        partial = deserialize_value(partial, cursor, &val_plan, registry)?;
+        partial = deserialize_value::<BORROW>(partial, cursor, &val_plan, registry)?;
         partial = partial.end().map_err(re)?;
     }
     Ok(partial)
 }
 
-fn deserialize_set<'facet>(
-    partial: Partial<'facet, false>,
+fn deserialize_set<'facet, const BORROW: bool>(
+    partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'_>,
     registry: &SchemaRegistry,
-) -> Result<Partial<'facet, false>, DeserializeError> {
+) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
     let len = cursor.read_varint()? as usize;
     let mut partial = partial.init_set().map_err(re)?;
     for _ in 0..len {
         partial = partial.begin_set_item().map_err(re)?;
         let item_plan = build_identity_plan(partial.shape());
-        partial = deserialize_value(partial, cursor, &item_plan, registry)?;
+        partial = deserialize_value::<BORROW>(partial, cursor, &item_plan, registry)?;
         partial = partial.end().map_err(re)?;
     }
     Ok(partial)
 }
 
-fn deserialize_pointer<'facet>(
-    partial: Partial<'facet, false>,
+fn deserialize_pointer<'facet, const BORROW: bool>(
+    partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'_>,
     plan: &TranslationPlan,
     registry: &SchemaRegistry,
-) -> Result<Partial<'facet, false>, DeserializeError> {
+) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
     let partial = partial.begin_smart_ptr().map_err(re)?;
-    let partial = deserialize_value(partial, cursor, plan, registry)?;
+    let partial = deserialize_value::<BORROW>(partial, cursor, plan, registry)?;
     partial.end().map_err(re)
 }

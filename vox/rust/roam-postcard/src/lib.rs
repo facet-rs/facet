@@ -7,7 +7,10 @@ pub mod error;
 pub mod plan;
 pub mod serialize;
 
-pub use deserialize::{from_slice, from_slice_identity};
+pub use deserialize::{
+    deserialize_into, from_slice, from_slice_borrowed, from_slice_borrowed_identity,
+    from_slice_identity,
+};
 pub use error::{DeserializeError, SerializeError, TranslationError, TranslationErrorKind};
 pub use plan::{EnumTranslationPlan, FieldOp, TranslationPlan, build_identity_plan, build_plan};
 pub use serialize::to_vec;
@@ -263,6 +266,23 @@ mod tests {
             let theirs = facet_postcard::to_vec(&color).unwrap();
             assert_eq!(ours, theirs, "Color enum encoding mismatch");
         }
+    }
+
+    #[test]
+    fn round_trip_borrowed_identity() {
+        #[derive(Facet, Debug, PartialEq)]
+        struct Msg {
+            id: u32,
+            name: String,
+        }
+
+        let val = Msg {
+            id: 42,
+            name: "hello".to_string(),
+        };
+        let bytes = to_vec(&val).unwrap();
+        let result: Msg = from_slice_borrowed_identity(&bytes).unwrap();
+        assert_eq!(result, val);
     }
 
     // ---- Translation plan tests ----
