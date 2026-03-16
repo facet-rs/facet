@@ -364,7 +364,11 @@ pub fn method_descriptor_with_retry<'a, 'r, A: Facet<'a>, R: Facet<'r>>(
         "persist methods cannot carry channels: {service_name}.{method_name}"
     );
 
-    let id = method_id::<A, R>(service_name, method_name);
+    // r[impl schema.method-id]
+    // Method IDs are name-only: they depend only on the service and method names,
+    // not on the type signature. This enables schema exchange — two peers can use
+    // different type versions and still route calls to the correct method.
+    let id = method_id_name_only(service_name, method_name);
 
     // Extract per-arg shapes from the tuple fields of A::SHAPE.
     let arg_shapes: &[&'static Shape] = match A::SHAPE.ty {
