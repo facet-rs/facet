@@ -19,7 +19,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 facet = { workspace = true }
 facet-core = { workspace = true }
-facet-format = { path = "../facet-format", version = "0.44.1" }
+facet-format = { path = "../facet-format", version = "0.44.2" }
 facet-reflect = { workspace = true }
 saphyr-parser = "0.0.6"
 zmij = { version = "1", optional = true }
@@ -36,11 +36,11 @@ divan = { workspace = true }
 facet = { workspace = true, features = ["std", "doc", "net", "iddqd"] }
 facet-default = { workspace = true }
 facet-format = { path = "../facet-format", features = ["net"] }
-facet-format-suite = { path = "../facet-format-suite", version = "0.44.1", features = [
+facet-format-suite = { path = "../facet-format-suite", version = "0.44.2", features = [
   "third-party",
   "net",
 ] }
-facet-json-classics = { path = "../facet-json-classics", version = "0.44.1" }
+facet-json-classics = { path = "../facet-json-classics", version = "0.44.2" }
 indoc = { workspace = true }
 libtest-mimic = "0.8.1"
 serde = { workspace = true }

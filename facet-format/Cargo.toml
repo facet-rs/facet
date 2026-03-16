@@ -20,7 +20,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 tracing = { version = "0.1", default-features = false, optional = true }
 stacker = { version = "0.1", default-features = false, optional = true }
 facet-core = { workspace = true }
-facet-dessert = { path = "../facet-dessert", version = "0.44.1" }
+facet-dessert = { path = "../facet-dessert", version = "0.44.2" }
 facet-path = { workspace = true }
 facet-reflect = { workspace = true }
 facet-solver = { workspace = true }
