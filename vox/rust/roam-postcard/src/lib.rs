@@ -1,5 +1,8 @@
 #![deny(unsafe_code)]
 
+#[allow(unsafe_code)]
+pub mod raw;
+
 pub mod decode;
 pub mod deserialize;
 pub mod encode;
@@ -13,6 +16,7 @@ pub use deserialize::{
 };
 pub use error::{DeserializeError, SerializeError, TranslationError, TranslationErrorKind};
 pub use plan::{EnumTranslationPlan, FieldOp, TranslationPlan, build_identity_plan, build_plan};
+pub use raw::opaque_encoded_borrowed;
 pub use serialize::to_vec;
 
 #[cfg(test)]

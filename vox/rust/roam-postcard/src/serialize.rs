@@ -21,6 +21,26 @@ pub fn to_vec<'a, T: Facet<'a>>(value: &T) -> Result<Vec<u8>, SerializeError> {
 pub fn serialize_peek(peek: Peek<'_, '_>, out: &mut Vec<u8>) -> Result<(), SerializeError> {
     let peek = peek.innermost_peek();
 
+    // Handle opaque adapters (e.g. Payload)
+    if let Some(adapter) = peek.shape().opaque_adapter {
+        #[allow(unsafe_code)]
+        let mapped = unsafe { (adapter.serialize)(peek.data()) };
+        // Check if this is already-encoded postcard bytes (passthrough)
+        #[allow(unsafe_code)]
+        if let Some(bytes) =
+            unsafe { crate::raw::try_decode_passthrough_bytes(mapped.ptr, mapped.shape) }
+        {
+            // Write as length-prefixed bytes
+            encode::write_varint(out, bytes.len() as u64);
+            out.extend_from_slice(bytes);
+            return Ok(());
+        }
+        // Otherwise, recursively serialize the mapped value
+        #[allow(unsafe_code)]
+        let mapped_peek = unsafe { Peek::unchecked_new(mapped.ptr, mapped.shape) };
+        return serialize_peek(mapped_peek, out);
+    }
+
     if let Some(scalar_type) = peek.scalar_type() {
         return serialize_scalar(peek, scalar_type, out);
     }

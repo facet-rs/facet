@@ -90,6 +90,29 @@ fn deserialize_value<'facet, const BORROW: bool>(
     let shape = partial.shape();
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
 
+    // Handle opaque adapters (e.g. Payload).
+    // Read length-prefixed bytes, then call the adapter's deserialize trampoline
+    // which writes the deserialized value directly into the Partial's memory.
+    if let Some(adapter) = shape.opaque_adapter {
+        let bytes = cursor.read_byte_slice()?;
+        let deser_fn = adapter.deserialize;
+        let input = facet::OpaqueDeserialize::Borrowed(bytes);
+        #[allow(unsafe_code)]
+        let partial = unsafe {
+            partial.set_from_function(move |target_ptr| {
+                (deser_fn)(input, target_ptr).map(|_| ()).map_err(|e| {
+                    facet_reflect::ReflectErrorKind::InvariantViolation {
+                        invariant: Box::leak(
+                            format!("opaque adapter deserialize failed: {e}").into_boxed_str(),
+                        ),
+                    }
+                })
+            })
+        }
+        .map_err(re)?;
+        return Ok(partial);
+    }
+
     // Transparent wrappers
     if shape.is_transparent() {
         let partial = partial.begin_inner().map_err(re)?;
