@@ -264,4 +264,303 @@ mod tests {
             assert_eq!(ours, theirs, "Color enum encoding mismatch");
         }
     }
+
+    // ---- Translation plan tests ----
+
+    /// Helper: extract schemas for a type and build a registry.
+    fn schemas_and_registry(
+        shape: &'static facet_core::Shape,
+    ) -> (Vec<roam_schema::Schema>, roam_schema::SchemaRegistry) {
+        let schemas = roam_schema::extract_schemas(shape);
+        let registry = roam_schema::build_registry(&schemas);
+        (schemas, registry)
+    }
+
+    // r[verify schema.translation.skip-unknown]
+    #[test]
+    fn translation_remote_has_extra_field() {
+        // Remote has fields [x, y, z], local only has [x, z]
+        #[derive(Facet, Debug)]
+        struct RemotePoint {
+            x: f64,
+            y: f64,
+            z: f64,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct LocalPoint {
+            x: f64,
+            z: f64,
+        }
+
+        let (schemas, registry) = schemas_and_registry(RemotePoint::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let plan = build_plan(remote_root, LocalPoint::SHAPE, &registry).unwrap();
+
+        // Serialize with remote type
+        let remote_val = RemotePoint {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+        };
+        let bytes = to_vec(&remote_val).unwrap();
+
+        // Deserialize with plan into local type — y should be skipped
+        let local_val: LocalPoint = from_slice(&bytes, &plan, &registry).unwrap();
+        assert_eq!(local_val, LocalPoint { x: 1.0, z: 3.0 });
+    }
+
+    // r[verify schema.translation.fill-defaults]
+    #[test]
+    fn translation_remote_missing_field_with_default() {
+        // Remote has [x], local has [x, y] where y has a default
+        #[derive(Facet, Debug)]
+        struct RemotePoint {
+            x: f64,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct LocalPoint {
+            x: f64,
+            #[facet(default)]
+            y: f64,
+        }
+
+        let (schemas, registry) = schemas_and_registry(RemotePoint::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let plan = build_plan(remote_root, LocalPoint::SHAPE, &registry).unwrap();
+
+        let remote_val = RemotePoint { x: 42.0 };
+        let bytes = to_vec(&remote_val).unwrap();
+
+        let local_val: LocalPoint = from_slice(&bytes, &plan, &registry).unwrap();
+        assert_eq!(local_val, LocalPoint { x: 42.0, y: 0.0 });
+    }
+
+    // r[verify schema.translation.field-matching]
+    #[test]
+    fn translation_missing_required_field_errors() {
+        // Remote has [x], local has [x, y] where y is required (no default)
+        #[derive(Facet, Debug)]
+        struct RemotePoint {
+            x: f64,
+        }
+
+        #[derive(Facet, Debug)]
+        struct LocalPoint {
+            x: f64,
+            y: f64,
+        }
+
+        let (schemas, registry) = schemas_and_registry(RemotePoint::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let result = build_plan(remote_root, LocalPoint::SHAPE, &registry);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            TranslationError::MissingRequiredField { name } => {
+                assert_eq!(name, "y");
+            }
+            other => panic!("expected MissingRequiredField, got {other:?}"),
+        }
+    }
+
+    // r[verify schema.translation.reorder]
+    #[test]
+    fn translation_field_reorder() {
+        // Remote has [b, a], local has [a, b] — different field order
+        #[derive(Facet, Debug)]
+        struct RemotePair {
+            b: String,
+            a: u32,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct LocalPair {
+            a: u32,
+            b: String,
+        }
+
+        let (schemas, registry) = schemas_and_registry(RemotePair::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let plan = build_plan(remote_root, LocalPair::SHAPE, &registry).unwrap();
+
+        let remote_val = RemotePair {
+            b: "hello".to_string(),
+            a: 42,
+        };
+        let bytes = to_vec(&remote_val).unwrap();
+
+        let local_val: LocalPair = from_slice(&bytes, &plan, &registry).unwrap();
+        assert_eq!(
+            local_val,
+            LocalPair {
+                a: 42,
+                b: "hello".to_string()
+            }
+        );
+    }
+
+    // r[verify schema.translation.skip-unknown]
+    #[test]
+    fn translation_skip_complex_field() {
+        // Remote has an extra Vec<String> field that local doesn't have
+        #[derive(Facet, Debug)]
+        struct RemoteMsg {
+            id: u32,
+            tags: Vec<String>,
+            name: String,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct LocalMsg {
+            id: u32,
+            name: String,
+        }
+
+        let (schemas, registry) = schemas_and_registry(RemoteMsg::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let plan = build_plan(remote_root, LocalMsg::SHAPE, &registry).unwrap();
+
+        let remote_val = RemoteMsg {
+            id: 99,
+            tags: vec!["a".into(), "bb".into(), "ccc".into()],
+            name: "test".to_string(),
+        };
+        let bytes = to_vec(&remote_val).unwrap();
+
+        let local_val: LocalMsg = from_slice(&bytes, &plan, &registry).unwrap();
+        assert_eq!(
+            local_val,
+            LocalMsg {
+                id: 99,
+                name: "test".to_string()
+            }
+        );
+    }
+
+    // r[verify schema.translation.serialization-unchanged]
+    #[test]
+    fn translation_identity_plan_matches_direct() {
+        // Identity plan should produce the same result as from_slice_identity
+        #[derive(Facet, Debug, PartialEq)]
+        struct Point {
+            x: f64,
+            y: f64,
+        }
+
+        let val = Point { x: 1.0, y: 2.0 };
+        let bytes = to_vec(&val).unwrap();
+
+        let direct: Point = from_slice_identity(&bytes).unwrap();
+
+        let (schemas, registry) = schemas_and_registry(Point::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let plan = build_plan(remote_root, Point::SHAPE, &registry).unwrap();
+        let translated: Point = from_slice(&bytes, &plan, &registry).unwrap();
+
+        assert_eq!(direct, translated);
+    }
+
+    #[test]
+    fn translation_combined_add_remove_reorder() {
+        // Remote: [a, b, c] → Local: [c, d, a] (b removed, d added with default, c/a reordered)
+        #[derive(Facet, Debug)]
+        struct Remote {
+            a: u32,
+            b: String,
+            c: bool,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct Local {
+            c: bool,
+            #[facet(default)]
+            d: u64,
+            a: u32,
+        }
+
+        let (schemas, registry) = schemas_and_registry(Remote::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let plan = build_plan(remote_root, Local::SHAPE, &registry).unwrap();
+
+        let remote_val = Remote {
+            a: 42,
+            b: "dropped".to_string(),
+            c: true,
+        };
+        let bytes = to_vec(&remote_val).unwrap();
+
+        let local_val: Local = from_slice(&bytes, &plan, &registry).unwrap();
+        assert_eq!(
+            local_val,
+            Local {
+                c: true,
+                d: 0, // default
+                a: 42,
+            }
+        );
+    }
+
+    // r[verify schema.translation.enum]
+    #[test]
+    fn translation_enum_variant_added() {
+        // Remote has [A, B], local has [A, B, C] — C never sent, that's fine
+        #[derive(Facet, Debug)]
+        #[repr(u8)]
+        enum RemoteCmd {
+            Start,
+            Stop,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[repr(u8)]
+        enum LocalCmd {
+            Start,
+            Stop,
+            Restart,
+        }
+
+        let (schemas, registry) = schemas_and_registry(RemoteCmd::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let plan = build_plan(remote_root, LocalCmd::SHAPE, &registry).unwrap();
+
+        let bytes = to_vec(&RemoteCmd::Stop).unwrap();
+        let result: LocalCmd = from_slice(&bytes, &plan, &registry).unwrap();
+        assert_eq!(result, LocalCmd::Stop);
+    }
+
+    // r[verify schema.translation.enum.unknown-variant]
+    #[test]
+    fn translation_enum_unknown_variant_errors_at_runtime() {
+        // Remote has [A, B, C], local has [A, B] — receiving C should error
+        #[derive(Facet, Debug)]
+        #[repr(u8)]
+        enum RemoteCmd {
+            Start,
+            Stop,
+            Restart,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[repr(u8)]
+        enum LocalCmd {
+            Start,
+            Stop,
+        }
+
+        let (schemas, registry) = schemas_and_registry(RemoteCmd::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let plan = build_plan(remote_root, LocalCmd::SHAPE, &registry).unwrap();
+
+        // Sending Start/Stop works
+        let bytes = to_vec(&RemoteCmd::Start).unwrap();
+        let result: LocalCmd = from_slice(&bytes, &plan, &registry).unwrap();
+        assert_eq!(result, LocalCmd::Start);
+
+        // Sending Restart (index 2) should fail at runtime
+        let bytes = to_vec(&RemoteCmd::Restart).unwrap();
+        let result: Result<LocalCmd, _> = from_slice(&bytes, &plan, &registry);
+        assert!(result.is_err());
+    }
 }

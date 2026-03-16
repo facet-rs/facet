@@ -10,6 +10,7 @@ use crate::error::TranslationError;
 /// When remote and local types are identical, every op is `Read` in order —
 /// a no-op translation. When types differ, the plan has skips, reorders,
 /// and defaults. Same code path either way.
+#[derive(Debug)]
 pub struct TranslationPlan {
     /// One op per remote field, in remote wire order.
     pub field_ops: Vec<FieldOp>,
@@ -20,6 +21,7 @@ pub struct TranslationPlan {
     pub enum_plan: Option<EnumTranslationPlan>,
 }
 
+#[derive(Debug)]
 pub enum FieldOp {
     /// Read this remote field into local field at `local_index`.
     Read { local_index: usize },
@@ -27,6 +29,7 @@ pub enum FieldOp {
     Skip { type_id: TypeId },
 }
 
+#[derive(Debug)]
 pub struct EnumTranslationPlan {
     /// Maps remote variant index → local variant index.
     /// `None` = unknown variant (runtime error if received).
