@@ -161,7 +161,13 @@ msrv:
 msrv-power:
     cargo hack check --feature-powerset --locked --rust-version --ignore-private --workspace --all-targets --keep-going --exclude-no-default-features -
 
-docs:
+sync-readme-footer:
+    bash scripts/readme-footer.sh sync
+
+check-readme-footer:
+    bash scripts/readme-footer.sh check
+
+docs: check-readme-footer
     cargo doc --workspace --all-features --no-deps --document-private-items --keep-going
 
 lockfile:
