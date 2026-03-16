@@ -87,18 +87,8 @@ where
 {
     // Only accept the cart type
     if src_shape.id != C::SHAPE.id {
-        eprintln!(
-            "Expected {}, got {}",
-            C::SHAPE.type_name(),
-            src_shape.type_name()
-        );
         return TryFromOutcome::Unsupported;
     }
-    eprintln!(
-        "Src: {}, Dst: {}",
-        src_shape.type_name(),
-        dst.shape().type_name()
-    );
 
     let CART_REF_SHAPE = <&<C as Deref>::Target as Facet>::SHAPE;
     let OUTPUT_SHAPE = <<Y as Yokeable>::Output as Facet>::SHAPE;
@@ -134,11 +124,6 @@ where
                             let dst_ptr = maybe_uninit.as_mut_ptr() as *mut ();
                             // Use PtrConst::new with the unsized type - it handles wide pointers correctly
                             let cart_ptr = PtrConst::new(cart_ref as *const _);
-                            eprintln!(
-                                "direct: Trying to convert from {} to {}",
-                                CART_REF_SHAPE.type_name(),
-                                OUTPUT_SHAPE.type_name()
-                            );
                             match try_from_fn(dst_ptr, CART_REF_SHAPE, cart_ptr) {
                                 TryFromOutcome::Converted => {
                                     // Read as Y::Output (same layout as Y, different lifetime)
@@ -146,11 +131,6 @@ where
                                     Ok(out)
                                 }
                                 e @ TryFromOutcome::Unsupported => {
-                                    eprintln!(
-                                        "direct: Failed to convert from {} to {}",
-                                        CART_REF_SHAPE.type_name(),
-                                        OUTPUT_SHAPE.type_name()
-                                    );
                                     // Here we retain ownership of the source (maybe_uninit),
                                     // but we we shouldn't need to do anything since MaybeUninit doesn't need to be dropped.
                                     Err(e)
@@ -172,11 +152,6 @@ where
                             // Use PtrConst::new with the unsized type - it handles wide pointers correctly
                             let cart_ptr = PtrConst::new(cart_ref as *const _);
 
-                            eprintln!(
-                                "indirect: Trying to convert from {} to {}",
-                                CART_REF_SHAPE.type_name(),
-                                OUTPUT_SHAPE.type_name()
-                            );
                             let outcome = try_from_fn(out_ptr, CART_REF_SHAPE, cart_ptr);
                             match outcome {
                                 TryFromOutcome::Converted => {
@@ -185,11 +160,6 @@ where
                                     Ok(out)
                                 }
                                 e @ TryFromOutcome::Unsupported => {
-                                    eprintln!(
-                                        "indirect: Failed to convert from {} to {}",
-                                        CART_REF_SHAPE.type_name(),
-                                        OUTPUT_SHAPE.type_name()
-                                    );
                                     // Here we retain ownership of the source (maybe_uninit),
                                     // but we we shouldn't need to do anything since MaybeUninit doesn't need to be dropped.
                                     Err(e)
@@ -199,14 +169,7 @@ where
                         })
                     }
                     // We checked has_new_into || has_try_from above, so this should be unreachable
-                    _ => {
-                        eprintln!(
-                            "No way to convert from {} to {}: {OUTPUT_SHAPE:?}",
-                            CART_REF_SHAPE.type_name(),
-                            OUTPUT_SHAPE.type_name(),
-                        );
-                        Err(TryFromOutcome::Unsupported)
-                    }
+                    _ => Err(TryFromOutcome::Unsupported),
                 }
             }
         };
