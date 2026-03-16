@@ -28,6 +28,8 @@ impl SchemaTracker {
     // r[impl schema.tracking.transitive]
     // r[impl schema.exchange.idempotent]
     // r[impl schema.principles.once-per-type]
+    // r[impl schema.principles.sender-driven]
+    // r[impl schema.principles.no-roundtrips]
     pub fn prepare_send(&self, shape: &'static Shape) -> Option<Vec<Schema>> {
         let all_schemas = extract_schemas(shape);
         let mut sent = self.sent.lock().unwrap();

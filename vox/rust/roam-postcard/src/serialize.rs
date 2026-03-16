@@ -6,6 +6,10 @@ use crate::encode;
 use crate::error::SerializeError;
 
 /// Serialize any `Facet` type to postcard bytes.
+///
+/// Serialization always uses the local type definition — no translation plan.
+/// The receiver adapts to the sender's layout, not the other way around.
+// r[impl schema.translation.serialization-unchanged]
 pub fn to_vec<'a, T: Facet<'a>>(value: &T) -> Result<Vec<u8>, SerializeError> {
     let peek = Peek::new(value);
     let mut out = Vec::new();

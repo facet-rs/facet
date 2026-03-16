@@ -338,6 +338,8 @@ mod tests {
     }
 
     // r[verify schema.translation.field-matching]
+    // r[verify schema.errors.early-detection]
+    // r[verify schema.errors.missing-required]
     #[test]
     fn translation_missing_required_field_errors() {
         // Remote has [x], local has [x, y] where y is required (no default)
@@ -448,6 +450,7 @@ mod tests {
     }
 
     // r[verify schema.translation.serialization-unchanged]
+    // r[verify schema.translation.type-compat]
     #[test]
     fn translation_identity_plan_matches_direct() {
         // Identity plan should produce the same result as from_slice_identity
@@ -571,6 +574,7 @@ mod tests {
     }
 
     // r[verify schema.translation.enum]
+    // r[verify schema.translation.enum.missing-variant]
     #[test]
     fn translation_enum_variant_added() {
         // Remote has [A, B], local has [A, B, C] — C never sent, that's fine
@@ -599,6 +603,7 @@ mod tests {
     }
 
     // r[verify schema.translation.enum.unknown-variant]
+    // r[verify schema.errors.unknown-variant-runtime]
     #[test]
     fn translation_enum_unknown_variant_errors_at_runtime() {
         // Remote has [A, B, C], local has [A, B] — receiving C should error

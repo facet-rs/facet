@@ -137,6 +137,7 @@ fn deserialize_enum_planned<'facet>(
             .get(remote_disc)
             .copied()
             .flatten()
+            // r[impl schema.errors.unknown-variant-runtime]
             .ok_or(DeserializeError::UnknownVariant {
                 remote_index: remote_disc,
             })?;

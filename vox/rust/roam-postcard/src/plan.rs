@@ -194,6 +194,7 @@ fn build_struct_plan(
                 local_index: local_idx,
             });
 
+            // r[impl schema.translation.type-compat]
             // Check if nested plan is needed
             if let Some(remote_field_schema) = registry.get(&remote_field.type_id) {
                 let local_field_shape = local_field.shape();
@@ -232,6 +233,8 @@ fn build_struct_plan(
 }
 
 // r[impl schema.translation.enum]
+// r[impl schema.translation.enum.missing-variant]
+// r[impl schema.translation.enum.payload-compat]
 fn build_enum_plan(
     remote_variants: &[roam_schema::VariantSchema],
     local_shape: &'static Shape,
