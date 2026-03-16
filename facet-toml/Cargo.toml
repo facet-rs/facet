@@ -18,7 +18,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet-core = { workspace = true }
-facet-format = { path = "../facet-format", version = "0.44.3" }
+facet-format = { path = "../facet-format", version = "0.44.4" }
 facet-reflect = { workspace = true }
 zmij = { version = "1", optional = true }
 itoa = { version = "1", optional = true }
