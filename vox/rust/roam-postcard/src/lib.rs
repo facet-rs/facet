@@ -323,7 +323,7 @@ mod tests {
     fn schemas_and_registry(
         shape: &'static facet_core::Shape,
     ) -> (Vec<roam_schema::Schema>, roam_schema::SchemaRegistry) {
-        let schemas = roam_schema::extract_schemas(shape);
+        let schemas = roam_schema_extract::extract_schemas(shape);
         let registry = roam_schema::build_registry(&schemas);
         (schemas, registry)
     }
@@ -711,14 +711,6 @@ mod tests {
 
         struct TestPayloadAdapter;
 
-        fn opaque_encoded_borrowed(bytes: &&[u8]) -> OpaqueSerialize {
-            static RAW_POSTCARD_BORROWED_SHAPE: &facet::Shape = <&[u8] as facet::Facet>::SHAPE;
-            OpaqueSerialize {
-                ptr: PtrConst::new((bytes as *const &[u8]).cast::<u8>()),
-                shape: RAW_POSTCARD_BORROWED_SHAPE,
-            }
-        }
-
         impl FacetOpaqueAdapter for TestPayloadAdapter {
             type Error = String;
             type SendValue<'a> = TestPayload<'a>;
@@ -729,7 +721,7 @@ mod tests {
                     TestPayload::Outgoing { ptr, shape, .. } => {
                         OpaqueSerialize { ptr: *ptr, shape }
                     }
-                    TestPayload::Incoming(bytes) => opaque_encoded_borrowed(bytes),
+                    TestPayload::Incoming(bytes) => crate::opaque_encoded_borrowed(bytes),
                 }
             }
 
@@ -783,6 +775,111 @@ mod tests {
         assert_eq!(
             reserialized, our_bytes,
             "re-serialized incoming must match original outgoing"
+        );
+    }
+
+    #[test]
+    fn trailing_opaque_vec_u8_round_trip() {
+        use facet::{
+            Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst, Shape,
+        };
+        use std::marker::PhantomData;
+
+        #[derive(Debug, Facet)]
+        #[repr(u8)]
+        #[facet(opaque = TestPayloadAdapter2, traits(Debug))]
+        enum TestPayload2<'a> {
+            Outgoing {
+                ptr: PtrConst,
+                shape: &'static Shape,
+                _lt: PhantomData<&'a ()>,
+            },
+            Incoming(&'a [u8]),
+        }
+
+        struct TestPayloadAdapter2;
+
+        impl FacetOpaqueAdapter for TestPayloadAdapter2 {
+            type Error = String;
+            type SendValue<'a> = TestPayload2<'a>;
+            type RecvValue<'de> = TestPayload2<'de>;
+
+            fn serialize_map(value: &Self::SendValue<'_>) -> OpaqueSerialize {
+                match value {
+                    TestPayload2::Outgoing { ptr, shape, .. } => {
+                        OpaqueSerialize { ptr: *ptr, shape }
+                    }
+                    TestPayload2::Incoming(bytes) => crate::opaque_encoded_borrowed(bytes),
+                }
+            }
+
+            fn deserialize_build<'de>(
+                input: OpaqueDeserialize<'de>,
+            ) -> Result<Self::RecvValue<'de>, Self::Error> {
+                match input {
+                    OpaqueDeserialize::Borrowed(bytes) => Ok(TestPayload2::Incoming(bytes)),
+                    OpaqueDeserialize::Owned(_) => Err("must be borrowed".into()),
+                }
+            }
+        }
+
+        #[derive(Debug, Facet)]
+        struct TestCall2<'a> {
+            id: u32,
+            #[facet(trailing)]
+            payload: TestPayload2<'a>,
+        }
+
+        // Test with Vec<u8> payload (like the blob stress test)
+        let blob = vec![0u8; 32];
+        let call = TestCall2 {
+            id: 7,
+            payload: TestPayload2::Outgoing {
+                ptr: PtrConst::new((&blob as *const Vec<u8>).cast::<u8>()),
+                shape: <Vec<u8> as Facet>::SHAPE,
+                _lt: PhantomData,
+            },
+        };
+
+        // Step 1: Serialize
+        let encoded = to_vec(&call).unwrap();
+        eprintln!(
+            "encoded ({} bytes): {:02x?}",
+            encoded.len(),
+            &encoded[..encoded.len().min(40)]
+        );
+
+        // Step 2: Deserialize back (payload becomes Incoming)
+        let round_tripped: TestCall2<'_> = from_slice_borrowed(&encoded).unwrap();
+        let payload_bytes = match &round_tripped.payload {
+            TestPayload2::Incoming(b) => *b,
+            _ => panic!("expected incoming"),
+        };
+        eprintln!(
+            "payload_bytes ({} bytes): {:02x?}",
+            payload_bytes.len(),
+            &payload_bytes[..payload_bytes.len().min(40)]
+        );
+
+        // Step 3: Deserialize the payload as Vec<u8>
+        let result: Vec<u8> = from_slice(payload_bytes).unwrap();
+        assert_eq!(result.len(), 32, "should get back 32 bytes");
+        assert_eq!(result, blob, "round-trip should preserve Vec<u8> content");
+
+        // Step 4: Re-serialize with Incoming payload (passthrough)
+        let reserialized = to_vec(&round_tripped).unwrap();
+        assert_eq!(reserialized, encoded, "re-serialized must match original");
+
+        // Step 5: Full round-trip again
+        let final_trip: TestCall2<'_> = from_slice_borrowed(&reserialized).unwrap();
+        let final_bytes = match &final_trip.payload {
+            TestPayload2::Incoming(b) => *b,
+            _ => panic!("expected incoming"),
+        };
+        let final_result: Vec<u8> = from_slice(final_bytes).unwrap();
+        assert_eq!(
+            final_result, blob,
+            "double round-trip should preserve content"
         );
     }
 }

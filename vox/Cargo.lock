@@ -2362,6 +2362,7 @@ dependencies = [
  "moire",
  "roam-postcard",
  "roam-schema",
+ "roam-schema-extract",
  "roam-shm",
  "roam-types",
  "shm-primitives",
@@ -2442,6 +2443,8 @@ dependencies = [
  "facet-postcard",
  "facet-reflect",
  "roam-schema",
+ "roam-schema-extract",
+ "roam-types",
 ]
 
 [[package]]
@@ -2453,6 +2456,15 @@ dependencies = [
  "facet-cbor",
  "facet-core",
  "roam-hash",
+]
+
+[[package]]
+name = "roam-schema-extract"
+version = "7.3.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "roam-schema",
  "roam-types",
 ]
 

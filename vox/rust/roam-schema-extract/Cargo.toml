@@ -1,5 +1,5 @@
 [package]
-name = "roam-postcard"
+name = "roam-schema-extract"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,9 +7,9 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 documentation.workspace = true
-keywords = ["postcard", "serialization", "facet", "rpc"]
-categories = ["encoding"]
-description = "Postcard serialization for roam with translation plan support"
+keywords.workspace = true
+categories.workspace = true
+description = "Schema extraction and tracking for roam — bridges roam-schema and roam-types"
 
 [package.metadata]
 
@@ -19,10 +19,5 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 facet = { workspace = true }
 facet-core = { workspace = true }
-facet-reflect = { workspace = true }
 roam-schema = { workspace = true }
 roam-types = { workspace = true }
-
-[dev-dependencies]
-facet-postcard = { workspace = true }
-roam-schema-extract = { path = "../roam-schema-extract" }

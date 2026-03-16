@@ -26,6 +26,7 @@ members = [
   "rust/subject-rust",
   "rust/roam-codegen",
   "rust/roam-schema",
+  "rust/roam-schema-extract",
   "rust/facet-cbor",
   "rust/roam-postcard",
   "rust/wasm-browser-tests",
@@ -66,6 +67,7 @@ spec-proto = { path = "spec/spec-proto", version = "7.3.0" }
 shm-primitives = { path = "rust/shm-primitives", version = "7.3.0", default-features = false }
 shm-primitives-async = { path = "rust/shm-primitives-async", version = "7.3.0", default-features = false }
 roam-schema = { path = "rust/roam-schema", version = "7.3.0" }
+roam-schema-extract = { path = "rust/roam-schema-extract", version = "7.3.0" }
 roam-postcard = { path = "rust/roam-postcard", version = "7.3.0" }
 facet-cbor = { path = "rust/facet-cbor", version = "7.3.0" }
 ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "7.3.0" }

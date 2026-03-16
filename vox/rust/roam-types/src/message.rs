@@ -6,13 +6,23 @@ use std::marker::PhantomData;
 
 use crate::{ChannelId, ConnectionId, Metadata, MethodId, RequestId};
 use facet::{Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst, Shape};
+
+/// Transparent wrapper around borrowed bytes that are already postcard-encoded.
+/// Used as a sentinel type for passthrough detection in serializers.
+#[repr(transparent)]
+pub struct RawPostcardBorrowed<'a>(pub &'a [u8]);
+
+/// Sentinel shape for borrowed passthrough bytes. Serializers check against
+/// this to distinguish pre-encoded bytes from regular `&[u8]`/`Vec<u8>` values.
+pub static RAW_POSTCARD_BORROWED_SHAPE: Shape =
+    Shape::builder_for_sized::<RawPostcardBorrowed<'static>>("RawPostcardBorrowed").build();
+
 /// Create an `OpaqueSerialize` for already-encoded postcard bytes.
-/// The serializer will write these bytes directly (passthrough) with a length prefix.
-fn opaque_encoded_borrowed(bytes: &&[u8]) -> OpaqueSerialize {
-    static RAW_POSTCARD_BORROWED_SHAPE: &facet::Shape = <&[u8] as facet::Facet>::SHAPE;
+/// The serializer detects the sentinel shape and writes bytes directly (passthrough).
+pub fn opaque_encoded_borrowed(bytes: &&[u8]) -> OpaqueSerialize {
     OpaqueSerialize {
-        ptr: PtrConst::new((bytes as *const &[u8]).cast::<u8>()),
-        shape: RAW_POSTCARD_BORROWED_SHAPE,
+        ptr: PtrConst::new((bytes as *const &[u8]).cast::<RawPostcardBorrowed<'_>>()),
+        shape: &RAW_POSTCARD_BORROWED_SHAPE,
     }
 }
 

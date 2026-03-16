@@ -24,6 +24,7 @@ diagnostics = ["moire/diagnostics"]
 [dependencies]
 roam-types.workspace = true
 roam-schema.workspace = true
+roam-schema-extract.workspace = true
 facet.workspace = true
 facet-core.workspace = true
 facet-reflect.workspace = true

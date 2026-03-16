@@ -134,7 +134,7 @@ pub struct DriverReplySink {
     operation_id: Option<u64>,
     operations: Option<Arc<dyn OperationStore>>,
     binder: DriverChannelBinder,
-    schema_tracker: Option<Arc<roam_schema::SchemaTracker>>,
+    schema_tracker: Option<Arc<roam_schema_extract::SchemaTracker>>,
 }
 
 fn send_encoded_response(
@@ -425,7 +425,7 @@ pub struct DriverCaller {
     resume_processed_rx: watch::Receiver<u64>,
     peer_supports_retry: bool,
     _drop_guard: Option<Arc<CallerDropGuard>>,
-    pub(crate) schema_tracker: Option<Arc<roam_schema::SchemaTracker>>,
+    pub(crate) schema_tracker: Option<Arc<roam_schema_extract::SchemaTracker>>,
 }
 
 impl DriverCaller {
@@ -770,7 +770,7 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     drop_control_seed: Option<mpsc::UnboundedSender<DropControlRequest>>,
     drop_control_request: DropControlRequest,
     drop_guard: SyncMutex<Option<Weak<CallerDropGuard>>>,
-    schema_tracker: Option<Arc<roam_schema::SchemaTracker>>,
+    schema_tracker: Option<Arc<roam_schema_extract::SchemaTracker>>,
 }
 
 enum DriverLocalControl {

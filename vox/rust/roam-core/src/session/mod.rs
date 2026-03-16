@@ -271,7 +271,7 @@ pub struct Session {
 
     /// Schema tracker for outbound/inbound schema deduplication.
     /// Only populated when schema_exchange is true.
-    schema_tracker: Option<Arc<roam_schema::SchemaTracker>>,
+    schema_tracker: Option<Arc<roam_schema_extract::SchemaTracker>>,
 
     /// Registry of schemas received from the remote peer.
     /// Used for building translation plans and skip_value during deserialization.
@@ -472,7 +472,7 @@ pub struct ConnectionHandle {
     pub parity: Parity,
     pub(crate) peer_supports_retry: bool,
     /// Schema tracker for this session (shared across all connections).
-    pub(crate) schema_tracker: Option<Arc<roam_schema::SchemaTracker>>,
+    pub(crate) schema_tracker: Option<Arc<roam_schema_extract::SchemaTracker>>,
 }
 
 impl std::fmt::Debug for ConnectionHandle {
@@ -734,7 +734,7 @@ impl Session {
         // Schema exchange is active only if both sides opted in
         self.schema_exchange = false && peer_schema_exchange;
         if self.schema_exchange {
-            self.schema_tracker = Some(Arc::new(roam_schema::SchemaTracker::new()));
+            self.schema_tracker = Some(Arc::new(roam_schema_extract::SchemaTracker::new()));
         }
 
         Ok(self.make_root_handle(settings, peer_settings))
@@ -826,7 +826,7 @@ impl Session {
         // Schema exchange is active only if both sides opted in
         self.schema_exchange = false && peer_schema_exchange;
         if self.schema_exchange {
-            self.schema_tracker = Some(Arc::new(roam_schema::SchemaTracker::new()));
+            self.schema_tracker = Some(Arc::new(roam_schema_extract::SchemaTracker::new()));
         }
 
         Ok(self.make_root_handle(our_settings, peer_settings))

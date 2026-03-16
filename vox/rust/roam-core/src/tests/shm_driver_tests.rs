@@ -112,7 +112,19 @@ impl Handler<DriverReplySink> for BlobEchoHandler {
             _ => panic!("expected incoming payload"),
         };
 
+        eprintln!(
+            "[blob handler] args_bytes len={}: {:02x?}",
+            args_bytes.len(),
+            &args_bytes[..args_bytes.len().min(32)]
+        );
         let blob: Vec<u8> = roam_postcard::from_slice(args_bytes).expect("deserialize blob");
+        eprintln!("[blob handler] got blob len={}, sending back", blob.len());
+        let response_bytes = roam_postcard::to_vec(&blob).unwrap();
+        eprintln!(
+            "[blob handler] response_bytes len={}: {:02x?}",
+            response_bytes.len(),
+            &response_bytes[..response_bytes.len().min(16)]
+        );
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&blob),
@@ -163,8 +175,12 @@ async fn echo_blob_stress_over_shm_link() {
             Payload::Incoming(bytes) => *bytes,
             _ => panic!("expected incoming payload in response"),
         };
-        let echoed: Vec<u8> =
-            roam_postcard::from_slice(ret_bytes).expect("deserialize echoed blob");
+        let echoed: Vec<u8> = roam_postcard::from_slice(ret_bytes).unwrap_or_else(|e| {
+            panic!(
+                "iter {i}: deserialize echoed blob (ret_bytes len={}): {e}",
+                ret_bytes.len()
+            )
+        });
         assert_eq!(echoed, payload);
     }
 }
