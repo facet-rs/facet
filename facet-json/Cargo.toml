@@ -109,7 +109,7 @@ compact_str = ["facet/compact_str", "facet-format/compact_str"]
 iddqd = ["facet/iddqd"]
 
 # yoke support
-yoke = ["facet/yoke"]
+yoke = ["facet-core/yoke"]
 
 # smallvec support
 smallvec = ["facet/smallvec"]
