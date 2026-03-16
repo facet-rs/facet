@@ -57,7 +57,7 @@ jit = ["facet-format/jit"]
 fast = ["dep:zmij", "dep:itoa"]
 net = ["facet-format/net", "facet-core/net"]
 tracing = ["facet-reflect/tracing", "facet-format/tracing"]
-iddqd = ["facet/iddqd"]
+iddqd = ["facet-core/iddqd"]
 
 # Axum HTTP integration
 axum = ["std", "serialize", "dep:axum-core", "dep:http", "dep:http-body-util"]
