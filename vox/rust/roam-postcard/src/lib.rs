@@ -8,6 +8,7 @@ pub mod deserialize;
 pub mod encode;
 pub mod error;
 pub mod plan;
+pub mod scatter;
 pub mod serialize;
 
 pub use deserialize::{
@@ -17,6 +18,7 @@ pub use deserialize::{
 pub use error::{DeserializeError, SerializeError, TranslationError, TranslationErrorKind};
 pub use plan::{EnumTranslationPlan, FieldOp, TranslationPlan, build_identity_plan, build_plan};
 pub use raw::opaque_encoded_borrowed;
+pub use scatter::{ScatterPlan, Segment, peek_to_scatter_plan};
 pub use serialize::to_vec;
 
 #[cfg(test)]
@@ -270,6 +272,32 @@ mod tests {
             let theirs = facet_postcard::to_vec(&color).unwrap();
             assert_eq!(ours, theirs, "Color enum encoding mismatch");
         }
+    }
+
+    #[test]
+    fn scatter_plan_matches_to_vec() {
+        #[derive(Facet, Debug, PartialEq)]
+        struct Msg {
+            id: u32,
+            name: String,
+            tags: Vec<String>,
+        }
+
+        let val = Msg {
+            id: 42,
+            name: "hello".to_string(),
+            tags: vec!["a".into(), "bb".into()],
+        };
+
+        let direct = to_vec(&val).unwrap();
+
+        let peek = facet_reflect::Peek::new(&val);
+        let plan = peek_to_scatter_plan(peek).unwrap();
+        assert_eq!(plan.total_size(), direct.len());
+
+        let mut scattered = vec![0u8; plan.total_size()];
+        plan.write_into(&mut scattered);
+        assert_eq!(scattered, direct);
     }
 
     #[test]
