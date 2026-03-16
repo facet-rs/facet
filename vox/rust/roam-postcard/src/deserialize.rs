@@ -147,6 +147,9 @@ fn deserialize_value_inner<'de, 'facet, const BORROW: bool>(
         Def::Option(_) => {
             return deserialize_option::<BORROW>(partial, cursor, plan, registry);
         }
+        Def::Result(_) => {
+            return deserialize_result::<BORROW>(partial, cursor, plan, registry);
+        }
         Def::List(list_def) => {
             if list_def.t().is_type::<u8>() {
                 return deserialize_byte_list(partial, cursor);
@@ -473,6 +476,33 @@ fn deserialize_option<'de, 'facet, const BORROW: bool>(
         other => Err(DeserializeError::InvalidOptionTag {
             pos: cursor.pos() - 1,
             got: other,
+        }),
+    }
+}
+
+fn deserialize_result<'de, 'facet, const BORROW: bool>(
+    partial: Partial<'facet, BORROW>,
+    cursor: &mut Cursor<'de>,
+    _plan: &TranslationPlan,
+    registry: &SchemaRegistry,
+) -> Result<Partial<'facet, BORROW>, DeserializeError> {
+    let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
+    let variant_index = cursor.read_varint()? as usize;
+    match variant_index {
+        0 => {
+            let partial = partial.begin_ok().map_err(re)?;
+            let inner_plan = build_identity_plan(partial.shape());
+            let partial = deserialize_value::<BORROW>(partial, cursor, &inner_plan, registry)?;
+            partial.end().map_err(re)
+        }
+        1 => {
+            let partial = partial.begin_err().map_err(re)?;
+            let inner_plan = build_identity_plan(partial.shape());
+            let partial = deserialize_value::<BORROW>(partial, cursor, &inner_plan, registry)?;
+            partial.end().map_err(re)
+        }
+        other => Err(DeserializeError::UnknownVariant {
+            remote_index: other,
         }),
     }
 }
