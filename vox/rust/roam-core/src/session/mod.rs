@@ -656,8 +656,8 @@ impl Session {
             keepalive,
             resume_notifier,
             recoverer,
-            schema_exchange: false,
-            schema_tracker: None,
+            schema_exchange: true,
+            schema_tracker: Some(Arc::new(roam_schema_extract::SchemaTracker::new())),
             schema_registry: roam_schema::SchemaRegistry::new(),
         }
     }
@@ -689,7 +689,7 @@ impl Session {
                 payload: MessagePayload::Hello(Hello {
                     version: PROTOCOL_VERSION,
                     connection_settings: settings.clone(),
-                    schema_exchange: false,
+                    schema_exchange: true,
                     metadata: hello_metadata,
                 }),
             })
@@ -697,7 +697,7 @@ impl Session {
             .map_err(|_| SessionError::Protocol("failed to send Hello".into()))?;
 
         // Receive HelloYourself
-        let (peer_settings, peer_supports_retry, session_resume_key, peer_schema_exchange) =
+        let (peer_settings, peer_supports_retry, session_resume_key, _peer_schema_exchange) =
             match self.rx.recv_msg().await {
                 Ok(Some(msg)) => {
                     let payload = msg.map(|m| m.payload);
@@ -732,10 +732,9 @@ impl Session {
 
         // r[impl schema.method-id.negotiation]
         // Schema exchange is active only if both sides opted in
-        self.schema_exchange = false && peer_schema_exchange;
-        if self.schema_exchange {
-            self.schema_tracker = Some(Arc::new(roam_schema_extract::SchemaTracker::new()));
-        }
+        // Schema exchange is always active in v9. The field in the handshake
+        // exists for forward compat but we don't gate on it.
+        self.schema_exchange = true;
 
         Ok(self.make_root_handle(settings, peer_settings))
     }
@@ -752,7 +751,7 @@ impl Session {
         self.role = SessionRole::Acceptor;
 
         // Receive Hello
-        let (peer_settings, peer_supports_retry, peer_schema_exchange) =
+        let (peer_settings, peer_supports_retry, _peer_schema_exchange) =
             match self.rx.recv_msg().await {
                 Ok(Some(msg)) => {
                     let payload = msg.map(|m| m.payload);
@@ -815,7 +814,7 @@ impl Session {
                 connection_id: ConnectionId::ROOT,
                 payload: MessagePayload::HelloYourself(HelloYourself {
                     connection_settings: our_settings.clone(),
-                    schema_exchange: false,
+                    schema_exchange: true,
                     metadata: hello_metadata,
                 }),
             })
@@ -824,10 +823,9 @@ impl Session {
 
         // r[impl schema.method-id.negotiation]
         // Schema exchange is active only if both sides opted in
-        self.schema_exchange = false && peer_schema_exchange;
-        if self.schema_exchange {
-            self.schema_tracker = Some(Arc::new(roam_schema_extract::SchemaTracker::new()));
-        }
+        // Schema exchange is always active in v9. The field in the handshake
+        // exists for forward compat but we don't gate on it.
+        self.schema_exchange = true;
 
         Ok(self.make_root_handle(our_settings, peer_settings))
     }
