@@ -18,7 +18,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet-core = { workspace = true }
-facet-format = { path = "../facet-format", version = "0.44.2" }
+facet-format = { path = "../facet-format", version = "0.44.3" }
 facet-reflect = { workspace = true }
 zmij = { version = "1", optional = true }
 itoa = { version = "1", optional = true }
@@ -35,11 +35,11 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 divan = { workspace = true }
 facet = { workspace = true, features = ["std", "doc", "net", "iddqd"] }
 facet-format = { path = "../facet-format", features = ["jit", "net", "tracing"] }
-facet-format-suite = { path = "../facet-format-suite", version = "0.44.2", features = [
+facet-format-suite = { path = "../facet-format-suite", version = "0.44.3", features = [
   "third-party",
   "net",
 ] }
-facet-json-classics = { path = "../facet-json-classics", version = "0.44.2" }
+facet-json-classics = { path = "../facet-json-classics", version = "0.44.3" }
 facet-value = { path = "../facet-value" }
 facet-testhelpers = { workspace = true }
 facet-reflect = { workspace = true, features = ["tracing"] }
