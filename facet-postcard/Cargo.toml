@@ -49,7 +49,7 @@ facet-format = { path = "../facet-format", features = ["jit"] }
 facet-json = { path = "../facet-json", version = "0.44.2" }
 facet-json-classics = { path = "../facet-json-classics", version = "0.44.2" }
 facet-testhelpers = { workspace = true }
-facet-value = { workspace = true }
+facet-value = { path = "../facet-value" }
 serde_json = { workspace = true }
 jiff = { workspace = true }
 ordered-float = { version = "5.0.0", default-features = false }
