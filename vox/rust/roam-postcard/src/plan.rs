@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use facet_core::{Shape, StructKind, Type, UserType};
 use roam_schema::{Schema, SchemaKind, SchemaRegistry, TypeId};
 
-use crate::error::TranslationError;
+use crate::error::{TranslationError, TranslationErrorKind};
 
 /// A precomputed plan for deserializing postcard bytes into a local type.
 ///
@@ -95,21 +95,56 @@ pub fn build_identity_plan(shape: &'static Shape) -> TranslationPlan {
 // r[impl schema.translation.skip-unknown]
 // r[impl schema.translation.fill-defaults]
 // r[impl schema.translation.reorder]
+// r[impl schema.errors.early-detection]
 pub fn build_plan(
     remote_schema: &Schema,
     local_shape: &'static Shape,
     registry: &SchemaRegistry,
 ) -> Result<TranslationPlan, TranslationError> {
+    let remote_type_id = remote_schema.type_id;
+    let local_type_name = format!("{}", local_shape);
+
+    let err_ctx = |kind: TranslationErrorKind| TranslationError {
+        path: Vec::new(),
+        remote_type_id,
+        local_type_name: local_type_name.clone(),
+        kind,
+    };
+
     match &remote_schema.kind {
         SchemaKind::Struct {
             fields: remote_fields,
-        } => build_struct_plan(remote_fields, local_shape, registry),
+        } => build_struct_plan(
+            remote_fields,
+            local_shape,
+            remote_type_id,
+            &local_type_name,
+            registry,
+        ),
         SchemaKind::Enum {
             variants: remote_variants,
-        } => build_enum_plan(remote_variants, local_shape, registry),
+        } => build_enum_plan(
+            remote_variants,
+            local_shape,
+            remote_type_id,
+            &local_type_name,
+            registry,
+        ),
         _ => {
-            // Primitives, containers — no field-level translation needed.
-            // Compatibility was checked when the plan was requested.
+            // Primitives, containers — check kind compatibility
+            let local_is_struct = matches!(local_shape.ty, Type::User(UserType::Struct(_)));
+            let local_is_enum = matches!(local_shape.ty, Type::User(UserType::Enum(_)));
+            if local_is_struct || local_is_enum {
+                return Err(err_ctx(TranslationErrorKind::KindMismatch {
+                    remote_kind: format!("{:?}", remote_schema.kind)
+                        .split('{')
+                        .next()
+                        .unwrap_or("?")
+                        .trim()
+                        .to_string(),
+                    local_kind: if local_is_struct { "struct" } else { "enum" }.to_string(),
+                }));
+            }
             Ok(TranslationPlan {
                 field_ops: Vec::new(),
                 nested: HashMap::new(),
@@ -122,16 +157,24 @@ pub fn build_plan(
 fn build_struct_plan(
     remote_fields: &[roam_schema::FieldSchema],
     local_shape: &'static Shape,
+    remote_type_id: TypeId,
+    local_type_name: &str,
     registry: &SchemaRegistry,
 ) -> Result<TranslationPlan, TranslationError> {
+    let err = |kind: TranslationErrorKind| TranslationError {
+        path: Vec::new(),
+        remote_type_id,
+        local_type_name: local_type_name.to_string(),
+        kind,
+    };
+
     let local_struct = match local_shape.ty {
         Type::User(UserType::Struct(s)) => s,
         _ => {
-            return Err(TranslationError::TypeMismatch {
-                field: String::new(),
-                remote: "struct".into(),
-                local: format!("{}", local_shape),
-            });
+            return Err(err(TranslationErrorKind::KindMismatch {
+                remote_kind: "struct".into(),
+                local_kind: format!("{}", local_shape),
+            }));
         }
     };
 
@@ -140,7 +183,6 @@ fn build_struct_plan(
     let mut matched_local = vec![false; local_struct.fields.len()];
 
     for remote_field in remote_fields {
-        // Look up by name in local struct
         if let Some((local_idx, local_field)) = local_struct
             .fields
             .iter()
@@ -152,32 +194,32 @@ fn build_struct_plan(
                 local_index: local_idx,
             });
 
-            // Check if nested plan is needed (remote field is a struct/enum that may differ)
+            // Check if nested plan is needed
             if let Some(remote_field_schema) = registry.get(&remote_field.type_id) {
                 let local_field_shape = local_field.shape();
                 let local_field_id = roam_schema::type_id_of(local_field_shape);
                 if remote_field.type_id != local_field_id {
-                    // Types differ — build nested plan
-                    let nested_plan = build_plan(remote_field_schema, local_field_shape, registry)?;
+                    let nested_plan = build_plan(remote_field_schema, local_field_shape, registry)
+                        .map_err(|e| e.with_path_prefix(remote_field.name.as_str()))?;
                     nested.insert(local_idx, nested_plan);
                 }
             }
         } else {
-            // Remote field not in local type — skip it
             field_ops.push(FieldOp::Skip {
                 type_id: remote_field.type_id,
             });
         }
     }
 
-    // Check that all required local fields are covered
+    // r[impl schema.errors.missing-required]
     for (i, matched) in matched_local.iter().enumerate() {
         if !matched {
             let field = &local_struct.fields[i];
             if field.default.is_none() {
-                return Err(TranslationError::MissingRequiredField {
-                    name: field.name.to_string(),
-                });
+                return Err(err(TranslationErrorKind::MissingRequiredField {
+                    field_name: field.name.to_string(),
+                    field_type: format!("{}", field.shape()),
+                }));
             }
         }
     }
@@ -193,16 +235,24 @@ fn build_struct_plan(
 fn build_enum_plan(
     remote_variants: &[roam_schema::VariantSchema],
     local_shape: &'static Shape,
+    remote_type_id: TypeId,
+    local_type_name: &str,
     _registry: &SchemaRegistry,
 ) -> Result<TranslationPlan, TranslationError> {
+    let err = |kind: TranslationErrorKind| TranslationError {
+        path: Vec::new(),
+        remote_type_id,
+        local_type_name: local_type_name.to_string(),
+        kind,
+    };
+
     let local_enum = match local_shape.ty {
         Type::User(UserType::Enum(e)) => e,
         _ => {
-            return Err(TranslationError::TypeMismatch {
-                field: String::new(),
-                remote: "enum".into(),
-                local: format!("{}", local_shape),
-            });
+            return Err(err(TranslationErrorKind::KindMismatch {
+                remote_kind: "enum".into(),
+                local_kind: format!("{}", local_shape),
+            }));
         }
     };
 

@@ -92,47 +92,104 @@ impl fmt::Display for DeserializeError {
 
 impl std::error::Error for DeserializeError {}
 
+// r[impl schema.errors.content]
+// r[impl schema.errors.early-detection]
 #[derive(Debug)]
-pub enum TranslationError {
+pub struct TranslationError {
+    /// Path from the root type to the error site, e.g. `["inner", "name"]`.
+    pub path: Vec<String>,
+    /// Remote type ID of the root type being translated.
+    pub remote_type_id: roam_schema::TypeId,
+    /// Local type name for diagnostics.
+    pub local_type_name: String,
+    /// The specific incompatibility.
+    pub kind: TranslationErrorKind,
+}
+
+#[derive(Debug)]
+pub enum TranslationErrorKind {
+    // r[impl schema.errors.missing-required]
+    /// A required local field has no corresponding remote field and no default.
     MissingRequiredField {
-        name: String,
+        field_name: String,
+        field_type: String,
     },
+    // r[impl schema.errors.type-mismatch]
+    /// A field exists in both types but the types are incompatible.
     TypeMismatch {
-        field: String,
-        remote: String,
-        local: String,
+        field_name: String,
+        remote_type: String,
+        local_type: String,
     },
-    UnknownVariant {
-        name: String,
+    /// Remote schema says "struct" but local type is something else (or vice versa).
+    KindMismatch {
+        remote_kind: String,
+        local_kind: String,
     },
+    /// Enum variant payloads are incompatible (e.g. unit vs struct).
     IncompatibleVariantPayload {
-        variant: String,
+        variant_name: String,
+        remote_payload: String,
+        local_payload: String,
     },
-    SchemaNotFound {
-        type_id: roam_schema::TypeId,
-    },
+    /// A type ID referenced by the remote schema was not found in the registry.
+    SchemaNotFound { type_id: roam_schema::TypeId },
+}
+
+impl TranslationError {
+    /// Push a path segment (field or variant name) onto the front of the path.
+    /// Used when propagating errors up from nested plan building.
+    pub fn with_path_prefix(mut self, segment: &str) -> Self {
+        self.path.insert(0, segment.to_string());
+        self
+    }
 }
 
 impl fmt::Display for TranslationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingRequiredField { name } => {
-                write!(f, "missing required field: {name}")
+        let path = if self.path.is_empty() {
+            self.local_type_name.clone()
+        } else {
+            format!("{}.{}", self.local_type_name, self.path.join("."))
+        };
+
+        write!(f, "at {path} (remote {:?}): ", self.remote_type_id)?;
+
+        match &self.kind {
+            TranslationErrorKind::MissingRequiredField {
+                field_name,
+                field_type,
+            } => {
+                write!(
+                    f,
+                    "missing required field '{field_name}' of type {field_type}"
+                )
             }
-            Self::TypeMismatch {
-                field,
-                remote,
-                local,
+            TranslationErrorKind::TypeMismatch {
+                field_name,
+                remote_type,
+                local_type,
             } => write!(
                 f,
-                "type mismatch for field '{field}': remote={remote}, local={local}"
+                "type mismatch on field '{field_name}': remote has {remote_type}, local has {local_type}"
             ),
-            Self::UnknownVariant { name } => write!(f, "unknown variant: {name}"),
-            Self::IncompatibleVariantPayload { variant } => {
-                write!(f, "incompatible variant payload: {variant}")
-            }
-            Self::SchemaNotFound { type_id } => {
-                write!(f, "schema not found for type_id {type_id:?}")
+            TranslationErrorKind::KindMismatch {
+                remote_kind,
+                local_kind,
+            } => write!(
+                f,
+                "structural mismatch: remote is {remote_kind}, local is {local_kind}"
+            ),
+            TranslationErrorKind::IncompatibleVariantPayload {
+                variant_name,
+                remote_payload,
+                local_payload,
+            } => write!(
+                f,
+                "variant '{variant_name}' payload mismatch: remote={remote_payload}, local={local_payload}"
+            ),
+            TranslationErrorKind::SchemaNotFound { type_id } => {
+                write!(f, "schema not found for type ID {type_id:?}")
             }
         }
     }

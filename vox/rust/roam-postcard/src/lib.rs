@@ -8,7 +8,7 @@ pub mod plan;
 pub mod serialize;
 
 pub use deserialize::{from_slice, from_slice_identity};
-pub use error::{DeserializeError, SerializeError, TranslationError};
+pub use error::{DeserializeError, SerializeError, TranslationError, TranslationErrorKind};
 pub use plan::{EnumTranslationPlan, FieldOp, TranslationPlan, build_identity_plan, build_plan};
 pub use serialize::to_vec;
 
@@ -357,12 +357,20 @@ mod tests {
         let result = build_plan(remote_root, LocalPoint::SHAPE, &registry);
 
         assert!(result.is_err());
-        match result.unwrap_err() {
-            TranslationError::MissingRequiredField { name } => {
-                assert_eq!(name, "y");
+        let err = result.unwrap_err();
+        match &err.kind {
+            error::TranslationErrorKind::MissingRequiredField { field_name, .. } => {
+                assert_eq!(field_name, "y");
             }
             other => panic!("expected MissingRequiredField, got {other:?}"),
         }
+        // Verify error message includes useful context
+        let msg = err.to_string();
+        assert!(msg.contains("y"), "error should name the field: {msg}");
+        assert!(
+            msg.contains("missing required"),
+            "error should say missing required: {msg}"
+        );
     }
 
     // r[verify schema.translation.reorder]
@@ -500,6 +508,66 @@ mod tests {
                 a: 42,
             }
         );
+    }
+
+    // r[verify schema.errors.content]
+    #[test]
+    fn translation_error_includes_context() {
+        // Verify errors include remote type ID, local type name, field name
+        #[derive(Facet, Debug)]
+        struct RemoteOuter {
+            inner: u32,
+        }
+
+        // LocalOuter has a required field 'missing' that remote doesn't have
+        #[derive(Facet, Debug)]
+        struct LocalOuter {
+            inner: u32,
+            missing: String,
+        }
+
+        let (schemas, registry) = schemas_and_registry(RemoteOuter::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let err = build_plan(remote_root, LocalOuter::SHAPE, &registry).unwrap_err();
+
+        let msg = err.to_string();
+        // Should include local type name
+        assert!(
+            msg.contains("LocalOuter"),
+            "error should include local type name: {msg}"
+        );
+        // Should include missing field name
+        assert!(
+            msg.contains("missing"),
+            "error should include field name: {msg}"
+        );
+        // Should include "missing required"
+        assert!(
+            msg.contains("missing required"),
+            "error should describe the incompatibility: {msg}"
+        );
+        // Remote type ID should be present
+        assert!(
+            !format!("{:?}", err.remote_type_id).is_empty(),
+            "error should have a remote_type_id"
+        );
+    }
+
+    // r[verify schema.errors.type-mismatch]
+    #[test]
+    fn translation_error_kind_mismatch() {
+        // Remote is a struct, but we try to translate into a primitive shape
+        #[derive(Facet, Debug)]
+        struct RemoteStruct {
+            x: u32,
+        }
+
+        let (schemas, registry) = schemas_and_registry(RemoteStruct::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let err = build_plan(remote_root, <u32 as Facet>::SHAPE, &registry).unwrap_err();
+
+        let msg = err.to_string();
+        assert!(msg.contains("struct"), "error should mention struct: {msg}");
     }
 
     // r[verify schema.translation.enum]
