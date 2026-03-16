@@ -6,22 +6,25 @@ use roam_schema::{
     type_id_of,
 };
 use roam_types::{is_rx, is_tx};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 /// Tracks schema exchange state for one session.
+///
+/// Handles both outbound dedup (what we've sent) and inbound storage
+/// (schemas received from the remote peer, used for building translation plans).
 // r[impl schema.tracking.sent]
 // r[impl schema.tracking.received]
 pub struct SchemaTracker {
     sent: Mutex<HashSet<TypeId>>,
-    received: Mutex<HashSet<TypeId>>,
+    received: Mutex<HashMap<TypeId, Schema>>,
 }
 
 impl SchemaTracker {
     pub fn new() -> Self {
         SchemaTracker {
             sent: Mutex::new(HashSet::new()),
-            received: Mutex::new(HashSet::new()),
+            received: Mutex::new(HashMap::new()),
         }
     }
 
@@ -49,17 +52,22 @@ impl SchemaTracker {
         Some(unsent)
     }
 
-    /// Record that we received schemas for these type IDs.
-    pub fn record_received(&self, type_ids: &[TypeId]) {
+    /// Record schemas received from the remote peer.
+    pub fn record_received(&self, schemas: Vec<Schema>) {
         let mut received = self.received.lock().unwrap();
-        for id in type_ids {
-            received.insert(*id);
+        for schema in schemas {
+            received.insert(schema.type_id, schema);
         }
     }
 
-    /// Check if we've received a schema for this type ID.
-    pub fn has_received(&self, type_id: &TypeId) -> bool {
-        self.received.lock().unwrap().contains(type_id)
+    /// Look up a received schema by type ID.
+    pub fn get_received(&self, type_id: &TypeId) -> Option<Schema> {
+        self.received.lock().unwrap().get(type_id).cloned()
+    }
+
+    /// Get a snapshot of the received schema registry for building translation plans.
+    pub fn received_registry(&self) -> roam_schema::SchemaRegistry {
+        self.received.lock().unwrap().clone()
     }
 }
 
@@ -662,11 +670,12 @@ mod tests {
 
     // r[verify schema.tracking.received]
     #[test]
-    fn tracker_record_and_has_received() {
+    fn tracker_record_and_get_received() {
         let tracker = SchemaTracker::new();
-        let id = type_id_of(<u32 as Facet>::SHAPE);
-        assert!(!tracker.has_received(&id));
-        tracker.record_received(&[id]);
-        assert!(tracker.has_received(&id));
+        let schemas = extract_schemas(<u32 as Facet>::SHAPE);
+        let id = schemas[0].type_id;
+        assert!(tracker.get_received(&id).is_none());
+        tracker.record_received(schemas);
+        assert!(tracker.get_received(&id).is_some());
     }
 }

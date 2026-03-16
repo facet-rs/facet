@@ -269,13 +269,8 @@ pub struct Session {
     // r[impl schema.method-id.fallback]
     schema_exchange: bool,
 
-    /// Schema tracker for outbound/inbound schema deduplication.
-    /// Only populated when schema_exchange is true.
-    schema_tracker: Option<Arc<roam_schema_extract::SchemaTracker>>,
-
-    /// Registry of schemas received from the remote peer.
-    /// Used for building translation plans and skip_value during deserialization.
-    schema_registry: roam_schema::SchemaRegistry,
+    /// Schema tracker: handles outbound dedup and stores received schemas.
+    schema_tracker: Arc<roam_schema_extract::SchemaTracker>,
 }
 
 #[derive(Debug)]
@@ -472,7 +467,7 @@ pub struct ConnectionHandle {
     pub parity: Parity,
     pub(crate) peer_supports_retry: bool,
     /// Schema tracker for this session (shared across all connections).
-    pub(crate) schema_tracker: Option<Arc<roam_schema_extract::SchemaTracker>>,
+    pub(crate) schema_tracker: Arc<roam_schema_extract::SchemaTracker>,
 }
 
 impl std::fmt::Debug for ConnectionHandle {
@@ -657,8 +652,7 @@ impl Session {
             resume_notifier,
             recoverer,
             schema_exchange: true,
-            schema_tracker: Some(Arc::new(roam_schema_extract::SchemaTracker::new())),
-            schema_registry: roam_schema::SchemaRegistry::new(),
+            schema_tracker: Arc::new(roam_schema_extract::SchemaTracker::new()),
         }
     }
 
@@ -877,7 +871,7 @@ impl Session {
             resumed_rx,
             parity,
             peer_supports_retry: self.peer_supports_retry,
-            schema_tracker: self.schema_tracker.clone(),
+            schema_tracker: Arc::clone(&self.schema_tracker),
         }
     }
 
@@ -1192,14 +1186,7 @@ impl Session {
             MessagePayload::SchemaMessage(schema_msg) => {
                 match roam_schema::parse_schema_message(&schema_msg.schemas) {
                     Ok(schemas) => {
-                        let type_ids: Vec<roam_schema::TypeId> =
-                            schemas.iter().map(|s| s.type_id).collect();
-                        if let Some(tracker) = &self.schema_tracker {
-                            tracker.record_received(&type_ids);
-                        }
-                        for schema in schemas {
-                            self.schema_registry.insert(schema.type_id, schema);
-                        }
+                        self.schema_tracker.record_received(schemas);
                     }
                     Err(e) => {
                         warn!("failed to parse schema message: {}", e);

@@ -134,7 +134,7 @@ pub struct DriverReplySink {
     operation_id: Option<u64>,
     operations: Option<Arc<dyn OperationStore>>,
     binder: DriverChannelBinder,
-    schema_tracker: Option<Arc<roam_schema_extract::SchemaTracker>>,
+    schema_tracker: Arc<roam_schema_extract::SchemaTracker>,
 }
 
 fn send_encoded_response(
@@ -167,11 +167,9 @@ impl ReplySink for DriverReplySink {
 
         // r[impl schema.exchange.callee]
         // Send schemas for response types before the response data.
-        if let Some(tracker) = &self.schema_tracker {
-            if let Payload::Outgoing { shape, .. } = &response.ret {
-                if let Some(schemas) = tracker.prepare_send(shape) {
-                    sender.send_schema_message(&schemas).await;
-                }
+        if let Payload::Outgoing { shape, .. } = &response.ret {
+            if let Some(schemas) = self.schema_tracker.prepare_send(shape) {
+                sender.send_schema_message(&schemas).await;
             }
         }
 
@@ -425,7 +423,7 @@ pub struct DriverCaller {
     resume_processed_rx: watch::Receiver<u64>,
     peer_supports_retry: bool,
     _drop_guard: Option<Arc<CallerDropGuard>>,
-    pub(crate) schema_tracker: Option<Arc<roam_schema_extract::SchemaTracker>>,
+    pub(crate) schema_tracker: Arc<roam_schema_extract::SchemaTracker>,
 }
 
 impl DriverCaller {
@@ -577,11 +575,9 @@ impl Caller for DriverCaller {
             // r[impl schema.exchange.caller]
             // r[impl schema.exchange.channels]
             // Send schemas for arg types (and channel element types) before the request.
-            if let Some(tracker) = &self.schema_tracker {
-                if let Payload::Outgoing { shape, .. } = &call.args {
-                    if let Some(schemas) = tracker.prepare_send(shape) {
-                        self.sender.send_schema_message(&schemas).await;
-                    }
+            if let Payload::Outgoing { shape, .. } = &call.args {
+                if let Some(schemas) = self.schema_tracker.prepare_send(shape) {
+                    self.sender.send_schema_message(&schemas).await;
                 }
             }
 
@@ -770,7 +766,7 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     drop_control_seed: Option<mpsc::UnboundedSender<DropControlRequest>>,
     drop_control_request: DropControlRequest,
     drop_guard: SyncMutex<Option<Weak<CallerDropGuard>>>,
-    schema_tracker: Option<Arc<roam_schema_extract::SchemaTracker>>,
+    schema_tracker: Arc<roam_schema_extract::SchemaTracker>,
 }
 
 enum DriverLocalControl {
