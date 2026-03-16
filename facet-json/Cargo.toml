@@ -22,7 +22,7 @@ itoa = { version = "1", optional = true }
 memchr = "2"
 zmij = { version = "1", optional = true }
 facet-core = { workspace = true }
-facet-format = { path = "../facet-format", version = "0.44.1", default-features = false }
+facet-format = { path = "../facet-format", version = "0.44.2", default-features = false }
 facet-reflect = { workspace = true }
 
 # Tracing (optional - compiles to nothing when disabled)
@@ -38,7 +38,7 @@ mime = { version = "0.3", optional = true }
 
 [dev-dependencies]
 compact_str = { workspace = true }
-facet-json-classics = { path = "../facet-json-classics", version = "0.44.1" }
+facet-json-classics = { path = "../facet-json-classics", version = "0.44.2" }
 divan = { workspace = true }
 facet = { workspace = true, features = [
   "std",
@@ -55,7 +55,7 @@ facet-format = { path = "../facet-format", features = ["jit", "net", "tracing"] 
 facet-reflect = { workspace = true, features = ["tracing"] }
 facet-testhelpers = { workspace = true }
 serde_json = { workspace = true }
-facet-format-suite = { path = "../facet-format-suite", version = "0.44.1", features = [
+facet-format-suite = { path = "../facet-format-suite", version = "0.44.2", features = [
   "third-party",
   "net",
   "tokio",

@@ -17,7 +17,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet-core = { workspace = true }
-facet-format = { path = "../facet-format", version = "0.44.1" }
+facet-format = { path = "../facet-format", version = "0.44.2" }
 facet-path = { workspace = true, features = ["alloc"] }
 facet-reflect = { workspace = true }
 facet-value = { workspace = true }
@@ -46,8 +46,8 @@ chrono = { workspace = true, features = ["clock"] }
 divan = { workspace = true }
 facet = { workspace = true, features = ["std", "all-impls", "doc"] }
 facet-format = { path = "../facet-format", features = ["jit"] }
-facet-json = { path = "../facet-json", version = "0.44.1" }
-facet-json-classics = { path = "../facet-json-classics", version = "0.44.1" }
+facet-json = { path = "../facet-json", version = "0.44.2" }
+facet-json-classics = { path = "../facet-json-classics", version = "0.44.2" }
 facet-testhelpers = { workspace = true }
 facet-value = { workspace = true }
 serde_json = { workspace = true }
