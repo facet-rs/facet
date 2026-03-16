@@ -542,6 +542,7 @@ impl<'a> RefCodeGen<'a> {
         let display = self.impls.display.to_borrowed_impl(self);
         let ord = self.impls.ord.to_borrowed_impl(self);
         let serde = self.impls.serde.to_borrowed_impl(self);
+        let rusqlite = self.impls.rusqlite.to_borrowed_impl(self);
 
         let ref_doc: proc_macro2::TokenStream =
             self.doc.iter().map(|d| quote! { #[doc = #d] }).collect();
@@ -583,6 +584,7 @@ impl<'a> RefCodeGen<'a> {
             #debug
             #display
             #serde
+            #rusqlite
         }
     }
 }

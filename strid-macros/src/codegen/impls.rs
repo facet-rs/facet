@@ -90,6 +90,7 @@ pub struct Impls {
     pub display: ImplDisplay,
     pub ord: ImplOrd,
     pub serde: ImplSerde,
+    pub rusqlite: ImplRusqlite,
 }
 
 pub(crate) trait ToImpl {
@@ -265,6 +266,63 @@ impl ToImpl for ImplOrd {
 
     fn to_borrowed_impl(&self, _cg: &RefCodeGen) -> Option<proc_macro2::TokenStream> {
         self.0.map_ref(|| quote! { #[derive(PartialOrd, Ord)] })
+    }
+}
+
+#[derive(Debug)]
+pub struct ImplRusqlite(ImplOption);
+
+impl Default for ImplRusqlite {
+    fn default() -> Self {
+        Self(ImplOption::Omit)
+    }
+}
+
+impl From<ImplOption> for ImplRusqlite {
+    fn from(opt: ImplOption) -> Self {
+        Self(opt)
+    }
+}
+
+impl ToImpl for ImplRusqlite {
+    fn to_owned_impl(&self, cg: &OwnedCodeGen) -> Option<proc_macro2::TokenStream> {
+        self.0.map(|| {
+            let name = cg.ty;
+            let field_name = &cg.field.name;
+            let handle_failure = cg.check_mode.rusqlite_err_handler();
+
+            quote! {
+                #[automatically_derived]
+                impl ::rusqlite::types::ToSql for #name {
+                    fn to_sql(&self) -> ::rusqlite::Result<::rusqlite::types::ToSqlOutput<'_>> {
+                        self.#field_name.to_sql()
+                    }
+                }
+
+                #[automatically_derived]
+                impl ::rusqlite::types::FromSql for #name {
+                    fn column_result(value: ::rusqlite::types::ValueRef<'_>) -> ::rusqlite::types::FromSqlResult<Self> {
+                        let s = <::std::string::String as ::rusqlite::types::FromSql>::column_result(value)?;
+                        ::std::result::Result::Ok(Self::new(s)#handle_failure)
+                    }
+                }
+            }
+        })
+    }
+
+    fn to_borrowed_impl(&self, cg: &RefCodeGen) -> Option<proc_macro2::TokenStream> {
+        self.0.map(|| {
+            let ty = &cg.ty;
+
+            quote! {
+                #[automatically_derived]
+                impl ::rusqlite::types::ToSql for #ty {
+                    fn to_sql(&self) -> ::rusqlite::Result<::rusqlite::types::ToSqlOutput<'_>> {
+                        self.as_str().to_sql()
+                    }
+                }
+            }
+        })
     }
 }
 

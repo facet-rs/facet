@@ -19,6 +19,17 @@ impl CheckMode {
             _ => Some(quote::quote! {.map_err(<D::Error as ::serde::de::Error>::custom)?}),
         }
     }
+
+    pub fn rusqlite_err_handler(&self) -> Option<proc_macro2::TokenStream> {
+        match self {
+            Self::None => None,
+            _ => Some(quote::quote! {
+                .map_err(|e| ::rusqlite::types::FromSqlError::Other(
+                    ::std::boxed::Box::new(e)
+                ))?
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Default)]
