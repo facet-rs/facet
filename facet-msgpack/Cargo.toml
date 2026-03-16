@@ -58,7 +58,7 @@ default = []
 std = []
 jit = ["facet-format/jit"]
 net = ["facet-format/net", "facet-core/net"]
-iddqd = ["facet/iddqd"]
+iddqd = ["facet-core/iddqd"]
 
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
