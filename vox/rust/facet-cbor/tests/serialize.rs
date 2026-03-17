@@ -174,6 +174,7 @@ fn test_unit_variant() {
 
 #[derive(Facet)]
 #[repr(u8)]
+#[allow(dead_code)]
 enum Shape {
     Circle { radius: f64 },
     Rectangle { width: f64, height: f64 },
@@ -196,6 +197,7 @@ fn test_struct_variant() {
 
 #[derive(Facet)]
 #[repr(u8)]
+#[allow(dead_code)]
 enum Value {
     Num(i64),
     Text(String),
