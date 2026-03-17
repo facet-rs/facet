@@ -97,7 +97,11 @@ where
             ::roam::Payload::Incoming(bytes) => bytes,
             _ => {
                 reply
-                    .send_error(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)
+                    .send_error(
+                        ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
+                            "args not Incoming".into(),
+                        ),
+                    )
                     .await;
                 return;
             }
@@ -109,10 +113,12 @@ where
                 ::roam::ReplySink::schema_tracker_any(&reply),
             ) {
                 Ok(v) => v,
-                Err(_) => {
+                Err(e) => {
                     reply
                         .send_error(
-                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload,
+                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
+                                e.to_string(),
+                            ),
                         )
                         .await;
                     return;
@@ -145,10 +151,12 @@ where
                 ::roam::ReplySink::schema_tracker_any(&reply),
             ) {
                 Ok(v) => v,
-                Err(_) => {
+                Err(e) => {
                     reply
                         .send_error(
-                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload,
+                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
+                                e.to_string(),
+                            ),
                         )
                         .await;
                     return;
@@ -181,10 +189,12 @@ where
                     ::roam::ReplySink::schema_tracker_any(&reply),
                 ) {
                     Ok(v) => v,
-                    Err(_) => {
+                    Err(e) => {
                         reply
                             .send_error(
-                                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload,
+                                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
+                                    e.to_string(),
+                                ),
                             )
                             .await;
                         return;
@@ -278,8 +288,8 @@ impl WordLabClient {
                 ::roam::RoamError::UnknownMethod => {
                     ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
                 }
-                ::roam::RoamError::InvalidPayload => {
-                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+                ::roam::RoamError::InvalidPayload(msg) => {
+                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(msg)
                 }
                 ::roam::RoamError::Cancelled => {
                     ::roam::RoamError::<::core::convert::Infallible>::Cancelled
@@ -291,7 +301,13 @@ impl WordLabClient {
             })?;
         let ret_bytes = match &response.ret {
             ::roam::Payload::Incoming(bytes) => bytes,
-            _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
+            _ => {
+                return Err(
+                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
+                        "response not Incoming".into(),
+                    ),
+                );
+            }
         };
         let result: Result<bool, ::roam::RoamError<::core::convert::Infallible>> =
             ::roam::schema_deser::schema_deserialize(
@@ -299,7 +315,9 @@ impl WordLabClient {
                 method_id,
                 ::roam::Caller::schema_tracker_any(&self.caller),
             )
-            .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
+            .map_err(|e| {
+                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
+            })?;
         result
     }
     pub async fn classify(
@@ -321,8 +339,8 @@ impl WordLabClient {
                 ::roam::RoamError::UnknownMethod => {
                     ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
                 }
-                ::roam::RoamError::InvalidPayload => {
-                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+                ::roam::RoamError::InvalidPayload(msg) => {
+                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(msg)
                 }
                 ::roam::RoamError::Cancelled => {
                     ::roam::RoamError::<::core::convert::Infallible>::Cancelled
@@ -336,7 +354,13 @@ impl WordLabClient {
         response.try_repack(|resp, _bytes| {
             let ret_bytes = match &resp.ret {
                 ::roam::Payload::Incoming(bytes) => bytes,
-                _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
+                _ => {
+                    return Err(
+                        ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
+                            "response not Incoming".into(),
+                        ),
+                    );
+                }
             };
             let result: Result<&'static str, ::roam::RoamError<::core::convert::Infallible>> =
                 ::roam::schema_deser::schema_deserialize_borrowed(
@@ -344,7 +368,9 @@ impl WordLabClient {
                     method_id,
                     schema_tracker,
                 )
-                .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
+                .map_err(|e| {
+                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
+                })?;
             let ret = result?;
             Ok(ret)
         })
@@ -381,8 +407,8 @@ impl WordLabClient {
                 ::roam::RoamError::UnknownMethod => {
                     ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
                 }
-                ::roam::RoamError::InvalidPayload => {
-                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
+                ::roam::RoamError::InvalidPayload(msg) => {
+                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(msg)
                 }
                 ::roam::RoamError::Cancelled => {
                     ::roam::RoamError::<::core::convert::Infallible>::Cancelled
@@ -394,7 +420,13 @@ impl WordLabClient {
             })?;
         let ret_bytes = match &response.ret {
             ::roam::Payload::Incoming(bytes) => bytes,
-            _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
+            _ => {
+                return Err(
+                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
+                        "response not Incoming".into(),
+                    ),
+                );
+            }
         };
         let result: Result<u32, ::roam::RoamError<::core::convert::Infallible>> =
             ::roam::schema_deser::schema_deserialize(
@@ -402,7 +434,9 @@ impl WordLabClient {
                 method_id,
                 ::roam::Caller::schema_tracker_any(&self.caller),
             )
-            .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
+            .map_err(|e| {
+                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
+            })?;
         result
     }
 }

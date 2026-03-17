@@ -122,3 +122,6 @@ pub use channel_binding::*;
 
 mod shape_classify;
 pub use shape_classify::*;
+
+mod method_identity;
+pub use method_identity::*;

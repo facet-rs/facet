@@ -98,7 +98,11 @@ where
             ::roam::Payload::Incoming(bytes) => bytes,
             _ => {
                 reply
-                    .send_error(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)
+                    .send_error(
+                        ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
+                            "args not Incoming".into(),
+                        ),
+                    )
                     .await;
                 return;
             }
@@ -110,10 +114,12 @@ where
                 ::roam::ReplySink::schema_tracker_any(&reply),
             ) {
                 Ok(v) => v,
-                Err(_) => {
+                Err(e) => {
                     reply
                         .send_error(
-                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload,
+                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
+                                e.to_string(),
+                            ),
                         )
                         .await;
                     return;
@@ -187,14 +193,20 @@ impl CalcClient {
             .await
             .map_err(|e| match e {
                 ::roam::RoamError::UnknownMethod => ::roam::RoamError::<DivError>::UnknownMethod,
-                ::roam::RoamError::InvalidPayload => ::roam::RoamError::<DivError>::InvalidPayload,
+                ::roam::RoamError::InvalidPayload(msg) => {
+                    ::roam::RoamError::<DivError>::InvalidPayload(msg)
+                }
                 ::roam::RoamError::Cancelled => ::roam::RoamError::<DivError>::Cancelled,
                 ::roam::RoamError::Indeterminate => ::roam::RoamError::<DivError>::Indeterminate,
                 ::roam::RoamError::User(never) => match never {},
             })?;
         let ret_bytes = match &response.ret {
             ::roam::Payload::Incoming(bytes) => bytes,
-            _ => return Err(::roam::RoamError::<DivError>::InvalidPayload),
+            _ => {
+                return Err(::roam::RoamError::<DivError>::InvalidPayload(
+                    "response not Incoming".into(),
+                ));
+            }
         };
         let result: Result<f64, ::roam::RoamError<DivError>> =
             ::roam::schema_deser::schema_deserialize(
@@ -202,7 +214,7 @@ impl CalcClient {
                 method_id,
                 ::roam::Caller::schema_tracker_any(&self.caller),
             )
-            .map_err(|_| ::roam::RoamError::<DivError>::InvalidPayload)?;
+            .map_err(|e| ::roam::RoamError::<DivError>::InvalidPayload(e.to_string()))?;
         result
     }
 }

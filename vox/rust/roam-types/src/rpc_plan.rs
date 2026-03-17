@@ -51,22 +51,18 @@ impl RpcPlan {
 
     /// Return a process-global cached plan for the given shape.
     pub fn for_shape(shape: &'static Shape) -> &'static Self {
-        static CACHE: OnceLock<Mutex<HashMap<usize, &'static RpcPlan>>> = OnceLock::new();
+        static CACHE: OnceLock<Mutex<HashMap<&'static Shape, &'static RpcPlan>>> = OnceLock::new();
         let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-
-        let key = todo!(
-            "fixme(garbage): Never, never use the address of a shape for anything. It is not for you to look at. It is garbage. Shape implements PartialEq and Eq and Hash and everything. DON'T FUCK WITH RAW POINTERS (The type of the HashMap is wrong, `usize` is wrong)"
-        );
 
         let mut guard = cache
             .lock()
             .expect("rpc plan cache mutex should not be poisoned");
-        if let Some(plan) = guard.get(&key) {
+        if let Some(plan) = guard.get(shape) {
             return plan;
         }
 
         let plan = Box::leak(Box::new(Self::from_shape(shape)));
-        guard.insert(key, plan);
+        guard.insert(shape, plan);
         plan
     }
 

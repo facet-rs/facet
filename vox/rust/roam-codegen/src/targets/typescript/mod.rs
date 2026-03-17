@@ -189,8 +189,9 @@ mod tests {
 
     use super::generate_service;
     use facet::Facet;
-    use roam_hash::{method_descriptor, method_descriptor_with_retry};
-    use roam_types::{RetryPolicy, Rx, ServiceDescriptor, Tx};
+    use roam_types::{
+        RetryPolicy, Rx, ServiceDescriptor, Tx, method_descriptor, method_descriptor_with_retry,
+    };
 
     #[derive(Facet)]
     struct RecursiveNode {

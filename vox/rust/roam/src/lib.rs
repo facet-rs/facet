@@ -19,8 +19,11 @@ pub use facet;
 // Generated code uses `roam::facet_postcard::from_slice_borrowed`.
 pub use roam_postcard as facet_postcard;
 
-// Re-export roam-hash (generated code uses `roam::hash::method_descriptor`)
-pub use roam_hash as hash;
+// Re-export method identity functions (generated code uses `roam::hash::method_descriptor`)
+// TODO: generated code should be updated to use roam::method_descriptor directly
+pub mod hash {
+    pub use roam_types::{method_descriptor, method_descriptor_with_retry, method_id_name_only};
+}
 
 // Re-export roam-types items used by generated code
 pub use roam_types::{

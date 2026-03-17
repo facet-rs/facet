@@ -36,8 +36,8 @@ struct SchemaGenState {
     use_named_refs: bool,
     /// Name of the registry entry currently being generated, if any.
     root_name: Option<String>,
-    /// Active shape pointers for recursion detection.
-    active: HashSet<usize>,
+    /// Active shapes for recursion detection.
+    active: HashSet<&'static Shape>,
 }
 
 fn named_shape_name(shape: &'static Shape) -> Option<&'static str> {
@@ -73,8 +73,7 @@ fn generate_schema_with_field(
         return format!("{{ kind: 'ref', name: '{name}' }}");
     }
 
-    let shape_ptr = shape as *const Shape as usize;
-    if !state.active.insert(shape_ptr) {
+    if !state.active.insert(shape) {
         if let Some(name) = named_shape_name(shape) {
             return format!("{{ kind: 'ref', name: '{name}' }}");
         }
@@ -92,7 +91,7 @@ fn generate_schema_with_field(
 
     // Check for bytes first (Vec<u8>)
     if is_bytes(shape) {
-        state.active.remove(&shape_ptr);
+        state.active.remove(shape);
         return bytes_schema.into();
     }
 
@@ -198,7 +197,7 @@ fn generate_schema_with_field(
         ShapeKind::Opaque => bytes_schema.into(),
     };
 
-    state.active.remove(&shape_ptr);
+    state.active.remove(shape);
     rendered
 }
 
@@ -279,7 +278,7 @@ fn generate_scalar_schema(scalar: ScalarType) -> String {
 /// Always has five variants at fixed indices:
 /// - 0: User(E)        — user-defined error (null for infallible)
 /// - 1: UnknownMethod  — unit
-/// - 2: InvalidPayload — unit
+/// - 2: InvalidPayload — newtype(String)
 /// - 3: Cancelled      — unit
 /// - 4: Indeterminate  — unit
 fn generate_roam_error_schema(err_schema: &str) -> String {
@@ -287,7 +286,7 @@ fn generate_roam_error_schema(err_schema: &str) -> String {
         "{{ kind: 'enum', variants: [\
           {{ name: 'User', fields: {err_schema} }}, \
           {{ name: 'UnknownMethod', fields: null }}, \
-          {{ name: 'InvalidPayload', fields: null }}, \
+          {{ name: 'InvalidPayload', fields: {{ kind: 'newtype', schema: {{ kind: 'scalar', type: 'string' }} }} }}, \
           {{ name: 'Cancelled', fields: null }}, \
           {{ name: 'Indeterminate', fields: null }}\
         ] }}"

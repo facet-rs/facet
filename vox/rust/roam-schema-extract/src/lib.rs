@@ -28,7 +28,7 @@ pub struct SchemaTracker {
     /// Method bindings we've already sent (by method_id).
     methods_sent: Mutex<HashSet<u64>>,
     /// Assigns incrementing type IDs to shapes we extract.
-    shape_to_id: Mutex<HashMap<usize, TypeSchemaId>>,
+    shape_to_id: Mutex<HashMap<&'static Shape, TypeSchemaId>>,
     /// Next ID to assign.
     next_id: Mutex<u32>,
     /// Type schemas received from the remote peer.
@@ -49,21 +49,16 @@ impl SchemaTracker {
         }
     }
 
-    /// Allocate or look up a TypeSchemaId for a Shape pointer.
+    /// Allocate or look up a TypeSchemaId for a Shape.
     fn id_for_shape(&self, shape: &'static Shape) -> TypeSchemaId {
-        todo!(
-            "fixme(garbage): Never, never use the address of a shape for anything. It is not for you to look at. It is garbage. Shape implements PartialEq and Eq and Hash and everything. DON'T FUCK WITH RAW POINTERS. IF YOU NEED TO ALLOCATE IDS JUST FUCKING USE A SERIAL ALLOCATOR AND STORE PREVIOUS MAPPING IN.. A HASHMAP"
-        ),
-
-        let ptr = shape as *const Shape as usize;
         let mut map = self.shape_to_id.lock().unwrap();
-        if let Some(&id) = map.get(&ptr) {
+        if let Some(&id) = map.get(shape) {
             return id;
         }
         let mut next = self.next_id.lock().unwrap();
         let id = TypeSchemaId(*next);
         *next += 1;
-        map.insert(ptr, id);
+        map.insert(shape, id);
         id
     }
 
@@ -185,10 +180,10 @@ pub fn extract_schemas(shape: &'static Shape) -> Vec<Schema> {
 struct ExtractCtx<'a> {
     tracker: &'a SchemaTracker,
     schemas: Vec<Schema>,
-    /// Shapes already fully processed (by pointer identity).
-    seen: HashSet<usize>,
-    /// Stack for cycle detection (by pointer identity).
-    stack: Vec<usize>,
+    /// Shapes already fully processed.
+    seen: HashSet<&'static Shape>,
+    /// Stack for cycle detection.
+    stack: Vec<&'static Shape>,
 }
 
 impl<'a> ExtractCtx<'a> {
@@ -210,28 +205,22 @@ impl<'a> ExtractCtx<'a> {
         }
 
         let type_id = self.tracker.id_for_shape(shape);
-        let ptr = (
-            todo!(
-                "fixme(garbage): Never, never use the address of a shape for anything. It is not for you to look at. It is garbage. Shape implements PartialEq and Eq and Hash and everything. DON'T FUCK WITH RAW POINTERS"
-            ),
-            shape as *const Shape as usize,
-        );
 
         // Already fully processed — just return its id.
-        if self.seen.contains(&ptr) {
+        if self.seen.contains(shape) {
             return type_id;
         }
 
         // r[impl schema.format.recursive]
         // Cycle detection: if on the stack, return the id without re-entering.
-        if self.stack.contains(&ptr) {
+        if self.stack.contains(&shape) {
             return type_id;
         }
 
         // r[impl schema.format.primitive]
         // Scalars
         if let Some(scalar) = shape.scalar_type() {
-            if self.seen.insert(ptr) {
+            if self.seen.insert(shape) {
                 self.schemas.push(Schema {
                     type_id,
                     kind: SchemaKind::Primitive {
@@ -248,7 +237,7 @@ impl<'a> ExtractCtx<'a> {
             Def::List(list_def) => {
                 if let Some(ScalarType::U8) = list_def.t().scalar_type() {
                     // Vec<u8> → Bytes
-                    if self.seen.insert(ptr) {
+                    if self.seen.insert(shape) {
                         self.schemas.push(Schema {
                             type_id,
                             kind: SchemaKind::Primitive {
@@ -258,7 +247,7 @@ impl<'a> ExtractCtx<'a> {
                     }
                 } else {
                     let elem_id = self.extract(list_def.t());
-                    if self.seen.insert(ptr) {
+                    if self.seen.insert(shape) {
                         self.schemas.push(Schema {
                             type_id,
                             kind: SchemaKind::List { element: elem_id },
@@ -269,7 +258,7 @@ impl<'a> ExtractCtx<'a> {
             }
             Def::Array(array_def) => {
                 let elem_id = self.extract(array_def.t());
-                if self.seen.insert(ptr) {
+                if self.seen.insert(shape) {
                     self.schemas.push(Schema {
                         type_id,
                         kind: SchemaKind::Array {
@@ -282,7 +271,7 @@ impl<'a> ExtractCtx<'a> {
             }
             Def::Slice(slice_def) => {
                 let elem_id = self.extract(slice_def.t());
-                if self.seen.insert(ptr) {
+                if self.seen.insert(shape) {
                     self.schemas.push(Schema {
                         type_id,
                         kind: SchemaKind::List { element: elem_id },
@@ -293,7 +282,7 @@ impl<'a> ExtractCtx<'a> {
             Def::Map(map_def) => {
                 let key_id = self.extract(map_def.k());
                 let val_id = self.extract(map_def.v());
-                if self.seen.insert(ptr) {
+                if self.seen.insert(shape) {
                     self.schemas.push(Schema {
                         type_id,
                         kind: SchemaKind::Map {
@@ -306,7 +295,7 @@ impl<'a> ExtractCtx<'a> {
             }
             Def::Set(set_def) => {
                 let elem_id = self.extract(set_def.t());
-                if self.seen.insert(ptr) {
+                if self.seen.insert(shape) {
                     self.schemas.push(Schema {
                         type_id,
                         kind: SchemaKind::Set { element: elem_id },
@@ -316,7 +305,7 @@ impl<'a> ExtractCtx<'a> {
             }
             Def::Option(opt_def) => {
                 let elem_id = self.extract(opt_def.t());
-                if self.seen.insert(ptr) {
+                if self.seen.insert(shape) {
                     self.schemas.push(Schema {
                         type_id,
                         kind: SchemaKind::Option { element: elem_id },
@@ -327,7 +316,7 @@ impl<'a> ExtractCtx<'a> {
             Def::Result(result_def) => {
                 let ok_id = self.extract(result_def.t());
                 let err_id = self.extract(result_def.e());
-                if self.seen.insert(ptr) {
+                if self.seen.insert(shape) {
                     self.schemas.push(Schema {
                         type_id,
                         kind: SchemaKind::Enum {
@@ -357,7 +346,7 @@ impl<'a> ExtractCtx<'a> {
         }
 
         // User-defined types: push onto stack for cycle detection.
-        self.stack.push(ptr);
+        self.stack.push(shape);
 
         let kind = match shape.ty {
             // r[impl schema.format.struct]
@@ -455,7 +444,7 @@ impl<'a> ExtractCtx<'a> {
 
         self.stack.pop();
 
-        if self.seen.insert(ptr) {
+        if self.seen.insert(shape) {
             self.schemas.push(Schema { type_id, kind });
         }
 
@@ -783,20 +772,6 @@ mod tests {
         );
 
         // Same method again — nothing to send
-        let sent = tracker.sent.lock().unwrap();
-        let shape_map = tracker.shape_to_id.lock().unwrap();
-        let u32_ptr = <u32 as Facet>::SHAPE as *const Shape as usize;
-        todo!(
-            "fixme(garbage): Never, never use the address of a shape for anything. It is not for you to look at. It is garbage. Shape implements PartialEq and Eq and Hash and everything. STOP FUCKING WITH RAW POINTERS"
-        ),
-        eprintln!("sent: {:?}", sent);
-        eprintln!(
-            "shape_to_id has u32 ptr {u32_ptr}: {:?}",
-            shape_map.get(&u32_ptr)
-        );
-        eprintln!("shape_to_id entries: {:?}", shape_map);
-        drop(sent);
-        drop(shape_map);
         let again = tracker.prepare_send_for_method(method, <u32 as Facet>::SHAPE);
         assert!(
             again.is_none(),

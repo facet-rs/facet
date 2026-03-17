@@ -130,8 +130,7 @@ pub fn generate_service_with_bindings(
 mod tests {
     use super::generate_service;
     use roam::{Rx, Tx};
-    use roam_hash::method_descriptor;
-    use roam_types::{MethodDescriptor, RetryPolicy, ServiceDescriptor};
+    use roam_types::{MethodDescriptor, RetryPolicy, ServiceDescriptor, method_descriptor};
 
     #[test]
     fn generated_swift_preserves_channel_initial_credit() {

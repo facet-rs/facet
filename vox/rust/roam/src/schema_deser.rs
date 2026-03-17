@@ -58,8 +58,22 @@ fn resolve_plan<'facet, T: Facet<'facet>>(
     let registry = tracker.received_registry();
     let local_shape = T::SHAPE;
 
-    let plan = build_plan(&remote_schema, local_shape, &registry)
-        .map_err(|e| DeserializeError::protocol(&format!("translation plan failed: {e}")))?;
+    let plan = build_plan(&remote_schema, local_shape, &registry).map_err(|e| {
+        eprintln!(
+            "[schema_deser] translation plan FAILED for local={local_shape} method={method_id:?}"
+        );
+        eprintln!("[schema_deser]   remote_root={remote_root_id:?}");
+        eprintln!("[schema_deser]   registry ({} entries):", registry.len());
+        for (id, schema) in &registry {
+            eprintln!("[schema_deser]     {id:?} => {:?}", schema.kind);
+        }
+        eprintln!("[schema_deser]   error: {e}");
+        DeserializeError::protocol(&format!("translation plan failed: {e}"))
+    })?;
+
+    eprintln!(
+        "[schema_deser] plan built OK for local={local_shape} method={method_id:?} root={remote_root_id:?}"
+    );
 
     Ok((plan, registry))
 }

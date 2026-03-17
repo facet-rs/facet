@@ -372,7 +372,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
             let args_bytes = match &call.args {
                 #roam::Payload::Incoming(bytes) => bytes,
                 _ => {
-                    reply.send_error(#roam::RoamError::<::core::convert::Infallible>::InvalidPayload).await;
+                    reply.send_error(#roam::RoamError::<::core::convert::Infallible>::InvalidPayload("args not Incoming".into())).await;
                     return;
                 }
             };
@@ -592,8 +592,8 @@ fn generate_dispatch_arm(
                 #roam::ReplySink::schema_tracker_any(&reply),
             ) {
                 Ok(v) => v,
-                Err(_) => {
-                    reply.send_error(#roam::RoamError::<::core::convert::Infallible>::InvalidPayload).await;
+                Err(e) => {
+                    reply.send_error(#roam::RoamError::<::core::convert::Infallible>::InvalidPayload(e.to_string())).await;
                     return;
                 }
             };
@@ -811,7 +811,7 @@ fn generate_client_method(
                 };
                 let response = #roam::Caller::call(&self.caller, req).await.map_err(|e| match e {
                     #roam::RoamError::UnknownMethod => #roam::RoamError::<#err_ty>::UnknownMethod,
-                    #roam::RoamError::InvalidPayload => #roam::RoamError::<#err_ty>::InvalidPayload,
+                    #roam::RoamError::InvalidPayload(msg) => #roam::RoamError::<#err_ty>::InvalidPayload(msg),
                     #roam::RoamError::Cancelled => #roam::RoamError::<#err_ty>::Cancelled,
                     #roam::RoamError::Indeterminate => #roam::RoamError::<#err_ty>::Indeterminate,
                     #roam::RoamError::User(never) => match never {},
@@ -820,11 +820,11 @@ fn generate_client_method(
                 response.try_repack(|resp, _bytes| {
                     let ret_bytes = match &resp.ret {
                         #roam::Payload::Incoming(bytes) => bytes,
-                        _ => return Err(#roam::RoamError::<#err_ty>::InvalidPayload),
+                        _ => return Err(#roam::RoamError::<#err_ty>::InvalidPayload("response not Incoming".into())),
                     };
                     let result: Result<#ok_ty_decode, #roam::RoamError<#err_ty>> =
                         #roam::schema_deser::schema_deserialize_borrowed(ret_bytes, method_id, schema_tracker)
-                            .map_err(|_| #roam::RoamError::<#err_ty>::InvalidPayload)?;
+                            .map_err(|e| #roam::RoamError::<#err_ty>::InvalidPayload(e.to_string()))?;
                     let ret = result?;
                     Ok(ret)
                 })
@@ -845,14 +845,14 @@ fn generate_client_method(
                 };
                 let response = #roam::Caller::call(&self.caller, req).await.map_err(|e| match e {
                     #roam::RoamError::UnknownMethod => #roam::RoamError::<#err_ty>::UnknownMethod,
-                    #roam::RoamError::InvalidPayload => #roam::RoamError::<#err_ty>::InvalidPayload,
+                    #roam::RoamError::InvalidPayload(msg) => #roam::RoamError::<#err_ty>::InvalidPayload(msg),
                     #roam::RoamError::Cancelled => #roam::RoamError::<#err_ty>::Cancelled,
                     #roam::RoamError::Indeterminate => #roam::RoamError::<#err_ty>::Indeterminate,
                     #roam::RoamError::User(never) => match never {},
                 })?;
                 let ret_bytes = match &response.ret {
                     #roam::Payload::Incoming(bytes) => bytes,
-                    _ => return Err(#roam::RoamError::<#err_ty>::InvalidPayload),
+                    _ => return Err(#roam::RoamError::<#err_ty>::InvalidPayload("response not Incoming".into())),
                 };
                 let result: Result<#ok_ty_decode, #roam::RoamError<#err_ty>> =
                     #roam::schema_deser::schema_deserialize(
@@ -860,7 +860,7 @@ fn generate_client_method(
                         method_id,
                         #roam::Caller::schema_tracker_any(&self.caller),
                     )
-                    .map_err(|_| #roam::RoamError::<#err_ty>::InvalidPayload)?;
+                    .map_err(|e| #roam::RoamError::<#err_ty>::InvalidPayload(e.to_string()))?;
                 result
             }
         }

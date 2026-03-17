@@ -596,7 +596,7 @@ impl Caller for DriverCaller {
             }
 
             let encoded_call: Arc<[u8]> = roam_postcard::to_vec(&call)
-                .map_err(|_| RoamError::InvalidPayload)?
+                .map_err(|e| RoamError::InvalidPayload(format!("failed to serialize call: {e}")))?
                 .into();
 
             // Allocate a request ID.
@@ -609,7 +609,7 @@ impl Caller for DriverCaller {
 
             let resend_call: RequestCall<'_> =
                 roam_postcard::from_slice_borrowed(encoded_call.as_ref())
-                    .map_err(|_| RoamError::<core::convert::Infallible>::InvalidPayload)?;
+                    .map_err(|e| RoamError::<core::convert::Infallible>::InvalidPayload(format!("failed to re-deserialize call: {e}")))?;
             if self
                 .sender
                 .send(ConnectionMessage::Request(RequestMessage {
@@ -1161,7 +1161,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         moire::task::spawn(
                             async move {
                                 let error: Result<(), RoamError<core::convert::Infallible>> =
-                                    Err(RoamError::InvalidPayload);
+                                    Err(RoamError::InvalidPayload("request ID conflict".into()));
                                 let _ = sender
                                     .send_response(
                                         req_id,

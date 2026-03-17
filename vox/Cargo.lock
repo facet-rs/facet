@@ -2373,7 +2373,6 @@ version = "7.3.0"
 dependencies = [
  "facet",
  "roam-core",
- "roam-hash",
  "roam-postcard",
  "roam-schema",
  "roam-schema-extract",
@@ -2422,7 +2421,6 @@ dependencies = [
  "facet-core",
  "heck 0.5.0",
  "roam",
- "roam-hash",
  "roam-types",
 ]
 
@@ -2459,17 +2457,6 @@ dependencies = [
  "passfd",
  "tokio",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "roam-hash"
-version = "7.3.0"
-dependencies = [
- "blake3",
- "facet",
- "facet-core",
- "heck 0.5.0",
- "roam-types",
 ]
 
 [[package]]
@@ -2591,11 +2578,13 @@ name = "roam-types"
 version = "7.3.0"
 dependencies = [
  "bitflags",
+ "blake3",
  "facet",
  "facet-core",
  "facet-path",
  "facet-postcard",
  "futures-channel",
+ "heck 0.5.0",
  "smallvec 1.15.1",
  "structstruck",
  "tokio",

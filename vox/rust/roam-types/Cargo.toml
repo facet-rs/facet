@@ -19,9 +19,11 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 bitflags.workspace = true
+blake3.workspace = true
 facet.workspace = true
 facet-core.workspace = true
 facet-path.workspace = true
+heck.workspace = true
 smallvec.workspace = true
 structstruck.workspace = true
 facet-postcard.workspace = true

@@ -190,7 +190,7 @@ fn main() {
     );
     write_value!(
         "result/err_invalid_payload.bin",
-        Err::<(), RoamError<std::convert::Infallible>>(RoamError::InvalidPayload)
+        Err::<(), RoamError<std::convert::Infallible>>(RoamError::InvalidPayload(String::new()))
     );
     write_value!(
         "result/err_cancelled.bin",

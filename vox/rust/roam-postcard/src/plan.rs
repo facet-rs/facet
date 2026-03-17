@@ -154,7 +154,17 @@ pub fn build_plan(
             registry,
         ),
         _ => {
-            // Primitives, containers — check kind compatibility
+            // Primitives, containers — check kind compatibility.
+            // If the local type is a scalar (e.g. () is both StructKind::Unit and
+            // ScalarType::Unit), it's compatible with a Primitive schema — the
+            // deserializer dispatches on scalar_type() before checking user types.
+            if local_shape.scalar_type().is_some() {
+                return Ok(TranslationPlan {
+                    field_ops: Vec::new(),
+                    nested: HashMap::new(),
+                    enum_plan: None,
+                });
+            }
             let local_is_struct = matches!(local_shape.ty, Type::User(UserType::Struct(_)));
             let local_is_enum = matches!(local_shape.ty, Type::User(UserType::Enum(_)));
             if local_is_struct || local_is_enum {

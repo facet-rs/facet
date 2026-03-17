@@ -16,7 +16,7 @@ pub enum RoamError<E = ::core::convert::Infallible> {
     UnknownMethod,
 
     /// The arguments could not be deserialized.
-    InvalidPayload,
+    InvalidPayload(String),
 
     /// The call was cancelled before completion.
     Cancelled,
