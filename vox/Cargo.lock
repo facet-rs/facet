@@ -2374,8 +2374,6 @@ dependencies = [
  "facet",
  "roam-core",
  "roam-postcard",
- "roam-schema",
- "roam-schema-extract",
  "roam-service-macros",
  "roam-shm",
  "roam-stream",
@@ -2436,8 +2434,6 @@ dependencies = [
  "getrandom 0.3.4",
  "moire",
  "roam-postcard",
- "roam-schema",
- "roam-schema-extract",
  "roam-shm",
  "roam-types",
  "shm-primitives",
@@ -2506,26 +2502,6 @@ dependencies = [
  "facet-core",
  "facet-postcard",
  "facet-reflect",
- "roam-schema",
- "roam-schema-extract",
- "roam-types",
-]
-
-[[package]]
-name = "roam-schema"
-version = "7.3.0"
-dependencies = [
- "facet",
- "facet-cbor",
-]
-
-[[package]]
-name = "roam-schema-extract"
-version = "7.3.0"
-dependencies = [
- "facet",
- "facet-core",
- "roam-schema",
  "roam-types",
 ]
 
@@ -2580,6 +2556,7 @@ dependencies = [
  "bitflags",
  "blake3",
  "facet",
+ "facet-cbor",
  "facet-core",
  "facet-path",
  "facet-postcard",

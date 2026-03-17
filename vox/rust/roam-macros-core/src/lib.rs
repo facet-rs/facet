@@ -524,6 +524,13 @@ fn generate_dispatch_arm(
     let ok_has_roam_lifetime = ok_ty_ref.has_named_lifetime("roam");
     let is_fallible = return_type.as_result().is_some();
     let ok_ty = ok_ty_ref.to_token_stream();
+    // For the response Shape expression, we need 'static (Shape is always 'static).
+    // Replace 'roam with 'static so the Shape reference is valid in the dispatch scope.
+    let ok_ty_static: proc_macro2::TokenStream = ok_ty
+        .to_string()
+        .replace("'roam", "'static")
+        .parse()
+        .expect("ok_ty_static parse");
     let err_ty = err_ty_ref
         .map(Type::to_token_stream)
         .unwrap_or_else(|| quote! { ::core::convert::Infallible });
@@ -586,7 +593,17 @@ fn generate_dispatch_arm(
 
     quote! {
         if method_id == #descriptor_fn_name().methods[#idx].id {
-            #args_let = match #roam::schema_deser::schema_deserialize_borrowed(
+            // r[impl schema.exchange.callee]
+            // Send response schemas using the statically-known response type,
+            // before the handler runs. This ensures the correct Result<T, RoamError<E>>
+            // shape is sent regardless of whether the handler succeeds or fails.
+            #roam::ReplySink::send_response_schemas(
+                &reply,
+                method_id,
+                <::core::result::Result<#ok_ty_static, #roam::RoamError<#err_ty>> as #roam::facet::Facet>::SHAPE,
+            ).await;
+
+            #args_let = match #roam::schema_deser::schema_deserialize_args_borrowed(
                 args_bytes,
                 method_id,
                 #roam::ReplySink::schema_tracker_any(&reply),
@@ -823,7 +840,7 @@ fn generate_client_method(
                         _ => return Err(#roam::RoamError::<#err_ty>::InvalidPayload("response not Incoming".into())),
                     };
                     let result: Result<#ok_ty_decode, #roam::RoamError<#err_ty>> =
-                        #roam::schema_deser::schema_deserialize_borrowed(ret_bytes, method_id, schema_tracker)
+                        #roam::schema_deser::schema_deserialize_response_borrowed(ret_bytes, method_id, schema_tracker)
                             .map_err(|e| #roam::RoamError::<#err_ty>::InvalidPayload(e.to_string()))?;
                     let ret = result?;
                     Ok(ret)
@@ -855,7 +872,7 @@ fn generate_client_method(
                     _ => return Err(#roam::RoamError::<#err_ty>::InvalidPayload("response not Incoming".into())),
                 };
                 let result: Result<#ok_ty_decode, #roam::RoamError<#err_ty>> =
-                    #roam::schema_deser::schema_deserialize(
+                    #roam::schema_deser::schema_deserialize_response(
                         ret_bytes,
                         method_id,
                         #roam::Caller::schema_tracker_any(&self.caller),

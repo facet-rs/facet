@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use facet_core::{Def, Shape, StructKind, Type, UserType};
-use roam_schema::{Schema, SchemaKind, SchemaRegistry, TypeSchemaId};
+use roam_types::{Schema, SchemaKind, SchemaRegistry, TypeSchemaId};
 
 use crate::error::{TranslationError, TranslationErrorKind};
 
@@ -189,7 +189,7 @@ pub fn build_plan(
 
 #[allow(clippy::result_large_err)]
 fn build_struct_plan(
-    remote_fields: &[roam_schema::FieldSchema],
+    remote_fields: &[roam_types::FieldSchema],
     local_shape: &'static Shape,
     remote_type_id: TypeSchemaId,
     local_type_name: &str,
@@ -332,7 +332,7 @@ fn build_tuple_plan(
 /// payloads if they differ between remote and local.
 #[allow(clippy::result_large_err)]
 fn build_result_plan(
-    remote_variants: &[roam_schema::VariantSchema],
+    remote_variants: &[roam_types::VariantSchema],
     result_def: facet_core::ResultDef,
     _remote_type_id: TypeSchemaId,
     _local_type_name: &str,
@@ -348,7 +348,7 @@ fn build_result_plan(
             _ => continue,
         };
 
-        if let roam_schema::VariantPayload::Newtype {
+        if let roam_types::VariantPayload::Newtype {
             type_id: remote_inner_id,
         } = &rv.payload
             && let Some(remote_inner_schema) = registry.get(remote_inner_id)
@@ -377,7 +377,7 @@ fn build_result_plan(
 // r[impl schema.translation.enum.payload-compat]
 #[allow(clippy::result_large_err)]
 fn build_enum_plan(
-    remote_variants: &[roam_schema::VariantSchema],
+    remote_variants: &[roam_types::VariantSchema],
     local_shape: &'static Shape,
     remote_type_id: TypeSchemaId,
     local_type_name: &str,
@@ -414,7 +414,7 @@ fn build_enum_plan(
             variant_map.push(Some(local_idx));
 
             // Build per-variant field plan if it's a struct variant
-            if let roam_schema::VariantPayload::Struct {
+            if let roam_types::VariantPayload::Struct {
                 fields: remote_fields,
             } = &remote_variant.payload
                 && (local_variant.data.kind == StructKind::Struct

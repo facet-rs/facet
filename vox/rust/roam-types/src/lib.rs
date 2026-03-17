@@ -125,3 +125,6 @@ pub use shape_classify::*;
 
 mod method_identity;
 pub use method_identity::*;
+
+pub mod schema;
+pub use schema::*;

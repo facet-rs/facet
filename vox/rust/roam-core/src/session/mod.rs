@@ -263,9 +263,6 @@ pub struct Session {
     keepalive: Option<SessionKeepaliveConfig>,
     resume_notifier: watch::Sender<u64>,
     recoverer: Option<Box<dyn ConduitRecoverer>>,
-
-    /// Schema tracker: handles outbound dedup and stores received schemas.
-    schema_tracker: Arc<roam_schema_extract::SchemaTracker>,
 }
 
 #[derive(Debug)]
@@ -294,6 +291,11 @@ pub struct ConnectionState {
     /// Sender for routing incoming messages to the per-connection driver task.
     conn_tx: mpsc::Sender<SelfRef<ConnectionMessage<'static>>>,
     closed_tx: watch::Sender<bool>,
+
+    /// Per-connection schema tracker. Each connection has its own independent
+    /// namespace of type IDs (see r[schema.type-id.per-connection]).
+    // r[impl schema.type-id.per-connection]
+    schema_tracker: Arc<roam_types::SchemaTracker>,
 }
 
 #[derive(Debug)]
@@ -437,16 +439,17 @@ impl ConnectionSender {
     /// Send a schema message on the root connection.
     /// Called before sending request/response data when schema exchange is active.
     // r[impl schema.exchange.ordering]
+    // r[impl schema.type-id.per-connection]
     pub(crate) async fn send_schema_message(
         &self,
-        schemas: &[roam_schema::Schema],
-        method_bindings: &[roam_schema::MethodSchemaBinding],
+        schemas: &[roam_types::Schema],
+        method_bindings: &[roam_types::MethodSchemaBinding],
     ) {
-        let cbor_bytes = roam_schema::build_schema_message(schemas, method_bindings);
+        let cbor_bytes = roam_types::build_schema_message(schemas, method_bindings);
         let _ = self
             .sess_core
             .send(Message {
-                connection_id: ConnectionId::ROOT,
+                connection_id: self.connection_id,
                 payload: MessagePayload::SchemaMessage(roam_types::SchemaMessage {
                     schemas: cbor_bytes,
                 }),
@@ -466,7 +469,7 @@ pub struct ConnectionHandle {
     pub parity: Parity,
     pub(crate) peer_supports_retry: bool,
     /// Schema tracker for this session (shared across all connections).
-    pub(crate) schema_tracker: Arc<roam_schema_extract::SchemaTracker>,
+    pub(crate) schema_tracker: Arc<roam_types::SchemaTracker>,
 }
 
 impl std::fmt::Debug for ConnectionHandle {
@@ -650,7 +653,6 @@ impl Session {
             keepalive,
             resume_notifier,
             recoverer,
-            schema_tracker: Arc::new(roam_schema_extract::SchemaTracker::new()),
         }
     }
 
@@ -831,6 +833,9 @@ impl Session {
             failures: Arc::new(failures_tx),
         };
 
+        // r[impl schema.type-id.per-connection]
+        let schema_tracker = Arc::new(roam_types::SchemaTracker::new());
+
         let parity = local_settings.parity;
         self.conns.insert(
             conn_id,
@@ -840,6 +845,7 @@ impl Session {
                 peer_settings,
                 conn_tx,
                 closed_tx,
+                schema_tracker: Arc::clone(&schema_tracker),
             }),
         );
 
@@ -852,7 +858,7 @@ impl Session {
             resumed_rx,
             parity,
             peer_supports_retry: self.peer_supports_retry,
-            schema_tracker: Arc::clone(&self.schema_tracker),
+            schema_tracker,
         }
     }
 
@@ -1162,10 +1168,18 @@ impl Session {
                 }
             }
             // r[impl schema.exchange.ordering]
+            // r[impl schema.type-id.per-connection]
             MessagePayload::SchemaMessage(schema_msg) => {
-                match roam_schema::parse_schema_message(&schema_msg.schemas) {
+                let tracker = match self.conns.get(&conn_id) {
+                    Some(ConnectionSlot::Active(state)) => &state.schema_tracker,
+                    _ => {
+                        warn!("SchemaMessage for unknown connection {}", conn_id.0);
+                        return;
+                    }
+                };
+                match roam_types::parse_schema_message(&schema_msg.schemas) {
                     Ok(payload) => {
-                        self.schema_tracker.record_received(payload);
+                        tracker.record_received(payload);
                     }
                     Err(e) => {
                         warn!("failed to parse schema message: {}", e);

@@ -72,7 +72,7 @@ pub(crate) fn deserialize_postcard<T: facet::Facet<'static>>(
             .map_err(|e| roam_postcard::DeserializeError::ReflectError(e.to_string()))?;
 
         let plan = roam_postcard::build_identity_plan(T::SHAPE);
-        let registry = roam_schema::SchemaRegistry::new();
+        let registry = roam_types::SchemaRegistry::new();
         let partial = roam_postcard::deserialize_into(partial, bytes, &plan, &registry)?;
 
         partial

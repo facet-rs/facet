@@ -126,7 +126,8 @@ where
             }
         };
         if method_id == billing_service_descriptor().methods[0usize].id {
-            let args: (String,) = match ::roam::schema_deser::schema_deserialize_borrowed(
+            :: roam :: ReplySink :: send_response_schemas (& reply , method_id , < :: core :: result :: Result < u64 , :: roam :: RoamError < :: core :: convert :: Infallible >> as :: roam :: facet :: Facet > :: SHAPE ,) . await ;
+            let args: (String,) = match ::roam::schema_deser::schema_deserialize_args_borrowed(
                 args_bytes,
                 method_id,
                 ::roam::ReplySink::schema_tracker_any(&reply),
@@ -164,23 +165,25 @@ where
             return;
         }
         if method_id == billing_service_descriptor().methods[1usize].id {
-            let args: (String, String) = match ::roam::schema_deser::schema_deserialize_borrowed(
-                args_bytes,
-                method_id,
-                ::roam::ReplySink::schema_tracker_any(&reply),
-            ) {
-                Ok(v) => v,
-                Err(e) => {
-                    reply
-                        .send_error(
-                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
-                                e.to_string(),
-                            ),
-                        )
-                        .await;
-                    return;
-                }
-            };
+            :: roam :: ReplySink :: send_response_schemas (& reply , method_id , < :: core :: result :: Result < u64 , :: roam :: RoamError < TransferError >> as :: roam :: facet :: Facet > :: SHAPE ,) . await ;
+            let args: (String, String) =
+                match ::roam::schema_deser::schema_deserialize_args_borrowed(
+                    args_bytes,
+                    method_id,
+                    ::roam::ReplySink::schema_tracker_any(&reply),
+                ) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        reply
+                            .send_error(
+                                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
+                                    e.to_string(),
+                                ),
+                            )
+                            .await;
+                        return;
+                    }
+                };
             let (from, to) = args;
             let extensions = ::roam::Extensions::new();
             let context = ::roam::RequestContext::with_extensions(
@@ -273,7 +276,7 @@ impl BillingClient {
             }
         };
         let result: Result<u64, ::roam::RoamError<::core::convert::Infallible>> =
-            ::roam::schema_deser::schema_deserialize(
+            ::roam::schema_deser::schema_deserialize_response(
                 ret_bytes,
                 method_id,
                 ::roam::Caller::schema_tracker_any(&self.caller),
@@ -321,7 +324,7 @@ impl BillingClient {
             }
         };
         let result: Result<u64, ::roam::RoamError<TransferError>> =
-            ::roam::schema_deser::schema_deserialize(
+            ::roam::schema_deser::schema_deserialize_response(
                 ret_bytes,
                 method_id,
                 ::roam::Caller::schema_tracker_any(&self.caller),

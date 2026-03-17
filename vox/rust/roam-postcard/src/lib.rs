@@ -322,9 +322,9 @@ mod tests {
     /// Helper: extract schemas for a type and build a registry.
     fn schemas_and_registry(
         shape: &'static facet_core::Shape,
-    ) -> (Vec<roam_schema::Schema>, roam_schema::SchemaRegistry) {
-        let schemas = roam_schema_extract::extract_schemas(shape);
-        let registry = roam_schema::build_registry(&schemas);
+    ) -> (Vec<roam_types::Schema>, roam_types::SchemaRegistry) {
+        let schemas = roam_types::extract_schemas(shape);
+        let registry = roam_types::build_registry(&schemas);
         (schemas, registry)
     }
 

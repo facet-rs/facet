@@ -20,9 +20,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 facet = { workspace = true }
 facet-core = { workspace = true }
 facet-reflect = { workspace = true }
-roam-schema = { workspace = true }
 roam-types = { workspace = true }
 
 [dev-dependencies]
 facet-postcard = { workspace = true }
-roam-schema-extract = { path = "../roam-schema-extract" }

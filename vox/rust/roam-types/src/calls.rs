@@ -169,6 +169,20 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
     fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
         None
     }
+
+    /// Send response schemas for the statically-known response type.
+    ///
+    /// Called by generated dispatch code BEFORE the handler runs.
+    /// The shape MUST be the full `Result<T, RoamError<E>>` wire type,
+    /// not a variant like `Result<(), RoamError<E>>`.
+    // r[impl schema.exchange.callee]
+    fn send_response_schemas(
+        &self,
+        _method_id: crate::MethodId,
+        _response_shape: &'static facet_core::Shape,
+    ) -> impl std::future::Future<Output = ()> + MaybeSend {
+        async {}
+    }
 }
 
 /// Type-erased handler for incoming service calls.

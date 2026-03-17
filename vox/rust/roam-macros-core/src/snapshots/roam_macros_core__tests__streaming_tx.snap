@@ -108,23 +108,25 @@ where
             }
         };
         if method_id == streamer_service_descriptor().methods[0usize].id {
-            let mut args: (i32, Tx<i32>) = match ::roam::schema_deser::schema_deserialize_borrowed(
-                args_bytes,
-                method_id,
-                ::roam::ReplySink::schema_tracker_any(&reply),
-            ) {
-                Ok(v) => v,
-                Err(e) => {
-                    reply
-                        .send_error(
-                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
-                                e.to_string(),
-                            ),
-                        )
-                        .await;
-                    return;
-                }
-            };
+            :: roam :: ReplySink :: send_response_schemas (& reply , method_id , < :: core :: result :: Result < i32 , :: roam :: RoamError < :: core :: convert :: Infallible >> as :: roam :: facet :: Facet > :: SHAPE ,) . await ;
+            let mut args: (i32, Tx<i32>) =
+                match ::roam::schema_deser::schema_deserialize_args_borrowed(
+                    args_bytes,
+                    method_id,
+                    ::roam::ReplySink::schema_tracker_any(&reply),
+                ) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        reply
+                            .send_error(
+                                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
+                                    e.to_string(),
+                                ),
+                            )
+                            .await;
+                        return;
+                    }
+                };
             #[cfg(not(target_arch = "wasm32"))]
             {
                 if let Some(binder) = reply.channel_binder() {
@@ -245,7 +247,7 @@ impl StreamerClient {
             }
         };
         let result: Result<i32, ::roam::RoamError<::core::convert::Infallible>> =
-            ::roam::schema_deser::schema_deserialize(
+            ::roam::schema_deser::schema_deserialize_response(
                 ret_bytes,
                 method_id,
                 ::roam::Caller::schema_tracker_any(&self.caller),

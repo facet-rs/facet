@@ -108,7 +108,8 @@ where
             }
         };
         if method_id == calc_service_descriptor().methods[0usize].id {
-            let args: (f64, f64) = match ::roam::schema_deser::schema_deserialize_borrowed(
+            :: roam :: ReplySink :: send_response_schemas (& reply , method_id , < :: core :: result :: Result < f64 , :: roam :: RoamError < DivError >> as :: roam :: facet :: Facet > :: SHAPE ,) . await ;
+            let args: (f64, f64) = match ::roam::schema_deser::schema_deserialize_args_borrowed(
                 args_bytes,
                 method_id,
                 ::roam::ReplySink::schema_tracker_any(&reply),
@@ -209,7 +210,7 @@ impl CalcClient {
             }
         };
         let result: Result<f64, ::roam::RoamError<DivError>> =
-            ::roam::schema_deser::schema_deserialize(
+            ::roam::schema_deser::schema_deserialize_response(
                 ret_bytes,
                 method_id,
                 ::roam::Caller::schema_tracker_any(&self.caller),

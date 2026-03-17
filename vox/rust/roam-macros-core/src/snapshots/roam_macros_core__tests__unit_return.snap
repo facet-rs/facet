@@ -101,7 +101,8 @@ where
             }
         };
         if method_id == notifier_service_descriptor().methods[0usize].id {
-            let args: (String,) = match ::roam::schema_deser::schema_deserialize_borrowed(
+            :: roam :: ReplySink :: send_response_schemas (& reply , method_id , < :: core :: result :: Result < () , :: roam :: RoamError < :: core :: convert :: Infallible >> as :: roam :: facet :: Facet > :: SHAPE ,) . await ;
+            let args: (String,) = match ::roam::schema_deser::schema_deserialize_args_borrowed(
                 args_bytes,
                 method_id,
                 ::roam::ReplySink::schema_tracker_any(&reply),
@@ -210,7 +211,7 @@ impl NotifierClient {
             }
         };
         let result: Result<(), ::roam::RoamError<::core::convert::Infallible>> =
-            ::roam::schema_deser::schema_deserialize(
+            ::roam::schema_deser::schema_deserialize_response(
                 ret_bytes,
                 method_id,
                 ::roam::Caller::schema_tracker_any(&self.caller),

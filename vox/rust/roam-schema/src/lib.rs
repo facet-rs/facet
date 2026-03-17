@@ -119,6 +119,18 @@ pub struct MethodSchemaBinding {
     pub method_id: u64,
     /// Root TypeSchemaId for this method's args or return type.
     pub root_type_schema_id: TypeSchemaId,
+    /// Whether this binding is for args (caller → callee) or response (callee → caller).
+    pub direction: BindingDirection,
+}
+
+/// Whether a method schema binding describes args or the response type.
+#[derive(Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum BindingDirection {
+    /// The sender will send data of this type as method arguments.
+    Args,
+    /// The sender will send data of this type as the method response.
+    Response,
 }
 
 /// CBOR-encoded payload inside a schema wire message.

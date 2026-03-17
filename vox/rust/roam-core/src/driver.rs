@@ -135,7 +135,7 @@ pub struct DriverReplySink {
     operation_id: Option<u64>,
     operations: Option<Arc<dyn OperationStore>>,
     binder: DriverChannelBinder,
-    schema_tracker: Arc<roam_schema_extract::SchemaTracker>,
+    schema_tracker: Arc<roam_types::SchemaTracker>,
 }
 
 #[allow(clippy::manual_async_fn)]
@@ -168,16 +168,11 @@ impl ReplySink for DriverReplySink {
             .expect("unreachable: send_reply takes self by value");
 
         // r[impl schema.exchange.callee]
-        // Send schemas for response types before the response data.
-        if let Payload::Outgoing { shape, .. } = &response.ret
-            && let Some(prepared) = self
-                .schema_tracker
-                .prepare_send_for_method(self.method_id, shape)
-        {
-            sender
-                .send_schema_message(&prepared.schemas, &prepared.method_bindings)
-                .await;
-        }
+        // Response schemas are sent by the generated dispatch code using the
+        // statically-known response type (see r[schema.exchange.callee]).
+        // send_reply does NOT send schemas — the dispatch code has already
+        // done so before the handler runs, using the correct Result<T, RoamError<E>>
+        // shape regardless of whether the handler succeeds or fails.
 
         if let (Some(operation_id), Some(operations)) = (self.operation_id, self.operations.take())
         {
@@ -205,6 +200,25 @@ impl ReplySink for DriverReplySink {
 
     fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
         Some(&*self.schema_tracker)
+    }
+
+    // r[impl schema.exchange.callee]
+    async fn send_response_schemas(
+        &self,
+        method_id: roam_types::MethodId,
+        response_shape: &'static facet_core::Shape,
+    ) {
+        if let Some(prepared) = self.schema_tracker.prepare_send_for_method(
+            method_id,
+            response_shape,
+            roam_types::BindingDirection::Response,
+        ) {
+            if let Some(sender) = &self.sender {
+                sender
+                    .send_schema_message(&prepared.schemas, &prepared.method_bindings)
+                    .await;
+            }
+        }
     }
 }
 
@@ -433,7 +447,7 @@ pub struct DriverCaller {
     resume_processed_rx: watch::Receiver<u64>,
     peer_supports_retry: bool,
     _drop_guard: Option<Arc<CallerDropGuard>>,
-    pub(crate) schema_tracker: Arc<roam_schema_extract::SchemaTracker>,
+    pub(crate) schema_tracker: Arc<roam_types::SchemaTracker>,
 }
 
 impl DriverCaller {
@@ -588,7 +602,7 @@ impl Caller for DriverCaller {
             if let Payload::Outgoing { shape, .. } = &call.args
                 && let Some(prepared) =
                     self.schema_tracker
-                        .prepare_send_for_method(call.method_id, shape)
+                        .prepare_send_for_method(call.method_id, shape, roam_types::BindingDirection::Args)
             {
                 self.sender
                     .send_schema_message(&prepared.schemas, &prepared.method_bindings)
@@ -784,7 +798,7 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     drop_control_seed: Option<mpsc::UnboundedSender<DropControlRequest>>,
     drop_control_request: DropControlRequest,
     drop_guard: SyncMutex<Option<Weak<CallerDropGuard>>>,
-    schema_tracker: Arc<roam_schema_extract::SchemaTracker>,
+    schema_tracker: Arc<roam_types::SchemaTracker>,
 }
 
 enum DriverLocalControl {

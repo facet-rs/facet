@@ -1,5 +1,5 @@
 use crate::error::DeserializeError;
-use roam_schema::{PrimitiveType, SchemaKind, SchemaRegistry, TypeSchemaId};
+use roam_types::{PrimitiveType, SchemaKind, SchemaRegistry, TypeSchemaId};
 
 pub struct Cursor<'a> {
     input: &'a [u8],
@@ -125,12 +125,12 @@ pub fn skip_value(
                     variant_count: variants.len(),
                 })?;
             match &variant.payload {
-                roam_schema::VariantPayload::Unit => Ok(()),
-                roam_schema::VariantPayload::Newtype { type_id } => {
+                roam_types::VariantPayload::Unit => Ok(()),
+                roam_types::VariantPayload::Newtype { type_id } => {
                     let inner_kind = lookup_kind(type_id, registry)?;
                     skip_value(cursor, inner_kind, registry)
                 }
-                roam_schema::VariantPayload::Struct { fields } => {
+                roam_types::VariantPayload::Struct { fields } => {
                     for field in fields {
                         let field_kind = lookup_kind(&field.type_id, registry)?;
                         skip_value(cursor, field_kind, registry)?;

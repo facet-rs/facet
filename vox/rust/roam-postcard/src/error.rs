@@ -109,7 +109,7 @@ pub struct TranslationError {
     /// Path from the root type to the error site, e.g. `["inner", "name"]`.
     pub path: Vec<String>,
     /// Remote type ID of the root type being translated.
-    pub remote_type_id: roam_schema::TypeSchemaId,
+    pub remote_type_id: roam_types::TypeSchemaId,
     /// Local type name for diagnostics.
     pub local_type_name: String,
     /// The specific incompatibility.
@@ -143,7 +143,7 @@ pub enum TranslationErrorKind {
         local_payload: String,
     },
     /// A type ID referenced by the remote schema was not found in the registry.
-    SchemaNotFound { type_id: roam_schema::TypeSchemaId },
+    SchemaNotFound { type_id: roam_types::TypeSchemaId },
 }
 
 impl TranslationError {
