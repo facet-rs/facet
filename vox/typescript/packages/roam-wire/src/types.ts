@@ -1,250 +1,24 @@
-// Roam wire protocol types for TypeScript (canonical v7 model).
+// Re-export all generated wire protocol types
+export * from "./types.generated.ts";
 
-// Connection settings and handshake
-export type Parity = { tag: "Odd" } | { tag: "Even" };
+// Hand-written additions that aren't derivable from Rust shapes
+import type {
+  ConnectionSettings,
+  Hello,
+  HelloYourself,
+  Message,
+  Metadata,
+  MetadataEntry,
+  MetadataFlags,
+  MetadataValue,
+  Parity,
+} from "./types.generated.ts";
 
-export interface ConnectionSettings {
-  parity: Parity;
-  max_concurrent_requests: number;
-}
-
-export interface Hello {
-  version: number;
-  connection_settings: ConnectionSettings;
-  metadata: Metadata;
-}
-
-export interface HelloYourself {
-  connection_settings: ConnectionSettings;
-  metadata: Metadata;
-}
-
-export interface ProtocolError {
-  description: string;
-}
-
-export interface Ping {
-  nonce: bigint;
-}
-
-export interface Pong {
-  nonce: bigint;
-}
-
-export interface SchemaMessage {
-  schemas: Uint8Array;
-}
-
-// Metadata
-export interface MetadataValueString {
-  tag: "String";
-  value: string;
-}
-
-export interface MetadataValueBytes {
-  tag: "Bytes";
-  value: Uint8Array;
-}
-
-export interface MetadataValueU64 {
-  tag: "U64";
-  value: bigint;
-}
-
-export type MetadataValue = MetadataValueString | MetadataValueBytes | MetadataValueU64;
-
-export type MetadataFlagsRepr = bigint;
-
-export const MetadataFlags = {
-  NONE: 0n,
-  SENSITIVE: 1n << 0n,
-  NO_PROPAGATE: 1n << 1n,
+export const MetadataFlagValues = {
+  NONE: 0n as MetadataFlags,
+  SENSITIVE: (1n << 0n) as MetadataFlags,
+  NO_PROPAGATE: (1n << 1n) as MetadataFlags,
 } as const;
-
-export interface MetadataEntry {
-  key: string;
-  value: MetadataValue;
-  flags: MetadataFlagsRepr;
-}
-
-export type Metadata = MetadataEntry[];
-
-// Connection control
-export interface ConnectionOpen {
-  connection_settings: ConnectionSettings;
-  metadata: Metadata;
-}
-
-export interface ConnectionAccept {
-  connection_settings: ConnectionSettings;
-  metadata: Metadata;
-}
-
-export interface ConnectionReject {
-  metadata: Metadata;
-}
-
-export interface ConnectionClose {
-  metadata: Metadata;
-}
-
-// RPC
-export interface RequestCall {
-  method_id: bigint;
-  args: Uint8Array;
-  channels: bigint[];
-  metadata: Metadata;
-}
-
-export interface RequestResponse {
-  ret: Uint8Array;
-  channels: bigint[];
-  metadata: Metadata;
-}
-
-export interface RequestCancel {
-  metadata: Metadata;
-}
-
-export type RequestBody =
-  | { tag: "Call"; value: RequestCall }
-  | { tag: "Response"; value: RequestResponse }
-  | { tag: "Cancel"; value: RequestCancel };
-
-export interface RequestMessage {
-  id: bigint;
-  body: RequestBody;
-}
-
-// Channels
-export interface ChannelItem {
-  item: Uint8Array;
-}
-
-export interface ChannelClose {
-  metadata: Metadata;
-}
-
-export interface ChannelReset {
-  metadata: Metadata;
-}
-
-export interface ChannelGrantCredit {
-  additional: number;
-}
-
-export type ChannelBody =
-  | { tag: "Item"; value: ChannelItem }
-  | { tag: "Close"; value: ChannelClose }
-  | { tag: "Reset"; value: ChannelReset }
-  | { tag: "GrantCredit"; value: ChannelGrantCredit };
-
-export interface ChannelMessage {
-  id: bigint;
-  body: ChannelBody;
-}
-
-// Top-level message
-export type MessagePayload =
-  | { tag: "Hello"; value: Hello }
-  | { tag: "HelloYourself"; value: HelloYourself }
-  | { tag: "ProtocolError"; value: ProtocolError }
-  | { tag: "Ping"; value: Ping }
-  | { tag: "Pong"; value: Pong }
-  | { tag: "ConnectionOpen"; value: ConnectionOpen }
-  | { tag: "ConnectionAccept"; value: ConnectionAccept }
-  | { tag: "ConnectionReject"; value: ConnectionReject }
-  | { tag: "ConnectionClose"; value: ConnectionClose }
-  | { tag: "RequestMessage"; value: RequestMessage }
-  | { tag: "ChannelMessage"; value: ChannelMessage }
-  | { tag: "SchemaMessage"; value: SchemaMessage };
-
-export interface Message {
-  connection_id: bigint;
-  payload: MessagePayload;
-}
-
-export type MessageHello = Message & { payload: { tag: "Hello"; value: Hello } };
-export type MessageHelloYourself = Message & {
-  payload: { tag: "HelloYourself"; value: HelloYourself };
-};
-export type MessageProtocolError = Message & {
-  payload: { tag: "ProtocolError"; value: ProtocolError };
-};
-export type MessagePing = Message & {
-  payload: { tag: "Ping"; value: Ping };
-};
-export type MessagePong = Message & {
-  payload: { tag: "Pong"; value: Pong };
-};
-export type MessageConnect = Message & { payload: { tag: "ConnectionOpen"; value: ConnectionOpen } };
-export type MessageAccept = Message & {
-  payload: { tag: "ConnectionAccept"; value: ConnectionAccept };
-};
-export type MessageReject = Message & {
-  payload: { tag: "ConnectionReject"; value: ConnectionReject };
-};
-export type MessageGoodbye = Message & {
-  payload: { tag: "ConnectionClose"; value: ConnectionClose };
-};
-export type MessageRequest = Message & {
-  payload: { tag: "RequestMessage"; value: { id: bigint; body: { tag: "Call"; value: RequestCall } } };
-};
-export type MessageResponse = Message & {
-  payload: {
-    tag: "RequestMessage";
-    value: { id: bigint; body: { tag: "Response"; value: RequestResponse } };
-  };
-};
-export type MessageCancel = Message & {
-  payload: {
-    tag: "RequestMessage";
-    value: { id: bigint; body: { tag: "Cancel"; value: RequestCancel } };
-  };
-};
-export type MessageData = Message & {
-  payload: { tag: "ChannelMessage"; value: { id: bigint; body: { tag: "Item"; value: ChannelItem } } };
-};
-export type MessageClose = Message & {
-  payload: {
-    tag: "ChannelMessage";
-    value: { id: bigint; body: { tag: "Close"; value: ChannelClose } };
-  };
-};
-export type MessageReset = Message & {
-  payload: {
-    tag: "ChannelMessage";
-    value: { id: bigint; body: { tag: "Reset"; value: ChannelReset } };
-  };
-};
-export type MessageCredit = Message & {
-  payload: {
-    tag: "ChannelMessage";
-    value: { id: bigint; body: { tag: "GrantCredit"; value: ChannelGrantCredit } };
-  };
-};
-
-export const MessageDiscriminant = {
-  Hello: 0,
-  HelloYourself: 1,
-  ProtocolError: 2,
-  ConnectionOpen: 3,
-  ConnectionAccept: 4,
-  ConnectionReject: 5,
-  ConnectionClose: 6,
-  RequestMessage: 7,
-  ChannelMessage: 8,
-  Ping: 9,
-  Pong: 10,
-  SchemaMessage: 11,
-} as const;
-
-export const MetadataValueDiscriminant = {
-  String: 0,
-  Bytes: 1,
-  U64: 2,
-} as const;
-
 
 export const HelloDiscriminant = {
   V7: 7,
@@ -304,7 +78,7 @@ export function metadataU64(value: bigint): MetadataValue {
 export function metadataEntry(
   key: string,
   value: MetadataValue,
-  flags: MetadataFlagsRepr = MetadataFlags.NONE,
+  flags: MetadataFlags = MetadataFlagValues.NONE,
 ): MetadataEntry {
   return { key, value, flags };
 }

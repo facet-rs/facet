@@ -7,24 +7,22 @@ export {
 } from "./rpc_error.ts";
 
 export type {
+  ConnectionId,
   Parity,
   ConnectionSettings,
+  MetadataValue,
+  MetadataFlags,
+  MetadataEntry,
   Hello,
   HelloYourself,
   ProtocolError,
-  Ping,
-  Pong,
-  MetadataValueString,
-  MetadataValueBytes,
-  MetadataValueU64,
-  MetadataValue,
-  MetadataFlagsRepr,
-  MetadataEntry,
-  Metadata,
   ConnectionOpen,
   ConnectionAccept,
   ConnectionReject,
   ConnectionClose,
+  RequestId,
+  MethodId,
+  ChannelId,
   RequestCall,
   RequestResponse,
   RequestCancel,
@@ -36,8 +34,12 @@ export type {
   ChannelGrantCredit,
   ChannelBody,
   ChannelMessage,
+  Ping,
+  Pong,
+  SchemaMessage,
   MessagePayload,
   Message,
+  Metadata,
   MessageHello,
   MessageHelloYourself,
   MessageProtocolError,
@@ -57,7 +59,14 @@ export type {
 } from "./types.ts";
 
 export {
-  MetadataFlags,
+  MessageDiscriminant,
+  MetadataValueDiscriminant,
+  RequestBodyDiscriminant,
+  ChannelBodyDiscriminant,
+} from "./types.ts";
+
+export {
+  MetadataFlagValues,
   parityOdd,
   parityEven,
   connectionSettings,

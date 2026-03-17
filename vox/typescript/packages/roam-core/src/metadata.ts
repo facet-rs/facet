@@ -4,7 +4,7 @@
 // and conversion functions to/from wire format.
 
 import type { MetadataEntry, MetadataValue } from "@bearcove/roam-wire";
-import { metadataString, metadataBytes, metadataU64, MetadataFlags } from "@bearcove/roam-wire";
+import { metadataString, metadataBytes, metadataU64, MetadataFlagValues } from "@bearcove/roam-wire";
 
 /**
  * Metadata value type for client middleware.
@@ -42,7 +42,7 @@ export class ClientMetadata {
    * Set a metadata entry with default flags (none).
    */
   set(key: string, value: ClientMetadataValue): this {
-    this.entries.set(key, { value, flags: MetadataFlags.NONE });
+    this.entries.set(key, { value, flags: MetadataFlagValues.NONE });
     return this;
   }
 
@@ -51,7 +51,7 @@ export class ClientMetadata {
    * r[impl call.metadata.flags] - SENSITIVE flag marks values for redaction
    */
   setSensitive(key: string, value: ClientMetadataValue): this {
-    this.entries.set(key, { value, flags: MetadataFlags.SENSITIVE });
+    this.entries.set(key, { value, flags: MetadataFlagValues.SENSITIVE });
     return this;
   }
 
@@ -74,7 +74,7 @@ export class ClientMetadata {
    * Get the flags for a key.
    */
   getFlags(key: string): bigint {
-    return this.entries.get(key)?.flags ?? MetadataFlags.NONE;
+    return this.entries.get(key)?.flags ?? MetadataFlagValues.NONE;
   }
 
   /**
@@ -82,7 +82,7 @@ export class ClientMetadata {
    */
   isSensitive(key: string): boolean {
     const flags = this.getFlags(key);
-    return (flags & MetadataFlags.SENSITIVE) !== 0n;
+    return (flags & MetadataFlagValues.SENSITIVE) !== 0n;
   }
 
   /**

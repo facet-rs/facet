@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  MetadataFlags,
+  MetadataFlagValues,
   connectionSettings,
   helloV7,
   helloYourself,
@@ -37,7 +37,7 @@ describe("wire helpers", () => {
   });
 
   it("builds nested request and channel helpers with the expected tags", () => {
-    const metadata = [metadataEntry("trace-id", metadataString("abc123"), MetadataFlags.NONE)];
+    const metadata = [metadataEntry("trace-id", metadataString("abc123"), MetadataFlagValues.NONE)];
     const request = messageRequest(11n, 42n, new Uint8Array([1, 2]), metadata, [3n], 2n);
     const item = messageData(5n, new Uint8Array([8, 7]), 2n);
     const close = messageClose(5n, 2n, metadata);
@@ -66,11 +66,11 @@ describe("wire helpers", () => {
 describe("wire codec", () => {
   it("roundtrips arbitrary request payloads and consumes the full buffer", () => {
     const metadata = [
-      metadataEntry("trace-id", metadataString("abc123"), MetadataFlags.NONE),
+      metadataEntry("trace-id", metadataString("abc123"), MetadataFlagValues.NONE),
       metadataEntry(
         "payload",
         metadataBytes(new Uint8Array([0xde, 0xad, 0xbe, 0xef])),
-        MetadataFlags.SENSITIVE,
+        MetadataFlagValues.SENSITIVE,
       ),
     ];
     const message = messageRequest(99n, 0xE5A1_D6B2_C390_F001n, encodeU32(0x1234_5678), metadata, [

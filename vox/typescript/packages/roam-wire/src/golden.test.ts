@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { decodeVarintNumber, decodeString, decodeU32, encodeU16, encodeU32, encodeU64 } from "@bearcove/roam-postcard";
 import {
   type Message,
-  MetadataFlags,
+  MetadataFlagValues,
   parityOdd,
   parityEven,
   connectionSettings,
@@ -44,13 +44,13 @@ function loadGoldenVector(path: string): Uint8Array {
 
 function sampleMetadata() {
   return [
-    metadataEntry("trace-id", metadataString("abc123"), MetadataFlags.NONE),
+    metadataEntry("trace-id", metadataString("abc123"), MetadataFlagValues.NONE),
     metadataEntry(
       "auth",
       metadataBytes(new Uint8Array([0xde, 0xad, 0xbe, 0xef])),
-      MetadataFlags.SENSITIVE | MetadataFlags.NO_PROPAGATE,
+      MetadataFlagValues.SENSITIVE | MetadataFlagValues.NO_PROPAGATE,
     ),
-    metadataEntry("attempt", metadataU64(2n), MetadataFlags.NONE),
+    metadataEntry("attempt", metadataU64(2n), MetadataFlagValues.NONE),
   ];
 }
 

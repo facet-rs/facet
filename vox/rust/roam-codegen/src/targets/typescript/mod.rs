@@ -13,6 +13,7 @@ pub mod http_client;
 pub mod schema;
 pub mod server;
 pub mod types;
+pub mod wire;
 
 use crate::code_writer::CodeWriter;
 use roam_types::{MethodDescriptor, ServiceDescriptor};

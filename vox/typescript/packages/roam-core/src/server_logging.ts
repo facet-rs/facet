@@ -1,4 +1,4 @@
-import { MetadataFlags } from "@bearcove/roam-wire";
+import { MetadataFlagValues } from "@bearcove/roam-wire";
 import type { RequestContext } from "./request_context.ts";
 import type { ServerCallOutcome, ServerMiddleware } from "./server_middleware.ts";
 
@@ -12,7 +12,7 @@ export interface ServerLoggingOptions {
 function metadataForLog(context: RequestContext): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value, flags] of context.metadata) {
-    if ((flags & MetadataFlags.SENSITIVE) !== 0n) {
+    if ((flags & MetadataFlagValues.SENSITIVE) !== 0n) {
       out[key] = "[REDACTED]";
     } else if (value instanceof Uint8Array) {
       out[key] = `<${value.length} bytes>`;

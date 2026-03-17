@@ -1,5 +1,5 @@
 import type { Metadata } from "@bearcove/roam-wire";
-import { MetadataFlags, metadataEntry, metadataU64 } from "@bearcove/roam-wire";
+import { MetadataFlagValues, metadataEntry, metadataU64 } from "@bearcove/roam-wire";
 import { ClientMetadata } from "./metadata.ts";
 
 export const RETRY_SUPPORT_METADATA_KEY = "roam-retry-support";
@@ -15,7 +15,7 @@ export function appendRetrySupportMetadata(metadata: Metadata): Metadata {
     metadataEntry(
       RETRY_SUPPORT_METADATA_KEY,
       metadataU64(RETRY_SUPPORT_VERSION),
-      MetadataFlags.NONE,
+      MetadataFlagValues.NONE,
     ),
   ];
 }
@@ -41,5 +41,5 @@ export function ensureOperationId(metadata: ClientMetadata, operationId: bigint)
   if (metadata.has(OPERATION_ID_METADATA_KEY)) {
     return;
   }
-  metadata.setWithFlags(OPERATION_ID_METADATA_KEY, operationId, MetadataFlags.NONE);
+  metadata.setWithFlags(OPERATION_ID_METADATA_KEY, operationId, MetadataFlagValues.NONE);
 }
