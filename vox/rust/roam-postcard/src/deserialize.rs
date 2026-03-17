@@ -90,28 +90,12 @@ fn deserialize_value<'de, 'facet, const BORROW: bool>(
     plan: &TranslationPlan,
     registry: &SchemaRegistry,
 ) -> Result<Partial<'facet, BORROW>, DeserializeError> {
-    deserialize_value_inner::<BORROW>(partial, cursor, plan, registry, false)
-}
-
-fn deserialize_value_inner<'de, 'facet, const BORROW: bool>(
-    partial: Partial<'facet, BORROW>,
-    cursor: &mut Cursor<'de>,
-    plan: &TranslationPlan,
-    registry: &SchemaRegistry,
-    is_trailing: bool,
-) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let shape = partial.shape();
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
 
-    // Handle opaque adapters (e.g. Payload).
+    // Handle opaque adapters (e.g. Payload). Always length-prefixed.
     if let Some(adapter) = shape.opaque_adapter {
-        let bytes = if is_trailing {
-            // Trailing opaque fields consume all remaining bytes (no length prefix).
-            cursor.read_bytes(cursor.remaining())?
-        } else {
-            // Non-trailing opaque fields are length-prefixed.
-            cursor.read_byte_slice()?
-        };
+        let bytes = cursor.read_byte_slice()?;
         let deser_fn = adapter.deserialize;
         let input = facet::OpaqueDeserialize::Borrowed(bytes);
         #[allow(unsafe_code)]
@@ -242,38 +226,17 @@ fn deserialize_struct_planned<'de, 'facet, const BORROW: bool>(
 ) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
 
-    // Get the struct fields for trailing attribute checks.
-    let struct_fields = match partial.shape().ty {
-        Type::User(UserType::Struct(s)) => s.fields,
-        _ => &[],
-    };
-
     let mut partial = partial;
 
     for op in &plan.field_ops {
         match op {
             FieldOp::Read { local_index } => {
-                let trailing = struct_fields
-                    .get(*local_index)
-                    .is_some_and(|f| f.has_builtin_attr("trailing"));
                 partial = partial.begin_nth_field(*local_index).map_err(re)?;
                 if let Some(nested_plan) = plan.nested.get(local_index) {
-                    partial = deserialize_value_inner::<BORROW>(
-                        partial,
-                        cursor,
-                        nested_plan,
-                        registry,
-                        trailing,
-                    )?;
+                    partial = deserialize_value::<BORROW>(partial, cursor, nested_plan, registry)?;
                 } else {
                     let field_plan = build_identity_plan(partial.shape());
-                    partial = deserialize_value_inner::<BORROW>(
-                        partial,
-                        cursor,
-                        &field_plan,
-                        registry,
-                        trailing,
-                    )?;
+                    partial = deserialize_value::<BORROW>(partial, cursor, &field_plan, registry)?;
                 }
                 partial = partial.end().map_err(re)?;
             }
@@ -326,18 +289,10 @@ fn deserialize_enum_planned<'de, 'facet, const BORROW: bool>(
             for op in &variant_plan.field_ops {
                 match op {
                     FieldOp::Read { local_index } => {
-                        let trailing = variant_fields
-                            .get(*local_index)
-                            .is_some_and(|f| f.has_builtin_attr("trailing"));
                         partial = partial.begin_nth_field(*local_index).map_err(re)?;
                         let field_plan = build_identity_plan(partial.shape());
-                        partial = deserialize_value_inner::<BORROW>(
-                            partial,
-                            cursor,
-                            &field_plan,
-                            registry,
-                            trailing,
-                        )?;
+                        partial =
+                            deserialize_value::<BORROW>(partial, cursor, &field_plan, registry)?;
                         partial = partial.end().map_err(re)?;
                     }
                     FieldOp::Skip { type_id } => {
@@ -351,17 +306,10 @@ fn deserialize_enum_planned<'de, 'facet, const BORROW: bool>(
                 }
             }
         } else {
-            for (i, variant_field) in variant_fields.iter().enumerate() {
-                let trailing = variant_field.has_builtin_attr("trailing");
+            for (i, _variant_field) in variant_fields.iter().enumerate() {
                 partial = partial.begin_nth_field(i).map_err(re)?;
                 let field_plan = build_identity_plan(partial.shape());
-                partial = deserialize_value_inner::<BORROW>(
-                    partial,
-                    cursor,
-                    &field_plan,
-                    registry,
-                    trailing,
-                )?;
+                partial = deserialize_value::<BORROW>(partial, cursor, &field_plan, registry)?;
                 partial = partial.end().map_err(re)?;
             }
         }
@@ -387,16 +335,9 @@ fn deserialize_enum_planned<'de, 'facet, const BORROW: bool>(
 
         let mut partial = partial.select_nth_variant(remote_disc).map_err(re)?;
         for i in 0..field_count {
-            let trailing = variant.data.fields[i].has_builtin_attr("trailing");
             partial = partial.begin_nth_field(i).map_err(re)?;
             let field_plan = build_identity_plan(partial.shape());
-            partial = deserialize_value_inner::<BORROW>(
-                partial,
-                cursor,
-                &field_plan,
-                registry,
-                trailing,
-            )?;
+            partial = deserialize_value::<BORROW>(partial, cursor, &field_plan, registry)?;
             partial = partial.end().map_err(re)?;
         }
         Ok(partial)

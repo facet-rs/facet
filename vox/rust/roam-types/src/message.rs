@@ -194,7 +194,6 @@ structstruck::strike! {
                                     pub metadata: Metadata<'payload>,
 
                                     /// Argument tuple
-                                    #[facet(trailing)]
                                     pub args: Payload<'payload>,
                                 }),
 
@@ -207,7 +206,6 @@ structstruck::strike! {
                                     pub metadata: Metadata<'payload>,
 
                                     /// Return value (`Result<T, RoamError<E>>`, where E could be Infallible depending on signature)
-                                    #[facet(trailing)]
                                     pub ret: Payload<'payload>,
                                 }),
 
@@ -237,7 +235,6 @@ structstruck::strike! {
                                 /// implicitly by calls.
                                 Item(pub struct ChannelItem<'payload> {
                                     /// The item itself
-                                    #[facet(trailing)]
                                     pub item: Payload<'payload>,
                                 }),
 

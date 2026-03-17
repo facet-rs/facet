@@ -826,13 +826,13 @@ mod tests {
     }
 
     #[test]
-    fn trailing_opaque_round_trip() {
+    fn opaque_round_trip() {
         use facet::{
             Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst, Shape,
         };
         use std::marker::PhantomData;
 
-        // A minimal opaque adapter for testing trailing behavior.
+        // A minimal opaque adapter for testing.
         #[derive(Debug, Facet)]
         #[repr(u8)]
         #[facet(opaque = TestPayloadAdapter, traits(Debug))]
@@ -871,11 +871,10 @@ mod tests {
             }
         }
 
-        // A struct with a trailing opaque field, mimicking RequestCall.
+        // A struct with an opaque field, mimicking RequestCall.
         #[derive(Debug, Facet)]
         struct TestCall<'a> {
             id: u32,
-            #[facet(trailing)]
             payload: TestPayload<'a>,
         }
 
@@ -915,7 +914,7 @@ mod tests {
     }
 
     #[test]
-    fn trailing_opaque_vec_u8_round_trip() {
+    fn opaque_vec_u8_round_trip() {
         use facet::{
             Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst, Shape,
         };
@@ -962,7 +961,6 @@ mod tests {
         #[derive(Debug, Facet)]
         struct TestCall2<'a> {
             id: u32,
-            #[facet(trailing)]
             payload: TestPayload2<'a>,
         }
 
