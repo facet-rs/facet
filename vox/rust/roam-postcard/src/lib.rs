@@ -731,7 +731,7 @@ mod tests {
         let r = plan_for(T::SHAPE, T::SHAPE).unwrap();
 
         let result: T = from_slice_with_plan(
-            &to_vec(&Ok::<_, MyError>(42)).unwrap(),
+            &to_vec(&Ok::<u32, MyError>(42u32)).unwrap(),
             &r.plan,
             &r.remote.registry,
         )
