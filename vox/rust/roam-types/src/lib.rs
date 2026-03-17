@@ -82,6 +82,9 @@ pub use requests::*;
 mod message;
 pub use message::*;
 
+mod handshake;
+pub use handshake::*;
+
 mod selfref;
 pub use selfref::*;
 

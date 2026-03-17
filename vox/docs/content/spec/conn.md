@@ -348,14 +348,13 @@ starts only after that conduit has been selected and initialized.
 > `MessagePayload` enum that follows.
 >
 > 1. The initiator sends a **`Hello`** containing:
->    - `version`: MUST be `8`
 >    - `parity`: the identifier partition desired by the initiator
 >    - `connection_settings`: limits for the root connection
 >    - `message_payload_schema`: the initiator's schema for `MessagePayload`
 >      (the postcard enum used for all subsequent communication)
 >
-> 2. The acceptor validates the version, adopts the opposite parity, compares
->    the `MessagePayload` schemas, and replies with one of:
+> 2. The acceptor adopts the opposite parity, compares the `MessagePayload`
+>    schemas, and replies with one of:
 >    - **`HelloYourself`** containing:
 >      - `connection_settings`: limits for the root connection
 >      - `message_payload_schema`: the acceptor's schema for `MessagePayload`
@@ -401,11 +400,12 @@ starts only after that conduit has been selected and initialized.
 > `StableConduit`) does not re-exchange protocol schemas. Session resumption
 > (new handshake) does.
 
-> r[session.handshake.version]
+> r[session.handshake.unversioned]
 >
-> The version field in `Hello` identifies the protocol generation. Version 8
-> uses the CBOR handshake with protocol schema exchange. Peers MUST reject
-> versions they do not support via `Sorry`.
+> There is no version field in `Hello`. Protocol evolution is handled entirely
+> through schema exchange: each peer describes its `MessagePayload` enum and
+> peers build translation plans from the schemas. If a peer's schema is
+> missing a variant the other peer requires, the handshake fails with `Sorry`.
 
 > r[session.handshake.resume]
 >

@@ -80,7 +80,7 @@ structstruck::strike! {
     // r[impl session.symmetry]
     #[structstruck::each[derive(Debug, Facet)]]
     pub struct Message<'payload> {
-        /// Connection ID: 0 for control messages (Hello, HelloYourself)
+        /// Connection ID: 0 for control messages (ProtocolError, Ping, Pong, SchemaMessage)
         pub connection_id: ConnectionId,
 
         /// Message payload
@@ -91,32 +91,6 @@ structstruck::strike! {
                 // ========================================================================
                 // Control (conn 0 only)
                 // ========================================================================
-
-                /// Sent by initiator to acceptor as the first message
-                // r[impl session.handshake]
-                // r[impl session.connection-settings.hello]
-                // r[impl schema.method-id.negotiation]
-                Hello(pub struct Hello<'payload> {
-                    /// Must be equal to 7
-                    pub version: u32,
-
-                    /// Connection limits advertised by the initiator for the root connection.
-                    /// Parity is included in ConnectionSettings.
-                    pub connection_settings: ConnectionSettings,
-
-                    /// Metadata associated with the connection.
-                    pub metadata: Metadata<'payload>,
-                }),
-
-                /// Sent by acceptor back to initiator. Poetic on purpose, I'm not changing the name.
-                // r[impl session.connection-settings.hello]
-                HelloYourself(pub struct HelloYourself<'payload> {
-                    /// Connection limits advertised by the acceptor for the root connection.
-                    pub connection_settings: ConnectionSettings,
-
-                    /// You can _also_ have metadata if you want.
-                    pub metadata: Metadata<'payload>,
-                }),
 
                 /// Sent by either peer when the counterpart has violated the protocol.
                 /// The sender closes the transport immediately after sending this message.

@@ -615,6 +615,18 @@ impl<'a> ExtractCtx<'a> {
                     .collect();
                 SchemaKind::Enum { variants }
             }
+            Type::User(UserType::Opaque) => {
+                // Opaque types (like Payload) are represented as bytes on the wire.
+                self.stack.pop();
+                self.push_schema(
+                    shape,
+                    type_id,
+                    SchemaKind::Primitive {
+                        primitive_type: PrimitiveType::Bytes,
+                    },
+                );
+                return type_id;
+            }
             Type::Pointer(_) => {
                 // Follow pointer type params
                 if let Some(inner) = shape.type_params.first() {

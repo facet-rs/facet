@@ -377,13 +377,10 @@ fn codegen_typescript_wire_schemas(
         "MetadataEntrySchema",
         <rt::MetadataEntry<'static> as facet::Facet<'static>>::SHAPE
     );
-    emit_schema!(
-        "HelloSchema",
-        <rt::Hello<'static> as facet::Facet<'static>>::SHAPE
-    );
+    emit_schema!("HelloSchema", <rt::Hello as facet::Facet<'static>>::SHAPE);
     emit_schema!(
         "HelloYourselfSchema",
-        <rt::HelloYourself<'static> as facet::Facet<'static>>::SHAPE
+        <rt::HelloYourself as facet::Facet<'static>>::SHAPE
     );
     emit_schema!(
         "ProtocolErrorSchema",
@@ -641,8 +638,8 @@ fn codegen_swift_wire(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
         wire_type!("ConnectionSettingsV7", rt::ConnectionSettings),
         wire_type!("MetadataValueV7", rt::MetadataValue<'static>),
         wire_type!("MetadataEntryV7", rt::MetadataEntry<'static>),
-        wire_type!("HelloV7", rt::Hello<'static>),
-        wire_type!("HelloYourselfV7", rt::HelloYourself<'static>),
+        wire_type!("HelloV7", rt::Hello),
+        wire_type!("HelloYourselfV7", rt::HelloYourself),
         wire_type!("ProtocolErrorV7", rt::ProtocolError<'static>),
         wire_type!("PingV7", rt::Ping),
         wire_type!("PongV7", rt::Pong),

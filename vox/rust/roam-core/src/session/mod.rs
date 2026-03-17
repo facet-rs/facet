@@ -4,20 +4,15 @@ use moire::sync::mpsc;
 use roam_types::{
     ChannelMessage, Conduit, ConduitRx, ConduitTx, ConduitTxPermit, ConnectionAccept,
     ConnectionClose, ConnectionId, ConnectionOpen, ConnectionReject, ConnectionSettings,
-    IdAllocator, MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload, Metadata, Parity,
-    RequestBody, RequestId, RequestMessage, RequestResponse, SelfRef, SessionResumeKey,
-    SessionRole, append_retry_support_metadata, append_session_resume_key_metadata,
-    metadata_session_resume_key, metadata_supports_retry,
+    HandshakeResult, IdAllocator, MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload,
+    Metadata, Parity, RequestBody, RequestId, RequestMessage, RequestResponse, SelfRef,
+    SessionResumeKey, SessionRole,
 };
 use tokio::sync::watch;
 use tracing::{debug, warn};
 
 mod builders;
 pub use builders::*;
-
-// r[impl session.handshake]
-/// Current roam session protocol version.
-pub const PROTOCOL_VERSION: u32 = 7;
 
 /// Session-level protocol keepalive configuration.
 #[derive(Debug, Clone, Copy)]
@@ -76,6 +71,7 @@ struct CloseRequest {
 struct ResumeRequest {
     tx: Arc<dyn DynConduitTx>,
     rx: Box<dyn DynConduitRx>,
+    handshake_result: HandshakeResult,
     result_tx: moire::sync::oneshot::Sender<Result<(), SessionError>>,
 }
 
@@ -123,6 +119,7 @@ pub struct SessionHandle {
     close_tx: mpsc::Sender<CloseRequest>,
     resume_tx: mpsc::Sender<ResumeRequest>,
     control_tx: mpsc::UnboundedSender<DropControlRequest>,
+    resume_key: Option<SessionResumeKey>,
 }
 
 impl SessionHandle {
@@ -176,7 +173,11 @@ impl SessionHandle {
             .map_err(|_| SessionError::Protocol("session closed".into()))?
     }
 
-    pub async fn resume<I: crate::IntoConduit>(&self, into_conduit: I) -> Result<(), SessionError>
+    pub async fn resume<I: crate::IntoConduit>(
+        &self,
+        into_conduit: I,
+        handshake_result: HandshakeResult,
+    ) -> Result<(), SessionError>
     where
         I::Conduit: Conduit<Msg = MessageFamily> + 'static,
         <I::Conduit as Conduit>::Tx: MaybeSend + MaybeSync + 'static,
@@ -184,22 +185,34 @@ impl SessionHandle {
         <I::Conduit as Conduit>::Rx: MaybeSend + 'static,
     {
         let (tx, rx) = into_conduit.into_conduit().split();
-        self.resume_parts(Arc::new(tx), Box::new(rx)).await
+        self.resume_parts(Arc::new(tx), Box::new(rx), handshake_result)
+            .await
     }
 
     pub(crate) async fn resume_parts(
         &self,
         tx: Arc<dyn DynConduitTx>,
         rx: Box<dyn DynConduitRx>,
+        handshake_result: HandshakeResult,
     ) -> Result<(), SessionError> {
         let (result_tx, result_rx) = moire::sync::oneshot::channel("session.resume_result");
         self.resume_tx
-            .send(ResumeRequest { tx, rx, result_tx })
+            .send(ResumeRequest {
+                tx,
+                rx,
+                handshake_result,
+                result_tx,
+            })
             .await
             .map_err(|_| SessionError::Protocol("session closed".into()))?;
         result_rx
             .await
             .map_err(|_| SessionError::Protocol("session closed".into()))?
+    }
+
+    /// Returns the session resume key, if the session is resumable.
+    pub fn resume_key(&self) -> Option<&SessionResumeKey> {
+        self.resume_key.as_ref()
     }
 
     /// Request shutdown of the entire session (root + all virtual connections).
@@ -596,14 +609,6 @@ impl std::fmt::Display for SessionError {
 
 impl std::error::Error for SessionError {}
 
-fn fresh_session_resume_key() -> Result<SessionResumeKey, SessionError> {
-    let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).map_err(|error| {
-        SessionError::Protocol(format!("failed to generate session key: {error}"))
-    })?;
-    Ok(SessionResumeKey(bytes))
-}
-
 impl Session {
     #[allow(clippy::too_many_arguments)]
     fn pre_handshake<Tx, Rx>(
@@ -661,150 +666,23 @@ impl Session {
     }
 
     // r[impl session.handshake]
-    async fn establish_as_initiator(
+    fn establish_from_handshake(
         &mut self,
-        settings: ConnectionSettings,
-        metadata: Metadata<'_>,
+        result: HandshakeResult,
     ) -> Result<ConnectionHandle, SessionError> {
-        use roam_types::{Hello, MessagePayload};
+        self.role = result.role;
+        self.parity = result.our_settings.parity;
+        self.conn_ids = IdAllocator::new(result.our_settings.parity);
+        self.local_root_settings = result.our_settings.clone();
+        self.peer_root_settings = Some(result.peer_settings.clone());
+        self.peer_supports_retry = result.peer_supports_retry;
+        self.session_resume_key = result.session_resume_key;
 
-        self.role = SessionRole::Initiator;
-        self.parity = settings.parity;
-        self.conn_ids = IdAllocator::new(settings.parity);
-        self.local_root_settings = settings.clone();
-
-        let mut hello_metadata = metadata.to_vec();
-        append_retry_support_metadata(&mut hello_metadata);
-
-        // Send Hello
-        self.sess_core
-            .send(Message {
-                connection_id: ConnectionId::ROOT,
-                payload: MessagePayload::Hello(Hello {
-                    version: PROTOCOL_VERSION,
-                    connection_settings: settings.clone(),
-                    metadata: hello_metadata,
-                }),
-            })
-            .await
-            .map_err(|_| SessionError::Protocol("failed to send Hello".into()))?;
-
-        // Receive HelloYourself
-        let (peer_settings, peer_supports_retry, session_resume_key) =
-            match self.rx.recv_msg().await {
-                Ok(Some(msg)) => {
-                    let payload = msg.map(|m| m.payload);
-                    match &*payload {
-                        MessagePayload::HelloYourself(hy) => (
-                            hy.connection_settings.clone(),
-                            metadata_supports_retry(&hy.metadata),
-                            metadata_session_resume_key(&hy.metadata),
-                        ),
-                        MessagePayload::ProtocolError(e) => {
-                            return Err(SessionError::Protocol(e.description.to_owned()));
-                        }
-                        _ => {
-                            return Err(SessionError::Protocol("expected HelloYourself".into()));
-                        }
-                    }
-                }
-                Ok(None) => {
-                    return Err(SessionError::Protocol(
-                        "peer closed during handshake".into(),
-                    ));
-                }
-                Err(e) => return Err(SessionError::Protocol(e.to_string())),
-            };
-        self.peer_supports_retry = peer_supports_retry;
-        self.peer_root_settings = Some(peer_settings.clone());
-        self.session_resume_key = session_resume_key;
         if self.resumable && self.session_resume_key.is_none() {
             return Err(SessionError::NotResumable);
         }
 
-        Ok(self.make_root_handle(settings, peer_settings))
-    }
-
-    // r[impl session.handshake]
-    #[moire::instrument]
-    async fn establish_as_acceptor(
-        &mut self,
-        settings: ConnectionSettings,
-        metadata: Metadata<'_>,
-    ) -> Result<ConnectionHandle, SessionError> {
-        use roam_types::{HelloYourself, MessagePayload};
-
-        self.role = SessionRole::Acceptor;
-
-        // Receive Hello
-        let (peer_settings, peer_supports_retry) = match self.rx.recv_msg().await {
-            Ok(Some(msg)) => {
-                let payload = msg.map(|m| m.payload);
-                match &*payload {
-                    MessagePayload::Hello(h) => {
-                        if h.version != PROTOCOL_VERSION {
-                            return Err(SessionError::Protocol(format!(
-                                "version mismatch: got {}, expected {PROTOCOL_VERSION}",
-                                h.version
-                            )));
-                        }
-                        (
-                            h.connection_settings.clone(),
-                            metadata_supports_retry(&h.metadata),
-                        )
-                    }
-                    MessagePayload::ProtocolError(e) => {
-                        return Err(SessionError::Protocol(e.description.to_owned()));
-                    }
-                    _ => {
-                        return Err(SessionError::Protocol("expected Hello".into()));
-                    }
-                }
-            }
-            Ok(None) => {
-                return Err(SessionError::Protocol(
-                    "peer closed during handshake".into(),
-                ));
-            }
-            Err(e) => return Err(SessionError::Protocol(e.to_string())),
-        };
-        self.peer_supports_retry = peer_supports_retry;
-
-        // Acceptor parity is opposite of initiator
-        let our_settings = ConnectionSettings {
-            parity: peer_settings.parity.other(),
-            ..settings
-        };
-        self.parity = our_settings.parity;
-        self.conn_ids = IdAllocator::new(our_settings.parity);
-        self.local_root_settings = our_settings.clone();
-        self.peer_root_settings = Some(peer_settings.clone());
-
-        let mut hello_metadata = metadata.to_vec();
-        append_retry_support_metadata(&mut hello_metadata);
-        if self.resumable {
-            self.session_resume_key = Some(fresh_session_resume_key()?);
-            append_session_resume_key_metadata(
-                &mut hello_metadata,
-                self.session_resume_key
-                    .as_ref()
-                    .expect("resumable acceptor must set a session key"),
-            );
-        }
-
-        // Send HelloYourself
-        self.sess_core
-            .send(Message {
-                connection_id: ConnectionId::ROOT,
-                payload: MessagePayload::HelloYourself(HelloYourself {
-                    connection_settings: our_settings.clone(),
-                    metadata: hello_metadata,
-                }),
-            })
-            .await
-            .map_err(|_| SessionError::Protocol("failed to send HelloYourself".into()))?;
-
-        Ok(self.make_root_handle(our_settings, peer_settings))
+        Ok(self.make_root_handle(result.our_settings, result.peer_settings))
     }
 
     fn make_root_handle(
@@ -939,8 +817,8 @@ impl Session {
 
         if let Some(recoverer) = self.recoverer.as_mut() {
             match recoverer.next_conduit().await {
-                Ok((tx, rx)) => {
-                    let result = self.resume_session(tx, rx).await;
+                Ok((tx, rx, handshake_result)) => {
+                    let result = self.resume_from_handshake(tx, rx, handshake_result);
                     match result {
                         Ok(()) => {
                             let next_generation = self.resume_notifier.borrow().wrapping_add(1);
@@ -958,7 +836,7 @@ impl Session {
         loop {
             tokio::select! {
                 Some(req) = self.resume_rx.recv() => {
-                    let result = self.resume_session(req.tx, req.rx).await;
+                    let result = self.resume_from_handshake(req.tx, req.rx, req.handshake_result);
                     let ok = result.is_ok();
                     let _ = req.result_tx.send(result);
                     if ok {
@@ -988,116 +866,25 @@ impl Session {
         }
     }
 
-    async fn resume_session(
+    // r[impl session.handshake.resume]
+    fn resume_from_handshake(
         &mut self,
         tx: Arc<dyn DynConduitTx>,
-        mut rx: Box<dyn DynConduitRx>,
+        rx: Box<dyn DynConduitRx>,
+        result: HandshakeResult,
     ) -> Result<(), SessionError> {
         let Some(peer_settings) = self.peer_root_settings.clone() else {
             return Err(SessionError::Protocol("missing peer root settings".into()));
         };
 
-        match self.role {
-            SessionRole::Initiator => {
-                let Some(session_resume_key) = self.session_resume_key else {
-                    return Err(SessionError::NotResumable);
-                };
-                let mut metadata = Vec::new();
-                append_retry_support_metadata(&mut metadata);
-                append_session_resume_key_metadata(&mut metadata, &session_resume_key);
-                tx.send_msg(Message {
-                    connection_id: ConnectionId::ROOT,
-                    payload: MessagePayload::Hello(roam_types::Hello {
-                        version: PROTOCOL_VERSION,
-                        connection_settings: self.local_root_settings.clone(),
-                        metadata,
-                    }),
-                })
-                .await
-                .map_err(SessionError::Io)?;
-
-                let msg = rx.recv_msg().await.map_err(SessionError::Io)?;
-                let Some(msg) = msg else {
-                    return Err(SessionError::Protocol(
-                        "peer closed during session resume".into(),
-                    ));
-                };
-                let payload = msg.map(|m| m.payload);
-                let hy = match &*payload {
-                    MessagePayload::HelloYourself(hy) => hy,
-                    MessagePayload::ProtocolError(e) => {
-                        return Err(SessionError::Protocol(e.description.to_owned()));
-                    }
-                    _ => {
-                        return Err(SessionError::Protocol(
-                            "expected HelloYourself during session resume".into(),
-                        ));
-                    }
-                };
-                if hy.connection_settings != peer_settings {
-                    return Err(SessionError::Protocol(
-                        "peer root settings changed across session resume".into(),
-                    ));
-                }
-                self.peer_supports_retry = metadata_supports_retry(&hy.metadata);
-                self.session_resume_key =
-                    metadata_session_resume_key(&hy.metadata).or(self.session_resume_key);
-            }
-            SessionRole::Acceptor => {
-                let msg = rx.recv_msg().await.map_err(SessionError::Io)?;
-                let Some(msg) = msg else {
-                    return Err(SessionError::Protocol(
-                        "peer closed during session resume".into(),
-                    ));
-                };
-                let payload = msg.map(|m| m.payload);
-                let hello = match &*payload {
-                    MessagePayload::Hello(hello) => hello,
-                    MessagePayload::ProtocolError(e) => {
-                        return Err(SessionError::Protocol(e.description.to_owned()));
-                    }
-                    _ => {
-                        return Err(SessionError::Protocol(
-                            "expected Hello during session resume".into(),
-                        ));
-                    }
-                };
-                if hello.version != PROTOCOL_VERSION {
-                    return Err(SessionError::Protocol(format!(
-                        "version mismatch: got {}, expected {PROTOCOL_VERSION}",
-                        hello.version
-                    )));
-                }
-                if hello.connection_settings != peer_settings {
-                    return Err(SessionError::Protocol(
-                        "peer root settings changed across session resume".into(),
-                    ));
-                }
-                let Some(expected_key) = self.session_resume_key else {
-                    return Err(SessionError::NotResumable);
-                };
-                let Some(actual_key) = metadata_session_resume_key(&hello.metadata) else {
-                    return Err(SessionError::Protocol("missing session resume key".into()));
-                };
-                if actual_key != expected_key {
-                    return Err(SessionError::Protocol("session resume key mismatch".into()));
-                }
-                self.peer_supports_retry = metadata_supports_retry(&hello.metadata);
-
-                let mut metadata = Vec::new();
-                append_retry_support_metadata(&mut metadata);
-                append_session_resume_key_metadata(&mut metadata, &expected_key);
-                tx.send_msg(Message {
-                    connection_id: ConnectionId::ROOT,
-                    payload: MessagePayload::HelloYourself(roam_types::HelloYourself {
-                        connection_settings: self.local_root_settings.clone(),
-                        metadata,
-                    }),
-                })
-                .await
-                .map_err(SessionError::Io)?;
-            }
+        if result.peer_settings != peer_settings {
+            return Err(SessionError::Protocol(
+                "peer root settings changed across session resume".into(),
+            ));
         }
+
+        self.peer_supports_retry = result.peer_supports_retry;
+        self.session_resume_key = result.session_resume_key.or(self.session_resume_key);
 
         self.sess_core.replace_tx(tx);
         self.rx = rx;
@@ -1186,7 +973,7 @@ impl Session {
                     }
                 }
             }
-            // Hello, HelloYourself, ProtocolError: not valid post-handshake, drop.
+            // ProtocolError: not valid post-handshake, drop.
         })
     }
 
@@ -1563,7 +1350,17 @@ pub(crate) trait ConduitRecoverer: Send {
     #[allow(clippy::type_complexity)]
     fn next_conduit<'a>(
         &'a mut self,
-    ) -> BoxFuture<'a, Result<(Arc<dyn DynConduitTx>, Box<dyn DynConduitRx>), SessionError>>;
+    ) -> BoxFuture<
+        'a,
+        Result<
+            (
+                Arc<dyn DynConduitTx>,
+                Box<dyn DynConduitRx>,
+                HandshakeResult,
+            ),
+            SessionError,
+        >,
+    >;
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1571,7 +1368,17 @@ pub(crate) trait ConduitRecoverer {
     #[allow(clippy::type_complexity)]
     fn next_conduit<'a>(
         &'a mut self,
-    ) -> BoxFuture<'a, Result<(Arc<dyn DynConduitTx>, Box<dyn DynConduitRx>), SessionError>>;
+    ) -> BoxFuture<
+        'a,
+        Result<
+            (
+                Arc<dyn DynConduitTx>,
+                Box<dyn DynConduitRx>,
+                HandshakeResult,
+            ),
+            SessionError,
+        >,
+    >;
 }
 
 #[cfg(not(target_arch = "wasm32"))]

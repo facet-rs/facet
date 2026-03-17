@@ -4,13 +4,51 @@ use moire::task::FutureExt;
 use roam_shm::varslot::SizeClassConfig;
 use roam_shm::{Segment, SegmentConfig, ShmLink, create_test_link_pair};
 use roam_types::{
-    Caller, Handler, MessageFamily, MethodId, Payload, ReplySink, RequestCall, RequestResponse,
-    SelfRef,
+    Caller, ConnectionSettings, Handler, HandshakeResult, MessageFamily, MethodId, Parity, Payload,
+    ReplySink, RequestCall, RequestResponse, SelfRef, SessionRole,
 };
 use shm_primitives::FileCleanup;
 
 use crate::session::{acceptor, initiator_conduit};
 use crate::{BareConduit, DriverCaller, DriverReplySink};
+
+fn test_acceptor_handshake() -> HandshakeResult {
+    HandshakeResult {
+        role: SessionRole::Acceptor,
+        our_settings: ConnectionSettings {
+            parity: Parity::Even,
+            max_concurrent_requests: 64,
+        },
+        peer_settings: ConnectionSettings {
+            parity: Parity::Odd,
+            max_concurrent_requests: 64,
+        },
+        peer_supports_retry: true,
+        session_resume_key: None,
+        peer_resume_key: None,
+        our_schema: vec![],
+        peer_schema: vec![],
+    }
+}
+
+fn test_initiator_handshake() -> HandshakeResult {
+    HandshakeResult {
+        role: SessionRole::Initiator,
+        our_settings: ConnectionSettings {
+            parity: Parity::Odd,
+            max_concurrent_requests: 64,
+        },
+        peer_settings: ConnectionSettings {
+            parity: Parity::Even,
+            max_concurrent_requests: 64,
+        },
+        peer_supports_retry: true,
+        session_resume_key: None,
+        peer_resume_key: None,
+        our_schema: vec![],
+        peer_schema: vec![],
+    }
+}
 
 type MessageConduit = BareConduit<MessageFamily, ShmLink>;
 
@@ -68,7 +106,7 @@ async fn echo_call_across_shm_link() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (server_caller, _sh) = acceptor(server_conduit)
+            let (server_caller, _sh) = acceptor(server_conduit, test_acceptor_handshake())
                 .establish::<DriverCaller>(EchoHandler)
                 .await
                 .expect("server handshake failed");
@@ -77,7 +115,7 @@ async fn echo_call_across_shm_link() {
         .named("server_setup"),
     );
 
-    let (caller, _sh) = initiator_conduit(client_conduit)
+    let (caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<DriverCaller>(())
         .await
         .expect("client handshake failed");
@@ -141,7 +179,7 @@ async fn echo_blob_stress_over_shm_link() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (server_caller, _sh) = acceptor(server_conduit)
+            let (server_caller, _sh) = acceptor(server_conduit, test_acceptor_handshake())
                 .establish::<DriverCaller>(BlobEchoHandler)
                 .await
                 .expect("server handshake failed");
@@ -150,7 +188,7 @@ async fn echo_blob_stress_over_shm_link() {
         .named("server_setup"),
     );
 
-    let (caller, _sh) = initiator_conduit(client_conduit)
+    let (caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<DriverCaller>(())
         .await
         .expect("client handshake failed");

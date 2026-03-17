@@ -27,6 +27,7 @@ facet.workspace = true
 facet-core.workspace = true
 facet-reflect.workspace = true
 roam-postcard.workspace = true
+facet-cbor.workspace = true
 tokio.workspace = true
 moire.workspace = true
 tracing.workspace = true

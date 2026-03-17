@@ -12,6 +12,9 @@ mod bare_conduit;
 pub use bare_conduit::*;
 pub use roam_types::TransportMode;
 
+mod handshake;
+pub use handshake::*;
+
 mod into_conduit;
 pub use into_conduit::*;
 

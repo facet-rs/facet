@@ -6,9 +6,9 @@ use std::sync::{
 
 use eyre::{Result, WrapErr, eyre};
 use roam::{
-    Attachment, Backing, ConnectionSettings, DriverCaller, Link, LinkRx, LinkSource, LinkTx,
-    MemoryLink, MemoryLinkRx, MemoryLinkRxError, MemoryLinkTx, MessageFamily, Parity, Rx,
-    StableConduit, Tx, channel, prepare_acceptor_attachment,
+    Attachment, Backing, ConnectionSettings, DriverCaller, HandshakeResult, Link, LinkRx,
+    LinkSource, LinkTx, MemoryLink, MemoryLinkRx, MemoryLinkRxError, MemoryLinkTx, MessageFamily,
+    Parity, Rx, SessionRole, StableConduit, Tx, channel, prepare_acceptor_attachment,
 };
 
 #[roam::service]
@@ -246,26 +246,56 @@ async fn run_demo() -> Result<()> {
 
     println!("[demo] establishing roam session over stable conduits");
     let server_task = tokio::spawn(async move {
-        let (server_guard, _) = roam::acceptor(server_conduit)
-            .root_settings(ConnectionSettings {
-                parity: Parity::Even,
-                max_concurrent_requests: 64,
-            })
-            .establish::<DriverCaller>(StableLabDispatcher::new(StableLabService::new()))
-            .await
-            .expect("server establish");
+        let server_settings = ConnectionSettings {
+            parity: Parity::Even,
+            max_concurrent_requests: 64,
+        };
+        let (server_guard, _) = roam::acceptor(
+            server_conduit,
+            HandshakeResult {
+                role: SessionRole::Acceptor,
+                our_settings: server_settings.clone(),
+                peer_settings: ConnectionSettings {
+                    parity: Parity::Odd,
+                    max_concurrent_requests: 64,
+                },
+                peer_supports_retry: false,
+                session_resume_key: None,
+                peer_resume_key: None,
+                our_schema: vec![],
+                peer_schema: vec![],
+            },
+        )
+        .establish::<DriverCaller>(StableLabDispatcher::new(StableLabService::new()))
+        .await
+        .expect("server establish");
         let _server_guard = server_guard;
         std::future::pending::<()>().await;
     });
 
-    let (client, _) = roam::initiator_conduit(client_conduit)
-        .root_settings(ConnectionSettings {
-            parity: Parity::Odd,
-            max_concurrent_requests: 64,
-        })
-        .establish::<StableLabClient>(())
-        .await
-        .map_err(|e| eyre!("client establish failed: {e:?}"))?;
+    let client_settings = ConnectionSettings {
+        parity: Parity::Odd,
+        max_concurrent_requests: 64,
+    };
+    let (client, _) = roam::initiator_conduit(
+        client_conduit,
+        HandshakeResult {
+            role: SessionRole::Initiator,
+            our_settings: client_settings.clone(),
+            peer_settings: ConnectionSettings {
+                parity: Parity::Even,
+                max_concurrent_requests: 64,
+            },
+            peer_supports_retry: false,
+            session_resume_key: None,
+            peer_resume_key: None,
+            our_schema: vec![],
+            peer_schema: vec![],
+        },
+    )
+    .establish::<StableLabClient>(())
+    .await
+    .map_err(|e| eyre!("client establish failed: {e:?}"))?;
     println!("[demo] session established");
 
     println!("[client] calling bump before cut");

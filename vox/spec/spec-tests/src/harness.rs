@@ -997,25 +997,68 @@ where
     <L::Rx as roam_types::LinkRx>::Error: std::error::Error + Send + Sync + 'static,
 {
     let (server_ready_tx, server_ready_rx) = oneshot::channel::<Result<(), String>>();
-    let _server_task = tokio::spawn(async move {
-        let setup = acceptor(server_link)
-            .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
+    let _server_task =
+        tokio::spawn(async move {
+            let (tx, mut rx) = roam_types::Link::split(server_link);
+            let handshake_result = roam_core::handshake_as_acceptor(
+                &tx,
+                &mut rx,
+                roam_types::ConnectionSettings {
+                    parity: roam_types::Parity::Even,
+                    max_concurrent_requests: 64,
+                },
+                true,
+                false,
+                None,
+            )
             .await
-            .map_err(|e| format!("server handshake: {e}"));
-        let (server_caller_guard, _sh) = match setup {
-            Ok(parts) => parts,
-            Err(err) => {
-                let _ = server_ready_tx.send(Err(err));
-                return;
-            }
-        };
+            .map_err(|e| format!("server CBOR handshake: {e}"));
+            let handshake_result = match handshake_result {
+                Ok(r) => r,
+                Err(err) => {
+                    let _ = server_ready_tx.send(Err(err));
+                    return;
+                }
+            };
+            let server_conduit = roam_core::BareConduit::<roam_types::MessageFamily, _>::new(
+                roam_types::SplitLink { tx, rx },
+            );
+            let setup = acceptor(server_conduit, handshake_result)
+                .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
+                .await
+                .map_err(|e| format!("server handshake: {e}"));
+            let (server_caller_guard, _sh) = match setup {
+                Ok(parts) => parts,
+                Err(err) => {
+                    let _ = server_ready_tx.send(Err(err));
+                    return;
+                }
+            };
 
-        let _ = server_ready_tx.send(Ok(()));
-        let _server_caller_guard = server_caller_guard;
-        std::future::pending::<()>().await;
-    });
+            let _ = server_ready_tx.send(Ok(()));
+            let _server_caller_guard = server_caller_guard;
+            std::future::pending::<()>().await;
+        });
 
-    let (client, _sh) = roam_core::initiator_conduit(client_link)
+    let (client_tx, mut client_rx) = roam_types::Link::split(client_link);
+    let client_handshake = roam_core::handshake_as_initiator(
+        &client_tx,
+        &mut client_rx,
+        roam_types::ConnectionSettings {
+            parity: roam_types::Parity::Odd,
+            max_concurrent_requests: 64,
+        },
+        true,
+        None,
+    )
+    .await
+    .map_err(|e| format!("client CBOR handshake: {e}"))?;
+    let client_conduit =
+        roam_core::BareConduit::<roam_types::MessageFamily, _>::new(roam_types::SplitLink {
+            tx: client_tx,
+            rx: client_rx,
+        });
+    let (client, _sh) = roam_core::initiator_conduit(client_conduit, client_handshake)
         .establish::<TestbedClient>(NoopHandler)
         .await
         .map_err(|e| format!("client handshake: {e}"))?;

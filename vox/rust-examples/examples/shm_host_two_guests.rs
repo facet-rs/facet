@@ -144,10 +144,18 @@ mod unix_demo {
         println!("[host] launching guest: Adder");
         let mut adder_guest = spawn_guest(GuestService::Adder)?;
         println!("[host] guest Adder pid={}", adder_guest.process.child.id());
-        let (adder, _) = roam::acceptor(adder_guest.link)
-            .establish::<AdderClient>(())
-            .await
-            .map_err(|e| eyre!("host<->adder handshake failed: {e:?}"))?;
+        let (adder, _) = roam::acceptor_on_link(
+            adder_guest.link,
+            roam::ConnectionSettings {
+                parity: roam::Parity::Even,
+                max_concurrent_requests: 64,
+            },
+        )
+        .await
+        .map_err(|e| eyre!("host<->adder acceptor_on_link failed: {e:?}"))?
+        .establish::<AdderClient>(())
+        .await
+        .map_err(|e| eyre!("host<->adder handshake failed: {e:?}"))?;
 
         println!("[host] launching guest: StringReverser");
         let mut reverser_guest = spawn_guest(GuestService::StringReverser)?;
@@ -155,10 +163,18 @@ mod unix_demo {
             "[host] guest StringReverser pid={}",
             reverser_guest.process.child.id()
         );
-        let (reverser, _) = roam::acceptor(reverser_guest.link)
-            .establish::<StringReverserClient>(())
-            .await
-            .map_err(|e| eyre!("host<->reverser handshake failed: {e:?}"))?;
+        let (reverser, _) = roam::acceptor_on_link(
+            reverser_guest.link,
+            roam::ConnectionSettings {
+                parity: roam::Parity::Even,
+                max_concurrent_requests: 64,
+            },
+        )
+        .await
+        .map_err(|e| eyre!("host<->reverser acceptor_on_link failed: {e:?}"))?
+        .establish::<StringReverserClient>(())
+        .await
+        .map_err(|e| eyre!("host<->reverser handshake failed: {e:?}"))?;
 
         let sum = adder
             .add(40, 2)
@@ -187,19 +203,35 @@ mod unix_demo {
 
         match service {
             GuestService::Adder => {
-                let (guard, _) = roam::initiator_conduit(link)
-                    .establish::<DriverCaller>(AdderDispatcher::new(AdderService))
-                    .await
-                    .map_err(|e| eyre!("guest adder handshake failed: {e:?}"))?;
+                let (guard, _) = roam::initiator_on_link(
+                    link,
+                    roam::ConnectionSettings {
+                        parity: roam::Parity::Odd,
+                        max_concurrent_requests: 64,
+                    },
+                )
+                .await
+                .map_err(|e| eyre!("guest adder initiator_on_link failed: {e:?}"))?
+                .establish::<DriverCaller>(AdderDispatcher::new(AdderService))
+                .await
+                .map_err(|e| eyre!("guest adder handshake failed: {e:?}"))?;
                 println!("[guest:{pid}] serving Adder");
                 let _guard = guard;
                 std::future::pending::<()>().await;
             }
             GuestService::StringReverser => {
-                let (guard, _) = roam::initiator_conduit(link)
-                    .establish::<DriverCaller>(StringReverserDispatcher::new(StringReverserService))
-                    .await
-                    .map_err(|e| eyre!("guest reverser handshake failed: {e:?}"))?;
+                let (guard, _) = roam::initiator_on_link(
+                    link,
+                    roam::ConnectionSettings {
+                        parity: roam::Parity::Odd,
+                        max_concurrent_requests: 64,
+                    },
+                )
+                .await
+                .map_err(|e| eyre!("guest reverser initiator_on_link failed: {e:?}"))?
+                .establish::<DriverCaller>(StringReverserDispatcher::new(StringReverserService))
+                .await
+                .map_err(|e| eyre!("guest reverser handshake failed: {e:?}"))?;
                 println!("[guest:{pid}] serving StringReverser");
                 let _guard = guard;
                 std::future::pending::<()>().await;

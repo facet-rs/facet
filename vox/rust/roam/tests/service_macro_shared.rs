@@ -2,7 +2,45 @@ use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 
 use roam_core::{BareConduit, acceptor, initiator_conduit};
-use roam_types::Link;
+use roam_types::{ConnectionSettings, HandshakeResult, Link, Parity, SessionRole};
+
+fn test_acceptor_handshake() -> HandshakeResult {
+    HandshakeResult {
+        role: SessionRole::Acceptor,
+        our_settings: ConnectionSettings {
+            parity: Parity::Even,
+            max_concurrent_requests: 64,
+        },
+        peer_settings: ConnectionSettings {
+            parity: Parity::Odd,
+            max_concurrent_requests: 64,
+        },
+        peer_supports_retry: true,
+        session_resume_key: None,
+        peer_resume_key: None,
+        our_schema: vec![],
+        peer_schema: vec![],
+    }
+}
+
+fn test_initiator_handshake() -> HandshakeResult {
+    HandshakeResult {
+        role: SessionRole::Initiator,
+        our_settings: ConnectionSettings {
+            parity: Parity::Odd,
+            max_concurrent_requests: 64,
+        },
+        peer_settings: ConnectionSettings {
+            parity: Parity::Even,
+            max_concurrent_requests: 64,
+        },
+        peer_supports_retry: true,
+        session_resume_key: None,
+        peer_resume_key: None,
+        our_schema: vec![],
+        peer_schema: vec![],
+    }
+}
 
 type MessageConduit<L> = BareConduit<roam_types::MessageFamily, L>;
 
@@ -273,7 +311,7 @@ pub async fn run_adder_end_to_end<L>(
 
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
-        let (server_caller_guard, _sh) = acceptor(server_conduit)
+        let (server_caller_guard, _sh) = acceptor(server_conduit, test_acceptor_handshake())
             .establish::<AdderClient>(AdderDispatcher::new(MyAdder))
             .await
             .expect("server handshake failed");
@@ -282,7 +320,7 @@ pub async fn run_adder_end_to_end<L>(
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator_conduit(client_conduit)
+    let (client, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<AdderClient>(())
         .await
         .expect("client handshake failed");
@@ -307,7 +345,7 @@ pub async fn run_request_context_end_to_end<L>(
 
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
-        let (server_caller_guard, _sh) = acceptor(server_conduit)
+        let (server_caller_guard, _sh) = acceptor(server_conduit, test_acceptor_handshake())
             .establish::<ContextProbeClient>(ContextProbeDispatcher::new(ContextProbeService))
             .await
             .expect("server handshake failed");
@@ -316,7 +354,7 @@ pub async fn run_request_context_end_to_end<L>(
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator_conduit(client_conduit)
+    let (client, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<ContextProbeClient>(())
         .await
         .expect("client handshake failed");
@@ -361,7 +399,7 @@ pub async fn run_server_middleware_end_to_end<L>(
         let dispatcher = MiddlewareProbeDispatcher::new(MiddlewareProbeService)
             .with_middleware(first)
             .with_middleware(second);
-        let (server_caller_guard, _sh) = acceptor(server_conduit)
+        let (server_caller_guard, _sh) = acceptor(server_conduit, test_acceptor_handshake())
             .establish::<MiddlewareProbeClient>(dispatcher)
             .await
             .expect("server handshake failed");
@@ -370,7 +408,7 @@ pub async fn run_server_middleware_end_to_end<L>(
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator_conduit(client_conduit)
+    let (client, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<MiddlewareProbeClient>(())
         .await
         .expect("client handshake failed");
@@ -413,7 +451,7 @@ pub async fn run_client_middleware_end_to_end<L>(
 
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
-        let (server_caller_guard, _sh) = acceptor(server_conduit)
+        let (server_caller_guard, _sh) = acceptor(server_conduit, test_acceptor_handshake())
             .establish::<ClientMiddlewareProbeClient>(ClientMiddlewareProbeDispatcher::new(
                 ClientMiddlewareProbeService,
             ))
@@ -424,7 +462,7 @@ pub async fn run_client_middleware_end_to_end<L>(
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator_conduit(client_conduit)
+    let (client, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<ClientMiddlewareProbeClient>(())
         .await
         .expect("client handshake failed");
@@ -473,7 +511,7 @@ pub async fn run_borrowed_return_survives_teardown_over_generated_client<L>(
 
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
-        let (server_caller_guard, _sh) = acceptor(server_conduit)
+        let (server_caller_guard, _sh) = acceptor(server_conduit, test_acceptor_handshake())
             .establish::<BorrowedPayloadProbeClient>(BorrowedPayloadProbeDispatcher::new(
                 BorrowedPayloadProbeService::new(),
             ))
@@ -484,10 +522,11 @@ pub async fn run_borrowed_return_survives_teardown_over_generated_client<L>(
         std::future::pending::<()>().await;
     });
 
-    let (client, client_session_handle) = initiator_conduit(client_conduit)
-        .establish::<BorrowedPayloadProbeClient>(())
-        .await
-        .expect("client handshake failed");
+    let (client, client_session_handle) =
+        initiator_conduit(client_conduit, test_initiator_handshake())
+            .establish::<BorrowedPayloadProbeClient>(())
+            .await
+            .expect("client handshake failed");
 
     server_ready_rx.await.expect("server setup failed");
 

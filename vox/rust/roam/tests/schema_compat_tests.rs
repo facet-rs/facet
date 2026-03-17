@@ -7,13 +7,51 @@
 //! translation plans handle the schema differences.
 
 use roam_core::{BareConduit, MemoryLink, acceptor, initiator_conduit, memory_link_pair};
-use roam_types::MessageFamily;
+use roam_types::{ConnectionSettings, HandshakeResult, MessageFamily, Parity, SessionRole};
 
 type MessageConduit = BareConduit<MessageFamily, MemoryLink>;
 
 fn conduit_pair() -> (MessageConduit, MessageConduit) {
     let (a, b) = memory_link_pair(64);
     (BareConduit::new(a), BareConduit::new(b))
+}
+
+fn test_acceptor_handshake() -> HandshakeResult {
+    HandshakeResult {
+        role: SessionRole::Acceptor,
+        our_settings: ConnectionSettings {
+            parity: Parity::Even,
+            max_concurrent_requests: 64,
+        },
+        peer_settings: ConnectionSettings {
+            parity: Parity::Odd,
+            max_concurrent_requests: 64,
+        },
+        peer_supports_retry: true,
+        session_resume_key: None,
+        peer_resume_key: None,
+        our_schema: vec![],
+        peer_schema: vec![],
+    }
+}
+
+fn test_initiator_handshake() -> HandshakeResult {
+    HandshakeResult {
+        role: SessionRole::Initiator,
+        our_settings: ConnectionSettings {
+            parity: Parity::Odd,
+            max_concurrent_requests: 64,
+        },
+        peer_settings: ConnectionSettings {
+            parity: Parity::Even,
+            max_concurrent_requests: 64,
+        },
+        peer_supports_retry: true,
+        session_resume_key: None,
+        peer_resume_key: None,
+        our_schema: vec![],
+        peer_schema: vec![],
+    }
 }
 
 // ============================================================================
@@ -84,7 +122,7 @@ async fn v1_client_v2_server_fills_default() {
     let (client_conduit, server_conduit) = conduit_pair();
 
     let server_task = tokio::task::spawn(async move {
-        let (_server_caller, _sh) = acceptor(server_conduit)
+        let (_server_caller, _sh) = acceptor(server_conduit, test_acceptor_handshake())
             .establish::<point_v2::GeometryClient>(point_v2::GeometryDispatcher::new(
                 V2GeometryService,
             ))
@@ -93,7 +131,7 @@ async fn v1_client_v2_server_fills_default() {
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator_conduit(client_conduit)
+    let (client, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<point_v1::GeometryClient>(())
         .await
         .expect("client handshake failed");
@@ -118,7 +156,7 @@ async fn v2_client_v1_server_skips_unknown_field() {
     let (client_conduit, server_conduit) = conduit_pair();
 
     let server_task = tokio::task::spawn(async move {
-        let (_server_caller, _sh) = acceptor(server_conduit)
+        let (_server_caller, _sh) = acceptor(server_conduit, test_acceptor_handshake())
             .establish::<point_v1::GeometryClient>(point_v1::GeometryDispatcher::new(
                 V1GeometryService,
             ))
@@ -127,7 +165,7 @@ async fn v2_client_v1_server_skips_unknown_field() {
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator_conduit(client_conduit)
+    let (client, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<point_v2::GeometryClient>(())
         .await
         .expect("client handshake failed");
@@ -196,7 +234,7 @@ async fn reordered_fields_are_matched_by_name() {
     let (client_conduit, server_conduit) = conduit_pair();
 
     let server_task = tokio::task::spawn(async move {
-        let (_server_caller, _sh) = acceptor(server_conduit)
+        let (_server_caller, _sh) = acceptor(server_conduit, test_acceptor_handshake())
             .establish::<reordered_v1::PairServiceClient>(reordered_v1::PairServiceDispatcher::new(
                 PairEchoV1,
             ))
@@ -205,7 +243,7 @@ async fn reordered_fields_are_matched_by_name() {
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator_conduit(client_conduit)
+    let (client, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<reordered_v2::PairServiceClient>(())
         .await
         .expect("client handshake failed");
@@ -280,7 +318,7 @@ async fn evolved_schema_combined_changes() {
     let (client_conduit, server_conduit) = conduit_pair();
 
     let server_task = tokio::task::spawn(async move {
-        let (_server_caller, _sh) = acceptor(server_conduit)
+        let (_server_caller, _sh) = acceptor(server_conduit, test_acceptor_handshake())
             .establish::<evolved_v1::ConfigServiceClient>(evolved_v1::ConfigServiceDispatcher::new(
                 ConfigServiceV1,
             ))
@@ -289,7 +327,7 @@ async fn evolved_schema_combined_changes() {
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator_conduit(client_conduit)
+    let (client, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<evolved_v2::ConfigServiceClient>(())
         .await
         .expect("client handshake failed");

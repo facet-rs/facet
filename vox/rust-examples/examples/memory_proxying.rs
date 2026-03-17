@@ -153,20 +153,36 @@ async fn run_demo() -> Result<()> {
 
     println!("[guest-b] starting root session");
     let guest_b_task = tokio::spawn(async move {
-        let (guest_b_root_guard, _) = roam::acceptor(guest_b_link)
-            .on_connection(UpstreamAcceptor)
-            .establish::<DriverCaller>(())
-            .await
-            .expect("guest-b establish");
+        let (guest_b_root_guard, _) = roam::acceptor_on_link(
+            guest_b_link,
+            ConnectionSettings {
+                parity: Parity::Even,
+                max_concurrent_requests: 64,
+            },
+        )
+        .await
+        .expect("guest-b acceptor_on_link")
+        .on_connection(UpstreamAcceptor)
+        .establish::<DriverCaller>(())
+        .await
+        .expect("guest-b establish");
         let _guest_b_root_guard = guest_b_root_guard;
         std::future::pending::<()>().await;
     });
 
     println!("[host] establishing session to guest-b");
-    let (_host_root_to_b_guard, upstream_session_handle) = roam::initiator_conduit(host_b_link)
-        .establish::<DriverCaller>(())
-        .await
-        .map_err(|e| eyre!("host<->guest-b establish failed: {e:?}"))?;
+    let (_host_root_to_b_guard, upstream_session_handle) = roam::initiator_on_link(
+        host_b_link,
+        ConnectionSettings {
+            parity: Parity::Odd,
+            max_concurrent_requests: 64,
+        },
+    )
+    .await
+    .map_err(|e| eyre!("host<->guest-b initiator_on_link failed: {e:?}"))?
+    .establish::<DriverCaller>(())
+    .await
+    .map_err(|e| eyre!("host<->guest-b establish failed: {e:?}"))?;
     println!("[host] host<->guest-b root session ready");
 
     println!("[host] starting root session for guest-a");
@@ -174,20 +190,36 @@ async fn run_demo() -> Result<()> {
         upstream_session: upstream_session_handle,
     };
     let host_for_a_task = tokio::spawn(async move {
-        let (host_root_for_a_guard, _) = roam::acceptor(host_a_link)
-            .on_connection(proxy_acceptor)
-            .establish::<DriverCaller>(())
-            .await
-            .expect("host<->guest-a establish");
+        let (host_root_for_a_guard, _) = roam::acceptor_on_link(
+            host_a_link,
+            ConnectionSettings {
+                parity: Parity::Even,
+                max_concurrent_requests: 64,
+            },
+        )
+        .await
+        .expect("host<->guest-a acceptor_on_link")
+        .on_connection(proxy_acceptor)
+        .establish::<DriverCaller>(())
+        .await
+        .expect("host<->guest-a establish");
         let _host_root_for_a_guard = host_root_for_a_guard;
         std::future::pending::<()>().await;
     });
 
     println!("[guest-a] establishing root session to host");
-    let (_guest_a_root_guard, guest_a_session_handle) = roam::initiator_conduit(guest_a_link)
-        .establish::<DriverCaller>(())
-        .await
-        .map_err(|e| eyre!("guest-a<->host establish failed: {e:?}"))?;
+    let (_guest_a_root_guard, guest_a_session_handle) = roam::initiator_on_link(
+        guest_a_link,
+        ConnectionSettings {
+            parity: Parity::Odd,
+            max_concurrent_requests: 64,
+        },
+    )
+    .await
+    .map_err(|e| eyre!("guest-a<->host initiator_on_link failed: {e:?}"))?
+    .establish::<DriverCaller>(())
+    .await
+    .map_err(|e| eyre!("guest-a<->host establish failed: {e:?}"))?;
     println!("[guest-a] root session ready");
 
     println!("[guest-a] opening proxy vconn to host");

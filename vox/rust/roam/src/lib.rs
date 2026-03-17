@@ -49,6 +49,7 @@ pub use roam_types::{
     ErasedCaller,
     Extensions,
     Handler,
+    HandshakeResult,
     Link,
     LinkRx,
     LinkTx,
@@ -81,6 +82,7 @@ pub use roam_types::{
     ServerCallOutcome,
     ServerMiddleware,
     ServiceDescriptor,
+    SessionRole,
     SinkCall,
     TransportMode,
     // Channels

@@ -2427,6 +2427,7 @@ name = "roam-core"
 version = "7.3.0"
 dependencies = [
  "facet",
+ "facet-cbor",
  "facet-core",
  "facet-error",
  "facet-reflect",

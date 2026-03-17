@@ -5,9 +5,9 @@ use std::{fs, path::PathBuf};
 use roam_types::{
     ChannelBody, ChannelClose, ChannelGrantCredit, ChannelId, ChannelItem, ChannelMessage,
     ChannelReset, ConnectionAccept, ConnectionClose, ConnectionId, ConnectionOpen,
-    ConnectionReject, ConnectionSettings, Hello, HelloYourself, Message, MessagePayload, Metadata,
-    MetadataEntry, MetadataFlags, MetadataValue, MethodId, Parity, Payload, ProtocolError,
-    RequestBody, RequestCall, RequestCancel, RequestId, RequestMessage, RequestResponse, RoamError,
+    ConnectionReject, ConnectionSettings, Message, MessagePayload, Metadata, MetadataEntry,
+    MetadataFlags, MetadataValue, MethodId, Parity, Payload, ProtocolError, RequestBody,
+    RequestCall, RequestCancel, RequestId, RequestMessage, RequestResponse, RoamError,
 };
 
 fn fixture_root() -> PathBuf {
@@ -210,31 +210,8 @@ fn main() {
     };
     let meta = sample_metadata();
 
-    write_fixture(
-        "wire-v7/message_hello.bin",
-        &encode_message(&Message {
-            connection_id: ConnectionId::ROOT,
-            payload: MessagePayload::Hello(Hello {
-                version: 7,
-                connection_settings: conn_settings.clone(),
-                metadata: meta.clone(),
-            }),
-        }),
-    );
-
-    write_fixture(
-        "wire-v7/message_hello_yourself.bin",
-        &encode_message(&Message {
-            connection_id: ConnectionId::ROOT,
-            payload: MessagePayload::HelloYourself(HelloYourself {
-                connection_settings: ConnectionSettings {
-                    parity: Parity::Even,
-                    max_concurrent_requests: 32,
-                },
-                metadata: meta.clone(),
-            }),
-        }),
-    );
+    // Hello and HelloYourself are no longer MessagePayload variants.
+    // They are CBOR-encoded handshake messages exchanged before postcard traffic.
 
     write_fixture(
         "wire-v7/message_protocol_error.bin",
