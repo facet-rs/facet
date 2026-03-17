@@ -1,5 +1,6 @@
 import { decodeMessage, encodeMessage, type Message } from "@bearcove/roam-wire";
 import type { Link } from "./link.ts";
+import { roamLogger } from "./logger.ts";
 
 export interface Conduit<T> {
   send(item: T): Promise<void>;
@@ -20,7 +21,12 @@ export class BareConduit implements Conduit<Message> {
     if (!payload) {
       return null;
     }
-    return decodeMessage(payload).value;
+    try {
+      return decodeMessage(payload).value;
+    } catch (e) {
+      roamLogger()?.error(`[roam:conduit] decode failed (${payload.length} bytes):`, e);
+      throw e;
+    }
   }
 
   close(): void {

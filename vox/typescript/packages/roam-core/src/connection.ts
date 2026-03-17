@@ -55,6 +55,7 @@ import type { ClientMiddleware } from "./middleware.ts";
 import { clientMetadataToEntries } from "./metadata.ts";
 import { encodeWithSchema, decodeWithSchema } from "@bearcove/roam-postcard";
 import { RpcError, RpcErrorCode } from "@bearcove/roam-wire";
+import { roamLogger } from "./logger.ts";
 
 // Note: Role is exported from streaming/index.ts in roam-core's main export
 
@@ -1087,6 +1088,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
       } catch (e) {
         if (e instanceof ConnectionError) throw e;
         // r[impl message.decode-error] - send goodbye on decode failure
+        roamLogger()?.error(`[roam:connection] message handling error:`, e);
         throw await this.goodbye("message.decode-error");
       }
     }
@@ -1102,6 +1104,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     const msg = result.value as any;
 
     const tag = msgTag(msg);
+    roamLogger()?.debug(`[roam:connection] recv tag=${tag} conn=${msg.connection_id}`);
 
     if (tag === "Hello") {
       // Duplicate Hello after exchange - ignore
@@ -1231,6 +1234,7 @@ export class Connection<T extends MessageTransport = MessageTransport> {
     }
 
     // Unknown message type (Cancel, etc.) - ignore
+    roamLogger()?.debug(`[roam:connection] ignoring unknown message type: ${tag}`);
   }
 }
 

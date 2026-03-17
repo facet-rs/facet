@@ -40,6 +40,7 @@ export async function runSubjectServer(createDispatcher: () => Dispatcher): Prom
     await driver.run();
   } catch (e) {
     if (e instanceof SessionError) {
+      console.error(`[harness] session error: ${e.message}`);
       return;
     }
     throw e;

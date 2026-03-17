@@ -14,7 +14,10 @@ import type {
   Config,
 } from "@bearcove/roam-generated/testbed_evolved.generated.ts";
 import { TestbedDispatcher } from "@bearcove/roam-generated/testbed_evolved.generated.ts";
+import { setRoamLogger } from "@bearcove/roam-core";
 import { runSubjectServer } from "./harness.ts";
+
+setRoamLogger(console);
 
 class EvolvedTestbedService implements TestbedHandler {
   echoProfile(profile: Profile): Profile {

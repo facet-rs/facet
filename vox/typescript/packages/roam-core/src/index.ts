@@ -97,3 +97,9 @@ export {
   RETRY_SUPPORT_METADATA_KEY,
   RETRY_SUPPORT_VERSION,
 } from "./retry.ts";
+
+export {
+  setRoamLogger,
+  roamLogger,
+  type RoamLogger,
+} from "./logger.ts";

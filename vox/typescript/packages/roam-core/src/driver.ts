@@ -18,6 +18,7 @@ import { RequestContext } from "./request_context.ts";
 import { metadataOperationId } from "./retry.ts";
 import { type ServerCallOutcome, type ServerMiddleware } from "./server_middleware.ts";
 import type { ConnectionHandle, IncomingCall } from "./session.ts";
+import { roamLogger } from "./logger.ts";
 
 export interface Dispatcher {
   getDescriptor(): ServiceDescriptor;
@@ -388,7 +389,9 @@ export class Driver {
     // r[impl rpc.response.one-per-request]
     const descriptor = this.dispatcher.getDescriptor();
     const method = descriptor.methods.find((candidate) => candidate.id === incoming.methodId);
+    roamLogger()?.debug(`[roam:driver] handleCall: methodId=${incoming.methodId} method=${method?.name ?? "UNKNOWN"}`);
     if (!method) {
+      roamLogger()?.debug(`[roam:driver] unknown method, sending error response`);
       await this.connection.sendResponse(incoming.requestId, encodeUnknownMethod());
       return;
     }
@@ -451,7 +454,9 @@ export class Driver {
         incoming,
         taskSender,
       );
+      roamLogger()?.debug(`[roam:driver] dispatching ${method.name} with ${args.length} args`);
       await this.dispatcher.dispatch(context, method, args, call);
+      roamLogger()?.debug(`[roam:driver] dispatch complete for ${method.name}, didReply=${call.didReply()}`);
       outcome = call.didReply() ? { kind: "replied" } : { kind: "dropped" };
       if (!call.didReply()) {
         if (operationId !== undefined) {
@@ -474,6 +479,7 @@ export class Driver {
         }
       }
     } catch (error) {
+      roamLogger()?.error(`[roam:driver] dispatch error for ${method.name}:`, error);
       if (!call.didReply()) {
         if (operationId !== undefined) {
           const waiters = this.operations.failWithoutReply(operationId, incoming.requestId);

@@ -56,6 +56,7 @@ import {
   roleFromParity,
 } from "./internal/parity.ts";
 import { BareConduit } from "./conduit.ts";
+import { roamLogger } from "./logger.ts";
 import type { Link, LinkSource } from "./link.ts";
 import { singleLinkSource } from "./link.ts";
 import { StableConduit } from "./stable_conduit.ts";
@@ -307,6 +308,7 @@ class SessionCore {
       return;
     }
     this.runPromise = this.run().catch((error) => {
+      roamLogger()?.error(`[roam:session] run loop error:`, error);
       this.fail(error instanceof SessionError ? error : new SessionError(String(error)));
     });
   }
@@ -600,6 +602,7 @@ class SessionCore {
   }
 
   private async handleMessage(message: Message): Promise<void> {
+    roamLogger()?.debug(`[roam:session] handleMessage: tag=${message.payload.tag} conn=${message.connection_id}`);
     switch (message.payload.tag) {
       case "Hello":
       case "HelloYourself":
