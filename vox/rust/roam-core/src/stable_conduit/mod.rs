@@ -7,8 +7,10 @@ use facet_core::PtrConst;
 use facet_reflect::Peek;
 use roam_types::{
     Conduit, ConduitRx, ConduitTx, ConduitTxPermit, Link, LinkRx, LinkTx, LinkTxPermit, MsgFamily,
-    SelfRef, WriteSlot,
+    Payload, SelfRef, WriteSlot,
 };
+
+use crate::MessagePlan;
 use zerocopy::little_endian::U32 as LeU32;
 
 mod replay_buffer;
@@ -52,7 +54,7 @@ const SH_HAS_LAST_RECEIVED: u8 = 0b0000_0010;
     zerocopy::Immutable,
 )]
 #[repr(C)]
-struct ClientHello {
+pub(crate) struct ClientHello {
     magic: LeU32,
     flags: u8,
     resume_key: ResumeKey,
@@ -78,17 +80,19 @@ struct ServerHello {
     last_received: LeU32,
 }
 
-/// Sequenced data frame. All post-handshake traffic is `Frame<T>`.
-/// Serialized in a single postcard pass — the seq/ack fields are just
-/// the first fields of the serialized output.
+/// Sequenced data frame. All post-handshake traffic is a `Frame`.
+///
+/// The `item` field is an opaque [`Payload`] — the message bytes are
+/// serialized/deserialized independently from the frame envelope.
+/// This decouples the frame format from the message schema.
 // r[impl stable.framing]
 // r[impl stable.framing.encoding]
-#[derive(Facet, Debug, Clone)]
-struct Frame<T> {
+#[derive(Facet, Debug)]
+struct Frame<'a> {
     seq: PacketSeq,
     // r[impl stable.ack]
     ack: Option<PacketAck>,
-    item: T,
+    item: Payload<'a>,
 }
 
 // ---------------------------------------------------------------------------
@@ -183,6 +187,13 @@ pub fn single_link_source<L: Link + Send + 'static>(link: L) -> SingleAttachment
     single_attachment_source(Attachment::initiator(link))
 }
 
+/// Build an already-exhausted [`LinkSource`]. Any call to `next_link` will
+/// fail immediately. Used when the first link is passed directly to
+/// [`StableConduit::with_first_link`] and no reconnection source is available.
+pub fn exhausted_source<L: Link + Send + 'static>() -> SingleAttachmentSource<L> {
+    SingleAttachmentSource { attachment: None }
+}
+
 impl<L: Link + Send + 'static> LinkSource for SingleAttachmentSource<L> {
     type Link = L;
 
@@ -204,6 +215,7 @@ impl<L: Link + Send + 'static> LinkSource for SingleAttachmentSource<L> {
 // r[impl zerocopy.framing.conduit.stable]
 pub struct StableConduit<F: MsgFamily, LS: LinkSource> {
     shared: Arc<Shared<LS>>,
+    message_plan: Option<MessagePlan>,
     _phantom: PhantomData<fn(F) -> F>,
 }
 
@@ -234,11 +246,23 @@ struct Inner<LS: LinkSource> {
 impl<F: MsgFamily, LS: LinkSource> StableConduit<F, LS> {
     pub async fn new(mut source: LS) -> Result<Self, StableConduitError> {
         let attachment = source.next_link().await.map_err(StableConduitError::Io)?;
-        let (link_tx, mut link_rx) = attachment.link.split();
+        let (link_tx, link_rx) = attachment.link.split();
+        Self::with_first_link(link_tx, link_rx, attachment.client_hello, source).await
+    }
 
+    /// Create a stable conduit with a pre-split first link.
+    ///
+    /// Use this when the first link has already been obtained and processed
+    /// (e.g. after a CBOR session handshake) before the stable conduit's own
+    /// resume handshake runs.
+    pub async fn with_first_link(
+        link_tx: <LS::Link as Link>::Tx,
+        mut link_rx: <LS::Link as Link>::Rx,
+        client_hello: Option<ClientHello>,
+        source: LS,
+    ) -> Result<Self, StableConduitError> {
         let (resume_key, _peer_last_received) =
-            handshake::<LS::Link>(&link_tx, &mut link_rx, attachment.client_hello, None, None)
-                .await?;
+            handshake::<LS::Link>(&link_tx, &mut link_rx, client_hello, None, None).await?;
 
         let inner = Inner {
             source: Some(source),
@@ -259,8 +283,16 @@ impl<F: MsgFamily, LS: LinkSource> StableConduit<F, LS> {
                 reconnected: moire::sync::Notify::new("stable_conduit.reconnected"),
                 tx_ready: moire::sync::Notify::new("stable_conduit.tx_ready"),
             }),
+            message_plan: None,
             _phantom: PhantomData,
         })
+    }
+
+    /// Set the message plan for schema-aware deserialization of the payload
+    /// inside each frame.
+    pub fn with_message_plan(mut self, plan: MessagePlan) -> Self {
+        self.message_plan = Some(plan);
+        self
     }
 }
 
@@ -499,6 +531,7 @@ where
             },
             StableConduitRx {
                 shared: Arc::clone(&self.shared),
+                message_plan: self.message_plan,
                 _phantom: PhantomData,
             },
         )
@@ -676,15 +709,28 @@ impl<F: MsgFamily, LS: LinkSource> ConduitTxPermit for StableConduitPermit<F, LS
             (seq, ack)
         };
 
-        let frame = Frame { seq, ack, item };
+        // Wrap the message as an outgoing Payload — the opaque adapter
+        // serializes its bytes inline, giving us one scatter pass for the
+        // whole frame (header + message bytes).
+        let msg_shape = F::shape();
+        // SAFETY: item is a valid F::Msg<'_> and msg_shape matches it.
+        #[allow(unsafe_code)]
+        let payload = unsafe {
+            Payload::outgoing_unchecked(PtrConst::new((&raw const item).cast::<u8>()), msg_shape)
+        };
 
-        // SAFETY: The shape matches `frame`'s concrete type for all lifetimes.
-        // `Frame<F::Msg<'a>>` has a lifetime-independent shape by `MsgFamily` contract.
+        let frame = Frame {
+            seq,
+            ack,
+            item: payload,
+        };
+
+        // SAFETY: Frame<'_> shape is lifetime-independent.
         #[allow(unsafe_code)]
         let peek = unsafe {
             Peek::unchecked_new(
                 PtrConst::new((&raw const frame).cast::<u8>()),
-                Frame::<F::Msg<'static>>::SHAPE,
+                <Frame<'static> as Facet<'static>>::SHAPE,
             )
         };
         let plan = roam_postcard::peek_to_scatter_plan(peek).map_err(StableConduitError::Encode)?;
@@ -709,6 +755,7 @@ impl<F: MsgFamily, LS: LinkSource> ConduitTxPermit for StableConduitPermit<F, LS
 
 pub struct StableConduitRx<F: MsgFamily, LS: LinkSource> {
     shared: Arc<Shared<LS>>,
+    message_plan: Option<MessagePlan>,
     _phantom: PhantomData<fn() -> F>,
 }
 
@@ -760,8 +807,8 @@ where
                 }
             };
 
-            // Phase 2: deserialize the frame.
-            let frame: SelfRef<Frame<F::Msg<'static>>> =
+            // Phase 2: deserialize the frame envelope (seq/ack + opaque payload bytes).
+            let frame: SelfRef<Frame<'static>> =
                 crate::deserialize_postcard(backing).map_err(StableConduitError::Decode)?;
 
             // Phase 3: update shared state; skip duplicates.
@@ -785,7 +832,24 @@ where
                 continue;
             }
 
-            return Ok(Some(frame.map(|f| f.item)));
+            // Phase 4: deserialize the message from the payload bytes
+            // using the message plan for schema-aware translation.
+            let item_bytes = match &frame.item {
+                Payload::Incoming(bytes) => bytes,
+                _ => unreachable!("deserialized Payload should always be Incoming"),
+            };
+            let item_backing = roam_types::Backing::Boxed(item_bytes.to_vec().into());
+            let msg = match &self.message_plan {
+                Some(plan) => crate::deserialize_postcard_with_plan::<F::Msg<'static>>(
+                    item_backing,
+                    &plan.plan,
+                    &plan.registry,
+                ),
+                None => crate::deserialize_postcard::<F::Msg<'static>>(item_backing),
+            }
+            .map_err(StableConduitError::Decode)?;
+
+            return Ok(Some(msg));
         }
     }
 }

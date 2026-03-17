@@ -56,30 +56,39 @@ fn resume_key(b: &[u8]) -> ResumeKey {
 }
 
 // Encode and send a frame directly onto a LinkTx.
+// The item is serialized to postcard and wrapped as a Payload.
 async fn send_frame<LTx: LinkTx>(tx: &LTx, seq: u32, ack: Option<u32>, item: &str) {
+    let item_bytes = roam_postcard::to_vec(&item.to_string()).unwrap();
     let frame = Frame {
         seq: PacketSeq(seq),
         ack: ack.map(|n| PacketAck {
             max_delivered: PacketSeq(n),
         }),
-        item: item.to_string(),
+        item: Payload::Incoming(&item_bytes),
     };
-    let frame_bytes = roam_postcard::to_vec(&frame).unwrap();
+    let peek = unsafe {
+        Peek::unchecked_new(
+            PtrConst::new((&raw const frame).cast::<u8>()),
+            <Frame<'static> as facet::Facet<'static>>::SHAPE,
+        )
+    };
+    let plan = roam_postcard::peek_to_scatter_plan(peek).unwrap();
 
     let permit = tx.reserve().await.unwrap();
-    let mut slot = permit.alloc(frame_bytes.len()).unwrap();
-    slot.as_mut_slice().copy_from_slice(&frame_bytes);
+    let mut slot = permit.alloc(plan.total_size()).unwrap();
+    plan.write_into(slot.as_mut_slice());
     slot.commit();
 }
 
-// Decode a raw frame payload into (seq, ack_max, item).
+// Decode a raw frame payload into (seq, ack_max, item_string).
 fn decode_frame(bytes: &[u8]) -> (u32, Option<u32>, String) {
-    let frame: Frame<String> = roam_postcard::from_slice(bytes).unwrap();
-    (
-        frame.seq.0,
-        frame.ack.map(|a| a.max_delivered.0),
-        frame.item,
-    )
+    let frame: Frame<'_> = roam_postcard::from_slice_borrowed(bytes).unwrap();
+    let item_bytes = match &frame.item {
+        Payload::Incoming(b) => b,
+        _ => unreachable!("deserialized Payload should be Incoming"),
+    };
+    let item: String = roam_postcard::from_slice(item_bytes).unwrap();
+    (frame.seq.0, frame.ack.map(|a| a.max_delivered.0), item)
 }
 
 // Receive one raw payload from a LinkRx.

@@ -427,8 +427,10 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
+                let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
+                    .map_err(SessionError::Protocol)?;
                 let builder = SessionInitiatorBuilder::new(
-                    BareConduit::<MessageFamily, _>::new(link),
+                    BareConduit::with_message_plan(link, message_plan),
                     handshake_result,
                 );
                 let recoverer = Box::new(BareSourceRecoverer {
@@ -451,16 +453,51 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
                 .await
             }
             TransportMode::Stable => {
-                let conduit = StableConduit::<MessageFamily, _>::new(TransportedLinkSource {
-                    source,
-                    mode: TransportMode::Stable,
-                })
+                // Get first link and do transport + CBOR handshake before
+                // handing to the stable conduit.
+                let attachment = source.next_link().await.map_err(SessionError::Io)?;
+                let mut link = initiate_transport(attachment.into_link(), TransportMode::Stable)
+                    .await
+                    .map_err(session_error_from_transport)?;
+                let handshake_result = handshake_as_initiator(
+                    &link.tx,
+                    &mut link.rx,
+                    root_settings.clone(),
+                    true,
+                    None,
+                )
+                .await
+                .map_err(session_error_from_handshake)?;
+                let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
+                    .map_err(SessionError::Protocol)?;
+                let conduit = StableConduit::<MessageFamily, _>::with_first_link(
+                    link.tx,
+                    link.rx,
+                    None, // initiator side — no ClientHello
+                    TransportedLinkSource {
+                        source,
+                        mode: TransportMode::Stable,
+                    },
+                )
                 .await
                 .map_err(|error| {
                     SessionError::Protocol(format!("stable conduit setup failed: {error}"))
-                })?;
-                // TODO: Stable conduit handshake — for now, create a placeholder result
-                unimplemented!("stable conduit CBOR handshake not yet implemented")
+                })?
+                .with_message_plan(message_plan);
+                let builder = SessionInitiatorBuilder::new(conduit, handshake_result);
+                SessionTransportInitiatorBuilder::<S::Link>::apply_common_parts(
+                    builder,
+                    root_settings,
+                    metadata,
+                    on_connection,
+                    keepalive,
+                    resumable,
+                    None,
+                    operation_store,
+                    spawn_fn,
+                )
+                .establish(handler)
+                .await
             }
         }
     }
@@ -589,6 +626,9 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
                 .await
             }
             TransportMode::Stable => {
+                let link = initiate_transport(link, TransportMode::Stable)
+                    .await
+                    .map_err(session_error_from_transport)?;
                 Self::finish_with_stable_parts(
                     link,
                     root_settings,
@@ -673,8 +713,10 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
             handshake_as_initiator(&link.tx, &mut link.rx, root_settings.clone(), true, None)
                 .await
                 .map_err(session_error_from_handshake)?;
+        let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
+            .map_err(SessionError::Protocol)?;
         let builder = SessionInitiatorBuilder::new(
-            BareConduit::<MessageFamily, _>::new(link),
+            BareConduit::with_message_plan(link, message_plan),
             handshake_result,
         );
         Self::apply_common_parts(
@@ -695,15 +737,15 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     #[cfg(not(target_arch = "wasm32"))]
     #[allow(clippy::too_many_arguments)]
     async fn finish_with_stable_parts<Client: From<DriverCaller>>(
-        _link: L,
-        _root_settings: ConnectionSettings,
-        _metadata: Metadata<'a>,
-        _on_connection: Option<Box<dyn ConnectionAcceptor>>,
-        _keepalive: Option<SessionKeepaliveConfig>,
-        _resumable: bool,
-        _operation_store: Option<Arc<dyn OperationStore>>,
-        _spawn_fn: SpawnFn,
-        _handler: impl Handler<DriverReplySink> + 'static,
+        mut link: SplitLink<L::Tx, L::Rx>,
+        root_settings: ConnectionSettings,
+        metadata: Metadata<'a>,
+        on_connection: Option<Box<dyn ConnectionAcceptor>>,
+        keepalive: Option<SessionKeepaliveConfig>,
+        resumable: bool,
+        operation_store: Option<Arc<dyn OperationStore>>,
+        spawn_fn: SpawnFn,
+        handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<(Client, SessionHandle), SessionError>
     where
         L: Link + Send + 'static,
@@ -711,8 +753,35 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         for<'p> <L::Tx as roam_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + Send + 'static,
     {
-        // TODO: Stable conduit CBOR handshake not yet implemented
-        unimplemented!("stable conduit CBOR handshake not yet implemented")
+        let handshake_result =
+            handshake_as_initiator(&link.tx, &mut link.rx, root_settings.clone(), true, None)
+                .await
+                .map_err(session_error_from_handshake)?;
+        let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
+            .map_err(SessionError::Protocol)?;
+        let conduit = StableConduit::<MessageFamily, _>::with_first_link(
+            link.tx,
+            link.rx,
+            None,
+            crate::stable_conduit::exhausted_source::<SplitLink<L::Tx, L::Rx>>(),
+        )
+        .await
+        .map_err(|e| SessionError::Protocol(format!("stable conduit setup failed: {e}")))?
+        .with_message_plan(message_plan);
+        let builder = SessionInitiatorBuilder::new(conduit, handshake_result);
+        Self::apply_common_parts(
+            builder,
+            root_settings,
+            metadata,
+            on_connection,
+            keepalive,
+            resumable,
+            None,
+            operation_store,
+            spawn_fn,
+        )
+        .establish(handler)
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1101,8 +1170,10 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
+                let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
+                    .map_err(SessionError::Protocol)?;
                 let builder = SessionAcceptorBuilder::new(
-                    BareConduit::<MessageFamily, _>::new(link),
+                    BareConduit::with_message_plan(link, message_plan),
                     handshake_result,
                 );
                 Self::apply_common_parts(
@@ -1175,8 +1246,10 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
+                let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
+                    .map_err(SessionError::Protocol)?;
                 let builder = SessionAcceptorBuilder::new(
-                    BareConduit::<MessageFamily, _>::new(link),
+                    BareConduit::with_message_plan(link, message_plan),
                     handshake_result,
                 );
                 Self::apply_common_parts(
@@ -1247,8 +1320,10 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
+                let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
+                    .map_err(SessionError::Protocol)?;
                 let builder = SessionAcceptorBuilder::new(
-                    BareConduit::<MessageFamily, _>::new(link),
+                    BareConduit::with_message_plan(link, message_plan),
                     handshake_result,
                 );
                 Self::apply_common_parts(
@@ -1308,8 +1383,10 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
+                let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
+                    .map_err(SessionError::Protocol)?;
                 let builder = SessionAcceptorBuilder::new(
-                    BareConduit::<MessageFamily, _>::new(link),
+                    BareConduit::with_message_plan(link, message_plan),
                     handshake_result,
                 );
                 Self::apply_common_parts(
@@ -1335,16 +1412,16 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     #[cfg(not(target_arch = "wasm32"))]
     #[allow(clippy::too_many_arguments)]
     async fn finish_with_stable_parts<Client: From<DriverCaller>>(
-        _link: SplitLink<L::Tx, L::Rx>,
-        _root_settings: ConnectionSettings,
-        _metadata: Metadata<'a>,
-        _on_connection: Option<Box<dyn ConnectionAcceptor>>,
-        _keepalive: Option<SessionKeepaliveConfig>,
-        _resumable: bool,
-        _session_registry: Option<SessionRegistry>,
-        _operation_store: Option<Arc<dyn OperationStore>>,
-        _spawn_fn: SpawnFn,
-        _handler: impl Handler<DriverReplySink> + 'static,
+        mut link: SplitLink<L::Tx, L::Rx>,
+        root_settings: ConnectionSettings,
+        metadata: Metadata<'a>,
+        on_connection: Option<Box<dyn ConnectionAcceptor>>,
+        keepalive: Option<SessionKeepaliveConfig>,
+        resumable: bool,
+        session_registry: Option<SessionRegistry>,
+        operation_store: Option<Arc<dyn OperationStore>>,
+        spawn_fn: SpawnFn,
+        handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<(Client, SessionHandle), SessionError>
     where
         L: Link + Send + 'static,
@@ -1352,8 +1429,41 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         <L::Tx as roam_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + Send + 'static,
     {
-        // TODO: Stable conduit CBOR handshake not yet implemented
-        unimplemented!("stable conduit acceptor CBOR handshake not yet implemented")
+        let handshake_result = handshake_as_acceptor(
+            &link.tx,
+            &mut link.rx,
+            root_settings.clone(),
+            true,
+            resumable,
+            None,
+        )
+        .await
+        .map_err(session_error_from_handshake)?;
+        let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
+            .map_err(SessionError::Protocol)?;
+        let conduit = StableConduit::<MessageFamily, _>::with_first_link(
+            link.tx,
+            link.rx,
+            None,
+            crate::stable_conduit::exhausted_source::<SplitLink<L::Tx, L::Rx>>(),
+        )
+        .await
+        .map_err(|e| SessionError::Protocol(format!("stable conduit setup failed: {e}")))?
+        .with_message_plan(message_plan);
+        let builder = SessionAcceptorBuilder::new(conduit, handshake_result);
+        Self::apply_common_parts(
+            builder,
+            root_settings,
+            metadata,
+            on_connection,
+            keepalive,
+            resumable,
+            session_registry,
+            operation_store,
+            spawn_fn,
+        )
+        .establish(handler)
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]
