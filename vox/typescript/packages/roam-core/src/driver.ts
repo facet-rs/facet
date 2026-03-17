@@ -19,6 +19,7 @@ import { metadataOperationId } from "./retry.ts";
 import { type ServerCallOutcome, type ServerMiddleware } from "./server_middleware.ts";
 import type { ConnectionHandle, IncomingCall } from "./session.ts";
 import { roamLogger } from "./logger.ts";
+import { SchemaTranslationError, type ArgTransform } from "./schema_tracker.ts";
 
 export interface Dispatcher {
   getDescriptor(): ServiceDescriptor;
@@ -535,10 +536,28 @@ export class Driver {
     // r[impl rpc.channel.binding]
     // r[impl rpc.channel.binding.callee-args.rx]
     // r[impl rpc.channel.binding.callee-args.tx]
+
+    // r[impl schema.translation]
+    // Try to build a translation plan using remote schemas.
+    const tracker = this.connection.getSchemaTracker();
+    let argsSchema = method.args;
+    let transforms: ArgTransform[] | null = null;
+
+    const translation = tracker.buildArgsTranslation(
+      method.id,
+      method.args,
+      descriptor.schema_registry,
+    );
+    if (translation) {
+      argsSchema = translation.remoteArgsSchema;
+      transforms = translation.transforms;
+      roamLogger()?.debug(`[roam:driver] using translation plan for ${method.name}`);
+    }
+
     const decoded = decodeWithSchema(
       incoming.args,
       0,
-      method.args,
+      argsSchema,
       descriptor.schema_registry,
     );
     if (decoded.next !== incoming.args.length) {
@@ -570,6 +589,10 @@ export class Driver {
         return createServerRx(channelId, receiver, (bytes: Uint8Array) =>
           decodeWithSchema(bytes, 0, argSchema.element, descriptor.schema_registry).value,
         );
+      }
+      // Apply translation transform if available.
+      if (transforms) {
+        return transforms[argIndex](raw);
       }
       return raw;
     });

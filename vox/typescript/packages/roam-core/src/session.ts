@@ -57,6 +57,7 @@ import {
 } from "./internal/parity.ts";
 import { BareConduit } from "./conduit.ts";
 import { roamLogger } from "./logger.ts";
+import { SchemaTracker } from "./schema_tracker.ts";
 import type { Link, LinkSource } from "./link.ts";
 import { singleLinkSource } from "./link.ts";
 import { StableConduit } from "./stable_conduit.ts";
@@ -242,6 +243,7 @@ class SessionCore {
   private peerSupportsRetry: boolean;
   private readonly resumable: boolean;
   private sessionResumeKey: Uint8Array | null;
+  private readonly schemaTracker = new SchemaTracker();
   private readonly recoverConduit?: () => Promise<Conduit<Message>>;
   private readonly pendingResumes: Array<{
     conduit: Conduit<Message>;
@@ -638,6 +640,11 @@ class SessionCore {
       case "ChannelMessage":
         this.handleChannelMessage(message.connection_id, message.payload.value);
         return;
+
+      // r[impl schema.exchange]
+      case "SchemaMessage":
+        this.handleSchemaMessage(message.payload.value);
+        return;
     }
   }
 
@@ -763,6 +770,20 @@ class SessionCore {
         return;
     }
   }
+
+  // r[impl schema.exchange]
+  private handleSchemaMessage(value: { schemas: Uint8Array }): void {
+    roamLogger()?.debug(`[roam:session] received SchemaMessage (${value.schemas.length} bytes)`);
+    try {
+      this.schemaTracker.recordReceived(value.schemas);
+    } catch (e) {
+      roamLogger()?.error(`[roam:session] failed to parse schema message:`, e);
+    }
+  }
+
+  getSchemaTracker(): SchemaTracker {
+    return this.schemaTracker;
+  }
 }
 
 export class SessionHandle {
@@ -837,6 +858,10 @@ export class ConnectionHandle {
 
   getChannelRegistry(): ChannelRegistry {
     return this.channelRegistry;
+  }
+
+  getSchemaTracker(): SchemaTracker {
+    return this.session.getSchemaTracker();
   }
 
   isClosed(): boolean {
