@@ -149,18 +149,18 @@ pub fn build_registry(schemas: &[Schema]) -> SchemaRegistry {
     schemas.iter().map(|s| (s.type_id, s.clone())).collect()
 }
 
-/// Binds a method (by its MethodId as u64) to the root TypeSchemaId of the
-/// type being sent for that method. Sent once per method per direction.
+/// Binds a method to the root TypeSchemaId of the type being sent for that
+/// method. Sent once per method per direction.
 #[derive(Facet, Clone, Debug)]
 pub struct MethodSchemaBinding {
-    pub method_id: u64,
+    pub method_id: MethodId,
     pub root_type_schema_id: TypeSchemaId,
     /// Whether this binding is for args (caller → callee) or response (callee → caller).
     pub direction: BindingDirection,
 }
 
 /// Whether a method schema binding describes args or the response type.
-#[derive(Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Facet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum BindingDirection {
     /// The sender will send data of this type as method arguments.
@@ -223,19 +223,19 @@ impl PreparedSchemaMessage {
 
 /// Tracks which schemas have been sent on the current connection.
 ///
-/// Plain struct (no Arc, no Mutex) — owned by `SessionCore` behind the
-/// same Mutex as the conduit tx. Reset on reconnection.
+/// Plain struct — owned by `SessionCore` behind the same Mutex as the
+/// conduit tx. Reset on reconnection.
 // r[impl schema.tracking.sent]
 // r[impl schema.type-id.per-connection]
 pub struct SchemaSendTracker {
-    /// Type schema IDs we've already sent.
-    sent: HashSet<TypeSchemaId>,
-    /// Method args bindings we've already sent (by method_id).
-    args_bindings_sent: HashSet<u64>,
-    /// Method response bindings we've already sent (by method_id).
-    response_bindings_sent: HashSet<u64>,
+    /// Per-method, per-direction: the CborPayload that was sent. Keyed by
+    /// (method_id, direction). If present, schemas were already sent.
+    sent_methods: HashMap<(MethodId, BindingDirection), CborPayload>,
     /// Assigns incrementing type IDs to shapes we extract.
     shape_to_id: HashMap<&'static Shape, TypeSchemaId>,
+    /// All type schema IDs we've sent so far (for dedup across methods that
+    /// share types).
+    sent_type_ids: HashSet<TypeSchemaId>,
     /// Next ID to assign.
     next_id: u32,
 }
@@ -243,20 +243,18 @@ pub struct SchemaSendTracker {
 impl SchemaSendTracker {
     pub fn new() -> Self {
         SchemaSendTracker {
-            sent: HashSet::new(),
-            args_bindings_sent: HashSet::new(),
-            response_bindings_sent: HashSet::new(),
+            sent_methods: HashMap::new(),
             shape_to_id: HashMap::new(),
+            sent_type_ids: HashSet::new(),
             next_id: 1,
         }
     }
 
     /// Reset all state — call on reconnection.
     pub fn reset(&mut self) {
-        self.sent.clear();
-        self.args_bindings_sent.clear();
-        self.response_bindings_sent.clear();
+        self.sent_methods.clear();
         self.shape_to_id.clear();
+        self.sent_type_ids.clear();
         self.next_id = 1;
     }
 
@@ -271,11 +269,12 @@ impl SchemaSendTracker {
         id
     }
 
-    /// Prepare type schemas and method binding for a method call/response.
+    /// Prepare schemas for a method call/response, returning a CBOR payload
+    /// to inline in the request/response. Returns empty payload if schemas
+    /// were already sent for this method+direction.
     ///
-    /// Returns `Some(...)` if there's anything to send (unsent type schemas
-    /// or a first-time method binding). Returns `None` if everything was
-    /// already sent.
+    /// Fast path: if method+direction is in `sent_methods`, return immediately.
+    /// Slow path: extract schemas, deduplicate, CBOR-encode, cache, return.
     // r[impl schema.tracking.transitive]
     // r[impl schema.exchange.idempotent]
     // r[impl schema.principles.once-per-type]
@@ -286,43 +285,39 @@ impl SchemaSendTracker {
         method_id: MethodId,
         shape: &'static Shape,
         direction: BindingDirection,
-    ) -> Option<PreparedSchemaMessage> {
+    ) -> CborPayload {
+        let key = (method_id, direction);
+
+        // Fast path: already sent for this method+direction.
+        if self.sent_methods.contains_key(&key) {
+            return CborPayload::default();
+        }
+
+        // Slow path: extract, deduplicate, encode.
         let all_schemas = self.extract_schemas(shape);
-        let root_type_schema_id = all_schemas.last().map(|s| s.type_id)?;
+        let root_type_schema_id = match all_schemas.last() {
+            Some(s) => s.type_id,
+            None => return CborPayload::default(),
+        };
 
         let unsent: Vec<Schema> = all_schemas
             .into_iter()
-            .filter(|s| !self.sent.contains(&s.type_id))
+            .filter(|s| self.sent_type_ids.insert(s.type_id))
             .collect();
 
-        let bindings_sent = match direction {
-            BindingDirection::Args => &mut self.args_bindings_sent,
-            BindingDirection::Response => &mut self.response_bindings_sent,
-        };
-        let need_method_binding = bindings_sent.insert(method_id.0);
-
-        if unsent.is_empty() && !need_method_binding {
-            return None;
-        }
-
-        for s in &unsent {
-            self.sent.insert(s.type_id);
-        }
-
-        let method_bindings = if need_method_binding {
-            vec![MethodSchemaBinding {
-                method_id: method_id.0,
-                root_type_schema_id,
-                direction,
-            }]
-        } else {
-            vec![]
+        let method_binding = MethodSchemaBinding {
+            method_id,
+            root_type_schema_id,
+            direction,
         };
 
-        Some(PreparedSchemaMessage {
+        let prepared = PreparedSchemaMessage {
             schemas: unsent,
-            method_bindings,
-        })
+            method_bindings: vec![method_binding],
+        };
+        let cbor = prepared.to_cbor();
+        self.sent_methods.insert(key, cbor.clone());
+        cbor
     }
 
     /// Extract all schemas for a type and its transitive dependencies.
@@ -369,9 +364,9 @@ pub struct SchemaRecvTracker {
     /// Type schemas received from the remote peer.
     received: Mutex<HashMap<TypeSchemaId, Schema>>,
     /// Args bindings received: method_id → root TypeSchemaId for args.
-    received_args_bindings: Mutex<HashMap<u64, TypeSchemaId>>,
+    received_args_bindings: Mutex<HashMap<MethodId, TypeSchemaId>>,
     /// Response bindings received: method_id → root TypeSchemaId for response.
-    received_response_bindings: Mutex<HashMap<u64, TypeSchemaId>>,
+    received_response_bindings: Mutex<HashMap<MethodId, TypeSchemaId>>,
 }
 
 /// Error returned when recording received schemas detects a protocol violation.
@@ -437,7 +432,7 @@ impl SchemaRecvTracker {
         self.received_args_bindings
             .lock()
             .unwrap()
-            .get(&method_id.0)
+            .get(&method_id)
             .copied()
     }
 
@@ -446,7 +441,7 @@ impl SchemaRecvTracker {
         self.received_response_bindings
             .lock()
             .unwrap()
-            .get(&method_id.0)
+            .get(&method_id)
             .copied()
     }
 
@@ -1060,17 +1055,20 @@ mod tests {
     // r[verify schema.principles.once-per-type]
     // r[verify schema.exchange.idempotent]
     #[test]
-    fn tracker_prepare_send_returns_some_then_none() {
+    fn tracker_prepare_send_returns_payload_then_empty() {
         let mut tracker = SchemaSendTracker::new();
         let method = MethodId(1);
         let first =
             tracker.prepare_send_for_method(method, <u32 as Facet>::SHAPE, BindingDirection::Args);
-        assert!(first.is_some(), "first prepare_send should return Some");
+        assert!(
+            !first.is_empty(),
+            "first prepare_send should return payload"
+        );
         let second =
             tracker.prepare_send_for_method(method, <u32 as Facet>::SHAPE, BindingDirection::Args);
         assert!(
-            second.is_none(),
-            "second prepare_send for same shape should return None"
+            second.is_empty(),
+            "second prepare_send for same method should return empty"
         );
     }
 
@@ -1086,20 +1084,20 @@ mod tests {
 
         let mut tracker = SchemaSendTracker::new();
         let method = MethodId(1);
-        let prepared = tracker
-            .prepare_send_for_method(method, Outer::SHAPE, BindingDirection::Args)
-            .expect("should return schemas");
+        let first = tracker.prepare_send_for_method(method, Outer::SHAPE, BindingDirection::Args);
+        assert!(!first.is_empty(), "should return schemas");
+        let parsed = first.parse().expect("should parse CBOR");
         assert!(
-            prepared.schemas.len() >= 3,
+            parsed.schemas.len() >= 3,
             "should include transitive deps, got {}",
-            prepared.schemas.len()
+            parsed.schemas.len()
         );
 
         // Same method again — nothing to send
         let again =
             tracker.prepare_send_for_method(method, <u32 as Facet>::SHAPE, BindingDirection::Args);
         assert!(
-            again.is_none(),
+            again.is_empty(),
             "u32 was already sent as transitive dep, method already bound"
         );
     }
@@ -1143,19 +1141,27 @@ mod tests {
         let method = MethodId(1);
 
         // Send args binding
-        let args = tracker
-            .prepare_send_for_method(method, <u32 as Facet>::SHAPE, BindingDirection::Args)
-            .expect("should send args");
-        assert_eq!(args.method_bindings.len(), 1);
-        assert_eq!(args.method_bindings[0].direction, BindingDirection::Args);
+        let args =
+            tracker.prepare_send_for_method(method, <u32 as Facet>::SHAPE, BindingDirection::Args);
+        assert!(!args.is_empty(), "should send args");
+        let args_parsed = args.parse().expect("parse args CBOR");
+        assert_eq!(args_parsed.method_bindings.len(), 1);
+        assert_eq!(
+            args_parsed.method_bindings[0].direction,
+            BindingDirection::Args
+        );
 
         // Send response binding for the same method — should NOT be deduplicated
-        let response = tracker
-            .prepare_send_for_method(method, <String as Facet>::SHAPE, BindingDirection::Response)
-            .expect("should send response");
-        assert_eq!(response.method_bindings.len(), 1);
+        let response = tracker.prepare_send_for_method(
+            method,
+            <String as Facet>::SHAPE,
+            BindingDirection::Response,
+        );
+        assert!(!response.is_empty(), "should send response");
+        let response_parsed = response.parse().expect("parse response CBOR");
+        assert_eq!(response_parsed.method_bindings.len(), 1);
         assert_eq!(
-            response.method_bindings[0].direction,
+            response_parsed.method_bindings[0].direction,
             BindingDirection::Response
         );
 
@@ -1166,12 +1172,12 @@ mod tests {
                 schemas: extract_schemas(<u64 as Facet>::SHAPE),
                 method_bindings: vec![
                     MethodSchemaBinding {
-                        method_id: 42,
+                        method_id: MethodId(42),
                         root_type_schema_id: TypeSchemaId(100),
                         direction: BindingDirection::Args,
                     },
                     MethodSchemaBinding {
-                        method_id: 42,
+                        method_id: MethodId(42),
                         root_type_schema_id: TypeSchemaId(200),
                         direction: BindingDirection::Response,
                     },
@@ -1212,18 +1218,17 @@ mod tests {
     fn send_tracker_reset_clears_all_state() {
         let mut tracker = SchemaSendTracker::new();
         let method = MethodId(1);
-        tracker
-            .prepare_send_for_method(method, <u32 as Facet>::SHAPE, BindingDirection::Args)
-            .expect("first should return Some");
+        let first =
+            tracker.prepare_send_for_method(method, <u32 as Facet>::SHAPE, BindingDirection::Args);
+        assert!(!first.is_empty(), "first should return payload");
 
         tracker.reset();
 
-        // After reset, the same method should return Some again
         let after_reset =
             tracker.prepare_send_for_method(method, <u32 as Facet>::SHAPE, BindingDirection::Args);
         assert!(
-            after_reset.is_some(),
-            "after reset, prepare_send should return Some"
+            !after_reset.is_empty(),
+            "after reset, prepare_send should return payload again"
         );
     }
 }

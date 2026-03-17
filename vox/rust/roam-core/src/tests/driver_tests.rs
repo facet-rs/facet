@@ -1319,8 +1319,13 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
             )
             .await
             .expect("client CBOR handshake should succeed");
+            let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
+                .expect("message plan should build");
             client_session_handle
-                .resume(BareConduit::new(resumed_link), handshake_result)
+                .resume(
+                    BareConduit::with_message_plan(resumed_link, message_plan),
+                    handshake_result,
+                )
                 .await
         },
         acceptor_on(server_link2)

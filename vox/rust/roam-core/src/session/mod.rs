@@ -1345,15 +1345,11 @@ impl SessionCore {
         arg_shape: &'static facet_core::Shape,
     ) -> roam_types::CborPayload {
         let mut inner = self.inner.lock().expect("session core mutex poisoned");
-        if let Some(prepared) = inner.send_tracker.prepare_send_for_method(
+        inner.send_tracker.prepare_send_for_method(
             method_id,
             arg_shape,
             roam_types::BindingDirection::Args,
-        ) {
-            prepared.to_cbor()
-        } else {
-            Default::default()
-        }
+        )
     }
 
     /// Prepare response schemas for a method's response type.
@@ -1366,15 +1362,11 @@ impl SessionCore {
         response_shape: &'static facet_core::Shape,
     ) -> roam_types::CborPayload {
         let mut inner = self.inner.lock().expect("session core mutex poisoned");
-        if let Some(prepared) = inner.send_tracker.prepare_send_for_method(
+        inner.send_tracker.prepare_send_for_method(
             method_id,
             response_shape,
             roam_types::BindingDirection::Response,
-        ) {
-            prepared.to_cbor()
-        } else {
-            Default::default()
-        }
+        )
     }
 }
 
