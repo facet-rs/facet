@@ -1,5 +1,7 @@
 #![deny(unsafe_code)]
 
+pub mod evolved;
+
 use facet::Facet;
 use roam::service;
 use roam::{Rx, Tx};
@@ -89,6 +91,28 @@ pub trait Testbed {
 
     /// Test tuple types.
     async fn swap_pair(&self, pair: (i32, String)) -> (String, i32);
+
+    // ========================================================================
+    // Schema evolution methods
+    // ========================================================================
+
+    /// Echo a profile back. Tests added optional field.
+    async fn echo_profile(&self, profile: Profile) -> Profile;
+
+    /// Echo a record back. Tests field reordering.
+    async fn echo_record(&self, record: Record) -> Record;
+
+    /// Echo a status back. Tests added enum variant.
+    async fn echo_status(&self, status: Status) -> Status;
+
+    /// Echo a tag back. Tests removed field (v2 drops a field v1 has).
+    async fn echo_tag(&self, tag: Tag) -> Tag;
+
+    /// Echo a measurement back. Tests incompatible type change.
+    async fn echo_measurement(&self, m: Measurement) -> Measurement;
+
+    /// Echo a config back. Tests missing required field.
+    async fn echo_config(&self, c: Config) -> Config;
 }
 
 // ============================================================================
@@ -151,6 +175,55 @@ pub enum Message {
     Text(String) = 0,
     Number(i64) = 1,
     Data(Vec<u8>) = 2,
+}
+
+// ============================================================================
+// Schema evolution types (v1 — the "original" definitions)
+// ============================================================================
+
+/// Tests added optional field: v1 has {name, bio}, v2 adds {avatar: Option<String>}.
+#[derive(Debug, Clone, PartialEq, Facet)]
+pub struct Profile {
+    pub name: String,
+    pub bio: String,
+}
+
+/// Tests field reordering: v1 has {alpha, beta, gamma}, v2 reorders to {gamma, alpha, beta}.
+#[derive(Debug, Clone, PartialEq, Facet)]
+pub struct Record {
+    pub alpha: i32,
+    pub beta: String,
+    pub gamma: f64,
+}
+
+/// Tests added enum variant: v1 has {Active, Inactive}, v2 adds {Suspended}.
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+pub enum Status {
+    Active = 0,
+    Inactive = 1,
+}
+
+/// Tests removed field: v1 has {label, priority, note}, v2 drops {note}.
+#[derive(Debug, Clone, PartialEq, Facet)]
+pub struct Tag {
+    pub label: String,
+    pub priority: u32,
+    pub note: String,
+}
+
+/// Tests incompatible type change: v1 has {value: f64}, v2 changes to {value: String}.
+#[derive(Debug, Clone, PartialEq, Facet)]
+pub struct Measurement {
+    pub unit: String,
+    pub value: f64,
+}
+
+/// Tests missing required field: v1 has {key, value}, v2 adds required {owner: String}.
+#[derive(Debug, Clone, PartialEq, Facet)]
+pub struct Config {
+    pub key: String,
+    pub value: String,
 }
 
 // ============================================================================

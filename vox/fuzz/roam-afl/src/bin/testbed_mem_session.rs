@@ -6,8 +6,8 @@ use roam::Call;
 use roam_core::{BareConduit, DriverReplySink, acceptor, initiator, memory_link_pair};
 use roam_types::{Handler, MessageFamily, RequestCall, SelfRef};
 use spec_proto::{
-    Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape, TestbedClient,
-    TestbedDispatcher, TestbedServer,
+    Canvas, Color, Config, LookupError, MathError, Measurement, Message, Person, Point, Profile,
+    Record, Rectangle, Shape, Status, Tag, Testbed, TestbedClient, TestbedDispatcher,
 };
 
 struct NoopHandler;
@@ -161,6 +161,30 @@ impl Testbed for FuzzService {
 
     async fn swap_pair(&self, call: impl Call<(String, i32), Infallible>, pair: (i32, String)) {
         call.ok((pair.1, pair.0)).await;
+    }
+
+    async fn echo_profile(&self, profile: Profile) -> Profile {
+        profile
+    }
+
+    async fn echo_record(&self, record: Record) -> Record {
+        record
+    }
+
+    async fn echo_status(&self, status: Status) -> Status {
+        status
+    }
+
+    async fn echo_tag(&self, tag: Tag) -> Tag {
+        tag
+    }
+
+    async fn echo_measurement(&self, m: Measurement) -> Measurement {
+        m
+    }
+
+    async fn echo_config(&self, c: Config) -> Config {
+        c
     }
 }
 

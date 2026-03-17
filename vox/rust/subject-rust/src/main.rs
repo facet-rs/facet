@@ -6,8 +6,8 @@ use roam_shm::bootstrap::{BootstrapStatus, encode_request};
 use roam_shm::segment::Segment;
 use roam_stream::tcp_connector;
 use spec_proto::{
-    Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape, Testbed,
-    TestbedClient, TestbedDispatcher,
+    Canvas, Color, Config, LookupError, MathError, Measurement, Message, Person, Point, Profile,
+    Record, Rectangle, Shape, Status, Tag, Testbed, TestbedClient, TestbedDispatcher,
 };
 use tracing::{debug, error, info, instrument};
 
@@ -174,6 +174,30 @@ impl Testbed for TestbedService {
 
     async fn swap_pair(&self, pair: (i32, String)) -> (String, i32) {
         (pair.1, pair.0)
+    }
+
+    async fn echo_profile(&self, profile: Profile) -> Profile {
+        profile
+    }
+
+    async fn echo_record(&self, record: Record) -> Record {
+        record
+    }
+
+    async fn echo_status(&self, status: Status) -> Status {
+        status
+    }
+
+    async fn echo_tag(&self, tag: Tag) -> Tag {
+        tag
+    }
+
+    async fn echo_measurement(&self, m: Measurement) -> Measurement {
+        m
+    }
+
+    async fn echo_config(&self, c: Config) -> Config {
+        c
     }
 }
 

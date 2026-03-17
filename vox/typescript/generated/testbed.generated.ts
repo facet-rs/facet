@@ -65,6 +65,37 @@ export type Message =
   | { tag: "Number"; value: bigint }
   | { tag: "Data"; value: Uint8Array };
 
+export interface Profile {
+  name: string;
+  bio: string;
+}
+
+export interface Record {
+  alpha: number;
+  beta: string;
+  gamma: number;
+}
+
+export type Status =
+  | { tag: "Active" }
+  | { tag: "Inactive" };
+
+export interface Tag {
+  label: string;
+  priority: number;
+  note: string;
+}
+
+export interface Measurement {
+  unit: string;
+  value: number;
+}
+
+export interface Config {
+  key: string;
+  value: string;
+}
+
 // Request/Response type aliases
 export type EchoRequest = [string];
 export type EchoResponse = string;
@@ -143,6 +174,24 @@ export type GetPointsResponse = Point[];
 export type SwapPairRequest = [[number, string]];
 export type SwapPairResponse = [string, number];
 
+export type EchoProfileRequest = [Profile];
+export type EchoProfileResponse = Profile;
+
+export type EchoRecordRequest = [Record];
+export type EchoRecordResponse = Record;
+
+export type EchoStatusRequest = [Status];
+export type EchoStatusResponse = Status;
+
+export type EchoTagRequest = [Tag];
+export type EchoTagResponse = Tag;
+
+export type EchoMeasurementRequest = [Measurement];
+export type EchoMeasurementResponse = Measurement;
+
+export type EchoConfigRequest = [Config];
+export type EchoConfigResponse = Config;
+
 // Caller interface for Testbed
 export interface TestbedCaller {
   /** Echoes the message back. */
@@ -201,6 +250,18 @@ export interface TestbedCaller {
   getPoints(count: number): Promise<Point[]>;
   /** Test tuple types. */
   swapPair(pair: [number, string]): Promise<[string, number]>;
+  /** Echo a profile back. Tests added optional field. */
+  echoProfile(profile: Profile): Promise<Profile>;
+  /** Echo a record back. Tests field reordering. */
+  echoRecord(record: Record): Promise<Record>;
+  /** Echo a status back. Tests added enum variant. */
+  echoStatus(status: Status): Promise<Status>;
+  /** Echo a tag back. Tests removed field (v2 drops a field v1 has). */
+  echoTag(tag: Tag): Promise<Tag>;
+  /** Echo a measurement back. Tests incompatible type change. */
+  echoMeasurement(m: Measurement): Promise<Measurement>;
+  /** Echo a config back. Tests missing required field. */
+  echoConfig(c: Config): Promise<Config>;
 }
 
 // Client implementation for Testbed
@@ -558,6 +619,78 @@ export class TestbedClient implements TestbedCaller {
     });
     return value as [string, number];
   }
+
+  /** Echo a profile back. Tests added optional field. */
+  async echoProfile(profile: Profile): Promise<Profile> {
+    const descriptor = testbed_descriptor.methods[18];
+    const value = await this.caller.call({
+      method: "Testbed.echoProfile",
+      args: { profile },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
+    });
+    return value as Profile;
+  }
+
+  /** Echo a record back. Tests field reordering. */
+  async echoRecord(record: Record): Promise<Record> {
+    const descriptor = testbed_descriptor.methods[19];
+    const value = await this.caller.call({
+      method: "Testbed.echoRecord",
+      args: { record },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
+    });
+    return value as Record;
+  }
+
+  /** Echo a status back. Tests added enum variant. */
+  async echoStatus(status: Status): Promise<Status> {
+    const descriptor = testbed_descriptor.methods[20];
+    const value = await this.caller.call({
+      method: "Testbed.echoStatus",
+      args: { status },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
+    });
+    return value as Status;
+  }
+
+  /** Echo a tag back. Tests removed field (v2 drops a field v1 has). */
+  async echoTag(tag: Tag): Promise<Tag> {
+    const descriptor = testbed_descriptor.methods[21];
+    const value = await this.caller.call({
+      method: "Testbed.echoTag",
+      args: { tag },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
+    });
+    return value as Tag;
+  }
+
+  /** Echo a measurement back. Tests incompatible type change. */
+  async echoMeasurement(m: Measurement): Promise<Measurement> {
+    const descriptor = testbed_descriptor.methods[22];
+    const value = await this.caller.call({
+      method: "Testbed.echoMeasurement",
+      args: { m },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
+    });
+    return value as Measurement;
+  }
+
+  /** Echo a config back. Tests missing required field. */
+  async echoConfig(c: Config): Promise<Config> {
+    const descriptor = testbed_descriptor.methods[23];
+    const value = await this.caller.call({
+      method: "Testbed.echoConfig",
+      args: { c },
+      descriptor,
+      schemaRegistry: testbed_descriptor.schema_registry,
+    });
+    return value as Config;
+  }
 }
 
 /**
@@ -604,6 +737,12 @@ export interface TestbedHandler {
   processMessage(msg: Message): Promise<Message> | Message;
   getPoints(count: number): Promise<Point[]> | Point[];
   swapPair(pair: [number, string]): Promise<[string, number]> | [string, number];
+  echoProfile(profile: Profile): Promise<Profile> | Profile;
+  echoRecord(record: Record): Promise<Record> | Record;
+  echoStatus(status: Status): Promise<Status> | Status;
+  echoTag(tag: Tag): Promise<Tag> | Tag;
+  echoMeasurement(m: Measurement): Promise<Measurement> | Measurement;
+  echoConfig(c: Config): Promise<Config> | Config;
 }
 
 // Dispatcher for Testbed
@@ -747,6 +886,48 @@ export class TestbedDispatcher implements Dispatcher {
       } catch {
         call.replyInternalError();
       }
+    } else if (method.id === 0xbd9bcabddeebeb04n) {
+      try {
+        const result = await this.handler.echoProfile(args[0] as Profile);
+        call.reply(result);
+      } catch {
+        call.replyInternalError();
+      }
+    } else if (method.id === 0x100b0e08da4b8f1an) {
+      try {
+        const result = await this.handler.echoRecord(args[0] as Record);
+        call.reply(result);
+      } catch {
+        call.replyInternalError();
+      }
+    } else if (method.id === 0x697590d3ffc36703n) {
+      try {
+        const result = await this.handler.echoStatus(args[0] as Status);
+        call.reply(result);
+      } catch {
+        call.replyInternalError();
+      }
+    } else if (method.id === 0x2bd1b3149d73ce97n) {
+      try {
+        const result = await this.handler.echoTag(args[0] as Tag);
+        call.reply(result);
+      } catch {
+        call.replyInternalError();
+      }
+    } else if (method.id === 0x3b3d22b015fa1a3fn) {
+      try {
+        const result = await this.handler.echoMeasurement(args[0] as Measurement);
+        call.reply(result);
+      } catch {
+        call.replyInternalError();
+      }
+    } else if (method.id === 0xe13a477fb964ce28n) {
+      try {
+        const result = await this.handler.echoConfig(args[0] as Config);
+        call.reply(result);
+      } catch {
+        call.replyInternalError();
+      }
     }
   }
 }
@@ -804,6 +985,18 @@ const testbed_schema_registry: SchemaRegistry = new Map<string, Schema>([
       fields: { kind: "bytes" },
     }],
   }],
+  ["Profile", { kind: "struct", fields: { "name": { kind: "string" }, "bio": { kind: "string" } } }],
+  ["Record", {
+    kind: "struct",
+    fields: { "alpha": { kind: "i32" }, "beta": { kind: "string" }, "gamma": { kind: "f64" } },
+  }],
+  ["Status", { kind: "enum", variants: [{ name: "Active", fields: null }, { name: "Inactive", fields: null }] }],
+  ["Tag", {
+    kind: "struct",
+    fields: { "label": { kind: "string" }, "priority": { kind: "u32" }, "note": { kind: "string" } },
+  }],
+  ["Measurement", { kind: "struct", fields: { "unit": { kind: "string" }, "value": { kind: "f64" } } }],
+  ["Config", { kind: "struct", fields: { "key": { kind: "string" }, "value": { kind: "string" } } }],
 ]);
 
 // Service descriptor for runtime schema-driven dispatch
@@ -1218,6 +1411,138 @@ export const testbed_descriptor: ServiceDescriptor = {
       result: {
         kind: "enum",
         variants: [{ name: "Ok", fields: { kind: "tuple", elements: [{ kind: "string" }, { kind: "i32" }] } }, {
+          name: "Err",
+          fields: {
+            kind: "enum",
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
+          },
+        }],
+      },
+    },
+    {
+      name: "echoProfile",
+      id: 0xbd9bcabddeebeb04n,
+      retry: { persist: false, idem: false },
+      args: { kind: "tuple", elements: [{ kind: "ref", name: "Profile" }] },
+      result: {
+        kind: "enum",
+        variants: [{ name: "Ok", fields: { kind: "ref", name: "Profile" } }, {
+          name: "Err",
+          fields: {
+            kind: "enum",
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
+          },
+        }],
+      },
+    },
+    {
+      name: "echoRecord",
+      id: 0x100b0e08da4b8f1an,
+      retry: { persist: false, idem: false },
+      args: { kind: "tuple", elements: [{ kind: "ref", name: "Record" }] },
+      result: {
+        kind: "enum",
+        variants: [{ name: "Ok", fields: { kind: "ref", name: "Record" } }, {
+          name: "Err",
+          fields: {
+            kind: "enum",
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
+          },
+        }],
+      },
+    },
+    {
+      name: "echoStatus",
+      id: 0x697590d3ffc36703n,
+      retry: { persist: false, idem: false },
+      args: { kind: "tuple", elements: [{ kind: "ref", name: "Status" }] },
+      result: {
+        kind: "enum",
+        variants: [{ name: "Ok", fields: { kind: "ref", name: "Status" } }, {
+          name: "Err",
+          fields: {
+            kind: "enum",
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
+          },
+        }],
+      },
+    },
+    {
+      name: "echoTag",
+      id: 0x2bd1b3149d73ce97n,
+      retry: { persist: false, idem: false },
+      args: { kind: "tuple", elements: [{ kind: "ref", name: "Tag" }] },
+      result: {
+        kind: "enum",
+        variants: [{ name: "Ok", fields: { kind: "ref", name: "Tag" } }, {
+          name: "Err",
+          fields: {
+            kind: "enum",
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
+          },
+        }],
+      },
+    },
+    {
+      name: "echoMeasurement",
+      id: 0x3b3d22b015fa1a3fn,
+      retry: { persist: false, idem: false },
+      args: { kind: "tuple", elements: [{ kind: "ref", name: "Measurement" }] },
+      result: {
+        kind: "enum",
+        variants: [{ name: "Ok", fields: { kind: "ref", name: "Measurement" } }, {
+          name: "Err",
+          fields: {
+            kind: "enum",
+            variants: [
+              { name: "User", fields: null },
+              { name: "UnknownMethod", fields: null },
+              { name: "InvalidPayload", fields: null },
+              { name: "Cancelled", fields: null },
+              { name: "Indeterminate", fields: null },
+            ],
+          },
+        }],
+      },
+    },
+    {
+      name: "echoConfig",
+      id: 0xe13a477fb964ce28n,
+      retry: { persist: false, idem: false },
+      args: { kind: "tuple", elements: [{ kind: "ref", name: "Config" }] },
+      result: {
+        kind: "enum",
+        variants: [{ name: "Ok", fields: { kind: "ref", name: "Config" } }, {
           name: "Err",
           fields: {
             kind: "enum",

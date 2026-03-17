@@ -28,8 +28,8 @@ use roam_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, RequestCall, SelfR
 use shm_primitives::FileCleanup;
 use shm_primitives::SizeClassConfig;
 use spec_proto::{
-    Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape, Testbed,
-    TestbedClient, TestbedDispatcher,
+    Canvas, Color, Config, LookupError, MathError, Measurement, Message, Person, Point, Profile,
+    Record, Rectangle, Shape, Status, Tag, Testbed, TestbedClient, TestbedDispatcher,
 };
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
@@ -609,6 +609,30 @@ impl Testbed for TestbedService {
 
     async fn swap_pair(&self, pair: (i32, String)) -> (String, i32) {
         (pair.1, pair.0)
+    }
+
+    async fn echo_profile(&self, profile: Profile) -> Profile {
+        profile
+    }
+
+    async fn echo_record(&self, record: Record) -> Record {
+        record
+    }
+
+    async fn echo_status(&self, status: Status) -> Status {
+        status
+    }
+
+    async fn echo_tag(&self, tag: Tag) -> Tag {
+        tag
+    }
+
+    async fn echo_measurement(&self, m: Measurement) -> Measurement {
+        m
+    }
+
+    async fn echo_config(&self, c: Config) -> Config {
+        c
     }
 }
 

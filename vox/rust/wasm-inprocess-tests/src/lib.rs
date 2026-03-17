@@ -11,8 +11,8 @@ use roam_core::acceptor_on;
 use roam_inprocess::JsInProcessLink;
 use roam_types::{Rx, Tx};
 use spec_proto::{
-    Canvas, Color, LookupError, MathError, Message, Person, Point, Rectangle, Shape, Testbed,
-    TestbedClient, TestbedDispatcher,
+    Canvas, Color, Config, LookupError, MathError, Measurement, Message, Person, Point, Profile,
+    Record, Rectangle, Shape, Status, Tag, Testbed, TestbedClient, TestbedDispatcher,
 };
 use wasm_bindgen::prelude::*;
 
@@ -145,6 +145,30 @@ impl Testbed for TestbedService {
 
     async fn swap_pair(&self, pair: (i32, String)) -> (String, i32) {
         (pair.1, pair.0)
+    }
+
+    async fn echo_profile(&self, profile: Profile) -> Profile {
+        profile
+    }
+
+    async fn echo_record(&self, record: Record) -> Record {
+        record
+    }
+
+    async fn echo_status(&self, status: Status) -> Status {
+        status
+    }
+
+    async fn echo_tag(&self, tag: Tag) -> Tag {
+        tag
+    }
+
+    async fn echo_measurement(&self, m: Measurement) -> Measurement {
+        m
+    }
+
+    async fn echo_config(&self, c: Config) -> Config {
+        c
     }
 }
 

@@ -25,6 +25,12 @@ public enum TestbedMethodId {
   public static let processMessage: UInt64 = 0xe08f_0f52_54e7_a997
   public static let getPoints: UInt64 = 0x5985_1852_3a62_66bf
   public static let swapPair: UInt64 = 0x7d55_a713_ad61_2bf2
+  public static let echoProfile: UInt64 = 0xbd9b_cabd_deeb_eb04
+  public static let echoRecord: UInt64 = 0x100b_0e08_da4b_8f1a
+  public static let echoStatus: UInt64 = 0x6975_90d3_ffc3_6703
+  public static let echoTag: UInt64 = 0x2bd1_b314_9d73_ce97
+  public static let echoMeasurement: UInt64 = 0x3b3d_22b0_15fa_1a3f
+  public static let echoConfig: UInt64 = 0xe13a_477f_b964_ce28
 }
 
 // MARK: - Testbed Types
@@ -103,6 +109,65 @@ public enum Message: Codable, Sendable {
   case data(Data)
 }
 
+public struct Profile: Codable, Sendable {
+  public var name: String
+  public var bio: String
+
+  public init(name: String, bio: String) {
+    self.name = name
+    self.bio = bio
+  }
+}
+
+public struct Record: Codable, Sendable {
+  public var alpha: Int32
+  public var beta: String
+  public var gamma: Double
+
+  public init(alpha: Int32, beta: String, gamma: Double) {
+    self.alpha = alpha
+    self.beta = beta
+    self.gamma = gamma
+  }
+}
+
+public enum Status: Codable, Sendable {
+  case active
+  case inactive
+}
+
+public struct Tag: Codable, Sendable {
+  public var label: String
+  public var priority: UInt32
+  public var note: String
+
+  public init(label: String, priority: UInt32, note: String) {
+    self.label = label
+    self.priority = priority
+    self.note = note
+  }
+}
+
+public struct Measurement: Codable, Sendable {
+  public var unit: String
+  public var value: Double
+
+  public init(unit: String, value: Double) {
+    self.unit = unit
+    self.value = value
+  }
+}
+
+public struct Config: Codable, Sendable {
+  public var key: String
+  public var value: String
+
+  public init(key: String, value: String) {
+    self.key = key
+    self.value = value
+  }
+}
+
 // MARK: - Testbed Client
 
 ///  Testbed service for conformance testing.
@@ -155,6 +220,18 @@ public protocol TestbedCaller {
   func getPoints(count: UInt32) async throws -> [Point]
   ///  Test tuple types.
   func swapPair(pair: (Int32, String)) async throws -> (String, Int32)
+  ///  Echo a profile back. Tests added optional field.
+  func echoProfile(profile: Profile) async throws -> Profile
+  ///  Echo a record back. Tests field reordering.
+  func echoRecord(record: Record) async throws -> Record
+  ///  Echo a status back. Tests added enum variant.
+  func echoStatus(status: Status) async throws -> Status
+  ///  Echo a tag back. Tests removed field (v2 drops a field v1 has).
+  func echoTag(tag: Tag) async throws -> Tag
+  ///  Echo a measurement back. Tests incompatible type change.
+  func echoMeasurement(m: Measurement) async throws -> Measurement
+  ///  Echo a config back. Tests missing required field.
+  func echoConfig(c: Config) async throws -> Config
 }
 
 public final class TestbedClient: TestbedCaller, Sendable {
@@ -1018,6 +1095,238 @@ public final class TestbedClient: TestbedCaller, Sendable {
       throw RoamError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
+
+  public func echoProfile(profile: Profile) async throws -> Profile {
+    var payloadBytes: [UInt8] = []
+    payloadBytes += encodeString(profile.name) + encodeString(profile.bio)
+    let payload = Data(payloadBytes)
+    let response = try await connection.call(
+      methodId: 0xbd9b_cabd_deeb_eb04, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
+    var cursor = 0
+    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    switch _cursor_resultDisc {
+    case 0:
+      let _result_name = try decodeString(from: response, offset: &cursor)
+      let _result_bio = try decodeString(from: response, offset: &cursor)
+      let result = Profile(name: _result_name, bio: _result_bio)
+      return result
+    case 1:
+      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      switch _cursor_errorCode {
+      case 0:
+        throw RoamError.decodeError("unexpected user error for infallible method")
+      case 1:
+        throw RoamError.unknownMethod
+      case 2:
+        throw RoamError.decodeError("invalid payload")
+      case 3:
+        throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
+      default:
+        throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
+      }
+    default:
+      throw RoamError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
+    }
+  }
+
+  public func echoRecord(record: Record) async throws -> Record {
+    var payloadBytes: [UInt8] = []
+    payloadBytes += encodeI32(record.alpha) + encodeString(record.beta) + encodeF64(record.gamma)
+    let payload = Data(payloadBytes)
+    let response = try await connection.call(
+      methodId: 0x100b_0e08_da4b_8f1a, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
+    var cursor = 0
+    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    switch _cursor_resultDisc {
+    case 0:
+      let _result_alpha = try decodeI32(from: response, offset: &cursor)
+      let _result_beta = try decodeString(from: response, offset: &cursor)
+      let _result_gamma = try decodeF64(from: response, offset: &cursor)
+      let result = Record(alpha: _result_alpha, beta: _result_beta, gamma: _result_gamma)
+      return result
+    case 1:
+      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      switch _cursor_errorCode {
+      case 0:
+        throw RoamError.decodeError("unexpected user error for infallible method")
+      case 1:
+        throw RoamError.unknownMethod
+      case 2:
+        throw RoamError.decodeError("invalid payload")
+      case 3:
+        throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
+      default:
+        throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
+      }
+    default:
+      throw RoamError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
+    }
+  }
+
+  public func echoStatus(status: Status) async throws -> Status {
+    var payloadBytes: [UInt8] = []
+    payloadBytes += { v in
+      switch v {
+      case .active:
+        return encodeVarint(UInt64(0))
+      case .inactive:
+        return encodeVarint(UInt64(1))
+      }
+    }(status)
+    let payload = Data(payloadBytes)
+    let response = try await connection.call(
+      methodId: 0x6975_90d3_ffc3_6703, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
+    var cursor = 0
+    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    switch _cursor_resultDisc {
+    case 0:
+      let _result_disc = try decodeVarint(from: response, offset: &cursor)
+      let result: Status
+      switch _result_disc {
+      case 0:
+        result = .active
+      case 1:
+        result = .inactive
+      default:
+        throw RoamError.decodeError("unknown enum variant")
+      }
+      return result
+    case 1:
+      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      switch _cursor_errorCode {
+      case 0:
+        throw RoamError.decodeError("unexpected user error for infallible method")
+      case 1:
+        throw RoamError.unknownMethod
+      case 2:
+        throw RoamError.decodeError("invalid payload")
+      case 3:
+        throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
+      default:
+        throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
+      }
+    default:
+      throw RoamError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
+    }
+  }
+
+  public func echoTag(tag: Tag) async throws -> Tag {
+    var payloadBytes: [UInt8] = []
+    payloadBytes += encodeString(tag.label) + encodeU32(tag.priority) + encodeString(tag.note)
+    let payload = Data(payloadBytes)
+    let response = try await connection.call(
+      methodId: 0x2bd1_b314_9d73_ce97, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
+    var cursor = 0
+    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    switch _cursor_resultDisc {
+    case 0:
+      let _result_label = try decodeString(from: response, offset: &cursor)
+      let _result_priority = try decodeU32(from: response, offset: &cursor)
+      let _result_note = try decodeString(from: response, offset: &cursor)
+      let result = Tag(label: _result_label, priority: _result_priority, note: _result_note)
+      return result
+    case 1:
+      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      switch _cursor_errorCode {
+      case 0:
+        throw RoamError.decodeError("unexpected user error for infallible method")
+      case 1:
+        throw RoamError.unknownMethod
+      case 2:
+        throw RoamError.decodeError("invalid payload")
+      case 3:
+        throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
+      default:
+        throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
+      }
+    default:
+      throw RoamError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
+    }
+  }
+
+  public func echoMeasurement(m: Measurement) async throws -> Measurement {
+    var payloadBytes: [UInt8] = []
+    payloadBytes += encodeString(m.unit) + encodeF64(m.value)
+    let payload = Data(payloadBytes)
+    let response = try await connection.call(
+      methodId: 0x3b3d_22b0_15fa_1a3f, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
+    var cursor = 0
+    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    switch _cursor_resultDisc {
+    case 0:
+      let _result_unit = try decodeString(from: response, offset: &cursor)
+      let _result_value = try decodeF64(from: response, offset: &cursor)
+      let result = Measurement(unit: _result_unit, value: _result_value)
+      return result
+    case 1:
+      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      switch _cursor_errorCode {
+      case 0:
+        throw RoamError.decodeError("unexpected user error for infallible method")
+      case 1:
+        throw RoamError.unknownMethod
+      case 2:
+        throw RoamError.decodeError("invalid payload")
+      case 3:
+        throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
+      default:
+        throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
+      }
+    default:
+      throw RoamError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
+    }
+  }
+
+  public func echoConfig(c: Config) async throws -> Config {
+    var payloadBytes: [UInt8] = []
+    payloadBytes += encodeString(c.key) + encodeString(c.value)
+    let payload = Data(payloadBytes)
+    let response = try await connection.call(
+      methodId: 0xe13a_477f_b964_ce28, payload: payload, channels: [], retry: .volatile,
+      timeout: timeout)
+    var cursor = 0
+    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    switch _cursor_resultDisc {
+    case 0:
+      let _result_key = try decodeString(from: response, offset: &cursor)
+      let _result_value = try decodeString(from: response, offset: &cursor)
+      let result = Config(key: _result_key, value: _result_value)
+      return result
+    case 1:
+      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      switch _cursor_errorCode {
+      case 0:
+        throw RoamError.decodeError("unexpected user error for infallible method")
+      case 1:
+        throw RoamError.unknownMethod
+      case 2:
+        throw RoamError.decodeError("invalid payload")
+      case 3:
+        throw RoamError.cancelled
+      case 4:
+        throw RoamError.indeterminate
+      default:
+        throw RoamError.decodeError("invalid RoamError discriminant: \(_cursor_errorCode)")
+      }
+    default:
+      throw RoamError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
+    }
+  }
 }
 
 // MARK: - Testbed Server
@@ -1072,6 +1381,18 @@ public protocol TestbedHandler {
   func getPoints(count: UInt32) async throws -> [Point]
   ///  Test tuple types.
   func swapPair(pair: (Int32, String)) async throws -> (String, Int32)
+  ///  Echo a profile back. Tests added optional field.
+  func echoProfile(profile: Profile) async throws -> Profile
+  ///  Echo a record back. Tests field reordering.
+  func echoRecord(record: Record) async throws -> Record
+  ///  Echo a status back. Tests added enum variant.
+  func echoStatus(status: Status) async throws -> Status
+  ///  Echo a tag back. Tests removed field (v2 drops a field v1 has).
+  func echoTag(tag: Tag) async throws -> Tag
+  ///  Echo a measurement back. Tests incompatible type change.
+  func echoMeasurement(m: Measurement) async throws -> Measurement
+  ///  Echo a config back. Tests missing required field.
+  func echoConfig(c: Config) async throws -> Config
 }
 
 public final class TestbedChannelingDispatcher {
@@ -1127,6 +1448,18 @@ public final class TestbedChannelingDispatcher {
       await dispatch_getPoints(requestId: requestId, channels: channels, payload: payload)
     case 0x7d55_a713_ad61_2bf2:
       await dispatch_swapPair(requestId: requestId, channels: channels, payload: payload)
+    case 0xbd9b_cabd_deeb_eb04:
+      await dispatch_echoProfile(requestId: requestId, channels: channels, payload: payload)
+    case 0x100b_0e08_da4b_8f1a:
+      await dispatch_echoRecord(requestId: requestId, channels: channels, payload: payload)
+    case 0x6975_90d3_ffc3_6703:
+      await dispatch_echoStatus(requestId: requestId, channels: channels, payload: payload)
+    case 0x2bd1_b314_9d73_ce97:
+      await dispatch_echoTag(requestId: requestId, channels: channels, payload: payload)
+    case 0x3b3d_22b0_15fa_1a3f:
+      await dispatch_echoMeasurement(requestId: requestId, channels: channels, payload: payload)
+    case 0xe13a_477f_b964_ce28:
+      await dispatch_echoConfig(requestId: requestId, channels: channels, payload: payload)
     default:
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
     }
@@ -1169,6 +1502,18 @@ public final class TestbedChannelingDispatcher {
     case 0x5985_1852_3a62_66bf:
       return .volatile
     case 0x7d55_a713_ad61_2bf2:
+      return .volatile
+    case 0xbd9b_cabd_deeb_eb04:
+      return .volatile
+    case 0x100b_0e08_da4b_8f1a:
+      return .volatile
+    case 0x6975_90d3_ffc3_6703:
+      return .volatile
+    case 0x2bd1_b314_9d73_ce97:
+      return .volatile
+    case 0x3b3d_22b0_15fa_1a3f:
+      return .volatile
+    case 0xe13a_477f_b964_ce28:
       return .volatile
     default:
       return .volatile
@@ -1762,6 +2107,153 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
+  private func dispatch_echoProfile(requestId: UInt64, channels: [UInt64], payload: Data) async {
+    do {
+      var cursor = 0
+      let _profile_name = try decodeString(from: payload, offset: &cursor)
+      let _profile_bio = try decodeString(from: payload, offset: &cursor)
+      let profile = Profile(name: _profile_name, bio: _profile_bio)
+      do {
+        let result = try await handler.echoProfile(profile: profile)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeResultOk(
+              result, encoder: { encodeString($0.name) + encodeString($0.bio) })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
+    } catch {
+      taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+    }
+  }
+
+  private func dispatch_echoRecord(requestId: UInt64, channels: [UInt64], payload: Data) async {
+    do {
+      var cursor = 0
+      let _record_alpha = try decodeI32(from: payload, offset: &cursor)
+      let _record_beta = try decodeString(from: payload, offset: &cursor)
+      let _record_gamma = try decodeF64(from: payload, offset: &cursor)
+      let record = Record(alpha: _record_alpha, beta: _record_beta, gamma: _record_gamma)
+      do {
+        let result = try await handler.echoRecord(record: record)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeResultOk(
+              result, encoder: { encodeI32($0.alpha) + encodeString($0.beta) + encodeF64($0.gamma) }
+            )))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
+    } catch {
+      taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+    }
+  }
+
+  private func dispatch_echoStatus(requestId: UInt64, channels: [UInt64], payload: Data) async {
+    do {
+      var cursor = 0
+      let _status_disc = try decodeVarint(from: payload, offset: &cursor)
+      let status: Status
+      switch _status_disc {
+      case 0:
+        status = .active
+      case 1:
+        status = .inactive
+      default:
+        throw RoamError.decodeError("unknown enum variant")
+      }
+      do {
+        let result = try await handler.echoStatus(status: status)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeResultOk(
+              result,
+              encoder: { v in
+                switch v {
+                case .active:
+                  return encodeVarint(UInt64(0))
+                case .inactive:
+                  return encodeVarint(UInt64(1))
+                }
+              })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
+    } catch {
+      taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+    }
+  }
+
+  private func dispatch_echoTag(requestId: UInt64, channels: [UInt64], payload: Data) async {
+    do {
+      var cursor = 0
+      let _tag_label = try decodeString(from: payload, offset: &cursor)
+      let _tag_priority = try decodeU32(from: payload, offset: &cursor)
+      let _tag_note = try decodeString(from: payload, offset: &cursor)
+      let tag = Tag(label: _tag_label, priority: _tag_priority, note: _tag_note)
+      do {
+        let result = try await handler.echoTag(tag: tag)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeResultOk(
+              result,
+              encoder: { encodeString($0.label) + encodeU32($0.priority) + encodeString($0.note) }))
+        )
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
+    } catch {
+      taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+    }
+  }
+
+  private func dispatch_echoMeasurement(requestId: UInt64, channels: [UInt64], payload: Data) async
+  {
+    do {
+      var cursor = 0
+      let _m_unit = try decodeString(from: payload, offset: &cursor)
+      let _m_value = try decodeF64(from: payload, offset: &cursor)
+      let m = Measurement(unit: _m_unit, value: _m_value)
+      do {
+        let result = try await handler.echoMeasurement(m: m)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeResultOk(
+              result, encoder: { encodeString($0.unit) + encodeF64($0.value) })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
+    } catch {
+      taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+    }
+  }
+
+  private func dispatch_echoConfig(requestId: UInt64, channels: [UInt64], payload: Data) async {
+    do {
+      var cursor = 0
+      let _c_key = try decodeString(from: payload, offset: &cursor)
+      let _c_value = try decodeString(from: payload, offset: &cursor)
+      let c = Config(key: _c_key, value: _c_value)
+      do {
+        let result = try await handler.echoConfig(c: c)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeResultOk(
+              result, encoder: { encodeString($0.key) + encodeString($0.value) })))
+      } catch {
+        taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+      }
+    } catch {
+      taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+    }
+  }
+
 }
 
 // MARK: - Testbed Schemas
@@ -1802,6 +2294,16 @@ public let testbed_schemas: [String: MethodSchema] = [
   ]),
   "getPoints": MethodSchema(args: [.u32]),
   "swapPair": MethodSchema(args: [.bytes]),
+  "echoProfile": MethodSchema(args: [.struct(fields: [("name", .string), ("bio", .string)])]),
+  "echoRecord": MethodSchema(args: [
+    .struct(fields: [("alpha", .i32), ("beta", .string), ("gamma", .f64)])
+  ]),
+  "echoStatus": MethodSchema(args: [.enum(variants: [("Active", []), ("Inactive", [])])]),
+  "echoTag": MethodSchema(args: [
+    .struct(fields: [("label", .string), ("priority", .u32), ("note", .string)])
+  ]),
+  "echoMeasurement": MethodSchema(args: [.struct(fields: [("unit", .string), ("value", .f64)])]),
+  "echoConfig": MethodSchema(args: [.struct(fields: [("key", .string), ("value", .string)])]),
 ]
 
 public struct TestbedSerializers: BindingSerializers {

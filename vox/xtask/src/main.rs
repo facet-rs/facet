@@ -325,6 +325,14 @@ fn codegen_typescript(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
         write_if_changed(&out_path, fmt_typescript(&out_path, ts))?;
     }
 
+    // Generate TypeScript for the evolved testbed (schema compat testing)
+    {
+        let evolved = spec_proto::evolved::testbed_service_descriptor();
+        let ts = roam_codegen::targets::typescript::generate_service(evolved);
+        let out_path = out_dir.join("testbed_evolved.generated.ts");
+        write_if_changed(&out_path, fmt_typescript(&out_path, ts))?;
+    }
+
     codegen_typescript_wire_schemas(workspace_root)?;
     codegen_typescript_wire_types(workspace_root)?;
 
