@@ -615,21 +615,21 @@ export class TestbedDispatcher implements Dispatcher {
   }
 
   async dispatch(_context: RequestContext, method: MethodDescriptor, args: unknown[], call: RoamCall): Promise<void> {
-    if (method.id === 0x9aabc4ba61fd5df3n) {
+    if (method.id === 0x880bc4eee23574ben) {
       try {
         const result = await this.handler.echo(args[0] as string);
         call.reply(result);
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0xcba154600f640175n) {
+    } else if (method.id === 0x1c223f30e180392an) {
       try {
         const result = await this.handler.reverse(args[0] as string);
         call.reply(result);
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0xc3964cbee4b1d590n) {
+    } else if (method.id === 0xfb68d9318f830875n) {
       try {
         const result = await this.handler.divide(args[0] as bigint, args[1] as bigint);
         if (result.ok) call.reply(result.value);
@@ -637,7 +637,7 @@ export class TestbedDispatcher implements Dispatcher {
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0xe71a0faedd014e59n) {
+    } else if (method.id === 0xa15ff52094712a3bn) {
       try {
         const result = await this.handler.lookup(args[0] as number);
         if (result.ok) call.reply(result.value);
@@ -645,14 +645,14 @@ export class TestbedDispatcher implements Dispatcher {
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0x855b3a25d97bfefdn) {
+    } else if (method.id === 0x51f9cfd8e86577c9n) {
       try {
         const result = await this.handler.sum(args[0] as Rx<number>);
         call.reply(result);
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0x54d2273d8cdb9c38n) {
+    } else if (method.id === 0x239e5b99b1f8207an) {
       try {
         const result = await this.handler.generate(args[0] as number, args[1] as Tx<number>);
         (args[1] as { close(): void }).close(); // close output before reply
@@ -660,7 +660,7 @@ export class TestbedDispatcher implements Dispatcher {
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0x8b2863690edf136en) {
+    } else if (method.id === 0x34419529478cc7b8n) {
       try {
         const result = await this.handler.generateRetryNonIdem(args[0] as number, args[1] as Tx<number>);
         (args[1] as { close(): void }).close(); // close output before reply
@@ -668,7 +668,7 @@ export class TestbedDispatcher implements Dispatcher {
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0x3be5efd8db40b6f3n) {
+    } else if (method.id === 0xe2d27fd9098c6ea2n) {
       try {
         const result = await this.handler.generateRetryIdem(args[0] as number, args[1] as Tx<number>);
         (args[1] as { close(): void }).close(); // close output before reply
@@ -676,7 +676,7 @@ export class TestbedDispatcher implements Dispatcher {
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0x5d9895604eb18b19n) {
+    } else if (method.id === 0xcb469cff8d798febn) {
       try {
         const result = await this.handler.transform(args[0] as Rx<string>, args[1] as Tx<string>);
         (args[1] as { close(): void }).close(); // close output before reply
@@ -684,63 +684,63 @@ export class TestbedDispatcher implements Dispatcher {
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0x453fa9bf6932528cn) {
+    } else if (method.id === 0x81f5386d589dfbe4n) {
       try {
         const result = await this.handler.echoPoint(args[0] as Point);
         call.reply(result);
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0x3dd231f57b1bca21n) {
+    } else if (method.id === 0x68ffa90b7728bde7n) {
       try {
         const result = await this.handler.createPerson(args[0] as string, args[1] as number, args[2] as string | null);
         call.reply(result);
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0xba75c48683f1d9e6n) {
+    } else if (method.id === 0x223fe0282d263107n) {
       try {
         const result = await this.handler.rectangleArea(args[0] as Rectangle);
         call.reply(result);
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0xe285f31c6dfffbfcn) {
+    } else if (method.id === 0xd4f16ea9eca132e6n) {
       try {
         const result = await this.handler.parseColor(args[0] as string);
         call.reply(result);
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0x6e706354167c00c2n) {
+    } else if (method.id === 0x04385a4be2a882f5n) {
       try {
         const result = await this.handler.shapeArea(args[0] as Shape);
         call.reply(result);
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0xa914982e7d3c7b55n) {
+    } else if (method.id === 0xef421eb5b08c973an) {
       try {
         const result = await this.handler.createCanvas(args[0] as string, args[1] as Shape[], args[2] as Color);
         call.reply(result);
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0xed1dc0c625889d30n) {
+    } else if (method.id === 0xe08f0f5254e7a997n) {
       try {
         const result = await this.handler.processMessage(args[0] as Message);
         call.reply(result);
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0x5c8707f5ae4ccbccn) {
+    } else if (method.id === 0x598518523a6266bfn) {
       try {
         const result = await this.handler.getPoints(args[0] as number);
         call.reply(result);
       } catch {
         call.replyInternalError();
       }
-    } else if (method.id === 0xacd19a29fe0d470cn) {
+    } else if (method.id === 0x7d55a713ad612bf2n) {
       try {
         const result = await this.handler.swapPair(args[0] as [number, string]);
         call.reply(result);
@@ -813,7 +813,7 @@ export const testbed_descriptor: ServiceDescriptor = {
   methods: [
     {
       name: "echo",
-      id: 0x9aabc4ba61fd5df3n,
+      id: 0x880bc4eee23574ben,
       retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "string" }] },
       result: {
@@ -835,7 +835,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "reverse",
-      id: 0xcba154600f640175n,
+      id: 0x1c223f30e180392an,
       retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "string" }] },
       result: {
@@ -857,7 +857,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "divide",
-      id: 0xc3964cbee4b1d590n,
+      id: 0xfb68d9318f830875n,
       retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "i64" }, { kind: "i64" }] },
       result: {
@@ -879,7 +879,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "lookup",
-      id: 0xe71a0faedd014e59n,
+      id: 0xa15ff52094712a3bn,
       retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "u32" }] },
       result: {
@@ -901,7 +901,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "sum",
-      id: 0x855b3a25d97bfefdn,
+      id: 0x51f9cfd8e86577c9n,
       retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "rx", initial_credit: 16, element: { kind: "i32" } }] },
       result: {
@@ -923,7 +923,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "generate",
-      id: 0x54d2273d8cdb9c38n,
+      id: 0x239e5b99b1f8207an,
       retry: { persist: false, idem: false },
       args: {
         kind: "tuple",
@@ -948,7 +948,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "generateRetryNonIdem",
-      id: 0x8b2863690edf136en,
+      id: 0x34419529478cc7b8n,
       retry: { persist: false, idem: false },
       args: {
         kind: "tuple",
@@ -973,7 +973,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "generateRetryIdem",
-      id: 0x3be5efd8db40b6f3n,
+      id: 0xe2d27fd9098c6ea2n,
       retry: { persist: false, idem: true },
       args: {
         kind: "tuple",
@@ -998,7 +998,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "transform",
-      id: 0x5d9895604eb18b19n,
+      id: 0xcb469cff8d798febn,
       retry: { persist: false, idem: false },
       args: {
         kind: "tuple",
@@ -1027,7 +1027,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "echoPoint",
-      id: 0x453fa9bf6932528cn,
+      id: 0x81f5386d589dfbe4n,
       retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "ref", name: "Point" }] },
       result: {
@@ -1049,7 +1049,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "createPerson",
-      id: 0x3dd231f57b1bca21n,
+      id: 0x68ffa90b7728bde7n,
       retry: { persist: false, idem: false },
       args: {
         kind: "tuple",
@@ -1074,7 +1074,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "rectangleArea",
-      id: 0xba75c48683f1d9e6n,
+      id: 0x223fe0282d263107n,
       retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "ref", name: "Rectangle" }] },
       result: {
@@ -1096,7 +1096,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "parseColor",
-      id: 0xe285f31c6dfffbfcn,
+      id: 0xd4f16ea9eca132e6n,
       retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "string" }] },
       result: {
@@ -1118,7 +1118,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "shapeArea",
-      id: 0x6e706354167c00c2n,
+      id: 0x04385a4be2a882f5n,
       retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "ref", name: "Shape" }] },
       result: {
@@ -1140,7 +1140,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "createCanvas",
-      id: 0xa914982e7d3c7b55n,
+      id: 0xef421eb5b08c973an,
       retry: { persist: false, idem: false },
       args: {
         kind: "tuple",
@@ -1168,7 +1168,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "processMessage",
-      id: 0xed1dc0c625889d30n,
+      id: 0xe08f0f5254e7a997n,
       retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "ref", name: "Message" }] },
       result: {
@@ -1190,7 +1190,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "getPoints",
-      id: 0x5c8707f5ae4ccbccn,
+      id: 0x598518523a6266bfn,
       retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "u32" }] },
       result: {
@@ -1212,7 +1212,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     },
     {
       name: "swapPair",
-      id: 0xacd19a29fe0d470cn,
+      id: 0x7d55a713ad612bf2n,
       retry: { persist: false, idem: false },
       args: { kind: "tuple", elements: [{ kind: "tuple", elements: [{ kind: "i32" }, { kind: "string" }] }] },
       result: {

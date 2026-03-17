@@ -838,6 +838,7 @@ export const MessagePayloadSchema: Schema = {
     },
     { name: "Ping", fields: { kind: "struct", fields: { "nonce": { kind: "u64" } } } },
     { name: "Pong", fields: { kind: "struct", fields: { "nonce": { kind: "u64" } } } },
+    { name: "SchemaMessage", fields: { kind: "struct", fields: { "schemas": { kind: "bytes" } } } },
   ],
 };
 
@@ -1184,6 +1185,7 @@ export const MessageSchema: Schema = {
         },
         { name: "Ping", fields: { kind: "struct", fields: { "nonce": { kind: "u64" } } } },
         { name: "Pong", fields: { kind: "struct", fields: { "nonce": { kind: "u64" } } } },
+        { name: "SchemaMessage", fields: { kind: "struct", fields: { "schemas": { kind: "bytes" } } } },
       ],
     },
   },

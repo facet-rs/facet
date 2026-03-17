@@ -264,11 +264,6 @@ pub struct Session {
     resume_notifier: watch::Sender<u64>,
     recoverer: Option<Box<dyn ConduitRecoverer>>,
 
-    /// Whether schema exchange is active for this session (both peers agreed).
-    // r[impl schema.method-id.negotiation]
-    // r[impl schema.method-id.fallback]
-    schema_exchange: bool,
-
     /// Schema tracker: handles outbound dedup and stores received schemas.
     schema_tracker: Arc<roam_schema_extract::SchemaTracker>,
 }
@@ -655,7 +650,6 @@ impl Session {
             keepalive,
             resume_notifier,
             recoverer,
-            schema_exchange: true,
             schema_tracker: Arc::new(roam_schema_extract::SchemaTracker::new()),
         }
     }
@@ -687,7 +681,6 @@ impl Session {
                 payload: MessagePayload::Hello(Hello {
                     version: PROTOCOL_VERSION,
                     connection_settings: settings.clone(),
-                    schema_exchange: true,
                     metadata: hello_metadata,
                 }),
             })
@@ -695,7 +688,7 @@ impl Session {
             .map_err(|_| SessionError::Protocol("failed to send Hello".into()))?;
 
         // Receive HelloYourself
-        let (peer_settings, peer_supports_retry, session_resume_key, _peer_schema_exchange) =
+        let (peer_settings, peer_supports_retry, session_resume_key) =
             match self.rx.recv_msg().await {
                 Ok(Some(msg)) => {
                     let payload = msg.map(|m| m.payload);
@@ -704,7 +697,6 @@ impl Session {
                             hy.connection_settings.clone(),
                             metadata_supports_retry(&hy.metadata),
                             metadata_session_resume_key(&hy.metadata),
-                            hy.schema_exchange,
                         ),
                         MessagePayload::ProtocolError(e) => {
                             return Err(SessionError::Protocol(e.description.to_owned()));
@@ -728,12 +720,6 @@ impl Session {
             return Err(SessionError::NotResumable);
         }
 
-        // r[impl schema.method-id.negotiation]
-        // Schema exchange is active only if both sides opted in
-        // Schema exchange is always active in v9. The field in the handshake
-        // exists for forward compat but we don't gate on it.
-        self.schema_exchange = true;
-
         Ok(self.make_root_handle(settings, peer_settings))
     }
 
@@ -749,39 +735,37 @@ impl Session {
         self.role = SessionRole::Acceptor;
 
         // Receive Hello
-        let (peer_settings, peer_supports_retry, _peer_schema_exchange) =
-            match self.rx.recv_msg().await {
-                Ok(Some(msg)) => {
-                    let payload = msg.map(|m| m.payload);
-                    match &*payload {
-                        MessagePayload::Hello(h) => {
-                            if h.version != PROTOCOL_VERSION {
-                                return Err(SessionError::Protocol(format!(
-                                    "version mismatch: got {}, expected {PROTOCOL_VERSION}",
-                                    h.version
-                                )));
-                            }
-                            (
-                                h.connection_settings.clone(),
-                                metadata_supports_retry(&h.metadata),
-                                h.schema_exchange,
-                            )
+        let (peer_settings, peer_supports_retry) = match self.rx.recv_msg().await {
+            Ok(Some(msg)) => {
+                let payload = msg.map(|m| m.payload);
+                match &*payload {
+                    MessagePayload::Hello(h) => {
+                        if h.version != PROTOCOL_VERSION {
+                            return Err(SessionError::Protocol(format!(
+                                "version mismatch: got {}, expected {PROTOCOL_VERSION}",
+                                h.version
+                            )));
                         }
-                        MessagePayload::ProtocolError(e) => {
-                            return Err(SessionError::Protocol(e.description.to_owned()));
-                        }
-                        _ => {
-                            return Err(SessionError::Protocol("expected Hello".into()));
-                        }
+                        (
+                            h.connection_settings.clone(),
+                            metadata_supports_retry(&h.metadata),
+                        )
+                    }
+                    MessagePayload::ProtocolError(e) => {
+                        return Err(SessionError::Protocol(e.description.to_owned()));
+                    }
+                    _ => {
+                        return Err(SessionError::Protocol("expected Hello".into()));
                     }
                 }
-                Ok(None) => {
-                    return Err(SessionError::Protocol(
-                        "peer closed during handshake".into(),
-                    ));
-                }
-                Err(e) => return Err(SessionError::Protocol(e.to_string())),
-            };
+            }
+            Ok(None) => {
+                return Err(SessionError::Protocol(
+                    "peer closed during handshake".into(),
+                ));
+            }
+            Err(e) => return Err(SessionError::Protocol(e.to_string())),
+        };
         self.peer_supports_retry = peer_supports_retry;
 
         // Acceptor parity is opposite of initiator
@@ -812,18 +796,11 @@ impl Session {
                 connection_id: ConnectionId::ROOT,
                 payload: MessagePayload::HelloYourself(HelloYourself {
                     connection_settings: our_settings.clone(),
-                    schema_exchange: true,
                     metadata: hello_metadata,
                 }),
             })
             .await
             .map_err(|_| SessionError::Protocol("failed to send HelloYourself".into()))?;
-
-        // r[impl schema.method-id.negotiation]
-        // Schema exchange is active only if both sides opted in
-        // Schema exchange is always active in v9. The field in the handshake
-        // exists for forward compat but we don't gate on it.
-        self.schema_exchange = true;
 
         Ok(self.make_root_handle(our_settings, peer_settings))
     }
@@ -1027,7 +1004,6 @@ impl Session {
                     payload: MessagePayload::Hello(roam_types::Hello {
                         version: PROTOCOL_VERSION,
                         connection_settings: self.local_root_settings.clone(),
-                        schema_exchange: self.schema_exchange,
                         metadata,
                     }),
                 })
@@ -1109,7 +1085,6 @@ impl Session {
                     connection_id: ConnectionId::ROOT,
                     payload: MessagePayload::HelloYourself(roam_types::HelloYourself {
                         connection_settings: self.local_root_settings.clone(),
-                        schema_exchange: self.schema_exchange,
                         metadata,
                     }),
                 })

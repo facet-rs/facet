@@ -104,26 +104,15 @@ structstruck::strike! {
                     /// Parity is included in ConnectionSettings.
                     pub connection_settings: ConnectionSettings,
 
-                    /// Whether this peer supports schema exchange.
-                    /// If both peers set this to true, schema-based method IDs are used.
-                    /// If either peer sets this to false, legacy signature-based method IDs
-                    /// are used instead (see r[schema.method-id.fallback]).
-                    pub schema_exchange: bool,
-
                     /// Metadata associated with the connection.
                     pub metadata: Metadata<'payload>,
                 }),
 
                 /// Sent by acceptor back to initiator. Poetic on purpose, I'm not changing the name.
                 // r[impl session.connection-settings.hello]
-                // r[impl schema.method-id.fallback]
                 HelloYourself(pub struct HelloYourself<'payload> {
                     /// Connection limits advertised by the acceptor for the root connection.
                     pub connection_settings: ConnectionSettings,
-
-                    /// Whether this peer supports schema exchange.
-                    /// Falls back to legacy method IDs if false (see r[schema.method-id.fallback]).
-                    pub schema_exchange: bool,
 
                     /// You can _also_ have metadata if you want.
                     pub metadata: Metadata<'payload>,

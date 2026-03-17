@@ -7,24 +7,24 @@ import RoamRuntime
 // MARK: - Testbed Method IDs
 
 public enum TestbedMethodId {
-  public static let echo: UInt64 = 0x9aab_c4ba_61fd_5df3
-  public static let reverse: UInt64 = 0xcba1_5460_0f64_0175
-  public static let divide: UInt64 = 0xc396_4cbe_e4b1_d590
-  public static let lookup: UInt64 = 0xe71a_0fae_dd01_4e59
-  public static let sum: UInt64 = 0x855b_3a25_d97b_fefd
-  public static let generate: UInt64 = 0x54d2_273d_8cdb_9c38
-  public static let generateRetryNonIdem: UInt64 = 0x8b28_6369_0edf_136e
-  public static let generateRetryIdem: UInt64 = 0x3be5_efd8_db40_b6f3
-  public static let transform: UInt64 = 0x5d98_9560_4eb1_8b19
-  public static let echoPoint: UInt64 = 0x453f_a9bf_6932_528c
-  public static let createPerson: UInt64 = 0x3dd2_31f5_7b1b_ca21
-  public static let rectangleArea: UInt64 = 0xba75_c486_83f1_d9e6
-  public static let parseColor: UInt64 = 0xe285_f31c_6dff_fbfc
-  public static let shapeArea: UInt64 = 0x6e70_6354_167c_00c2
-  public static let createCanvas: UInt64 = 0xa914_982e_7d3c_7b55
-  public static let processMessage: UInt64 = 0xed1d_c0c6_2588_9d30
-  public static let getPoints: UInt64 = 0x5c87_07f5_ae4c_cbcc
-  public static let swapPair: UInt64 = 0xacd1_9a29_fe0d_470c
+  public static let echo: UInt64 = 0x880b_c4ee_e235_74be
+  public static let reverse: UInt64 = 0x1c22_3f30_e180_392a
+  public static let divide: UInt64 = 0xfb68_d931_8f83_0875
+  public static let lookup: UInt64 = 0xa15f_f520_9471_2a3b
+  public static let sum: UInt64 = 0x51f9_cfd8_e865_77c9
+  public static let generate: UInt64 = 0x239e_5b99_b1f8_207a
+  public static let generateRetryNonIdem: UInt64 = 0x3441_9529_478c_c7b8
+  public static let generateRetryIdem: UInt64 = 0xe2d2_7fd9_098c_6ea2
+  public static let transform: UInt64 = 0xcb46_9cff_8d79_8feb
+  public static let echoPoint: UInt64 = 0x81f5_386d_589d_fbe4
+  public static let createPerson: UInt64 = 0x68ff_a90b_7728_bde7
+  public static let rectangleArea: UInt64 = 0x223f_e028_2d26_3107
+  public static let parseColor: UInt64 = 0xd4f1_6ea9_eca1_32e6
+  public static let shapeArea: UInt64 = 0x0438_5a4b_e2a8_82f5
+  public static let createCanvas: UInt64 = 0xef42_1eb5_b08c_973a
+  public static let processMessage: UInt64 = 0xe08f_0f52_54e7_a997
+  public static let getPoints: UInt64 = 0x5985_1852_3a62_66bf
+  public static let swapPair: UInt64 = 0x7d55_a713_ad61_2bf2
 }
 
 // MARK: - Testbed Types
@@ -171,7 +171,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += encodeString(message)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0x9aab_c4ba_61fd_5df3, payload: payload, channels: [], retry: .volatile,
+      methodId: 0x880b_c4ee_e235_74be, payload: payload, channels: [], retry: .volatile,
       timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
@@ -205,7 +205,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += encodeString(message)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0xcba1_5460_0f64_0175, payload: payload, channels: [], retry: .volatile,
+      methodId: 0x1c22_3f30_e180_392a, payload: payload, channels: [], retry: .volatile,
       timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
@@ -240,7 +240,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += encodeI64(divisor)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0xc396_4cbe_e4b1_d590, payload: payload, channels: [], retry: .volatile,
+      methodId: 0xfb68_d931_8f83_0875, payload: payload, channels: [], retry: .volatile,
       timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
@@ -284,7 +284,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += encodeU32(id)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0xe71a_0fae_dd01_4e59, payload: payload, channels: [], retry: .volatile,
+      methodId: 0xa15f_f520_9471_2a3b, payload: payload, channels: [], retry: .volatile,
       timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
@@ -347,7 +347,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let prepared = await prepareRetry()
 
     let response = try await connection.call(
-      methodId: 0x855b_3a25_d97b_fefd, payload: Data(prepared.payload), channels: prepared.channels,
+      methodId: 0x51f9_cfd8_e865_77c9, payload: Data(prepared.payload), channels: prepared.channels,
       retry: .volatile, timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
         finalizeBoundChannels(schemas: testbed_schemas["sum"]!.args, args: [numbers])
@@ -400,7 +400,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let prepared = await prepareRetry()
 
     let response = try await connection.call(
-      methodId: 0x54d2_273d_8cdb_9c38, payload: Data(prepared.payload), channels: prepared.channels,
+      methodId: 0x239e_5b99_b1f8_207a, payload: Data(prepared.payload), channels: prepared.channels,
       retry: .volatile, timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
         finalizeBoundChannels(schemas: testbed_schemas["generate"]!.args, args: [count, output])
@@ -452,7 +452,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let prepared = await prepareRetry()
 
     let response = try await connection.call(
-      methodId: 0x8b28_6369_0edf_136e, payload: Data(prepared.payload), channels: prepared.channels,
+      methodId: 0x3441_9529_478c_c7b8, payload: Data(prepared.payload), channels: prepared.channels,
       retry: .volatile, timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
         finalizeBoundChannels(
@@ -505,7 +505,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let prepared = await prepareRetry()
 
     let response = try await connection.call(
-      methodId: 0x3be5_efd8_db40_b6f3, payload: Data(prepared.payload), channels: prepared.channels,
+      methodId: 0xe2d2_7fd9_098c_6ea2, payload: Data(prepared.payload), channels: prepared.channels,
       retry: .idem, timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
         finalizeBoundChannels(
@@ -557,7 +557,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let prepared = await prepareRetry()
 
     let response = try await connection.call(
-      methodId: 0x5d98_9560_4eb1_8b19, payload: Data(prepared.payload), channels: prepared.channels,
+      methodId: 0xcb46_9cff_8d79_8feb, payload: Data(prepared.payload), channels: prepared.channels,
       retry: .volatile, timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
         finalizeBoundChannels(schemas: testbed_schemas["transform"]!.args, args: [input, output])
@@ -593,7 +593,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += encodeI32(point.x) + encodeI32(point.y)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0x453f_a9bf_6932_528c, payload: payload, channels: [], retry: .volatile,
+      methodId: 0x81f5_386d_589d_fbe4, payload: payload, channels: [], retry: .volatile,
       timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
@@ -631,7 +631,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += encodeOption(email, encoder: { encodeString($0) })
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0x3dd2_31f5_7b1b_ca21, payload: payload, channels: [], retry: .volatile,
+      methodId: 0x68ff_a90b_7728_bde7, payload: payload, channels: [], retry: .volatile,
       timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
@@ -672,7 +672,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
       + encodeI32(rect.bottomRight.y) + encodeOption(rect.label, encoder: { encodeString($0) })
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0xba75_c486_83f1_d9e6, payload: payload, channels: [], retry: .volatile,
+      methodId: 0x223f_e028_2d26_3107, payload: payload, channels: [], retry: .volatile,
       timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
@@ -706,7 +706,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += encodeString(name)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0xe285_f31c_6dff_fbfc, payload: payload, channels: [], retry: .volatile,
+      methodId: 0xd4f1_6ea9_eca1_32e6, payload: payload, channels: [], retry: .volatile,
       timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
@@ -765,7 +765,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     }(shape)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0x6e70_6354_167c_00c2, payload: payload, channels: [], retry: .volatile,
+      methodId: 0x0438_5a4b_e2a8_82f5, payload: payload, channels: [], retry: .volatile,
       timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
@@ -822,7 +822,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     }(background)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0xa914_982e_7d3c_7b55, payload: payload, channels: [], retry: .volatile,
+      methodId: 0xef42_1eb5_b08c_973a, payload: payload, channels: [], retry: .volatile,
       timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
@@ -899,7 +899,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     }(msg)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0xed1d_c0c6_2588_9d30, payload: payload, channels: [], retry: .volatile,
+      methodId: 0xe08f_0f52_54e7_a997, payload: payload, channels: [], retry: .volatile,
       timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
@@ -947,7 +947,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += encodeU32(count)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0x5c87_07f5_ae4c_cbcc, payload: payload, channels: [], retry: .volatile,
+      methodId: 0x5985_1852_3a62_66bf, payload: payload, channels: [], retry: .volatile,
       timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
@@ -987,7 +987,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     payloadBytes += { encodeI32($0) }(pair.0) + { encodeString($0) }(pair.1)
     let payload = Data(payloadBytes)
     let response = try await connection.call(
-      methodId: 0xacd1_9a29_fe0d_470c, payload: payload, channels: [], retry: .volatile,
+      methodId: 0x7d55_a713_ad61_2bf2, payload: payload, channels: [], retry: .volatile,
       timeout: timeout)
     var cursor = 0
     let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
@@ -1090,42 +1090,42 @@ public final class TestbedChannelingDispatcher {
   public func dispatch(methodId: UInt64, requestId: UInt64, channels: [UInt64], payload: Data) async
   {
     switch methodId {
-    case 0x9aab_c4ba_61fd_5df3:
+    case 0x880b_c4ee_e235_74be:
       await dispatch_echo(requestId: requestId, channels: channels, payload: payload)
-    case 0xcba1_5460_0f64_0175:
+    case 0x1c22_3f30_e180_392a:
       await dispatch_reverse(requestId: requestId, channels: channels, payload: payload)
-    case 0xc396_4cbe_e4b1_d590:
+    case 0xfb68_d931_8f83_0875:
       await dispatch_divide(requestId: requestId, channels: channels, payload: payload)
-    case 0xe71a_0fae_dd01_4e59:
+    case 0xa15f_f520_9471_2a3b:
       await dispatch_lookup(requestId: requestId, channels: channels, payload: payload)
-    case 0x855b_3a25_d97b_fefd:
+    case 0x51f9_cfd8_e865_77c9:
       await dispatch_sum(requestId: requestId, channels: channels, payload: payload)
-    case 0x54d2_273d_8cdb_9c38:
+    case 0x239e_5b99_b1f8_207a:
       await dispatch_generate(requestId: requestId, channels: channels, payload: payload)
-    case 0x8b28_6369_0edf_136e:
+    case 0x3441_9529_478c_c7b8:
       await dispatch_generateRetryNonIdem(
         requestId: requestId, channels: channels, payload: payload)
-    case 0x3be5_efd8_db40_b6f3:
+    case 0xe2d2_7fd9_098c_6ea2:
       await dispatch_generateRetryIdem(requestId: requestId, channels: channels, payload: payload)
-    case 0x5d98_9560_4eb1_8b19:
+    case 0xcb46_9cff_8d79_8feb:
       await dispatch_transform(requestId: requestId, channels: channels, payload: payload)
-    case 0x453f_a9bf_6932_528c:
+    case 0x81f5_386d_589d_fbe4:
       await dispatch_echoPoint(requestId: requestId, channels: channels, payload: payload)
-    case 0x3dd2_31f5_7b1b_ca21:
+    case 0x68ff_a90b_7728_bde7:
       await dispatch_createPerson(requestId: requestId, channels: channels, payload: payload)
-    case 0xba75_c486_83f1_d9e6:
+    case 0x223f_e028_2d26_3107:
       await dispatch_rectangleArea(requestId: requestId, channels: channels, payload: payload)
-    case 0xe285_f31c_6dff_fbfc:
+    case 0xd4f1_6ea9_eca1_32e6:
       await dispatch_parseColor(requestId: requestId, channels: channels, payload: payload)
-    case 0x6e70_6354_167c_00c2:
+    case 0x0438_5a4b_e2a8_82f5:
       await dispatch_shapeArea(requestId: requestId, channels: channels, payload: payload)
-    case 0xa914_982e_7d3c_7b55:
+    case 0xef42_1eb5_b08c_973a:
       await dispatch_createCanvas(requestId: requestId, channels: channels, payload: payload)
-    case 0xed1d_c0c6_2588_9d30:
+    case 0xe08f_0f52_54e7_a997:
       await dispatch_processMessage(requestId: requestId, channels: channels, payload: payload)
-    case 0x5c87_07f5_ae4c_cbcc:
+    case 0x5985_1852_3a62_66bf:
       await dispatch_getPoints(requestId: requestId, channels: channels, payload: payload)
-    case 0xacd1_9a29_fe0d_470c:
+    case 0x7d55_a713_ad61_2bf2:
       await dispatch_swapPair(requestId: requestId, channels: channels, payload: payload)
     default:
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
@@ -1134,41 +1134,41 @@ public final class TestbedChannelingDispatcher {
 
   public static func retryPolicy(methodId: UInt64) -> RetryPolicy {
     switch methodId {
-    case 0x9aab_c4ba_61fd_5df3:
+    case 0x880b_c4ee_e235_74be:
       return .volatile
-    case 0xcba1_5460_0f64_0175:
+    case 0x1c22_3f30_e180_392a:
       return .volatile
-    case 0xc396_4cbe_e4b1_d590:
+    case 0xfb68_d931_8f83_0875:
       return .volatile
-    case 0xe71a_0fae_dd01_4e59:
+    case 0xa15f_f520_9471_2a3b:
       return .volatile
-    case 0x855b_3a25_d97b_fefd:
+    case 0x51f9_cfd8_e865_77c9:
       return .volatile
-    case 0x54d2_273d_8cdb_9c38:
+    case 0x239e_5b99_b1f8_207a:
       return .volatile
-    case 0x8b28_6369_0edf_136e:
+    case 0x3441_9529_478c_c7b8:
       return .volatile
-    case 0x3be5_efd8_db40_b6f3:
+    case 0xe2d2_7fd9_098c_6ea2:
       return .idem
-    case 0x5d98_9560_4eb1_8b19:
+    case 0xcb46_9cff_8d79_8feb:
       return .volatile
-    case 0x453f_a9bf_6932_528c:
+    case 0x81f5_386d_589d_fbe4:
       return .volatile
-    case 0x3dd2_31f5_7b1b_ca21:
+    case 0x68ff_a90b_7728_bde7:
       return .volatile
-    case 0xba75_c486_83f1_d9e6:
+    case 0x223f_e028_2d26_3107:
       return .volatile
-    case 0xe285_f31c_6dff_fbfc:
+    case 0xd4f1_6ea9_eca1_32e6:
       return .volatile
-    case 0x6e70_6354_167c_00c2:
+    case 0x0438_5a4b_e2a8_82f5:
       return .volatile
-    case 0xa914_982e_7d3c_7b55:
+    case 0xef42_1eb5_b08c_973a:
       return .volatile
-    case 0xed1d_c0c6_2588_9d30:
+    case 0xe08f_0f52_54e7_a997:
       return .volatile
-    case 0x5c87_07f5_ae4c_cbcc:
+    case 0x5985_1852_3a62_66bf:
       return .volatile
-    case 0xacd1_9a29_fe0d_470c:
+    case 0x7d55_a713_ad61_2bf2:
       return .volatile
     default:
       return .volatile
@@ -1182,7 +1182,7 @@ public final class TestbedChannelingDispatcher {
     methodId: UInt64, channels: [UInt64], registry: ChannelRegistry
   ) async {
     switch methodId {
-    case 0x855b_3a25_d97b_fefd:
+    case 0x51f9_cfd8_e865_77c9:
       guard channels.count >= 1 else {
         return
       }
@@ -1190,7 +1190,7 @@ public final class TestbedChannelingDispatcher {
       let numbersChannelId = channels[channelCursor]
       channelCursor += 1
       await registry.markKnown(numbersChannelId)
-    case 0x5d98_9560_4eb1_8b19:
+    case 0xcb46_9cff_8d79_8feb:
       guard channels.count >= 2 else {
         return
       }

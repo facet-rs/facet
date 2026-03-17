@@ -31,6 +31,10 @@ export interface Pong {
   nonce: bigint;
 }
 
+export interface SchemaMessage {
+  schemas: Uint8Array;
+}
+
 // Metadata
 export interface MetadataValueString {
   tag: "String";
@@ -152,7 +156,8 @@ export type MessagePayload =
   | { tag: "ConnectionReject"; value: ConnectionReject }
   | { tag: "ConnectionClose"; value: ConnectionClose }
   | { tag: "RequestMessage"; value: RequestMessage }
-  | { tag: "ChannelMessage"; value: ChannelMessage };
+  | { tag: "ChannelMessage"; value: ChannelMessage }
+  | { tag: "SchemaMessage"; value: SchemaMessage };
 
 export interface Message {
   connection_id: bigint;
@@ -231,6 +236,7 @@ export const MessageDiscriminant = {
   ChannelMessage: 8,
   Ping: 9,
   Pong: 10,
+  SchemaMessage: 11,
 } as const;
 
 export const MetadataValueDiscriminant = {
