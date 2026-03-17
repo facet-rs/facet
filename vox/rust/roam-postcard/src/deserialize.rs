@@ -534,7 +534,7 @@ fn deserialize_option<'de, 'facet, const BORROW: bool>(
 fn deserialize_result<'de, 'facet, const BORROW: bool>(
     partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'de>,
-    _plan: &TranslationPlan,
+    plan: &TranslationPlan,
     registry: &SchemaRegistry,
 ) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
@@ -542,14 +542,28 @@ fn deserialize_result<'de, 'facet, const BORROW: bool>(
     match variant_index {
         0 => {
             let partial = partial.begin_ok().map_err(re)?;
-            let inner_plan = build_identity_plan(partial.shape());
-            let partial = deserialize_value::<BORROW>(partial, cursor, &inner_plan, registry)?;
+            let fallback;
+            let inner_plan = match plan.nested.get(&0) {
+                Some(p) => p,
+                None => {
+                    fallback = build_identity_plan(partial.shape());
+                    &fallback
+                }
+            };
+            let partial = deserialize_value::<BORROW>(partial, cursor, inner_plan, registry)?;
             partial.end().map_err(re)
         }
         1 => {
             let partial = partial.begin_err().map_err(re)?;
-            let inner_plan = build_identity_plan(partial.shape());
-            let partial = deserialize_value::<BORROW>(partial, cursor, &inner_plan, registry)?;
+            let fallback;
+            let inner_plan = match plan.nested.get(&1) {
+                Some(p) => p,
+                None => {
+                    fallback = build_identity_plan(partial.shape());
+                    &fallback
+                }
+            };
+            let partial = deserialize_value::<BORROW>(partial, cursor, inner_plan, registry)?;
             partial.end().map_err(re)
         }
         other => Err(DeserializeError::UnknownVariant {

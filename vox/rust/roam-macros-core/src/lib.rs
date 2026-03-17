@@ -586,7 +586,11 @@ fn generate_dispatch_arm(
 
     quote! {
         if method_id == #descriptor_fn_name().methods[#idx].id {
-            #args_let = match #roam::facet_postcard::from_slice_borrowed(args_bytes) {
+            #args_let = match #roam::schema_deser::schema_deserialize_borrowed(
+                args_bytes,
+                method_id,
+                #roam::ReplySink::schema_tracker_any(&reply),
+            ) {
                 Ok(v) => v,
                 Err(_) => {
                     reply.send_error(#roam::RoamError::<::core::convert::Infallible>::InvalidPayload).await;
@@ -812,13 +816,14 @@ fn generate_client_method(
                     #roam::RoamError::Indeterminate => #roam::RoamError::<#err_ty>::Indeterminate,
                     #roam::RoamError::User(never) => match never {},
                 })?;
+                let schema_tracker = #roam::Caller::schema_tracker_any(&self.caller);
                 response.try_repack(|resp, _bytes| {
                     let ret_bytes = match &resp.ret {
                         #roam::Payload::Incoming(bytes) => bytes,
                         _ => return Err(#roam::RoamError::<#err_ty>::InvalidPayload),
                     };
                     let result: Result<#ok_ty_decode, #roam::RoamError<#err_ty>> =
-                        #roam::facet_postcard::from_slice_borrowed(ret_bytes)
+                        #roam::schema_deser::schema_deserialize_borrowed(ret_bytes, method_id, schema_tracker)
                             .map_err(|_| #roam::RoamError::<#err_ty>::InvalidPayload)?;
                     let ret = result?;
                     Ok(ret)
@@ -850,8 +855,12 @@ fn generate_client_method(
                     _ => return Err(#roam::RoamError::<#err_ty>::InvalidPayload),
                 };
                 let result: Result<#ok_ty_decode, #roam::RoamError<#err_ty>> =
-                    #roam::facet_postcard::from_slice(ret_bytes)
-                        .map_err(|_| #roam::RoamError::<#err_ty>::InvalidPayload)?;
+                    #roam::schema_deser::schema_deserialize(
+                        ret_bytes,
+                        method_id,
+                        #roam::Caller::schema_tracker_any(&self.caller),
+                    )
+                    .map_err(|_| #roam::RoamError::<#err_ty>::InvalidPayload)?;
                 result
             }
         }

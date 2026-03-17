@@ -442,8 +442,12 @@ impl ConnectionSender {
     /// Send a schema message on the root connection.
     /// Called before sending request/response data when schema exchange is active.
     // r[impl schema.exchange.ordering]
-    pub(crate) async fn send_schema_message(&self, schemas: &[roam_schema::Schema]) {
-        let cbor_bytes = roam_schema::build_schema_message(schemas);
+    pub(crate) async fn send_schema_message(
+        &self,
+        schemas: &[roam_schema::Schema],
+        method_bindings: &[roam_schema::MethodSchemaBinding],
+    ) {
+        let cbor_bytes = roam_schema::build_schema_message(schemas, method_bindings);
         let _ = self
             .sess_core
             .send(Message {
@@ -1185,8 +1189,8 @@ impl Session {
             // r[impl schema.exchange.ordering]
             MessagePayload::SchemaMessage(schema_msg) => {
                 match roam_schema::parse_schema_message(&schema_msg.schemas) {
-                    Ok(schemas) => {
-                        self.schema_tracker.record_received(schemas);
+                    Ok(payload) => {
+                        self.schema_tracker.record_received(payload);
                     }
                     Err(e) => {
                         warn!("failed to parse schema message: {}", e);

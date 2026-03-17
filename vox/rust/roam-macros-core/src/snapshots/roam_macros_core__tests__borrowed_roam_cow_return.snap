@@ -1,6 +1,5 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
-assertion_line: 1023
 expression: "generate(quote!\n{\n    trait TextSvc\n    {\n        async fn normalize(&self, input: String) -> ::std::borrow::Cow<'roam,\n        str>;\n    }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -105,7 +104,11 @@ where
             }
         };
         if method_id == text_svc_service_descriptor().methods[0usize].id {
-            let args: (String,) = match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
+            let args: (String,) = match ::roam::schema_deser::schema_deserialize_borrowed(
+                args_bytes,
+                method_id,
+                ::roam::ReplySink::schema_tracker_any(&reply),
+            ) {
                 Ok(v) => v,
                 Err(_) => {
                     reply
@@ -199,6 +202,7 @@ impl TextSvcClient {
                 }
                 ::roam::RoamError::User(never) => match never {},
             })?;
+        let schema_tracker = ::roam::Caller::schema_tracker_any(&self.caller);
         response.try_repack(|resp, _bytes| {
             let ret_bytes = match &resp.ret {
                 ::roam::Payload::Incoming(bytes) => bytes,
@@ -207,8 +211,12 @@ impl TextSvcClient {
             let result: Result<
                 ::std::borrow::Cow<'static, str>,
                 ::roam::RoamError<::core::convert::Infallible>,
-            > = ::roam::facet_postcard::from_slice_borrowed(ret_bytes)
-                .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
+            > = ::roam::schema_deser::schema_deserialize_borrowed(
+                ret_bytes,
+                method_id,
+                schema_tracker,
+            )
+            .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
             let ret = result?;
             Ok(ret)
         })

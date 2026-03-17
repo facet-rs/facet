@@ -26,6 +26,8 @@ roam-types.workspace = true
 roam-hash.workspace = true
 roam-service-macros.workspace = true
 roam-core = { workspace = true, optional = true }
+roam-schema.workspace = true
+roam-schema-extract.workspace = true
 facet.workspace = true
 roam-postcard.workspace = true
 tracing.workspace = true

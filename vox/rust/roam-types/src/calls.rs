@@ -161,6 +161,14 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
         None
     }
+
+    /// Return the schema tracker as an opaque `Any` reference.
+    ///
+    /// Used by macro-generated dispatch code to look up remote schemas
+    /// and build translation plans. Returns `None` by default.
+    fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
+        None
+    }
 }
 
 /// Type-erased handler for incoming service calls.
@@ -212,6 +220,14 @@ pub trait Caller: Clone + MaybeSend + MaybeSync + 'static {
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
         None
     }
+
+    /// Return the schema tracker as an opaque `Any` reference.
+    ///
+    /// Used by macro-generated client code to look up remote schemas
+    /// and build translation plans for response deserialization.
+    fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
+        None
+    }
 }
 
 trait ErasedCallerDyn: MaybeSend + MaybeSync + 'static {
@@ -237,6 +253,8 @@ trait ErasedCallerDyn: MaybeSend + MaybeSync + 'static {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder>;
+
+    fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)>;
 }
 
 impl<C: Caller> ErasedCallerDyn for C {
@@ -274,6 +292,10 @@ impl<C: Caller> ErasedCallerDyn for C {
     #[cfg(not(target_arch = "wasm32"))]
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
         Caller::channel_binder(self)
+    }
+
+    fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
+        Caller::schema_tracker_any(self)
     }
 }
 
@@ -366,6 +388,10 @@ impl Caller for ErasedCaller {
     #[cfg(not(target_arch = "wasm32"))]
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
         self.inner.channel_binder()
+    }
+
+    fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
+        self.inner.schema_tracker_any()
     }
 }
 

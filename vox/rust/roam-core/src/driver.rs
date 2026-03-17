@@ -130,6 +130,7 @@ mod tests {
 pub struct DriverReplySink {
     sender: Option<ConnectionSender>,
     request_id: RequestId,
+    method_id: roam_types::MethodId,
     retry: roam_types::RetryPolicy,
     operation_id: Option<u64>,
     operations: Option<Arc<dyn OperationStore>>,
@@ -168,8 +169,13 @@ impl ReplySink for DriverReplySink {
         // r[impl schema.exchange.callee]
         // Send schemas for response types before the response data.
         if let Payload::Outgoing { shape, .. } = &response.ret {
-            if let Some(schemas) = self.schema_tracker.prepare_send(shape) {
-                sender.send_schema_message(&schemas).await;
+            if let Some(prepared) = self
+                .schema_tracker
+                .prepare_send_for_method(self.method_id, shape)
+            {
+                sender
+                    .send_schema_message(&prepared.schemas, &prepared.method_bindings)
+                    .await;
             }
         }
 
@@ -195,6 +201,10 @@ impl ReplySink for DriverReplySink {
 
     fn channel_binder(&self) -> Option<&dyn ChannelBinder> {
         Some(&self.binder)
+    }
+
+    fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
+        Some(&*self.schema_tracker)
     }
 }
 
@@ -576,8 +586,13 @@ impl Caller for DriverCaller {
             // r[impl schema.exchange.channels]
             // Send schemas for arg types (and channel element types) before the request.
             if let Payload::Outgoing { shape, .. } = &call.args {
-                if let Some(schemas) = self.schema_tracker.prepare_send(shape) {
-                    self.sender.send_schema_message(&schemas).await;
+                if let Some(prepared) =
+                    self.schema_tracker
+                        .prepare_send_for_method(call.method_id, shape)
+                {
+                    self.sender
+                        .send_schema_message(&prepared.schemas, &prepared.method_bindings)
+                        .await;
                 }
             }
 
@@ -739,6 +754,10 @@ impl Caller for DriverCaller {
 
     fn channel_binder(&self) -> Option<&dyn ChannelBinder> {
         Some(self)
+    }
+
+    fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
+        Some(&*self.schema_tracker)
     }
 }
 
@@ -1187,6 +1206,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             let reply = DriverReplySink {
                 sender: Some(self.sender.clone()),
                 request_id: req_id,
+                method_id: call.method_id,
                 retry,
                 operation_id,
                 operations: operation_id.map(|_| Arc::clone(&self.shared.operations)),

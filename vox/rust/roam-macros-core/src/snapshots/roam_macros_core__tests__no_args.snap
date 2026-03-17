@@ -1,6 +1,5 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
-assertion_line: 907
 expression: "generate(quote! { trait Ping { async fn ping(&self) -> u64; } })"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -98,7 +97,11 @@ where
             }
         };
         if method_id == ping_service_descriptor().methods[0usize].id {
-            let args: () = match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
+            let args: () = match ::roam::schema_deser::schema_deserialize_borrowed(
+                args_bytes,
+                method_id,
+                ::roam::ReplySink::schema_tracker_any(&reply),
+            ) {
                 Ok(v) => v,
                 Err(_) => {
                     reply
@@ -195,8 +198,12 @@ impl PingClient {
             _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
         };
         let result: Result<u64, ::roam::RoamError<::core::convert::Infallible>> =
-            ::roam::facet_postcard::from_slice(ret_bytes)
-                .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
+            ::roam::schema_deser::schema_deserialize(
+                ret_bytes,
+                method_id,
+                ::roam::Caller::schema_tracker_any(&self.caller),
+            )
+            .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
         result
     }
 }

@@ -2375,6 +2375,8 @@ dependencies = [
  "roam-core",
  "roam-hash",
  "roam-postcard",
+ "roam-schema",
+ "roam-schema-extract",
  "roam-service-macros",
  "roam-shm",
  "roam-stream",

@@ -1,6 +1,5 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
-assertion_line: 914
 expression: "generate(quote!\n{\n    trait Audit\n    {\n        #[roam::context] async fn record(&self, payload: String) -> &'roam\n        str; async fn ping(&self) -> u64;\n    }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -121,7 +120,11 @@ where
             }
         };
         if method_id == audit_service_descriptor().methods[0usize].id {
-            let args: (String,) = match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
+            let args: (String,) = match ::roam::schema_deser::schema_deserialize_borrowed(
+                args_bytes,
+                method_id,
+                ::roam::ReplySink::schema_tracker_any(&reply),
+            ) {
                 Ok(v) => v,
                 Err(_) => {
                     reply
@@ -152,7 +155,11 @@ where
             return;
         }
         if method_id == audit_service_descriptor().methods[1usize].id {
-            let args: () = match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
+            let args: () = match ::roam::schema_deser::schema_deserialize_borrowed(
+                args_bytes,
+                method_id,
+                ::roam::ReplySink::schema_tracker_any(&reply),
+            ) {
                 Ok(v) => v,
                 Err(_) => {
                     reply
@@ -247,15 +254,19 @@ impl AuditClient {
                 }
                 ::roam::RoamError::User(never) => match never {},
             })?;
+        let schema_tracker = ::roam::Caller::schema_tracker_any(&self.caller);
         response.try_repack(|resp, _bytes| {
             let ret_bytes = match &resp.ret {
                 ::roam::Payload::Incoming(bytes) => bytes,
                 _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
             };
             let result: Result<&'static str, ::roam::RoamError<::core::convert::Infallible>> =
-                ::roam::facet_postcard::from_slice_borrowed(ret_bytes).map_err(|_| {
-                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload
-                })?;
+                ::roam::schema_deser::schema_deserialize_borrowed(
+                    ret_bytes,
+                    method_id,
+                    schema_tracker,
+                )
+                .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
             let ret = result?;
             Ok(ret)
         })
@@ -292,8 +303,12 @@ impl AuditClient {
             _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
         };
         let result: Result<u64, ::roam::RoamError<::core::convert::Infallible>> =
-            ::roam::facet_postcard::from_slice(ret_bytes)
-                .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
+            ::roam::schema_deser::schema_deserialize(
+                ret_bytes,
+                method_id,
+                ::roam::Caller::schema_tracker_any(&self.caller),
+            )
+            .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
         result
     }
 }

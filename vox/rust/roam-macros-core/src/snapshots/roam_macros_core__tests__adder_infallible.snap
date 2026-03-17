@@ -1,6 +1,5 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
-assertion_line: 893
 expression: "generate(quote!\n{ pub trait Adder { async fn add(&self, a: i32, b: i32) -> i32; } })"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -99,7 +98,11 @@ where
             }
         };
         if method_id == adder_service_descriptor().methods[0usize].id {
-            let args: (i32, i32) = match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
+            let args: (i32, i32) = match ::roam::schema_deser::schema_deserialize_borrowed(
+                args_bytes,
+                method_id,
+                ::roam::ReplySink::schema_tracker_any(&reply),
+            ) {
                 Ok(v) => v,
                 Err(_) => {
                     reply
@@ -196,8 +199,12 @@ impl AdderClient {
             _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
         };
         let result: Result<i32, ::roam::RoamError<::core::convert::Infallible>> =
-            ::roam::facet_postcard::from_slice(ret_bytes)
-                .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
+            ::roam::schema_deser::schema_deserialize(
+                ret_bytes,
+                method_id,
+                ::roam::Caller::schema_tracker_any(&self.caller),
+            )
+            .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
         result
     }
 }

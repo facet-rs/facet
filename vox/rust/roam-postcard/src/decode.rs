@@ -1,5 +1,5 @@
 use crate::error::DeserializeError;
-use roam_schema::{PrimitiveType, SchemaKind, SchemaRegistry, TypeId};
+use roam_schema::{PrimitiveType, SchemaKind, SchemaRegistry, TypeSchemaId};
 
 pub struct Cursor<'a> {
     input: &'a [u8],
@@ -225,7 +225,7 @@ fn skip_primitive(cursor: &mut Cursor<'_>, prim: PrimitiveType) -> Result<(), De
 }
 
 fn lookup_kind<'a>(
-    type_id: &TypeId,
+    type_id: &TypeSchemaId,
     registry: &'a SchemaRegistry,
 ) -> Result<&'a SchemaKind, DeserializeError> {
     registry.get(type_id).map(|s| &s.kind).ok_or_else(|| {

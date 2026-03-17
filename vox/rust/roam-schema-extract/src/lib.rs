@@ -2,12 +2,18 @@
 
 use facet_core::{Def, ScalarType, Shape, StructKind, Type, UserType};
 use roam_schema::{
-    FieldSchema, PrimitiveType, Schema, SchemaKind, TypeId, VariantPayload, VariantSchema,
-    type_id_of,
+    FieldSchema, MethodSchemaBinding, PrimitiveType, Schema, SchemaKind, SchemaMessagePayload,
+    TypeSchemaId, VariantPayload, VariantSchema, type_schema_id_of,
 };
-use roam_types::{is_rx, is_tx};
+use roam_types::{MethodId, is_rx, is_tx};
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
+
+/// What `prepare_send_for_method` returns when there's something to send.
+pub struct PreparedSchemaMessage {
+    pub schemas: Vec<Schema>,
+    pub method_bindings: Vec<MethodSchemaBinding>,
+}
 
 /// Tracks schema exchange state for one session.
 ///
@@ -16,52 +22,103 @@ use std::sync::Mutex;
 // r[impl schema.tracking.sent]
 // r[impl schema.tracking.received]
 pub struct SchemaTracker {
-    sent: Mutex<HashSet<TypeId>>,
-    received: Mutex<HashMap<TypeId, Schema>>,
+    /// Type schemas we've already sent.
+    sent: Mutex<HashSet<TypeSchemaId>>,
+    /// Method bindings we've already sent (by method_id).
+    methods_sent: Mutex<HashSet<u64>>,
+    /// Type schemas received from the remote peer.
+    received: Mutex<HashMap<TypeSchemaId, Schema>>,
+    /// Method bindings received: method_id → root TypeSchemaId.
+    received_method_bindings: Mutex<HashMap<u64, TypeSchemaId>>,
 }
 
 impl SchemaTracker {
     pub fn new() -> Self {
         SchemaTracker {
             sent: Mutex::new(HashSet::new()),
+            methods_sent: Mutex::new(HashSet::new()),
             received: Mutex::new(HashMap::new()),
+            received_method_bindings: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Given a Shape, compute all schemas needed and return the ones
-    /// not yet sent. Marks them as sent atomically. Returns None if
-    /// all schemas were already sent.
+    /// Prepare type schemas and method binding for a method call/response.
+    ///
+    /// Returns `Some(...)` if there's anything to send (unsent type schemas
+    /// or a first-time method binding). Returns `None` if everything was
+    /// already sent.
     // r[impl schema.tracking.transitive]
     // r[impl schema.exchange.idempotent]
     // r[impl schema.principles.once-per-type]
     // r[impl schema.principles.sender-driven]
     // r[impl schema.principles.no-roundtrips]
-    pub fn prepare_send(&self, shape: &'static Shape) -> Option<Vec<Schema>> {
+    pub fn prepare_send_for_method(
+        &self,
+        method_id: MethodId,
+        shape: &'static Shape,
+    ) -> Option<PreparedSchemaMessage> {
         let all_schemas = extract_schemas(shape);
+        let root_type_schema_id = all_schemas.last().map(|s| s.type_id)?;
+
         let mut sent = self.sent.lock().unwrap();
         let unsent: Vec<Schema> = all_schemas
             .into_iter()
             .filter(|s| !sent.contains(&s.type_id))
             .collect();
-        if unsent.is_empty() {
+
+        let mut methods_sent = self.methods_sent.lock().unwrap();
+        let need_method_binding = methods_sent.insert(method_id.0);
+
+        if unsent.is_empty() && !need_method_binding {
             return None;
         }
+
         for s in &unsent {
             sent.insert(s.type_id);
         }
-        Some(unsent)
+
+        let method_bindings = if need_method_binding {
+            vec![MethodSchemaBinding {
+                method_id: method_id.0,
+                root_type_schema_id,
+            }]
+        } else {
+            vec![]
+        };
+
+        Some(PreparedSchemaMessage {
+            schemas: unsent,
+            method_bindings,
+        })
     }
 
-    /// Record schemas received from the remote peer.
-    pub fn record_received(&self, schemas: Vec<Schema>) {
-        let mut received = self.received.lock().unwrap();
-        for schema in schemas {
-            received.insert(schema.type_id, schema);
+    /// Record a parsed schema message from the remote peer.
+    pub fn record_received(&self, payload: SchemaMessagePayload) {
+        {
+            let mut received = self.received.lock().unwrap();
+            for schema in payload.schemas {
+                received.insert(schema.type_id, schema);
+            }
+        }
+        {
+            let mut bindings = self.received_method_bindings.lock().unwrap();
+            for binding in payload.method_bindings {
+                bindings.insert(binding.method_id, binding.root_type_schema_id);
+            }
         }
     }
 
+    /// Look up the remote's root TypeSchemaId for a method.
+    pub fn get_remote_root(&self, method_id: MethodId) -> Option<TypeSchemaId> {
+        self.received_method_bindings
+            .lock()
+            .unwrap()
+            .get(&method_id.0)
+            .copied()
+    }
+
     /// Look up a received schema by type ID.
-    pub fn get_received(&self, type_id: &TypeId) -> Option<Schema> {
+    pub fn get_received(&self, type_id: &TypeSchemaId) -> Option<Schema> {
         self.received.lock().unwrap().get(type_id).cloned()
     }
 
@@ -101,9 +158,9 @@ struct ExtractCtx {
 }
 
 impl ExtractCtx {
-    /// Extract a schema for the given shape, returning its TypeId.
+    /// Extract a schema for the given shape, returning its TypeSchemaId.
     /// Recursively extracts dependencies first.
-    fn extract(&mut self, shape: &'static Shape) -> TypeId {
+    fn extract(&mut self, shape: &'static Shape) -> TypeSchemaId {
         // Channel types: extract the element type, skip the channel wrapper.
         if is_tx(shape) || is_rx(shape) {
             if let Some(inner) = shape.type_params.first() {
@@ -118,7 +175,7 @@ impl ExtractCtx {
             }
         }
 
-        let type_id = type_id_of(shape);
+        let type_id = type_schema_id_of(shape);
         let ptr = shape as *const Shape as usize;
 
         // Already fully processed — just return its id.
@@ -228,6 +285,30 @@ impl ExtractCtx {
                 }
                 return type_id;
             }
+            Def::Result(result_def) => {
+                let ok_id = self.extract(result_def.t());
+                let err_id = self.extract(result_def.e());
+                if self.seen.insert(ptr) {
+                    self.schemas.push(Schema {
+                        type_id,
+                        kind: SchemaKind::Enum {
+                            variants: vec![
+                                VariantSchema {
+                                    name: "Ok".to_string(),
+                                    index: 0,
+                                    payload: VariantPayload::Newtype { type_id: ok_id },
+                                },
+                                VariantSchema {
+                                    name: "Err".to_string(),
+                                    index: 1,
+                                    payload: VariantPayload::Newtype { type_id: err_id },
+                                },
+                            ],
+                        },
+                    });
+                }
+                return type_id;
+            }
             Def::Pointer(ptr_def) => {
                 if let Some(pointee) = ptr_def.pointee {
                     return self.extract(pointee);
@@ -247,7 +328,7 @@ impl ExtractCtx {
                     primitive_type: PrimitiveType::Unit,
                 },
                 StructKind::TupleStruct | StructKind::Tuple => {
-                    let elements: Vec<TypeId> = struct_type
+                    let elements: Vec<TypeSchemaId> = struct_type
                         .fields
                         .iter()
                         .map(|f| self.extract(f.shape()))
@@ -325,13 +406,12 @@ impl ExtractCtx {
                     self.stack.pop();
                     return self.extract(inner.shape);
                 }
-                SchemaKind::Primitive {
-                    primitive_type: PrimitiveType::Unit,
-                }
+                panic!("schema extraction: Pointer type without type_params: {shape}");
             }
-            _ => SchemaKind::Primitive {
-                primitive_type: PrimitiveType::Unit,
-            },
+            other => panic!(
+                "schema extraction: unhandled type {other:?} for shape {shape} (def={:?})",
+                shape.def
+            ),
         };
 
         self.stack.pop();
@@ -632,9 +712,10 @@ mod tests {
     #[test]
     fn tracker_prepare_send_returns_some_then_none() {
         let tracker = SchemaTracker::new();
-        let first = tracker.prepare_send(<u32 as Facet>::SHAPE);
+        let method = MethodId(1);
+        let first = tracker.prepare_send_for_method(method, <u32 as Facet>::SHAPE);
         assert!(first.is_some(), "first prepare_send should return Some");
-        let second = tracker.prepare_send(<u32 as Facet>::SHAPE);
+        let second = tracker.prepare_send_for_method(method, <u32 as Facet>::SHAPE);
         assert!(
             second.is_none(),
             "second prepare_send for same shape should return None"
@@ -652,19 +733,21 @@ mod tests {
         }
 
         let tracker = SchemaTracker::new();
-        let schemas = tracker
-            .prepare_send(Outer::SHAPE)
+        let method = MethodId(1);
+        let prepared = tracker
+            .prepare_send_for_method(method, Outer::SHAPE)
             .expect("should return schemas");
         assert!(
-            schemas.len() >= 3,
+            prepared.schemas.len() >= 3,
             "should include transitive deps, got {}",
-            schemas.len()
+            prepared.schemas.len()
         );
 
-        let u32_again = tracker.prepare_send(<u32 as Facet>::SHAPE);
+        // Same method again — nothing to send
+        let again = tracker.prepare_send_for_method(method, <u32 as Facet>::SHAPE);
         assert!(
-            u32_again.is_none(),
-            "u32 was already sent as transitive dep"
+            again.is_none(),
+            "u32 was already sent as transitive dep, method already bound"
         );
     }
 
@@ -675,7 +758,10 @@ mod tests {
         let schemas = extract_schemas(<u32 as Facet>::SHAPE);
         let id = schemas[0].type_id;
         assert!(tracker.get_received(&id).is_none());
-        tracker.record_received(schemas);
+        tracker.record_received(roam_schema::SchemaMessagePayload {
+            schemas,
+            method_bindings: vec![],
+        });
         assert!(tracker.get_received(&id).is_some());
     }
 }

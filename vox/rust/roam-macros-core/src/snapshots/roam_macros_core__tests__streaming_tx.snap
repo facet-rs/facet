@@ -1,6 +1,5 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
-assertion_line: 946
 expression: "generate(quote!\n{\n    trait Streamer\n    { async fn count_up(&self, start: i32, output: Tx<i32>) -> i32; }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -105,18 +104,21 @@ where
             }
         };
         if method_id == streamer_service_descriptor().methods[0usize].id {
-            let mut args: (i32, Tx<i32>) =
-                match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        reply
-                            .send_error(
-                                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload,
-                            )
-                            .await;
-                        return;
-                    }
-                };
+            let mut args: (i32, Tx<i32>) = match ::roam::schema_deser::schema_deserialize_borrowed(
+                args_bytes,
+                method_id,
+                ::roam::ReplySink::schema_tracker_any(&reply),
+            ) {
+                Ok(v) => v,
+                Err(_) => {
+                    reply
+                        .send_error(
+                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload,
+                        )
+                        .await;
+                    return;
+                }
+            };
             #[cfg(not(target_arch = "wasm32"))]
             {
                 if let Some(binder) = reply.channel_binder() {
@@ -231,8 +233,12 @@ impl StreamerClient {
             _ => return Err(::roam::RoamError::<::core::convert::Infallible>::InvalidPayload),
         };
         let result: Result<i32, ::roam::RoamError<::core::convert::Infallible>> =
-            ::roam::facet_postcard::from_slice(ret_bytes)
-                .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
+            ::roam::schema_deser::schema_deserialize(
+                ret_bytes,
+                method_id,
+                ::roam::Caller::schema_tracker_any(&self.caller),
+            )
+            .map_err(|_| ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload)?;
         result
     }
 }

@@ -162,6 +162,18 @@ fn encode_shape_inner(shape: &'static Shape, out: &mut Vec<u8>, stack: &mut Vec<
             encode_shape_inner(opt_def.t(), out, stack);
             return;
         }
+        Def::Result(result_def) => {
+            // Encode Result as an enum with Ok/Err variants
+            out.push(sig::ENUM);
+            encode_varint_u64(2, out);
+            encode_str("Ok", out);
+            out.push(sig::VARIANT_NEWTYPE);
+            encode_shape_inner(result_def.t(), out, stack);
+            encode_str("Err", out);
+            out.push(sig::VARIANT_NEWTYPE);
+            encode_shape_inner(result_def.e(), out, stack);
+            return;
+        }
         Def::Pointer(ptr_def) => {
             if let Some(pointee) = ptr_def.pointee {
                 encode_shape_inner(pointee, out, stack);
@@ -242,11 +254,14 @@ fn encode_shape_inner(shape: &'static Shape, out: &mut Vec<u8>, stack: &mut Vec<
             if let Some(inner) = shape.type_params.first() {
                 encode_shape_inner(inner.shape, out, stack);
             } else {
-                out.push(sig::UNIT);
+                panic!("encode_shape: Pointer type without type_params: {shape}");
             }
         }
-        _ => {
-            out.push(sig::UNIT);
+        other => {
+            panic!(
+                "encode_shape: unhandled type {other:?} for shape {shape} (def={:?})",
+                shape.def
+            );
         }
     }
 

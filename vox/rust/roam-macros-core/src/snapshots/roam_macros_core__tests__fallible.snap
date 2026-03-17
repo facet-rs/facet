@@ -1,6 +1,5 @@
 ---
 source: rust/roam-macros-core/src/lib.rs
-assertion_line: 900
 expression: "generate(quote!\n{\n    trait Calc\n    { async fn div(&self, a: f64, b: f64) -> Result<f64, DivError>; }\n})"
 ---
 #[allow(non_snake_case, clippy::all)]
@@ -105,7 +104,11 @@ where
             }
         };
         if method_id == calc_service_descriptor().methods[0usize].id {
-            let args: (f64, f64) = match ::roam::facet_postcard::from_slice_borrowed(args_bytes) {
+            let args: (f64, f64) = match ::roam::schema_deser::schema_deserialize_borrowed(
+                args_bytes,
+                method_id,
+                ::roam::ReplySink::schema_tracker_any(&reply),
+            ) {
                 Ok(v) => v,
                 Err(_) => {
                     reply
@@ -194,8 +197,12 @@ impl CalcClient {
             _ => return Err(::roam::RoamError::<DivError>::InvalidPayload),
         };
         let result: Result<f64, ::roam::RoamError<DivError>> =
-            ::roam::facet_postcard::from_slice(ret_bytes)
-                .map_err(|_| ::roam::RoamError::<DivError>::InvalidPayload)?;
+            ::roam::schema_deser::schema_deserialize(
+                ret_bytes,
+                method_id,
+                ::roam::Caller::schema_tracker_any(&self.caller),
+            )
+            .map_err(|_| ::roam::RoamError::<DivError>::InvalidPayload)?;
         result
     }
 }

@@ -4,6 +4,7 @@
 //! hand-written code and `#[roam::service]` macro-generated code.
 
 mod client_logging;
+pub mod schema_deser;
 mod server_logging;
 
 // Re-export the proc macro
