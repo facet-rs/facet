@@ -1,24 +1,16 @@
 #![deny(unsafe_code)]
 
 use facet::Facet;
-use facet_core::Shape;
 use std::collections::HashMap;
 
-/// Compute a TypeSchemaId from a Shape by hashing its canonical byte encoding with blake3.
+/// An opaque type identifier, unique within a connection half.
+///
+/// Type IDs are assigned by the sender (typically as incrementing integers)
+/// and are used so schemas can reference each other and to track which types
+/// have already been sent. They are not stable across connections.
 // r[impl schema.type-id]
-// r[impl schema.type-id.deterministic]
-// r[impl schema.type-id.structural]
-pub fn type_schema_id_of(shape: &'static Shape) -> TypeSchemaId {
-    let bytes = roam_hash::encode_shape_bytes(shape);
-    let hash = blake3::hash(&bytes);
-    let mut id = [0u8; 16];
-    id.copy_from_slice(&hash.as_bytes()[..16]);
-    TypeSchemaId(id)
-}
-
-/// A 16-byte identifier for a type.
 #[derive(Facet, Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct TypeSchemaId(pub [u8; 16]);
+pub struct TypeSchemaId(pub u32);
 
 /// The root schema type describing a single type.
 #[derive(Facet, Clone, Debug)]
@@ -110,8 +102,8 @@ pub enum PrimitiveType {
     Bytes,
 }
 
-/// Lookup table mapping TypeId → Schema, used for resolving type references
-/// during deserialization with translation plans.
+/// Lookup table mapping TypeSchemaId → Schema, used for resolving type
+/// references during deserialization with translation plans.
 pub type SchemaRegistry = HashMap<TypeSchemaId, Schema>;
 
 /// Build a SchemaRegistry from a list of schemas.
@@ -163,23 +155,14 @@ pub fn parse_schema_message(bytes: &[u8]) -> Result<SchemaMessagePayload, facet_
 #[cfg(test)]
 mod tests {
     use super::*;
-    use facet::Facet;
 
     // r[verify schema.type-id]
-    // r[verify schema.type-id.deterministic]
     #[test]
-    fn type_id_is_stable() {
-        let id1 = type_schema_id_of(<u32 as Facet>::SHAPE);
-        let id2 = type_schema_id_of(<u32 as Facet>::SHAPE);
-        assert_eq!(id1, id2);
-    }
-
-    // r[verify schema.type-id.structural]
-    #[test]
-    fn type_id_differs_for_different_types() {
-        let id_u32 = type_schema_id_of(<u32 as Facet>::SHAPE);
-        let id_u64 = type_schema_id_of(<u64 as Facet>::SHAPE);
-        assert_ne!(id_u32, id_u64);
+    fn type_ids_are_just_u32() {
+        let id = TypeSchemaId(42);
+        assert_eq!(id.0, 42);
+        assert_eq!(id, TypeSchemaId(42));
+        assert_ne!(id, TypeSchemaId(43));
     }
 
     // r[verify schema.principles.cbor]
@@ -187,9 +170,8 @@ mod tests {
     // r[verify schema.format.batch]
     #[test]
     fn cbor_round_trip() {
-        // Simple schema round-trip without needing extract_schemas
         let schema = Schema {
-            type_id: type_schema_id_of(<u32 as Facet>::SHAPE),
+            type_id: TypeSchemaId(1),
             kind: SchemaKind::Primitive {
                 primitive_type: PrimitiveType::U32,
             },

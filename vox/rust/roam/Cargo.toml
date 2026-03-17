@@ -23,7 +23,6 @@ runtime = ["dep:roam-core"]
 
 [dependencies]
 roam-types.workspace = true
-roam-hash.workspace = true
 roam-service-macros.workspace = true
 roam-core = { workspace = true, optional = true }
 roam-schema.workspace = true

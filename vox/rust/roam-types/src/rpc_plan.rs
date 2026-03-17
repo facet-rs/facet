@@ -54,7 +54,9 @@ impl RpcPlan {
         static CACHE: OnceLock<Mutex<HashMap<usize, &'static RpcPlan>>> = OnceLock::new();
         let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 
-        let key = shape as *const Shape as usize;
+        let key = todo!(
+            "fixme(garbage): Never, never use the address of a shape for anything. It is not for you to look at. It is garbage. Shape implements PartialEq and Eq and Hash and everything. DON'T FUCK WITH RAW POINTERS (The type of the HashMap is wrong, `usize` is wrong)"
+        );
 
         let mut guard = cache
             .lock()

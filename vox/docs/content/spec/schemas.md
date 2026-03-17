@@ -49,36 +49,29 @@ translation plan is built — not mid-stream when a field has the wrong value.
 
 # Type identity
 
-Every type in schema exchange has a unique structural identifier. Two types
-with the same fields, in the same order, with the same field names and field
-types, have the same type ID — regardless of what the type is called.
+Schemas reference other types by type ID. A type ID is an opaque `u32`
+handle assigned by the sender.
 
 > r[schema.type-id]
 >
-> A type ID is 16 bytes, computed as the first 16 bytes of a BLAKE3 hash of
-> the type's canonical CBOR-encoded schema. Type IDs are structural — they
-> depend on the type's shape (fields, variants, containers, primitives),
-> not its name.
+> A type ID is a `u32` assigned by the sender. It MUST be unique within
+> the sender's half of a connection — no two distinct types sent by the
+> same peer may share a type ID. Each peer assigns its own type IDs
+> independently; the two peers' ID spaces do not interact. Type IDs do
+> not need to be stable across connections, sessions, or compiles.
+> Incrementing integers are valid. (If your service has more than 2³²
+> distinct types, please get in touch — we'd love to hear about it.)
 
-> r[schema.type-id.structural]
+> r[schema.type-id.per-connection]
 >
-> Two types with identical structure (same fields, same field names, same
-> field types in the same order, same variants) MUST produce the same type
-> ID, even if their Rust type names differ. Conversely, any structural
-> difference — a renamed field, a reordered field, an added variant — MUST
-> produce a different type ID.
+> Every connection starts with zero schema knowledge. A peer MUST NOT
+> assume that schemas sent on one connection are available on another,
+> even within the same session. Each connection half has its own
+> independent namespace of type IDs and its own sent/received tracking.
 
-> r[schema.type-id.deterministic]
->
-> The canonical CBOR encoding used for type ID computation MUST be
-> deterministic. Implementations MUST produce identical bytes for the same
-> type structure, regardless of platform, language, or compiler version.
-> CBOR deterministic encoding follows RFC 8949 §4.2 (Core Deterministic
-> Encoding Requirements).
-
-This means renaming a Rust struct (but keeping its fields) does not change
-the type ID. Adding a field does. This is intentional — the type ID captures
-what matters for wire compatibility: structure.
+Type IDs exist so schemas can reference each other (a struct field points
+to its field type's schema by type ID) and so the sender can track which
+types it has already sent. They are bookkeeping, not identity.
 
 # Schema format
 
@@ -148,25 +141,16 @@ or is referenced by its type ID.
 ## Recursive types
 
 Types can reference themselves — a tree node contains child tree nodes.
-Since schemas reference other types by type ID, and the type ID is computed
-from the schema, a naively recursive type would require computing the hash
-of a structure that contains its own hash.
+Since type IDs are opaque handles (not derived from the schema content),
+recursive types are straightforward: the recursive field simply references
+the type ID of the containing type.
 
 > r[schema.format.recursive]
 >
-> Recursive type references MUST use a backreference marker in the canonical
-> encoding. When computing a type ID, if the encoder encounters a type that
-> is already on the encoding stack, it MUST emit a backreference (the CBOR
-> string `"$self"` for direct recursion, or `"$ref:N"` for indirect recursion
-> at depth N) instead of re-encoding the type. This ensures the canonical
-> encoding is finite and deterministic.
-
-> r[schema.format.recursive.schema-body]
->
-> In schema messages sent over the wire (as opposed to canonical encoding for
-> type ID computation), recursive references use the type ID of the
-> referenced type. Since the schema for the recursive type is being sent
-> in the same batch, the receiver can resolve the reference.
+> Recursive type references MUST use the type ID of the referenced type.
+> Since the schema for the recursive type is included in the same batch,
+> the receiver can resolve the reference. No special backreference markers
+> are needed.
 
 ## Self-contained schema messages
 
@@ -181,9 +165,10 @@ of a structure that contains its own hash.
 
 > r[schema.format.batch]
 >
-> A schema message MUST be a CBOR array of `(type_id, schema)` pairs. The
-> schemas are ordered such that dependencies appear before dependents, except
-> for recursive cycles where backreferences break the dependency.
+> A schema message is a CBOR-encoded payload containing a list of schemas
+> (each with its type ID) and a list of method bindings (mapping method ID
+> to root type ID). Schemas SHOULD be ordered so that dependencies appear
+> before dependents, but receivers MUST handle any order.
 
 # Schema tracking
 
@@ -242,6 +227,14 @@ for the entire service interface up front.
 > Schema messages MUST arrive before the `Request` or `Response` that
 > references those types. The receiver MUST be able to build a translation
 > plan for the incoming data before deserializing it.
+
+> r[schema.exchange.required]
+>
+> Schema exchange is mandatory. If a peer receives a `Request` or
+> `Response` for a method whose schemas have not been received, this is
+> a protocol error and the connection MUST be torn down. There is no
+> fallback to identity deserialization — the sender is always responsible
+> for sending schemas before data.
 
 > r[schema.exchange.idempotent]
 >
@@ -428,8 +421,8 @@ can snapshot schemas and check changes as part of the development workflow.
 > r[schema.compat.snapshot]
 >
 > Implementations SHOULD provide tooling to snapshot the schemas of a
-> service's types. A snapshot captures the type IDs and full schemas for
-> every type used in the service's method signatures.
+> service's types. A snapshot captures the full schemas for every type
+> used in the service's method signatures.
 
 > r[schema.compat.check]
 >

@@ -219,15 +219,12 @@ fn build_struct_plan(
             });
 
             // r[impl schema.translation.type-compat]
-            // Check if nested plan is needed
+            // Always build nested plan when the remote field has a schema.
             if let Some(remote_field_schema) = registry.get(&remote_field.type_id) {
                 let local_field_shape = local_field.shape();
-                let local_field_id = roam_schema::type_schema_id_of(local_field_shape);
-                if remote_field.type_id != local_field_id {
-                    let nested_plan = build_plan(remote_field_schema, local_field_shape, registry)
-                        .map_err(|e| e.with_path_prefix(remote_field.name.as_str()))?;
-                    nested.insert(local_idx, nested_plan);
-                }
+                let nested_plan = build_plan(remote_field_schema, local_field_shape, registry)
+                    .map_err(|e| e.with_path_prefix(remote_field.name.as_str()))?;
+                nested.insert(local_idx, nested_plan);
             }
         } else {
             field_ops.push(FieldOp::Skip {
@@ -302,15 +299,12 @@ fn build_tuple_plan(
     for (i, remote_elem_id) in remote_elements.iter().enumerate() {
         field_ops.push(FieldOp::Read { local_index: i });
 
-        // Check if nested plan is needed for this element
+        // Always build nested plan when the remote element has a schema.
         if let Some(remote_elem_schema) = registry.get(remote_elem_id) {
             let local_field_shape = local_struct.fields[i].shape();
-            let local_field_id = roam_schema::type_schema_id_of(local_field_shape);
-            if *remote_elem_id != local_field_id {
-                let nested_plan = build_plan(remote_elem_schema, local_field_shape, registry)
-                    .map_err(|e| e.with_path_prefix(&i.to_string()))?;
-                nested.insert(i, nested_plan);
-            }
+            let nested_plan = build_plan(remote_elem_schema, local_field_shape, registry)
+                .map_err(|e| e.with_path_prefix(&i.to_string()))?;
+            nested.insert(i, nested_plan);
         }
     }
 
@@ -348,7 +342,6 @@ fn build_result_plan(
             type_id: remote_inner_id,
         } = &rv.payload
             && let Some(remote_inner_schema) = registry.get(remote_inner_id)
-            && *remote_inner_id != roam_schema::type_schema_id_of(local_inner_shape)
         {
             match build_plan(remote_inner_schema, local_inner_shape, registry) {
                 Ok(inner_plan) => {

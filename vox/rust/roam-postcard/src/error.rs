@@ -51,6 +51,9 @@ pub enum DeserializeError {
         len: usize,
     },
     Custom(String),
+    /// A protocol-level error: missing schemas, missing tracker, etc.
+    // r[impl schema.exchange.required]
+    Protocol(String),
 }
 
 impl fmt::Display for DeserializeError {
@@ -86,7 +89,14 @@ impl fmt::Display for DeserializeError {
                 )
             }
             Self::Custom(msg) => write!(f, "{msg}"),
+            Self::Protocol(msg) => write!(f, "protocol error: {msg}"),
         }
+    }
+}
+
+impl DeserializeError {
+    pub fn protocol(msg: &str) -> Self {
+        Self::Protocol(msg.to_string())
     }
 }
 

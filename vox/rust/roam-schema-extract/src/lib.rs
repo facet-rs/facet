@@ -3,7 +3,7 @@
 use facet_core::{Def, ScalarType, Shape, StructKind, Type, UserType};
 use roam_schema::{
     FieldSchema, MethodSchemaBinding, PrimitiveType, Schema, SchemaKind, SchemaMessagePayload,
-    TypeSchemaId, VariantPayload, VariantSchema, type_schema_id_of,
+    TypeSchemaId, VariantPayload, VariantSchema,
 };
 use roam_types::{MethodId, is_rx, is_tx};
 use std::collections::{HashMap, HashSet};
@@ -15,17 +15,22 @@ pub struct PreparedSchemaMessage {
     pub method_bindings: Vec<MethodSchemaBinding>,
 }
 
-/// Tracks schema exchange state for one session.
+/// Tracks schema exchange state for one connection half.
 ///
 /// Handles both outbound dedup (what we've sent) and inbound storage
 /// (schemas received from the remote peer, used for building translation plans).
 // r[impl schema.tracking.sent]
 // r[impl schema.tracking.received]
+// r[impl schema.type-id.per-connection]
 pub struct SchemaTracker {
-    /// Type schemas we've already sent.
+    /// Type schema IDs we've already sent.
     sent: Mutex<HashSet<TypeSchemaId>>,
     /// Method bindings we've already sent (by method_id).
     methods_sent: Mutex<HashSet<u64>>,
+    /// Assigns incrementing type IDs to shapes we extract.
+    shape_to_id: Mutex<HashMap<usize, TypeSchemaId>>,
+    /// Next ID to assign.
+    next_id: Mutex<u32>,
     /// Type schemas received from the remote peer.
     received: Mutex<HashMap<TypeSchemaId, Schema>>,
     /// Method bindings received: method_id → root TypeSchemaId.
@@ -37,9 +42,29 @@ impl SchemaTracker {
         SchemaTracker {
             sent: Mutex::new(HashSet::new()),
             methods_sent: Mutex::new(HashSet::new()),
+            shape_to_id: Mutex::new(HashMap::new()),
+            next_id: Mutex::new(1),
             received: Mutex::new(HashMap::new()),
             received_method_bindings: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Allocate or look up a TypeSchemaId for a Shape pointer.
+    fn id_for_shape(&self, shape: &'static Shape) -> TypeSchemaId {
+        todo!(
+            "fixme(garbage): Never, never use the address of a shape for anything. It is not for you to look at. It is garbage. Shape implements PartialEq and Eq and Hash and everything. DON'T FUCK WITH RAW POINTERS. IF YOU NEED TO ALLOCATE IDS JUST FUCKING USE A SERIAL ALLOCATOR AND STORE PREVIOUS MAPPING IN.. A HASHMAP"
+        ),
+
+        let ptr = shape as *const Shape as usize;
+        let mut map = self.shape_to_id.lock().unwrap();
+        if let Some(&id) = map.get(&ptr) {
+            return id;
+        }
+        let mut next = self.next_id.lock().unwrap();
+        let id = TypeSchemaId(*next);
+        *next += 1;
+        map.insert(ptr, id);
+        id
     }
 
     /// Prepare type schemas and method binding for a method call/response.
@@ -57,7 +82,7 @@ impl SchemaTracker {
         method_id: MethodId,
         shape: &'static Shape,
     ) -> Option<PreparedSchemaMessage> {
-        let all_schemas = extract_schemas(shape);
+        let all_schemas = self.extract_schemas(shape);
         let root_type_schema_id = all_schemas.last().map(|s| s.type_id)?;
 
         let mut sent = self.sent.lock().unwrap();
@@ -126,6 +151,22 @@ impl SchemaTracker {
     pub fn received_registry(&self) -> roam_schema::SchemaRegistry {
         self.received.lock().unwrap().clone()
     }
+
+    /// Extract all schemas for a type and its transitive dependencies.
+    ///
+    /// Returns schemas in dependency order: dependencies appear before dependents.
+    /// The root type's schema is last.
+    // r[impl schema.format]
+    fn extract_schemas(&self, shape: &'static Shape) -> Vec<Schema> {
+        let mut ctx = ExtractCtx {
+            tracker: self,
+            schemas: Vec::new(),
+            seen: HashSet::new(),
+            stack: Vec::new(),
+        };
+        ctx.extract(shape);
+        ctx.schemas
+    }
 }
 
 impl Default for SchemaTracker {
@@ -134,22 +175,15 @@ impl Default for SchemaTracker {
     }
 }
 
-/// Extract all schemas for a type and its transitive dependencies.
-///
-/// Returns schemas in dependency order: dependencies appear before dependents.
-/// The root type's schema is last.
-// r[impl schema.format]
+/// Extract schemas without a tracker (uses a temporary counter).
+/// Useful for tests and one-off schema extraction.
 pub fn extract_schemas(shape: &'static Shape) -> Vec<Schema> {
-    let mut ctx = ExtractCtx {
-        schemas: Vec::new(),
-        seen: HashSet::new(),
-        stack: Vec::new(),
-    };
-    ctx.extract(shape);
-    ctx.schemas
+    let tracker = SchemaTracker::new();
+    tracker.extract_schemas(shape)
 }
 
-struct ExtractCtx {
+struct ExtractCtx<'a> {
+    tracker: &'a SchemaTracker,
     schemas: Vec<Schema>,
     /// Shapes already fully processed (by pointer identity).
     seen: HashSet<usize>,
@@ -157,7 +191,7 @@ struct ExtractCtx {
     stack: Vec<usize>,
 }
 
-impl ExtractCtx {
+impl<'a> ExtractCtx<'a> {
     /// Extract a schema for the given shape, returning its TypeSchemaId.
     /// Recursively extracts dependencies first.
     fn extract(&mut self, shape: &'static Shape) -> TypeSchemaId {
@@ -175,8 +209,13 @@ impl ExtractCtx {
             return self.extract(inner);
         }
 
-        let type_id = type_schema_id_of(shape);
-        let ptr = shape as *const Shape as usize;
+        let type_id = self.tracker.id_for_shape(shape);
+        let ptr = (
+            todo!(
+                "fixme(garbage): Never, never use the address of a shape for anything. It is not for you to look at. It is garbage. Shape implements PartialEq and Eq and Hash and everything. DON'T FUCK WITH RAW POINTERS"
+            ),
+            shape as *const Shape as usize,
+        );
 
         // Already fully processed — just return its id.
         if self.seen.contains(&ptr) {
@@ -744,6 +783,20 @@ mod tests {
         );
 
         // Same method again — nothing to send
+        let sent = tracker.sent.lock().unwrap();
+        let shape_map = tracker.shape_to_id.lock().unwrap();
+        let u32_ptr = <u32 as Facet>::SHAPE as *const Shape as usize;
+        todo!(
+            "fixme(garbage): Never, never use the address of a shape for anything. It is not for you to look at. It is garbage. Shape implements PartialEq and Eq and Hash and everything. STOP FUCKING WITH RAW POINTERS"
+        ),
+        eprintln!("sent: {:?}", sent);
+        eprintln!(
+            "shape_to_id has u32 ptr {u32_ptr}: {:?}",
+            shape_map.get(&u32_ptr)
+        );
+        eprintln!("shape_to_id entries: {:?}", shape_map);
+        drop(sent);
+        drop(shape_map);
         let again = tracker.prepare_send_for_method(method, <u32 as Facet>::SHAPE);
         assert!(
             again.is_none(),
@@ -763,5 +816,22 @@ mod tests {
             method_bindings: vec![],
         });
         assert!(tracker.get_received(&id).is_some());
+    }
+
+    // r[verify schema.type-id]
+    #[test]
+    fn type_ids_are_incrementing_u32() {
+        let tracker = SchemaTracker::new();
+        let schemas = tracker.extract_schemas(<(u32, String) as Facet>::SHAPE);
+        // Should have u32, String, and the tuple — all with sequential IDs
+        assert!(schemas.len() >= 3);
+        // IDs should be small integers
+        for s in &schemas {
+            assert!(
+                s.type_id.0 < 100,
+                "expected small u32 ID, got {}",
+                s.type_id.0
+            );
+        }
     }
 }

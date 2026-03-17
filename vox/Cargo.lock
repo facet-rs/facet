@@ -2528,11 +2528,8 @@ dependencies = [
 name = "roam-schema"
 version = "7.3.0"
 dependencies = [
- "blake3",
  "facet",
  "facet-cbor",
- "facet-core",
- "roam-hash",
 ]
 
 [[package]]
