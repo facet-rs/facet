@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-use facet_core::{Def, Shape, StructKind, Type, UserType};
-use roam_types::{Schema, SchemaKind, SchemaRegistry, TypeSchemaId};
+use facet_core::{Shape, Type, UserType};
+use roam_types::{
+    FieldSchema, Schema, SchemaKind, SchemaRegistry, TypeSchemaId, VariantPayload, VariantSchema,
+};
 
 use crate::error::{TranslationError, TranslationErrorKind};
 
@@ -37,6 +39,29 @@ pub struct EnumTranslationPlan {
     /// Per-variant field translation (for struct variants that may have evolved).
     /// Keyed by remote variant index.
     pub variant_plans: HashMap<usize, TranslationPlan>,
+}
+
+/// A complete schema set: root schema + registry for resolving type references.
+#[derive(Debug)]
+pub struct SchemaSet {
+    pub root: Schema,
+    pub registry: SchemaRegistry,
+}
+
+impl SchemaSet {
+    /// Build a SchemaSet from extracted schemas. The root is the last schema
+    /// (extraction produces dependencies before dependents).
+    pub fn from_extracted(schemas: Vec<Schema>) -> Self {
+        let root = schemas.last().cloned().expect("empty schema list");
+        let registry = roam_types::build_registry(&schemas);
+        SchemaSet { root, registry }
+    }
+}
+
+/// Input to `build_plan`: identifies which side is remote and which is local.
+pub struct PlanInput<'a> {
+    pub remote: &'a SchemaSet,
+    pub local: &'a SchemaSet,
 }
 
 /// Build the trivial identity plan from a local Shape alone.
@@ -79,31 +104,33 @@ pub fn build_identity_plan(shape: &'static Shape) -> TranslationPlan {
                 }),
             }
         }
-        _ => {
-            // Scalars, containers, etc. — no field ops needed
-            TranslationPlan {
-                field_ops: Vec::new(),
-                nested: HashMap::new(),
-                enum_plan: None,
-            }
-        }
+        _ => TranslationPlan {
+            field_ops: Vec::new(),
+            nested: HashMap::new(),
+            enum_plan: None,
+        },
     }
 }
 
-/// Build a translation plan from a remote schema and local Shape.
+/// Build a translation plan by comparing remote and local schemas.
+///
+/// Both sides are represented as schemas — the same extraction logic
+/// (channel unwrapping, transparent wrappers, etc.) has already run on
+/// both. This avoids mismatches between schema representation and raw
+/// Shape inspection.
 // r[impl schema.translation.field-matching]
 // r[impl schema.translation.skip-unknown]
 // r[impl schema.translation.fill-defaults]
 // r[impl schema.translation.reorder]
 // r[impl schema.errors.early-detection]
 #[allow(clippy::result_large_err)]
-pub fn build_plan(
-    remote_schema: &Schema,
-    local_shape: &'static Shape,
-    registry: &SchemaRegistry,
-) -> Result<TranslationPlan, TranslationError> {
-    let remote_type_id = remote_schema.type_id;
-    let local_type_name = format!("{}", local_shape);
+pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError> {
+    let remote_type_id = input.remote.root.type_id;
+    let local_type_name = if input.local.root.name.is_empty() {
+        schema_kind_label(&input.local.root.kind)
+    } else {
+        input.local.root.name.clone()
+    };
 
     let err_ctx = |kind: TranslationErrorKind| TranslationError {
         path: Vec::new(),
@@ -112,88 +139,101 @@ pub fn build_plan(
         kind,
     };
 
-    match &remote_schema.kind {
-        SchemaKind::Struct {
-            fields: remote_fields,
-        } => build_struct_plan(
+    match (&input.remote.root.kind, &input.local.root.kind) {
+        (
+            SchemaKind::Struct {
+                fields: remote_fields,
+            },
+            SchemaKind::Struct {
+                fields: local_fields,
+            },
+        ) => build_struct_plan(
             remote_fields,
-            local_shape,
+            local_fields,
             remote_type_id,
             &local_type_name,
-            registry,
+            input,
         ),
-        SchemaKind::Enum {
-            variants: remote_variants,
-        } => {
-            // If local is a Result type (Def::Result), build a Result-specific plan
-            if let Def::Result(result_def) = local_shape.def {
-                build_result_plan(
-                    remote_variants,
-                    result_def,
-                    remote_type_id,
-                    &local_type_name,
-                    registry,
-                )
-            } else {
-                build_enum_plan(
-                    remote_variants,
-                    local_shape,
-                    remote_type_id,
-                    &local_type_name,
-                    registry,
-                )
-            }
-        }
-        SchemaKind::Tuple {
-            elements: remote_elements,
-        } => build_tuple_plan(
+        (
+            SchemaKind::Enum {
+                variants: remote_variants,
+            },
+            SchemaKind::Enum {
+                variants: local_variants,
+            },
+        ) => build_enum_plan(
+            remote_variants,
+            local_variants,
+            remote_type_id,
+            &local_type_name,
+            input,
+        ),
+        (
+            SchemaKind::Tuple {
+                elements: remote_elements,
+            },
+            SchemaKind::Tuple {
+                elements: local_elements,
+            },
+        ) => build_tuple_plan(
             remote_elements,
-            local_shape,
+            local_elements,
             remote_type_id,
             &local_type_name,
-            registry,
+            input,
         ),
-        _ => {
-            // Primitives, containers — check kind compatibility.
-            // If the local type is a scalar (e.g. () is both StructKind::Unit and
-            // ScalarType::Unit), it's compatible with a Primitive schema — the
-            // deserializer dispatches on scalar_type() before checking user types.
-            if local_shape.scalar_type().is_some() {
-                return Ok(TranslationPlan {
-                    field_ops: Vec::new(),
-                    nested: HashMap::new(),
-                    enum_plan: None,
-                });
-            }
-            let local_is_struct = matches!(local_shape.ty, Type::User(UserType::Struct(_)));
-            let local_is_enum = matches!(local_shape.ty, Type::User(UserType::Enum(_)));
-            if local_is_struct || local_is_enum {
-                return Err(err_ctx(TranslationErrorKind::KindMismatch {
-                    remote_kind: format!("{:?}", remote_schema.kind)
-                        .split('{')
-                        .next()
-                        .unwrap_or("?")
-                        .trim()
-                        .to_string(),
-                    local_kind: if local_is_struct { "struct" } else { "enum" }.to_string(),
-                }));
-            }
-            Ok(TranslationPlan {
-                field_ops: Vec::new(),
-                nested: HashMap::new(),
-                enum_plan: None,
-            })
-        }
+        // Same kind, no field-level translation needed
+        (SchemaKind::Primitive { .. }, SchemaKind::Primitive { .. })
+        | (SchemaKind::List { .. }, SchemaKind::List { .. })
+        | (SchemaKind::Map { .. }, SchemaKind::Map { .. })
+        | (SchemaKind::Set { .. }, SchemaKind::Set { .. })
+        | (SchemaKind::Array { .. }, SchemaKind::Array { .. })
+        | (SchemaKind::Option { .. }, SchemaKind::Option { .. }) => Ok(TranslationPlan {
+            field_ops: Vec::new(),
+            nested: HashMap::new(),
+            enum_plan: None,
+        }),
+        // Kind mismatch
+        _ => Err(err_ctx(TranslationErrorKind::KindMismatch {
+            remote_kind: if input.remote.root.name.is_empty() {
+                schema_kind_label(&input.remote.root.kind)
+            } else {
+                input.remote.root.name.clone()
+            },
+            local_kind: local_type_name.clone(),
+        })),
     }
+}
+
+/// Build a nested plan for two type IDs looked up in their respective registries.
+#[allow(clippy::result_large_err)]
+fn nested_plan(
+    remote_type_id: &TypeSchemaId,
+    local_type_id: &TypeSchemaId,
+    input: &PlanInput,
+) -> Option<Result<TranslationPlan, TranslationError>> {
+    let remote_schema = input.remote.registry.get(remote_type_id)?;
+    let local_schema = input.local.registry.get(local_type_id)?;
+    let sub_input = PlanInput {
+        remote: &SchemaSet {
+            root: remote_schema.clone(),
+            registry: input.remote.registry.clone(),
+        },
+        local: &SchemaSet {
+            root: local_schema.clone(),
+            registry: input.local.registry.clone(),
+        },
+    };
+    Some(build_plan(&sub_input))
 }
 
 #[allow(clippy::result_large_err)]
 fn build_struct_plan(
-    remote_fields: &[roam_types::FieldSchema],
-    local_shape: &'static Shape,
+    remote_fields: &[FieldSchema],
+    local_fields: &[FieldSchema],
     remote_type_id: TypeSchemaId,
     local_type_name: &str,
-    registry: &SchemaRegistry,
+    input: &PlanInput,
 ) -> Result<TranslationPlan, TranslationError> {
     let err = |kind: TranslationErrorKind| TranslationError {
         path: Vec::new(),
@@ -202,23 +242,12 @@ fn build_struct_plan(
         kind,
     };
 
-    let local_struct = match local_shape.ty {
-        Type::User(UserType::Struct(s)) => s,
-        _ => {
-            return Err(err(TranslationErrorKind::KindMismatch {
-                remote_kind: "struct".into(),
-                local_kind: format!("{}", local_shape),
-            }));
-        }
-    };
-
     let mut field_ops = Vec::with_capacity(remote_fields.len());
     let mut nested = HashMap::new();
-    let mut matched_local = vec![false; local_struct.fields.len()];
+    let mut matched_local = vec![false; local_fields.len()];
 
     for remote_field in remote_fields {
-        if let Some((local_idx, local_field)) = local_struct
-            .fields
+        if let Some((local_idx, local_field)) = local_fields
             .iter()
             .enumerate()
             .find(|(_, f)| f.name == remote_field.name)
@@ -229,11 +258,9 @@ fn build_struct_plan(
             });
 
             // r[impl schema.translation.type-compat]
-            // Always build nested plan when the remote field has a schema.
-            if let Some(remote_field_schema) = registry.get(&remote_field.type_id) {
-                let local_field_shape = local_field.shape();
-                let nested_plan = build_plan(remote_field_schema, local_field_shape, registry)
-                    .map_err(|e| e.with_path_prefix(remote_field.name.as_str()))?;
+            if let Some(result) = nested_plan(&remote_field.type_id, &local_field.type_id, input) {
+                let nested_plan =
+                    result.map_err(|e| e.with_path_prefix(remote_field.name.as_str()))?;
                 nested.insert(local_idx, nested_plan);
             }
         } else {
@@ -245,14 +272,11 @@ fn build_struct_plan(
 
     // r[impl schema.errors.missing-required]
     for (i, matched) in matched_local.iter().enumerate() {
-        if !matched {
-            let field = &local_struct.fields[i];
-            if field.default.is_none() {
-                return Err(err(TranslationErrorKind::MissingRequiredField {
-                    field_name: field.name.to_string(),
-                    field_type: format!("{}", field.shape()),
-                }));
-            }
+        if !matched && local_fields[i].required {
+            return Err(err(TranslationErrorKind::MissingRequiredField {
+                field_name: local_fields[i].name.to_string(),
+                field_type: format!("{:?}", local_fields[i].type_id),
+            }));
         }
     }
 
@@ -263,17 +287,13 @@ fn build_struct_plan(
     })
 }
 
-/// Build a translation plan for a tuple type (e.g. args tuple `(Arg1, Arg2)`).
-///
-/// Tuple elements are positional — they match 1:1 by index. If an element's
-/// remote type differs from the local type, a nested plan is built.
 #[allow(clippy::result_large_err)]
 fn build_tuple_plan(
     remote_elements: &[TypeSchemaId],
-    local_shape: &'static Shape,
+    local_elements: &[TypeSchemaId],
     remote_type_id: TypeSchemaId,
     local_type_name: &str,
-    registry: &SchemaRegistry,
+    input: &PlanInput,
 ) -> Result<TranslationPlan, TranslationError> {
     let err = |kind: TranslationErrorKind| TranslationError {
         path: Vec::new(),
@@ -282,91 +302,31 @@ fn build_tuple_plan(
         kind,
     };
 
-    let local_struct = match local_shape.ty {
-        Type::User(UserType::Struct(s))
-            if matches!(s.kind, StructKind::TupleStruct | StructKind::Tuple) =>
-        {
-            s
-        }
-        _ => {
-            return Err(err(TranslationErrorKind::KindMismatch {
-                remote_kind: "tuple".into(),
-                local_kind: format!("{}", local_shape),
-            }));
-        }
-    };
-
-    if remote_elements.len() != local_struct.fields.len() {
+    if remote_elements.len() != local_elements.len() {
         return Err(err(TranslationErrorKind::KindMismatch {
             remote_kind: format!("tuple({} elements)", remote_elements.len()),
-            local_kind: format!("tuple({} elements)", local_struct.fields.len()),
+            local_kind: format!("tuple({} elements)", local_elements.len()),
         }));
     }
 
     let mut field_ops = Vec::with_capacity(remote_elements.len());
     let mut nested = HashMap::new();
 
-    for (i, remote_elem_id) in remote_elements.iter().enumerate() {
+    for (i, (remote_elem_id, local_elem_id)) in remote_elements
+        .iter()
+        .zip(local_elements.iter())
+        .enumerate()
+    {
         field_ops.push(FieldOp::Read { local_index: i });
 
-        // Always build nested plan when the remote element has a schema.
-        if let Some(remote_elem_schema) = registry.get(remote_elem_id) {
-            let local_field_shape = local_struct.fields[i].shape();
-            let nested_plan = build_plan(remote_elem_schema, local_field_shape, registry)
-                .map_err(|e| e.with_path_prefix(&i.to_string()))?;
-            nested.insert(i, nested_plan);
+        if let Some(result) = nested_plan(remote_elem_id, local_elem_id, input) {
+            let plan = result.map_err(|e| e.with_path_prefix(&i.to_string()))?;
+            nested.insert(i, plan);
         }
     }
 
     Ok(TranslationPlan {
         field_ops,
-        nested,
-        enum_plan: None,
-    })
-}
-
-/// Build a translation plan for a Result type.
-///
-/// The remote schema encodes Result as an Enum with Ok(0) and Err(1) variants.
-/// The local type is Def::Result. We build nested plans for the Ok and Err
-/// payloads if they differ between remote and local.
-#[allow(clippy::result_large_err)]
-fn build_result_plan(
-    remote_variants: &[roam_types::VariantSchema],
-    result_def: facet_core::ResultDef,
-    _remote_type_id: TypeSchemaId,
-    _local_type_name: &str,
-    registry: &SchemaRegistry,
-) -> Result<TranslationPlan, TranslationError> {
-    let mut nested = HashMap::new();
-
-    // Find the Ok and Err variants in the remote schema
-    for rv in remote_variants {
-        let (local_inner_shape, local_index) = match rv.name.as_str() {
-            "Ok" => (result_def.t(), 0usize),
-            "Err" => (result_def.e(), 1usize),
-            _ => continue,
-        };
-
-        if let roam_types::VariantPayload::Newtype {
-            type_id: remote_inner_id,
-        } = &rv.payload
-            && let Some(remote_inner_schema) = registry.get(remote_inner_id)
-        {
-            match build_plan(remote_inner_schema, local_inner_shape, registry) {
-                Ok(inner_plan) => {
-                    nested.insert(local_index, inner_plan);
-                }
-                Err(e) => return Err(e.with_path_prefix(&rv.name)),
-            }
-        }
-    }
-
-    // The TranslationPlan for Result is empty field_ops (Result is deserialized
-    // by deserialize_result, not by struct field iteration). The nested plans
-    // are keyed by 0 (Ok) and 1 (Err) and used by deserialize_result.
-    Ok(TranslationPlan {
-        field_ops: Vec::new(),
         nested,
         enum_plan: None,
     })
@@ -377,92 +337,105 @@ fn build_result_plan(
 // r[impl schema.translation.enum.payload-compat]
 #[allow(clippy::result_large_err)]
 fn build_enum_plan(
-    remote_variants: &[roam_types::VariantSchema],
-    local_shape: &'static Shape,
+    remote_variants: &[VariantSchema],
+    local_variants: &[VariantSchema],
     remote_type_id: TypeSchemaId,
     local_type_name: &str,
-    _registry: &SchemaRegistry,
+    input: &PlanInput,
 ) -> Result<TranslationPlan, TranslationError> {
-    let err = |kind: TranslationErrorKind| TranslationError {
-        path: Vec::new(),
-        remote_type_id,
-        local_type_name: local_type_name.to_string(),
-        kind,
-    };
-
-    let local_enum = match local_shape.ty {
-        Type::User(UserType::Enum(e)) => e,
-        _ => {
-            return Err(err(TranslationErrorKind::KindMismatch {
-                remote_kind: "enum".into(),
-                local_kind: format!("{}", local_shape),
-            }));
-        }
-    };
-
     let mut variant_map = Vec::with_capacity(remote_variants.len());
     let mut variant_plans = HashMap::new();
+    let mut nested = HashMap::new();
 
     for (remote_idx, remote_variant) in remote_variants.iter().enumerate() {
-        // Match by name
-        if let Some((local_idx, local_variant)) = local_enum
-            .variants
+        if let Some((local_idx, local_variant)) = local_variants
             .iter()
             .enumerate()
             .find(|(_, v)| v.name == remote_variant.name)
         {
             variant_map.push(Some(local_idx));
 
-            // Build per-variant field plan if it's a struct variant
-            if let roam_types::VariantPayload::Struct {
-                fields: remote_fields,
-            } = &remote_variant.payload
-                && (local_variant.data.kind == StructKind::Struct
-                    || local_variant.data.kind == StructKind::TupleStruct)
-            {
-                // Build a mini struct plan for this variant's fields
-                let variant_field_ops: Vec<FieldOp> = remote_fields
-                    .iter()
-                    .map(|rf| {
-                        if let Some((local_field_idx, _)) = local_variant
-                            .data
-                            .fields
-                            .iter()
-                            .enumerate()
-                            .find(|(_, f)| f.name == rf.name)
-                        {
-                            FieldOp::Read {
-                                local_index: local_field_idx,
-                            }
-                        } else {
-                            FieldOp::Skip {
-                                type_id: rf.type_id,
-                            }
-                        }
-                    })
-                    .collect();
-                variant_plans.insert(
-                    remote_idx,
-                    TranslationPlan {
-                        field_ops: variant_field_ops,
-                        nested: HashMap::new(),
-                        enum_plan: None,
+            match (&remote_variant.payload, &local_variant.payload) {
+                // Both struct variants — build a per-variant field plan
+                (
+                    VariantPayload::Struct {
+                        fields: remote_fields,
                     },
-                );
+                    VariantPayload::Struct {
+                        fields: local_fields,
+                    },
+                ) => {
+                    let variant_field_ops: Vec<FieldOp> = remote_fields
+                        .iter()
+                        .map(|rf| {
+                            if let Some((local_field_idx, _)) = local_fields
+                                .iter()
+                                .enumerate()
+                                .find(|(_, f)| f.name == rf.name)
+                            {
+                                FieldOp::Read {
+                                    local_index: local_field_idx,
+                                }
+                            } else {
+                                FieldOp::Skip {
+                                    type_id: rf.type_id,
+                                }
+                            }
+                        })
+                        .collect();
+                    variant_plans.insert(
+                        remote_idx,
+                        TranslationPlan {
+                            field_ops: variant_field_ops,
+                            nested: HashMap::new(),
+                            enum_plan: None,
+                        },
+                    );
+                }
+                // Both newtype — build a nested plan for the inner type
+                (
+                    VariantPayload::Newtype {
+                        type_id: remote_inner_id,
+                    },
+                    VariantPayload::Newtype {
+                        type_id: local_inner_id,
+                    },
+                ) => {
+                    if let Some(result) = nested_plan(remote_inner_id, local_inner_id, input) {
+                        let inner_plan =
+                            result.map_err(|e| e.with_path_prefix(&remote_variant.name))?;
+                        nested.insert(local_idx, inner_plan);
+                    }
+                }
+                (VariantPayload::Unit, VariantPayload::Unit) => {}
+                _ => {}
             }
         } else {
             // r[impl schema.translation.enum.unknown-variant]
-            // Unknown variant — will cause runtime error if received
             variant_map.push(None);
         }
     }
 
     Ok(TranslationPlan {
         field_ops: Vec::new(),
-        nested: HashMap::new(),
+        nested,
         enum_plan: Some(EnumTranslationPlan {
             variant_map,
             variant_plans,
         }),
     })
+}
+
+fn schema_kind_label(kind: &SchemaKind) -> String {
+    match kind {
+        SchemaKind::Struct { .. } => "Struct".into(),
+        SchemaKind::Enum { .. } => "Enum".into(),
+        SchemaKind::Tuple { .. } => "Tuple".into(),
+        SchemaKind::List { .. } => "List".into(),
+        SchemaKind::Map { .. } => "Map".into(),
+        SchemaKind::Set { .. } => "Set".into(),
+        SchemaKind::Array { .. } => "Array".into(),
+        SchemaKind::Option { .. } => "Option".into(),
+        SchemaKind::Primitive { primitive_type } => format!("Primitive({primitive_type:?})"),
+    }
 }

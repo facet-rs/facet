@@ -16,7 +16,10 @@ pub use deserialize::{
     from_slice_with_plan,
 };
 pub use error::{DeserializeError, SerializeError, TranslationError, TranslationErrorKind};
-pub use plan::{EnumTranslationPlan, FieldOp, TranslationPlan, build_identity_plan, build_plan};
+pub use plan::{
+    EnumTranslationPlan, FieldOp, PlanInput, SchemaSet, TranslationPlan, build_identity_plan,
+    build_plan,
+};
 pub use raw::opaque_encoded_borrowed;
 pub use scatter::{ScatterPlan, Segment, peek_to_scatter_plan};
 pub use serialize::to_vec;
@@ -328,6 +331,32 @@ mod tests {
         (schemas, registry)
     }
 
+    #[derive(Debug)]
+    struct PlanResult {
+        plan: TranslationPlan,
+        remote: SchemaSet,
+        #[allow(dead_code)]
+        local: SchemaSet,
+    }
+
+    /// Helper: build a translation plan from remote and local shapes.
+    fn plan_for(
+        remote_shape: &'static facet_core::Shape,
+        local_shape: &'static facet_core::Shape,
+    ) -> Result<PlanResult, error::TranslationError> {
+        let remote = SchemaSet::from_extracted(roam_types::extract_schemas(remote_shape));
+        let local = SchemaSet::from_extracted(roam_types::extract_schemas(local_shape));
+        let plan = build_plan(&PlanInput {
+            remote: &remote,
+            local: &local,
+        })?;
+        Ok(PlanResult {
+            plan,
+            remote,
+            local,
+        })
+    }
+
     // r[verify schema.translation.skip-unknown]
     #[test]
     fn translation_remote_has_extra_field() {
@@ -345,9 +374,7 @@ mod tests {
             z: f64,
         }
 
-        let (schemas, registry) = schemas_and_registry(RemotePoint::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let plan = build_plan(remote_root, LocalPoint::SHAPE, &registry).unwrap();
+        let r = plan_for(RemotePoint::SHAPE, LocalPoint::SHAPE).unwrap();
 
         // Serialize with remote type
         let remote_val = RemotePoint {
@@ -358,7 +385,8 @@ mod tests {
         let bytes = to_vec(&remote_val).unwrap();
 
         // Deserialize with plan into local type — y should be skipped
-        let local_val: LocalPoint = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        let local_val: LocalPoint =
+            from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
         assert_eq!(local_val, LocalPoint { x: 1.0, z: 3.0 });
     }
 
@@ -378,14 +406,13 @@ mod tests {
             y: f64,
         }
 
-        let (schemas, registry) = schemas_and_registry(RemotePoint::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let plan = build_plan(remote_root, LocalPoint::SHAPE, &registry).unwrap();
+        let r = plan_for(RemotePoint::SHAPE, LocalPoint::SHAPE).unwrap();
 
         let remote_val = RemotePoint { x: 42.0 };
         let bytes = to_vec(&remote_val).unwrap();
 
-        let local_val: LocalPoint = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        let local_val: LocalPoint =
+            from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
         assert_eq!(local_val, LocalPoint { x: 42.0, y: 0.0 });
     }
 
@@ -406,9 +433,7 @@ mod tests {
             y: f64,
         }
 
-        let (schemas, registry) = schemas_and_registry(RemotePoint::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let result = build_plan(remote_root, LocalPoint::SHAPE, &registry);
+        let result = plan_for(RemotePoint::SHAPE, LocalPoint::SHAPE);
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -443,9 +468,7 @@ mod tests {
             b: String,
         }
 
-        let (schemas, registry) = schemas_and_registry(RemotePair::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let plan = build_plan(remote_root, LocalPair::SHAPE, &registry).unwrap();
+        let r = plan_for(RemotePair::SHAPE, LocalPair::SHAPE).unwrap();
 
         let remote_val = RemotePair {
             b: "hello".to_string(),
@@ -453,7 +476,8 @@ mod tests {
         };
         let bytes = to_vec(&remote_val).unwrap();
 
-        let local_val: LocalPair = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        let local_val: LocalPair =
+            from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
         assert_eq!(
             local_val,
             LocalPair {
@@ -480,9 +504,7 @@ mod tests {
             name: String,
         }
 
-        let (schemas, registry) = schemas_and_registry(RemoteMsg::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let plan = build_plan(remote_root, LocalMsg::SHAPE, &registry).unwrap();
+        let r = plan_for(RemoteMsg::SHAPE, LocalMsg::SHAPE).unwrap();
 
         let remote_val = RemoteMsg {
             id: 99,
@@ -491,7 +513,8 @@ mod tests {
         };
         let bytes = to_vec(&remote_val).unwrap();
 
-        let local_val: LocalMsg = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        let local_val: LocalMsg =
+            from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
         assert_eq!(
             local_val,
             LocalMsg {
@@ -517,10 +540,8 @@ mod tests {
 
         let direct: Point = from_slice(&bytes).unwrap();
 
-        let (schemas, registry) = schemas_and_registry(Point::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let plan = build_plan(remote_root, Point::SHAPE, &registry).unwrap();
-        let translated: Point = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        let r = plan_for(Point::SHAPE, Point::SHAPE).unwrap();
+        let translated: Point = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
 
         assert_eq!(direct, translated);
     }
@@ -543,9 +564,7 @@ mod tests {
             a: u32,
         }
 
-        let (schemas, registry) = schemas_and_registry(Remote::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let plan = build_plan(remote_root, Local::SHAPE, &registry).unwrap();
+        let r = plan_for(Remote::SHAPE, Local::SHAPE).unwrap();
 
         let remote_val = Remote {
             a: 42,
@@ -554,7 +573,7 @@ mod tests {
         };
         let bytes = to_vec(&remote_val).unwrap();
 
-        let local_val: Local = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        let local_val: Local = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
         assert_eq!(
             local_val,
             Local {
@@ -581,9 +600,7 @@ mod tests {
             missing: String,
         }
 
-        let (schemas, registry) = schemas_and_registry(RemoteOuter::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let err = build_plan(remote_root, LocalOuter::SHAPE, &registry).unwrap_err();
+        let err = plan_for(RemoteOuter::SHAPE, LocalOuter::SHAPE).unwrap_err();
 
         let msg = err.to_string();
         // Should include local type name
@@ -617,9 +634,7 @@ mod tests {
             x: u32,
         }
 
-        let (schemas, registry) = schemas_and_registry(RemoteStruct::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let err = build_plan(remote_root, <u32 as Facet>::SHAPE, &registry).unwrap_err();
+        let err = plan_for(RemoteStruct::SHAPE, <u32 as Facet>::SHAPE).unwrap_err();
 
         let msg = err.to_string();
         assert!(msg.contains("struct"), "error should mention struct: {msg}");
@@ -645,12 +660,10 @@ mod tests {
             Restart,
         }
 
-        let (schemas, registry) = schemas_and_registry(RemoteCmd::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let plan = build_plan(remote_root, LocalCmd::SHAPE, &registry).unwrap();
+        let r = plan_for(RemoteCmd::SHAPE, LocalCmd::SHAPE).unwrap();
 
         let bytes = to_vec(&RemoteCmd::Stop).unwrap();
-        let result: LocalCmd = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        let result: LocalCmd = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
         assert_eq!(result, LocalCmd::Stop);
     }
 
@@ -674,54 +687,34 @@ mod tests {
             Stop,
         }
 
-        let (schemas, registry) = schemas_and_registry(RemoteCmd::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let plan = build_plan(remote_root, LocalCmd::SHAPE, &registry).unwrap();
+        let r = plan_for(RemoteCmd::SHAPE, LocalCmd::SHAPE).unwrap();
 
         // Sending Start/Stop works
         let bytes = to_vec(&RemoteCmd::Start).unwrap();
-        let result: LocalCmd = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        let result: LocalCmd = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
         assert_eq!(result, LocalCmd::Start);
 
         // Sending Restart (index 2) should fail at runtime
         let bytes = to_vec(&RemoteCmd::Restart).unwrap();
-        let result: Result<LocalCmd, _> = from_slice_with_plan(&bytes, &plan, &registry);
+        let result: Result<LocalCmd, _> = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry);
         assert!(result.is_err());
     }
 
     #[test]
     fn translation_result_ok_round_trip() {
-        let val: Result<String, u32> = Ok("hello".to_string());
-        let bytes = to_vec(&val).unwrap();
-
-        let (schemas, registry) = schemas_and_registry(<Result<String, u32> as Facet>::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let plan = build_plan(
-            remote_root,
-            <Result<String, u32> as Facet>::SHAPE,
-            &registry,
-        )
-        .unwrap();
-
-        let result: Result<String, u32> = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        type T = Result<String, u32>;
+        let r = plan_for(T::SHAPE, T::SHAPE).unwrap();
+        let bytes = to_vec(&Ok::<_, u32>("hello".to_string())).unwrap();
+        let result: T = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
         assert_eq!(result, Ok("hello".to_string()));
     }
 
     #[test]
     fn translation_result_err_round_trip() {
-        let val: Result<String, u32> = Err(42);
-        let bytes = to_vec(&val).unwrap();
-
-        let (schemas, registry) = schemas_and_registry(<Result<String, u32> as Facet>::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let plan = build_plan(
-            remote_root,
-            <Result<String, u32> as Facet>::SHAPE,
-            &registry,
-        )
-        .unwrap();
-
-        let result: Result<String, u32> = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        type T = Result<String, u32>;
+        let r = plan_for(T::SHAPE, T::SHAPE).unwrap();
+        let bytes = to_vec(&Err::<String, _>(42u32)).unwrap();
+        let result: T = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
         assert_eq!(result, Err(42));
     }
 
@@ -734,49 +727,35 @@ mod tests {
             Forbidden(String),
         }
 
-        let ok_val: Result<u32, MyError> = Ok(42);
-        let err_val: Result<u32, MyError> = Err(MyError::Forbidden("nope".into()));
+        type T = Result<u32, MyError>;
+        let r = plan_for(T::SHAPE, T::SHAPE).unwrap();
 
-        let (schemas, registry) = schemas_and_registry(<Result<u32, MyError> as Facet>::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let plan = build_plan(
-            remote_root,
-            <Result<u32, MyError> as Facet>::SHAPE,
-            &registry,
+        let result: T = from_slice_with_plan(
+            &to_vec(&Ok::<_, MyError>(42)).unwrap(),
+            &r.plan,
+            &r.remote.registry,
         )
         .unwrap();
-
-        let result: Result<u32, MyError> =
-            from_slice_with_plan(&to_vec(&ok_val).unwrap(), &plan, &registry).unwrap();
         assert_eq!(result, Ok(42));
 
-        let result: Result<u32, MyError> =
-            from_slice_with_plan(&to_vec(&err_val).unwrap(), &plan, &registry).unwrap();
+        let result: T = from_slice_with_plan(
+            &to_vec(&Err::<u32, _>(MyError::Forbidden("nope".into()))).unwrap(),
+            &r.plan,
+            &r.remote.registry,
+        )
+        .unwrap();
         assert_eq!(result, Err(MyError::Forbidden("nope".into())));
     }
 
     #[test]
     fn translation_result_with_roam_error_shape() {
-        // This mirrors the actual wire type: Result<T, RoamError<Infallible>>
-        // where RoamError has an uninhabitable User(Infallible) variant.
         use roam_types::RoamError;
         use std::convert::Infallible;
 
-        let ok_val: Result<String, RoamError<Infallible>> = Ok("hello".to_string());
-        let bytes = to_vec(&ok_val).unwrap();
-
-        let (schemas, registry) =
-            schemas_and_registry(<Result<String, RoamError<Infallible>> as Facet>::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let plan = build_plan(
-            remote_root,
-            <Result<String, RoamError<Infallible>> as Facet>::SHAPE,
-            &registry,
-        )
-        .unwrap();
-
-        let result: Result<String, RoamError<Infallible>> =
-            from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        type T = Result<String, RoamError<Infallible>>;
+        let r = plan_for(T::SHAPE, T::SHAPE).unwrap();
+        let bytes = to_vec(&Ok::<_, RoamError<Infallible>>("hello".to_string())).unwrap();
+        let result: T = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
         assert_eq!(result.unwrap(), "hello");
     }
 
@@ -785,22 +764,13 @@ mod tests {
         use roam_types::RoamError;
         use std::convert::Infallible;
 
-        let err_val: Result<String, RoamError<Infallible>> =
-            Err(RoamError::InvalidPayload("bad data".into()));
-        let bytes = to_vec(&err_val).unwrap();
-
-        let (schemas, registry) =
-            schemas_and_registry(<Result<String, RoamError<Infallible>> as Facet>::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let plan = build_plan(
-            remote_root,
-            <Result<String, RoamError<Infallible>> as Facet>::SHAPE,
-            &registry,
-        )
+        type T = Result<String, RoamError<Infallible>>;
+        let r = plan_for(T::SHAPE, T::SHAPE).unwrap();
+        let bytes = to_vec(&Err::<String, _>(RoamError::<Infallible>::InvalidPayload(
+            "bad data".into(),
+        )))
         .unwrap();
-
-        let result: Result<String, RoamError<Infallible>> =
-            from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        let result: T = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
         match result {
             Err(RoamError::InvalidPayload(msg)) => assert_eq!(msg, "bad data"),
             other => panic!("expected InvalidPayload, got {other:?}"),
@@ -815,22 +785,14 @@ mod tests {
             name: String,
         }
 
-        let val: Result<Payload, u32> = Ok(Payload {
+        type T = Result<Payload, u32>;
+        let r = plan_for(T::SHAPE, T::SHAPE).unwrap();
+        let bytes = to_vec(&Ok::<_, u32>(Payload {
             id: 1,
             name: "test".into(),
-        });
-        let bytes = to_vec(&val).unwrap();
-
-        let (schemas, registry) = schemas_and_registry(<Result<Payload, u32> as Facet>::SHAPE);
-        let remote_root = schemas.last().unwrap();
-        let plan = build_plan(
-            remote_root,
-            <Result<Payload, u32> as Facet>::SHAPE,
-            &registry,
-        )
+        }))
         .unwrap();
-
-        let result: Result<Payload, u32> = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        let result: T = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
         assert_eq!(
             result,
             Ok(Payload {
@@ -850,16 +812,15 @@ mod tests {
             Data(Vec<u8>),
         }
 
+        let r = plan_for(Message::SHAPE, Message::SHAPE).unwrap();
         for val in [
             Message::Text("hello".into()),
             Message::Number(42),
             Message::Data(vec![1, 2, 3]),
         ] {
             let bytes = to_vec(&val).unwrap();
-            let (schemas, registry) = schemas_and_registry(Message::SHAPE);
-            let remote_root = schemas.last().unwrap();
-            let plan = build_plan(remote_root, Message::SHAPE, &registry).unwrap();
-            let result: Message = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+            let result: Message =
+                from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
             assert_eq!(result, val);
         }
     }

@@ -1,7 +1,7 @@
 use facet::Facet;
 use roam_postcard::error::DeserializeError;
-use roam_postcard::plan::{TranslationPlan, build_plan};
-use roam_types::{BindingDirection, MethodId, SchemaRegistry, SchemaTracker};
+use roam_postcard::plan::{PlanInput, SchemaSet, TranslationPlan, build_plan};
+use roam_types::{BindingDirection, MethodId, SchemaTracker, extract_schemas};
 
 /// Deserialize args from a request (caller → callee direction).
 // r[impl schema.exchange.required]
@@ -13,9 +13,8 @@ pub fn schema_deserialize_args_borrowed<'input, 'facet, T: Facet<'facet>>(
 where
     'input: 'facet,
 {
-    let (plan, registry) =
-        resolve_plan::<T>(method_id, BindingDirection::Args, schema_tracker_any)?;
-    roam_postcard::from_slice_borrowed_with_plan(bytes, &plan, &registry)
+    let resolved = resolve_plan::<T>(method_id, BindingDirection::Args, schema_tracker_any)?;
+    roam_postcard::from_slice_borrowed_with_plan(bytes, &resolved.plan, &resolved.remote.registry)
 }
 
 /// Deserialize a response (callee → caller direction), borrowed variant.
@@ -28,9 +27,8 @@ pub fn schema_deserialize_response_borrowed<'input, 'facet, T: Facet<'facet>>(
 where
     'input: 'facet,
 {
-    let (plan, registry) =
-        resolve_plan::<T>(method_id, BindingDirection::Response, schema_tracker_any)?;
-    roam_postcard::from_slice_borrowed_with_plan(bytes, &plan, &registry)
+    let resolved = resolve_plan::<T>(method_id, BindingDirection::Response, schema_tracker_any)?;
+    roam_postcard::from_slice_borrowed_with_plan(bytes, &resolved.plan, &resolved.remote.registry)
 }
 
 /// Deserialize a response (callee → caller direction), owned variant.
@@ -40,16 +38,20 @@ pub fn schema_deserialize_response<T: Facet<'static>>(
     method_id: MethodId,
     schema_tracker_any: Option<&(dyn std::any::Any + Send + Sync)>,
 ) -> Result<T, DeserializeError> {
-    let (plan, registry) =
-        resolve_plan::<T>(method_id, BindingDirection::Response, schema_tracker_any)?;
-    roam_postcard::from_slice_with_plan(bytes, &plan, &registry)
+    let resolved = resolve_plan::<T>(method_id, BindingDirection::Response, schema_tracker_any)?;
+    roam_postcard::from_slice_with_plan(bytes, &resolved.plan, &resolved.remote.registry)
+}
+
+struct ResolvedPlan {
+    plan: TranslationPlan,
+    remote: SchemaSet,
 }
 
 fn resolve_plan<'facet, T: Facet<'facet>>(
     method_id: MethodId,
     direction: BindingDirection,
     schema_tracker_any: Option<&(dyn std::any::Any + Send + Sync)>,
-) -> Result<(TranslationPlan, SchemaRegistry), DeserializeError> {
+) -> Result<ResolvedPlan, DeserializeError> {
     let tracker = schema_tracker_any
         .and_then(|a| a.downcast_ref::<SchemaTracker>())
         .ok_or_else(|| {
@@ -71,17 +73,24 @@ fn resolve_plan<'facet, T: Facet<'facet>>(
         ))
     })?;
 
-    let remote_schema = tracker.get_received(&remote_root_id).ok_or_else(|| {
+    let remote_root = tracker.get_received(&remote_root_id).ok_or_else(|| {
         DeserializeError::protocol(&format!(
             "remote root type ID {remote_root_id:?} not found in received schemas"
         ))
     })?;
 
-    let registry = tracker.received_registry();
-    let local_shape = T::SHAPE;
+    let remote = SchemaSet {
+        root: remote_root,
+        registry: tracker.received_registry(),
+    };
 
-    let plan = build_plan(&remote_schema, local_shape, &registry)
-        .map_err(|e| DeserializeError::protocol(&format!("translation plan failed: {e}")))?;
+    let local = SchemaSet::from_extracted(extract_schemas(T::SHAPE));
 
-    Ok((plan, registry))
+    let plan = build_plan(&PlanInput {
+        remote: &remote,
+        local: &local,
+    })
+    .map_err(|e| DeserializeError::protocol(&format!("translation plan failed: {e}")))?;
+
+    Ok(ResolvedPlan { plan, remote })
 }

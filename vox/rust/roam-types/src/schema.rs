@@ -30,6 +30,9 @@ pub struct TypeSchemaId(pub u32);
 #[derive(Facet, Clone, Debug)]
 pub struct Schema {
     pub type_id: TypeSchemaId,
+    /// The Rust type name (e.g. "Point", "Vec<String>"). For diagnostics.
+    #[facet(default)]
+    pub name: String,
     pub kind: SchemaKind,
 }
 
@@ -387,6 +390,16 @@ struct ExtractCtx<'a> {
 }
 
 impl<'a> ExtractCtx<'a> {
+    fn push_schema(&mut self, shape: &'static Shape, type_id: TypeSchemaId, kind: SchemaKind) {
+        if self.seen.insert(shape) {
+            self.schemas.push(Schema {
+                type_id,
+                name: format!("{shape}"),
+                kind,
+            });
+        }
+    }
+
     /// Extract a schema for the given shape, returning its TypeSchemaId.
     /// Recursively extracts dependencies first.
     fn extract(&mut self, shape: &'static Shape) -> TypeSchemaId {
@@ -420,14 +433,13 @@ impl<'a> ExtractCtx<'a> {
         // r[impl schema.format.primitive]
         // Scalars
         if let Some(scalar) = shape.scalar_type() {
-            if self.seen.insert(shape) {
-                self.schemas.push(Schema {
-                    type_id,
-                    kind: SchemaKind::Primitive {
-                        primitive_type: scalar_to_primitive(scalar),
-                    },
-                });
-            }
+            self.push_schema(
+                shape,
+                type_id,
+                SchemaKind::Primitive {
+                    primitive_type: scalar_to_primitive(scalar),
+                },
+            );
             return type_id;
         }
 
@@ -436,105 +448,80 @@ impl<'a> ExtractCtx<'a> {
         match shape.def {
             Def::List(list_def) => {
                 if let Some(ScalarType::U8) = list_def.t().scalar_type() {
-                    // Vec<u8> → Bytes
-                    if self.seen.insert(shape) {
-                        self.schemas.push(Schema {
-                            type_id,
-                            kind: SchemaKind::Primitive {
-                                primitive_type: PrimitiveType::Bytes,
-                            },
-                        });
-                    }
+                    self.push_schema(
+                        shape,
+                        type_id,
+                        SchemaKind::Primitive {
+                            primitive_type: PrimitiveType::Bytes,
+                        },
+                    );
                 } else {
                     let elem_id = self.extract(list_def.t());
-                    if self.seen.insert(shape) {
-                        self.schemas.push(Schema {
-                            type_id,
-                            kind: SchemaKind::List { element: elem_id },
-                        });
-                    }
+                    self.push_schema(shape, type_id, SchemaKind::List { element: elem_id });
                 }
                 return type_id;
             }
             Def::Array(array_def) => {
                 let elem_id = self.extract(array_def.t());
-                if self.seen.insert(shape) {
-                    self.schemas.push(Schema {
-                        type_id,
-                        kind: SchemaKind::Array {
-                            element: elem_id,
-                            length: array_def.n as u64,
-                        },
-                    });
-                }
+                self.push_schema(
+                    shape,
+                    type_id,
+                    SchemaKind::Array {
+                        element: elem_id,
+                        length: array_def.n as u64,
+                    },
+                );
                 return type_id;
             }
             Def::Slice(slice_def) => {
                 let elem_id = self.extract(slice_def.t());
-                if self.seen.insert(shape) {
-                    self.schemas.push(Schema {
-                        type_id,
-                        kind: SchemaKind::List { element: elem_id },
-                    });
-                }
+                self.push_schema(shape, type_id, SchemaKind::List { element: elem_id });
                 return type_id;
             }
             Def::Map(map_def) => {
                 let key_id = self.extract(map_def.k());
                 let val_id = self.extract(map_def.v());
-                if self.seen.insert(shape) {
-                    self.schemas.push(Schema {
-                        type_id,
-                        kind: SchemaKind::Map {
-                            key: key_id,
-                            value: val_id,
-                        },
-                    });
-                }
+                self.push_schema(
+                    shape,
+                    type_id,
+                    SchemaKind::Map {
+                        key: key_id,
+                        value: val_id,
+                    },
+                );
                 return type_id;
             }
             Def::Set(set_def) => {
                 let elem_id = self.extract(set_def.t());
-                if self.seen.insert(shape) {
-                    self.schemas.push(Schema {
-                        type_id,
-                        kind: SchemaKind::Set { element: elem_id },
-                    });
-                }
+                self.push_schema(shape, type_id, SchemaKind::Set { element: elem_id });
                 return type_id;
             }
             Def::Option(opt_def) => {
                 let elem_id = self.extract(opt_def.t());
-                if self.seen.insert(shape) {
-                    self.schemas.push(Schema {
-                        type_id,
-                        kind: SchemaKind::Option { element: elem_id },
-                    });
-                }
+                self.push_schema(shape, type_id, SchemaKind::Option { element: elem_id });
                 return type_id;
             }
             Def::Result(result_def) => {
                 let ok_id = self.extract(result_def.t());
                 let err_id = self.extract(result_def.e());
-                if self.seen.insert(shape) {
-                    self.schemas.push(Schema {
-                        type_id,
-                        kind: SchemaKind::Enum {
-                            variants: vec![
-                                VariantSchema {
-                                    name: "Ok".to_string(),
-                                    index: 0,
-                                    payload: VariantPayload::Newtype { type_id: ok_id },
-                                },
-                                VariantSchema {
-                                    name: "Err".to_string(),
-                                    index: 1,
-                                    payload: VariantPayload::Newtype { type_id: err_id },
-                                },
-                            ],
-                        },
-                    });
-                }
+                self.push_schema(
+                    shape,
+                    type_id,
+                    SchemaKind::Enum {
+                        variants: vec![
+                            VariantSchema {
+                                name: "Ok".to_string(),
+                                index: 0,
+                                payload: VariantPayload::Newtype { type_id: ok_id },
+                            },
+                            VariantSchema {
+                                name: "Err".to_string(),
+                                index: 1,
+                                payload: VariantPayload::Newtype { type_id: err_id },
+                            },
+                        ],
+                    },
+                );
                 return type_id;
             }
             Def::Pointer(ptr_def) => {
@@ -570,7 +557,7 @@ impl<'a> ExtractCtx<'a> {
                         .map(|f| FieldSchema {
                             name: f.name.to_string(),
                             type_id: self.extract(f.shape()),
-                            required: true,
+                            required: f.default.is_none(),
                         })
                         .collect();
                     SchemaKind::Struct { fields }
@@ -644,9 +631,7 @@ impl<'a> ExtractCtx<'a> {
 
         self.stack.pop();
 
-        if self.seen.insert(shape) {
-            self.schemas.push(Schema { type_id, kind });
-        }
+        self.push_schema(shape, type_id, kind);
 
         type_id
     }
@@ -698,6 +683,7 @@ mod tests {
     fn cbor_round_trip() {
         let schema = Schema {
             type_id: TypeSchemaId(1),
+            name: "u32".into(),
             kind: SchemaKind::Primitive {
                 primitive_type: PrimitiveType::U32,
             },
