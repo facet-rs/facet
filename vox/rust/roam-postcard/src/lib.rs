@@ -690,6 +690,181 @@ mod tests {
     }
 
     #[test]
+    fn translation_result_ok_round_trip() {
+        let val: Result<String, u32> = Ok("hello".to_string());
+        let bytes = to_vec(&val).unwrap();
+
+        let (schemas, registry) = schemas_and_registry(<Result<String, u32> as Facet>::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let plan = build_plan(
+            remote_root,
+            <Result<String, u32> as Facet>::SHAPE,
+            &registry,
+        )
+        .unwrap();
+
+        let result: Result<String, u32> = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        assert_eq!(result, Ok("hello".to_string()));
+    }
+
+    #[test]
+    fn translation_result_err_round_trip() {
+        let val: Result<String, u32> = Err(42);
+        let bytes = to_vec(&val).unwrap();
+
+        let (schemas, registry) = schemas_and_registry(<Result<String, u32> as Facet>::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let plan = build_plan(
+            remote_root,
+            <Result<String, u32> as Facet>::SHAPE,
+            &registry,
+        )
+        .unwrap();
+
+        let result: Result<String, u32> = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        assert_eq!(result, Err(42));
+    }
+
+    #[test]
+    fn translation_result_with_enum_error() {
+        #[derive(Facet, Debug, PartialEq)]
+        #[repr(u8)]
+        enum MyError {
+            NotFound,
+            Forbidden(String),
+        }
+
+        let ok_val: Result<u32, MyError> = Ok(42);
+        let err_val: Result<u32, MyError> = Err(MyError::Forbidden("nope".into()));
+
+        let (schemas, registry) = schemas_and_registry(<Result<u32, MyError> as Facet>::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let plan = build_plan(
+            remote_root,
+            <Result<u32, MyError> as Facet>::SHAPE,
+            &registry,
+        )
+        .unwrap();
+
+        let result: Result<u32, MyError> =
+            from_slice_with_plan(&to_vec(&ok_val).unwrap(), &plan, &registry).unwrap();
+        assert_eq!(result, Ok(42));
+
+        let result: Result<u32, MyError> =
+            from_slice_with_plan(&to_vec(&err_val).unwrap(), &plan, &registry).unwrap();
+        assert_eq!(result, Err(MyError::Forbidden("nope".into())));
+    }
+
+    #[test]
+    fn translation_result_with_roam_error_shape() {
+        // This mirrors the actual wire type: Result<T, RoamError<Infallible>>
+        // where RoamError has an uninhabitable User(Infallible) variant.
+        use roam_types::RoamError;
+        use std::convert::Infallible;
+
+        let ok_val: Result<String, RoamError<Infallible>> = Ok("hello".to_string());
+        let bytes = to_vec(&ok_val).unwrap();
+
+        let (schemas, registry) =
+            schemas_and_registry(<Result<String, RoamError<Infallible>> as Facet>::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let plan = build_plan(
+            remote_root,
+            <Result<String, RoamError<Infallible>> as Facet>::SHAPE,
+            &registry,
+        )
+        .unwrap();
+
+        let result: Result<String, RoamError<Infallible>> =
+            from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        assert_eq!(result.unwrap(), "hello");
+    }
+
+    #[test]
+    fn translation_result_with_roam_error_err_variant() {
+        use roam_types::RoamError;
+        use std::convert::Infallible;
+
+        let err_val: Result<String, RoamError<Infallible>> =
+            Err(RoamError::InvalidPayload("bad data".into()));
+        let bytes = to_vec(&err_val).unwrap();
+
+        let (schemas, registry) =
+            schemas_and_registry(<Result<String, RoamError<Infallible>> as Facet>::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let plan = build_plan(
+            remote_root,
+            <Result<String, RoamError<Infallible>> as Facet>::SHAPE,
+            &registry,
+        )
+        .unwrap();
+
+        let result: Result<String, RoamError<Infallible>> =
+            from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        match result {
+            Err(RoamError::InvalidPayload(msg)) => assert_eq!(msg, "bad data"),
+            other => panic!("expected InvalidPayload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn translation_nested_struct_in_result() {
+        #[derive(Facet, Debug, PartialEq)]
+        struct Payload {
+            id: u32,
+            name: String,
+        }
+
+        let val: Result<Payload, u32> = Ok(Payload {
+            id: 1,
+            name: "test".into(),
+        });
+        let bytes = to_vec(&val).unwrap();
+
+        let (schemas, registry) = schemas_and_registry(<Result<Payload, u32> as Facet>::SHAPE);
+        let remote_root = schemas.last().unwrap();
+        let plan = build_plan(
+            remote_root,
+            <Result<Payload, u32> as Facet>::SHAPE,
+            &registry,
+        )
+        .unwrap();
+
+        let result: Result<Payload, u32> = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+        assert_eq!(
+            result,
+            Ok(Payload {
+                id: 1,
+                name: "test".into()
+            })
+        );
+    }
+
+    #[test]
+    fn translation_enum_newtype_variant() {
+        #[derive(Facet, Debug, PartialEq)]
+        #[repr(u8)]
+        enum Message {
+            Text(String),
+            Number(i64),
+            Data(Vec<u8>),
+        }
+
+        for val in [
+            Message::Text("hello".into()),
+            Message::Number(42),
+            Message::Data(vec![1, 2, 3]),
+        ] {
+            let bytes = to_vec(&val).unwrap();
+            let (schemas, registry) = schemas_and_registry(Message::SHAPE);
+            let remote_root = schemas.last().unwrap();
+            let plan = build_plan(remote_root, Message::SHAPE, &registry).unwrap();
+            let result: Message = from_slice_with_plan(&bytes, &plan, &registry).unwrap();
+            assert_eq!(result, val);
+        }
+    }
+
+    #[test]
     fn trailing_opaque_round_trip() {
         use facet::{
             Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst, Shape,

@@ -308,14 +308,19 @@ fn deserialize_enum_planned<'de, 'facet, const BORROW: bool>(
             .ok_or(DeserializeError::UnknownVariant {
                 remote_index: remote_disc,
             })?;
-
-        let mut partial = partial.select_nth_variant(local_idx).map_err(re)?;
-
-        // Get variant field metadata for trailing checks.
+        // Get variant field metadata BEFORE selecting the variant,
+        // because after select_nth_variant the shape is still the enum,
+        // not a struct.
         let variant_fields = match partial.shape().ty {
-            Type::User(UserType::Struct(s)) => s.fields,
+            Type::User(UserType::Enum(e)) => e
+                .variants
+                .get(local_idx)
+                .map(|v| v.data.fields)
+                .unwrap_or(&[]),
             _ => &[],
         };
+
+        let mut partial = partial.select_nth_variant(local_idx).map_err(re)?;
 
         if let Some(variant_plan) = enum_plan.variant_plans.get(&remote_disc) {
             for op in &variant_plan.field_ops {
