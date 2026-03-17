@@ -20,8 +20,8 @@ import type {
   Rectangle,
   Shape,
   TestbedHandler,
-} from "@bearcove/roam-generated/testbed.ts";
-import { TestbedDispatcher } from "@bearcove/roam-generated/testbed.ts";
+} from "@bearcove/roam-generated/testbed.generated.ts";
+import { TestbedDispatcher } from "@bearcove/roam-generated/testbed.generated.ts";
 
 class NodeWsLink implements Link {
   lastReceived: Uint8Array | undefined;

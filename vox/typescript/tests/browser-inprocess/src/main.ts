@@ -8,7 +8,7 @@ import { InProcessLink } from "@bearcove/roam-inprocess";
 import {
   session,
 } from "@bearcove/roam-core";
-import type { TestbedClient } from "@bearcove/roam-generated/testbed.ts";
+import type { TestbedClient } from "@bearcove/roam-generated/testbed.generated.ts";
 
 // Make test results available to Playwright
 declare global {
@@ -344,7 +344,7 @@ async function runTests(): Promise<void> {
 
     // Import the TestbedClient constructor dynamically to avoid circular issues
     const { TestbedClient } = await import(
-      "@bearcove/roam-generated/testbed.ts"
+      "@bearcove/roam-generated/testbed.generated.ts"
     );
     const client = new TestbedClient(established.rootConnection().caller());
 

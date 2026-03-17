@@ -320,7 +320,7 @@ fn codegen_typescript(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
     // Generate TypeScript for all services in spec-proto
     for service in spec_proto::all_services() {
         let ts = roam_codegen::targets::typescript::generate_service(service);
-        let filename = format!("{}.ts", service.service_name.to_lowercase());
+        let filename = format!("{}.generated.ts", service.service_name.to_lowercase());
         let out_path = out_dir.join(&filename);
         write_if_changed(&out_path, fmt_typescript(&out_path, ts))?;
     }

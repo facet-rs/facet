@@ -14,8 +14,8 @@ import type {
   Message,
   MathError,
   LookupError,
-} from "@bearcove/roam-generated/testbed.ts";
-import { TestbedClient, TestbedDispatcher } from "@bearcove/roam-generated/testbed.ts";
+} from "@bearcove/roam-generated/testbed.generated.ts";
+import { TestbedClient, TestbedDispatcher } from "@bearcove/roam-generated/testbed.generated.ts";
 import { tcpConnector } from "@bearcove/roam-tcp";
 import {
   Driver,
