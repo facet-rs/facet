@@ -12,13 +12,19 @@ import {
 import type {
   Canvas,
   Color,
+  Config,
   LookupError,
   MathError,
+  Measurement,
   Message,
   Person,
   Point,
+  Profile,
+  Record,
   Rectangle,
   Shape,
+  Status,
+  Tag,
   TestbedHandler,
 } from "@bearcove/roam-generated/testbed.generated.ts";
 import { TestbedDispatcher } from "@bearcove/roam-generated/testbed.generated.ts";
@@ -239,6 +245,30 @@ class TestbedService implements TestbedHandler {
 
   swapPair(pair: [number, string]): [string, number] {
     return [pair[1], pair[0]];
+  }
+
+  echoProfile(profile: Profile): Profile {
+    return profile;
+  }
+
+  echoRecord(record: Record): Record {
+    return record;
+  }
+
+  echoStatus(status: Status): Status {
+    return status;
+  }
+
+  echoTag(tag: Tag): Tag {
+    return tag;
+  }
+
+  echoMeasurement(m: Measurement): Measurement {
+    return m;
+  }
+
+  echoConfig(c: Config): Config {
+    return c;
   }
 }
 

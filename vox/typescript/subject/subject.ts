@@ -14,6 +14,12 @@ import type {
   Message,
   MathError,
   LookupError,
+  Profile,
+  Record,
+  Status,
+  Tag,
+  Measurement,
+  Config,
 } from "@bearcove/roam-generated/testbed.generated.ts";
 import { TestbedClient, TestbedDispatcher } from "@bearcove/roam-generated/testbed.generated.ts";
 import { tcpConnector } from "@bearcove/roam-tcp";
@@ -163,6 +169,31 @@ class TestbedService implements TestbedHandler {
 
   swapPair(pair: [number, string]): [string, number] {
     return [pair[1], pair[0]];
+  }
+
+  // Schema evolution methods
+  echoProfile(profile: Profile): Profile {
+    return profile;
+  }
+
+  echoRecord(record: Record): Record {
+    return record;
+  }
+
+  echoStatus(status: Status): Status {
+    return status;
+  }
+
+  echoTag(tag: Tag): Tag {
+    return tag;
+  }
+
+  echoMeasurement(m: Measurement): Measurement {
+    return m;
+  }
+
+  echoConfig(c: Config): Config {
+    return c;
   }
 }
 
