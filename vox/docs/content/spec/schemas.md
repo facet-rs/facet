@@ -69,6 +69,27 @@ handle assigned by the sender.
 > even within the same session. Each connection half has its own
 > independent namespace of type IDs and its own sent/received tracking.
 
+Per-connection tracking is required because connections within a session
+may terminate at different peers. Consider this topology:
+
+```
+     B  → C  (Conn 0 aka root connection)
+A ← (B) ← C  (Conn 1)
+```
+
+Connection 0 (root) between B and C serves one set of services. C
+requests a virtual connection (ID 1), which B forwards to A. B routes
+`MessagePayload`s for connection 1 between A and C without inspecting
+their content — B does not know what services A and C are speaking on
+that connection, and does not need to.
+
+If schema knowledge leaked across connections — for example, if a peer
+assumed "I already sent `String`'s schema on connection 0, so I don't
+need to send it on connection 1" — the proxy would break. A never saw
+connection 0's schemas; it only sees connection 1. Each connection is
+an independent communication channel that may reach a different peer,
+so schema state must be tracked independently per connection.
+
 Type IDs exist so schemas can reference each other (a struct field points
 to its field type's schema by type ID) and so the sender can track which
 types it has already sent. They are bookkeeping, not identity.
