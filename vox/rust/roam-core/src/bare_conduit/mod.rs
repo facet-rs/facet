@@ -8,6 +8,8 @@ use roam_types::{
     MsgFamily, SelfRef, WriteSlot,
 };
 
+use crate::MessagePlan;
+
 /// Wraps a [`Link`] with postcard serialization. No reconnect, no reliability.
 ///
 /// If the link dies, the conduit is dead. For localhost, SHM, or any
@@ -22,15 +24,27 @@ use roam_types::{
 pub struct BareConduit<F: MsgFamily, L: Link> {
     link: L,
     shape: &'static Shape,
+    message_plan: Option<MessagePlan>,
     _phantom: PhantomData<fn(F) -> F>,
 }
 
 impl<F: MsgFamily, L: Link> BareConduit<F, L> {
-    /// Create a new BareConduit.
+    /// Create a new BareConduit (identity plan — no schema translation).
     pub fn new(link: L) -> Self {
         Self {
             link,
             shape: F::shape(),
+            message_plan: None,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Create a new BareConduit with a pre-built message translation plan.
+    pub fn with_message_plan(link: L, message_plan: MessagePlan) -> Self {
+        Self {
+            link,
+            shape: F::shape(),
+            message_plan: Some(message_plan),
             _phantom: PhantomData,
         }
     }
@@ -55,6 +69,7 @@ where
             },
             BareConduitRx {
                 link_rx: rx,
+                message_plan: self.message_plan,
                 _phantom: PhantomData,
             },
         )
@@ -139,6 +154,7 @@ impl<F: MsgFamily, LTx: LinkTx> ConduitTxPermit for BareConduitPermit<'_, F, LTx
 
 pub struct BareConduitRx<F: MsgFamily, LRx> {
     link_rx: LRx,
+    message_plan: Option<MessagePlan>,
     _phantom: PhantomData<fn() -> F>,
 }
 
@@ -159,9 +175,16 @@ where
             None => return Ok(None),
         };
 
-        crate::deserialize_postcard::<F::Msg<'static>>(backing)
-            .map_err(BareConduitError::Decode)
-            .map(Some)
+        match &self.message_plan {
+            Some(plan) => crate::deserialize_postcard_with_plan::<F::Msg<'static>>(
+                backing,
+                &plan.plan,
+                &plan.registry,
+            ),
+            None => crate::deserialize_postcard::<F::Msg<'static>>(backing),
+        }
+        .map_err(BareConduitError::Decode)
+        .map(Some)
     }
 }
 

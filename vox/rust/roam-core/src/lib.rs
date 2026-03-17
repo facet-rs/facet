@@ -57,11 +57,66 @@ pub fn rpc_plan<T: facet::Facet<'static>>() -> &'static roam_types::RpcPlan {
     roam_types::RpcPlan::for_type::<T>()
 }
 
+/// Pre-built translation plan for deserializing the `Message` wire type.
+///
+/// Built once from the peer's schema (received during handshake) and our
+/// local schema. Stored in the conduit's Rx half and used for every
+/// incoming message.
+pub struct MessagePlan {
+    pub plan: roam_postcard::plan::TranslationPlan,
+    pub registry: roam_types::SchemaRegistry,
+}
+
+impl MessagePlan {
+    /// Build a message plan from the handshake result's schema exchange.
+    pub fn from_handshake(result: &roam_types::HandshakeResult) -> Result<Self, String> {
+        use roam_postcard::plan::{PlanInput, SchemaSet, build_plan};
+
+        if result.peer_schema.is_empty() || result.our_schema.is_empty() {
+            // No schemas exchanged — fall back to identity plan
+            let plan = roam_postcard::build_identity_plan(
+                <roam_types::Message<'static> as facet::Facet<'static>>::SHAPE,
+            );
+            return Ok(MessagePlan {
+                plan,
+                registry: roam_types::SchemaRegistry::new(),
+            });
+        }
+
+        let remote = SchemaSet::from_extracted(result.peer_schema.clone());
+        let local = SchemaSet::from_extracted(result.our_schema.clone());
+
+        let plan = build_plan(&PlanInput {
+            remote: &remote,
+            local: &local,
+        })
+        .map_err(|e| format!("failed to build message translation plan: {e}"))?;
+
+        Ok(MessagePlan {
+            plan,
+            registry: remote.registry,
+        })
+    }
+}
+
 /// Deserialize postcard-encoded `backing` bytes into `T` in place, returning a
 /// [`roam_types::SelfRef`] that keeps the backing storage alive for the value.
 // r[impl zerocopy.framing.value]
 pub(crate) fn deserialize_postcard<T: facet::Facet<'static>>(
     backing: Backing,
+) -> Result<SelfRef<T>, roam_postcard::DeserializeError> {
+    let plan = roam_postcard::build_identity_plan(T::SHAPE);
+    let registry = roam_types::SchemaRegistry::new();
+    deserialize_postcard_with_plan(backing, &plan, &registry)
+}
+
+/// Deserialize postcard-encoded `backing` bytes into `T` using a pre-built
+/// translation plan and schema registry for the remote peer's type layout.
+// r[impl zerocopy.framing.value]
+pub(crate) fn deserialize_postcard_with_plan<T: facet::Facet<'static>>(
+    backing: Backing,
+    plan: &roam_postcard::plan::TranslationPlan,
+    registry: &roam_types::SchemaRegistry,
 ) -> Result<SelfRef<T>, roam_postcard::DeserializeError> {
     // SAFETY: backing is heap-allocated with a stable address.
     // The SelfRef::try_new contract guarantees value is dropped before backing.
@@ -74,9 +129,7 @@ pub(crate) fn deserialize_postcard<T: facet::Facet<'static>>(
         let partial: Partial<'_, true> = unsafe { Partial::from_raw_with_shape(ptr, T::SHAPE) }
             .map_err(|e| roam_postcard::DeserializeError::ReflectError(e.to_string()))?;
 
-        let plan = roam_postcard::build_identity_plan(T::SHAPE);
-        let registry = roam_types::SchemaRegistry::new();
-        let partial = roam_postcard::deserialize_into(partial, bytes, &plan, &registry)?;
+        let partial = roam_postcard::deserialize_into(partial, bytes, plan, registry)?;
 
         partial
             .finish_in_place()
