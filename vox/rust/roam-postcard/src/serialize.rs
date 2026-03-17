@@ -101,7 +101,7 @@ fn serialize_peek_inner<'a>(
         let proxy_uninit = facet_core::alloc_for_layout(proxy_layout);
         #[allow(unsafe_code)]
         let proxy_ptr = unsafe { (proxy_def.convert_out)(peek.data(), proxy_uninit) }
-            .map_err(|msg| SerializeError::ReflectError(msg))?;
+            .map_err(SerializeError::ReflectError)?;
         #[allow(unsafe_code)]
         let proxy_peek = unsafe { Peek::unchecked_new(proxy_ptr.as_const(), proxy_shape) };
 

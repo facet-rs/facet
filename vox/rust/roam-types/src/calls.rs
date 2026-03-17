@@ -335,6 +335,7 @@ impl ErasedCaller {
 }
 
 impl Caller for ErasedCaller {
+    #[allow(clippy::manual_async_fn)]
     fn call<'a>(
         &'a self,
         mut call: RequestCall<'a>,
@@ -520,6 +521,7 @@ mod tests {
     struct NoopCaller;
 
     impl Caller for NoopCaller {
+        #[allow(clippy::manual_async_fn)]
         fn call<'a>(
             &'a self,
             _call: RequestCall<'a>,

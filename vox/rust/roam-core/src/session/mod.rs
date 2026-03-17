@@ -1571,6 +1571,7 @@ type BoxFuture<'a, T> = Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) trait ConduitRecoverer: Send {
+    #[allow(clippy::type_complexity)]
     fn next_conduit<'a>(
         &'a mut self,
     ) -> BoxFuture<'a, Result<(Arc<dyn DynConduitTx>, Box<dyn DynConduitRx>), SessionError>>;
@@ -1578,6 +1579,7 @@ pub(crate) trait ConduitRecoverer: Send {
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) trait ConduitRecoverer {
+    #[allow(clippy::type_complexity)]
     fn next_conduit<'a>(
         &'a mut self,
     ) -> BoxFuture<'a, Result<(Arc<dyn DynConduitTx>, Box<dyn DynConduitRx>), SessionError>>;

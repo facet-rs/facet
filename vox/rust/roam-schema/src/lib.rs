@@ -194,7 +194,7 @@ mod tests {
                 primitive_type: PrimitiveType::U32,
             },
         };
-        let bytes = build_schema_message(&[schema.clone()], &[]);
+        let bytes = build_schema_message(std::slice::from_ref(&schema), &[]);
         let payload = parse_schema_message(&bytes).expect("should parse CBOR");
         assert_eq!(payload.schemas.len(), 1);
         assert_eq!(payload.schemas[0].type_id, schema.type_id);

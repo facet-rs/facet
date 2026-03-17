@@ -91,11 +91,10 @@ impl<'a> ScatterBuilder<'a> {
             offset: prev_offset,
             len: prev_len,
         }) = self.segments.last_mut()
+            && *prev_offset + *prev_len == offset
         {
-            if *prev_offset + *prev_len == offset {
-                *prev_len += len;
-                return;
-            }
+            *prev_len += len;
+            return;
         }
         self.segments.push(Segment::Staged { offset, len });
     }

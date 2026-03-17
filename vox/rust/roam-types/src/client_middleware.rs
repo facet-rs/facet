@@ -197,6 +197,7 @@ impl<C> Caller for MiddlewareCaller<C>
 where
     C: Caller,
 {
+    #[allow(clippy::manual_async_fn)]
     fn call<'a>(
         &'a self,
         mut call: RequestCall<'a>,
@@ -296,6 +297,7 @@ mod tests {
     }
 
     impl Caller for RecordingCaller {
+        #[allow(clippy::manual_async_fn)]
         fn call<'a>(
             &'a self,
             call: RequestCall<'a>,
@@ -365,7 +367,7 @@ mod tests {
             service_name: "Audit",
             method_name: "record",
             args: &[],
-            return_shape: &<() as facet::Facet<'static>>::SHAPE,
+            return_shape: <() as facet::Facet<'static>>::SHAPE,
             retry: crate::RetryPolicy::VOLATILE,
             doc: None,
         };

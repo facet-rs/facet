@@ -157,6 +157,7 @@ where
     type Msg = MessageFamily;
     type Error = Rx::Error;
 
+    #[allow(clippy::manual_async_fn)]
     fn recv(
         &mut self,
     ) -> impl Future<Output = Result<Option<SelfRef<Message<'static>>>, Self::Error>> + MaybeSend + '_
@@ -662,6 +663,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn finish_with_bare_parts<Client: From<DriverCaller>>(
         link: SplitLink<L::Tx, L::Rx>,
         root_settings: ConnectionSettings,
@@ -696,6 +698,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::too_many_arguments)]
     async fn finish_with_stable_parts<Client: From<DriverCaller>>(
         link: L,
         root_settings: ConnectionSettings,
@@ -737,6 +740,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_common_parts<C>(
         mut builder: SessionInitiatorBuilder<'a, C>,
         root_settings: ConnectionSettings,
@@ -1032,6 +1036,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         Ok(SessionAcceptOutcome::Established(client, handle))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn establish_from_parts<Client: From<DriverCaller>, Tx, Rx>(
         conduit: impl Conduit<Msg = MessageFamily, Tx = Tx, Rx = Rx> + 'static,
         root_settings: ConnectionSettings,
@@ -1065,6 +1070,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         Ok((client, handle))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn establish_from_parts_with_prefetched_hello<Client: From<DriverCaller>, Tx, Rx>(
         tx: Tx,
         rx: Rx,
@@ -1427,6 +1433,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::too_many_arguments)]
     async fn finish_with_stable_parts<Client: From<DriverCaller>>(
         link: SplitLink<L::Tx, L::Rx>,
         root_settings: ConnectionSettings,
@@ -1469,6 +1476,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_common_parts<C>(
         mut builder: SessionAcceptorBuilder<'a, C>,
         root_settings: ConnectionSettings,

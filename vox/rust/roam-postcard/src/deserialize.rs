@@ -346,8 +346,8 @@ fn deserialize_enum_planned<'de, 'facet, const BORROW: bool>(
                 }
             }
         } else {
-            for i in 0..variant_fields.len() {
-                let trailing = variant_fields[i].has_builtin_attr("trailing");
+            for (i, variant_field) in variant_fields.iter().enumerate() {
+                let trailing = variant_field.has_builtin_attr("trailing");
                 partial = partial.begin_nth_field(i).map_err(re)?;
                 let field_plan = build_identity_plan(partial.shape());
                 partial = deserialize_value_inner::<BORROW>(
@@ -666,21 +666,18 @@ fn deserialize_pointer<'de, 'facet, const BORROW: bool>(
     // Special case: &[u8] — borrowed byte slice reference.
     // We can't use begin_smart_ptr() for plain references. Instead, read
     // the bytes and set the fat pointer directly.
-    if let Def::Pointer(ptr_def) = shape.def {
-        if let Some(facet_core::KnownPointer::SharedReference) = ptr_def.known {
-            if let Some(pointee) = ptr_def.pointee() {
-                if let Def::Slice(slice_def) = pointee.def {
-                    if slice_def.t().is_type::<u8>() {
-                        let bytes = cursor.read_byte_slice()?;
-                        // SAFETY: from_slice_borrowed guarantees 'input: 'facet,
-                        // so borrowing from the cursor is valid.
-                        #[allow(unsafe_code)]
-                        let bytes: &'facet [u8] = unsafe { std::mem::transmute(bytes) };
-                        return partial.set(bytes).map_err(re);
-                    }
-                }
-            }
-        }
+    if let Def::Pointer(ptr_def) = shape.def
+        && let Some(facet_core::KnownPointer::SharedReference) = ptr_def.known
+        && let Some(pointee) = ptr_def.pointee()
+        && let Def::Slice(slice_def) = pointee.def
+        && slice_def.t().is_type::<u8>()
+    {
+        let bytes = cursor.read_byte_slice()?;
+        // SAFETY: from_slice_borrowed guarantees 'input: 'facet,
+        // so borrowing from the cursor is valid.
+        #[allow(unsafe_code)]
+        let bytes: &'facet [u8] = unsafe { std::mem::transmute(bytes) };
+        return partial.set(bytes).map_err(re);
     }
 
     let partial = partial.begin_smart_ptr().map_err(re)?;

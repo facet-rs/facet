@@ -120,7 +120,7 @@ mod tests {
         }
 
         let shapes = vec![
-            Shape::Circle(3.14),
+            Shape::Circle(std::f64::consts::PI),
             Shape::Rect { w: 10.0, h: 20.0 },
             Shape::Empty,
         ];

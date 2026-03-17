@@ -138,6 +138,7 @@ pub struct DriverReplySink {
     schema_tracker: Arc<roam_schema_extract::SchemaTracker>,
 }
 
+#[allow(clippy::manual_async_fn)]
 fn send_encoded_response(
     sender: ConnectionSender,
     request_id: RequestId,
@@ -168,15 +169,14 @@ impl ReplySink for DriverReplySink {
 
         // r[impl schema.exchange.callee]
         // Send schemas for response types before the response data.
-        if let Payload::Outgoing { shape, .. } = &response.ret {
-            if let Some(prepared) = self
+        if let Payload::Outgoing { shape, .. } = &response.ret
+            && let Some(prepared) = self
                 .schema_tracker
                 .prepare_send_for_method(self.method_id, shape)
-            {
-                sender
-                    .send_schema_message(&prepared.schemas, &prepared.method_bindings)
-                    .await;
-            }
+        {
+            sender
+                .send_schema_message(&prepared.schemas, &prepared.method_bindings)
+                .await;
         }
 
         if let (Some(operation_id), Some(operations)) = (self.operation_id, self.operations.take())
@@ -585,15 +585,14 @@ impl Caller for DriverCaller {
             // r[impl schema.exchange.caller]
             // r[impl schema.exchange.channels]
             // Send schemas for arg types (and channel element types) before the request.
-            if let Payload::Outgoing { shape, .. } = &call.args {
-                if let Some(prepared) =
+            if let Payload::Outgoing { shape, .. } = &call.args
+                && let Some(prepared) =
                     self.schema_tracker
                         .prepare_send_for_method(call.method_id, shape)
-                {
-                    self.sender
-                        .send_schema_message(&prepared.schemas, &prepared.method_bindings)
-                        .await;
-                }
+            {
+                self.sender
+                    .send_schema_message(&prepared.schemas, &prepared.method_bindings)
+                    .await;
             }
 
             let encoded_call: Arc<[u8]> = roam_postcard::to_vec(&call)
@@ -930,7 +929,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
     }
 
     fn connection_drop_guard(&self) -> Option<Arc<CallerDropGuard>> {
-        let drop_guard = if let Some(existing) = self.existing_drop_guard() {
+        if let Some(existing) = self.existing_drop_guard() {
             Some(existing)
         } else if let Some(seed) = &self.drop_control_seed {
             let mut guard = self.drop_guard.lock();
@@ -946,8 +945,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             }
         } else {
             None
-        };
-        drop_guard
+        }
     }
 
     pub fn caller(&self) -> DriverCaller {
@@ -1250,11 +1248,10 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         .map(|in_flight| !in_flight.retry.persist)
                         .unwrap_or(false);
                     tracing::debug!(%req_id, should_abort, "cancel OperationCancel::None");
-                    if should_abort {
-                        if let Some(in_flight) = self.in_flight_handlers.remove(&req_id) {
-                            tracing::debug!(%req_id, "aborting handler");
-                            in_flight.handle.abort();
-                        }
+                    if should_abort && let Some(in_flight) = self.in_flight_handlers.remove(&req_id)
+                    {
+                        tracing::debug!(%req_id, "aborting handler");
+                        in_flight.handle.abort();
                     }
                 }
                 OperationCancel::DetachOnly => {}

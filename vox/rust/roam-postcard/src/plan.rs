@@ -96,6 +96,7 @@ pub fn build_identity_plan(shape: &'static Shape) -> TranslationPlan {
 // r[impl schema.translation.fill-defaults]
 // r[impl schema.translation.reorder]
 // r[impl schema.errors.early-detection]
+#[allow(clippy::result_large_err)]
 pub fn build_plan(
     remote_schema: &Schema,
     local_shape: &'static Shape,
@@ -176,6 +177,7 @@ pub fn build_plan(
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn build_struct_plan(
     remote_fields: &[roam_schema::FieldSchema],
     local_shape: &'static Shape,
@@ -258,6 +260,7 @@ fn build_struct_plan(
 ///
 /// Tuple elements are positional — they match 1:1 by index. If an element's
 /// remote type differs from the local type, a nested plan is built.
+#[allow(clippy::result_large_err)]
 fn build_tuple_plan(
     remote_elements: &[TypeSchemaId],
     local_shape: &'static Shape,
@@ -304,7 +307,7 @@ fn build_tuple_plan(
             let local_field_shape = local_struct.fields[i].shape();
             let local_field_id = roam_schema::type_schema_id_of(local_field_shape);
             if *remote_elem_id != local_field_id {
-                let nested_plan = build_plan(&remote_elem_schema, local_field_shape, registry)
+                let nested_plan = build_plan(remote_elem_schema, local_field_shape, registry)
                     .map_err(|e| e.with_path_prefix(&i.to_string()))?;
                 nested.insert(i, nested_plan);
             }
@@ -323,6 +326,7 @@ fn build_tuple_plan(
 /// The remote schema encodes Result as an Enum with Ok(0) and Err(1) variants.
 /// The local type is Def::Result. We build nested plans for the Ok and Err
 /// payloads if they differ between remote and local.
+#[allow(clippy::result_large_err)]
 fn build_result_plan(
     remote_variants: &[roam_schema::VariantSchema],
     result_def: facet_core::ResultDef,
@@ -343,17 +347,14 @@ fn build_result_plan(
         if let roam_schema::VariantPayload::Newtype {
             type_id: remote_inner_id,
         } = &rv.payload
+            && let Some(remote_inner_schema) = registry.get(remote_inner_id)
+            && *remote_inner_id != roam_schema::type_schema_id_of(local_inner_shape)
         {
-            if let Some(remote_inner_schema) = registry.get(remote_inner_id) {
-                let local_inner_id = roam_schema::type_schema_id_of(local_inner_shape);
-                if *remote_inner_id != local_inner_id {
-                    match build_plan(&remote_inner_schema, local_inner_shape, registry) {
-                        Ok(inner_plan) => {
-                            nested.insert(local_index, inner_plan);
-                        }
-                        Err(e) => return Err(e.with_path_prefix(&rv.name)),
-                    }
+            match build_plan(remote_inner_schema, local_inner_shape, registry) {
+                Ok(inner_plan) => {
+                    nested.insert(local_index, inner_plan);
                 }
+                Err(e) => return Err(e.with_path_prefix(&rv.name)),
             }
         }
     }
@@ -371,6 +372,7 @@ fn build_result_plan(
 // r[impl schema.translation.enum]
 // r[impl schema.translation.enum.missing-variant]
 // r[impl schema.translation.enum.payload-compat]
+#[allow(clippy::result_large_err)]
 fn build_enum_plan(
     remote_variants: &[roam_schema::VariantSchema],
     local_shape: &'static Shape,
@@ -412,41 +414,38 @@ fn build_enum_plan(
             if let roam_schema::VariantPayload::Struct {
                 fields: remote_fields,
             } = &remote_variant.payload
+                && (local_variant.data.kind == StructKind::Struct
+                    || local_variant.data.kind == StructKind::TupleStruct)
             {
-                if local_variant.data.kind == StructKind::Struct
-                    || local_variant.data.kind == StructKind::TupleStruct
-                {
-                    // Build a mini struct plan for this variant's fields
-                    let variant_field_ops: Vec<FieldOp> = remote_fields
-                        .iter()
-                        .enumerate()
-                        .map(|(_, rf)| {
-                            if let Some((local_field_idx, _)) = local_variant
-                                .data
-                                .fields
-                                .iter()
-                                .enumerate()
-                                .find(|(_, f)| f.name == rf.name)
-                            {
-                                FieldOp::Read {
-                                    local_index: local_field_idx,
-                                }
-                            } else {
-                                FieldOp::Skip {
-                                    type_id: rf.type_id,
-                                }
+                // Build a mini struct plan for this variant's fields
+                let variant_field_ops: Vec<FieldOp> = remote_fields
+                    .iter()
+                    .map(|rf| {
+                        if let Some((local_field_idx, _)) = local_variant
+                            .data
+                            .fields
+                            .iter()
+                            .enumerate()
+                            .find(|(_, f)| f.name == rf.name)
+                        {
+                            FieldOp::Read {
+                                local_index: local_field_idx,
                             }
-                        })
-                        .collect();
-                    variant_plans.insert(
-                        remote_idx,
-                        TranslationPlan {
-                            field_ops: variant_field_ops,
-                            nested: HashMap::new(),
-                            enum_plan: None,
-                        },
-                    );
-                }
+                        } else {
+                            FieldOp::Skip {
+                                type_id: rf.type_id,
+                            }
+                        }
+                    })
+                    .collect();
+                variant_plans.insert(
+                    remote_idx,
+                    TranslationPlan {
+                        field_ops: variant_field_ops,
+                        nested: HashMap::new(),
+                        enum_plan: None,
+                    },
+                );
             }
         } else {
             // r[impl schema.translation.enum.unknown-variant]

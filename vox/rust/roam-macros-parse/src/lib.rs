@@ -1,3 +1,4 @@
+#![allow(clippy::result_large_err)]
 //! Parser grammar for roam RPC service trait definitions.
 //!
 //! # This Is Just a Grammar

@@ -71,7 +71,7 @@ fn test_bool_round_trip() {
 #[test]
 fn test_f64_round_trip() {
     round_trip(&0.0f64);
-    round_trip(&3.14159f64);
+    round_trip(&std::f64::consts::PI);
     round_trip(&-1.5f64);
     round_trip(&f64::INFINITY);
     round_trip(&f64::NEG_INFINITY);
@@ -80,7 +80,7 @@ fn test_f64_round_trip() {
 #[test]
 fn test_f32_round_trip() {
     round_trip(&0.0f32);
-    round_trip(&3.14f32);
+    round_trip(&std::f32::consts::PI);
     round_trip(&-1.5f32);
 }
 

@@ -103,18 +103,16 @@ fn test_struct() {
     let p = Point { x: 1, y: 2 };
     let bytes = to_vec(&p).unwrap();
     // map(2) { "x": 1, "y": 2 }
-    let mut expected = Vec::new();
-    expected.push(0xa2); // map of 2 items
-    // "x"
-    expected.push(0x61); // text(1)
-    expected.push(b'x');
-    // 1
-    expected.push(0x01);
-    // "y"
-    expected.push(0x61); // text(1)
-    expected.push(b'y');
-    // 2
-    expected.push(0x02);
+    let expected = vec![
+        0xa2, // map of 2 items
+        // "x"
+        0x61, // text(1)
+        b'x', // 1
+        0x01, // "y"
+        0x61, // text(1)
+        b'y', // 2
+        0x02,
+    ];
     assert_eq!(bytes, expected);
 }
 

@@ -162,17 +162,17 @@ impl ExtractCtx {
     /// Recursively extracts dependencies first.
     fn extract(&mut self, shape: &'static Shape) -> TypeSchemaId {
         // Channel types: extract the element type, skip the channel wrapper.
-        if is_tx(shape) || is_rx(shape) {
-            if let Some(inner) = shape.type_params.first() {
-                return self.extract(inner.shape);
-            }
+        if (is_tx(shape) || is_rx(shape))
+            && let Some(inner) = shape.type_params.first()
+        {
+            return self.extract(inner.shape);
         }
 
         // Transparent wrappers: follow inner.
-        if shape.is_transparent() {
-            if let Some(inner) = shape.inner {
-                return self.extract(inner);
-            }
+        if shape.is_transparent()
+            && let Some(inner) = shape.inner
+        {
+            return self.extract(inner);
         }
 
         let type_id = type_schema_id_of(shape);
