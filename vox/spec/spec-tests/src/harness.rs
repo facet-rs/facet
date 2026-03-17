@@ -786,6 +786,11 @@ pub async fn accept_subject_spec(spec: SubjectSpec) -> Result<(TestbedClient, Ch
     }
 }
 
+/// Accept a subject over TCP given a custom command string.
+pub async fn accept_subject_cmd_tcp(cmd: &str) -> Result<(TestbedClient, Child), String> {
+    accept_subject_tcp(cmd).await
+}
+
 pub async fn accept_subject_with_transport(
     transport: SubjectTestTransport,
 ) -> Result<(TestbedClient, Child), String> {
