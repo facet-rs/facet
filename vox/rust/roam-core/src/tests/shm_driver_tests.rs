@@ -93,6 +93,7 @@ impl Handler<DriverReplySink> for EchoHandler {
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&result),
+                schemas: Default::default(),
                 channels: vec![],
                 metadata: Default::default(),
             })
@@ -127,6 +128,7 @@ async fn echo_call_across_shm_link() {
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
+            schemas: Default::default(),
             channels: vec![],
             metadata: Default::default(),
         })
@@ -166,6 +168,7 @@ impl Handler<DriverReplySink> for BlobEchoHandler {
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&blob),
+                schemas: Default::default(),
                 channels: vec![],
                 metadata: Default::default(),
             })
@@ -203,6 +206,7 @@ async fn echo_blob_stress_over_shm_link() {
             .call(RequestCall {
                 method_id: MethodId(2),
                 args: Payload::outgoing(&payload),
+                schemas: Default::default(),
                 channels: vec![],
                 metadata: Default::default(),
             })

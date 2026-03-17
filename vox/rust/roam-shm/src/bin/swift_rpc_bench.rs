@@ -180,6 +180,7 @@ fn main() {
                     args: Payload::outgoing(&payload),
                     channels: Vec::new(),
                     metadata: vec![],
+                    schemas: Default::default(),
                 }),
             }),
         };

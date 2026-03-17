@@ -269,6 +269,7 @@ mod tests {
             channels: vec![],
             metadata: vec![],
             args: Payload::Incoming(&[]),
+            schemas: Default::default(),
         };
         let mut owned = OwnedMetadata::default();
         let mut request = ClientRequest::new(&mut call, &mut owned);
@@ -327,6 +328,7 @@ mod tests {
                         channels: vec![],
                         metadata: vec![],
                         ret: Payload::Incoming(&[]),
+                        schemas: Default::default(),
                     },
                 ))
             }
@@ -392,6 +394,7 @@ mod tests {
                 channels: vec![],
                 metadata: vec![],
                 args: Payload::Incoming(&[]),
+                schemas: Default::default(),
             })
             .await;
 

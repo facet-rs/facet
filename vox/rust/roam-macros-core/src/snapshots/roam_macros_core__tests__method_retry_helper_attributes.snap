@@ -247,6 +247,7 @@ impl BillingClient {
             args: ::roam::Payload::outgoing(&args),
             channels,
             metadata: Default::default(),
+            schemas: Default::default(),
         };
         let response = ::roam::Caller::call(&self.caller, req)
             .await
@@ -299,6 +300,7 @@ impl BillingClient {
             args: ::roam::Payload::outgoing(&args),
             channels,
             metadata: Default::default(),
+            schemas: Default::default(),
         };
         let response = ::roam::Caller::call(&self.caller, req)
             .await

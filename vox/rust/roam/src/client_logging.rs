@@ -232,6 +232,7 @@ mod tests {
                     },
                 ],
                 args: Payload::Incoming(&[]),
+                schemas: Default::default(),
             })
             .await;
 

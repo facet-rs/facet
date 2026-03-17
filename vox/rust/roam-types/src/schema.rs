@@ -4,7 +4,8 @@
 //! - Schema data types (TypeSchemaId, Schema, SchemaKind, etc.)
 //! - CBOR serialization for schema messages
 //! - Schema extraction from facet Shape graphs
-//! - SchemaTracker for per-connection sent/received tracking
+//! - SchemaSendTracker for outbound dedup (owned by SessionCore)
+//! - SchemaRecvTracker for inbound storage (shared via Arc)
 
 use facet::Facet;
 use facet_core::{Def, ScalarType, Shape, StructKind, Type, UserType};
@@ -119,6 +120,26 @@ pub enum PrimitiveType {
     Bytes,
 }
 
+/// CBOR-encoded schema payload (schemas + method bindings).
+///
+/// Newtype over `Vec<u8>` so the type system distinguishes raw bytes from
+/// CBOR-encoded schema data. Empty when no new schemas need to be sent.
+#[derive(Facet, Clone, Debug, Default)]
+#[repr(transparent)]
+#[facet(transparent)]
+pub struct CborPayload(pub Vec<u8>);
+
+impl CborPayload {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Parse the CBOR-encoded schema message payload.
+    pub fn parse(&self) -> Result<SchemaMessagePayload, facet_cbor::CborError> {
+        parse_schema_message(&self.0)
+    }
+}
+
 /// Lookup table mapping TypeSchemaId → Schema, used for resolving type
 /// references during deserialization with translation plans.
 pub type SchemaRegistry = HashMap<TypeSchemaId, Schema>;
@@ -189,56 +210,64 @@ pub struct PreparedSchemaMessage {
     pub method_bindings: Vec<MethodSchemaBinding>,
 }
 
-/// Tracks schema exchange state for one connection.
-///
-/// Handles both outbound dedup (what we've sent) and inbound storage
-/// (schemas received from the remote peer, used for building translation plans).
-// r[impl schema.tracking.sent]
-// r[impl schema.tracking.received]
-// r[impl schema.type-id.per-connection]
-pub struct SchemaTracker {
-    /// Type schema IDs we've already sent.
-    sent: Mutex<HashSet<TypeSchemaId>>,
-    /// Method args bindings we've already sent (by method_id).
-    args_bindings_sent: Mutex<HashSet<u64>>,
-    /// Method response bindings we've already sent (by method_id).
-    response_bindings_sent: Mutex<HashSet<u64>>,
-    /// Assigns incrementing type IDs to shapes we extract.
-    shape_to_id: Mutex<HashMap<&'static Shape, TypeSchemaId>>,
-    /// Next ID to assign.
-    next_id: Mutex<u32>,
-    /// Type schemas received from the remote peer.
-    received: Mutex<HashMap<TypeSchemaId, Schema>>,
-    /// Args bindings received: method_id → root TypeSchemaId for args.
-    received_args_bindings: Mutex<HashMap<u64, TypeSchemaId>>,
-    /// Response bindings received: method_id → root TypeSchemaId for response.
-    received_response_bindings: Mutex<HashMap<u64, TypeSchemaId>>,
+impl PreparedSchemaMessage {
+    /// CBOR-encode this prepared message for embedding in RequestCall/RequestResponse.
+    pub fn to_cbor(&self) -> CborPayload {
+        CborPayload(build_schema_message(&self.schemas, &self.method_bindings))
+    }
 }
 
-impl SchemaTracker {
+// ============================================================================
+// SchemaSendTracker — outbound dedup, owned by SessionCore (no Arc, no Mutex)
+// ============================================================================
+
+/// Tracks which schemas have been sent on the current connection.
+///
+/// Plain struct (no Arc, no Mutex) — owned by `SessionCore` behind the
+/// same Mutex as the conduit tx. Reset on reconnection.
+// r[impl schema.tracking.sent]
+// r[impl schema.type-id.per-connection]
+pub struct SchemaSendTracker {
+    /// Type schema IDs we've already sent.
+    sent: HashSet<TypeSchemaId>,
+    /// Method args bindings we've already sent (by method_id).
+    args_bindings_sent: HashSet<u64>,
+    /// Method response bindings we've already sent (by method_id).
+    response_bindings_sent: HashSet<u64>,
+    /// Assigns incrementing type IDs to shapes we extract.
+    shape_to_id: HashMap<&'static Shape, TypeSchemaId>,
+    /// Next ID to assign.
+    next_id: u32,
+}
+
+impl SchemaSendTracker {
     pub fn new() -> Self {
-        SchemaTracker {
-            sent: Mutex::new(HashSet::new()),
-            args_bindings_sent: Mutex::new(HashSet::new()),
-            response_bindings_sent: Mutex::new(HashSet::new()),
-            shape_to_id: Mutex::new(HashMap::new()),
-            next_id: Mutex::new(1),
-            received: Mutex::new(HashMap::new()),
-            received_args_bindings: Mutex::new(HashMap::new()),
-            received_response_bindings: Mutex::new(HashMap::new()),
+        SchemaSendTracker {
+            sent: HashSet::new(),
+            args_bindings_sent: HashSet::new(),
+            response_bindings_sent: HashSet::new(),
+            shape_to_id: HashMap::new(),
+            next_id: 1,
         }
     }
 
+    /// Reset all state — call on reconnection.
+    pub fn reset(&mut self) {
+        self.sent.clear();
+        self.args_bindings_sent.clear();
+        self.response_bindings_sent.clear();
+        self.shape_to_id.clear();
+        self.next_id = 1;
+    }
+
     /// Allocate or look up a TypeSchemaId for a Shape.
-    fn id_for_shape(&self, shape: &'static Shape) -> TypeSchemaId {
-        let mut map = self.shape_to_id.lock().unwrap();
-        if let Some(&id) = map.get(shape) {
+    fn id_for_shape(&mut self, shape: &'static Shape) -> TypeSchemaId {
+        if let Some(&id) = self.shape_to_id.get(shape) {
             return id;
         }
-        let mut next = self.next_id.lock().unwrap();
-        let id = TypeSchemaId(*next);
-        *next += 1;
-        map.insert(shape, id);
+        let id = TypeSchemaId(self.next_id);
+        self.next_id += 1;
+        self.shape_to_id.insert(shape, id);
         id
     }
 
@@ -253,7 +282,7 @@ impl SchemaTracker {
     // r[impl schema.principles.sender-driven]
     // r[impl schema.principles.no-roundtrips]
     pub fn prepare_send_for_method(
-        &self,
+        &mut self,
         method_id: MethodId,
         shape: &'static Shape,
         direction: BindingDirection,
@@ -261,15 +290,14 @@ impl SchemaTracker {
         let all_schemas = self.extract_schemas(shape);
         let root_type_schema_id = all_schemas.last().map(|s| s.type_id)?;
 
-        let mut sent = self.sent.lock().unwrap();
         let unsent: Vec<Schema> = all_schemas
             .into_iter()
-            .filter(|s| !sent.contains(&s.type_id))
+            .filter(|s| !self.sent.contains(&s.type_id))
             .collect();
 
-        let mut bindings_sent = match direction {
-            BindingDirection::Args => self.args_bindings_sent.lock().unwrap(),
-            BindingDirection::Response => self.response_bindings_sent.lock().unwrap(),
+        let bindings_sent = match direction {
+            BindingDirection::Args => &mut self.args_bindings_sent,
+            BindingDirection::Response => &mut self.response_bindings_sent,
         };
         let need_method_binding = bindings_sent.insert(method_id.0);
 
@@ -278,7 +306,7 @@ impl SchemaTracker {
         }
 
         for s in &unsent {
-            sent.insert(s.type_id);
+            self.sent.insert(s.type_id);
         }
 
         let method_bindings = if need_method_binding {
@@ -297,11 +325,98 @@ impl SchemaTracker {
         })
     }
 
+    /// Extract all schemas for a type and its transitive dependencies.
+    ///
+    /// Returns schemas in dependency order: dependencies appear before dependents.
+    /// The root type's schema is last.
+    // r[impl schema.format]
+    pub fn extract_schemas(&mut self, shape: &'static Shape) -> Vec<Schema> {
+        let mut ctx = ExtractCtx {
+            tracker: self,
+            schemas: Vec::new(),
+            seen: HashSet::new(),
+            stack: Vec::new(),
+        };
+        ctx.extract(shape);
+        ctx.schemas
+    }
+}
+
+impl Default for SchemaSendTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for SchemaSendTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SchemaSendTracker").finish_non_exhaustive()
+    }
+}
+
+// ============================================================================
+// SchemaRecvTracker — inbound storage, shared via Arc
+// ============================================================================
+
+/// Tracks schemas received from the remote peer on the current connection.
+///
+/// Uses interior mutability (Mutex) so it can be shared via `Arc` between the
+/// session recv loop and in-flight handler tasks. Created fresh on each
+/// connection — NOT reused across reconnections.
+// r[impl schema.tracking.received]
+// r[impl schema.type-id.per-connection]
+pub struct SchemaRecvTracker {
+    /// Type schemas received from the remote peer.
+    received: Mutex<HashMap<TypeSchemaId, Schema>>,
+    /// Args bindings received: method_id → root TypeSchemaId for args.
+    received_args_bindings: Mutex<HashMap<u64, TypeSchemaId>>,
+    /// Response bindings received: method_id → root TypeSchemaId for response.
+    received_response_bindings: Mutex<HashMap<u64, TypeSchemaId>>,
+}
+
+/// Error returned when recording received schemas detects a protocol violation.
+#[derive(Debug)]
+pub struct DuplicateSchemaError {
+    pub type_id: TypeSchemaId,
+}
+
+impl std::fmt::Display for DuplicateSchemaError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "duplicate TypeSchemaId {:?} received on same connection — protocol error",
+            self.type_id
+        )
+    }
+}
+
+impl std::error::Error for DuplicateSchemaError {}
+
+impl SchemaRecvTracker {
+    pub fn new() -> Self {
+        SchemaRecvTracker {
+            received: Mutex::new(HashMap::new()),
+            received_args_bindings: Mutex::new(HashMap::new()),
+            received_response_bindings: Mutex::new(HashMap::new()),
+        }
+    }
+
     /// Record a parsed schema message from the remote peer.
-    pub fn record_received(&self, payload: SchemaMessagePayload) {
+    ///
+    /// Returns `Err` if a TypeSchemaId was already received — this is a
+    /// protocol error (the send tracker didn't reset on reconnection).
+    pub fn record_received(
+        &self,
+        payload: SchemaMessagePayload,
+    ) -> Result<(), DuplicateSchemaError> {
         {
             let mut received = self.received.lock().unwrap();
             for schema in payload.schemas {
+                if received.contains_key(&schema.type_id) {
+                    return Err(DuplicateSchemaError {
+                        type_id: schema.type_id,
+                    });
+                }
                 received.insert(schema.type_id, schema);
             }
         }
@@ -314,6 +429,7 @@ impl SchemaTracker {
                 .unwrap()
                 .insert(binding.method_id, binding.root_type_schema_id);
         }
+        Ok(())
     }
 
     /// Look up the remote's root TypeSchemaId for a method's args.
@@ -343,45 +459,29 @@ impl SchemaTracker {
     pub fn received_registry(&self) -> SchemaRegistry {
         self.received.lock().unwrap().clone()
     }
-
-    /// Extract all schemas for a type and its transitive dependencies.
-    ///
-    /// Returns schemas in dependency order: dependencies appear before dependents.
-    /// The root type's schema is last.
-    // r[impl schema.format]
-    pub fn extract_schemas(&self, shape: &'static Shape) -> Vec<Schema> {
-        let mut ctx = ExtractCtx {
-            tracker: self,
-            schemas: Vec::new(),
-            seen: HashSet::new(),
-            stack: Vec::new(),
-        };
-        ctx.extract(shape);
-        ctx.schemas
-    }
 }
 
-impl std::fmt::Debug for SchemaTracker {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SchemaTracker").finish_non_exhaustive()
-    }
-}
-
-impl Default for SchemaTracker {
+impl Default for SchemaRecvTracker {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl std::fmt::Debug for SchemaRecvTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SchemaRecvTracker").finish_non_exhaustive()
     }
 }
 
 /// Extract schemas without a tracker (uses a temporary counter).
 /// Useful for tests and one-off schema extraction.
 pub fn extract_schemas(shape: &'static Shape) -> Vec<Schema> {
-    let tracker = SchemaTracker::new();
+    let mut tracker = SchemaSendTracker::new();
     tracker.extract_schemas(shape)
 }
 
 struct ExtractCtx<'a> {
-    tracker: &'a SchemaTracker,
+    tracker: &'a mut SchemaSendTracker,
     schemas: Vec<Schema>,
     /// Shapes already fully processed.
     seen: HashSet<&'static Shape>,
@@ -961,7 +1061,7 @@ mod tests {
     // r[verify schema.exchange.idempotent]
     #[test]
     fn tracker_prepare_send_returns_some_then_none() {
-        let tracker = SchemaTracker::new();
+        let mut tracker = SchemaSendTracker::new();
         let method = MethodId(1);
         let first =
             tracker.prepare_send_for_method(method, <u32 as Facet>::SHAPE, BindingDirection::Args);
@@ -984,7 +1084,7 @@ mod tests {
             name: String,
         }
 
-        let tracker = SchemaTracker::new();
+        let mut tracker = SchemaSendTracker::new();
         let method = MethodId(1);
         let prepared = tracker
             .prepare_send_for_method(method, Outer::SHAPE, BindingDirection::Args)
@@ -1007,21 +1107,23 @@ mod tests {
     // r[verify schema.tracking.received]
     #[test]
     fn tracker_record_and_get_received() {
-        let tracker = SchemaTracker::new();
+        let tracker = SchemaRecvTracker::new();
         let schemas = extract_schemas(<u32 as Facet>::SHAPE);
         let id = schemas[0].type_id;
         assert!(tracker.get_received(&id).is_none());
-        tracker.record_received(SchemaMessagePayload {
-            schemas,
-            method_bindings: vec![],
-        });
+        tracker
+            .record_received(SchemaMessagePayload {
+                schemas,
+                method_bindings: vec![],
+            })
+            .expect("first record should succeed");
         assert!(tracker.get_received(&id).is_some());
     }
 
     // r[verify schema.type-id]
     #[test]
     fn type_ids_are_incrementing_u32() {
-        let tracker = SchemaTracker::new();
+        let mut tracker = SchemaSendTracker::new();
         let schemas = tracker.extract_schemas(<(u32, String) as Facet>::SHAPE);
         // Should have u32, String, and the tuple — all with sequential IDs
         assert!(schemas.len() >= 3);
@@ -1037,7 +1139,7 @@ mod tests {
 
     #[test]
     fn bidirectional_bindings_are_independent() {
-        let tracker = SchemaTracker::new();
+        let mut tracker = SchemaSendTracker::new();
         let method = MethodId(1);
 
         // Send args binding
@@ -1058,29 +1160,70 @@ mod tests {
         );
 
         // Record received bindings and verify they go to separate maps
-        tracker.record_received(SchemaMessagePayload {
-            schemas: extract_schemas(<u64 as Facet>::SHAPE),
-            method_bindings: vec![
-                MethodSchemaBinding {
-                    method_id: 42,
-                    root_type_schema_id: TypeSchemaId(100),
-                    direction: BindingDirection::Args,
-                },
-                MethodSchemaBinding {
-                    method_id: 42,
-                    root_type_schema_id: TypeSchemaId(200),
-                    direction: BindingDirection::Response,
-                },
-            ],
-        });
+        let recv_tracker = SchemaRecvTracker::new();
+        recv_tracker
+            .record_received(SchemaMessagePayload {
+                schemas: extract_schemas(<u64 as Facet>::SHAPE),
+                method_bindings: vec![
+                    MethodSchemaBinding {
+                        method_id: 42,
+                        root_type_schema_id: TypeSchemaId(100),
+                        direction: BindingDirection::Args,
+                    },
+                    MethodSchemaBinding {
+                        method_id: 42,
+                        root_type_schema_id: TypeSchemaId(200),
+                        direction: BindingDirection::Response,
+                    },
+                ],
+            })
+            .expect("record should succeed");
 
         assert_eq!(
-            tracker.get_remote_args_root(MethodId(42)),
+            recv_tracker.get_remote_args_root(MethodId(42)),
             Some(TypeSchemaId(100))
         );
         assert_eq!(
-            tracker.get_remote_response_root(MethodId(42)),
+            recv_tracker.get_remote_response_root(MethodId(42)),
             Some(TypeSchemaId(200))
+        );
+    }
+
+    #[test]
+    fn duplicate_schema_is_protocol_error() {
+        let tracker = SchemaRecvTracker::new();
+        let schemas = extract_schemas(<u32 as Facet>::SHAPE);
+        tracker
+            .record_received(SchemaMessagePayload {
+                schemas: schemas.clone(),
+                method_bindings: vec![],
+            })
+            .expect("first record should succeed");
+        let err = tracker
+            .record_received(SchemaMessagePayload {
+                schemas,
+                method_bindings: vec![],
+            })
+            .expect_err("duplicate should fail");
+        assert_eq!(err.type_id, TypeSchemaId(1));
+    }
+
+    #[test]
+    fn send_tracker_reset_clears_all_state() {
+        let mut tracker = SchemaSendTracker::new();
+        let method = MethodId(1);
+        tracker
+            .prepare_send_for_method(method, <u32 as Facet>::SHAPE, BindingDirection::Args)
+            .expect("first should return Some");
+
+        tracker.reset();
+
+        // After reset, the same method should return Some again
+        let after_reset =
+            tracker.prepare_send_for_method(method, <u32 as Facet>::SHAPE, BindingDirection::Args);
+        assert!(
+            after_reset.is_some(),
+            "after reset, prepare_send should return Some"
         );
     }
 }

@@ -148,6 +148,7 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
                 ret: Payload::outgoing(&wire),
                 channels: vec![],
                 metadata: Default::default(),
+                schemas: Default::default(),
             })
             .await;
         }
@@ -482,6 +483,7 @@ where
                 ret,
                 channels: vec![],
                 metadata: Default::default(),
+                schemas: Default::default(),
             })
             .await;
     }
@@ -601,6 +603,7 @@ mod tests {
                 channels: vec![],
                 metadata: Metadata::default(),
                 args: Payload::Incoming(&[]),
+                schemas: Default::default(),
             },
         );
         ().handle(

@@ -348,6 +348,7 @@ pub fn run_message_v7_case() {
                 ret: Payload::outgoing(&ret),
                 channels: vec![ChannelId(7)],
                 metadata: sample_metadata(),
+                schemas: Default::default(),
             }),
         }),
     };

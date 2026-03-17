@@ -5,7 +5,7 @@ use roam_types::{
     ChannelMessage, Conduit, ConduitRx, ConduitTx, ConduitTxPermit, ConnectionAccept,
     ConnectionClose, ConnectionId, ConnectionOpen, ConnectionReject, ConnectionSettings,
     HandshakeResult, IdAllocator, MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload,
-    Metadata, Parity, RequestBody, RequestId, RequestMessage, RequestResponse, SelfRef,
+    Metadata, Parity, Payload, RequestBody, RequestId, RequestMessage, RequestResponse, SelfRef,
     SessionResumeKey, SessionRole,
 };
 use tokio::sync::watch;
@@ -276,6 +276,9 @@ pub struct Session {
     keepalive: Option<SessionKeepaliveConfig>,
     resume_notifier: watch::Sender<u64>,
     recoverer: Option<Box<dyn ConduitRecoverer>>,
+
+    /// Schema recv tracker — shared across all connections, reset on reconnection.
+    schema_recv_tracker: Arc<roam_types::SchemaRecvTracker>,
 }
 
 #[derive(Debug)]
@@ -304,11 +307,6 @@ pub struct ConnectionState {
     /// Sender for routing incoming messages to the per-connection driver task.
     conn_tx: mpsc::Sender<SelfRef<ConnectionMessage<'static>>>,
     closed_tx: watch::Sender<bool>,
-
-    /// Per-connection schema tracker. Each connection has its own independent
-    /// namespace of type IDs (see r[schema.type-id.per-connection]).
-    // r[impl schema.type-id.per-connection]
-    schema_tracker: Arc<roam_types::SchemaTracker>,
 }
 
 #[derive(Debug)]
@@ -334,7 +332,7 @@ impl std::fmt::Debug for PendingOutboundData {
 #[derive(Clone)]
 pub(crate) struct ConnectionSender {
     connection_id: ConnectionId,
-    sess_core: Arc<SessionCore>,
+    pub(crate) sess_core: Arc<SessionCore>,
     failures: Arc<mpsc::UnboundedSender<(RequestId, FailureDisposition)>>,
 }
 
@@ -352,11 +350,13 @@ fn forwarded_request_body<'a>(body: &'a RequestBody<'static>) -> RequestBody<'a>
             channels: call.channels.clone(),
             metadata: call.metadata.clone(),
             args: forwarded_payload(&call.args),
+            schemas: call.schemas.clone(),
         }),
         RequestBody::Response(response) => RequestBody::Response(RequestResponse {
             channels: response.channels.clone(),
             metadata: response.metadata.clone(),
             ret: forwarded_payload(&response.ret),
+            schemas: response.schemas.clone(),
         }),
         RequestBody::Cancel(cancel) => RequestBody::Cancel(roam_types::RequestCancel {
             metadata: cancel.metadata.clone(),
@@ -448,27 +448,6 @@ impl ConnectionSender {
     pub fn mark_failure(&self, request_id: RequestId, disposition: FailureDisposition) {
         let _ = self.failures.send((request_id, disposition));
     }
-
-    /// Send a schema message on the root connection.
-    /// Called before sending request/response data when schema exchange is active.
-    // r[impl schema.exchange.ordering]
-    // r[impl schema.type-id.per-connection]
-    pub(crate) async fn send_schema_message(
-        &self,
-        schemas: &[roam_types::Schema],
-        method_bindings: &[roam_types::MethodSchemaBinding],
-    ) {
-        let cbor_bytes = roam_types::build_schema_message(schemas, method_bindings);
-        let _ = self
-            .sess_core
-            .send(Message {
-                connection_id: self.connection_id,
-                payload: MessagePayload::SchemaMessage(roam_types::SchemaMessage {
-                    schemas: cbor_bytes,
-                }),
-            })
-            .await;
-    }
 }
 
 pub struct ConnectionHandle {
@@ -481,8 +460,8 @@ pub struct ConnectionHandle {
     /// The parity this side should use for allocating request/channel IDs.
     pub parity: Parity,
     pub(crate) peer_supports_retry: bool,
-    /// Schema tracker for this session (shared across all connections).
-    pub(crate) schema_tracker: Arc<roam_types::SchemaTracker>,
+    /// Schema recv tracker (shared across the session, reset on reconnection)
+    pub(crate) schema_recv_tracker: Arc<roam_types::SchemaRecvTracker>,
 }
 
 impl std::fmt::Debug for ConnectionHandle {
@@ -544,7 +523,7 @@ pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) 
         resumed_rx: _left_resumed_rx,
         parity: _left_parity,
         peer_supports_retry: _left_peer_supports_retry,
-        schema_tracker: _left_schema_tracker,
+        schema_recv_tracker: _left_schema_recv_tracker,
     } = left;
     let ConnectionHandle {
         sender: right_sender,
@@ -555,7 +534,7 @@ pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) 
         resumed_rx: _right_resumed_rx,
         parity: _right_parity,
         peer_supports_retry: _right_peer_supports_retry,
-        schema_tracker: _right_schema_tracker,
+        schema_recv_tracker: _right_schema_recv_tracker,
     } = right;
 
     loop {
@@ -630,7 +609,10 @@ impl Session {
         Rx: ConduitRx<Msg = MessageFamily> + MaybeSend + 'static,
     {
         let sess_core = Arc::new(SessionCore {
-            tx: std::sync::Mutex::new(Arc::new(tx) as Arc<dyn DynConduitTx>),
+            inner: std::sync::Mutex::new(SessionCoreInner {
+                tx: Arc::new(tx) as Arc<dyn DynConduitTx>,
+                send_tracker: roam_types::SchemaSendTracker::new(),
+            }),
         });
         let (resume_notifier, _resume_rx) = watch::channel(0_u64);
         Session {
@@ -658,6 +640,7 @@ impl Session {
             keepalive,
             resume_notifier,
             recoverer,
+            schema_recv_tracker: Arc::new(roam_types::SchemaRecvTracker::new()),
         }
     }
 
@@ -711,9 +694,6 @@ impl Session {
             failures: Arc::new(failures_tx),
         };
 
-        // r[impl schema.type-id.per-connection]
-        let schema_tracker = Arc::new(roam_types::SchemaTracker::new());
-
         let parity = local_settings.parity;
         self.conns.insert(
             conn_id,
@@ -723,7 +703,6 @@ impl Session {
                 peer_settings,
                 conn_tx,
                 closed_tx,
-                schema_tracker: Arc::clone(&schema_tracker),
             }),
         );
 
@@ -736,7 +715,7 @@ impl Session {
             resumed_rx,
             parity,
             peer_supports_retry: self.peer_supports_retry,
-            schema_tracker,
+            schema_recv_tracker: Arc::clone(&self.schema_recv_tracker),
         }
     }
 
@@ -886,8 +865,10 @@ impl Session {
         self.peer_supports_retry = result.peer_supports_retry;
         self.session_resume_key = result.session_resume_key.or(self.session_resume_key);
 
-        self.sess_core.replace_tx(tx);
+        self.sess_core.replace_tx_and_reset_schemas(tx);
         self.rx = rx;
+        // Reset the recv tracker on reconnection — type IDs are per-connection
+        self.schema_recv_tracker = Arc::new(roam_types::SchemaRecvTracker::new());
         Ok(())
     }
 
@@ -921,6 +902,28 @@ impl Session {
                 self.handle_inbound_reject(conn_id, reject);
             }
             MessagePayload::RequestMessage(r) => {
+                // Record any inlined schemas from the incoming request before routing
+                {
+                    let schemas_cbor = match &r.body {
+                        RequestBody::Call(call) => Some(&call.schemas),
+                        RequestBody::Response(resp) => Some(&resp.schemas),
+                        _ => None,
+                    };
+                    if let Some(schemas_cbor) = schemas_cbor {
+                        if !schemas_cbor.is_empty() {
+                            match schemas_cbor.parse() {
+                                Ok(payload) => {
+                                    if let Err(e) = self.schema_recv_tracker.record_received(payload) {
+                                        warn!("failed to record received schemas: {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("failed to parse inlined schemas: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
                 let conn_tx = match self.conns.get(&conn_id) {
                     Some(ConnectionSlot::Active(state)) => state.conn_tx.clone(),
                     _ => return,
@@ -952,25 +955,6 @@ impl Session {
             MessagePayload::Pong(pong) => {
                 if conn_id.is_root() {
                     self.handle_keepalive_pong(pong.nonce, keepalive_runtime);
-                }
-            }
-            // r[impl schema.exchange.ordering]
-            // r[impl schema.type-id.per-connection]
-            MessagePayload::SchemaMessage(schema_msg) => {
-                let tracker = match self.conns.get(&conn_id) {
-                    Some(ConnectionSlot::Active(state)) => &state.schema_tracker,
-                    _ => {
-                        warn!("SchemaMessage for unknown connection {}", conn_id.0);
-                        return;
-                    }
-                };
-                match roam_types::parse_schema_message(&schema_msg.schemas) {
-                    Ok(payload) => {
-                        tracker.record_received(payload);
-                    }
-                    Err(e) => {
-                        warn!("failed to parse schema message: {}", e);
-                    }
                 }
             }
             // ProtocolError: not valid post-handshake, drop.
@@ -1326,17 +1310,71 @@ impl Session {
 }
 
 pub(crate) struct SessionCore {
-    tx: std::sync::Mutex<Arc<dyn DynConduitTx>>,
+    inner: std::sync::Mutex<SessionCoreInner>,
+}
+
+struct SessionCoreInner {
+    tx: Arc<dyn DynConduitTx>,
+    send_tracker: roam_types::SchemaSendTracker,
 }
 
 impl SessionCore {
     pub(crate) async fn send<'a>(&self, msg: Message<'a>) -> Result<(), ()> {
-        let tx = self.tx.lock().expect("session tx mutex poisoned").clone();
+        let tx = self
+            .inner
+            .lock()
+            .expect("session core mutex poisoned")
+            .tx
+            .clone();
         tx.send_msg(msg).await.map_err(|_| ())
     }
 
-    fn replace_tx(&self, tx: Arc<dyn DynConduitTx>) {
-        *self.tx.lock().expect("session tx mutex poisoned") = tx;
+    fn replace_tx_and_reset_schemas(&self, tx: Arc<dyn DynConduitTx>) {
+        let mut inner = self.inner.lock().expect("session core mutex poisoned");
+        inner.tx = tx;
+        inner.send_tracker.reset();
+    }
+
+    /// Prepare call schemas for a method's arg type.
+    ///
+    /// Called by `DriverCaller::call` before serializing the call, because
+    /// the call is serialized to bytes before reaching `SessionCore::send()`.
+    pub(crate) fn prepare_call_schemas(
+        &self,
+        method_id: roam_types::MethodId,
+        arg_shape: &'static facet_core::Shape,
+    ) -> roam_types::CborPayload {
+        let mut inner = self.inner.lock().expect("session core mutex poisoned");
+        if let Some(prepared) = inner.send_tracker.prepare_send_for_method(
+            method_id,
+            arg_shape,
+            roam_types::BindingDirection::Args,
+        ) {
+            prepared.to_cbor()
+        } else {
+            Default::default()
+        }
+    }
+
+    /// Prepare response schemas for a method's response type.
+    ///
+    /// Called by `DriverReplySink::send_response_schemas` before the handler runs.
+    /// Returns a `CborPayload` that should be attached to the `RequestResponse`.
+    pub(crate) fn prepare_response_schemas(
+        &self,
+        method_id: roam_types::MethodId,
+        response_shape: &'static facet_core::Shape,
+    ) -> roam_types::CborPayload {
+        let mut inner = self.inner.lock().expect("session core mutex poisoned");
+        if let Some(prepared) = inner.send_tracker.prepare_send_for_method(
+            method_id,
+            response_shape,
+            roam_types::BindingDirection::Response,
+        ) {
+            prepared.to_cbor()
+        } else {
+            Default::default()
+        }
     }
 }
 

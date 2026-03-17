@@ -294,7 +294,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             resumed_rx,
             parity,
             peer_supports_retry,
-            schema_tracker: _,
+            schema_recv_tracker: _,
         } = handle;
         let drop_control_request = DropControlRequest::Close(conn_id);
         Self {

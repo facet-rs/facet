@@ -1,7 +1,7 @@
 use facet::Facet;
 use roam_postcard::error::DeserializeError;
 use roam_postcard::plan::{PlanInput, SchemaSet, TranslationPlan, build_plan};
-use roam_types::{BindingDirection, MethodId, SchemaTracker, extract_schemas};
+use roam_types::{BindingDirection, MethodId, SchemaRecvTracker, extract_schemas};
 
 /// Deserialize args from a request (caller → callee direction).
 // r[impl schema.exchange.required]
@@ -53,7 +53,7 @@ fn resolve_plan<'facet, T: Facet<'facet>>(
     schema_tracker_any: Option<&(dyn std::any::Any + Send + Sync)>,
 ) -> Result<ResolvedPlan, DeserializeError> {
     let tracker = schema_tracker_any
-        .and_then(|a| a.downcast_ref::<SchemaTracker>())
+        .and_then(|a| a.downcast_ref::<SchemaRecvTracker>())
         .ok_or_else(|| {
             DeserializeError::protocol("no schema tracker available — protocol error")
         })?;

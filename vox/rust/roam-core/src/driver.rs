@@ -135,7 +135,10 @@ pub struct DriverReplySink {
     operation_id: Option<u64>,
     operations: Option<Arc<dyn OperationStore>>,
     binder: DriverChannelBinder,
-    schema_tracker: Arc<roam_types::SchemaTracker>,
+    schema_recv_tracker: Arc<roam_types::SchemaRecvTracker>,
+    /// Pre-prepared CBOR schemas for the response type, set by send_response_schemas
+    /// before the handler runs, consumed by send_reply after the handler finishes.
+    response_schemas: std::sync::Mutex<roam_types::CborPayload>,
 }
 
 #[allow(clippy::manual_async_fn)]
@@ -161,18 +164,22 @@ fn incoming_args_bytes<'a>(call: &'a RequestCall<'a>) -> &'a [u8] {
 }
 
 impl ReplySink for DriverReplySink {
-    async fn send_reply(mut self, response: RequestResponse<'_>) {
+    async fn send_reply(mut self, mut response: RequestResponse<'_>) {
         let sender = self
             .sender
             .take()
             .expect("unreachable: send_reply takes self by value");
 
         // r[impl schema.exchange.callee]
-        // Response schemas are sent by the generated dispatch code using the
-        // statically-known response type (see r[schema.exchange.callee]).
-        // send_reply does NOT send schemas — the dispatch code has already
-        // done so before the handler runs, using the correct Result<T, RoamError<E>>
-        // shape regardless of whether the handler succeeds or fails.
+        // Attach pre-prepared response schemas (set by send_response_schemas
+        // before the handler ran). The schemas are inlined in the response
+        // message for atomic delivery.
+        response.schemas = std::mem::take(
+            &mut *self
+                .response_schemas
+                .lock()
+                .expect("response_schemas mutex poisoned"),
+        );
 
         if let (Some(operation_id), Some(operations)) = (self.operation_id, self.operations.take())
         {
@@ -199,7 +206,7 @@ impl ReplySink for DriverReplySink {
     }
 
     fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
-        Some(&*self.schema_tracker)
+        Some(&*self.schema_recv_tracker)
     }
 
     // r[impl schema.exchange.callee]
@@ -208,15 +215,18 @@ impl ReplySink for DriverReplySink {
         method_id: roam_types::MethodId,
         response_shape: &'static facet_core::Shape,
     ) {
-        if let Some(prepared) = self.schema_tracker.prepare_send_for_method(
-            method_id,
-            response_shape,
-            roam_types::BindingDirection::Response,
-        ) {
-            if let Some(sender) = &self.sender {
-                sender
-                    .send_schema_message(&prepared.schemas, &prepared.method_bindings)
-                    .await;
+        if let Some(sender) = &self.sender {
+            // Prepare response schemas via the SessionCore's send tracker.
+            // The returned CborPayload is stored and attached to the response
+            // in send_reply().
+            let schemas = sender
+                .sess_core
+                .prepare_response_schemas(method_id, response_shape);
+            if !schemas.is_empty() {
+                *self
+                    .response_schemas
+                    .lock()
+                    .expect("response_schemas mutex poisoned") = schemas;
             }
         }
     }
@@ -447,7 +457,7 @@ pub struct DriverCaller {
     resume_processed_rx: watch::Receiver<u64>,
     peer_supports_retry: bool,
     _drop_guard: Option<Arc<CallerDropGuard>>,
-    pub(crate) schema_tracker: Arc<roam_types::SchemaTracker>,
+    pub(crate) schema_recv_tracker: Arc<roam_types::SchemaRecvTracker>,
 }
 
 impl DriverCaller {
@@ -598,15 +608,14 @@ impl Caller for DriverCaller {
 
             // r[impl schema.exchange.caller]
             // r[impl schema.exchange.channels]
-            // Send schemas for arg types (and channel element types) before the request.
-            if let Payload::Outgoing { shape, .. } = &call.args
-                && let Some(prepared) =
-                    self.schema_tracker
-                        .prepare_send_for_method(call.method_id, shape, roam_types::BindingDirection::Args)
-            {
-                self.sender
-                    .send_schema_message(&prepared.schemas, &prepared.method_bindings)
-                    .await;
+            // Prepare and attach schemas for arg types before serialization.
+            // Must happen here because the call is serialized (to_vec) before
+            // reaching SessionCore::send(), at which point args are Incoming bytes.
+            if let Payload::Outgoing { shape, .. } = &call.args {
+                let schemas = self.sender.sess_core.prepare_call_schemas(call.method_id, shape);
+                if !schemas.is_empty() {
+                    call.schemas = schemas;
+                }
             }
 
             let encoded_call: Arc<[u8]> = roam_postcard::to_vec(&call)
@@ -703,6 +712,7 @@ impl Caller for DriverCaller {
                                 args: resend_args,
                                 channels: call.channels.clone(),
                                 metadata: call.metadata.clone(),
+                                schemas: Default::default(),
                             };
                             let _ = self.sender.send(ConnectionMessage::Request(RequestMessage {
                                 id: req_id,
@@ -770,7 +780,7 @@ impl Caller for DriverCaller {
     }
 
     fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
-        Some(&*self.schema_tracker)
+        Some(&*self.schema_recv_tracker)
     }
 }
 
@@ -798,7 +808,7 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     drop_control_seed: Option<mpsc::UnboundedSender<DropControlRequest>>,
     drop_control_request: DropControlRequest,
     drop_guard: SyncMutex<Option<Weak<CallerDropGuard>>>,
-    schema_tracker: Arc<roam_types::SchemaTracker>,
+    schema_recv_tracker: Arc<roam_types::SchemaRecvTracker>,
 }
 
 enum DriverLocalControl {
@@ -899,7 +909,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             resumed_rx,
             parity,
             peer_supports_retry,
-            schema_tracker,
+            schema_recv_tracker,
         } = handle;
         let drop_control_request = DropControlRequest::Close(conn_id);
         let (local_control_tx, local_control_rx) = mpsc::unbounded_channel("driver.local_control");
@@ -929,7 +939,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             drop_control_seed: control_tx,
             drop_control_request,
             drop_guard: SyncMutex::new("driver.drop_guard", None),
-            schema_tracker,
+            schema_recv_tracker,
         }
     }
 
@@ -973,7 +983,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             resume_processed_rx: self.resume_processed_tx.subscribe(),
             peer_supports_retry: self.peer_supports_retry,
             _drop_guard: drop_guard,
-            schema_tracker: self.schema_tracker.clone(),
+            schema_recv_tracker: self.schema_recv_tracker.clone(),
         }
     }
 
@@ -1058,6 +1068,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                             ret: Payload::outgoing(&error),
                             channels: vec![],
                             metadata: Default::default(),
+                            schemas: Default::default(),
                         }).await;
                         tracing::debug!(%req_id, "failures_rx: error response sent");
                     }
@@ -1183,6 +1194,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                                             ret: Payload::outgoing(&error),
                                             channels: vec![],
                                             metadata: Default::default(),
+                                            schemas: Default::default(),
                                         },
                                     )
                                     .await;
@@ -1204,6 +1216,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                                             ret: Payload::outgoing(&error),
                                             channels: vec![],
                                             metadata: Default::default(),
+                                            schemas: Default::default(),
                                         },
                                     )
                                     .await;
@@ -1223,7 +1236,8 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 operation_id,
                 operations: operation_id.map(|_| Arc::clone(&self.shared.operations)),
                 binder: self.internal_binder(),
-                schema_tracker: self.schema_tracker.clone(),
+                schema_recv_tracker: self.schema_recv_tracker.clone(),
+                response_schemas: std::sync::Mutex::new(Default::default()),
             };
             let has_channels = !call.channels.is_empty();
             let join_handle = moire::task::spawn(

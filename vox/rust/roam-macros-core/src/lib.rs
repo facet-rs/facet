@@ -825,6 +825,7 @@ fn generate_client_method(
                     args: #roam::Payload::outgoing(&args),
                     channels,
                     metadata: Default::default(),
+                    schemas: Default::default(),
                 };
                 let response = #roam::Caller::call(&self.caller, req).await.map_err(|e| match e {
                     #roam::RoamError::UnknownMethod => #roam::RoamError::<#err_ty>::UnknownMethod,
@@ -859,6 +860,7 @@ fn generate_client_method(
                     args: #roam::Payload::outgoing(&args),
                     channels,
                     metadata: Default::default(),
+                    schemas: Default::default(),
                 };
                 let response = #roam::Caller::call(&self.caller, req).await.map_err(|e| match e {
                     #roam::RoamError::UnknownMethod => #roam::RoamError::<#err_ty>::UnknownMethod,

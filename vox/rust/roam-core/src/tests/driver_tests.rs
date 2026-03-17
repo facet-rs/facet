@@ -272,6 +272,7 @@ impl Handler<DriverReplySink> for EchoHandler {
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&result),
+                schemas: Default::default(),
                 channels: vec![],
                 metadata: Default::default(),
             })
@@ -333,6 +334,7 @@ impl Handler<DriverReplySink> for OperationIdHandler {
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&operation_id),
+                schemas: Default::default(),
                 channels: vec![],
                 metadata: Default::default(),
             })
@@ -409,6 +411,7 @@ impl Handler<DriverReplySink> for ReplayHandler {
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&result),
+                schemas: Default::default(),
                 channels: vec![],
                 metadata: Default::default(),
             })
@@ -449,6 +452,7 @@ impl Handler<DriverReplySink> for PersistentReplyingHandler {
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&123_u32),
+                schemas: Default::default(),
                 channels: vec![],
                 metadata: Default::default(),
             })
@@ -473,6 +477,7 @@ impl Handler<DriverReplySink> for ResumableReplyingHandler {
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&result),
+                schemas: Default::default(),
                 channels: vec![],
                 metadata: Default::default(),
             })
@@ -501,6 +506,7 @@ impl Handler<DriverReplySink> for RetryAfterResumeHandler {
         reply
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&result),
+                schemas: Default::default(),
                 channels: vec![],
                 metadata: Default::default(),
             })
@@ -558,6 +564,7 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&42_u32),
+            schemas: Default::default(),
             channels: vec![],
             metadata: Default::default(),
         })
@@ -669,6 +676,7 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&7_u32),
+            schemas: Default::default(),
             channels: vec![],
             metadata: Default::default(),
         })
@@ -832,6 +840,7 @@ async fn cancel_aborts_in_flight_handler() {
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&args_value),
+                    schemas: Default::default(),
                     channels: vec![],
                     metadata: Default::default(),
                 })
@@ -922,6 +931,7 @@ async fn cancel_does_not_abort_persist_handler() {
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&99_u32),
+                    schemas: Default::default(),
                     channels: vec![],
                     metadata: Default::default(),
                 })
@@ -989,6 +999,7 @@ async fn caller_injects_operation_id_when_peer_supports_retry() {
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&7_u32),
+            schemas: Default::default(),
             channels: vec![],
             metadata: Default::default(),
         })
@@ -1032,6 +1043,7 @@ async fn builder_uses_custom_operation_store() {
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&7_u32),
+            schemas: Default::default(),
             channels: vec![],
             metadata: Default::default(),
         })
@@ -1083,6 +1095,7 @@ async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
                     .call(RequestCall {
                         method_id: MethodId(1),
                         args: Payload::outgoing(&11_u32),
+                        schemas: Default::default(),
                         channels: vec![],
                         metadata,
                     })
@@ -1101,6 +1114,7 @@ async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
                     .call(RequestCall {
                         method_id: MethodId(1),
                         args: Payload::outgoing(&11_u32),
+                        schemas: Default::default(),
                         channels: vec![],
                         metadata,
                     })
@@ -1133,6 +1147,7 @@ async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&11_u32),
+            schemas: Default::default(),
             channels: vec![],
             metadata,
         })
@@ -1186,6 +1201,7 @@ async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&55_u32),
+                    schemas: Default::default(),
                     channels: vec![],
                     metadata: Default::default(),
                 })
@@ -1268,6 +1284,7 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&66_u32),
+                    schemas: Default::default(),
                     channels: vec![],
                     metadata: Default::default(),
                 })
@@ -1382,6 +1399,7 @@ async fn resumable_session_reruns_released_idem_call_after_manual_resume() {
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&77_u32),
+                    schemas: Default::default(),
                     channels: vec![],
                     metadata: Default::default(),
                 })
@@ -1466,6 +1484,7 @@ async fn resumable_session_returns_indeterminate_for_released_non_idem_call_afte
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&88_u32),
+                    schemas: Default::default(),
                     channels: vec![],
                     metadata: Default::default(),
                 })
@@ -1549,6 +1568,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&123_u32),
+                    schemas: Default::default(),
                     channels: vec![],
                     metadata: Default::default(),
                 })
@@ -1619,6 +1639,7 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&123_u32),
+                    schemas: Default::default(),
                     channels: vec![],
                     metadata: Default::default(),
                 })
@@ -1780,6 +1801,7 @@ async fn open_virtual_connection_and_call() {
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
+            schemas: Default::default(),
             channels: vec![],
             metadata: Default::default(),
         })
@@ -2191,6 +2213,7 @@ async fn close_virtual_connection() {
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
+            schemas: Default::default(),
             channels: vec![],
             metadata: Default::default(),
         })
@@ -2316,6 +2339,7 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&11_u32),
+            schemas: Default::default(),
             channels: vec![],
             metadata: Default::default(),
         })
@@ -2433,6 +2457,7 @@ async fn echo_call_across_memory_link() {
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
+            schemas: Default::default(),
             channels: vec![],
             metadata: Default::default(),
         })
@@ -2648,6 +2673,7 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
             id: roam_types::RequestId(9999),
             body: RequestBody::Response(RequestResponse {
                 ret: Payload::outgoing(&123_u32),
+                schemas: Default::default(),
                 channels: vec![],
                 metadata: Default::default(),
             }),
@@ -2660,6 +2686,7 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
+            schemas: Default::default(),
             channels: vec![],
             metadata: Default::default(),
         })
@@ -2802,6 +2829,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
+            schemas: Default::default(),
             channels: vec![],
             metadata: Default::default(),
         })

@@ -4,7 +4,7 @@
 
 use std::marker::PhantomData;
 
-use crate::{ChannelId, ConnectionId, Metadata, MethodId, RequestId};
+use crate::{CborPayload, ChannelId, ConnectionId, Metadata, MethodId, RequestId};
 use facet::{Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst, Shape};
 
 /// Transparent wrapper around borrowed bytes that are already postcard-encoded.
@@ -80,7 +80,7 @@ structstruck::strike! {
     // r[impl session.symmetry]
     #[structstruck::each[derive(Debug, Facet)]]
     pub struct Message<'payload> {
-        /// Connection ID: 0 for control messages (ProtocolError, Ping, Pong, SchemaMessage)
+        /// Connection ID: 0 for control messages (ProtocolError, Ping, Pong)
         pub connection_id: ConnectionId,
 
         /// Message payload
@@ -169,6 +169,11 @@ structstruck::strike! {
 
                                     /// Argument tuple
                                     pub args: Payload<'payload>,
+
+                                    /// CBOR-encoded schemas for this call's arg types.
+                                    /// Non-empty on the first call for each method on a connection.
+                                    #[facet(default)]
+                                    pub schemas: CborPayload,
                                 }),
 
                                 /// Respond to a request
@@ -181,6 +186,11 @@ structstruck::strike! {
 
                                     /// Return value (`Result<T, RoamError<E>>`, where E could be Infallible depending on signature)
                                     pub ret: Payload<'payload>,
+
+                                    /// CBOR-encoded schemas for this response's return type.
+                                    /// Non-empty on the first response for each method on a connection.
+                                    #[facet(default)]
+                                    pub schemas: CborPayload,
                                 }),
 
                                 /// Cancel processing of a request.
@@ -252,20 +262,6 @@ structstruck::strike! {
                     pub nonce: u64,
                 }),
 
-                // ========================================================================
-                // Schema exchange
-                // ========================================================================
-
-                /// CBOR-encoded schema batch for type evolution.
-                /// Sent on connection 0 (control) since schemas are session-wide.
-                // r[impl schema.principles.cbor]
-                // r[impl schema.format.batch]
-                SchemaMessage(pub struct SchemaMessage {
-                    /// CBOR-encoded array of (type_id, schema) pairs.
-                    /// The sender serializes schemas to CBOR, wraps them here,
-                    /// and the outer message is postcard-framed as usual.
-                    pub schemas: Vec<u8>,
-                }),
             },
     }
 
