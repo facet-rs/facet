@@ -215,6 +215,21 @@ Each peer maintains two sets per connection:
 > implicitly sends the schemas of all its field types, their field types,
 > and so on.
 
+# Two levels of schema exchange
+
+Schema exchange operates at two levels:
+
+1. **Protocol level (per-session):** The `MessagePayload` schema is
+   exchanged during the CBOR handshake (see `r[session.handshake]`).
+   This allows the protocol framing itself to evolve without breaking
+   changes.
+
+2. **Application level (per-connection):** Method argument and response
+   schemas are exchanged lazily via `SchemaMessage` payloads, scoped to
+   each connection. This allows service types to evolve independently.
+
+The rest of this section describes application-level schema exchange.
+
 # When schemas are exchanged
 
 Schema exchange is triggered by method invocation. The caller sends schemas
@@ -225,16 +240,22 @@ for the entire service interface up front.
 > r[schema.exchange.caller]
 >
 > Before sending a `Request`, the caller MUST check whether the schemas for
-> the method's argument types have been sent to this peer. If any have not,
-> the caller MUST send a schema message containing all unsent schemas before
-> sending the `Request`.
+> the method's argument types have been sent to this peer on this connection.
+> If any have not, the caller MUST send a `SchemaMessage` containing all
+> unsent schemas before sending the `Request`.
 
 > r[schema.exchange.callee]
 >
-> Before sending a `Response`, the callee MUST check whether the schemas for
-> the method's return type (and error type, if fallible) have been sent to
-> this peer. If any have not, the callee MUST send a schema message before
-> sending the `Response`.
+> Before sending any `Response` for a method, the callee MUST check whether
+> the schemas for the method's **statically-known response type** have been
+> sent to this peer on this connection. If any have not, the callee MUST
+> send a `SchemaMessage` before the `Response`.
+>
+> The response schema is determined by the method signature — it is the
+> full `Result<T, RoamError<E>>` wire type. It MUST NOT vary based on
+> whether the handler succeeded or failed. Sending schemas for a different
+> type (e.g. `Result<(), RoamError<E>>` when the method returns
+> `Result<T, RoamError<E>>`) is a protocol error.
 
 > r[schema.exchange.channels]
 >
@@ -245,17 +266,19 @@ for the entire service interface up front.
 
 > r[schema.exchange.ordering]
 >
-> Schema messages MUST arrive before the `Request` or `Response` that
-> references those types. The receiver MUST be able to build a translation
-> plan for the incoming data before deserializing it.
+> `SchemaMessage` MUST arrive before the `Request` or `Response` that
+> references those types on the same connection. The receiver MUST be
+> able to build a translation plan for the incoming data before
+> deserializing it.
 
 > r[schema.exchange.required]
 >
-> Schema exchange is mandatory. If a peer receives a `Request` or
-> `Response` for a method whose schemas have not been received, this is
-> a protocol error and the connection MUST be torn down. There is no
-> fallback to identity deserialization — the sender is always responsible
-> for sending schemas before data.
+> Application-level schema exchange is mandatory. If a peer receives a
+> `Request` or `Response` for a method whose schemas have not been
+> received on that connection, this is a protocol error and the
+> connection MUST be torn down. There is no fallback to identity
+> deserialization — the sender is always responsible for sending schemas
+> before data.
 
 > r[schema.exchange.idempotent]
 >
@@ -266,15 +289,16 @@ for the entire service interface up front.
 
 # Method identity without signatures
 
-When schema exchange is active, method identity no longer needs to encode
-the full type signature. Two versions of a service may have the same method
-with evolved argument types — including the signature hash in the method ID
-would make these look like different methods, which is exactly what schema
-exchange is designed to avoid.
+Schema exchange is mandatory (see `r[session.handshake]`). Since peers
+always have each other's type metadata, method identity no longer needs
+to encode the full type signature. Two versions of a service may have
+the same method with evolved argument types — including the signature
+hash in the method ID would make these look like different methods,
+which is exactly what schema exchange is designed to avoid.
 
 > r[schema.method-id]
 >
-> When schema exchange is active, the method ID MUST be computed as:
+> The method ID MUST be computed as:
 > ```
 > method_id = blake3(kebab(ServiceName) + "." + kebab(methodName))[0..8]
 > ```
@@ -282,23 +306,10 @@ exchange is designed to avoid.
 > excluded. Only the service name and method name contribute to the method
 > ID.
 
-> r[schema.method-id.negotiation]
->
-> Whether schema exchange is active MUST be negotiated during session setup.
-> Both peers MUST agree on whether to use schema-based method IDs or
-> legacy signature-based method IDs (see `r[method.identity.computation]`).
-> A session MUST NOT mix the two modes.
-
-> r[schema.method-id.fallback]
->
-> If either peer does not support schema exchange, the session MUST fall
-> back to legacy signature-based method IDs. Schema exchange is opt-in —
-> existing peers that do not implement it continue to work unchanged.
-
-This means that with schema exchange, renaming a method is still a breaking
-change (the method ID changes), but changing argument or return types is
-no longer automatically breaking — it depends on whether the translation
-plan can bridge the difference.
+Renaming a method is still a breaking change (the method ID changes),
+but changing argument or return types is no longer automatically
+breaking — it depends on whether the translation plan can bridge the
+difference.
 
 # Translation plans
 

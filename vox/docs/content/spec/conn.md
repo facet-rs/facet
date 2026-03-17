@@ -310,19 +310,19 @@ starts only after that conduit has been selected and initialized.
 > r[session.message.connection-id]
 >
 > Every message is composed of a connection identifier and a payload. The
-> connection ID is meaningful for every message type except for the handshake
-> (`Hello` and `HelloYourself`), `ProtocolError`, and keepalive
-> (`Ping`/`Pong`), all of which MUST use connection ID 0.
+> connection ID is meaningful for every message type except `ProtocolError`
+> and keepalive (`Ping`/`Pong`), which MUST use connection ID 0.
+> `SchemaMessage` MUST use the connection ID of the connection whose types
+> it describes.
 
 > r[session.message.payloads]
 >
 > Here are all the kinds of message payloads:
 >
->   * Hello
->   * HelloYourself
 >   * ProtocolError
 >   * Ping
 >   * Pong
+>   * SchemaMessage
 >   * OpenConnection
 >   * AcceptConnection
 >   * RejectConnection
@@ -334,22 +334,85 @@ starts only after that conduit has been selected and initialized.
 >   * CloseChannel
 >   * ResetChannel
 >   * GrantCredit
+>
+> `Hello`, `HelloYourself`, `LetsGo`, and `Sorry` are NOT message payloads.
+> They are CBOR-encoded handshake structs exchanged before the postcard
+> `MessagePayload` enum is used (see `r[session.handshake]`).
 
 > r[session.handshake]
 >
-> To establish a session on top of an existing conduit, a handshake MUST be
-> performed. The initiator sends a `Hello` message, with the version field
-> set to `7`, and the parity field set to the identifier partition desired by
-> the initiator.
+> To establish a session on top of an existing conduit, a three-step CBOR
+> handshake MUST be performed. The handshake messages are CBOR-encoded
+> structs, NOT postcard-encoded `MessagePayload` variants. This is the
+> bootstrap: it establishes the schemas needed to interpret the postcard
+> `MessagePayload` enum that follows.
 >
-> The counterpart MUST assert that the version is set to 7, adopt the opposite
-> parity, and send back a `HelloYourself` message.
+> 1. The initiator sends a **`Hello`** containing:
+>    - `version`: MUST be `8`
+>    - `parity`: the identifier partition desired by the initiator
+>    - `connection_settings`: limits for the root connection
+>    - `message_payload_schema`: the initiator's schema for `MessagePayload`
+>      (the postcard enum used for all subsequent communication)
+>
+> 2. The acceptor validates the version, adopts the opposite parity, compares
+>    the `MessagePayload` schemas, and replies with one of:
+>    - **`HelloYourself`** containing:
+>      - `connection_settings`: limits for the root connection
+>      - `message_payload_schema`: the acceptor's schema for `MessagePayload`
+>    - **`Sorry`** if the schemas are incompatible (see `r[session.handshake.sorry]`)
+>
+> 3. The initiator compares schemas and replies with one of:
+>    - **`LetsGo`**: confirms compatibility; the session is established
+>    - **`Sorry`**: rejects the session
+
+> r[session.handshake.cbor]
+>
+> All handshake messages (`Hello`, `HelloYourself`, `LetsGo`, `Sorry`) MUST
+> be CBOR-encoded. CBOR is self-describing and does not require a schema to
+> parse, avoiding the chicken-and-egg problem of needing a schema to read a
+> schema. After `LetsGo`, all subsequent communication is postcard-encoded
+> `MessagePayload` values, deserialized using translation plans built from
+> the schemas exchanged in the handshake.
+
+> r[session.handshake.sorry]
+>
+> `Sorry` MUST contain a structured CBOR description of the incompatibility:
+> which variants or fields the rejecting peer requires that the other peer's
+> schema does not provide. After sending or receiving `Sorry`, the session
+> MUST NOT proceed and the conduit SHOULD be closed.
+
+> r[session.handshake.protocol-schema]
+>
+> The `message_payload_schema` exchanged during the handshake describes the
+> `MessagePayload` enum — the top-level type for all post-handshake
+> communication. Each peer builds a translation plan for the other's
+> `MessagePayload` schema. This allows the protocol to evolve: peers with
+> different versions of `MessagePayload` can communicate as long as a
+> translation plan can be built.
+>
+> The sender MUST NOT send a `MessagePayload` variant that the receiver's
+> schema does not include. If a peer's schema is missing a variant the other
+> peer requires, the handshake MUST fail with `Sorry`.
+
+> r[session.handshake.protocol-schema.session-scoped]
+>
+> Protocol schemas are exchanged once per session during the handshake. They
+> are immutable for the session lifetime. Transparent reconnection (via
+> `StableConduit`) does not re-exchange protocol schemas. Session resumption
+> (new handshake) does.
+
+> r[session.handshake.version]
+>
+> The version field in `Hello` identifies the protocol generation. Version 8
+> uses the CBOR handshake with protocol schema exchange. Peers MUST reject
+> versions they do not support via `Sorry`.
 
 > r[session.handshake.resume]
 >
 > After initial establishment, the runtime MAY bind a replacement conduit onto
 > the same session. Resumption preserves the session's connection namespace and
-> any operation records attached to that session.
+> any operation records attached to that session. Protocol schemas are
+> re-exchanged on resumption (new handshake).
 
 > r[session.parity]
 >

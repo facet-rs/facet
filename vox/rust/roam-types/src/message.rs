@@ -268,9 +268,6 @@ structstruck::strike! {
                 // ========================================================================
                 // Keepalive
                 // ========================================================================
-                //
-                // NOTE: these variants are intentionally appended to preserve
-                // existing discriminants for earlier message payload variants.
 
                 /// Liveness probe for dead-peer detection.
                 Ping(pub struct Ping {
@@ -298,7 +295,6 @@ structstruck::strike! {
                     /// and the outer message is postcard-framed as usual.
                     pub schemas: Vec<u8>,
                 }),
-
             },
     }
 
