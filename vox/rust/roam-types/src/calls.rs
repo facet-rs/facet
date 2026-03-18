@@ -5,6 +5,12 @@ use crate::{
     MaybeSync, Metadata, RequestCall, RequestResponse, RoamError, SelfRef, ServiceDescriptor,
 };
 
+/// A boxed future that is `Send` on native targets and `!Send` on wasm32.
+pub type BoxFut<'a, T> = Pin<Box<dyn Future<Output = T> + MaybeSend + 'a>>;
+
+/// Result type for an RPC call: either a tracked response or an error.
+pub type CallResult = Result<crate::WithTracker<SelfRef<RequestResponse<'static>>>, RoamError>;
+
 // As a recap, a service defined like so:
 //
 // #[roam::service]
@@ -185,21 +191,13 @@ pub trait Caller: Clone + MaybeSend + MaybeSync + 'static {
     fn call<'a>(
         &'a self,
         call: RequestCall<'a>,
-    ) -> impl Future<
-        Output = Result<crate::WithTracker<SelfRef<RequestResponse<'static>>>, RoamError>,
-    > + MaybeSend
-    + 'a;
+    ) -> impl Future<Output = CallResult> + MaybeSend + 'a;
 
     /// Resolve when the underlying connection closes.
     ///
     /// Runtime-backed callers can override this to expose connection liveness.
     /// The default implementation never resolves.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        Box::pin(std::future::pending())
-    }
-    #[cfg(target_arch = "wasm32")]
-    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + '_>> {
+    fn closed(&self) -> BoxFut<'_, ()> {
         Box::pin(std::future::pending())
     }
 
@@ -222,40 +220,9 @@ pub trait Caller: Clone + MaybeSend + MaybeSync + 'static {
 }
 
 trait ErasedCallerDyn: MaybeSend + MaybeSync + 'static {
-    #[cfg(not(target_arch = "wasm32"))]
-    fn call<'a>(
-        &'a self,
-        call: RequestCall<'a>,
-    ) -> Pin<
-        Box<
-            dyn Future<
-                    Output = Result<
-                        crate::WithTracker<SelfRef<RequestResponse<'static>>>,
-                        RoamError,
-                    >,
-                > + Send
-                + 'a,
-        >,
-    >;
-    #[cfg(target_arch = "wasm32")]
-    fn call<'a>(
-        &'a self,
-        call: RequestCall<'a>,
-    ) -> Pin<
-        Box<
-            dyn Future<
-                    Output = Result<
-                        crate::WithTracker<SelfRef<RequestResponse<'static>>>,
-                        RoamError,
-                    >,
-                > + 'a,
-        >,
-    >;
+    fn call<'a>(&'a self, call: RequestCall<'a>) -> BoxFut<'a, CallResult>;
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
-    #[cfg(target_arch = "wasm32")]
-    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + '_>>;
+    fn closed(&self) -> BoxFut<'_, ()>;
 
     fn is_connected(&self) -> bool;
 
@@ -264,46 +231,11 @@ trait ErasedCallerDyn: MaybeSend + MaybeSync + 'static {
 }
 
 impl<C: Caller> ErasedCallerDyn for C {
-    #[cfg(not(target_arch = "wasm32"))]
-    fn call<'a>(
-        &'a self,
-        call: RequestCall<'a>,
-    ) -> Pin<
-        Box<
-            dyn Future<
-                    Output = Result<
-                        crate::WithTracker<SelfRef<RequestResponse<'static>>>,
-                        RoamError,
-                    >,
-                > + Send
-                + 'a,
-        >,
-    > {
-        Box::pin(Caller::call(self, call))
-    }
-    #[cfg(target_arch = "wasm32")]
-    fn call<'a>(
-        &'a self,
-        call: RequestCall<'a>,
-    ) -> Pin<
-        Box<
-            dyn Future<
-                    Output = Result<
-                        crate::WithTracker<SelfRef<RequestResponse<'static>>>,
-                        RoamError,
-                    >,
-                > + 'a,
-        >,
-    > {
+    fn call<'a>(&'a self, call: RequestCall<'a>) -> BoxFut<'a, CallResult> {
         Box::pin(Caller::call(self, call))
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        Caller::closed(self)
-    }
-    #[cfg(target_arch = "wasm32")]
-    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + '_>> {
+    fn closed(&self) -> BoxFut<'_, ()> {
         Caller::closed(self)
     }
 
@@ -357,10 +289,7 @@ impl Caller for ErasedCaller {
     fn call<'a>(
         &'a self,
         mut call: RequestCall<'a>,
-    ) -> impl Future<
-        Output = Result<crate::WithTracker<SelfRef<RequestResponse<'static>>>, RoamError>,
-    > + MaybeSend
-    + 'a {
+    ) -> impl Future<Output = CallResult> + MaybeSend + 'a {
         async move {
             let Some(service) = self.service else {
                 return self.inner.call(call).await;
@@ -392,13 +321,7 @@ impl Caller for ErasedCaller {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        self.inner.closed()
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + '_>> {
+    fn closed(&self) -> BoxFut<'_, ()> {
         self.inner.closed()
     }
 

@@ -54,7 +54,7 @@ const SH_HAS_LAST_RECEIVED: u8 = 0b0000_0010;
     zerocopy::Immutable,
 )]
 #[repr(C)]
-pub(crate) struct ClientHello {
+pub struct ClientHello {
     magic: LeU32,
     flags: u8,
     resume_key: ResumeKey,

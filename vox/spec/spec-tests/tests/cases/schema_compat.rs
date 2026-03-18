@@ -36,7 +36,7 @@ pub fn run_schema_compat_reordered_fields() {
         let record = Record {
             alpha: 42,
             beta: "hello".to_string(),
-            gamma: 3.14,
+            gamma: 5.25_f64,
         };
         let resp = client
             .echo_record(record.clone())
@@ -116,7 +116,7 @@ pub fn run_schema_compat_incompatible_type_change() {
         let (client, mut child) = accept_subject_cmd_tcp(EVOLVED_TS_CMD).await?;
         let m = Measurement {
             unit: "meters".to_string(),
-            value: 3.14,
+            value: 5.25,
         };
         let result = client.echo_measurement(m).await;
         if result.is_ok() {

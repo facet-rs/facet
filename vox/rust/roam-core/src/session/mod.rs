@@ -917,17 +917,17 @@ impl Session {
                         RequestBody::Response(resp) => Some(&resp.schemas),
                         _ => None,
                     };
-                    if let Some(schemas_cbor) = schemas_cbor {
-                        if !schemas_cbor.is_empty() {
-                            match schemas_cbor.parse() {
-                                Ok(payload) => {
-                                    if let Err(e) = self.schema_recv_tracker.record_received(payload) {
-                                        warn!("failed to record received schemas: {}", e);
-                                    }
+                    if let Some(schemas_cbor) = schemas_cbor
+                        && !schemas_cbor.is_empty()
+                    {
+                        match schemas_cbor.parse() {
+                            Ok(payload) => {
+                                if let Err(e) = self.schema_recv_tracker.record_received(payload) {
+                                    warn!("failed to record received schemas: {}", e);
                                 }
-                                Err(e) => {
-                                    warn!("failed to parse inlined schemas: {}", e);
-                                }
+                            }
+                            Err(e) => {
+                                warn!("failed to parse inlined schemas: {}", e);
                             }
                         }
                     }
@@ -1381,40 +1381,40 @@ impl SessionCore {
                 match &mut req.body {
                     RequestBody::Call(call) => {
                         let key = (roam_types::BindingDirection::Args, call.method_id);
-                        if !conn_state.method_tracker.contains(&key) {
-                            if let Payload::Outgoing { shape, .. } = &call.args {
-                                let schemas = conn_state.send_tracker.prepare_send_for_method(
-                                    call.method_id,
-                                    shape,
-                                    roam_types::BindingDirection::Args,
-                                );
-                                if !schemas.is_empty() {
-                                    call.schemas = schemas;
-                                }
-                                conn_state.method_tracker.insert(key);
+                        if !conn_state.method_tracker.contains(&key)
+                            && let Payload::Outgoing { shape, .. } = &call.args
+                        {
+                            let schemas = conn_state.send_tracker.prepare_send_for_method(
+                                call.method_id,
+                                shape,
+                                roam_types::BindingDirection::Args,
+                            );
+                            if !schemas.is_empty() {
+                                call.schemas = schemas;
                             }
+                            conn_state.method_tracker.insert(key);
                         }
                     }
                     RequestBody::Response(resp) => {
                         if let Some(method_id) = conn_state.inflight_incoming.remove(&req.id) {
                             let key = (roam_types::BindingDirection::Response, method_id);
-                            if !conn_state.method_tracker.contains(&key) {
-                                if let Payload::Outgoing { shape, .. } = &resp.ret {
-                                    let schemas = conn_state.send_tracker.prepare_send_for_method(
-                                        method_id,
-                                        shape,
-                                        roam_types::BindingDirection::Response,
-                                    );
-                                    roam_types::dlog!(
-                                        "[schema] prepared {} bytes of response schemas for method {:?}",
-                                        schemas.0.len(),
-                                        method_id
-                                    );
-                                    if !schemas.is_empty() {
-                                        resp.schemas = schemas;
-                                    }
-                                    conn_state.method_tracker.insert(key);
+                            if !conn_state.method_tracker.contains(&key)
+                                && let Payload::Outgoing { shape, .. } = &resp.ret
+                            {
+                                let schemas = conn_state.send_tracker.prepare_send_for_method(
+                                    method_id,
+                                    shape,
+                                    roam_types::BindingDirection::Response,
+                                );
+                                roam_types::dlog!(
+                                    "[schema] prepared {} bytes of response schemas for method {:?}",
+                                    schemas.0.len(),
+                                    method_id
+                                );
+                                if !schemas.is_empty() {
+                                    resp.schemas = schemas;
                                 }
+                                conn_state.method_tracker.insert(key);
                             }
                         }
                     }

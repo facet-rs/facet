@@ -526,7 +526,7 @@ fn generate_dispatch_arm(
     let ok_ty = ok_ty_ref.to_token_stream();
     // For the response Shape expression, we need 'static (Shape is always 'static).
     // Replace 'roam with 'static so the Shape reference is valid in the dispatch scope.
-    let ok_ty_static: proc_macro2::TokenStream = ok_ty
+    let _ok_ty_static: proc_macro2::TokenStream = ok_ty
         .to_string()
         .replace("'roam", "'static")
         .parse()

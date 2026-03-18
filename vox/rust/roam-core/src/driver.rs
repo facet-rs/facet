@@ -657,17 +657,17 @@ impl Caller for DriverCaller {
                                 return Err(RoamError::SessionShutdown);
                             }
                         }
-                        if let Some((args_ptr, plan)) = caller_channel_plan {
-                            if let Some(binder) = self.channel_binder() {
-                                let channels = unsafe {
-                                    roam_types::bind_channels_caller_args(
-                                        args_ptr as *mut u8,
-                                        plan,
-                                        binder,
-                                    )
-                                };
-                                call.channels = channels;
-                            }
+                        if let Some((args_ptr, plan)) = caller_channel_plan
+                            && let Some(binder) = self.channel_binder()
+                        {
+                            let channels = unsafe {
+                                roam_types::bind_channels_caller_args(
+                                    args_ptr as *mut u8,
+                                    plan,
+                                    binder,
+                                )
+                            };
+                            call.channels = channels;
                         }
                         let _ = self.sender.send(ConnectionMessage::Request(RequestMessage {
                             id: req_id,

@@ -3,6 +3,9 @@
 list:
     just --list
 
+check:
+    cargo clippy --all-targets
+
 rust *args:
     cargo build --package subject-rust
     cargo nextest run -p spec-tests {{ args }}

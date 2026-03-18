@@ -99,8 +99,8 @@ where
     let handshake_result = handshake_as_initiator(&tx, &mut rx, settings, true, None)
         .await
         .map_err(session_error_from_handshake)?;
-    let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
-        .map_err(|e| SessionError::Protocol(e))?;
+    let message_plan =
+        crate::MessagePlan::from_handshake(&handshake_result).map_err(SessionError::Protocol)?;
     Ok(SessionInitiatorBuilder::new(
         BareConduit::with_message_plan(SplitLink { tx, rx }, message_plan),
         handshake_result,
@@ -124,8 +124,8 @@ where
     let handshake_result = handshake_as_acceptor(&tx, &mut rx, settings, true, false, None)
         .await
         .map_err(session_error_from_handshake)?;
-    let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
-        .map_err(|e| SessionError::Protocol(e))?;
+    let message_plan =
+        crate::MessagePlan::from_handshake(&handshake_result).map_err(SessionError::Protocol)?;
     Ok(SessionAcceptorBuilder::new(
         BareConduit::with_message_plan(SplitLink { tx, rx }, message_plan),
         handshake_result,
