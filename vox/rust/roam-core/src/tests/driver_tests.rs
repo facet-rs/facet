@@ -1246,6 +1246,92 @@ async fn call_through_cbor_handshake_reaches_handler() {
     assert_eq!(value, 42);
 }
 
+/// Same as above but through the stable conduit path.
+#[tokio::test]
+async fn call_through_stable_conduit_reaches_handler() {
+    let (client_link, server_link) = memory_link_pair(64);
+
+    let (server_result, client_result) = tokio::try_join!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            acceptor_on(server_link).establish::<DriverCaller>(EchoHandler),
+        ),
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            initiator_on(client_link, TransportMode::Stable).establish::<DriverCaller>(()),
+        ),
+    )
+    .expect("session establishment timed out");
+
+    let (_server_caller, _server_handle) = server_result.expect("server establish failed");
+    let (caller, _client_handle) = client_result.expect("client establish failed");
+
+    let response = tokio::time::timeout(
+        Duration::from_secs(1),
+        caller.call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&42_u32),
+            schemas: Default::default(),
+            channels: vec![],
+            metadata: Default::default(),
+        }),
+    )
+    .await
+    .expect("call timed out")
+    .expect("call should succeed");
+
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
+    assert_eq!(value, 42);
+}
+
+/// Multiple calls through stable conduit to verify seq/ack tracking works.
+#[tokio::test]
+async fn multiple_calls_through_stable_conduit() {
+    let (client_link, server_link) = memory_link_pair(64);
+
+    let (server_result, client_result) = tokio::try_join!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            acceptor_on(server_link).establish::<DriverCaller>(EchoHandler),
+        ),
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            initiator_on(client_link, TransportMode::Stable).establish::<DriverCaller>(()),
+        ),
+    )
+    .expect("session establishment timed out");
+
+    let (_server_caller, _server_handle) = server_result.expect("server establish failed");
+    let (caller, _client_handle) = client_result.expect("client establish failed");
+
+    for i in 0_u32..10 {
+        let response = tokio::time::timeout(
+            Duration::from_secs(1),
+            caller.call(RequestCall {
+                method_id: MethodId(1),
+                args: Payload::outgoing(&i),
+                schemas: Default::default(),
+                channels: vec![],
+                metadata: Default::default(),
+            }),
+        )
+        .await
+        .expect("call timed out")
+        .expect("call should succeed");
+
+        let ret_bytes = match &response.ret {
+            Payload::Incoming(bytes) => *bytes,
+            _ => panic!("expected incoming payload in response"),
+        };
+        let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
+        assert_eq!(value, i);
+    }
+}
+
 #[tokio::test]
 async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
     let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);

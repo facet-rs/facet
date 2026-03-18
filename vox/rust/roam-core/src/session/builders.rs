@@ -1441,10 +1441,15 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         .map_err(session_error_from_handshake)?;
         let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
             .map_err(SessionError::Protocol)?;
+        // Read the stable conduit's ClientHello — the initiator sends it
+        // after the CBOR session handshake completes.
+        let client_hello = crate::stable_conduit::recv_client_hello(&mut link.rx)
+            .await
+            .map_err(|e| SessionError::Protocol(format!("stable conduit setup failed: {e}")))?;
         let conduit = StableConduit::<MessageFamily, _>::with_first_link(
             link.tx,
             link.rx,
-            None,
+            Some(client_hello),
             crate::stable_conduit::exhausted_source::<SplitLink<L::Tx, L::Rx>>(),
         )
         .await

@@ -502,6 +502,15 @@ async fn recv_handshake<
         .map_err(|_| StableConduitError::Setup("handshake message size mismatch".into()))
 }
 
+/// Receive a stable conduit `ClientHello` from a link.
+///
+/// Used by the acceptor when the CBOR session handshake has already been
+/// completed on the link — the next bytes are the stable conduit's
+/// binary `ClientHello`.
+pub async fn recv_client_hello<Rx: LinkRx>(rx: &mut Rx) -> Result<ClientHello, StableConduitError> {
+    recv_handshake::<_, ClientHello>(rx).await
+}
+
 fn fresh_key() -> Result<ResumeKey, StableConduitError> {
     let mut key = ResumeKey([0u8; 16]);
     getrandom::fill(&mut key.0)
