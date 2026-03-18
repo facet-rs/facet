@@ -181,7 +181,7 @@ pub enum Message {
 // Schema evolution types (v1 — the "original" definitions)
 // ============================================================================
 
-/// Tests added optional field: v1 has {name, bio}, v2 adds {avatar: Option<String>}.
+/// Tests added optional field: v1 has {name, bio}, v2 adds {avatar: `Option<String>`}.
 #[derive(Debug, Clone, PartialEq, Facet)]
 pub struct Profile {
     pub name: String,
