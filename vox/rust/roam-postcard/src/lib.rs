@@ -361,23 +361,29 @@ mod tests {
     #[test]
     fn translation_remote_has_extra_field() {
         // Remote has fields [x, y, z], local only has [x, z]
-        #[derive(Facet, Debug)]
-        struct RemotePoint {
-            x: f64,
-            y: f64,
-            z: f64,
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Point {
+                pub x: f64,
+                pub y: f64,
+                pub z: f64,
+            }
         }
 
-        #[derive(Facet, Debug, PartialEq)]
-        struct LocalPoint {
-            x: f64,
-            z: f64,
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Point {
+                pub x: f64,
+                pub z: f64,
+            }
         }
 
-        let r = plan_for(RemotePoint::SHAPE, LocalPoint::SHAPE).unwrap();
+        let r = plan_for(remote::Point::SHAPE, local::Point::SHAPE).unwrap();
 
         // Serialize with remote type
-        let remote_val = RemotePoint {
+        let remote_val = remote::Point {
             x: 1.0,
             y: 2.0,
             z: 3.0,
@@ -385,35 +391,41 @@ mod tests {
         let bytes = to_vec(&remote_val).unwrap();
 
         // Deserialize with plan into local type — y should be skipped
-        let local_val: LocalPoint =
+        let local_val: local::Point =
             from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
-        assert_eq!(local_val, LocalPoint { x: 1.0, z: 3.0 });
+        assert_eq!(local_val, local::Point { x: 1.0, z: 3.0 });
     }
 
     // r[verify schema.translation.fill-defaults]
     #[test]
     fn translation_remote_missing_field_with_default() {
         // Remote has [x], local has [x, y] where y has a default
-        #[derive(Facet, Debug)]
-        struct RemotePoint {
-            x: f64,
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Point {
+                pub x: f64,
+            }
         }
 
-        #[derive(Facet, Debug, PartialEq)]
-        struct LocalPoint {
-            x: f64,
-            #[facet(default)]
-            y: f64,
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Point {
+                pub x: f64,
+                #[facet(default)]
+                pub y: f64,
+            }
         }
 
-        let r = plan_for(RemotePoint::SHAPE, LocalPoint::SHAPE).unwrap();
+        let r = plan_for(remote::Point::SHAPE, local::Point::SHAPE).unwrap();
 
-        let remote_val = RemotePoint { x: 42.0 };
+        let remote_val = remote::Point { x: 42.0 };
         let bytes = to_vec(&remote_val).unwrap();
 
-        let local_val: LocalPoint =
+        let local_val: local::Point =
             from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
-        assert_eq!(local_val, LocalPoint { x: 42.0, y: 0.0 });
+        assert_eq!(local_val, local::Point { x: 42.0, y: 0.0 });
     }
 
     // r[verify schema.translation.field-matching]
@@ -422,24 +434,30 @@ mod tests {
     #[test]
     fn translation_missing_required_field_errors() {
         // Remote has [x], local has [x, y] where y is required (no default)
-        #[derive(Facet, Debug)]
-        struct RemotePoint {
-            x: f64,
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Point {
+                pub x: f64,
+            }
         }
 
-        #[derive(Facet, Debug)]
-        struct LocalPoint {
-            x: f64,
-            y: f64,
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Point {
+                pub x: f64,
+                pub y: f64,
+            }
         }
 
-        let result = plan_for(RemotePoint::SHAPE, LocalPoint::SHAPE);
+        let result = plan_for(remote::Point::SHAPE, local::Point::SHAPE);
 
         assert!(result.is_err());
         let err = result.unwrap_err();
         match &err.kind {
-            error::TranslationErrorKind::MissingRequiredField { field_name, .. } => {
-                assert_eq!(field_name, "y");
+            error::TranslationErrorKind::MissingRequiredField { field, .. } => {
+                assert_eq!(field.name, "y");
             }
             other => panic!("expected MissingRequiredField, got {other:?}"),
         }
@@ -447,7 +465,7 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("y"), "error should name the field: {msg}");
         assert!(
-            msg.contains("missing required"),
+            msg.contains("required field") && msg.contains("missing"),
             "error should say missing required: {msg}"
         );
     }
@@ -456,31 +474,37 @@ mod tests {
     #[test]
     fn translation_field_reorder() {
         // Remote has [b, a], local has [a, b] — different field order
-        #[derive(Facet, Debug)]
-        struct RemotePair {
-            b: String,
-            a: u32,
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Pair {
+                pub b: String,
+                pub a: u32,
+            }
         }
 
-        #[derive(Facet, Debug, PartialEq)]
-        struct LocalPair {
-            a: u32,
-            b: String,
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Pair {
+                pub a: u32,
+                pub b: String,
+            }
         }
 
-        let r = plan_for(RemotePair::SHAPE, LocalPair::SHAPE).unwrap();
+        let r = plan_for(remote::Pair::SHAPE, local::Pair::SHAPE).unwrap();
 
-        let remote_val = RemotePair {
+        let remote_val = remote::Pair {
             b: "hello".to_string(),
             a: 42,
         };
         let bytes = to_vec(&remote_val).unwrap();
 
-        let local_val: LocalPair =
+        let local_val: local::Pair =
             from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
         assert_eq!(
             local_val,
-            LocalPair {
+            local::Pair {
                 a: 42,
                 b: "hello".to_string()
             }
@@ -491,33 +515,39 @@ mod tests {
     #[test]
     fn translation_skip_complex_field() {
         // Remote has an extra Vec<String> field that local doesn't have
-        #[derive(Facet, Debug)]
-        struct RemoteMsg {
-            id: u32,
-            tags: Vec<String>,
-            name: String,
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Msg {
+                pub id: u32,
+                pub tags: Vec<String>,
+                pub name: String,
+            }
         }
 
-        #[derive(Facet, Debug, PartialEq)]
-        struct LocalMsg {
-            id: u32,
-            name: String,
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Msg {
+                pub id: u32,
+                pub name: String,
+            }
         }
 
-        let r = plan_for(RemoteMsg::SHAPE, LocalMsg::SHAPE).unwrap();
+        let r = plan_for(remote::Msg::SHAPE, local::Msg::SHAPE).unwrap();
 
-        let remote_val = RemoteMsg {
+        let remote_val = remote::Msg {
             id: 99,
             tags: vec!["a".into(), "bb".into(), "ccc".into()],
             name: "test".to_string(),
         };
         let bytes = to_vec(&remote_val).unwrap();
 
-        let local_val: LocalMsg =
+        let local_val: local::Msg =
             from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
         assert_eq!(
             local_val,
-            LocalMsg {
+            local::Msg {
                 id: 99,
                 name: "test".to_string()
             }
@@ -549,34 +579,41 @@ mod tests {
     #[test]
     fn translation_combined_add_remove_reorder() {
         // Remote: [a, b, c] → Local: [c, d, a] (b removed, d added with default, c/a reordered)
-        #[derive(Facet, Debug)]
-        struct Remote {
-            a: u32,
-            b: String,
-            c: bool,
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Combo {
+                pub a: u32,
+                pub b: String,
+                pub c: bool,
+            }
         }
 
-        #[derive(Facet, Debug, PartialEq)]
-        struct Local {
-            c: bool,
-            #[facet(default)]
-            d: u64,
-            a: u32,
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Combo {
+                pub c: bool,
+                #[facet(default)]
+                pub d: u64,
+                pub a: u32,
+            }
         }
 
-        let r = plan_for(Remote::SHAPE, Local::SHAPE).unwrap();
+        let r = plan_for(remote::Combo::SHAPE, local::Combo::SHAPE).unwrap();
 
-        let remote_val = Remote {
+        let remote_val = remote::Combo {
             a: 42,
             b: "dropped".to_string(),
             c: true,
         };
         let bytes = to_vec(&remote_val).unwrap();
 
-        let local_val: Local = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        let local_val: local::Combo =
+            from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
         assert_eq!(
             local_val,
-            Local {
+            local::Combo {
                 c: true,
                 d: 0, // default
                 a: 42,
@@ -588,24 +625,30 @@ mod tests {
     #[test]
     fn translation_error_includes_context() {
         // Verify errors include remote type ID, local type name, field name
-        #[derive(Facet, Debug)]
-        struct RemoteOuter {
-            inner: u32,
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Outer {
+                pub inner: u32,
+            }
         }
 
-        // LocalOuter has a required field 'missing' that remote doesn't have
-        #[derive(Facet, Debug)]
-        struct LocalOuter {
-            inner: u32,
-            missing: String,
+        // local::Outer has a required field 'missing' that remote doesn't have
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Outer {
+                pub inner: u32,
+                pub missing: String,
+            }
         }
 
-        let err = plan_for(RemoteOuter::SHAPE, LocalOuter::SHAPE).unwrap_err();
+        let err = plan_for(remote::Outer::SHAPE, local::Outer::SHAPE).unwrap_err();
 
         let msg = err.to_string();
         // Should include local type name
         assert!(
-            msg.contains("LocalOuter"),
+            msg.contains("Outer"),
             "error should include local type name: {msg}"
         );
         // Should include missing field name
@@ -613,15 +656,15 @@ mod tests {
             msg.contains("missing"),
             "error should include field name: {msg}"
         );
-        // Should include "missing required"
+        // Should include "required field" and "missing"
         assert!(
-            msg.contains("missing required"),
+            msg.contains("required field") && msg.contains("missing"),
             "error should describe the incompatibility: {msg}"
         );
-        // Remote type ID should be present
+        // Error should have useful context
         assert!(
-            !format!("{:?}", err.remote_type_id).is_empty(),
-            "error should have a remote_type_id"
+            !format!("{err}").is_empty(),
+            "error Display should produce output"
         );
     }
 
@@ -645,26 +688,32 @@ mod tests {
     #[test]
     fn translation_enum_variant_added() {
         // Remote has [A, B], local has [A, B, C] — C never sent, that's fine
-        #[derive(Facet, Debug)]
-        #[repr(u8)]
-        enum RemoteCmd {
-            Start,
-            Stop,
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            #[repr(u8)]
+            pub enum Cmd {
+                Start,
+                Stop,
+            }
         }
 
-        #[derive(Facet, Debug, PartialEq)]
-        #[repr(u8)]
-        enum LocalCmd {
-            Start,
-            Stop,
-            Restart,
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            #[repr(u8)]
+            pub enum Cmd {
+                Start,
+                Stop,
+                Restart,
+            }
         }
 
-        let r = plan_for(RemoteCmd::SHAPE, LocalCmd::SHAPE).unwrap();
+        let r = plan_for(remote::Cmd::SHAPE, local::Cmd::SHAPE).unwrap();
 
-        let bytes = to_vec(&RemoteCmd::Stop).unwrap();
-        let result: LocalCmd = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
-        assert_eq!(result, LocalCmd::Stop);
+        let bytes = to_vec(&remote::Cmd::Stop).unwrap();
+        let result: local::Cmd = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(result, local::Cmd::Stop);
     }
 
     // r[verify schema.translation.enum.unknown-variant]
@@ -672,31 +721,38 @@ mod tests {
     #[test]
     fn translation_enum_unknown_variant_errors_at_runtime() {
         // Remote has [A, B, C], local has [A, B] — receiving C should error
-        #[derive(Facet, Debug)]
-        #[repr(u8)]
-        enum RemoteCmd {
-            Start,
-            Stop,
-            Restart,
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            #[repr(u8)]
+            pub enum Cmd {
+                Start,
+                Stop,
+                Restart,
+            }
         }
 
-        #[derive(Facet, Debug, PartialEq)]
-        #[repr(u8)]
-        enum LocalCmd {
-            Start,
-            Stop,
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            #[repr(u8)]
+            pub enum Cmd {
+                Start,
+                Stop,
+            }
         }
 
-        let r = plan_for(RemoteCmd::SHAPE, LocalCmd::SHAPE).unwrap();
+        let r = plan_for(remote::Cmd::SHAPE, local::Cmd::SHAPE).unwrap();
 
         // Sending Start/Stop works
-        let bytes = to_vec(&RemoteCmd::Start).unwrap();
-        let result: LocalCmd = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
-        assert_eq!(result, LocalCmd::Start);
+        let bytes = to_vec(&remote::Cmd::Start).unwrap();
+        let result: local::Cmd = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(result, local::Cmd::Start);
 
         // Sending Restart (index 2) should fail at runtime
-        let bytes = to_vec(&RemoteCmd::Restart).unwrap();
-        let result: Result<LocalCmd, _> = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry);
+        let bytes = to_vec(&remote::Cmd::Restart).unwrap();
+        let result: Result<local::Cmd, _> =
+            from_slice_with_plan(&bytes, &r.plan, &r.remote.registry);
         assert!(result.is_err());
     }
 

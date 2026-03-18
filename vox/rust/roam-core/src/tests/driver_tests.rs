@@ -1162,6 +1162,90 @@ async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
     assert_eq!(runs_check.load(Ordering::SeqCst), 1);
 }
 
+/// Verify that MessagePlan built from identical schemas can round-trip a message.
+#[test]
+fn message_plan_from_identical_schemas_round_trips() {
+    let schemas = roam_types::extract_schemas(<Message<'static> as Facet<'static>>::SHAPE);
+    let handshake_result = HandshakeResult {
+        role: SessionRole::Initiator,
+        our_settings: ConnectionSettings {
+            parity: Parity::Odd,
+            max_concurrent_requests: 64,
+        },
+        peer_settings: ConnectionSettings {
+            parity: Parity::Even,
+            max_concurrent_requests: 64,
+        },
+        peer_supports_retry: false,
+        session_resume_key: None,
+        peer_resume_key: None,
+        our_schema: schemas.clone(),
+        peer_schema: schemas,
+    };
+    let plan = crate::MessagePlan::from_handshake(&handshake_result)
+        .expect("should build message plan from identical schemas");
+
+    // Serialize a simple Ping message
+    let msg = Message {
+        connection_id: roam_types::ConnectionId::ROOT,
+        payload: MessagePayload::Ping(roam_types::Ping { nonce: 42 }),
+    };
+    let bytes = roam_postcard::to_vec(&msg).expect("serialize message");
+    let backing = Backing::Boxed(bytes.into());
+
+    // Deserialize with the plan
+    let decoded: SelfRef<Message<'static>> =
+        crate::deserialize_postcard_with_plan(backing, &plan.plan, &plan.registry)
+            .expect("should deserialize with identical-schema plan");
+    assert_eq!(decoded.connection_id, roam_types::ConnectionId::ROOT);
+    match &decoded.payload {
+        MessagePayload::Ping(ping) => assert_eq!(ping.nonce, 42),
+        other => panic!("expected Ping, got {other:?}"),
+    }
+}
+
+/// Minimal test: establish via real CBOR handshake, send one call, verify handler runs.
+#[tokio::test]
+async fn call_through_cbor_handshake_reaches_handler() {
+    let (client_link, server_link) = memory_link_pair(64);
+
+    let (server_result, client_result) = tokio::try_join!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            acceptor_on(server_link).establish::<DriverCaller>(EchoHandler),
+        ),
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            initiator_on(client_link, TransportMode::Bare).establish::<DriverCaller>(()),
+        ),
+    )
+    .expect("session establishment timed out");
+
+    let (_server_caller, _server_handle) = server_result.expect("server establish failed");
+    let (caller, _client_handle) = client_result.expect("client establish failed");
+
+    let response = tokio::time::timeout(
+        Duration::from_secs(1),
+        caller.call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&42_u32),
+            schemas: Default::default(),
+            channels: vec![],
+            metadata: Default::default(),
+        }),
+    )
+    .await
+    .expect("call timed out")
+    .expect("call should succeed");
+
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
+    assert_eq!(value, 42);
+}
+
 #[tokio::test]
 async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
     let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);

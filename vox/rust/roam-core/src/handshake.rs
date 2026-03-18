@@ -30,11 +30,9 @@ impl std::fmt::Display for HandshakeError {
 
 impl std::error::Error for HandshakeError {}
 
-/// Extract the MessagePayload schema from the static shape.
-fn message_payload_schema() -> Vec<Schema> {
-    roam_types::extract_schemas(
-        <roam_types::MessagePayload<'static> as facet::Facet<'static>>::SHAPE,
-    )
+/// Extract the Message schema from the static shape.
+fn message_schema() -> Vec<Schema> {
+    roam_types::extract_schemas(<roam_types::Message<'static> as facet::Facet<'static>>::SHAPE)
 }
 
 /// Send a CBOR-encoded handshake message on a raw link.
@@ -72,7 +70,7 @@ pub async fn handshake_as_initiator<Tx: LinkTx, Rx: LinkRx>(
     supports_retry: bool,
     resume_key: Option<&SessionResumeKey>,
 ) -> Result<HandshakeResult, HandshakeError> {
-    let our_schema = message_payload_schema();
+    let our_schema = message_schema();
 
     let hello = roam_types::Hello {
         parity: settings.parity,
@@ -169,7 +167,7 @@ pub async fn handshake_as_acceptor<Tx: LinkTx, Rx: LinkRx>(
         None
     };
 
-    let our_schema = message_payload_schema();
+    let our_schema = message_schema();
 
     // Step 2: Send HelloYourself
     let hy = roam_types::HelloYourself {
