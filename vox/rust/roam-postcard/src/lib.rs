@@ -362,6 +362,46 @@ mod tests {
     }
 
     #[test]
+    fn scatter_staged_segments_coalesce() {
+        // A struct with no borrowed fields — all structural bytes should merge
+        // into a single staged segment.
+        #[derive(Facet)]
+        struct AllScalar {
+            a: u32,
+            b: u32,
+            c: bool,
+            d: u64,
+        }
+
+        let val = AllScalar {
+            a: 1,
+            b: 2,
+            c: true,
+            d: 999,
+        };
+
+        let peek = facet_reflect::Peek::new(&val);
+        let plan = peek_to_scatter_plan(peek).unwrap();
+
+        let segments = plan.segments();
+        assert_eq!(
+            segments.len(),
+            1,
+            "all-scalar struct should produce exactly 1 coalesced staged segment, got {segments:?}"
+        );
+        assert!(
+            matches!(segments[0], Segment::Staged { .. }),
+            "single segment should be Staged"
+        );
+
+        // Verify output still matches to_vec
+        let direct = to_vec(&val).unwrap();
+        let mut scattered = vec![0u8; plan.total_size()];
+        plan.write_into(&mut scattered);
+        assert_eq!(scattered, direct);
+    }
+
+    #[test]
     fn round_trip_borrowed_identity() {
         #[derive(Facet, Debug, PartialEq)]
         struct Msg {
