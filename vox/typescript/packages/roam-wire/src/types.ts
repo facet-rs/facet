@@ -1,5 +1,5 @@
 // Re-export all generated wire protocol types
-export * from "./types.generated.ts";
+export * from "./wire.generated.ts";
 
 // Hand-written additions that aren't derivable from Rust shapes
 import type {
@@ -9,7 +9,7 @@ import type {
   MetadataFlags,
   MetadataValue,
   Parity,
-} from "./types.generated.ts";
+} from "./wire.generated.ts";
 
 export type Metadata = MetadataEntry[];
 

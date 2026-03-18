@@ -2418,6 +2418,7 @@ name = "roam-codegen"
 version = "7.3.0"
 dependencies = [
  "facet",
+ "facet-cbor",
  "facet-core",
  "heck 0.5.0",
  "roam",

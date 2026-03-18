@@ -13,8 +13,6 @@ export type {
   MetadataValue,
   MetadataFlags,
   MetadataEntry,
-  Hello,
-  HelloYourself,
   ProtocolError,
   ConnectionOpen,
   ConnectionAccept,
@@ -23,6 +21,7 @@ export type {
   RequestId,
   MethodId,
   ChannelId,
+  CborPayload,
   RequestCall,
   RequestResponse,
   RequestCancel,
@@ -36,48 +35,28 @@ export type {
   ChannelMessage,
   Ping,
   Pong,
-  SchemaMessage,
   MessagePayload,
   Message,
   Metadata,
-  MessageHello,
-  MessageHelloYourself,
-  MessageProtocolError,
-  MessagePing,
-  MessagePong,
-  MessageConnect,
-  MessageAccept,
-  MessageReject,
-  MessageGoodbye,
-  MessageRequest,
-  MessageResponse,
-  MessageCancel,
-  MessageData,
-  MessageClose,
-  MessageReset,
-  MessageCredit,
 } from "./types.ts";
 
 export {
-  MessageDiscriminant,
+  ParityDiscriminant,
   MetadataValueDiscriminant,
   RequestBodyDiscriminant,
   ChannelBodyDiscriminant,
-} from "./types.ts";
+  MessagePayloadDiscriminant,
+} from "./wire.generated.ts";
 
 export {
   MetadataFlagValues,
   parityOdd,
   parityEven,
   connectionSettings,
-  helloV7,
-  helloYourself,
   metadataString,
   metadataBytes,
   metadataU64,
   metadataEntry,
-  messageHello,
-  messageHelloYourself,
   messageProtocolError,
   messagePing,
   messagePong,
@@ -100,7 +79,8 @@ export {
 } from "./codec.ts";
 
 export {
-  MessageSchema,
+  type Schema,
+  type SchemaRegistry,
   wireMessageSchemasCbor,
   wireSchemaRegistry,
 } from "./schemas.ts";
