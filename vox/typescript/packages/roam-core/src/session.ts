@@ -188,10 +188,11 @@ async function makeInitiatorEstablishedTransport(
   if (isLinkSource(transport)) {
     const attachment = await transport.nextLink();
     await requestTransportMode(attachment.link, conduit);
-    if (conduit === "stable") {
-      throw SessionError.protocol("raw CBOR handshake for stable conduit is not implemented yet");
-    }
     const handshake = await handshakeAsInitiator(attachment.link, localSettings, true, null);
+    if (conduit === "stable") {
+      const stableConduit = await StableConduit.connect(singleLinkSource(attachment.link));
+      return { conduit: stableConduit, handshake };
+    }
     return {
       conduit: new BareConduit(attachment.link),
       handshake,
@@ -199,11 +200,12 @@ async function makeInitiatorEstablishedTransport(
   }
 
   await requestTransportMode(transport, conduit);
+  const handshake = await handshakeAsInitiator(transport, localSettings, true, null);
   if (conduit === "stable") {
-    throw SessionError.protocol("raw CBOR handshake for stable conduit is not implemented yet");
+    const stableConduit = await StableConduit.connect(singleLinkSource(transport));
+    return { conduit: stableConduit, handshake };
   }
 
-  const handshake = await handshakeAsInitiator(transport, localSettings, true, null);
   return {
     conduit: new BareConduit(transport),
     handshake,
@@ -218,9 +220,6 @@ async function makeAcceptorEstablishedTransport(
     ? await transport.nextLink()
     : { link: transport };
   const requestedMode = await acceptTransportMode(attachment.link);
-  if (requestedMode === "stable") {
-    throw SessionError.protocol("raw CBOR handshake for stable conduit is not implemented yet");
-  }
 
   const localSettings: ConnectionSettings = {
     parity: { tag: "Even" },
@@ -234,6 +233,17 @@ async function makeAcceptorEstablishedTransport(
     options.resumable ?? false,
     null,
   );
+
+  if (requestedMode === "stable") {
+    const clientHello = await attachment.link.recv();
+    if (!clientHello) {
+      throw SessionError.protocol("expected StableConduit ClientHello after CBOR handshake");
+    }
+    const stableConduit = await StableConduit.connect(
+      singleLinkSource(attachment.link, clientHello),
+    );
+    return { conduit: stableConduit, handshake };
+  }
 
   return {
     conduit: new BareConduit(attachment.link),
@@ -1333,11 +1343,15 @@ export const session = {
   },
 
   async acceptorOnOrResume(
-    _transport: Link,
-    _registry: SessionRegistry,
-    _options: SessionTransportOptions = {},
+    transport: Link,
+    registry: SessionRegistry,
+    options: SessionTransportOptions = {},
   ): Promise<SessionAcceptOutcome> {
-    throw SessionError.protocol("raw transport session resumption is not implemented in TypeScript yet");
+    const established = await makeAcceptorEstablishedTransport(transport, {
+      ...options,
+      resumable: options.resumable ?? false,
+    });
+    return session.acceptorOrResume(established.conduit, established.handshake, registry, options);
   },
 
   async initiatorTransport(
@@ -1367,11 +1381,15 @@ export const session = {
   },
 
   async acceptorTransportOrResume(
-    _transport: SessionTransport,
-    _registry: SessionRegistry,
-    _options: SessionTransportOptions = {},
+    transport: SessionTransport,
+    registry: SessionRegistry,
+    options: SessionTransportOptions = {},
   ): Promise<SessionAcceptOutcome> {
-    throw SessionError.protocol("raw transport session resumption is not implemented in TypeScript yet");
+    const established = await makeAcceptorEstablishedTransport(transport, {
+      ...options,
+      resumable: options.resumable ?? false,
+    });
+    return session.acceptorOrResume(established.conduit, established.handshake, registry, options);
   },
 
   rootSettings(role: Role, maxConcurrentRequests = 64): ConnectionSettings {

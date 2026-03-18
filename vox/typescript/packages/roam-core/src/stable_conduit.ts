@@ -5,7 +5,6 @@ import {
   type SchemaRegistry,
 } from "@bearcove/roam-postcard";
 import {
-  MessageSchema,
   decodeMessage,
   encodeMessage,
   type Message,
@@ -29,7 +28,7 @@ interface PacketAck {
 interface StableFrame {
   seq: number;
   ack: PacketAck | null;
-  item: Message;
+  item: Uint8Array;
 }
 
 const FRAME_SCHEMA: Schema = {
@@ -45,7 +44,7 @@ const FRAME_SCHEMA: Schema = {
         },
       },
     },
-    item: MessageSchema,
+    item: { kind: "bytes", opaque: true },
   },
 };
 
@@ -206,7 +205,7 @@ export class StableConduit implements Conduit<Message> {
         const frame: StableFrame = {
           seq,
           ack: this.lastReceived === null ? null : { max_delivered: this.lastReceived },
-          item,
+          item: itemBytes,
         };
         this.replay.push(seq, itemBytes);
         await link.send(encodeWithSchema(frame, FRAME_SCHEMA, FRAME_SCHEMA_REGISTRY));
@@ -275,7 +274,7 @@ export class StableConduit implements Conduit<Message> {
         const frame: StableFrame = {
           seq: entry.seq,
           ack: this.lastReceived === null ? null : { max_delivered: this.lastReceived },
-          item: decodeMessage(entry.item).value,
+          item: entry.item,
         };
         await link.send(encodeWithSchema(frame, FRAME_SCHEMA, FRAME_SCHEMA_REGISTRY));
       }
@@ -302,7 +301,7 @@ export class StableConduit implements Conduit<Message> {
       const frame: StableFrame = {
         seq: entry.seq,
         ack: this.lastReceived === null ? null : { max_delivered: this.lastReceived },
-        item: decodeMessage(entry.item).value,
+        item: entry.item,
       };
       await link.send(encodeWithSchema(frame, FRAME_SCHEMA, FRAME_SCHEMA_REGISTRY));
     }
@@ -352,11 +351,12 @@ export class StableConduit implements Conduit<Message> {
           }
 
           this.lastReceived = frame.seq;
+          const message = decodeMessage(frame.item).value;
           const waiter = this.recvWaiters.shift();
           if (waiter) {
-            waiter(frame.item);
+            waiter(message);
           } else {
-            this.recvQueue.push(frame.item);
+            this.recvQueue.push(message);
           }
         } catch {
           await this.ensureReconnected();

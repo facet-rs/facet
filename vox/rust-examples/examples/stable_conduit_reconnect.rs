@@ -250,7 +250,7 @@ async fn run_demo() -> Result<()> {
             parity: Parity::Even,
             max_concurrent_requests: 64,
         };
-        let (server_guard, _) = roam::acceptor(
+        let (server_guard, _) = roam::acceptor_conduit(
             server_conduit,
             HandshakeResult {
                 role: SessionRole::Acceptor,
