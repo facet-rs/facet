@@ -23,6 +23,7 @@ export {
   ChannelMessageSchema,
   MessagePayloadSchema,
   MessageSchema,
+  wireMessageSchemasCbor,
   wireSchemaRegistry,
 } from "./schemas.generated.ts";
 

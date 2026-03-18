@@ -3,6 +3,10 @@
 
 export type ConnectionId = bigint;
 
+export interface ProtocolError {
+  description: string;
+}
+
 export type Parity =
   | { tag: "Odd" }
   | { tag: "Even" };
@@ -23,21 +27,6 @@ export interface MetadataEntry {
   key: string;
   value: MetadataValue;
   flags: MetadataFlags;
-}
-
-export interface Hello {
-  version: number;
-  connection_settings: ConnectionSettings;
-  metadata: Metadata;
-}
-
-export interface HelloYourself {
-  connection_settings: ConnectionSettings;
-  metadata: Metadata;
-}
-
-export interface ProtocolError {
-  description: string;
 }
 
 export interface ConnectionOpen {
@@ -64,17 +53,21 @@ export type MethodId = bigint;
 
 export type ChannelId = bigint;
 
+export type CborPayload = Uint8Array;
+
 export interface RequestCall {
   method_id: MethodId;
   channels: ChannelId[];
   metadata: Metadata;
   args: Uint8Array;
+  schemas: CborPayload;
 }
 
 export interface RequestResponse {
   channels: ChannelId[];
   metadata: Metadata;
   ret: Uint8Array;
+  schemas: CborPayload;
 }
 
 export interface RequestCancel {
@@ -126,13 +119,7 @@ export interface Pong {
   nonce: bigint;
 }
 
-export interface SchemaMessage {
-  schemas: Uint8Array;
-}
-
 export type MessagePayload =
-  | { tag: "Hello"; value: Hello }
-  | { tag: "HelloYourself"; value: HelloYourself }
   | { tag: "ProtocolError"; value: ProtocolError }
   | { tag: "ConnectionOpen"; value: ConnectionOpen }
   | { tag: "ConnectionAccept"; value: ConnectionAccept }
@@ -141,8 +128,7 @@ export type MessagePayload =
   | { tag: "RequestMessage"; value: RequestMessage }
   | { tag: "ChannelMessage"; value: ChannelMessage }
   | { tag: "Ping"; value: Ping }
-  | { tag: "Pong"; value: Pong }
-  | { tag: "SchemaMessage"; value: SchemaMessage };
+  | { tag: "Pong"; value: Pong };
 
 export interface Message {
   connection_id: ConnectionId;
@@ -152,18 +138,15 @@ export interface Message {
 export type Metadata = MetadataEntry[];
 
 export const MessageDiscriminant = {
-  Hello: 0,
-  HelloYourself: 1,
-  ProtocolError: 2,
-  ConnectionOpen: 3,
-  ConnectionAccept: 4,
-  ConnectionReject: 5,
-  ConnectionClose: 6,
-  RequestMessage: 7,
-  ChannelMessage: 8,
-  Ping: 9,
-  Pong: 10,
-  SchemaMessage: 11,
+  ProtocolError: 0,
+  ConnectionOpen: 1,
+  ConnectionAccept: 2,
+  ConnectionReject: 3,
+  ConnectionClose: 4,
+  RequestMessage: 5,
+  ChannelMessage: 6,
+  Ping: 7,
+  Pong: 8,
 } as const;
 
 export const MetadataValueDiscriminant = {

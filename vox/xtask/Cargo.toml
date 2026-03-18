@@ -12,6 +12,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet.workspace = true
+facet-cbor.workspace = true
 figue.workspace = true
 xshell.workspace = true
 roam-codegen.workspace = true

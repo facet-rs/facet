@@ -520,12 +520,29 @@ export class SchemaTranslationError extends Error {
 // ============================================================================
 
 function parseTypeIdHex(raw: CborValue): TypeIdHex {
-  // TypeSchemaId is a tuple struct wrapping [u8; 16].
-  // In CBOR: array(1) containing array(16) of integers.
-  const outerArray = raw as CborValue[];
-  const innerArray = outerArray[0] as number[];
-  const bytes = new Uint8Array(innerArray);
-  return hexFromBytes(bytes);
+  // TypeSchemaId is currently a tuple struct wrapping a u32.
+  // In CBOR that arrives as array(1) containing the numeric ID.
+  //
+  // Older experimental code paths expected a [u8; 16] payload, so we
+  // continue to accept that shape as a fallback for compatibility.
+  if (Array.isArray(raw)) {
+    const first = raw[0];
+
+    if (typeof first === "number") {
+      return String(first);
+    }
+
+    if (Array.isArray(first)) {
+      const bytes = new Uint8Array(first as number[]);
+      return hexFromBytes(bytes);
+    }
+  }
+
+  if (typeof raw === "number") {
+    return String(raw);
+  }
+
+  throw new Error(`unsupported TypeSchemaId encoding: ${JSON.stringify(raw)}`);
 }
 
 function hexFromBytes(bytes: Uint8Array): string {

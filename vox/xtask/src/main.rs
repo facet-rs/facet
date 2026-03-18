@@ -357,6 +357,15 @@ fn codegen_typescript_wire_schemas(
     out.push_str("// DO NOT EDIT - schemas are generated from rust/roam-types facet shapes.\n\n");
     out.push_str("import type { Schema, SchemaRegistry } from \"@bearcove/roam-postcard\";\n\n");
 
+    fn ts_u8_array_literal(bytes: &[u8]) -> String {
+        let body = bytes
+            .iter()
+            .map(|b| b.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("new Uint8Array([{body}])")
+    }
+
     macro_rules! emit_schema {
         ($name:literal, $shape:expr) => {{
             let schema = generate_schema($shape);
@@ -428,6 +437,14 @@ fn codegen_typescript_wire_schemas(
         "MessageSchema",
         <rt::Message<'static> as facet::Facet<'static>>::SHAPE
     );
+
+    let wire_message_schemas =
+        rt::extract_schemas(<rt::Message<'static> as facet::Facet<'static>>::SHAPE);
+    let wire_message_schemas_cbor = facet_cbor::to_vec(&wire_message_schemas)?;
+    out.push_str(&format!(
+        "export const wireMessageSchemasCbor = {};\n\n",
+        ts_u8_array_literal(&wire_message_schemas_cbor)
+    ));
 
     out.push_str("export const wireSchemaRegistry: SchemaRegistry = new Map<string, Schema>([\n");
     out.push_str("  [\"Parity\", ParitySchema],\n");

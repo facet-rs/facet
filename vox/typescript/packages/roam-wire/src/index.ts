@@ -101,5 +101,6 @@ export {
 
 export {
   MessageSchema,
+  wireMessageSchemasCbor,
   wireSchemaRegistry,
 } from "./schemas.ts";

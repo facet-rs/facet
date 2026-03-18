@@ -1018,7 +1018,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1040,7 +1040,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1062,7 +1062,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: { kind: "ref", name: "MathError" } },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1084,7 +1084,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: { kind: "ref", name: "LookupError" } },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1106,7 +1106,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1131,7 +1131,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1156,7 +1156,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1181,7 +1181,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1210,7 +1210,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1232,7 +1232,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1257,7 +1257,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1279,7 +1279,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1301,7 +1301,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1323,7 +1323,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1351,7 +1351,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1373,7 +1373,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1395,7 +1395,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1417,7 +1417,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1439,7 +1439,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1461,7 +1461,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1483,7 +1483,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1505,7 +1505,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1527,7 +1527,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
@@ -1549,7 +1549,7 @@ export const testbed_descriptor: ServiceDescriptor = {
             variants: [
               { name: "User", fields: null },
               { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
+              { name: "InvalidPayload", fields: { kind: "newtype", schema: { kind: "scalar", type: "string" } } },
               { name: "Cancelled", fields: null },
               { name: "Indeterminate", fields: null },
             ],
