@@ -304,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn scatter_plan_segment_structure() {
+    fn scatter_plan_small_blobs_get_staged() {
         #[derive(Facet)]
         struct Borrowed<'a> {
             id: u32,
@@ -327,38 +327,56 @@ mod tests {
         plan.write_into(&mut scattered);
         assert_eq!(scattered, direct);
 
-        // Check segment structure: staged bytes should merge when contiguous,
-        // and borrowed fields should appear as Reference segments.
+        // Small borrowed fields (< 4K) are copied into staging, not kept as references.
         let segments = plan.segments();
-        let staged_count = segments
-            .iter()
-            .filter(|s| matches!(s, Segment::Staged { .. }))
-            .count();
         let ref_count = segments
             .iter()
             .filter(|s| matches!(s, Segment::Reference { .. }))
             .count();
-
-        // Both &str and &[u8] produce Reference segments (zero-copy).
         assert_eq!(
-            ref_count, 2,
-            "expected 2 reference segments for &str and &[u8]"
+            ref_count, 0,
+            "small borrowed fields should be staged, not referenced"
         );
-        // Staged segments merge when contiguous. References break the merge chain:
-        // staged(id + name len), ref(name), staged(data len), ref(data) = 2 staged.
-        assert_eq!(staged_count, 2, "expected 2 staged segments");
+        // Everything merges into one staged segment.
+        assert_eq!(
+            segments.len(),
+            1,
+            "all small data should coalesce into 1 segment"
+        );
+    }
 
-        eprintln!("segments ({} total):", segments.len());
-        for (i, seg) in segments.iter().enumerate() {
-            match seg {
-                Segment::Staged { offset, len } => {
-                    eprintln!("  [{i}] Staged: offset={offset}, len={len}");
-                }
-                Segment::Reference { bytes } => {
-                    eprintln!("  [{i}] Reference: len={}", bytes.len());
-                }
-            }
+    #[test]
+    fn scatter_plan_large_blobs_get_referenced() {
+        #[derive(Facet)]
+        struct BigPayload<'a> {
+            id: u32,
+            data: &'a [u8],
         }
+
+        let big_blob = vec![0xABu8; 8192];
+        let val = BigPayload {
+            id: 1,
+            data: &big_blob,
+        };
+
+        let peek = facet_reflect::Peek::new(&val);
+        let plan = peek_to_scatter_plan(peek).unwrap();
+
+        // Verify output matches to_vec
+        let direct = to_vec(&val).unwrap();
+        let mut scattered = vec![0u8; plan.total_size()];
+        plan.write_into(&mut scattered);
+        assert_eq!(scattered, direct);
+
+        // Large blob (>= 4K) should be a Reference segment (zero-copy).
+        let segments = plan.segments();
+        let ref_count = segments
+            .iter()
+            .filter(|s| matches!(s, Segment::Reference { .. }))
+            .count();
+        assert_eq!(ref_count, 1, "large blob should be a Reference segment");
+        // staged(id + data len), ref(data) = 2 segments total.
+        assert_eq!(segments.len(), 2);
     }
 
     #[test]

@@ -150,14 +150,26 @@ impl Writer for ScatterBuilder<'_> {
     }
 }
 
+/// Below this threshold, borrowed bytes are copied into the staging buffer
+/// rather than kept as a separate Reference segment. This avoids the overhead
+/// of an extra iovec in writev for small payloads. Benchmarked crossover is
+/// around 4K on TCP loopback.
+const SCATTER_REFERENCE_THRESHOLD: usize = 4096;
+
 impl<'a> PostcardWriter<'a> for ScatterBuilder<'a> {
     fn write_referenced_bytes(&mut self, bytes: &'a [u8]) {
         if bytes.is_empty() {
             return;
         }
-        self.flush_staged();
-        self.segments.push(Segment::Reference { bytes });
-        self.total_size += bytes.len();
+        if bytes.len() < SCATTER_REFERENCE_THRESHOLD {
+            // Small payload: copy into staging to avoid iovec overhead.
+            self.write_bytes(bytes);
+        } else {
+            // Large payload: keep as a zero-copy reference.
+            self.flush_staged();
+            self.segments.push(Segment::Reference { bytes });
+            self.total_size += bytes.len();
+        }
     }
 }
 

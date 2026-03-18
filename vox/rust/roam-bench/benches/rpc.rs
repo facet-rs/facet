@@ -711,9 +711,43 @@ mod serialize_bench {
         plan.write_into(&mut buf);
         buf.len()
     }
+
+    // --- Blob benchmarks: struct with a large &[u8] payload ---
+
+    #[derive(Facet)]
+    pub struct BlobMessage<'a> {
+        pub id: u64,
+        pub label: &'a str,
+        pub data: &'a [u8],
+    }
+
+    pub fn make_blob<'a>(data: &'a [u8]) -> BlobMessage<'a> {
+        BlobMessage {
+            id: 1,
+            label: "frame-data",
+            data,
+        }
+    }
+
+    pub fn make_blob_msg<'a>(args: &'a (&'a BlobMessage<'a>,)) -> Message<'a> {
+        Message {
+            connection_id: roam_types::ConnectionId(1),
+            payload: MessagePayload::RequestMessage(RequestMessage {
+                id: roam_types::RequestId(1),
+                body: RequestBody::Call(RequestCall {
+                    method_id: roam_types::MethodId(1),
+                    args: Payload::outgoing(args),
+                    channels: vec![],
+                    metadata: vec![],
+                    schemas: Default::default(),
+                }),
+            }),
+        }
+    }
 }
 
 const SERIALIZE_FIELD_COUNTS: &[usize] = &[4, 16, 64, 256];
+const BLOB_SIZES: &[usize] = &[256, 1024, 4096, 8192, 16384, 32768, 65536, 262144, 1048576];
 
 #[divan::bench(args = SERIALIZE_FIELD_COUNTS)]
 fn serialize_to_vec(bencher: divan::Bencher, n: usize) {
@@ -749,6 +783,54 @@ fn serialize_to_vec_write_tcp(bencher: divan::Bencher, n: usize) {
     let profile = serialize_bench::make_profile(n);
     let args = (&profile,);
     let msg = serialize_bench::make_message(&args);
+    let mut stream = TOKIO.block_on(serialize_bench::tcp_sink());
+    bencher.bench_local(|| {
+        TOKIO.block_on(async {
+            divan::black_box(serialize_bench::bench_to_vec_write(&msg, &mut stream).await)
+        })
+    });
+}
+
+// --- Blob benchmarks: large binary payload ---
+
+#[divan::bench(args = BLOB_SIZES)]
+fn blob_to_vec(bencher: divan::Bencher, n: usize) {
+    let blob = vec![0xCAu8; n];
+    let bm = serialize_bench::make_blob(&blob);
+    let args = (&bm,);
+    let msg = serialize_bench::make_blob_msg(&args);
+    bencher.bench_local(|| divan::black_box(serialize_bench::bench_to_vec(&msg)));
+}
+
+#[divan::bench(args = BLOB_SIZES)]
+fn blob_scatter_plan(bencher: divan::Bencher, n: usize) {
+    let blob = vec![0xCAu8; n];
+    let bm = serialize_bench::make_blob(&blob);
+    let args = (&bm,);
+    let msg = serialize_bench::make_blob_msg(&args);
+    bencher.bench_local(|| divan::black_box(serialize_bench::bench_scatter(&msg)));
+}
+
+#[divan::bench(args = BLOB_SIZES)]
+fn blob_scatter_writev_tcp(bencher: divan::Bencher, n: usize) {
+    let blob = vec![0xCAu8; n];
+    let bm = serialize_bench::make_blob(&blob);
+    let args = (&bm,);
+    let msg = serialize_bench::make_blob_msg(&args);
+    let mut stream = TOKIO.block_on(serialize_bench::tcp_sink());
+    bencher.bench_local(|| {
+        TOKIO.block_on(async {
+            divan::black_box(serialize_bench::bench_scatter_writev(&msg, &mut stream).await)
+        })
+    });
+}
+
+#[divan::bench(args = BLOB_SIZES)]
+fn blob_to_vec_write_tcp(bencher: divan::Bencher, n: usize) {
+    let blob = vec![0xCAu8; n];
+    let bm = serialize_bench::make_blob(&blob);
+    let args = (&bm,);
+    let msg = serialize_bench::make_blob_msg(&args);
     let mut stream = TOKIO.block_on(serialize_bench::tcp_sink());
     bencher.bench_local(|| {
         TOKIO.block_on(async {
