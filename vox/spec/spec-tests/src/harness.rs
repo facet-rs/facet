@@ -11,8 +11,8 @@ use std::os::fd::{AsRawFd, IntoRawFd};
 
 use roam::{Rx, Tx};
 use roam_core::{
-    DriverReplySink, SessionAcceptOutcome, SessionRegistry, TransportMode, acceptor, acceptor_on,
-    acceptor_transport, initiator_on, memory_link_pair,
+    DriverReplySink, SessionAcceptOutcome, SessionRegistry, TransportMode, acceptor_conduit,
+    acceptor_on, acceptor_transport, initiator_on, memory_link_pair,
 };
 use roam_shm::HostHub;
 use roam_shm::ShmLink;
@@ -1029,7 +1029,7 @@ where
             let server_conduit = roam_core::BareConduit::<roam_types::MessageFamily, _>::new(
                 roam_types::SplitLink { tx, rx },
             );
-            let setup = acceptor(server_conduit, handshake_result)
+            let setup = acceptor_conduit(server_conduit, handshake_result)
                 .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
                 .await
                 .map_err(|e| format!("server handshake: {e}"));

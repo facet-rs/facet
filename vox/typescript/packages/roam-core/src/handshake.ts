@@ -178,7 +178,7 @@ function encodeHandshakeMessage(message: HandshakeMessage): Uint8Array {
         ],
       ]);
     case "LetsGo":
-      return encodeMap([["LetsGo", encodeNull()]]);
+      return encodeMap([["LetsGo", encodeMap([])]]);
     case "Sorry":
       return encodeMap([["Sorry", encodeMap([["reason", encodeText(message.reason)]])]]);
   }
