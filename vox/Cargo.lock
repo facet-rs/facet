@@ -4150,6 +4150,7 @@ version = "7.3.0"
 dependencies = [
  "dprint-plugin-typescript",
  "facet",
+ "facet-cbor",
  "figue",
  "prettyplease",
  "proc-macro2",
