@@ -24,6 +24,8 @@ protobuf = [
 roam.workspace = true
 roam-core.workspace = true
 roam-types.workspace = true
+roam-postcard.workspace = true
+facet.workspace = true
 roam-shm.workspace = true
 roam-stream.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }

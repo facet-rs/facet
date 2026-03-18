@@ -2390,12 +2390,14 @@ name = "roam-bench"
 version = "7.3.0"
 dependencies = [
  "divan",
+ "facet",
  "futures-util",
  "hyper-util",
  "moire",
  "prost",
  "roam",
  "roam-core",
+ "roam-postcard",
  "roam-shm",
  "roam-stream",
  "roam-types",

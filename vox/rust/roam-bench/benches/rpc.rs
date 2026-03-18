@@ -552,6 +552,135 @@ fn roam_tcp_stream(bencher: divan::Bencher, n: usize) {
 }
 
 // ============================================================================
+// serialization microbenchmark: scatter plan vs direct to_vec
+// ============================================================================
+
+mod serialize_bench {
+    use facet::{Facet, Peek, PtrConst};
+    use roam_postcard::{peek_to_scatter_plan, to_vec};
+    use roam_types::{
+        Message, MessageFamily, MessagePayload, MetadataEntry, MetadataFlags, MetadataValue,
+        MsgFamily, Payload, RequestBody, RequestCall, RequestMessage,
+    };
+
+    #[derive(Facet)]
+    pub struct UserProfile<'a> {
+        pub id: u64,
+        pub username: &'a str,
+        pub email: &'a str,
+        pub bio: &'a str,
+        pub avatar_url: &'a str,
+        pub follower_count: u32,
+        pub following_count: u32,
+        pub is_verified: bool,
+        pub tags: Vec<&'a str>,
+        pub scores: Vec<f64>,
+    }
+
+    pub fn make_profile(n_tags: usize) -> UserProfile<'static> {
+        static TAGS: &[&str] = &[
+            "christmas",
+            "gifts",
+            "reindeer",
+            "sleigh",
+            "cookies",
+            "chimney",
+            "naughty",
+            "nice",
+            "elves",
+            "workshop",
+            "northpole",
+            "rudolph",
+            "snowflakes",
+            "jinglebells",
+            "mistletoe",
+            "eggnog",
+        ];
+        UserProfile {
+            id: 24121800,
+            username: "santa_claus",
+            email: "santa@northpole.int",
+            bio: "Jolly old elf residing at the North Pole. Maintains a \
+                  globally distributed naughty/nice list with eventual \
+                  consistency. Expert in chimney-based ingress protocols.",
+            avatar_url: "https://northpole.int/avatars/big-red-suit.jpg",
+            follower_count: 4200000000,
+            following_count: 0,
+            is_verified: true,
+            tags: TAGS.iter().copied().cycle().take(n_tags).collect(),
+            scores: (0..n_tags).map(|i| i as f64 * 1.5).collect(),
+        }
+    }
+
+    pub fn make_message<'a>(args: &'a (&'a UserProfile<'a>,)) -> Message<'a> {
+        Message {
+            connection_id: roam_types::ConnectionId(1),
+            payload: MessagePayload::RequestMessage(RequestMessage {
+                id: roam_types::RequestId(42),
+                body: RequestBody::Call(RequestCall {
+                    method_id: roam_types::MethodId(7),
+                    args: Payload::outgoing(args),
+                    channels: vec![],
+                    metadata: vec![
+                        MetadataEntry {
+                            key: "authorization",
+                            value: MetadataValue::String(
+                                "Bearer eyJhbGciOiJIUzI1NiJ9.e30.ZRrHA1JJJW8opB1Qfp7QDm",
+                            ),
+                            flags: MetadataFlags::SENSITIVE,
+                        },
+                        MetadataEntry {
+                            key: "request-id",
+                            value: MetadataValue::String("550e8400-e29b-41d4-a716-446655440000"),
+                            flags: MetadataFlags::NONE,
+                        },
+                    ],
+                    schemas: Default::default(),
+                }),
+            }),
+        }
+    }
+
+    pub fn bench_to_vec(msg: &Message<'_>) -> usize {
+        let bytes = to_vec(msg).expect("serialize");
+        bytes.len()
+    }
+
+    pub fn bench_scatter(msg: &Message<'_>) -> usize {
+        let shape = MessageFamily::shape();
+        #[allow(unsafe_code)]
+        let peek = unsafe {
+            Peek::unchecked_new(
+                PtrConst::new((msg as *const Message<'_>).cast::<u8>()),
+                shape,
+            )
+        };
+        let plan = peek_to_scatter_plan(peek).expect("scatter plan");
+        let mut buf = vec![0u8; plan.total_size()];
+        plan.write_into(&mut buf);
+        buf.len()
+    }
+}
+
+const SERIALIZE_FIELD_COUNTS: &[usize] = &[4, 16, 64, 256];
+
+#[divan::bench(args = SERIALIZE_FIELD_COUNTS)]
+fn serialize_to_vec(bencher: divan::Bencher, n: usize) {
+    let profile = serialize_bench::make_profile(n);
+    let args = (&profile,);
+    let msg = serialize_bench::make_message(&args);
+    bencher.bench_local(|| divan::black_box(serialize_bench::bench_to_vec(&msg)));
+}
+
+#[divan::bench(args = SERIALIZE_FIELD_COUNTS)]
+fn serialize_scatter_plan(bencher: divan::Bencher, n: usize) {
+    let profile = serialize_bench::make_profile(n);
+    let args = (&profile,);
+    let msg = serialize_bench::make_message(&args);
+    bencher.bench_local(|| divan::black_box(serialize_bench::bench_scatter(&msg)));
+}
+
+// ============================================================================
 // tarpc
 // ============================================================================
 
