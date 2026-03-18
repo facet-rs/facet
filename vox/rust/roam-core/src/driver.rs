@@ -26,7 +26,15 @@ use crate::session::{
 use crate::{InMemoryOperationStore, OperationAdmit, OperationCancel, OperationStore};
 use moire::sync::mpsc;
 
-type ResponseSlot = moire::sync::oneshot::Sender<SelfRef<RequestMessage<'static>>>;
+/// A pending response carries both the message and the recv tracker that was
+/// current when the message was received, so the caller can deserialize
+/// the response with the correct schemas.
+struct PendingResponse {
+    msg: SelfRef<RequestMessage<'static>>,
+    schemas: Arc<roam_types::SchemaRecvTracker>,
+}
+
+type ResponseSlot = moire::sync::oneshot::Sender<PendingResponse>;
 
 struct InFlightHandler {
     handle: moire::task::JoinHandle<()>,
@@ -135,10 +143,6 @@ pub struct DriverReplySink {
     operation_id: Option<u64>,
     operations: Option<Arc<dyn OperationStore>>,
     binder: DriverChannelBinder,
-    schema_recv_tracker: Arc<roam_types::SchemaRecvTracker>,
-    /// Pre-prepared CBOR schemas for the response type, set by send_response_schemas
-    /// before the handler runs, consumed by send_reply after the handler finishes.
-    response_schemas: std::sync::Mutex<roam_types::CborPayload>,
 }
 
 #[allow(clippy::manual_async_fn)]
@@ -164,22 +168,11 @@ fn incoming_args_bytes<'a>(call: &'a RequestCall<'a>) -> &'a [u8] {
 }
 
 impl ReplySink for DriverReplySink {
-    async fn send_reply(mut self, mut response: RequestResponse<'_>) {
+    async fn send_reply(mut self, response: RequestResponse<'_>) {
         let sender = self
             .sender
             .take()
             .expect("unreachable: send_reply takes self by value");
-
-        // r[impl schema.exchange.callee]
-        // Attach pre-prepared response schemas (set by send_response_schemas
-        // before the handler ran). The schemas are inlined in the response
-        // message for atomic delivery.
-        response.schemas = std::mem::take(
-            &mut *self
-                .response_schemas
-                .lock()
-                .expect("response_schemas mutex poisoned"),
-        );
 
         if let (Some(operation_id), Some(operations)) = (self.operation_id, self.operations.take())
         {
@@ -203,32 +196,6 @@ impl ReplySink for DriverReplySink {
 
     fn channel_binder(&self) -> Option<&dyn ChannelBinder> {
         Some(&self.binder)
-    }
-
-    fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
-        Some(&*self.schema_recv_tracker)
-    }
-
-    // r[impl schema.exchange.callee]
-    async fn send_response_schemas(
-        &self,
-        method_id: roam_types::MethodId,
-        response_shape: &'static facet_core::Shape,
-    ) {
-        if let Some(sender) = &self.sender {
-            // Prepare response schemas via the SessionCore's send tracker.
-            // The returned CborPayload is stored and attached to the response
-            // in send_reply().
-            let schemas = sender
-                .sess_core
-                .prepare_response_schemas(method_id, response_shape);
-            if !schemas.is_empty() {
-                *self
-                    .response_schemas
-                    .lock()
-                    .expect("response_schemas mutex poisoned") = schemas;
-            }
-        }
     }
 }
 
@@ -457,7 +424,6 @@ pub struct DriverCaller {
     resume_processed_rx: watch::Receiver<u64>,
     peer_supports_retry: bool,
     _drop_guard: Option<Arc<CallerDropGuard>>,
-    pub(crate) schema_recv_tracker: Arc<roam_types::SchemaRecvTracker>,
 }
 
 impl DriverCaller {
@@ -585,8 +551,9 @@ impl Caller for DriverCaller {
     fn call<'a>(
         &'a self,
         mut call: RequestCall<'a>,
-    ) -> impl std::future::Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>>
-    + MaybeSend
+    ) -> impl std::future::Future<
+        Output = Result<roam_types::WithTracker<SelfRef<RequestResponse<'static>>>, RoamError>,
+    > + MaybeSend
     + 'a {
         async move {
             let caller_channel_plan = match &call.args {
@@ -646,7 +613,7 @@ impl Caller for DriverCaller {
                 if let Some((args_ptr, plan)) = caller_channel_plan {
                     unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
                 }
-                return Err(RoamError::Cancelled);
+                return Err(RoamError::SendFailed);
             }
 
             let mut resumed_rx = self.resumed_rx.clone();
@@ -655,16 +622,16 @@ impl Caller for DriverCaller {
             let mut closed_rx = self.closed_rx.clone();
             let mut response = std::pin::pin!(rx.named("awaiting_response"));
 
-            let response_msg: SelfRef<RequestMessage<'static>> = loop {
+            let pending: PendingResponse = loop {
                 tokio::select! {
                     result = &mut response => {
                         match result {
-                            Ok(msg) => break msg,
+                            Ok(pending) => break pending,
                             Err(_) => {
                                 if let Some((args_ptr, plan)) = caller_channel_plan {
                                     unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
                                 }
-                                return Err(RoamError::Cancelled);
+                                return Err(RoamError::ConnectionClosed);
                             }
                         }
                     }
@@ -674,7 +641,7 @@ impl Caller for DriverCaller {
                             if let Some((args_ptr, plan)) = caller_channel_plan {
                                 unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
                             }
-                            return Err(RoamError::Cancelled);
+                            return Err(RoamError::SessionShutdown);
                         }
                         let generation = *resumed_rx.borrow();
                         if generation == seen_resume_generation {
@@ -687,7 +654,7 @@ impl Caller for DriverCaller {
                                 if let Some((args_ptr, plan)) = caller_channel_plan {
                                     unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
                                 }
-                                return Err(RoamError::Cancelled);
+                                return Err(RoamError::SessionShutdown);
                             }
                         }
                         if let Some((args_ptr, plan)) = caller_channel_plan {
@@ -735,13 +702,17 @@ impl Caller for DriverCaller {
                             if let Some((args_ptr, plan)) = caller_channel_plan {
                                 unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
                             }
-                            return Err(RoamError::Cancelled);
+                            return Err(RoamError::ConnectionClosed);
                         }
                     }
                 }
             };
 
             // Extract the Response variant from the RequestMessage.
+            let PendingResponse {
+                msg: response_msg,
+                schemas: response_schemas,
+            } = pending;
             let response = response_msg.map(|m| match m.body {
                 RequestBody::Response(r) => r,
                 _ => unreachable!("pending_responses only gets Response variants"),
@@ -752,7 +723,10 @@ impl Caller for DriverCaller {
             {
                 unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
             }
-            Ok(response)
+            Ok(roam_types::WithTracker {
+                value: response,
+                tracker: response_schemas,
+            })
         }
         .named("Caller::call")
     }
@@ -778,10 +752,6 @@ impl Caller for DriverCaller {
     fn channel_binder(&self) -> Option<&dyn ChannelBinder> {
         Some(self)
     }
-
-    fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
-        Some(&*self.schema_recv_tracker)
-    }
 }
 
 // r[impl rpc.handler]
@@ -792,7 +762,7 @@ impl Caller for DriverCaller {
 /// incoming calls to a Handler, and manages channel state/flow control.
 pub struct Driver<H: Handler<DriverReplySink>> {
     sender: ConnectionSender,
-    rx: mpsc::Receiver<SelfRef<ConnectionMessage<'static>>>,
+    rx: mpsc::Receiver<crate::session::RecvMessage>,
     failures_rx: mpsc::UnboundedReceiver<(RequestId, FailureDisposition)>,
     closed_rx: watch::Receiver<bool>,
     resumed_rx: watch::Receiver<u64>,
@@ -808,7 +778,6 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     drop_control_seed: Option<mpsc::UnboundedSender<DropControlRequest>>,
     drop_control_request: DropControlRequest,
     drop_guard: SyncMutex<Option<Weak<CallerDropGuard>>>,
-    schema_recv_tracker: Arc<roam_types::SchemaRecvTracker>,
 }
 
 enum DriverLocalControl {
@@ -909,7 +878,6 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             resumed_rx,
             parity,
             peer_supports_retry,
-            schema_recv_tracker,
         } = handle;
         let drop_control_request = DropControlRequest::Close(conn_id);
         let (local_control_tx, local_control_rx) = mpsc::unbounded_channel("driver.local_control");
@@ -939,7 +907,6 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             drop_control_seed: control_tx,
             drop_control_request,
             drop_guard: SyncMutex::new("driver.drop_guard", None),
-            schema_recv_tracker,
         }
     }
 
@@ -983,7 +950,6 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             resume_processed_rx: self.resume_processed_tx.subscribe(),
             peer_supports_retry: self.peer_supports_retry,
             _drop_guard: drop_guard,
-            schema_recv_tracker: self.schema_recv_tracker.clone(),
         }
     }
 
@@ -1019,11 +985,11 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         let _ = self.resume_processed_tx.send(generation);
                     }
                 }
-                msg = self.rx.recv() => {
-                    match msg {
-                        Some(msg) => {
+                recv = self.rx.recv() => {
+                    match recv {
+                        Some(recv) => {
                             tracing::debug!("driver rx received message");
-                            self.handle_msg(msg);
+                            self.handle_recv(recv);
                         }
                         None => {
                             tracing::debug!("driver rx closed, exiting loop");
@@ -1122,14 +1088,15 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         }
     }
 
-    fn handle_msg(&mut self, msg: SelfRef<ConnectionMessage<'static>>) {
+    fn handle_recv(&mut self, recv: crate::session::RecvMessage) {
+        let crate::session::RecvMessage { schemas, msg } = recv;
         let is_request = matches!(&*msg, ConnectionMessage::Request(_));
         if is_request {
             let msg = msg.map(|m| match m {
                 ConnectionMessage::Request(r) => r,
                 _ => unreachable!(),
             });
-            self.handle_request(msg);
+            self.handle_request(msg, schemas);
         } else {
             let msg = msg.map(|m| match m {
                 ConnectionMessage::Channel(c) => c,
@@ -1139,7 +1106,11 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         }
     }
 
-    fn handle_request(&mut self, msg: SelfRef<RequestMessage<'static>>) {
+    fn handle_request(
+        &mut self,
+        msg: SelfRef<RequestMessage<'static>>,
+        schemas: Arc<roam_types::SchemaRecvTracker>,
+    ) {
         let req_id = msg.id;
         let is_call = matches!(&msg.body, RequestBody::Call(_));
         let is_response = matches!(&msg.body, RequestBody::Response(_));
@@ -1236,8 +1207,6 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 operation_id,
                 operations: operation_id.map(|_| Arc::clone(&self.shared.operations)),
                 binder: self.internal_binder(),
-                schema_recv_tracker: self.schema_recv_tracker.clone(),
-                response_schemas: std::sync::Mutex::new(Default::default()),
             };
             let has_channels = !call.channels.is_empty();
             let join_handle = moire::task::spawn(
@@ -1260,7 +1229,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             tracing::debug!(%req_id, "driver received response");
             if let Some(tx) = self.shared.pending_responses.lock().remove(&req_id) {
                 tracing::debug!(%req_id, "routing response to pending oneshot");
-                let _: Result<(), _> = tx.send(msg);
+                let _: Result<(), _> = tx.send(PendingResponse { msg, schemas });
             } else {
                 tracing::debug!(%req_id, "no pending response slot for this req_id");
             }

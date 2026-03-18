@@ -827,21 +827,24 @@ fn generate_client_method(
                     metadata: Default::default(),
                     schemas: Default::default(),
                 };
-                let response = #roam::Caller::call(&self.caller, req).await.map_err(|e| match e {
+                let with_tracker = #roam::Caller::call(&self.caller, req).await.map_err(|e| match e {
                     #roam::RoamError::UnknownMethod => #roam::RoamError::<#err_ty>::UnknownMethod,
                     #roam::RoamError::InvalidPayload(msg) => #roam::RoamError::<#err_ty>::InvalidPayload(msg),
                     #roam::RoamError::Cancelled => #roam::RoamError::<#err_ty>::Cancelled,
+                    #roam::RoamError::ConnectionClosed => #roam::RoamError::<#err_ty>::ConnectionClosed,
+                    #roam::RoamError::SessionShutdown => #roam::RoamError::<#err_ty>::SessionShutdown,
+                    #roam::RoamError::SendFailed => #roam::RoamError::<#err_ty>::SendFailed,
                     #roam::RoamError::Indeterminate => #roam::RoamError::<#err_ty>::Indeterminate,
                     #roam::RoamError::User(never) => match never {},
                 })?;
-                let schema_tracker = #roam::Caller::schema_tracker_any(&self.caller);
+                let #roam::WithTracker { value: response, tracker: schema_tracker } = with_tracker;
                 response.try_repack(|resp, _bytes| {
                     let ret_bytes = match &resp.ret {
                         #roam::Payload::Incoming(bytes) => bytes,
                         _ => return Err(#roam::RoamError::<#err_ty>::InvalidPayload("response not Incoming".into())),
                     };
                     let result: Result<#ok_ty_decode, #roam::RoamError<#err_ty>> =
-                        #roam::schema_deser::schema_deserialize_response_borrowed(ret_bytes, method_id, schema_tracker)
+                        #roam::schema_deser::schema_deserialize_response_borrowed(ret_bytes, method_id, &schema_tracker)
                             .map_err(|e| #roam::RoamError::<#err_ty>::InvalidPayload(e.to_string()))?;
                     let ret = result?;
                     Ok(ret)
@@ -862,13 +865,17 @@ fn generate_client_method(
                     metadata: Default::default(),
                     schemas: Default::default(),
                 };
-                let response = #roam::Caller::call(&self.caller, req).await.map_err(|e| match e {
+                let with_tracker = #roam::Caller::call(&self.caller, req).await.map_err(|e| match e {
                     #roam::RoamError::UnknownMethod => #roam::RoamError::<#err_ty>::UnknownMethod,
                     #roam::RoamError::InvalidPayload(msg) => #roam::RoamError::<#err_ty>::InvalidPayload(msg),
                     #roam::RoamError::Cancelled => #roam::RoamError::<#err_ty>::Cancelled,
+                    #roam::RoamError::ConnectionClosed => #roam::RoamError::<#err_ty>::ConnectionClosed,
+                    #roam::RoamError::SessionShutdown => #roam::RoamError::<#err_ty>::SessionShutdown,
+                    #roam::RoamError::SendFailed => #roam::RoamError::<#err_ty>::SendFailed,
                     #roam::RoamError::Indeterminate => #roam::RoamError::<#err_ty>::Indeterminate,
                     #roam::RoamError::User(never) => match never {},
                 })?;
+                let #roam::WithTracker { value: response, tracker: schema_tracker } = with_tracker;
                 let ret_bytes = match &response.ret {
                     #roam::Payload::Incoming(bytes) => bytes,
                     _ => return Err(#roam::RoamError::<#err_ty>::InvalidPayload("response not Incoming".into())),
@@ -877,7 +884,7 @@ fn generate_client_method(
                     #roam::schema_deser::schema_deserialize_response(
                         ret_bytes,
                         method_id,
-                        #roam::Caller::schema_tracker_any(&self.caller),
+                        &schema_tracker,
                     )
                     .map_err(|e| #roam::RoamError::<#err_ty>::InvalidPayload(e.to_string()))?;
                 result

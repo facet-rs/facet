@@ -201,8 +201,10 @@ where
     fn call<'a>(
         &'a self,
         mut call: RequestCall<'a>,
-    ) -> impl Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + crate::MaybeSend + 'a
-    {
+    ) -> impl Future<
+        Output = Result<crate::WithTracker<SelfRef<RequestResponse<'static>>>, RoamError>,
+    > + crate::MaybeSend
+    + 'a {
         async move {
             let extensions = Extensions::new();
             let method = self.service.by_id(call.method_id);

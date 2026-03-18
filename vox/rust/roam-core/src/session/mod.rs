@@ -1,12 +1,17 @@
-use std::{collections::BTreeMap, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    pin::Pin,
+    sync::Arc,
+    time::Duration,
+};
 
 use moire::sync::mpsc;
 use roam_types::{
     ChannelMessage, Conduit, ConduitRx, ConduitTx, ConduitTxPermit, ConnectionAccept,
     ConnectionClose, ConnectionId, ConnectionOpen, ConnectionReject, ConnectionSettings,
     HandshakeResult, IdAllocator, MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload,
-    Metadata, Parity, Payload, RequestBody, RequestId, RequestMessage, RequestResponse, SelfRef,
-    SessionResumeKey, SessionRole,
+    Metadata, Parity, Payload, RequestBody, RequestId, RequestMessage, RequestResponse,
+    SchemaSendTracker, SelfRef, SessionResumeKey, SessionRole,
 };
 use tokio::sync::watch;
 use tracing::{debug, warn};
@@ -305,7 +310,7 @@ pub struct ConnectionState {
     pub peer_settings: ConnectionSettings,
 
     /// Sender for routing incoming messages to the per-connection driver task.
-    conn_tx: mpsc::Sender<SelfRef<ConnectionMessage<'static>>>,
+    conn_tx: mpsc::Sender<RecvMessage>,
     closed_tx: watch::Sender<bool>,
 }
 
@@ -452,7 +457,7 @@ impl ConnectionSender {
 
 pub struct ConnectionHandle {
     pub(crate) sender: ConnectionSender,
-    pub(crate) rx: mpsc::Receiver<SelfRef<ConnectionMessage<'static>>>,
+    pub(crate) rx: mpsc::Receiver<RecvMessage>,
     pub(crate) failures_rx: mpsc::UnboundedReceiver<(RequestId, FailureDisposition)>,
     pub(crate) control_tx: Option<mpsc::UnboundedSender<DropControlRequest>>,
     pub(crate) closed_rx: watch::Receiver<bool>,
@@ -460,8 +465,6 @@ pub struct ConnectionHandle {
     /// The parity this side should use for allocating request/channel IDs.
     pub parity: Parity,
     pub(crate) peer_supports_retry: bool,
-    /// Schema recv tracker (shared across the session, reset on reconnection)
-    pub(crate) schema_recv_tracker: Arc<roam_types::SchemaRecvTracker>,
 }
 
 impl std::fmt::Debug for ConnectionHandle {
@@ -475,6 +478,14 @@ impl std::fmt::Debug for ConnectionHandle {
 pub(crate) enum ConnectionMessage<'payload> {
     Request(RequestMessage<'payload>),
     Channel(ChannelMessage<'payload>),
+}
+
+/// A message routed to a driver, carrying the `SchemaRecvTracker` that was
+/// current when the session received it. This ensures each message uses the
+/// correct tracker even across reconnections.
+pub(crate) struct RecvMessage {
+    pub schemas: Arc<roam_types::SchemaRecvTracker>,
+    pub msg: SelfRef<ConnectionMessage<'static>>,
 }
 
 impl ConnectionHandle {
@@ -523,7 +534,6 @@ pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) 
         resumed_rx: _left_resumed_rx,
         parity: _left_parity,
         peer_supports_retry: _left_peer_supports_retry,
-        schema_recv_tracker: _left_schema_recv_tracker,
     } = left;
     let ConnectionHandle {
         sender: right_sender,
@@ -534,24 +544,23 @@ pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) 
         resumed_rx: _right_resumed_rx,
         parity: _right_parity,
         peer_supports_retry: _right_peer_supports_retry,
-        schema_recv_tracker: _right_schema_recv_tracker,
     } = right;
 
     loop {
         tokio::select! {
-            msg = left_rx.recv() => {
-                let Some(msg) = msg else {
+            recv = left_rx.recv() => {
+                let Some(recv) = recv else {
                     break;
                 };
-                if right_sender.send_owned(msg).await.is_err() {
+                if right_sender.send_owned(recv.msg).await.is_err() {
                     break;
                 }
             }
-            msg = right_rx.recv() => {
-                let Some(msg) = msg else {
+            recv = right_rx.recv() => {
+                let Some(recv) = recv else {
                     break;
                 };
-                if left_sender.send_owned(msg).await.is_err() {
+                if left_sender.send_owned(recv.msg).await.is_err() {
                     break;
                 }
             }
@@ -683,7 +692,7 @@ impl Session {
         peer_settings: ConnectionSettings,
     ) -> ConnectionHandle {
         let label = format!("session.conn{}", conn_id.0);
-        let (conn_tx, conn_rx) = mpsc::channel::<SelfRef<ConnectionMessage<'static>>>(&label, 64);
+        let (conn_tx, conn_rx) = mpsc::channel::<RecvMessage>(&label, 64);
         let (failures_tx, failures_rx) = mpsc::unbounded_channel(format!("{label}.failures"));
         let (closed_tx, closed_rx) = watch::channel(false);
         let resumed_rx = self.resume_notifier.subscribe();
@@ -715,7 +724,6 @@ impl Session {
             resumed_rx,
             parity,
             peer_supports_retry: self.peer_supports_retry,
-            schema_recv_tracker: Arc::clone(&self.schema_recv_tracker),
         }
     }
 
@@ -928,7 +936,11 @@ impl Session {
                     Some(ConnectionSlot::Active(state)) => state.conn_tx.clone(),
                     _ => return,
                 };
-                if conn_tx.send(r.map(ConnectionMessage::Request)).await.is_err() {
+                let recv_msg = RecvMessage {
+                    schemas: Arc::clone(&self.schema_recv_tracker),
+                    msg: r.map(ConnectionMessage::Request),
+                };
+                if conn_tx.send(recv_msg).await.is_err() {
                     self.remove_connection(&conn_id);
                     self.maybe_request_shutdown_after_root_closed();
                 }
@@ -938,7 +950,11 @@ impl Session {
                     Some(ConnectionSlot::Active(state)) => state.conn_tx.clone(),
                     _ => return,
                 };
-                if conn_tx.send(c.map(ConnectionMessage::Channel)).await.is_err() {
+                let recv_msg = RecvMessage {
+                    schemas: Arc::clone(&self.schema_recv_tracker),
+                    msg: c.map(ConnectionMessage::Channel),
+                };
+                if conn_tx.send(recv_msg).await.is_err() {
                     self.remove_connection(&conn_id);
                     self.maybe_request_shutdown_after_root_closed();
                 }
@@ -1313,9 +1329,21 @@ pub(crate) struct SessionCore {
     inner: std::sync::Mutex<SessionCoreInner>,
 }
 
+struct SendConnState {
+    /// Tracks which schemas we have sent
+    send_tracker: SchemaSendTracker,
+
+    /// Used to pair outgoing responses to a MethodID, which is going to
+    /// let us know if we need to attach response schemas via the send tracker
+    inflight_incoming: HashMap<RequestId, roam_types::MethodId>,
+}
+
 struct SessionCoreInner {
+    /// Underlying conduit (tx end)
     tx: Arc<dyn DynConduitTx>,
-    send_tracker: roam_types::SchemaSendTracker,
+
+    /// Per-connection state re: sent schemas, etc.
+    conns: HashMap<ConnectionId, SendConnState>,
 }
 
 impl SessionCore {

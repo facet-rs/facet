@@ -162,28 +162,6 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
         None
     }
-
-    /// Return the schema tracker as an opaque `Any` reference.
-    ///
-    /// Used by macro-generated dispatch code to look up remote schemas
-    /// and build translation plans. Returns `None` by default.
-    fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
-        None
-    }
-
-    /// Send response schemas for the statically-known response type.
-    ///
-    /// Called by generated dispatch code BEFORE the handler runs.
-    /// The shape MUST be the full `Result<T, RoamError<E>>` wire type,
-    /// not a variant like `Result<(), RoamError<E>>`.
-    // r[impl schema.exchange.callee]
-    fn send_response_schemas(
-        &self,
-        _method_id: crate::MethodId,
-        _response_shape: &'static facet_core::Shape,
-    ) -> impl std::future::Future<Output = ()> + MaybeSend {
-        async {}
-    }
 }
 
 /// Type-erased handler for incoming service calls.
@@ -201,10 +179,16 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
 /// pending response slot, and awaits the response from the peer.
 pub trait Caller: Clone + MaybeSend + MaybeSync + 'static {
     /// Send a call and wait for the response.
+    ///
+    /// Returns the response paired with the `SchemaRecvTracker` that was
+    /// active when the response was received, for schema-aware deserialization.
     fn call<'a>(
         &'a self,
         call: RequestCall<'a>,
-    ) -> impl Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + MaybeSend + 'a;
+    ) -> impl Future<
+        Output = Result<crate::WithTracker<SelfRef<RequestResponse<'static>>>, RoamError>,
+    > + MaybeSend
+    + 'a;
 
     /// Resolve when the underlying connection closes.
     ///
@@ -235,14 +219,6 @@ pub trait Caller: Clone + MaybeSend + MaybeSync + 'static {
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
         None
     }
-
-    /// Return the schema tracker as an opaque `Any` reference.
-    ///
-    /// Used by macro-generated client code to look up remote schemas
-    /// and build translation plans for response deserialization.
-    fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
-        None
-    }
 }
 
 trait ErasedCallerDyn: MaybeSend + MaybeSync + 'static {
@@ -251,13 +227,30 @@ trait ErasedCallerDyn: MaybeSend + MaybeSync + 'static {
         &'a self,
         call: RequestCall<'a>,
     ) -> Pin<
-        Box<dyn Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + Send + 'a>,
+        Box<
+            dyn Future<
+                    Output = Result<
+                        crate::WithTracker<SelfRef<RequestResponse<'static>>>,
+                        RoamError,
+                    >,
+                > + Send
+                + 'a,
+        >,
     >;
     #[cfg(target_arch = "wasm32")]
     fn call<'a>(
         &'a self,
         call: RequestCall<'a>,
-    ) -> Pin<Box<dyn Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + 'a>>;
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        crate::WithTracker<SelfRef<RequestResponse<'static>>>,
+                        RoamError,
+                    >,
+                > + 'a,
+        >,
+    >;
 
     #[cfg(not(target_arch = "wasm32"))]
     fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
@@ -268,8 +261,6 @@ trait ErasedCallerDyn: MaybeSend + MaybeSync + 'static {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder>;
-
-    fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)>;
 }
 
 impl<C: Caller> ErasedCallerDyn for C {
@@ -278,7 +269,15 @@ impl<C: Caller> ErasedCallerDyn for C {
         &'a self,
         call: RequestCall<'a>,
     ) -> Pin<
-        Box<dyn Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + Send + 'a>,
+        Box<
+            dyn Future<
+                    Output = Result<
+                        crate::WithTracker<SelfRef<RequestResponse<'static>>>,
+                        RoamError,
+                    >,
+                > + Send
+                + 'a,
+        >,
     > {
         Box::pin(Caller::call(self, call))
     }
@@ -286,8 +285,16 @@ impl<C: Caller> ErasedCallerDyn for C {
     fn call<'a>(
         &'a self,
         call: RequestCall<'a>,
-    ) -> Pin<Box<dyn Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + 'a>>
-    {
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = Result<
+                        crate::WithTracker<SelfRef<RequestResponse<'static>>>,
+                        RoamError,
+                    >,
+                > + 'a,
+        >,
+    > {
         Box::pin(Caller::call(self, call))
     }
 
@@ -307,10 +314,6 @@ impl<C: Caller> ErasedCallerDyn for C {
     #[cfg(not(target_arch = "wasm32"))]
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
         Caller::channel_binder(self)
-    }
-
-    fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
-        Caller::schema_tracker_any(self)
     }
 }
 
@@ -354,8 +357,10 @@ impl Caller for ErasedCaller {
     fn call<'a>(
         &'a self,
         mut call: RequestCall<'a>,
-    ) -> impl Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>> + MaybeSend + 'a
-    {
+    ) -> impl Future<
+        Output = Result<crate::WithTracker<SelfRef<RequestResponse<'static>>>, RoamError>,
+    > + MaybeSend
+    + 'a {
         async move {
             let Some(service) = self.service else {
                 return self.inner.call(call).await;
@@ -405,10 +410,6 @@ impl Caller for ErasedCaller {
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
         self.inner.channel_binder()
     }
-
-    fn schema_tracker_any(&self) -> Option<&(dyn std::any::Any + Send + Sync)> {
-        self.inner.schema_tracker_any()
-    }
 }
 
 pub trait Handler<R: ReplySink>: MaybeSend + MaybeSync + 'static {
@@ -422,11 +423,18 @@ pub trait Handler<R: ReplySink>: MaybeSend + MaybeSync + 'static {
         &self,
         call: SelfRef<crate::RequestCall<'static>>,
         reply: R,
+        schemas: &crate::SchemaRecvTracker,
     ) -> impl std::future::Future<Output = ()> + MaybeSend + '_;
 }
 
 impl<R: ReplySink> Handler<R> for () {
-    async fn handle(&self, _call: SelfRef<crate::RequestCall<'static>>, _reply: R) {}
+    async fn handle(
+        &self,
+        _call: SelfRef<crate::RequestCall<'static>>,
+        _reply: R,
+        _schemas: &crate::SchemaRecvTracker,
+    ) {
+    }
 }
 
 /// A decoded response value paired with response metadata.
@@ -542,7 +550,10 @@ mod tests {
             &'a self,
             _call: RequestCall<'a>,
         ) -> impl Future<
-            Output = Result<crate::SelfRef<RequestResponse<'static>>, crate::RoamError>,
+            Output = Result<
+                crate::WithTracker<crate::SelfRef<RequestResponse<'static>>>,
+                crate::RoamError,
+            >,
         > + MaybeSend
         + 'a {
             async move { unreachable!("NoopCaller::call is not used by this test") }

@@ -8,12 +8,12 @@ use roam_types::{BindingDirection, MethodId, SchemaRecvTracker, extract_schemas}
 pub fn schema_deserialize_args_borrowed<'input, 'facet, T: Facet<'facet>>(
     bytes: &'input [u8],
     method_id: MethodId,
-    schema_tracker_any: Option<&(dyn std::any::Any + Send + Sync)>,
+    tracker: &SchemaRecvTracker,
 ) -> Result<T, DeserializeError>
 where
     'input: 'facet,
 {
-    let resolved = resolve_plan::<T>(method_id, BindingDirection::Args, schema_tracker_any)?;
+    let resolved = resolve_plan::<T>(method_id, BindingDirection::Args, tracker)?;
     roam_postcard::from_slice_borrowed_with_plan(bytes, &resolved.plan, &resolved.remote.registry)
 }
 
@@ -22,12 +22,12 @@ where
 pub fn schema_deserialize_response_borrowed<'input, 'facet, T: Facet<'facet>>(
     bytes: &'input [u8],
     method_id: MethodId,
-    schema_tracker_any: Option<&(dyn std::any::Any + Send + Sync)>,
+    tracker: &SchemaRecvTracker,
 ) -> Result<T, DeserializeError>
 where
     'input: 'facet,
 {
-    let resolved = resolve_plan::<T>(method_id, BindingDirection::Response, schema_tracker_any)?;
+    let resolved = resolve_plan::<T>(method_id, BindingDirection::Response, tracker)?;
     roam_postcard::from_slice_borrowed_with_plan(bytes, &resolved.plan, &resolved.remote.registry)
 }
 
@@ -36,9 +36,9 @@ where
 pub fn schema_deserialize_response<T: Facet<'static>>(
     bytes: &[u8],
     method_id: MethodId,
-    schema_tracker_any: Option<&(dyn std::any::Any + Send + Sync)>,
+    tracker: &SchemaRecvTracker,
 ) -> Result<T, DeserializeError> {
-    let resolved = resolve_plan::<T>(method_id, BindingDirection::Response, schema_tracker_any)?;
+    let resolved = resolve_plan::<T>(method_id, BindingDirection::Response, tracker)?;
     roam_postcard::from_slice_with_plan(bytes, &resolved.plan, &resolved.remote.registry)
 }
 
@@ -50,14 +50,8 @@ struct ResolvedPlan {
 fn resolve_plan<'facet, T: Facet<'facet>>(
     method_id: MethodId,
     direction: BindingDirection,
-    schema_tracker_any: Option<&(dyn std::any::Any + Send + Sync)>,
+    tracker: &SchemaRecvTracker,
 ) -> Result<ResolvedPlan, DeserializeError> {
-    let tracker = schema_tracker_any
-        .and_then(|a| a.downcast_ref::<SchemaRecvTracker>())
-        .ok_or_else(|| {
-            DeserializeError::protocol("no schema tracker available — protocol error")
-        })?;
-
     let dir_name = match direction {
         BindingDirection::Args => "args",
         BindingDirection::Response => "response",

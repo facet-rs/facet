@@ -131,3 +131,24 @@ pub use method_identity::*;
 
 pub mod schema;
 pub use schema::*;
+
+/// Pairs a value with the `SchemaRecvTracker` that was active when the value
+/// was received. Used to thread per-message schema context through the caller
+/// API without storing trackers on long-lived structs.
+pub struct WithTracker<T> {
+    pub value: T,
+    pub tracker: std::sync::Arc<SchemaRecvTracker>,
+}
+
+impl<T> std::ops::Deref for WithTracker<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.value
+    }
+}
+
+impl<T> std::ops::DerefMut for WithTracker<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.value
+    }
+}
