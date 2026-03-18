@@ -18,6 +18,10 @@ Conduit continuity and session continuity are separate concerns:
 - Retry decisions are evaluated against the session's operation table, not
   against an individual conduit attachment.
 
+Retry semantics are defined in terms of **operations**, not request attempts.
+A retry creates a new request attempt for an existing operation. Retry does
+not retroactively preserve the original request attempt.
+
 # The fundamental ambiguity
 
 After any communication failure, the client faces irreducible uncertainty.
@@ -38,12 +42,12 @@ Any retry model must handle all five as possible realities behind a single
 > r[retry.op-id]
 >
 > Every RPC is bound to an **operation ID**: a client-generated identifier that
-> names one logical operation across multiple delivery attempts.
+> names one logical operation across multiple request attempts.
 
 > r[retry.op-id.uniqueness]
 >
 > The client MUST mint a unique operation ID for each logical operation. Every
-> delivery attempt for that operation carries the same ID. A new intention,
+> request attempt for that operation carries the same ID. A new intention,
 > even with identical arguments, gets a new ID.
 
 > r[retry.op-id.scope]
@@ -55,7 +59,8 @@ Any retry model must handle all five as possible realities behind a single
 >
 > If a session resumes on a replacement conduit, the operation ID scope does
 > not change. The same operation table continues to govern retries for that
-> session.
+> session. However, request attempts that were in flight on the failed
+> attachment are not preserved by session resumption.
 
 > r[retry.op-id.payload-binding]
 >
@@ -188,6 +193,9 @@ The two dimensions produce four static method classes:
    but if they reach Indeterminate, re-execution remains safe.
 
 # Duplicate attempt handling
+
+A retry never creates a new logical operation. It creates a new request
+attempt for the same operation.
 
 > r[retry.duplicate.absent]
 >

@@ -9,7 +9,10 @@ use crate::{
 /// A boxed future that is `Send` on native targets and `!Send` on wasm32.
 pub type BoxFut<'a, T> = Pin<Box<dyn MaybeSendFuture<Output = T> + 'a>>;
 
-/// Result type for an RPC call: either a tracked response or an error.
+/// Result type for one caller-visible RPC call: either a tracked response or an error.
+///
+/// The tracked value is the wire-level [`RequestResponse`] that resolved the
+/// current request attempt for that call.
 pub type CallResult = Result<crate::WithTracker<SelfRef<RequestResponse<'static>>>, RoamError>;
 
 // As a recap, a service defined like so:
@@ -66,11 +69,16 @@ pub type CallResult = Result<crate::WithTracker<SelfRef<RequestResponse<'static>
 // is always notified, even if the handler panics or otherwise fails to
 // reply.
 
-/// Represents an in-progress call from a client that must be replied to.
+/// Represents an in-progress API-level call as seen by a server handler.
 ///
-/// A `Call` is handed to a [`Handler`] implementation and provides the
-/// mechanism for sending a response back to the caller. The response can
-/// be sent via [`Call::reply`], [`Call::ok`], or [`Call::err`].
+/// A `Call` is handed to a [`Handler`] implementation for one incoming
+/// request attempt. It provides the mechanism for sending the terminal
+/// response for that attempt back to the caller. The response can be sent
+/// via [`Call::reply`], [`Call::ok`], or [`Call::err`].
+///
+/// In the retry model, one logical operation may span multiple request
+/// attempts over time, but each `Call` value corresponds to exactly one
+/// request attempt currently being handled.
 ///
 /// # Cancellation
 ///
@@ -88,10 +96,10 @@ where
     T: facet::Facet<'wire> + MaybeSend,
     E: facet::Facet<'wire> + MaybeSend,
 {
-    /// Send a [`Result`] back to the caller, consuming this `Call`.
+    /// Send the terminal response for this request attempt, consuming this `Call`.
     fn reply(self, result: Result<T, E>) -> impl std::future::Future<Output = ()> + MaybeSend;
 
-    /// Send a successful response back to the caller, consuming this `Call`.
+    /// Send a successful response for this request attempt, consuming this `Call`.
     ///
     /// Equivalent to `self.reply(Ok(value)).await`.
     fn ok(self, value: T) -> impl std::future::Future<Output = ()> + MaybeSend
@@ -101,7 +109,7 @@ where
         self.reply(Ok(value))
     }
 
-    /// Send an error response back to the caller, consuming this `Call`.
+    /// Send an error response for this request attempt, consuming this `Call`.
     ///
     /// Equivalent to `self.reply(Err(error)).await`.
     fn err(self, error: E) -> impl std::future::Future<Output = ()> + MaybeSend
@@ -112,7 +120,7 @@ where
     }
 }
 
-/// Sink for sending a reply back to the caller.
+/// Sink for sending the terminal response for one request attempt.
 ///
 /// Implemented by the session driver. Provides backpressure: `send_reply`
 /// awaits until the transport can accept the response before serializing it.
@@ -122,11 +130,12 @@ where
 /// If the `ReplySink` is dropped without `send_reply` being called, the caller
 /// will automatically receive a [`crate::RoamError::Cancelled`] error.
 pub trait ReplySink: MaybeSend + MaybeSync + 'static {
-    /// Send the response, consuming the sink. Any error that happens during send_reply
-    /// must set a flag in the driver for it to reply with an error.
+    /// Send the terminal response for this request attempt, consuming the sink.
+    /// Any error that happens during `send_reply` must set a flag in the driver
+    /// for it to resolve the attempt as failed.
     ///
-    /// This cannot return a Result because we cannot trust callers to deal with it, and
-    /// it's not like they can try sending a second reply anyway.
+    /// This cannot return a `Result` because we cannot trust callers to deal
+    /// with it, and they cannot try sending a second response anyway.
     ///
     /// Do not spawn a task to send the error because it too, might fail.
     fn send_reply(
@@ -134,7 +143,7 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
         response: RequestResponse<'_>,
     ) -> impl std::future::Future<Output = ()> + MaybeSend;
 
-    /// Send an error response back to the caller, consuming the sink.
+    /// Send an error response for this request attempt, consuming the sink.
     ///
     /// This is a convenience method used by generated dispatchers when
     /// deserialization fails or the method ID is unknown.
@@ -174,21 +183,24 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
 /// Type-erased handler for incoming service calls.
 ///
 /// Implemented (by the macro-generated dispatch code) for server-side types.
-/// Takes a fully decoded [`RequestCall`](crate::RequestCall) — already parsed
-/// from the wire — and a [`ReplySink`] through which the response is sent.
+/// Takes a fully decoded [`RequestCall`](crate::RequestCall) — one wire-level
+/// request attempt already parsed from the connection — and a [`ReplySink`]
+/// through which the terminal response for that attempt is sent.
 ///
 /// The dispatch impl decodes the args, routes by [`crate::MethodId`], and
 /// invokes the appropriate typed [`Call`]-based method on the concrete server type.
-/// A cloneable handle to a connection, handed out by the session driver.
 ///
-/// Generated clients hold an [`ErasedCaller`] and use it to send calls. The caller
-/// serializes the outgoing [`RequestCall`] (with borrowed args), registers a
-/// pending response slot, and awaits the response from the peer.
+/// Generated clients hold an [`ErasedCaller`] and use it to start API-level
+/// calls. The caller serializes the outgoing [`RequestCall`] (with borrowed
+/// args), registers a pending response slot for that request attempt, and
+/// awaits the response from the peer.
 pub trait Caller: Clone + MaybeSend + MaybeSync + 'static {
-    /// Send a call and wait for the response.
+    /// Start one outgoing request attempt for an API-level call and wait for
+    /// its response.
     ///
-    /// Returns the response paired with the `SchemaRecvTracker` that was
-    /// active when the response was received, for schema-aware deserialization.
+    /// Returns the wire-level response paired with the `SchemaRecvTracker` that
+    /// was active when the response was received, for schema-aware
+    /// deserialization.
     fn call<'a>(
         &'a self,
         call: RequestCall<'a>,

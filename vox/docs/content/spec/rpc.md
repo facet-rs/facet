@@ -328,10 +328,38 @@ identity described in [Retry](./retry/).
 
 > r[rpc.flow-control.max-concurrent-requests]
 >
-> Each connection has a per-direction limit on the number of concurrent
-> in-flight requests. Each peer advertises the maximum number of requests
-> it is willing to accept on a connection. A peer MUST NOT send a new
-> request if it would exceed the counterpart's advertised limit.
+> Each connection has two independent directional request limits: one for
+> request attempts sent by the local peer, and one for request attempts
+> sent by the counterpart. Each peer advertises the maximum number of
+> concurrent request attempts it is willing to accept on that connection.
+>
+> A peer's advertised `max_concurrent_requests` limits how many concurrent
+> request attempts the other peer may send on that connection.
+
+> r[rpc.flow-control.max-concurrent-requests.outbound]
+>
+> A peer MUST NOT send a new request attempt if doing so would exceed the
+> counterpart's advertised `max_concurrent_requests` for that connection.
+
+> r[rpc.flow-control.max-concurrent-requests.inbound]
+>
+> If a peer receives a request attempt that exceeds its own advertised
+> `max_concurrent_requests` for that connection, it MUST treat that as a
+> protocol violation.
+
+> r[rpc.flow-control.max-concurrent-requests.counting]
+>
+> `max_concurrent_requests` counts live request attempts, not logical
+> operations. A retransmission for the same operation still consumes one
+> unit of request concurrency while that retransmitted request attempt is
+> live.
+
+> r[rpc.flow-control.max-concurrent-requests.attachment-loss]
+>
+> Request-attempt accounting is attachment-local. When a conduit attachment
+> fails, in-flight request attempts on that failed attachment are no longer
+> live. If an unresolved operation is retransmitted after session
+> resumption, that later retransmission counts as a new request attempt.
 
 > r[rpc.flow-control.max-concurrent-requests.default]
 >

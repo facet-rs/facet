@@ -1,6 +1,10 @@
 //! Swift client generation.
 //!
-//! Generates caller protocol and client implementation for making RPC calls.
+//! Generates the caller protocol and client implementation for making
+//! application-level RPC calls. Each generated client method represents one
+//! logical call; the runtime may realize that call with one request attempt or
+//! multiple request attempts if retry/session recovery creates later attempts
+//! for the same operation.
 
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use roam_types::{MethodDescriptor, ServiceDescriptor, ShapeKind, classify_shape, is_rx, is_tx};
@@ -22,6 +26,9 @@ fn swift_retry_policy_literal(method: &MethodDescriptor) -> &'static str {
 }
 
 /// Generate complete client code (caller protocol + client implementation).
+///
+/// The generated API speaks in terms of application-level calls, while the
+/// runtime beneath it sends wire-level request attempts and receives responses.
 pub fn generate_client(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
     out.push_str(&generate_caller_protocol(service));
@@ -29,7 +36,7 @@ pub fn generate_client(service: &ServiceDescriptor) -> String {
     out
 }
 
-/// Generate caller protocol (for making calls to the service).
+/// Generate caller protocol for making application-level service calls.
 fn generate_caller_protocol(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
     let service_name = service.service_name.to_upper_camel_case();
@@ -77,7 +84,7 @@ fn generate_caller_protocol(service: &ServiceDescriptor) -> String {
     out
 }
 
-/// Generate client implementation (for making calls to the service).
+/// Generate client implementation for making application-level service calls.
 fn generate_client_impl(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
     let mut w = CodeWriter::with_indent_spaces(&mut out, 4);
@@ -113,6 +120,11 @@ fn generate_client_impl(service: &ServiceDescriptor) -> String {
 }
 
 /// Generate a single client method implementation.
+///
+/// One generated method corresponds to one logical call. At runtime, the
+/// underlying connection sends one request attempt immediately, and may later
+/// send additional request attempts for the same logical operation if retry or
+/// session recovery requires it.
 fn generate_client_method(
     w: &mut CodeWriter<&mut String>,
     method: &MethodDescriptor,
@@ -171,7 +183,7 @@ fn generate_client_method(
             // Encode arguments
             generate_encode_args(w, method.args);
 
-            // Make call
+            // Start the first request attempt for this logical call.
             let method_id = crate::method_id(method);
             cw_writeln!(
                 w,
@@ -212,7 +224,12 @@ fn generate_encode_args_filtered(
     w.writeln("let payload = Data(payloadBytes)").unwrap();
 }
 
-/// Generate client body for channeled methods.
+/// Generate client body for channel-bearing methods.
+///
+/// These methods still represent one logical call at the API level, but the
+/// request payload and channel bindings may need to be rebuilt for later
+/// request attempts if retry/session recovery triggers another attempt for the
+/// same operation.
 fn generate_streaming_client_body(
     w: &mut CodeWriter<&mut String>,
     method: &MethodDescriptor,
@@ -265,7 +282,7 @@ fn generate_streaming_client_body(
     w.writeln("let prepared = await prepareRetry()").unwrap();
     w.blank_line().unwrap();
 
-    // Make the call
+    // Start the first request attempt for this logical call.
     let ret_type = swift_type_client_return(method.return_shape);
     let method_id = crate::method_id(method);
     let _ = ret_type;
@@ -288,7 +305,7 @@ fn unique_decode_cursor_name(args: &[roam_types::ArgDescriptor]) -> String {
     candidate
 }
 
-/// Generate code to decode the full wire response payload:
+/// Generate code to decode the wire response payload for one request attempt:
 /// `Result<T, RoamError<E>>`.
 fn generate_response_decode(
     w: &mut CodeWriter<&mut String>,

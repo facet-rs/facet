@@ -25,8 +25,10 @@ use crate::session::{
 use crate::{InMemoryOperationStore, OperationAdmit, OperationCancel, OperationStore};
 use moire::sync::mpsc;
 
-/// A pending response carries both the message and the recv tracker that was
-/// current when the message was received, so the caller can deserialize
+/// A pending response for one outbound request attempt.
+///
+/// Carries both the wire response message and the recv tracker that was
+/// current when the response was received, so the caller can deserialize
 /// the response with the correct schemas.
 struct PendingResponse {
     msg: SelfRef<RequestMessage<'static>>,
@@ -42,7 +44,10 @@ struct InFlightHandler {
     operation_id: Option<u64>,
 }
 
-/// State shared between the driver loop and any DriverCaller/DriverChannelSink handles.
+/// State shared between the driver loop and any `DriverCaller` / `DriverChannelSink` handles.
+///
+/// `pending_responses` is keyed by request ID and therefore tracks live
+/// request attempts, not logical operations.
 struct DriverShared {
     pending_responses: SyncMutex<BTreeMap<RequestId, ResponseSlot>>,
     request_ids: SyncMutex<IdAllocator<RequestId>>,
@@ -132,8 +137,9 @@ mod tests {
 ///
 /// If dropped without `send_reply` being called, automatically sends
 /// `RoamError::Cancelled` to the caller. This guarantees that every
-/// request receives exactly one response (`rpc.response.one-per-request`),
-/// even if the handler panics or forgets to reply.
+/// request attempt receives exactly one terminal response
+/// (`rpc.response.one-per-request`), even if the handler panics or
+/// forgets to reply.
 pub struct DriverReplySink {
     sender: Option<ConnectionSender>,
     request_id: RequestId,
@@ -419,7 +425,8 @@ impl ChannelBinder for DriverChannelBinder {
 }
 
 /// Implements [`Caller`]: allocates a request ID, registers a response slot,
-/// sends the call through the connection, and awaits the response.
+/// sends one request attempt through the connection, and awaits the
+/// corresponding response.
 #[derive(Clone)]
 pub struct DriverCaller {
     sender: ConnectionSender,
@@ -731,8 +738,8 @@ impl Caller for DriverCaller {
 // r[impl rpc.request]
 // r[impl rpc.response]
 // r[impl rpc.pipelining]
-/// Per-connection driver. Handles in-flight request tracking, dispatches
-/// incoming calls to a Handler, and manages channel state/flow control.
+/// Per-connection driver. Tracks in-flight request attempts, dispatches
+/// incoming requests to a `Handler`, and manages channel state / flow control.
 pub struct Driver<H: Handler<DriverReplySink>> {
     sender: ConnectionSender,
     rx: mpsc::Receiver<crate::session::RecvMessage>,

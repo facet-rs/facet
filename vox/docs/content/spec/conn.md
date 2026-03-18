@@ -304,8 +304,8 @@ starts only after that conduit has been selected and initialized.
 
 > r[session.message]
 >
-> Every operation that can be done during a session's lifecycle is done by
-> sending and receiving `Message` values.
+> Every session-level protocol action is done by sending and receiving
+> `Message` values.
 
 > r[session.message.connection-id]
 >
@@ -410,9 +410,14 @@ starts only after that conduit has been selected and initialized.
 > r[session.handshake.resume]
 >
 > After initial establishment, the runtime MAY bind a replacement conduit onto
-> the same session. Resumption preserves the session's connection namespace and
-> any operation records attached to that session. Protocol schemas are
-> re-exchanged on resumption (new handshake).
+> the same session. Resumption preserves session-scoped state, including the
+> session's connection namespace and any operation records attached to that
+> session. Protocol schemas are re-exchanged on resumption (new handshake).
+>
+> Session resumption preserves session-scoped state, but does not preserve
+> in-flight request attempts or in-flight response deliveries on the failed
+> attachment. If an unresolved operation continues after session resumption, it
+> does so by creating a new request attempt for the same operation.
 
 > r[session.parity]
 >

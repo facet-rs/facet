@@ -1,13 +1,13 @@
 // CallBuilder for fluent RPC call construction.
 //
-// Allows adding metadata before making the call:
+// Allows adding metadata before starting the request attempt for a call:
 //   await client.echo("hello").withMeta("trace-id", "abc123");
 
 import { ClientMetadata } from "./metadata.ts";
 
 /**
  * Executor function type for CallBuilder.
- * Takes metadata and returns the call result.
+ * Takes metadata and returns the eventual call result.
  */
 export type CallExecutor<T> = (metadata: ClientMetadata) => Promise<T>;
 
@@ -15,12 +15,17 @@ export type CallExecutor<T> = (metadata: ClientMetadata) => Promise<T>;
  * Fluent builder for RPC calls.
  *
  * Implements PromiseLike so it can be awaited directly, while also
- * supporting metadata modification before the call is made.
+ * supporting metadata modification before the request attempt is started.
  *
- * IMPORTANT: The call is executed eagerly when the CallBuilder is created.
- * This is necessary for streaming methods where channels must be active
- * before data can be sent. The builder pattern still works because metadata
- * is captured at construction time.
+ * IMPORTANT: the builder starts work eagerly when the CallBuilder is created.
+ * For ordinary unary methods this usually just means the request attempt is
+ * issued immediately. For streaming methods this is necessary because channels
+ * must be active before data can be sent. The builder pattern still works
+ * because metadata is captured at construction time.
+ *
+ * `CallBuilder` is about one caller-visible call. If retry or session recovery
+ * later creates another request attempt for the same logical operation, that is
+ * handled below this API surface.
  *
  * @example
  * ```typescript
@@ -33,8 +38,8 @@ export type CallExecutor<T> = (metadata: ClientMetadata) => Promise<T>;
  * const client = new TestbedClient(caller);
  * await client.echo("hello"); // middleware adds auth
  *
- * // For streaming, the call starts immediately:
- * const call = client.generate(5, tx); // RPC sent now
+ * // For streaming, the initial request attempt starts immediately:
+ * const call = client.generate(5, tx); // initial request attempt sent now
  * tx.send(data);                        // Can send data
  * await call;                           // Wait for completion
  * ```
@@ -43,7 +48,8 @@ export class CallBuilder<T> implements PromiseLike<T> {
   private resultPromise: Promise<T>;
 
   constructor(executor: CallExecutor<T>, metadata?: ClientMetadata) {
-    // Execute immediately with the provided metadata (or empty)
+    // Start the initial request attempt immediately with the provided metadata
+    // (or empty metadata).
     this.resultPromise = executor(metadata ?? new ClientMetadata());
   }
 
@@ -78,7 +84,8 @@ export class CallBuilder<T> implements PromiseLike<T> {
 /**
  * Create a CallBuilder with metadata.
  *
- * This is the primary way to add per-call metadata:
+ * This is the primary way to add per-call metadata before the initial request
+ * attempt is started:
  * ```typescript
  * const meta = new ClientMetadata();
  * meta.setSensitive("authorization", "Bearer token");
