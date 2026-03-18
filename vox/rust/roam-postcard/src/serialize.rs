@@ -166,8 +166,9 @@ fn serialize_peek_inner<'a>(
             unsafe { crate::raw::try_decode_passthrough_bytes(mapped.ptr, mapped.shape) }
         {
             // Passthrough: already-encoded postcard bytes, u32le length-prefixed.
+            // The payload bytes are borrowed from the source value — zero-copy.
             out.write_bytes(&(bytes.len() as u32).to_le_bytes());
-            out.write_bytes(bytes);
+            out.write_referenced_bytes(bytes);
             return Ok(());
         }
         // Non-passthrough: reserve u32le prefix, serialize directly, patch length.
