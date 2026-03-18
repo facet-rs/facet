@@ -31,20 +31,20 @@ export interface MetadataEntry {
 
 export interface ConnectionOpen {
   connection_settings: ConnectionSettings;
-  metadata: Metadata;
+  metadata: MetadataEntry[];
 }
 
 export interface ConnectionAccept {
   connection_settings: ConnectionSettings;
-  metadata: Metadata;
+  metadata: MetadataEntry[];
 }
 
 export interface ConnectionReject {
-  metadata: Metadata;
+  metadata: MetadataEntry[];
 }
 
 export interface ConnectionClose {
-  metadata: Metadata;
+  metadata: MetadataEntry[];
 }
 
 export type RequestId = bigint;
@@ -58,20 +58,20 @@ export type CborPayload = Uint8Array;
 export interface RequestCall {
   method_id: MethodId;
   channels: ChannelId[];
-  metadata: Metadata;
+  metadata: MetadataEntry[];
   args: Uint8Array;
   schemas: CborPayload;
 }
 
 export interface RequestResponse {
   channels: ChannelId[];
-  metadata: Metadata;
+  metadata: MetadataEntry[];
   ret: Uint8Array;
   schemas: CborPayload;
 }
 
 export interface RequestCancel {
-  metadata: Metadata;
+  metadata: MetadataEntry[];
 }
 
 export type RequestBody =
@@ -89,11 +89,11 @@ export interface ChannelItem {
 }
 
 export interface ChannelClose {
-  metadata: Metadata;
+  metadata: MetadataEntry[];
 }
 
 export interface ChannelReset {
-  metadata: Metadata;
+  metadata: MetadataEntry[];
 }
 
 export interface ChannelGrantCredit {
@@ -135,18 +135,9 @@ export interface Message {
   payload: MessagePayload;
 }
 
-export type Metadata = MetadataEntry[];
-
-export const MessageDiscriminant = {
-  ProtocolError: 0,
-  ConnectionOpen: 1,
-  ConnectionAccept: 2,
-  ConnectionReject: 3,
-  ConnectionClose: 4,
-  RequestMessage: 5,
-  ChannelMessage: 6,
-  Ping: 7,
-  Pong: 8,
+export const ParityDiscriminant = {
+  Odd: 0,
+  Even: 1,
 } as const;
 
 export const MetadataValueDiscriminant = {
@@ -168,33 +159,40 @@ export const ChannelBodyDiscriminant = {
   GrantCredit: 3,
 } as const;
 
-export type MessageHello = Message & { payload: { tag: "Hello"; value: Hello } };
-export type MessageHelloYourself = Message & { payload: { tag: "HelloYourself"; value: HelloYourself } };
-export type MessageProtocolError = Message & { payload: { tag: "ProtocolError"; value: ProtocolError } };
-export type MessagePing = Message & { payload: { tag: "Ping"; value: Ping } };
-export type MessagePong = Message & { payload: { tag: "Pong"; value: Pong } };
-export type MessageConnect = Message & { payload: { tag: "ConnectionOpen"; value: ConnectionOpen } };
-export type MessageAccept = Message & { payload: { tag: "ConnectionAccept"; value: ConnectionAccept } };
-export type MessageReject = Message & { payload: { tag: "ConnectionReject"; value: ConnectionReject } };
-export type MessageGoodbye = Message & { payload: { tag: "ConnectionClose"; value: ConnectionClose } };
-export type MessageRequest = Message & {
-  payload: { tag: "RequestMessage"; value: { id: bigint; body: { tag: "Call"; value: RequestCall } } };
-};
-export type MessageResponse = Message & {
-  payload: { tag: "RequestMessage"; value: { id: bigint; body: { tag: "Response"; value: RequestResponse } } };
-};
-export type MessageCancel = Message & {
-  payload: { tag: "RequestMessage"; value: { id: bigint; body: { tag: "Cancel"; value: RequestCancel } } };
-};
-export type MessageData = Message & {
-  payload: { tag: "ChannelMessage"; value: { id: bigint; body: { tag: "Item"; value: ChannelItem } } };
-};
-export type MessageClose = Message & {
-  payload: { tag: "ChannelMessage"; value: { id: bigint; body: { tag: "Close"; value: ChannelClose } } };
-};
-export type MessageReset = Message & {
-  payload: { tag: "ChannelMessage"; value: { id: bigint; body: { tag: "Reset"; value: ChannelReset } } };
-};
-export type MessageCredit = Message & {
-  payload: { tag: "ChannelMessage"; value: { id: bigint; body: { tag: "GrantCredit"; value: ChannelGrantCredit } } };
-};
+export const MessagePayloadDiscriminant = {
+  ProtocolError: 0,
+  ConnectionOpen: 1,
+  ConnectionAccept: 2,
+  ConnectionReject: 3,
+  ConnectionClose: 4,
+  RequestMessage: 5,
+  ChannelMessage: 6,
+  Ping: 7,
+  Pong: 8,
+} as const;
+
+export type ParityOdd = Extract<Parity, { tag: "Odd" }>;
+export type ParityEven = Extract<Parity, { tag: "Even" }>;
+
+export type MetadataValueString = Extract<MetadataValue, { tag: "String" }>;
+export type MetadataValueBytes = Extract<MetadataValue, { tag: "Bytes" }>;
+export type MetadataValueU64 = Extract<MetadataValue, { tag: "U64" }>;
+
+export type RequestBodyCall = Extract<RequestBody, { tag: "Call" }>;
+export type RequestBodyResponse = Extract<RequestBody, { tag: "Response" }>;
+export type RequestBodyCancel = Extract<RequestBody, { tag: "Cancel" }>;
+
+export type ChannelBodyItem = Extract<ChannelBody, { tag: "Item" }>;
+export type ChannelBodyClose = Extract<ChannelBody, { tag: "Close" }>;
+export type ChannelBodyReset = Extract<ChannelBody, { tag: "Reset" }>;
+export type ChannelBodyGrantCredit = Extract<ChannelBody, { tag: "GrantCredit" }>;
+
+export type MessagePayloadProtocolError = Extract<MessagePayload, { tag: "ProtocolError" }>;
+export type MessagePayloadConnectionOpen = Extract<MessagePayload, { tag: "ConnectionOpen" }>;
+export type MessagePayloadConnectionAccept = Extract<MessagePayload, { tag: "ConnectionAccept" }>;
+export type MessagePayloadConnectionReject = Extract<MessagePayload, { tag: "ConnectionReject" }>;
+export type MessagePayloadConnectionClose = Extract<MessagePayload, { tag: "ConnectionClose" }>;
+export type MessagePayloadRequestMessage = Extract<MessagePayload, { tag: "RequestMessage" }>;
+export type MessagePayloadChannelMessage = Extract<MessagePayload, { tag: "ChannelMessage" }>;
+export type MessagePayloadPing = Extract<MessagePayload, { tag: "Ping" }>;
+export type MessagePayloadPong = Extract<MessagePayload, { tag: "Pong" }>;

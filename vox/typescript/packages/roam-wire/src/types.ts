@@ -4,24 +4,19 @@ export * from "./types.generated.ts";
 // Hand-written additions that aren't derivable from Rust shapes
 import type {
   ConnectionSettings,
-  Hello,
-  HelloYourself,
   Message,
-  Metadata,
   MetadataEntry,
   MetadataFlags,
   MetadataValue,
   Parity,
 } from "./types.generated.ts";
 
+export type Metadata = MetadataEntry[];
+
 export const MetadataFlagValues = {
   NONE: 0n as MetadataFlags,
   SENSITIVE: (1n << 0n) as MetadataFlags,
   NO_PROPAGATE: (1n << 1n) as MetadataFlags,
-} as const;
-
-export const HelloDiscriminant = {
-  V7: 7,
 } as const;
 
 // Helpers
@@ -40,28 +35,7 @@ export function connectionSettings(parity: Parity, maxConcurrentRequests: number
   };
 }
 
-export function helloV7(
-  parity: Parity,
-  maxConcurrentRequests: number,
-  metadata: Metadata = [],
-): Hello {
-  return {
-    version: 7,
-    connection_settings: connectionSettings(parity, maxConcurrentRequests),
-    metadata,
-  };
-}
 
-export function helloYourself(
-  parity: Parity,
-  maxConcurrentRequests: number,
-  metadata: Metadata = [],
-): HelloYourself {
-  return {
-    connection_settings: connectionSettings(parity, maxConcurrentRequests),
-    metadata,
-  };
-}
 
 export function metadataString(value: string): MetadataValue {
   return { tag: "String", value };
@@ -81,14 +55,6 @@ export function metadataEntry(
   flags: MetadataFlags = MetadataFlagValues.NONE,
 ): MetadataEntry {
   return { key, value, flags };
-}
-
-export function messageHello(hello: Hello): Message {
-  return { connection_id: 0n, payload: { tag: "Hello", value: hello } };
-}
-
-export function messageHelloYourself(value: HelloYourself): Message {
-  return { connection_id: 0n, payload: { tag: "HelloYourself", value } };
 }
 
 export function messageProtocolError(description: string): Message {
@@ -155,6 +121,7 @@ export function messageRequest(
   metadata: Metadata = [],
   channels: bigint[] = [],
   connId: bigint = 0n,
+  schemas: Uint8Array = new Uint8Array(0),
 ): Message {
   return {
     connection_id: connId,
@@ -169,6 +136,7 @@ export function messageRequest(
             args: payload,
             channels,
             metadata,
+            schemas,
           },
         },
       },
@@ -182,6 +150,7 @@ export function messageResponse(
   metadata: Metadata = [],
   channels: bigint[] = [],
   connId: bigint = 0n,
+  schemas: Uint8Array = new Uint8Array(0),
 ): Message {
   return {
     connection_id: connId,
@@ -195,6 +164,7 @@ export function messageResponse(
             ret: payload,
             channels,
             metadata,
+            schemas,
           },
         },
       },

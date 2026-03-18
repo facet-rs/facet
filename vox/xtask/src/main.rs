@@ -386,11 +386,7 @@ fn codegen_typescript_wire_schemas(
         "MetadataEntrySchema",
         <rt::MetadataEntry<'static> as facet::Facet<'static>>::SHAPE
     );
-    emit_schema!("HelloSchema", <rt::Hello as facet::Facet<'static>>::SHAPE);
-    emit_schema!(
-        "HelloYourselfSchema",
-        <rt::HelloYourself as facet::Facet<'static>>::SHAPE
-    );
+
     emit_schema!(
         "ProtocolErrorSchema",
         <rt::ProtocolError<'static> as facet::Facet<'static>>::SHAPE
@@ -451,8 +447,7 @@ fn codegen_typescript_wire_schemas(
     out.push_str("  [\"ConnectionSettings\", ConnectionSettingsSchema],\n");
     out.push_str("  [\"MetadataValue\", MetadataValueSchema],\n");
     out.push_str("  [\"MetadataEntry\", MetadataEntrySchema],\n");
-    out.push_str("  [\"Hello\", HelloSchema],\n");
-    out.push_str("  [\"HelloYourself\", HelloYourselfSchema],\n");
+
     out.push_str("  [\"ProtocolError\", ProtocolErrorSchema],\n");
     out.push_str("  [\"Ping\", PingSchema],\n");
     out.push_str("  [\"Pong\", PongSchema],\n");
@@ -490,94 +485,6 @@ fn codegen_typescript_wire_types(
             // Walk the entire Message shape — this collects all transitive types
             WireType {
                 shape: <rt::Message<'static> as facet::Facet<'static>>::SHAPE,
-            },
-        ],
-        aliases: vec![TypeAlias {
-            name: "Metadata",
-            definition: "MetadataEntry[]",
-        }],
-        discriminants: vec![
-            DiscriminantConst {
-                const_name: "MessageDiscriminant",
-                shape: <rt::MessagePayload<'static> as facet::Facet<'static>>::SHAPE,
-            },
-            DiscriminantConst {
-                const_name: "MetadataValueDiscriminant",
-                shape: <rt::MetadataValue<'static> as facet::Facet<'static>>::SHAPE,
-            },
-            DiscriminantConst {
-                const_name: "RequestBodyDiscriminant",
-                shape: <rt::RequestBody<'static> as facet::Facet<'static>>::SHAPE,
-            },
-            DiscriminantConst {
-                const_name: "ChannelBodyDiscriminant",
-                shape: <rt::ChannelBody<'static> as facet::Facet<'static>>::SHAPE,
-            },
-        ],
-        narrowed: vec![
-            NarrowedAlias {
-                name: "MessageHello",
-                definition: "Message & { payload: { tag: \"Hello\"; value: Hello } }",
-            },
-            NarrowedAlias {
-                name: "MessageHelloYourself",
-                definition: "Message & { payload: { tag: \"HelloYourself\"; value: HelloYourself } }",
-            },
-            NarrowedAlias {
-                name: "MessageProtocolError",
-                definition: "Message & { payload: { tag: \"ProtocolError\"; value: ProtocolError } }",
-            },
-            NarrowedAlias {
-                name: "MessagePing",
-                definition: "Message & { payload: { tag: \"Ping\"; value: Ping } }",
-            },
-            NarrowedAlias {
-                name: "MessagePong",
-                definition: "Message & { payload: { tag: \"Pong\"; value: Pong } }",
-            },
-            NarrowedAlias {
-                name: "MessageConnect",
-                definition: "Message & { payload: { tag: \"ConnectionOpen\"; value: ConnectionOpen } }",
-            },
-            NarrowedAlias {
-                name: "MessageAccept",
-                definition: "Message & { payload: { tag: \"ConnectionAccept\"; value: ConnectionAccept } }",
-            },
-            NarrowedAlias {
-                name: "MessageReject",
-                definition: "Message & { payload: { tag: \"ConnectionReject\"; value: ConnectionReject } }",
-            },
-            NarrowedAlias {
-                name: "MessageGoodbye",
-                definition: "Message & { payload: { tag: \"ConnectionClose\"; value: ConnectionClose } }",
-            },
-            NarrowedAlias {
-                name: "MessageRequest",
-                definition: "Message & { payload: { tag: \"RequestMessage\"; value: { id: bigint; body: { tag: \"Call\"; value: RequestCall } } } }",
-            },
-            NarrowedAlias {
-                name: "MessageResponse",
-                definition: "Message & { payload: { tag: \"RequestMessage\"; value: { id: bigint; body: { tag: \"Response\"; value: RequestResponse } } } }",
-            },
-            NarrowedAlias {
-                name: "MessageCancel",
-                definition: "Message & { payload: { tag: \"RequestMessage\"; value: { id: bigint; body: { tag: \"Cancel\"; value: RequestCancel } } } }",
-            },
-            NarrowedAlias {
-                name: "MessageData",
-                definition: "Message & { payload: { tag: \"ChannelMessage\"; value: { id: bigint; body: { tag: \"Item\"; value: ChannelItem } } } }",
-            },
-            NarrowedAlias {
-                name: "MessageClose",
-                definition: "Message & { payload: { tag: \"ChannelMessage\"; value: { id: bigint; body: { tag: \"Close\"; value: ChannelClose } } } }",
-            },
-            NarrowedAlias {
-                name: "MessageReset",
-                definition: "Message & { payload: { tag: \"ChannelMessage\"; value: { id: bigint; body: { tag: \"Reset\"; value: ChannelReset } } } }",
-            },
-            NarrowedAlias {
-                name: "MessageCredit",
-                definition: "Message & { payload: { tag: \"ChannelMessage\"; value: { id: bigint; body: { tag: \"GrantCredit\"; value: ChannelGrantCredit } } } }",
             },
         ],
     };
