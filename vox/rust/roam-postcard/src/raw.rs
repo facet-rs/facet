@@ -18,9 +18,7 @@ pub fn opaque_encoded_borrowed(bytes: &&[u8]) -> facet::OpaqueSerialize {
 /// Try to extract passthrough bytes from an `OpaqueSerialize` result.
 /// Returns `Some(bytes)` if this is already-encoded postcard data.
 ///
-/// Checks against the single sentinel shape defined in roam-types using
-/// pointer identity. Both roam-types and roam-postcard reference the same
-/// static, so the addresses match.
+/// Checks against the sentinel shape defined in roam-types using value equality.
 ///
 /// # Safety
 /// The caller must ensure `ptr` points to valid memory matching `shape`.
