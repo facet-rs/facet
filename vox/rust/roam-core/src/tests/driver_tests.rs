@@ -1246,6 +1246,279 @@ async fn call_through_cbor_handshake_reaches_handler() {
     assert_eq!(value, 42);
 }
 
+/// After resuming a session, the caller should be able to make calls
+/// that go through schema deserialization on the server side.
+#[tokio::test]
+async fn call_after_resume_reaches_handler() {
+    let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
+
+    let registry = SessionRegistry::default();
+
+    let (server_result, client_result) = tokio::try_join!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            acceptor_on(server_link1)
+                .session_registry(registry.clone())
+                .establish_or_resume::<DriverCaller>(EchoHandler),
+        ),
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            initiator_on(client_link1, TransportMode::Bare)
+                .resumable()
+                .establish::<DriverCaller>(()),
+        ),
+    )
+    .expect("session establishment timed out");
+
+    let (_server_caller, _server_handle) = match server_result.expect("server failed") {
+        SessionAcceptOutcome::Established(c, h) => (c, h),
+        _ => panic!("expected Established"),
+    };
+    let (caller, client_session_handle) = client_result.expect("client failed");
+
+    // First call succeeds on the initial connection
+    let response = tokio::time::timeout(
+        Duration::from_secs(1),
+        caller.call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&42_u32),
+            schemas: Default::default(),
+            channels: vec![],
+            metadata: Default::default(),
+        }),
+    )
+    .await
+    .expect("first call timed out")
+    .expect("first call should succeed");
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload"),
+    };
+    assert_eq!(roam_postcard::from_slice::<u32>(ret_bytes).unwrap(), 42);
+
+    // Break the connection
+    client_break1.close().await;
+    server_break1.close().await;
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    // Resume
+    let (client_link2, _client_break2, server_link2, _server_break2) = breakable_link_pair(64);
+    let (resume_result, server_accept_result) = tokio::join!(
+        async {
+            let mut resumed_link = initiate_transport(client_link2, TransportMode::Bare)
+                .await
+                .expect("transport");
+            let handshake_result = crate::handshake_as_initiator(
+                &resumed_link.tx,
+                &mut resumed_link.rx,
+                ConnectionSettings {
+                    parity: Parity::Odd,
+                    max_concurrent_requests: 64,
+                },
+                true,
+                client_session_handle.resume_key(),
+            )
+            .await
+            .expect("handshake");
+            let message_plan =
+                crate::MessagePlan::from_handshake(&handshake_result).expect("message plan");
+            client_session_handle
+                .resume(
+                    BareConduit::with_message_plan(resumed_link, message_plan),
+                    handshake_result,
+                )
+                .await
+        },
+        acceptor_on(server_link2)
+            .session_registry(registry.clone())
+            .establish_or_resume::<DriverCaller>(EchoHandler),
+    );
+    resume_result.expect("resume should succeed");
+    match server_accept_result.expect("server accept should succeed") {
+        SessionAcceptOutcome::Resumed => {}
+        _ => panic!("expected Resumed"),
+    }
+
+    // Call after resume should succeed — schemas must be re-sent
+    let response = tokio::time::timeout(
+        Duration::from_secs(1),
+        caller.call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&99_u32),
+            schemas: Default::default(),
+            channels: vec![],
+            metadata: Default::default(),
+        }),
+    )
+    .await
+    .expect("post-resume call timed out")
+    .expect("post-resume call should succeed");
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload"),
+    };
+    assert_eq!(roam_postcard::from_slice::<u32>(ret_bytes).unwrap(), 99);
+}
+
+/// After resuming, the server should be able to respond with schemas
+/// that the client can deserialize (response schemas re-sent after reset).
+#[tokio::test]
+async fn response_schemas_work_after_resume() {
+    let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
+
+    let registry = SessionRegistry::default();
+
+    let (server_result, client_result) = tokio::try_join!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            acceptor_on(server_link1)
+                .session_registry(registry.clone())
+                .establish_or_resume::<DriverCaller>(EchoHandler),
+        ),
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            initiator_on(client_link1, TransportMode::Bare)
+                .resumable()
+                .establish::<DriverCaller>(()),
+        ),
+    )
+    .expect("session establishment timed out");
+
+    let _ = match server_result.expect("server failed") {
+        SessionAcceptOutcome::Established(c, h) => (c, h),
+        _ => panic!("expected Established"),
+    };
+    let (caller, client_session_handle) = client_result.expect("client failed");
+
+    // Break immediately — no calls on the first connection
+    client_break1.close().await;
+    server_break1.close().await;
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    // Resume
+    let (client_link2, _client_break2, server_link2, _server_break2) = breakable_link_pair(64);
+    let (resume_result, server_accept_result) = tokio::join!(
+        async {
+            let mut resumed_link = initiate_transport(client_link2, TransportMode::Bare)
+                .await
+                .expect("transport");
+            let handshake_result = crate::handshake_as_initiator(
+                &resumed_link.tx,
+                &mut resumed_link.rx,
+                ConnectionSettings {
+                    parity: Parity::Odd,
+                    max_concurrent_requests: 64,
+                },
+                true,
+                client_session_handle.resume_key(),
+            )
+            .await
+            .expect("handshake");
+            let message_plan =
+                crate::MessagePlan::from_handshake(&handshake_result).expect("message plan");
+            client_session_handle
+                .resume(
+                    BareConduit::with_message_plan(resumed_link, message_plan),
+                    handshake_result,
+                )
+                .await
+        },
+        acceptor_on(server_link2)
+            .session_registry(registry.clone())
+            .establish_or_resume::<DriverCaller>(EchoHandler),
+    );
+    resume_result.expect("resume should succeed");
+    match server_accept_result.expect("server accept should succeed") {
+        SessionAcceptOutcome::Resumed => {}
+        _ => panic!("expected Resumed"),
+    }
+
+    // First-ever call happens on the resumed connection — both arg and
+    // response schemas must be sent fresh.
+    let response = tokio::time::timeout(
+        Duration::from_secs(1),
+        caller.call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&77_u32),
+            schemas: Default::default(),
+            channels: vec![],
+            metadata: Default::default(),
+        }),
+    )
+    .await
+    .expect("call timed out")
+    .expect("call should succeed");
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload"),
+    };
+    assert_eq!(roam_postcard::from_slice::<u32>(ret_bytes).unwrap(), 77);
+}
+
+/// Two different method IDs should each get their schemas sent independently
+/// on the same connection.
+#[tokio::test]
+async fn multiple_methods_get_independent_schemas() {
+    let (client_link, server_link) = memory_link_pair(64);
+
+    let (server_result, client_result) = tokio::try_join!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            acceptor_on(server_link).establish::<DriverCaller>(EchoHandler),
+        ),
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            initiator_on(client_link, TransportMode::Bare).establish::<DriverCaller>(()),
+        ),
+    )
+    .expect("session establishment timed out");
+
+    let (_server_caller, _server_handle) = server_result.expect("server failed");
+    let (caller, _client_handle) = client_result.expect("client failed");
+
+    // Call with method ID 1
+    let r1 = tokio::time::timeout(
+        Duration::from_secs(1),
+        caller.call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&10_u32),
+            schemas: Default::default(),
+            channels: vec![],
+            metadata: Default::default(),
+        }),
+    )
+    .await
+    .expect("call 1 timed out")
+    .expect("call 1 should succeed");
+    let v1: u32 = roam_postcard::from_slice(match &r1.ret {
+        Payload::Incoming(b) => b,
+        _ => panic!("expected incoming"),
+    })
+    .unwrap();
+    assert_eq!(v1, 10);
+
+    // Call with method ID 2 — different method, needs its own schema binding
+    let r2 = tokio::time::timeout(
+        Duration::from_secs(1),
+        caller.call(RequestCall {
+            method_id: MethodId(2),
+            args: Payload::outgoing(&20_u32),
+            schemas: Default::default(),
+            channels: vec![],
+            metadata: Default::default(),
+        }),
+    )
+    .await
+    .expect("call 2 timed out")
+    .expect("call 2 should succeed");
+    let v2: u32 = roam_postcard::from_slice(match &r2.ret {
+        Payload::Incoming(b) => b,
+        _ => panic!("expected incoming"),
+    })
+    .unwrap();
+    assert_eq!(v2, 20);
+}
+
 /// Same as above but through the stable conduit path.
 #[tokio::test]
 async fn call_through_stable_conduit_reaches_handler() {

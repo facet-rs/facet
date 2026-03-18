@@ -141,5 +141,7 @@ pub(crate) fn deserialize_postcard_with_plan<T: facet::Facet<'static>>(
     })
 }
 
+pub mod testing;
+
 #[cfg(test)]
 mod tests;
