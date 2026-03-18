@@ -86,6 +86,9 @@ pub trait ConduitTxPermit {
 ///
 /// Yields decoded values as [`SelfRef<Msg<'static>>`](SelfRef) (value + backing storage).
 /// Uses a precomputed `TypePlanCore` for fast plan-driven deserialization.
+/// The result of receiving a message from a conduit.
+pub type RecvResult<M, E> = Result<Option<SelfRef<<M as MsgFamily>::Msg<'static>>>, E>;
+
 pub trait ConduitRx {
     type Msg: MsgFamily;
     type Error: std::error::Error + MaybeSend + 'static;
@@ -93,13 +96,8 @@ pub trait ConduitRx {
     /// Receive and decode the next message.
     ///
     /// Returns `Ok(None)` when the peer has closed.
-    #[allow(clippy::type_complexity)]
-    fn recv(
-        &mut self,
-    ) -> impl Future<
-        Output = Result<Option<SelfRef<<Self::Msg as MsgFamily>::Msg<'static>>>, Self::Error>,
-    > + MaybeSend
-    + '_;
+    fn recv(&mut self)
+    -> impl Future<Output = RecvResult<Self::Msg, Self::Error>> + MaybeSend + '_;
 }
 
 /// Yields new conduits from inbound connections.
