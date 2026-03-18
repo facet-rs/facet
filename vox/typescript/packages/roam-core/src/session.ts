@@ -769,6 +769,10 @@ export class SessionHandle {
     return this.core.closeConnection(connectionId, metadata);
   }
 
+  sessionResumeKey(): Uint8Array | null {
+    return this.core.sessionResumeKeyValue();
+  }
+
   resume(conduit: Conduit<Message>): Promise<void> {
     return this.core.resume(conduit);
   }

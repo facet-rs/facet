@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { Message } from "@bearcove/roam-wire";
 import { BareConduit } from "./conduit.ts";
 import { Driver, type Dispatcher } from "./driver.ts";
+import { handshakeAsAcceptor, handshakeAsInitiator } from "./handshake.ts";
 import { Extensions } from "./middleware.ts";
 import { RequestContext } from "./request_context.ts";
-import { Session } from "./session.ts";
+import { session } from "./session.ts";
 import { ClientMetadata } from "./metadata.ts";
 import { OPERATION_ID_METADATA_KEY } from "./retry.ts";
-import type { MethodDescriptor, ServiceDescriptor } from "./channeling/index.ts";
+import type { ConnectionSettings, MethodDescriptor, ServiceDescriptor } from "./channeling/index.ts";
 
 class MemoryLink {
   private readonly queue: Uint8Array[] = [];
@@ -126,10 +127,14 @@ describe("retry operation identity", () => {
       },
     };
 
-    const [serverSession, clientSession] = await Promise.all([
-      Session.establishAcceptor(serverConduit),
-      Session.establishInitiator(clientConduit),
+    const clientSettings: ConnectionSettings = { parity: { tag: "Odd" }, max_concurrent_requests: 64 };
+    const serverSettings: ConnectionSettings = { parity: { tag: "Even" }, max_concurrent_requests: 64 };
+    const [clientHandshake, serverHandshake] = await Promise.all([
+      handshakeAsInitiator(clientLink, clientSettings),
+      handshakeAsAcceptor(serverLink, serverSettings),
     ]);
+    const clientSession = session.initiatorConduit(clientConduit, clientHandshake);
+    const serverSession = session.acceptorConduit(serverConduit, serverHandshake);
     const serverDriver = new Driver(serverSession.rootConnection(), dispatcher);
     const clientDriver = new Driver(clientSession.rootConnection(), {
       getDescriptor: () => DESCRIPTOR,
@@ -171,10 +176,14 @@ describe("retry operation identity", () => {
       },
     };
 
-    const [serverSession, clientSession] = await Promise.all([
-      Session.establishAcceptor(serverConduit),
-      Session.establishInitiator(clientConduit),
+    const clientSettings: ConnectionSettings = { parity: { tag: "Odd" }, max_concurrent_requests: 64 };
+    const serverSettings: ConnectionSettings = { parity: { tag: "Even" }, max_concurrent_requests: 64 };
+    const [clientHandshake, serverHandshake] = await Promise.all([
+      handshakeAsInitiator(clientLink, clientSettings),
+      handshakeAsAcceptor(serverLink, serverSettings),
     ]);
+    const clientSession = session.initiatorConduit(clientConduit, clientHandshake);
+    const serverSession = session.acceptorConduit(serverConduit, serverHandshake);
     const serverDriver = new Driver(serverSession.rootConnection(), dispatcher);
     const clientDriver = new Driver(clientSession.rootConnection(), {
       getDescriptor: () => DESCRIPTOR,

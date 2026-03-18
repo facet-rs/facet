@@ -47,7 +47,9 @@ export {
 
 export {
   Driver,
+  InMemoryOperationStore,
   type Dispatcher,
+  type OperationStore,
 } from "./driver.ts";
 
 export { RequestContext } from "./request_context.ts";

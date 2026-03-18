@@ -36,6 +36,28 @@ interface OperationSignature {
   args: Uint8Array;
 }
 
+/**
+ * Interface for operation state backing — mirrors Rust's `OperationStore` trait.
+ *
+ * The default implementation is `InMemoryOperationStore`.
+ * Applications that want stronger retention or durability can provide their own.
+ */
+export interface OperationStore {
+  admit(
+    operationId: bigint,
+    methodId: bigint,
+    args: Uint8Array,
+    retry: MethodDescriptor["retry"],
+    requestId: bigint,
+  ): OperationAdmit;
+
+  seal(operationId: bigint, ownerRequestId: bigint, payload: Uint8Array): bigint[];
+
+  failWithoutReply(operationId: bigint, ownerRequestId: bigint): bigint[];
+
+  cancel(requestId: bigint): OperationCancel;
+}
+
 interface StoredOperation {
   signature: OperationSignature;
   retry: MethodDescriptor["retry"];
@@ -102,7 +124,7 @@ function sameSignature(
   return signature.methodId === methodId && sameBytes(signature.args, args);
 }
 
-class OperationRegistry {
+export class InMemoryOperationStore implements OperationStore {
   private readonly states = new Map<bigint, OperationState>();
   private readonly requestToOperation = new Map<bigint, bigint>();
 
@@ -227,7 +249,7 @@ class RoamCallImpl implements RoamCall {
     private readonly method: MethodDescriptor,
     private readonly requestId: bigint,
     private readonly taskSender: TaskSender,
-    private readonly operations: OperationRegistry,
+    private readonly operations: OperationStore,
     private readonly operationId: bigint | undefined,
     private readonly schemaRegistry?: ServiceDescriptor["schema_registry"],
   ) {}
@@ -290,16 +312,35 @@ class RoamCallImpl implements RoamCall {
 export class Driver {
   private readonly middlewares: ServerMiddleware[];
   private readonly taskQueue: TaskMessage[] = [];
-  private readonly operations = new OperationRegistry();
+  private readonly operations: OperationStore;
   private inFlight = new Set<Promise<void>>();
   private wakeupResolve: (() => void) | null = null;
+
+  static new(
+    connection: ConnectionHandle,
+    dispatcher: Dispatcher,
+    middlewares: ServerMiddleware[] = [],
+  ): Driver {
+    return new Driver(connection, dispatcher, middlewares, new InMemoryOperationStore());
+  }
+
+  static withOperationStore(
+    connection: ConnectionHandle,
+    dispatcher: Dispatcher,
+    store: OperationStore,
+    middlewares: ServerMiddleware[] = [],
+  ): Driver {
+    return new Driver(connection, dispatcher, middlewares, store);
+  }
 
   constructor(
     private readonly connection: ConnectionHandle,
     private readonly dispatcher: Dispatcher,
     middlewares: ServerMiddleware[] = [],
+    store: OperationStore = new InMemoryOperationStore(),
   ) {
     this.middlewares = middlewares;
+    this.operations = store;
   }
 
   withMiddleware(middleware: ServerMiddleware): Driver {
