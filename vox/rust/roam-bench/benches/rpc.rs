@@ -32,9 +32,48 @@ mod roam_zerocopy_bench {
     use roam_shm::varslot::SizeClassConfig;
     use roam_shm::{Segment, SegmentConfig, create_test_link_pair};
     use roam_stream::StreamLink;
+    use roam_types::{ConnectionSettings, HandshakeResult, Parity, SessionRole};
 
     use shm_primitives::FileCleanup;
     use tokio::net::TcpListener;
+
+    fn test_acceptor_handshake() -> HandshakeResult {
+        HandshakeResult {
+            role: SessionRole::Acceptor,
+            our_settings: ConnectionSettings {
+                parity: Parity::Even,
+                max_concurrent_requests: 64,
+            },
+            peer_settings: ConnectionSettings {
+                parity: Parity::Odd,
+                max_concurrent_requests: 64,
+            },
+            peer_supports_retry: true,
+            session_resume_key: None,
+            peer_resume_key: None,
+            our_schema: vec![],
+            peer_schema: vec![],
+        }
+    }
+
+    fn test_initiator_handshake() -> HandshakeResult {
+        HandshakeResult {
+            role: SessionRole::Initiator,
+            our_settings: ConnectionSettings {
+                parity: Parity::Odd,
+                max_concurrent_requests: 64,
+            },
+            peer_settings: ConnectionSettings {
+                parity: Parity::Even,
+                max_concurrent_requests: 64,
+            },
+            peer_supports_retry: true,
+            session_resume_key: None,
+            peer_resume_key: None,
+            our_schema: vec![],
+            peer_schema: vec![],
+        }
+    }
 
     #[roam::service]
     pub trait Zerocopy {
@@ -61,7 +100,7 @@ mod roam_zerocopy_bench {
         let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
         let _server_task = moire::task::spawn(
             async move {
-                let (_caller, _sh) = acceptor(b)
+                let (_caller, _sh) = acceptor(b, test_acceptor_handshake())
                     .establish::<NoopCaller>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -125,7 +164,7 @@ mod roam_zerocopy_bench {
         let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
         let _server_task = moire::task::spawn(
             async move {
-                let (_caller, _sh) = acceptor(b)
+                let (_caller, _sh) = acceptor(b, test_acceptor_handshake())
                     .establish::<NoopCaller>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -272,7 +311,7 @@ mod roam_bench {
         let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
         let _server_task = moire::task::spawn(
             async move {
-                let (_caller, _sh) = acceptor(b)
+                let (_caller, _sh) = acceptor(b, test_acceptor_handshake())
                     .establish::<NoopCaller>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -393,7 +432,7 @@ mod roam_shm_bench {
         let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
         let _server_task = moire::task::spawn(
             async move {
-                let (_caller, _sh) = acceptor(b)
+                let (_caller, _sh) = acceptor(b, test_acceptor_handshake())
                     .establish::<NoopCaller>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");

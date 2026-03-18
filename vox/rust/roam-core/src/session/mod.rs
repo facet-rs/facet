@@ -7,25 +7,14 @@ use std::{
 
 use moire::sync::mpsc;
 use roam_types::{
-    BindingDirection, ChannelMessage, Conduit, ConduitRx, ConduitTx, ConduitTxPermit,
-    ConnectionAccept, ConnectionClose, ConnectionId, ConnectionOpen, ConnectionReject,
-    ConnectionSettings, HandshakeResult, IdAllocator, MaybeSend, MaybeSync, Message, MessageFamily,
-    MessagePayload, Metadata, Parity, Payload, RequestBody, RequestId, RequestMessage,
-    RequestResponse, SchemaSendTracker, SelfRef, SessionResumeKey, SessionRole,
+    ChannelMessage, Conduit, ConduitRx, ConduitTx, ConduitTxPermit, ConnectionAccept,
+    ConnectionClose, ConnectionId, ConnectionOpen, ConnectionReject, ConnectionSettings,
+    HandshakeResult, IdAllocator, MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload,
+    Metadata, Parity, Payload, RequestBody, RequestId, RequestMessage, RequestResponse, SelfRef,
+    SessionResumeKey, SessionRole,
 };
 use tokio::sync::watch;
 use tracing::{debug, warn};
-
-/// Toggle verbose schema-negotiation tracing (compile-time, zero-cost when off).
-const SCHEMA_DEBUG: bool = false;
-
-macro_rules! schema_debug {
-    ($($arg:tt)*) => {
-        if SCHEMA_DEBUG {
-            eprintln!($($arg)*);
-        }
-    };
-}
 
 mod builders;
 pub use builders::*;
@@ -1416,7 +1405,7 @@ impl SessionCore {
                                         shape,
                                         roam_types::BindingDirection::Response,
                                     );
-                                    schema_debug!(
+                                    roam_types::dlog!(
                                         "[schema] prepared {} bytes of response schemas for method {:?}",
                                         schemas.0.len(),
                                         method_id
@@ -1451,7 +1440,7 @@ impl SessionCore {
             .conns
             .entry(conn_id)
             .or_insert_with(SendConnState::new);
-        schema_debug!(
+        roam_types::dlog!(
             "[schema] record_incoming_call: conn={:?} req={:?} method={:?}",
             conn_id,
             request_id,

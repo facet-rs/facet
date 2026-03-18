@@ -1,3 +1,12 @@
+/// Debug logging macro — toggle by commenting/uncommenting the body.
+#[macro_export]
+macro_rules! dlog {
+    ($($arg:tt)*) => {
+        eprintln!($($arg)*)
+        // commented out = silent
+    };
+}
+
 macro_rules! declare_id {
     ($(#[$meta:meta])* $name:ident, $inner:ty) => {
         $(#[$meta])*

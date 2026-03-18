@@ -635,6 +635,7 @@ impl Caller for DriverCaller {
                         }
                     }
                     changed = resumed_rx.changed(), if self.peer_supports_retry => {
+                        roam_types::dlog!("[CALLER] resumed_rx fired");
                         if changed.is_err() {
                             self.shared.pending_responses.lock().remove(&req_id);
                             if let Some((args_ptr, plan)) = caller_channel_plan {
@@ -680,6 +681,7 @@ impl Caller for DriverCaller {
                         })).await;
                     }
                     changed = closed_rx.changed() => {
+                        roam_types::dlog!("[CALLER] closed_rx fired, value={}", *closed_rx.borrow());
                         if changed.is_err() || *closed_rx.borrow() {
                             self.shared.pending_responses.lock().remove(&req_id);
                             if let Some((args_ptr, plan)) = caller_channel_plan {

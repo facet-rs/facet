@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use roam_core::{
@@ -5,6 +6,7 @@ use roam_core::{
     initiate_transport, initiator_on, memory_link_pair, testing::breakable_link_pair,
 };
 use roam_types::{ConnectionSettings, Parity};
+use tokio::sync::Notify;
 
 #[roam::service]
 trait Echo {
@@ -276,4 +278,138 @@ async fn first_call_after_resume_without_prior_calls() {
 
     // Very first call happens after resume
     assert_eq!(client.echo(77).await.unwrap(), 77);
+}
+
+// ---------------------------------------------------------------------------
+// Operation replay after resume
+// ---------------------------------------------------------------------------
+
+#[roam::service]
+trait PersistEcho {
+    #[roam(persist)]
+    async fn echo(&self, value: u32) -> u32;
+}
+
+#[derive(Clone)]
+struct SlowEchoService {
+    ready: Arc<Notify>,
+    proceed: Arc<Notify>,
+}
+
+impl PersistEcho for SlowEchoService {
+    async fn echo(&self, value: u32) -> u32 {
+        self.ready.notify_one();
+        self.proceed.notified().await;
+        value
+    }
+}
+
+/// After resume, if the server already completed an operation and sealed the
+/// response, the client retries with the same operation_id and the server
+/// replays the stored response. The replayed response must include schemas
+/// so the client can deserialize it.
+#[tokio::test]
+async fn operation_replay_after_resume_has_schemas() {
+    let registry = SessionRegistry::default();
+    let ready = Arc::new(Notify::new());
+    let proceed = Arc::new(Notify::new());
+    let service = SlowEchoService {
+        ready: ready.clone(),
+        proceed: proceed.clone(),
+    };
+
+    // First connection
+    let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
+    let (server_result, client_result) = tokio::try_join!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            acceptor_on(server_link1)
+                .session_registry(registry.clone())
+                .establish_or_resume::<PersistEchoClient>(PersistEchoDispatcher::new(
+                    service.clone()
+                )),
+        ),
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            initiator_on(client_link1, TransportMode::Bare)
+                .resumable()
+                .establish::<PersistEchoClient>(()),
+        ),
+    )
+    .expect("session establishment timed out");
+
+    let _ = match server_result.expect("server failed") {
+        SessionAcceptOutcome::Established(c, h) => (c, h),
+        _ => panic!("expected Established"),
+    };
+    let (client, client_session_handle) = client_result.expect("client failed");
+
+    // Start a call — handler will block until we notify `proceed`
+    let client2 = client.clone();
+    let call_task = tokio::spawn(async move { client2.echo(42).await });
+
+    // Wait for the handler to start processing
+    ready.notified().await;
+
+    // Break the connection BEFORE the handler replies
+    client_break1.close().await;
+    server_break1.close().await;
+
+    // Now let the handler finish — it seals the response in the operation
+    // store, but the broken connection means the response never reaches
+    // the client.
+    proceed.notify_one();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Resume
+    let (client_link2, _client_break2, server_link2, _server_break2) = breakable_link_pair(64);
+    let (resume_result, server_accept_result) = tokio::join!(
+        async {
+            let mut resumed_link = initiate_transport(client_link2, TransportMode::Bare)
+                .await
+                .expect("transport");
+            let handshake_result = roam_core::handshake_as_initiator(
+                &resumed_link.tx,
+                &mut resumed_link.rx,
+                ConnectionSettings {
+                    parity: Parity::Odd,
+                    max_concurrent_requests: 64,
+                },
+                true,
+                client_session_handle.resume_key(),
+            )
+            .await
+            .expect("handshake");
+            let message_plan =
+                roam_core::MessagePlan::from_handshake(&handshake_result).expect("message plan");
+            client_session_handle
+                .resume(
+                    BareConduit::with_message_plan(resumed_link, message_plan),
+                    handshake_result,
+                )
+                .await
+        },
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            acceptor_on(server_link2)
+                .session_registry(registry.clone())
+                .establish_or_resume::<PersistEchoClient>(PersistEchoDispatcher::new(service)),
+        ),
+    );
+    resume_result.expect("resume should succeed");
+    let server_accept_result = server_accept_result.expect("server accept timed out");
+    match server_accept_result.expect("server accept failed") {
+        SessionAcceptOutcome::Resumed => {}
+        _ => panic!("expected Resumed"),
+    }
+
+    // The client's in-flight call retries on the new connection with the
+    // same operation_id. The server sees OperationAdmit::Replay and sends
+    // the stored encoded response. That response must include schemas so
+    // the client can deserialize it.
+    let result = tokio::time::timeout(Duration::from_secs(2), call_task)
+        .await
+        .expect("call timed out")
+        .expect("task join");
+    assert_eq!(result.expect("replay response should have schemas"), 42);
 }
