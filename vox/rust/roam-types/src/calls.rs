@@ -2,11 +2,12 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use crate::{
     ClientCallOutcome, ClientContext, ClientMiddleware, ClientRequest, Extensions, MaybeSend,
-    MaybeSync, Metadata, RequestCall, RequestResponse, RoamError, SelfRef, ServiceDescriptor,
+    MaybeSendFuture, MaybeSync, Metadata, RequestCall, RequestResponse, RoamError, SelfRef,
+    ServiceDescriptor,
 };
 
 /// A boxed future that is `Send` on native targets and `!Send` on wasm32.
-pub type BoxFut<'a, T> = Pin<Box<dyn Future<Output = T> + MaybeSend + 'a>>;
+pub type BoxFut<'a, T> = Pin<Box<dyn MaybeSendFuture<Output = T> + 'a>>;
 
 /// Result type for an RPC call: either a tracked response or an error.
 pub type CallResult = Result<crate::WithTracker<SelfRef<RequestResponse<'static>>>, RoamError>;

@@ -1,9 +1,10 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{future::Future, sync::Arc};
 
 use crate::server_middleware::BoxMiddlewareFuture;
 use crate::{
-    Caller, Extensions, Metadata, MetadataEntry, MetadataFlags, MetadataValue, MethodDescriptor,
-    MethodId, RequestCall, RequestResponse, RoamError, SelfRef, ServiceDescriptor,
+    BoxFut, Caller, Extensions, Metadata, MetadataEntry, MetadataFlags, MetadataValue,
+    MethodDescriptor, MethodId, RequestCall, RequestResponse, RoamError, SelfRef,
+    ServiceDescriptor,
 };
 
 /// Borrowed per-call context exposed to client middleware.
@@ -231,13 +232,7 @@ where
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        self.caller.closed()
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + '_>> {
+    fn closed(&self) -> BoxFut<'_, ()> {
         self.caller.closed()
     }
 

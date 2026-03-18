@@ -33,6 +33,19 @@ pub trait MaybeSync {}
 #[cfg(target_arch = "wasm32")]
 impl<T> MaybeSync for T {}
 
+/// A future that is `Send` on native targets, nothing on wasm32.
+/// Unlike `MaybeSend`, this can be used as `dyn MaybeSendFuture` because
+/// it's a single trait (not `dyn Future + MaybeSend`).
+#[cfg(not(target_arch = "wasm32"))]
+pub trait MaybeSendFuture: Future + Send {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Future + Send> MaybeSendFuture for T {}
+
+#[cfg(target_arch = "wasm32")]
+pub trait MaybeSendFuture: Future {}
+#[cfg(target_arch = "wasm32")]
+impl<T: Future> MaybeSendFuture for T {}
+
 /// Bidirectional raw-bytes transport.
 ///
 /// TCP, WebSocket, SHM all implement this. No knowledge of what's being

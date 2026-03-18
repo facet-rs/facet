@@ -446,7 +446,7 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err();
-        match &err.kind {
+        match &*err.kind {
             error::TranslationErrorKind::MissingRequiredField { field, .. } => {
                 assert_eq!(field.name, "y");
             }

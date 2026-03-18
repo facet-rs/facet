@@ -5,6 +5,7 @@ list:
 
 check:
     cargo clippy --all-targets
+    tracey query validate
 
 rust *args:
     cargo build --package subject-rust

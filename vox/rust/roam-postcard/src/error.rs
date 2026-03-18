@@ -161,7 +161,7 @@ pub struct TranslationError {
     /// Path from the root type to the error site.
     pub path: SchemaPath,
     /// The specific incompatibility.
-    pub kind: TranslationErrorKind,
+    pub kind: Box<TranslationErrorKind>,
 }
 
 #[derive(Debug)]
@@ -224,6 +224,13 @@ impl fmt::Display for SchemaSide {
 }
 
 impl TranslationError {
+    pub fn new(kind: TranslationErrorKind) -> Self {
+        Self {
+            path: SchemaPath::new(),
+            kind: Box::new(kind),
+        }
+    }
+
     /// Prepend a path segment when propagating errors up from nested plan building.
     pub fn with_path_prefix(mut self, segment: PathSegment) -> Self {
         self.path.push_front(segment);
@@ -259,7 +266,7 @@ impl fmt::Display for TranslationError {
             write!(f, "at {}: ", self.path)?;
         }
 
-        match &self.kind {
+        match &*self.kind {
             TranslationErrorKind::NameMismatch { remote, local } => {
                 write!(
                     f,

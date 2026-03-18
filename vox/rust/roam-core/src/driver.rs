@@ -12,7 +12,7 @@ use tokio::sync::{Semaphore, watch};
 
 use moire::task::FutureExt as _;
 use roam_types::{
-    Caller, ChannelBinder, ChannelBody, ChannelClose, ChannelCreditReplenisher,
+    BoxFut, Caller, ChannelBinder, ChannelBody, ChannelClose, ChannelCreditReplenisher,
     ChannelCreditReplenisherHandle, ChannelId, ChannelItem, ChannelLivenessHandle, ChannelMessage,
     ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage, MaybeSend, Payload,
     ReplySink, RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse, RoamError,
@@ -716,7 +716,7 @@ impl Caller for DriverCaller {
         .named("Caller::call")
     }
 
-    fn closed(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+    fn closed(&self) -> BoxFut<'_, ()> {
         Box::pin(async move {
             if *self.closed_rx.borrow() {
                 return;
