@@ -254,12 +254,28 @@ fn serialize_peek_inner<'a>(
             }
             return Ok(());
         }
-        Def::Slice(_) => {
+        Def::Slice(slice_def) => {
             let list_like = peek.into_list_like().map_err(re)?;
-            let len = list_like.len();
-            encode::write_varint(out, len as u64);
-            for elem in list_like.iter() {
-                serialize_peek(elem, out)?;
+            if slice_def.t().is_type::<u8>() {
+                if let Some(bytes) = list_like.as_bytes() {
+                    encode::write_varint(out, bytes.len() as u64);
+                    out.write_referenced_bytes(bytes);
+                } else {
+                    let len = list_like.len();
+                    let mut bytes = Vec::with_capacity(len);
+                    for elem in list_like.iter() {
+                        let byte = elem.get::<u8>().map_err(re)?;
+                        bytes.push(*byte);
+                    }
+                    encode::write_varint(out, bytes.len() as u64);
+                    out.write_bytes(&bytes);
+                }
+            } else {
+                let len = list_like.len();
+                encode::write_varint(out, len as u64);
+                for elem in list_like.iter() {
+                    serialize_peek(elem, out)?;
+                }
             }
             return Ok(());
         }

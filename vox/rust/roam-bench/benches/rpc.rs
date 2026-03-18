@@ -646,6 +646,57 @@ mod serialize_bench {
         bytes.len()
     }
 
+    pub async fn bench_scatter_writev(
+        msg: &Message<'_>,
+        stream: &mut tokio::net::TcpStream,
+    ) -> usize {
+        use tokio::io::AsyncWriteExt;
+        let shape = MessageFamily::shape();
+        #[allow(unsafe_code)]
+        let peek = unsafe {
+            Peek::unchecked_new(
+                PtrConst::new((msg as *const Message<'_>).cast::<u8>()),
+                shape,
+            )
+        };
+        let plan = peek_to_scatter_plan(peek).expect("scatter plan");
+        let io_slices = plan.to_io_slices();
+        let bufs: Vec<std::io::IoSlice<'_>> = io_slices;
+        stream.write_vectored(&bufs).await.expect("writev")
+    }
+
+    pub async fn bench_to_vec_write(
+        msg: &Message<'_>,
+        stream: &mut tokio::net::TcpStream,
+    ) -> usize {
+        use tokio::io::AsyncWriteExt;
+        let bytes = to_vec(msg).expect("serialize");
+        stream.write_all(&bytes).await.expect("write");
+        bytes.len()
+    }
+
+    /// Create a TCP loopback pair. Returns the write side; the read side is
+    /// drained by a spawned task.
+    pub async fn tcp_sink() -> tokio::net::TcpStream {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let writer = tokio::net::TcpStream::connect(addr).await.unwrap();
+        writer.set_nodelay(true).unwrap();
+        let (reader, _) = listener.accept().await.unwrap();
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut reader = reader;
+            let mut buf = vec![0u8; 65536];
+            loop {
+                match reader.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+        });
+        writer
+    }
+
     pub fn bench_scatter(msg: &Message<'_>) -> usize {
         let shape = MessageFamily::shape();
         #[allow(unsafe_code)]
@@ -678,6 +729,32 @@ fn serialize_scatter_plan(bencher: divan::Bencher, n: usize) {
     let args = (&profile,);
     let msg = serialize_bench::make_message(&args);
     bencher.bench_local(|| divan::black_box(serialize_bench::bench_scatter(&msg)));
+}
+
+#[divan::bench(args = SERIALIZE_FIELD_COUNTS)]
+fn serialize_scatter_writev_tcp(bencher: divan::Bencher, n: usize) {
+    let profile = serialize_bench::make_profile(n);
+    let args = (&profile,);
+    let msg = serialize_bench::make_message(&args);
+    let mut stream = TOKIO.block_on(serialize_bench::tcp_sink());
+    bencher.bench_local(|| {
+        TOKIO.block_on(async {
+            divan::black_box(serialize_bench::bench_scatter_writev(&msg, &mut stream).await)
+        })
+    });
+}
+
+#[divan::bench(args = SERIALIZE_FIELD_COUNTS)]
+fn serialize_to_vec_write_tcp(bencher: divan::Bencher, n: usize) {
+    let profile = serialize_bench::make_profile(n);
+    let args = (&profile,);
+    let msg = serialize_bench::make_message(&args);
+    let mut stream = TOKIO.block_on(serialize_bench::tcp_sink());
+    bencher.bench_local(|| {
+        TOKIO.block_on(async {
+            divan::black_box(serialize_bench::bench_to_vec_write(&msg, &mut stream).await)
+        })
+    });
 }
 
 // ============================================================================

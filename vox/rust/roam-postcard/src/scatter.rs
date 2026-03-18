@@ -38,6 +38,19 @@ impl<'a> ScatterPlan<'a> {
         &self.segments
     }
 
+    /// Build a list of `IoSlice`s for vectored I/O (`writev`).
+    pub fn to_io_slices(&self) -> Vec<std::io::IoSlice<'_>> {
+        self.segments
+            .iter()
+            .map(|seg| match seg {
+                Segment::Staged { offset, len } => {
+                    std::io::IoSlice::new(&self.staging[*offset..*offset + len])
+                }
+                Segment::Reference { bytes } => std::io::IoSlice::new(bytes),
+            })
+            .collect()
+    }
+
     /// Write the full serialized output into `dest`.
     /// `dest` must be at least `total_size()` bytes.
     pub fn write_into(&self, dest: &mut [u8]) {

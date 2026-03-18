@@ -304,6 +304,64 @@ mod tests {
     }
 
     #[test]
+    fn scatter_plan_segment_structure() {
+        #[derive(Facet)]
+        struct Borrowed<'a> {
+            id: u32,
+            name: &'a str,
+            data: &'a [u8],
+        }
+
+        let val = Borrowed {
+            id: 42,
+            name: "hello",
+            data: &[1, 2, 3, 4, 5],
+        };
+
+        let peek = facet_reflect::Peek::new(&val);
+        let plan = peek_to_scatter_plan(peek).unwrap();
+
+        // Verify output matches to_vec
+        let direct = to_vec(&val).unwrap();
+        let mut scattered = vec![0u8; plan.total_size()];
+        plan.write_into(&mut scattered);
+        assert_eq!(scattered, direct);
+
+        // Check segment structure: staged bytes should merge when contiguous,
+        // and borrowed fields should appear as Reference segments.
+        let segments = plan.segments();
+        let staged_count = segments
+            .iter()
+            .filter(|s| matches!(s, Segment::Staged { .. }))
+            .count();
+        let ref_count = segments
+            .iter()
+            .filter(|s| matches!(s, Segment::Reference { .. }))
+            .count();
+
+        // Both &str and &[u8] produce Reference segments (zero-copy).
+        assert_eq!(
+            ref_count, 2,
+            "expected 2 reference segments for &str and &[u8]"
+        );
+        // Staged segments merge when contiguous. References break the merge chain:
+        // staged(id + name len), ref(name), staged(data len), ref(data) = 2 staged.
+        assert_eq!(staged_count, 2, "expected 2 staged segments");
+
+        eprintln!("segments ({} total):", segments.len());
+        for (i, seg) in segments.iter().enumerate() {
+            match seg {
+                Segment::Staged { offset, len } => {
+                    eprintln!("  [{i}] Staged: offset={offset}, len={len}");
+                }
+                Segment::Reference { bytes } => {
+                    eprintln!("  [{i}] Reference: len={}", bytes.len());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn round_trip_borrowed_identity() {
         #[derive(Facet, Debug, PartialEq)]
         struct Msg {
