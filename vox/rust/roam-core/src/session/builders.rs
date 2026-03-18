@@ -824,19 +824,9 @@ where
     <<S::Link as Link>::Tx as roam_types::LinkTx>::Permit: MaybeSend,
     <S::Link as Link>::Rx: MaybeSend + Send + 'static,
 {
-    fn next_conduit<'b>(
-        &'b mut self,
-    ) -> super::BoxFuture<
-        'b,
-        Result<
-            (
-                std::sync::Arc<dyn crate::DynConduitTx>,
-                Box<dyn crate::DynConduitRx>,
-                HandshakeResult,
-            ),
-            SessionError,
-        >,
-    > {
+    fn next_conduit(
+        &mut self,
+    ) -> roam_types::BoxFut<'_, Result<super::RecoveredConduit, SessionError>> {
         Box::pin(async move {
             let attachment = self.source.next_link().await.map_err(SessionError::Io)?;
             let mut link = initiate_transport(attachment.into_link(), TransportMode::Bare)
@@ -853,11 +843,11 @@ where
             .map_err(session_error_from_handshake)?;
             let conduit = BareConduit::<MessageFamily, _>::new(link);
             let (tx, rx) = conduit.split();
-            Ok((
-                std::sync::Arc::new(tx) as std::sync::Arc<dyn crate::DynConduitTx>,
-                Box::new(rx) as Box<dyn crate::DynConduitRx>,
-                handshake_result,
-            ))
+            Ok(super::RecoveredConduit {
+                tx: Arc::new(tx) as Arc<dyn crate::DynConduitTx>,
+                rx: Box::new(rx) as Box<dyn crate::DynConduitRx>,
+                handshake: handshake_result,
+            })
         })
     }
 }

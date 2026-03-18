@@ -1,13 +1,12 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    pin::Pin,
     sync::Arc,
     time::Duration,
 };
 
 use moire::sync::mpsc;
 use roam_types::{
-    ChannelMessage, Conduit, ConduitRx, ConduitTx, ConduitTxPermit, ConnectionAccept,
+    BoxFut, ChannelMessage, Conduit, ConduitRx, ConduitTx, ConduitTxPermit, ConnectionAccept,
     ConnectionClose, ConnectionId, ConnectionOpen, ConnectionReject, ConnectionSettings,
     HandshakeResult, IdAllocator, MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload,
     Metadata, Parity, Payload, RequestBody, RequestId, RequestMessage, RequestResponse, SelfRef,
@@ -804,8 +803,9 @@ impl Session {
 
         if let Some(recoverer) = self.recoverer.as_mut() {
             match recoverer.next_conduit().await {
-                Ok((tx, rx, handshake_result)) => {
-                    let result = self.resume_from_handshake(tx, rx, handshake_result);
+                Ok(recovered) => {
+                    let result =
+                        self.resume_from_handshake(recovered.tx, recovered.rx, recovered.handshake);
                     match result {
                         Ok(()) => {
                             let next_generation = self.resume_notifier.borrow().wrapping_add(1);
@@ -1456,67 +1456,40 @@ impl SessionCore {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-type BoxFuture<'a, T> = Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
-#[cfg(target_arch = "wasm32")]
-type BoxFuture<'a, T> = Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
+pub(crate) struct RecoveredConduit {
+    pub tx: Arc<dyn DynConduitTx>,
+    pub rx: Box<dyn DynConduitRx>,
+    pub handshake: HandshakeResult,
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) trait ConduitRecoverer: Send {
-    #[allow(clippy::type_complexity)]
-    fn next_conduit<'a>(
-        &'a mut self,
-    ) -> BoxFuture<
-        'a,
-        Result<
-            (
-                Arc<dyn DynConduitTx>,
-                Box<dyn DynConduitRx>,
-                HandshakeResult,
-            ),
-            SessionError,
-        >,
-    >;
+    fn next_conduit(&mut self) -> BoxFut<'_, Result<RecoveredConduit, SessionError>>;
 }
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) trait ConduitRecoverer {
-    #[allow(clippy::type_complexity)]
-    fn next_conduit<'a>(
-        &'a mut self,
-    ) -> BoxFuture<
-        'a,
-        Result<
-            (
-                Arc<dyn DynConduitTx>,
-                Box<dyn DynConduitRx>,
-                HandshakeResult,
-            ),
-            SessionError,
-        >,
-    >;
+    fn next_conduit(&mut self) -> BoxFut<'_, Result<RecoveredConduit, SessionError>>;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub trait DynConduitTx: Send + Sync {
-    fn send_msg<'a>(&'a self, msg: Message<'a>) -> BoxFuture<'a, std::io::Result<()>>;
+    fn send_msg<'a>(&'a self, msg: Message<'a>) -> BoxFut<'a, std::io::Result<()>>;
 }
 #[cfg(target_arch = "wasm32")]
 pub trait DynConduitTx {
-    fn send_msg<'a>(&'a self, msg: Message<'a>) -> BoxFuture<'a, std::io::Result<()>>;
+    fn send_msg<'a>(&'a self, msg: Message<'a>) -> BoxFut<'a, std::io::Result<()>>;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub trait DynConduitRx: Send {
-    fn recv_msg<'a>(
-        &'a mut self,
-    ) -> BoxFuture<'a, std::io::Result<Option<SelfRef<Message<'static>>>>>;
+    fn recv_msg<'a>(&'a mut self)
+    -> BoxFut<'a, std::io::Result<Option<SelfRef<Message<'static>>>>>;
 }
 #[cfg(target_arch = "wasm32")]
 pub trait DynConduitRx {
-    fn recv_msg<'a>(
-        &'a mut self,
-    ) -> BoxFuture<'a, std::io::Result<Option<SelfRef<Message<'static>>>>>;
+    fn recv_msg<'a>(&'a mut self)
+    -> BoxFut<'a, std::io::Result<Option<SelfRef<Message<'static>>>>>;
 }
 
 // r[impl zerocopy.send]
@@ -1526,7 +1499,7 @@ where
     T: ConduitTx<Msg = MessageFamily> + MaybeSend + MaybeSync,
     for<'p> <T as ConduitTx>::Permit<'p>: MaybeSend,
 {
-    fn send_msg<'a>(&'a self, msg: Message<'a>) -> BoxFuture<'a, std::io::Result<()>> {
+    fn send_msg<'a>(&'a self, msg: Message<'a>) -> BoxFut<'a, std::io::Result<()>> {
         Box::pin(async move {
             let permit = self.reserve().await?;
             permit
@@ -1542,7 +1515,7 @@ where
 {
     fn recv_msg<'a>(
         &'a mut self,
-    ) -> BoxFuture<'a, std::io::Result<Option<SelfRef<Message<'static>>>>> {
+    ) -> BoxFut<'a, std::io::Result<Option<SelfRef<Message<'static>>>>> {
         Box::pin(async move {
             self.recv()
                 .await
