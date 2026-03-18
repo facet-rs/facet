@@ -1136,7 +1136,7 @@ export class Session {
     return this.core.sessionResumeKeyValue();
   }
 
-  static fromEstablishedHandshake(
+  static initiatorConduit(
     conduit: Conduit<Message>,
     handshake: HandshakeResult,
     options: SessionBuilderOptions = {},
@@ -1223,7 +1223,7 @@ export const session = {
     options: SessionTransportOptions = {},
   ): Promise<Session> {
     const established = await makeInitiatorEstablishedTransport(transport, options);
-    return Session.fromEstablishedHandshake(
+    return Session.initiatorConduit(
       established.conduit,
       established.handshake,
       {
@@ -1234,12 +1234,44 @@ export const session = {
     );
   },
 
-  acceptor(
+  initiatorConduit(
     conduit: Conduit<Message>,
     handshake: HandshakeResult,
     options: SessionBuilderOptions = {},
   ): Session {
-    return Session.fromEstablishedHandshake(conduit, handshake, options);
+    return Session.initiatorConduit(conduit, handshake, options);
+  },
+
+  acceptorConduit(
+    conduit: Conduit<Message>,
+    handshake: HandshakeResult,
+    options: SessionBuilderOptions = {},
+  ): Session {
+    return Session.initiatorConduit(conduit, handshake, options);
+  },
+
+  async initiatorOnLink(
+    link: Link,
+    options: SessionTransportOptions = {},
+  ): Promise<Session> {
+    const localSettings: ConnectionSettings = {
+      parity: { tag: "Odd" },
+      max_concurrent_requests: options.maxConcurrentRequests ?? 64,
+    };
+    const handshake = await handshakeAsInitiator(link, localSettings);
+    return Session.initiatorConduit(new BareConduit(link), handshake, options);
+  },
+
+  async acceptorOnLink(
+    link: Link,
+    options: SessionTransportOptions = {},
+  ): Promise<Session> {
+    const localSettings: ConnectionSettings = {
+      parity: { tag: "Even" },
+      max_concurrent_requests: options.maxConcurrentRequests ?? 64,
+    };
+    const handshake = await handshakeAsAcceptor(link, localSettings);
+    return Session.initiatorConduit(new BareConduit(link), handshake, options);
   },
 
   acceptorOrResume(
@@ -1257,7 +1289,7 @@ export const session = {
       void handle.acceptResumedConduit(conduit);
       return { tag: "Resumed" };
     }
-    const s = Session.fromEstablishedHandshake(conduit, handshake, options);
+    const s = session.acceptorConduit(conduit, handshake, options);
     const establishedKey = handshake.sessionResumeKey;
     if (establishedKey) {
       registry.insert(establishedKey, s.handle());
@@ -1270,7 +1302,7 @@ export const session = {
     options: SessionTransportOptions = {},
   ): Promise<Session> {
     const established = await makeInitiatorEstablishedTransport(transport, options);
-    return Session.fromEstablishedHandshake(
+    return Session.initiatorConduit(
       established.conduit,
       established.handshake,
       {
@@ -1289,7 +1321,7 @@ export const session = {
       ...options,
       resumable: options.resumable ?? false,
     });
-    return Session.fromEstablishedHandshake(
+    return Session.initiatorConduit(
       established.conduit,
       established.handshake,
       {
@@ -1323,7 +1355,7 @@ export const session = {
       ...options,
       resumable: options.resumable ?? false,
     });
-    return Session.fromEstablishedHandshake(
+    return Session.initiatorConduit(
       established.conduit,
       established.handshake,
       {

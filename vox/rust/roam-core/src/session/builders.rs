@@ -68,18 +68,11 @@ where
 }
 
 // r[impl session.role]
-pub fn acceptor<I: IntoConduit>(
-    into_conduit: I,
-    handshake_result: HandshakeResult,
-) -> SessionAcceptorBuilder<'static, I::Conduit> {
-    SessionAcceptorBuilder::new(into_conduit.into_conduit(), handshake_result)
-}
-
 pub fn acceptor_conduit<I: IntoConduit>(
     into_conduit: I,
     handshake_result: HandshakeResult,
 ) -> SessionAcceptorBuilder<'static, I::Conduit> {
-    acceptor(into_conduit, handshake_result)
+    SessionAcceptorBuilder::new(into_conduit.into_conduit(), handshake_result)
 }
 
 /// Convenience: perform CBOR handshake as initiator on a raw link, then return
