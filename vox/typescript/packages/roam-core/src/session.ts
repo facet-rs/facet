@@ -3,19 +3,14 @@ import {
   type ConnectionSettings,
   type RequestMessage,
   type ChannelMessage,
-  type Hello,
-  type HelloYourself,
   type Message,
   type Metadata,
   type MetadataEntry,
-  helloV7,
   parityEven,
   parityOdd,
   messageAccept,
   messageConnect,
   messageGoodbye,
-  messageHello,
-  messageHelloYourself,
   messageRequest,
   messageResponse,
   messageCancel,
@@ -30,8 +25,6 @@ import {
   ChannelIdAllocator,
   ChannelRegistry,
   Role,
-  type MethodDescriptor,
-  type SchemaRegistry,
 } from "./channeling/index.ts";
 import type { Caller, CallerRequest } from "./caller.ts";
 import { MiddlewareCaller } from "./caller.ts";
@@ -68,7 +61,7 @@ import {
 import {
   handshakeAsAcceptor,
   handshakeAsInitiator,
-  type TransportHandshakeResult,
+  type HandshakeResult,
 } from "./handshake.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -175,7 +168,7 @@ function cloneMetadata(metadata: Metadata): Metadata {
 
 interface EstablishedTransport {
   conduit: Conduit<Message>;
-  handshake: TransportHandshakeResult;
+  handshake: HandshakeResult;
 }
 
 async function makeInitiatorEstablishedTransport(
@@ -248,44 +241,7 @@ async function makeAcceptorEstablishedTransport(
   };
 }
 
-async function makeInitiatorSessionConduit(
-  transport: SessionTransport,
-  options: SessionTransportOptions,
-): Promise<Conduit<Message>> {
-  const conduit = options.transport ?? options.conduit ?? "bare";
-  if (isLinkSource(transport)) {
-    const attachment = await transport.nextLink();
-    await requestTransportMode(attachment.link, conduit);
-    if (conduit === "stable") {
-      return StableConduit.connect(singleLinkSource(attachment.link));
-    }
-    return new BareConduit(attachment.link);
-  }
 
-  await requestTransportMode(transport, conduit);
-  if (conduit === "stable") {
-    return StableConduit.connect(singleLinkSource(transport));
-  }
-
-  return new BareConduit(transport);
-}
-
-async function makeAcceptorSessionConduit(
-  transport: SessionTransport,
-): Promise<Conduit<Message>> {
-  const attachment = isLinkSource(transport)
-    ? await transport.nextLink()
-    : { link: transport };
-  const requestedMode = await acceptTransportMode(attachment.link);
-  if (requestedMode === "stable") {
-    const clientHello = await attachment.link.recv();
-    if (!clientHello) {
-      throw SessionError.protocol("expected StableConduit ClientHello after transport accept");
-    }
-    return StableConduit.connect(singleLinkSource(attachment.link, clientHello));
-  }
-  return new BareConduit(attachment.link);
-}
 
 export class SessionError extends Error {
   constructor(message: string) {
@@ -584,70 +540,11 @@ class SessionCore {
   }
 
   private async resumeOnConduit(conduit: Conduit<Message>): Promise<void> {
-    const resumeKey = this.sessionResumeKey;
-    if (!resumeKey) {
+    if (!this.sessionResumeKey) {
       throw SessionError.protocol("session is not resumable");
     }
-
-    if (this.localRootSettings.parity.tag === "Odd") {
-      const helloMetadata = appendSessionResumeKeyMetadata(
-        appendRetrySupportMetadata([]),
-        resumeKey,
-      );
-      await conduit.send(
-        messageHello(
-          helloV7(
-            this.localRootSettings.parity,
-            this.localRootSettings.max_concurrent_requests,
-            helloMetadata,
-          ),
-        ),
-      );
-      const helloYourself = await waitForHelloYourself(conduit);
-      if (
-        helloYourself.connection_settings.parity.tag !== this.peerRootSettings.parity.tag
-        || helloYourself.connection_settings.max_concurrent_requests
-          !== this.peerRootSettings.max_concurrent_requests
-      ) {
-        throw SessionError.protocol(
-          `peer root settings changed across session resume: expected ${JSON.stringify(this.peerRootSettings)}, got ${JSON.stringify(helloYourself.connection_settings)}`,
-        );
-      }
-      const echoedKey = metadataSessionResumeKey(helloYourself.metadata);
-      if (!echoedKey || !sameBytes(echoedKey, resumeKey)) {
-        throw SessionError.protocol("session resume key mismatch");
-      }
-      this.peerSupportsRetry = metadataSupportsRetry(helloYourself.metadata);
-      this.conduit = conduit;
-      return;
-    }
-
-    const hello = await waitForHello(conduit);
-    if (
-      hello.connection_settings.parity.tag !== this.peerRootSettings.parity.tag
-      || hello.connection_settings.max_concurrent_requests
-        !== this.peerRootSettings.max_concurrent_requests
-    ) {
-      throw SessionError.protocol(
-        `peer root settings changed across session resume: expected ${JSON.stringify(this.peerRootSettings)}, got ${JSON.stringify(hello.connection_settings)}`,
-      );
-    }
-    const actualKey = metadataSessionResumeKey(hello.metadata);
-    if (!actualKey || !sameBytes(actualKey, resumeKey)) {
-      throw SessionError.protocol("session resume key mismatch");
-    }
-
-    const helloMetadata = appendSessionResumeKeyMetadata(
-      appendRetrySupportMetadata([]),
-      resumeKey,
-    );
-    await conduit.send(
-      messageHelloYourself({
-        connection_settings: this.localRootSettings,
-        metadata: helloMetadata,
-      }),
-    );
-    this.peerSupportsRetry = metadataSupportsRetry(hello.metadata);
+    // CBOR handshake (including resume key exchange) is performed by the
+    // caller before the conduit is handed in. Just switch to the new conduit.
     this.conduit = conduit;
   }
 
@@ -686,10 +583,6 @@ class SessionCore {
   private async handleMessage(message: Message): Promise<void> {
     roamLogger()?.debug(`[roam:session] handleMessage: tag=${message.payload.tag} conn=${message.connection_id}`);
     switch (message.payload.tag) {
-      case "Hello":
-      case "HelloYourself":
-        return;
-
       case "Ping":
       case "Pong":
         return;
@@ -721,10 +614,6 @@ class SessionCore {
         this.handleChannelMessage(message.connection_id, message.payload.value);
         return;
 
-      // r[impl schema.exchange.ordering]
-      case "SchemaMessage":
-        this.handleSchemaMessage(message.payload.value);
-        return;
     }
   }
 
@@ -848,16 +737,6 @@ class SessionCore {
       case "GrantCredit":
         connection.grantChannelCredit(channel.id, channel.body.value.additional);
         return;
-    }
-  }
-
-  // r[impl schema.exchange.ordering]
-  private handleSchemaMessage(value: { schemas: Uint8Array }): void {
-    roamLogger()?.debug(`[roam:session] received SchemaMessage (${value.schemas.length} bytes)`);
-    try {
-      this.schemaTracker.recordReceived(value.schemas);
-    } catch (e) {
-      roamLogger()?.error(`[roam:session] failed to parse schema message:`, e);
     }
   }
 
@@ -1259,7 +1138,7 @@ export class Session {
 
   static fromEstablishedHandshake(
     conduit: Conduit<Message>,
-    handshake: TransportHandshakeResult,
+    handshake: HandshakeResult,
     options: SessionBuilderOptions = {},
     recoverConduit?: () => Promise<Conduit<Message>>,
   ): Session {
@@ -1281,123 +1160,7 @@ export class Session {
     return new Session(core);
   }
 
-  static async establishInitiatorOn(
-    conduit: Conduit<Message>,
-    options: SessionBuilderOptions = {},
-  ): Promise<Session> {
-    return Session.establishInitiator(conduit, options, undefined);
-  }
 
-  static async establishInitiator(
-    conduit: Conduit<Message>,
-    options: SessionBuilderOptions = {},
-    recoverConduit?: () => Promise<Conduit<Message>>,
-  ): Promise<Session> {
-    // r[impl session.handshake]
-    // r[impl session.connection-settings.hello]
-    // r[impl session.parity]
-    const localSettings: ConnectionSettings = {
-      parity: parityOdd(),
-      max_concurrent_requests: options.maxConcurrentRequests ?? 64,
-    };
-    const helloMetadata = appendRetrySupportMetadata(options.metadata ?? []);
-    await conduit.send(
-      messageHello(helloV7(localSettings.parity, localSettings.max_concurrent_requests, helloMetadata)),
-    );
-    const helloYourself = await waitForHelloYourself(conduit);
-    const sessionResumeKey = metadataSessionResumeKey(helloYourself.metadata);
-    if (options.resumable && !sessionResumeKey) {
-      throw SessionError.protocol("peer did not advertise session resumption");
-    }
-    const core = new SessionCore(
-      conduit,
-      localSettings,
-      helloYourself.connection_settings,
-      metadataSupportsRetry(helloYourself.metadata),
-      options.resumable ?? false,
-      sessionResumeKey,
-      recoverConduit,
-      options.onConnection,
-    );
-    core.rootConnection();
-    core.start();
-    return new Session(core);
-  }
-
-  static async establishAcceptor(
-    conduit: Conduit<Message>,
-    options: SessionBuilderOptions = {},
-  ): Promise<Session> {
-    // r[impl session.handshake]
-    // r[impl session.connection-settings.hello]
-    // r[impl session.parity]
-    const hello = await waitForHello(conduit);
-    const localSettings: ConnectionSettings = {
-      parity: parityEven(),
-      max_concurrent_requests: options.maxConcurrentRequests ?? 64,
-    };
-    let helloMetadata = appendRetrySupportMetadata(options.metadata ?? []);
-    let sessionResumeKey: Uint8Array | null = null;
-    if (options.resumable) {
-      sessionResumeKey = randomSessionResumeKey();
-      helloMetadata = appendSessionResumeKeyMetadata(helloMetadata, sessionResumeKey);
-    }
-    const response: HelloYourself = {
-      connection_settings: localSettings,
-      metadata: helloMetadata,
-    };
-    await conduit.send(messageHelloYourself(response));
-    const core = new SessionCore(
-      conduit,
-      localSettings,
-      hello.connection_settings,
-      metadataSupportsRetry(hello.metadata),
-      options.resumable ?? false,
-      sessionResumeKey,
-      undefined,
-      options.onConnection,
-    );
-    core.rootConnection();
-    core.start();
-    return new Session(core);
-  }
-
-  static async establishAcceptorOrResume(
-    conduit: Conduit<Message>,
-    registry: SessionRegistry,
-    options: SessionBuilderOptions = {},
-  ): Promise<SessionAcceptOutcome> {
-    const first = await conduit.recv();
-    if (!first) {
-      throw SessionError.closed();
-    }
-
-    if (first.payload.tag !== "Hello") {
-      throw SessionError.protocol("expected Hello during session establishment");
-    }
-
-    const resumeKey = metadataSessionResumeKey(first.payload.value.metadata);
-    if (resumeKey) {
-      const handle = registry.get(resumeKey);
-      if (!handle) {
-        throw SessionError.protocol("unknown session resume key");
-      }
-      try {
-        await handle.acceptResumedConduit(new PrefetchedConduit(first, conduit));
-      } catch (error) {
-        registry.remove(resumeKey);
-        throw error;
-      }
-      return { tag: "Resumed" };
-    }
-
-    const session = await Session.establishAcceptor(new PrefetchedConduit(first, conduit), options);
-    const establishedKey = session.resumeKey();
-    if (establishedKey) {
-      registry.insert(establishedKey, session.handle());
-    }
-    return { tag: "Established", session };
-  }
 
   rootConnection(): ConnectionHandle {
     return this.core.rootConnection();
@@ -1444,28 +1207,6 @@ class PrefetchedConduit implements Conduit<Message> {
   }
 }
 
-async function waitForHello(conduit: Conduit<Message>): Promise<Hello> {
-  const message = await conduit.recv();
-  if (!message) {
-    throw SessionError.closed();
-  }
-  if (message.payload.tag !== "Hello") {
-    throw SessionError.protocol("expected Hello during session establishment");
-  }
-  return message.payload.value;
-}
-
-async function waitForHelloYourself(conduit: Conduit<Message>): Promise<HelloYourself> {
-  const message = await conduit.recv();
-  if (!message) {
-    throw SessionError.closed();
-  }
-  if (message.payload.tag !== "HelloYourself") {
-    throw SessionError.protocol("expected HelloYourself during session establishment");
-  }
-  return message.payload.value;
-}
-
 function randomSessionResumeKey(): Uint8Array {
   const bytes = new Uint8Array(16);
   const cryptoApi = globalThis.crypto;
@@ -1493,16 +1234,35 @@ export const session = {
     );
   },
 
-  acceptor(conduit: Conduit<Message>, options: SessionBuilderOptions = {}): Promise<Session> {
-    return Session.establishAcceptor(conduit, options);
+  acceptor(
+    conduit: Conduit<Message>,
+    handshake: HandshakeResult,
+    options: SessionBuilderOptions = {},
+  ): Session {
+    return Session.fromEstablishedHandshake(conduit, handshake, options);
   },
 
   acceptorOrResume(
     conduit: Conduit<Message>,
+    handshake: HandshakeResult,
     registry: SessionRegistry,
     options: SessionBuilderOptions = {},
-  ): Promise<SessionAcceptOutcome> {
-    return Session.establishAcceptorOrResume(conduit, registry, options);
+  ): SessionAcceptOutcome {
+    const resumeKey = handshake.peerResumeKey;
+    if (resumeKey) {
+      const handle = registry.get(resumeKey);
+      if (!handle) {
+        throw SessionError.protocol("unknown session resume key");
+      }
+      void handle.acceptResumedConduit(conduit);
+      return { tag: "Resumed" };
+    }
+    const s = Session.fromEstablishedHandshake(conduit, handshake, options);
+    const establishedKey = handshake.sessionResumeKey;
+    if (establishedKey) {
+      registry.insert(establishedKey, s.handle());
+    }
+    return { tag: "Established", session: s };
   },
 
   async initiatorOn(

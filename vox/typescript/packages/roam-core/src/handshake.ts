@@ -3,7 +3,7 @@ import { wireMessageSchemasCbor } from "@bearcove/roam-wire";
 import { decodeCbor, type CborMap, type CborValue } from "./cbor.ts";
 import type { Link } from "./link.ts";
 
-export interface TransportHandshakeResult {
+export interface HandshakeResult {
   localSettings: ConnectionSettings;
   peerSettings: ConnectionSettings;
   peerSupportsRetry: boolean;
@@ -361,7 +361,7 @@ export async function handshakeAsInitiator(
   settings: ConnectionSettings,
   supportsRetry: boolean = true,
   resumeKey: Uint8Array | null = null,
-): Promise<TransportHandshakeResult> {
+): Promise<HandshakeResult> {
   await sendHandshake(link, {
     tag: "Hello",
     value: {
@@ -399,7 +399,7 @@ export async function handshakeAsAcceptor(
   supportsRetry: boolean = true,
   resumable: boolean = false,
   expectedResumeKey: Uint8Array | null = null,
-): Promise<TransportHandshakeResult> {
+): Promise<HandshakeResult> {
   const first = await recvHandshake(link);
   if (first.tag !== "Hello") {
     throw new Error("expected Hello during handshake");
