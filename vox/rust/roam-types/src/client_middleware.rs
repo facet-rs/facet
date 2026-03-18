@@ -78,7 +78,14 @@ impl<'call, 'state> ClientRequest<'call, 'state> {
         value: impl Into<String>,
         flags: MetadataFlags,
     ) {
-        let value = self.owned_metadata.store_string(value.into());
+        self.owned_metadata
+            .strings
+            .push(value.into().into_boxed_str());
+        let stored = self.owned_metadata.strings.last().unwrap();
+        // SAFETY: The boxed string is heap-allocated (stable address) and owned by
+        // `owned_metadata`, which lives in the same stack frame as `call` in
+        // MiddlewareCaller::call. It won't be dropped until after `call` is consumed.
+        let value: &'call str = unsafe { &*((&**stored) as *const str) };
         self.call.metadata.push(MetadataEntry {
             key,
             value: MetadataValue::String(value),
@@ -92,7 +99,12 @@ impl<'call, 'state> ClientRequest<'call, 'state> {
         value: impl Into<Vec<u8>>,
         flags: MetadataFlags,
     ) {
-        let value = self.owned_metadata.store_bytes(value.into());
+        self.owned_metadata
+            .bytes
+            .push(value.into().into_boxed_slice());
+        let stored = self.owned_metadata.bytes.last().unwrap();
+        // SAFETY: same reasoning as push_string_metadata above.
+        let value: &'call [u8] = unsafe { &*((&**stored) as *const [u8]) };
         self.call.metadata.push(MetadataEntry {
             key,
             value: MetadataValue::Bytes(value),
@@ -113,32 +125,6 @@ impl<'call, 'state> ClientRequest<'call, 'state> {
 pub(crate) struct OwnedMetadata {
     strings: Vec<Box<str>>,
     bytes: Vec<Box<[u8]>>,
-}
-
-impl OwnedMetadata {
-    fn store_string<'a>(&mut self, value: String) -> &'a str {
-        self.strings.push(value.into_boxed_str());
-        let value = self
-            .strings
-            .last()
-            .expect("owned string metadata should exist after push");
-        let value: *const str = &**value;
-        // SAFETY: the boxed string is owned by this `OwnedMetadata` and remains alive
-        // until the wrapped caller finishes awaiting the inner `call`.
-        unsafe { &*value }
-    }
-
-    fn store_bytes<'a>(&mut self, value: Vec<u8>) -> &'a [u8] {
-        self.bytes.push(value.into_boxed_slice());
-        let value = self
-            .bytes
-            .last()
-            .expect("owned bytes metadata should exist after push");
-        let value: *const [u8] = &**value;
-        // SAFETY: the boxed bytes are owned by this `OwnedMetadata` and remain alive
-        // until the wrapped caller finishes awaiting the inner `call`.
-        unsafe { &*value }
-    }
 }
 
 #[derive(Clone, Copy)]
