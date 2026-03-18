@@ -12,12 +12,11 @@ use tokio::sync::{Semaphore, watch};
 
 use moire::task::FutureExt as _;
 use roam_types::{
-    BoxFut, Caller, ChannelBinder, ChannelBody, ChannelClose, ChannelCreditReplenisher,
+    BoxFut, CallResult, Caller, ChannelBinder, ChannelBody, ChannelClose, ChannelCreditReplenisher,
     ChannelCreditReplenisherHandle, ChannelId, ChannelItem, ChannelLivenessHandle, ChannelMessage,
-    ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage, MaybeSend, Payload,
-    ReplySink, RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse, RoamError,
-    RpcPlan, SelfRef, TxError, ensure_operation_id, finalize_channels_caller_args,
-    metadata_operation_id,
+    ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage, Payload, ReplySink,
+    RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse, RoamError, RpcPlan,
+    SelfRef, TxError, ensure_operation_id, finalize_channels_caller_args, metadata_operation_id,
 };
 
 use crate::session::{
@@ -145,17 +144,14 @@ pub struct DriverReplySink {
     binder: DriverChannelBinder,
 }
 
-#[allow(clippy::manual_async_fn)]
-fn send_encoded_response(
+async fn send_encoded_response(
     sender: ConnectionSender,
     request_id: RequestId,
     encoded_response: Arc<[u8]>,
-) -> impl std::future::Future<Output = Result<(), ()>> + Send {
-    async move {
-        let response: RequestResponse<'_> =
-            roam_postcard::from_slice_borrowed(encoded_response.as_ref()).map_err(|_| ())?;
-        sender.send_response(request_id, response).await
-    }
+) -> Result<(), ()> {
+    let response: RequestResponse<'_> =
+        roam_postcard::from_slice_borrowed(encoded_response.as_ref()).map_err(|_| ())?;
+    sender.send_response(request_id, response).await
 }
 
 fn incoming_args_bytes<'a>(call: &'a RequestCall<'a>) -> &'a [u8] {
@@ -558,44 +554,38 @@ impl ChannelBinder for DriverCaller {
 }
 
 impl Caller for DriverCaller {
-    fn call<'a>(
-        &'a self,
-        mut call: RequestCall<'a>,
-    ) -> impl std::future::Future<
-        Output = Result<roam_types::WithTracker<SelfRef<RequestResponse<'static>>>, RoamError>,
-    > + MaybeSend
-    + 'a {
-        async move {
-            let caller_channel_plan = match &call.args {
-                Payload::Outgoing { ptr, shape, .. } => {
-                    let plan = RpcPlan::for_shape(shape);
-                    (!plan.channel_locations.is_empty())
-                        .then_some((ptr.raw_ptr() as usize, plan))
-                }
-                Payload::Incoming(_) => None,
-            };
-
-            if self.peer_supports_retry {
-                let operation_id = self
-                    .shared
-                    .next_operation_id
-                    .fetch_add(1, Ordering::Relaxed);
-                ensure_operation_id(&mut call.metadata, operation_id);
+    async fn call<'a>(&'a self, mut call: RequestCall<'a>) -> CallResult {
+        let caller_channel_plan = match &call.args {
+            Payload::Outgoing { ptr, shape, .. } => {
+                let plan = RpcPlan::for_shape(shape);
+                (!plan.channel_locations.is_empty()).then_some((ptr.raw_ptr() as usize, plan))
             }
+            Payload::Incoming(_) => None,
+        };
 
-            // Allocate a request ID.
-            let req_id = self.shared.request_ids.lock().alloc();
+        if self.peer_supports_retry {
+            let operation_id = self
+                .shared
+                .next_operation_id
+                .fetch_add(1, Ordering::Relaxed);
+            ensure_operation_id(&mut call.metadata, operation_id);
+        }
 
-            // Register the response slot before sending, so the driver can
-            // route the response even if it arrives before we start awaiting.
-            let (tx, rx) = moire::sync::oneshot::channel("driver.response");
-            self.shared.pending_responses.lock().insert(req_id, tx);
+        // Allocate a request ID.
+        let req_id = self.shared.request_ids.lock().alloc();
 
-            // r[impl schema.exchange.caller]
-            // r[impl schema.exchange.channels]
-            // Schemas are attached by SessionCore::send() when it sees a Call
-            // with Payload::Outgoing — no separate prepare step needed.
-            if self.sender.send(ConnectionMessage::Request(RequestMessage {
+        // Register the response slot before sending, so the driver can
+        // route the response even if it arrives before we start awaiting.
+        let (tx, rx) = moire::sync::oneshot::channel("driver.response");
+        self.shared.pending_responses.lock().insert(req_id, tx);
+
+        // r[impl schema.exchange.caller]
+        // r[impl schema.exchange.channels]
+        // Schemas are attached by SessionCore::send() when it sees a Call
+        // with Payload::Outgoing — no separate prepare step needed.
+        if self
+            .sender
+            .send(ConnectionMessage::Request(RequestMessage {
                 id: req_id,
                 body: RequestBody::Call(RequestCall {
                     method_id: call.method_id,
@@ -605,85 +595,28 @@ impl Caller for DriverCaller {
                     schemas: Default::default(),
                 }),
             }))
-                .await
-                .is_err()
-            {
-                self.shared.pending_responses.lock().remove(&req_id);
-                if let Some((args_ptr, plan)) = caller_channel_plan {
-                    unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
-                }
-                return Err(RoamError::SendFailed);
+            .await
+            .is_err()
+        {
+            self.shared.pending_responses.lock().remove(&req_id);
+            if let Some((args_ptr, plan)) = caller_channel_plan {
+                unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
             }
+            return Err(RoamError::SendFailed);
+        }
 
-            let mut resumed_rx = self.resumed_rx.clone();
-            let mut seen_resume_generation = *resumed_rx.borrow();
-            let mut resume_processed_rx = self.resume_processed_rx.clone();
-            let mut closed_rx = self.closed_rx.clone();
-            let mut response = std::pin::pin!(rx.named("awaiting_response"));
+        let mut resumed_rx = self.resumed_rx.clone();
+        let mut seen_resume_generation = *resumed_rx.borrow();
+        let mut resume_processed_rx = self.resume_processed_rx.clone();
+        let mut closed_rx = self.closed_rx.clone();
+        let mut response = std::pin::pin!(rx.named("awaiting_response"));
 
-            let pending: PendingResponse = loop {
-                tokio::select! {
-                    result = &mut response => {
-                        match result {
-                            Ok(pending) => break pending,
-                            Err(_) => {
-                                if let Some((args_ptr, plan)) = caller_channel_plan {
-                                    unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
-                                }
-                                return Err(RoamError::ConnectionClosed);
-                            }
-                        }
-                    }
-                    changed = resumed_rx.changed(), if self.peer_supports_retry => {
-                        roam_types::dlog!("[CALLER] resumed_rx fired");
-                        if changed.is_err() {
-                            self.shared.pending_responses.lock().remove(&req_id);
-                            if let Some((args_ptr, plan)) = caller_channel_plan {
-                                unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
-                            }
-                            return Err(RoamError::SessionShutdown);
-                        }
-                        let generation = *resumed_rx.borrow();
-                        if generation == seen_resume_generation {
-                            continue;
-                        }
-                        seen_resume_generation = generation;
-                        while *resume_processed_rx.borrow() < generation {
-                            if resume_processed_rx.changed().await.is_err() {
-                                self.shared.pending_responses.lock().remove(&req_id);
-                                if let Some((args_ptr, plan)) = caller_channel_plan {
-                                    unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
-                                }
-                                return Err(RoamError::SessionShutdown);
-                            }
-                        }
-                        if let Some((args_ptr, plan)) = caller_channel_plan
-                            && let Some(binder) = self.channel_binder()
-                        {
-                            let channels = unsafe {
-                                roam_types::bind_channels_caller_args(
-                                    args_ptr as *mut u8,
-                                    plan,
-                                    binder,
-                                )
-                            };
-                            call.channels = channels;
-                        }
-                        let _ = self.sender.send(ConnectionMessage::Request(RequestMessage {
-                            id: req_id,
-                            body: RequestBody::Call(RequestCall {
-                                method_id: call.method_id,
-                                args: call.args.reborrow(),
-                                channels: call.channels.clone(),
-                                metadata: call.metadata.clone(),
-                                schemas: Default::default(),
-                            }),
-                        })).await;
-                    }
-                    changed = closed_rx.changed() => {
-                        roam_types::dlog!("[CALLER] closed_rx fired, value={}", *closed_rx.borrow());
-                        if changed.is_err() || *closed_rx.borrow() {
-                            self.shared.pending_responses.lock().remove(&req_id);
+        let pending: PendingResponse = loop {
+            tokio::select! {
+                result = &mut response => {
+                    match result {
+                        Ok(pending) => break pending,
+                        Err(_) => {
                             if let Some((args_ptr, plan)) = caller_channel_plan {
                                 unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
                             }
@@ -691,29 +624,84 @@ impl Caller for DriverCaller {
                         }
                     }
                 }
-            };
-
-            // Extract the Response variant from the RequestMessage.
-            let PendingResponse {
-                msg: response_msg,
-                schemas: response_schemas,
-            } = pending;
-            let response = response_msg.map(|m| match m.body {
-                RequestBody::Response(r) => r,
-                _ => unreachable!("pending_responses only gets Response variants"),
-            });
-
-            if let Some((args_ptr, plan)) = caller_channel_plan
-                && payload_is_runtime_error(&response.ret)
-            {
-                unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
+                changed = resumed_rx.changed(), if self.peer_supports_retry => {
+                    roam_types::dlog!("[CALLER] resumed_rx fired");
+                    if changed.is_err() {
+                        self.shared.pending_responses.lock().remove(&req_id);
+                        if let Some((args_ptr, plan)) = caller_channel_plan {
+                            unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
+                        }
+                        return Err(RoamError::SessionShutdown);
+                    }
+                    let generation = *resumed_rx.borrow();
+                    if generation == seen_resume_generation {
+                        continue;
+                    }
+                    seen_resume_generation = generation;
+                    while *resume_processed_rx.borrow() < generation {
+                        if resume_processed_rx.changed().await.is_err() {
+                            self.shared.pending_responses.lock().remove(&req_id);
+                            if let Some((args_ptr, plan)) = caller_channel_plan {
+                                unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
+                            }
+                            return Err(RoamError::SessionShutdown);
+                        }
+                    }
+                    if let Some((args_ptr, plan)) = caller_channel_plan
+                        && let Some(binder) = self.channel_binder()
+                    {
+                        let channels = unsafe {
+                            roam_types::bind_channels_caller_args(
+                                args_ptr as *mut u8,
+                                plan,
+                                binder,
+                            )
+                        };
+                        call.channels = channels;
+                    }
+                    let _ = self.sender.send(ConnectionMessage::Request(RequestMessage {
+                        id: req_id,
+                        body: RequestBody::Call(RequestCall {
+                            method_id: call.method_id,
+                            args: call.args.reborrow(),
+                            channels: call.channels.clone(),
+                            metadata: call.metadata.clone(),
+                            schemas: Default::default(),
+                        }),
+                    })).await;
+                }
+                changed = closed_rx.changed() => {
+                    roam_types::dlog!("[CALLER] closed_rx fired, value={}", *closed_rx.borrow());
+                    if changed.is_err() || *closed_rx.borrow() {
+                        self.shared.pending_responses.lock().remove(&req_id);
+                        if let Some((args_ptr, plan)) = caller_channel_plan {
+                            unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
+                        }
+                        return Err(RoamError::ConnectionClosed);
+                    }
+                }
             }
-            Ok(roam_types::WithTracker {
-                value: response,
-                tracker: response_schemas,
-            })
+        };
+
+        // Extract the Response variant from the RequestMessage.
+        let PendingResponse {
+            msg: response_msg,
+            schemas: response_schemas,
+        } = pending;
+        let response = response_msg.map(|m| match m.body {
+            RequestBody::Response(r) => r,
+            _ => unreachable!("pending_responses only gets Response variants"),
+        });
+
+        if let Some((args_ptr, plan)) = caller_channel_plan
+            && payload_is_runtime_error(&response.ret)
+        {
+            unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
         }
-        .named("Caller::call")
+        Ok(roam_types::WithTracker {
+            value: response,
+            tracker: response_schemas,
+        })
     }
 
     fn closed(&self) -> BoxFut<'_, ()> {

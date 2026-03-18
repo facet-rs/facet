@@ -159,9 +159,9 @@ mod tests {
     use super::{ClientLogging, ClientLoggingOptions, RedactedMetadata};
     use crate::{
         Caller, MetadataEntry, MetadataFlags, MetadataValue, MethodDescriptor, MethodId,
-        MiddlewareCaller, Payload, RequestCall, RequestResponse, RoamError, SelfRef,
-        ServiceDescriptor,
+        MiddlewareCaller, Payload, RequestCall, RoamError, ServiceDescriptor,
     };
+    use roam_types::CallResult;
 
     #[test]
     fn metadata_debug_redacts_sensitive_values() {
@@ -250,15 +250,8 @@ mod tests {
     struct AlwaysCancelledCaller;
 
     impl Caller for AlwaysCancelledCaller {
-        #[allow(clippy::manual_async_fn)]
-        fn call<'a>(
-            &'a self,
-            _call: RequestCall<'a>,
-        ) -> impl std::future::Future<
-            Output = Result<roam_types::WithTracker<SelfRef<RequestResponse<'static>>>, RoamError>,
-        > + Send
-        + 'a {
-            async move { Err(RoamError::Cancelled) }
+        async fn call<'a>(&'a self, _call: RequestCall<'a>) -> CallResult {
+            Err(RoamError::Cancelled)
         }
     }
 

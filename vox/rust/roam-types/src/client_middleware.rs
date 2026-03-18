@@ -1,10 +1,9 @@
-use std::{future::Future, sync::Arc};
+use std::sync::Arc;
 
 use crate::server_middleware::BoxMiddlewareFuture;
 use crate::{
-    BoxFut, Caller, Extensions, Metadata, MetadataEntry, MetadataFlags, MetadataValue,
-    MethodDescriptor, MethodId, RequestCall, RequestResponse, RoamError, SelfRef,
-    ServiceDescriptor,
+    BoxFut, CallResult, Caller, Extensions, Metadata, MetadataEntry, MetadataFlags, MetadataValue,
+    MethodDescriptor, MethodId, RequestCall, RoamError, ServiceDescriptor,
 };
 
 /// Borrowed per-call context exposed to client middleware.
@@ -198,38 +197,29 @@ impl<C> Caller for MiddlewareCaller<C>
 where
     C: Caller,
 {
-    #[allow(clippy::manual_async_fn)]
-    fn call<'a>(
-        &'a self,
-        mut call: RequestCall<'a>,
-    ) -> impl Future<
-        Output = Result<crate::WithTracker<SelfRef<RequestResponse<'static>>>, RoamError>,
-    > + crate::MaybeSend
-    + 'a {
-        async move {
-            let extensions = Extensions::new();
-            let method = self.service.by_id(call.method_id);
-            let context = ClientContext::new(method, call.method_id, &extensions);
-            let mut owned_metadata = OwnedMetadata::default();
-            if !self.middlewares.is_empty() {
-                for middleware in &self.middlewares {
-                    let mut request = ClientRequest::new(&mut call, &mut owned_metadata);
-                    middleware.pre(&context, &mut request).await;
-                }
+    async fn call<'a>(&'a self, mut call: RequestCall<'a>) -> CallResult {
+        let extensions = Extensions::new();
+        let method = self.service.by_id(call.method_id);
+        let context = ClientContext::new(method, call.method_id, &extensions);
+        let mut owned_metadata = OwnedMetadata::default();
+        if !self.middlewares.is_empty() {
+            for middleware in &self.middlewares {
+                let mut request = ClientRequest::new(&mut call, &mut owned_metadata);
+                middleware.pre(&context, &mut request).await;
             }
-
-            let result = self.caller.call(call).await;
-            if !self.middlewares.is_empty() {
-                let outcome = match &result {
-                    Ok(_) => ClientCallOutcome::Response,
-                    Err(error) => ClientCallOutcome::Error(error),
-                };
-                for middleware in self.middlewares.iter().rev() {
-                    middleware.post(&context, outcome).await;
-                }
-            }
-            result
         }
+
+        let result = self.caller.call(call).await;
+        if !self.middlewares.is_empty() {
+            let outcome = match &result {
+                Ok(_) => ClientCallOutcome::Response,
+                Err(error) => ClientCallOutcome::Error(error),
+            };
+            for middleware in self.middlewares.iter().rev() {
+                middleware.post(&context, outcome).await;
+            }
+        }
+        result
     }
 
     fn closed(&self) -> BoxFut<'_, ()> {
@@ -255,9 +245,9 @@ mod tests {
     use super::{
         BoxMiddlewareFuture, ClientCallOutcome, ClientContext, ClientMiddleware, ClientRequest,
         MetadataFlags, MethodDescriptor, MethodId, MiddlewareCaller, OwnedMetadata, RequestCall,
-        RequestResponse, RoamError, SelfRef,
     };
-    use crate::Caller;
+    use crate::{CallResult, Caller};
+    use crate::{RequestResponse, SelfRef};
 
     #[test]
     fn client_request_can_add_owned_metadata() {
@@ -295,44 +285,35 @@ mod tests {
     }
 
     impl Caller for RecordingCaller {
-        #[allow(clippy::manual_async_fn)]
-        fn call<'a>(
-            &'a self,
-            call: RequestCall<'a>,
-        ) -> impl Future<
-            Output = Result<crate::WithTracker<SelfRef<RequestResponse<'static>>>, RoamError>,
-        > + crate::MaybeSend
-        + 'a {
-            async move {
-                let seen = call
-                    .metadata
-                    .iter()
-                    .map(|entry| match entry.value {
-                        crate::MetadataValue::String(value) => format!("{}={value}", entry.key),
-                        crate::MetadataValue::Bytes(bytes) => {
-                            format!("{}=<{} bytes>", entry.key, bytes.len())
-                        }
-                        crate::MetadataValue::U64(value) => format!("{}={value}", entry.key),
-                    })
-                    .collect::<Vec<_>>();
-                *self
-                    .seen_metadata
-                    .lock()
-                    .expect("seen metadata mutex poisoned") = seen;
-
-                Ok(crate::WithTracker {
-                    value: SelfRef::owning(
-                        Backing::Boxed(Box::<[u8]>::default()),
-                        RequestResponse {
-                            channels: vec![],
-                            metadata: vec![],
-                            ret: Payload::Incoming(&[]),
-                            schemas: Default::default(),
-                        },
-                    ),
-                    tracker: std::sync::Arc::new(crate::SchemaRecvTracker::new()),
+        async fn call<'a>(&'a self, call: RequestCall<'a>) -> CallResult {
+            let seen = call
+                .metadata
+                .iter()
+                .map(|entry| match entry.value {
+                    crate::MetadataValue::String(value) => format!("{}={value}", entry.key),
+                    crate::MetadataValue::Bytes(bytes) => {
+                        format!("{}=<{} bytes>", entry.key, bytes.len())
+                    }
+                    crate::MetadataValue::U64(value) => format!("{}={value}", entry.key),
                 })
-            }
+                .collect::<Vec<_>>();
+            *self
+                .seen_metadata
+                .lock()
+                .expect("seen metadata mutex poisoned") = seen;
+
+            Ok(crate::WithTracker {
+                value: SelfRef::owning(
+                    Backing::Boxed(Box::<[u8]>::default()),
+                    RequestResponse {
+                        channels: vec![],
+                        metadata: vec![],
+                        ret: Payload::Incoming(&[]),
+                        schemas: Default::default(),
+                    },
+                ),
+                tracker: std::sync::Arc::new(crate::SchemaRecvTracker::new()),
+            })
         }
     }
 
@@ -389,7 +370,7 @@ mod tests {
         )
         .with_middleware(InjectMetadata);
 
-        let response = caller
+        let response: CallResult = caller
             .call(RequestCall {
                 method_id: MethodId(7),
                 channels: vec![],

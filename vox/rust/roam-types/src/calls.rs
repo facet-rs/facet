@@ -286,40 +286,34 @@ impl ErasedCaller {
 }
 
 impl Caller for ErasedCaller {
-    #[allow(clippy::manual_async_fn)]
-    fn call<'a>(
-        &'a self,
-        mut call: RequestCall<'a>,
-    ) -> impl Future<Output = CallResult> + MaybeSend + 'a {
-        async move {
-            let Some(service) = self.service else {
-                return self.inner.call(call).await;
-            };
+    async fn call<'a>(&'a self, mut call: RequestCall<'a>) -> CallResult {
+        let Some(service) = self.service else {
+            return self.inner.call(call).await;
+        };
 
-            let extensions = Extensions::new();
-            let method = service.by_id(call.method_id);
-            let context = ClientContext::new(method, call.method_id, &extensions);
-            let mut owned_metadata = crate::client_middleware::OwnedMetadata::default();
+        let extensions = Extensions::new();
+        let method = service.by_id(call.method_id);
+        let context = ClientContext::new(method, call.method_id, &extensions);
+        let mut owned_metadata = crate::client_middleware::OwnedMetadata::default();
 
-            if !self.middlewares.is_empty() {
-                for middleware in &self.middlewares {
-                    let mut request = ClientRequest::new(&mut call, &mut owned_metadata);
-                    middleware.pre(&context, &mut request).await;
-                }
+        if !self.middlewares.is_empty() {
+            for middleware in &self.middlewares {
+                let mut request = ClientRequest::new(&mut call, &mut owned_metadata);
+                middleware.pre(&context, &mut request).await;
             }
-
-            let result = self.inner.call(call).await;
-            if !self.middlewares.is_empty() {
-                let outcome = match &result {
-                    Ok(_) => ClientCallOutcome::Response,
-                    Err(error) => ClientCallOutcome::Error(error),
-                };
-                for middleware in self.middlewares.iter().rev() {
-                    middleware.post(&context, outcome).await;
-                }
-            }
-            result
         }
+
+        let result = self.inner.call(call).await;
+        if !self.middlewares.is_empty() {
+            let outcome = match &result {
+                Ok(_) => ClientCallOutcome::Response,
+                Err(error) => ClientCallOutcome::Error(error),
+            };
+            for middleware in self.middlewares.iter().rev() {
+                middleware.post(&context, outcome).await;
+            }
+        }
+        result
     }
 
     fn closed(&self) -> BoxFut<'_, ()> {
@@ -427,7 +421,7 @@ mod tests {
 
     use crate::{MaybeSend, Metadata, Payload, RequestCall, RequestResponse};
 
-    use super::{Call, Caller, Handler, ReplySink, ResponseParts};
+    use super::{Call, CallResult, Caller, Handler, ReplySink, ResponseParts};
 
     struct RecordingCall<T, E> {
         observed: Arc<Mutex<Option<Result<T, E>>>>,
@@ -469,18 +463,8 @@ mod tests {
     struct NoopCaller;
 
     impl Caller for NoopCaller {
-        #[allow(clippy::manual_async_fn)]
-        fn call<'a>(
-            &'a self,
-            _call: RequestCall<'a>,
-        ) -> impl Future<
-            Output = Result<
-                crate::WithTracker<crate::SelfRef<RequestResponse<'static>>>,
-                crate::RoamError,
-            >,
-        > + MaybeSend
-        + 'a {
-            async move { unreachable!("NoopCaller::call is not used by this test") }
+        async fn call<'a>(&'a self, _call: RequestCall<'a>) -> CallResult {
+            unreachable!("NoopCaller::call is not used by this test")
         }
     }
 
