@@ -76,6 +76,9 @@ pub(crate) struct ScatterBuilder<'a> {
     staging: Vec<u8>,
     segments: Vec<Segment<'a>>,
     total_size: usize,
+    /// Start offset in staging of the current (not yet pushed) staged run.
+    /// None means no staged bytes are pending.
+    staged_start: Option<usize>,
 }
 
 impl<'a> ScatterBuilder<'a> {
@@ -84,51 +87,48 @@ impl<'a> ScatterBuilder<'a> {
             staging: Vec::new(),
             segments: Vec::new(),
             total_size: 0,
+            staged_start: None,
         }
     }
 
-    fn finish(self) -> ScatterPlan<'a> {
+    /// Flush the current staged run into a segment.
+    fn flush_staged(&mut self) {
+        if let Some(start) = self.staged_start.take() {
+            let len = self.staging.len() - start;
+            if len > 0 {
+                self.segments.push(Segment::Staged { offset: start, len });
+            }
+        }
+    }
+
+    fn finish(mut self) -> ScatterPlan<'a> {
+        self.flush_staged();
         ScatterPlan {
             staging: self.staging,
             segments: self.segments,
             total_size: self.total_size,
         }
     }
-
-    fn push_staged_segment(&mut self, offset: usize, len: usize) {
-        if len == 0 {
-            return;
-        }
-        // Merge with previous staged segment if contiguous
-        if let Some(Segment::Staged {
-            offset: prev_offset,
-            len: prev_len,
-        }) = self.segments.last_mut()
-            && *prev_offset + *prev_len == offset
-        {
-            *prev_len += len;
-            return;
-        }
-        self.segments.push(Segment::Staged { offset, len });
-    }
 }
 
 impl Writer for ScatterBuilder<'_> {
     fn write_byte(&mut self, byte: u8) {
-        let offset = self.staging.len();
+        if self.staged_start.is_none() {
+            self.staged_start = Some(self.staging.len());
+        }
         self.staging.push(byte);
         self.total_size += 1;
-        self.push_staged_segment(offset, 1);
     }
 
     fn write_bytes(&mut self, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
         }
-        let offset = self.staging.len();
+        if self.staged_start.is_none() {
+            self.staged_start = Some(self.staging.len());
+        }
         self.staging.extend_from_slice(bytes);
         self.total_size += bytes.len();
-        self.push_staged_segment(offset, bytes.len());
     }
 
     fn bytes_written(&self) -> usize {
@@ -136,10 +136,12 @@ impl Writer for ScatterBuilder<'_> {
     }
 
     fn reserve_size_field(&mut self) -> SizeField {
+        if self.staged_start.is_none() {
+            self.staged_start = Some(self.staging.len());
+        }
         let offset = self.staging.len();
         self.staging.extend_from_slice(&[0u8; 4]);
         self.total_size += 4;
-        self.push_staged_segment(offset, 4);
         SizeField(offset)
     }
 
@@ -153,6 +155,7 @@ impl<'a> PostcardWriter<'a> for ScatterBuilder<'a> {
         if bytes.is_empty() {
             return;
         }
+        self.flush_staged();
         self.segments.push(Segment::Reference { bytes });
         self.total_size += bytes.len();
     }
