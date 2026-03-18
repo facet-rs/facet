@@ -16,6 +16,17 @@ use roam_types::{
 use tokio::sync::watch;
 use tracing::{debug, warn};
 
+/// Toggle verbose schema-negotiation tracing (compile-time, zero-cost when off).
+const SCHEMA_DEBUG: bool = false;
+
+macro_rules! schema_debug {
+    ($($arg:tt)*) => {
+        if SCHEMA_DEBUG {
+            eprintln!($($arg)*);
+        }
+    };
+}
+
 mod builders;
 pub use builders::*;
 
@@ -1405,6 +1416,11 @@ impl SessionCore {
                                         shape,
                                         roam_types::BindingDirection::Response,
                                     );
+                                    schema_debug!(
+                                        "[schema] prepared {} bytes of response schemas for method {:?}",
+                                        schemas.0.len(),
+                                        method_id
+                                    );
                                     if !schemas.is_empty() {
                                         resp.schemas = schemas;
                                     }
@@ -1435,6 +1451,12 @@ impl SessionCore {
             .conns
             .entry(conn_id)
             .or_insert_with(SendConnState::new);
+        schema_debug!(
+            "[schema] record_incoming_call: conn={:?} req={:?} method={:?}",
+            conn_id,
+            request_id,
+            method_id
+        );
         conn_state.inflight_incoming.insert(request_id, method_id);
     }
 

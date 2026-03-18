@@ -179,9 +179,19 @@ impl ReplySink for DriverReplySink {
             let encoded_response: Arc<[u8]> = roam_postcard::to_vec(&response)
                 .expect("serialize operation response")
                 .into();
+            // Send the original response directly — preserving the Outgoing payload
+            // so SessionCore::send() can extract schemas from the shape.
+            if let Err(_e) = sender.send_response(self.request_id, response).await {
+                sender.mark_failure(self.request_id, FailureDisposition::Cancelled);
+            }
+            // Replay to any dedup'd waiters using the serialized form.
+            // The owner (self.request_id) was already sent directly above.
             let waiters =
                 operations.seal(operation_id, self.request_id, Arc::clone(&encoded_response));
             for waiter in waiters {
+                if waiter == self.request_id {
+                    continue;
+                }
                 if send_encoded_response(sender.clone(), waiter, Arc::clone(&encoded_response))
                     .await
                     .is_err()
