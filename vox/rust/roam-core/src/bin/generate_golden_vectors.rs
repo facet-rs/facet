@@ -28,7 +28,7 @@ fn write_fixture(path: &str, bytes: &[u8]) {
 }
 
 fn encode_message(message: &Message<'_>) -> Vec<u8> {
-    facet_postcard::to_vec(message).expect("serialize message fixture")
+    roam_postcard::to_vec(message).expect("serialize message fixture")
 }
 
 fn sample_metadata() -> Metadata<'static> {
@@ -54,7 +54,7 @@ fn sample_metadata() -> Metadata<'static> {
 fn main() {
     macro_rules! write_value {
         ($path:literal, $value:expr) => {{
-            let bytes = facet_postcard::to_vec(&$value).expect("serialize fixture");
+            let bytes = roam_postcard::to_vec(&$value).expect("serialize fixture");
             write_fixture($path, &bytes);
         }};
     }

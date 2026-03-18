@@ -35,6 +35,12 @@ export interface BytesSchema {
    * length prefix. This must only be used for structurally trailing fields.
    */
   trailing?: boolean;
+  /**
+   * When true, bytes are encoded/decoded with a 4-byte little-endian length
+   * prefix (u32le). Used for opaque Payload fields (args, ret, item) that must
+   * be framed so that subsequent fields (e.g. schemas) can be read.
+   */
+  opaque?: boolean;
 }
 
 // ============================================================================

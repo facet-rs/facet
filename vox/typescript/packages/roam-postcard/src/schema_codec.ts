@@ -395,6 +395,15 @@ function encodeBytesWithSchema(value: unknown, schema: BytesSchema, writer: BufW
     writer.writeBytes(bytes);
     return;
   }
+  if (schema.opaque) {
+    const len = bytes.length;
+    writer.writeByte(len & 0xff);
+    writer.writeByte((len >> 8) & 0xff);
+    writer.writeByte((len >> 16) & 0xff);
+    writer.writeByte((len >> 24) & 0xff);
+    writer.writeBytes(bytes);
+    return;
+  }
   writer.writeVarint(bytes.length);
   writer.writeBytes(bytes);
 }
@@ -653,6 +662,22 @@ function decodeBytesWithSchema(
 ): DecodeResult<Uint8Array> {
   if (schema.trailing) {
     return { value: buf.subarray(offset), next: buf.length };
+  }
+  if (schema.opaque) {
+    if (offset + 4 > buf.length) {
+      throw new Error(`opaque u32le length prefix out of bounds at offset ${offset}`);
+    }
+    const len =
+      buf[offset] |
+      (buf[offset + 1] << 8) |
+      (buf[offset + 2] << 16) |
+      (buf[offset + 3] << 24);
+    const start = offset + 4;
+    const end = start + len;
+    if (end > buf.length) {
+      throw new Error(`opaque payload length ${len} exceeds buffer at offset ${offset}`);
+    }
+    return { value: buf.subarray(start, end), next: end };
   }
   return decodeBytes(buf, offset);
 }

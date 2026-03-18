@@ -353,7 +353,7 @@ export const MethodIdSchema: Schema = { kind: "u64" };
 
 export const ChannelIdSchema: Schema = { kind: "u64" };
 
-export const CborPayloadSchema: Schema = { kind: "vec", element: { kind: "u8" } };
+export const CborPayloadSchema: Schema = { kind: "bytes" };
 
 export const RequestCallSchema: Schema = {
   kind: "struct",
@@ -377,8 +377,8 @@ export const RequestCallSchema: Schema = {
         },
       },
     },
-    "args": { kind: "bytes" },
-    "schemas": { kind: "vec", element: { kind: "u8" } },
+    "args": { kind: "bytes", opaque: true },
+    "schemas": { kind: "bytes" },
   },
 };
 
@@ -403,8 +403,8 @@ export const RequestResponseSchema: Schema = {
         },
       },
     },
-    "ret": { kind: "bytes" },
-    "schemas": { kind: "vec", element: { kind: "u8" } },
+    "ret": { kind: "bytes", opaque: true },
+    "schemas": { kind: "bytes" },
   },
 };
 
@@ -458,8 +458,8 @@ export const RequestBodySchema: Schema = {
             },
           },
         },
-        "args": { kind: "bytes" },
-        "schemas": { kind: "vec", element: { kind: "u8" } },
+        "args": { kind: "bytes", opaque: true },
+        "schemas": { kind: "bytes" },
       },
     },
   }, {
@@ -486,8 +486,8 @@ export const RequestBodySchema: Schema = {
             },
           },
         },
-        "ret": { kind: "bytes" },
-        "schemas": { kind: "vec", element: { kind: "u8" } },
+        "ret": { kind: "bytes", opaque: true },
+        "schemas": { kind: "bytes" },
       },
     },
   }, {
@@ -548,8 +548,8 @@ export const RequestMessageSchema: Schema = {
                 },
               },
             },
-            "args": { kind: "bytes" },
-            "schemas": { kind: "vec", element: { kind: "u8" } },
+            "args": { kind: "bytes", opaque: true },
+            "schemas": { kind: "bytes" },
           },
         },
       }, {
@@ -575,8 +575,8 @@ export const RequestMessageSchema: Schema = {
                 },
               },
             },
-            "ret": { kind: "bytes" },
-            "schemas": { kind: "vec", element: { kind: "u8" } },
+            "ret": { kind: "bytes", opaque: true },
+            "schemas": { kind: "bytes" },
           },
         },
       }, {
@@ -608,7 +608,7 @@ export const RequestMessageSchema: Schema = {
   },
 };
 
-export const ChannelItemSchema: Schema = { kind: "struct", fields: { "item": { kind: "bytes" } } };
+export const ChannelItemSchema: Schema = { kind: "struct", fields: { "item": { kind: "bytes", opaque: true } } };
 
 export const ChannelCloseSchema: Schema = {
   kind: "struct",
@@ -660,7 +660,7 @@ export const ChannelGrantCreditSchema: Schema = { kind: "struct", fields: { "add
 
 export const ChannelBodySchema: Schema = {
   kind: "enum",
-  variants: [{ name: "Item", fields: { kind: "struct", fields: { "item": { kind: "bytes" } } } }, {
+  variants: [{ name: "Item", fields: { kind: "struct", fields: { "item": { kind: "bytes", opaque: true } } } }, {
     name: "Close",
     fields: {
       kind: "struct",
@@ -719,7 +719,7 @@ export const ChannelMessageSchema: Schema = {
     "id": { kind: "u64" },
     "body": {
       kind: "enum",
-      variants: [{ name: "Item", fields: { kind: "struct", fields: { "item": { kind: "bytes" } } } }, {
+      variants: [{ name: "Item", fields: { kind: "struct", fields: { "item": { kind: "bytes", opaque: true } } } }, {
         name: "Close",
         fields: {
           kind: "struct",
@@ -926,8 +926,8 @@ export const MessagePayloadSchema: Schema = {
                       },
                     },
                   },
-                  "args": { kind: "bytes" },
-                  "schemas": { kind: "vec", element: { kind: "u8" } },
+                  "args": { kind: "bytes", opaque: true },
+                  "schemas": { kind: "bytes" },
                 },
               },
             }, {
@@ -953,8 +953,8 @@ export const MessagePayloadSchema: Schema = {
                       },
                     },
                   },
-                  "ret": { kind: "bytes" },
-                  "schemas": { kind: "vec", element: { kind: "u8" } },
+                  "ret": { kind: "bytes", opaque: true },
+                  "schemas": { kind: "bytes" },
                 },
               },
             }, {
@@ -994,7 +994,10 @@ export const MessagePayloadSchema: Schema = {
           "id": { kind: "u64" },
           "body": {
             kind: "enum",
-            variants: [{ name: "Item", fields: { kind: "struct", fields: { "item": { kind: "bytes" } } } }, {
+            variants: [{
+              name: "Item",
+              fields: { kind: "struct", fields: { "item": { kind: "bytes", opaque: true } } },
+            }, {
               name: "Close",
               fields: {
                 kind: "struct",
@@ -1206,8 +1209,8 @@ export const MessageSchema: Schema = {
                           },
                         },
                       },
-                      "args": { kind: "bytes" },
-                      "schemas": { kind: "vec", element: { kind: "u8" } },
+                      "args": { kind: "bytes", opaque: true },
+                      "schemas": { kind: "bytes" },
                     },
                   },
                 }, {
@@ -1233,8 +1236,8 @@ export const MessageSchema: Schema = {
                           },
                         },
                       },
-                      "ret": { kind: "bytes" },
-                      "schemas": { kind: "vec", element: { kind: "u8" } },
+                      "ret": { kind: "bytes", opaque: true },
+                      "schemas": { kind: "bytes" },
                     },
                   },
                 }, {
@@ -1274,7 +1277,10 @@ export const MessageSchema: Schema = {
               "id": { kind: "u64" },
               "body": {
                 kind: "enum",
-                variants: [{ name: "Item", fields: { kind: "struct", fields: { "item": { kind: "bytes" } } } }, {
+                variants: [{
+                  name: "Item",
+                  fields: { kind: "struct", fields: { "item": { kind: "bytes", opaque: true } } },
+                }, {
                   name: "Close",
                   fields: {
                     kind: "struct",

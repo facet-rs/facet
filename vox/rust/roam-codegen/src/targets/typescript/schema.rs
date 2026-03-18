@@ -194,7 +194,7 @@ fn generate_schema_with_field(
                 .collect();
             format!("{{ kind: 'tuple', elements: [{}] }}", inner.join(", "))
         }
-        ShapeKind::Opaque => bytes_schema.into(),
+        ShapeKind::Opaque => "{ kind: 'bytes', opaque: true }".into(),
     };
 
     state.active.remove(shape);

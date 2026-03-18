@@ -10,14 +10,10 @@ import {
   parityOdd,
   parityEven,
   connectionSettings,
-  helloV7,
-  helloYourself,
   metadataString,
   metadataBytes,
   metadataU64,
   metadataEntry,
-  messageHello,
-  messageHelloYourself,
   messageProtocolError,
   messageConnect,
   messageAccept,
@@ -58,11 +54,6 @@ function expectedMessages(): Array<[name: string, message: Message]> {
   const meta = sampleMetadata();
 
   return [
-    ["message_hello", messageHello(helloV7(parityOdd(), 64, meta))],
-    [
-      "message_hello_yourself",
-      messageHelloYourself(helloYourself(parityEven(), 32, meta)),
-    ],
     ["message_protocol_error", messageProtocolError("bad frame sequence")],
     ["message_connection_open", messageConnect(2n, connectionSettings(parityOdd(), 64), meta)],
     ["message_connection_accept", messageAccept(2n, connectionSettings(parityEven(), 96), meta)],
@@ -144,9 +135,9 @@ describe("Result/RoamError golden vectors", () => {
     expect(err.payload).toBeNull();
   });
 
-  it("err_invalid_payload: [0x01, 0x02]", () => {
+  it("err_invalid_payload: [0x01, 0x02, 0x00]", () => {
     const bytes = loadGoldenVector("result/err_invalid_payload.bin");
-    expect(Array.from(bytes)).toEqual([0x01, 0x02]);
+    expect(Array.from(bytes)).toEqual([0x01, 0x02, 0x00]);
     const err = decodeErr(bytes);
     expect(err.code).toBe(RpcErrorCode.INVALID_PAYLOAD);
     expect(err.payload).toBeNull();

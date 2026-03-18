@@ -191,6 +191,11 @@ pub fn classify_shape(shape: &'static Shape) -> ShapeKind<'static> {
 
 /// Check if a shape represents bytes (`Vec<u8>` or `&[u8]`).
 pub fn is_bytes(shape: &Shape) -> bool {
+    let shape = if shape.is_transparent() {
+        shape.inner.unwrap_or(shape)
+    } else {
+        shape
+    };
     match shape.def {
         Def::List(list_def) => matches!(list_def.t().scalar_type(), Some(ScalarType::U8)),
         Def::Slice(slice_def) => matches!(slice_def.t().scalar_type(), Some(ScalarType::U8)),
