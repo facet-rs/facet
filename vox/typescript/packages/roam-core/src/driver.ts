@@ -537,7 +537,7 @@ export class Driver {
     // r[impl rpc.channel.binding.callee-args.rx]
     // r[impl rpc.channel.binding.callee-args.tx]
 
-    // r[impl schema.translation]
+    // r[impl schema.translation.field-matching]
     // Try to build a translation plan using remote schemas.
     const tracker = this.connection.getSchemaTracker();
     let argsSchema = method.args;

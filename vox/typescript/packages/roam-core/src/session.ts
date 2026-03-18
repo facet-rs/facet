@@ -641,7 +641,7 @@ class SessionCore {
         this.handleChannelMessage(message.connection_id, message.payload.value);
         return;
 
-      // r[impl schema.exchange]
+      // r[impl schema.exchange.ordering]
       case "SchemaMessage":
         this.handleSchemaMessage(message.payload.value);
         return;
@@ -771,7 +771,7 @@ class SessionCore {
     }
   }
 
-  // r[impl schema.exchange]
+  // r[impl schema.exchange.ordering]
   private handleSchemaMessage(value: { schemas: Uint8Array }): void {
     roamLogger()?.debug(`[roam:session] received SchemaMessage (${value.schemas.length} bytes)`);
     try {
