@@ -1,4 +1,5 @@
 use facet::Facet;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
@@ -23,8 +24,9 @@ use crate::session::{
     initiator_conduit, initiator_on, proxy_connections,
 };
 use crate::{
-    BareConduit, Driver, DriverCaller, DriverReplySink, InMemoryOperationStore, OperationAdmit,
-    OperationCancel, OperationStore, TransportMode, initiate_transport, memory_link_pair,
+    Attachment, BareConduit, Driver, DriverCaller, DriverReplySink, InMemoryOperationStore,
+    LinkSource, OperationAdmit, OperationCancel, OperationStore, TransportMode, initiate_transport,
+    memory_link_pair,
 };
 
 fn test_resume_key() -> SessionResumeKey {
@@ -193,6 +195,31 @@ impl LinkRx for BreakableLinkRx {
             Some(Some(bytes)) => Ok(Some(Backing::Boxed(bytes.into_boxed_slice()))),
             Some(None) | None => Ok(None),
         }
+    }
+}
+
+struct TestLinkSource {
+    attachments: VecDeque<Attachment<BreakableLink>>,
+}
+
+impl TestLinkSource {
+    fn new(attachments: impl IntoIterator<Item = Attachment<BreakableLink>>) -> Self {
+        Self {
+            attachments: attachments.into_iter().collect(),
+        }
+    }
+}
+
+impl LinkSource for TestLinkSource {
+    type Link = BreakableLink;
+
+    async fn next_link(&mut self) -> std::io::Result<Attachment<Self::Link>> {
+        self.attachments.pop_front().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "test link source exhausted",
+            )
+        })
     }
 }
 
@@ -1560,6 +1587,105 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
     };
     let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
     assert_eq!(value, 66);
+
+    drop(server_caller);
+    let _ = client_session_handle.shutdown();
+    client_break2.close().await;
+    server_break2.close().await;
+}
+
+#[tokio::test]
+async fn resumable_source_initiator_keeps_pending_call_alive_across_auto_resume() {
+    let registry = SessionRegistry::default();
+    let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
+    let (client_link2, client_break2, server_link2, server_break2) = breakable_link_pair(64);
+
+    let source = TestLinkSource::new([
+        Attachment::initiator(client_link1),
+        Attachment::initiator(client_link2),
+    ]);
+
+    let started = Arc::new(tokio::sync::Notify::new());
+    let started_for_wait = Arc::clone(&started);
+    let started_wait = started_for_wait.notified();
+    let release = Arc::new(tokio::sync::Notify::new());
+
+    let (server_established, client_established) = tokio::try_join!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            acceptor_on(server_link1)
+                .session_registry(registry.clone())
+                .establish_or_resume::<DriverCaller>(ResumableReplyingHandler {
+                    started,
+                    release: Arc::clone(&release),
+                }),
+        ),
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            crate::initiator(source, TransportMode::Bare).establish::<DriverCaller>(()),
+        ),
+    )
+    .expect("initial session establishment timed out");
+
+    let (server_caller, _server_session_handle) =
+        match server_established.expect("server handshake failed") {
+            SessionAcceptOutcome::Established(client, handle) => (client, handle),
+            SessionAcceptOutcome::Resumed => panic!("first accept should establish a new session"),
+        };
+    let (caller, client_session_handle) = client_established.expect("client handshake failed");
+
+    let call_task = moire::task::spawn(
+        async move {
+            caller
+                .call(RequestCall {
+                    method_id: MethodId(1),
+                    args: Payload::outgoing(&77_u32),
+                    schemas: Default::default(),
+                    channels: vec![],
+                    metadata: Default::default(),
+                })
+                .await
+        }
+        .named("source_auto_resume_pending_call"),
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), started_wait)
+        .await
+        .expect("timed out waiting for handler start");
+
+    client_break1.close().await;
+    server_break1.close().await;
+
+    let server_accept_result = tokio::time::timeout(
+        Duration::from_secs(1),
+        acceptor_on(server_link2)
+            .session_registry(registry.clone())
+            .establish_or_resume::<DriverCaller>(ResumableReplyingHandler {
+                started: Arc::new(tokio::sync::Notify::new()),
+                release: Arc::clone(&release),
+            }),
+    )
+    .await
+    .expect("timed out waiting for source-driven resume");
+    match server_accept_result.expect("server accept should succeed") {
+        SessionAcceptOutcome::Resumed => {}
+        SessionAcceptOutcome::Established(_, _) => {
+            panic!("registry accept should have resumed the existing session")
+        }
+    }
+
+    release.notify_waiters();
+
+    let response = call_task
+        .await
+        .expect("call task join")
+        .expect("call should succeed after source-driven auto-resume");
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
+    assert_eq!(value, 77);
 
     drop(server_caller);
     let _ = client_session_handle.shutdown();

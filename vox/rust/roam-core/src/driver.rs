@@ -153,11 +153,14 @@ pub struct DriverReplySink {
 async fn send_encoded_response(
     sender: ConnectionSender,
     request_id: RequestId,
+    method_id: roam_types::MethodId,
     encoded_response: Arc<[u8]>,
 ) -> Result<(), ()> {
     let response: RequestResponse<'_> =
         roam_postcard::from_slice_borrowed(encoded_response.as_ref()).map_err(|_| ())?;
-    sender.send_response(request_id, response).await
+    sender
+        .send_response_for_method(request_id, method_id, response)
+        .await
 }
 
 fn incoming_args_bytes<'a>(call: &'a RequestCall<'a>) -> &'a [u8] {
@@ -178,30 +181,36 @@ impl ReplySink for DriverReplySink {
 
         if let (Some(operation_id), Some(operations)) = (self.operation_id, self.operations.take())
         {
+            let mut response = response;
+            sender.prepare_response_for_method(self.request_id, self.method_id, &mut response);
             let encoded_response: Arc<[u8]> = roam_postcard::to_vec(&response)
                 .expect("serialize operation response")
                 .into();
-            // Send the original response directly — preserving the Outgoing payload
-            // so SessionCore::send() can extract schemas from the shape.
             if let Err(_e) = sender.send_response(self.request_id, response).await {
                 sender.mark_failure(self.request_id, FailureDisposition::Cancelled);
             }
-            // Replay to any dedup'd waiters using the serialized form.
-            // The owner (self.request_id) was already sent directly above.
             let waiters =
                 operations.seal(operation_id, self.request_id, Arc::clone(&encoded_response));
             for waiter in waiters {
                 if waiter == self.request_id {
                     continue;
                 }
-                if send_encoded_response(sender.clone(), waiter, Arc::clone(&encoded_response))
-                    .await
-                    .is_err()
+                if send_encoded_response(
+                    sender.clone(),
+                    waiter,
+                    self.method_id,
+                    Arc::clone(&encoded_response),
+                )
+                .await
+                .is_err()
                 {
                     sender.mark_failure(waiter, FailureDisposition::Cancelled);
                 }
             }
-        } else if let Err(_e) = sender.send_response(self.request_id, response).await {
+        } else if let Err(_e) = sender
+            .send_response_for_method(self.request_id, self.method_id, response)
+            .await
+        {
             sender.mark_failure(self.request_id, FailureDisposition::Cancelled);
         }
     }
@@ -1119,11 +1128,17 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     OperationAdmit::Attached => return,
                     OperationAdmit::Replay(encoded_response) => {
                         let sender = self.sender.clone();
+                        let method_id = call.method_id;
                         moire::task::spawn(
                             async move {
-                                if send_encoded_response(sender.clone(), req_id, encoded_response)
-                                    .await
-                                    .is_err()
+                                if send_encoded_response(
+                                    sender.clone(),
+                                    req_id,
+                                    method_id,
+                                    encoded_response,
+                                )
+                                .await
+                                .is_err()
                                 {
                                     sender.mark_failure(req_id, FailureDisposition::Cancelled);
                                 }

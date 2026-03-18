@@ -447,6 +447,36 @@ impl ConnectionSender {
         .await
     }
 
+    /// Shape a response using an explicit method ID, then send it.
+    pub async fn send_response_for_method<'a>(
+        &self,
+        request_id: RequestId,
+        method_id: roam_types::MethodId,
+        mut response: RequestResponse<'a>,
+    ) -> Result<(), ()> {
+        self.prepare_response_for_method(request_id, method_id, &mut response);
+        self.send(ConnectionMessage::Request(RequestMessage {
+            id: request_id,
+            body: RequestBody::Response(response),
+        }))
+        .await
+    }
+
+    /// Shape a response using an explicit method ID without sending it yet.
+    pub(crate) fn prepare_response_for_method(
+        &self,
+        request_id: RequestId,
+        method_id: roam_types::MethodId,
+        response: &mut RequestResponse<'_>,
+    ) {
+        self.sess_core.prepare_response_for_method(
+            self.connection_id,
+            request_id,
+            method_id,
+            response,
+        );
+    }
+
     /// Mark a request as failed by removing any pending response slot.
     /// Called when a send error occurs or no reply was sent.
     pub fn mark_failure(&self, request_id: RequestId, disposition: FailureDisposition) {
@@ -802,7 +832,10 @@ impl Session {
         }
 
         if let Some(recoverer) = self.recoverer.as_mut() {
-            match recoverer.next_conduit().await {
+            match recoverer
+                .next_conduit(self.session_resume_key.as_ref())
+                .await
+            {
                 Ok(recovered) => {
                     let result =
                         self.resume_from_handshake(recovered.tx, recovered.rx, recovered.handshake);
@@ -823,7 +856,8 @@ impl Session {
         loop {
             tokio::select! {
                 Some(req) = self.resume_rx.recv() => {
-                    let result = self.resume_from_handshake(req.tx, req.rx, req.handshake_result);
+                    let result =
+                        self.resume_from_handshake(req.tx, req.rx, req.handshake_result);
                     let ok = result.is_ok();
                     let _ = req.result_tx.send(result);
                     if ok {
@@ -863,6 +897,12 @@ impl Session {
         let Some(peer_settings) = self.peer_root_settings.clone() else {
             return Err(SessionError::Protocol("missing peer root settings".into()));
         };
+
+        if result.our_settings != self.local_root_settings {
+            return Err(SessionError::Protocol(
+                "local root settings changed across session resume".into(),
+            ));
+        }
 
         if result.peer_settings != peer_settings {
             return Err(SessionError::Protocol(
@@ -1397,25 +1437,7 @@ impl SessionCore {
                     }
                     RequestBody::Response(resp) => {
                         if let Some(method_id) = conn_state.inflight_incoming.remove(&req.id) {
-                            let key = (roam_types::BindingDirection::Response, method_id);
-                            if !conn_state.method_tracker.contains(&key)
-                                && let Payload::Outgoing { shape, .. } = &resp.ret
-                            {
-                                let schemas = conn_state.send_tracker.prepare_send_for_method(
-                                    method_id,
-                                    shape,
-                                    roam_types::BindingDirection::Response,
-                                );
-                                roam_types::dlog!(
-                                    "[schema] prepared {} bytes of response schemas for method {:?}",
-                                    schemas.0.len(),
-                                    method_id
-                                );
-                                if !schemas.is_empty() {
-                                    resp.schemas = schemas;
-                                }
-                                conn_state.method_tracker.insert(key);
-                            }
+                            Self::prepare_response_schemas(conn_state, req.id, method_id, resp);
                         }
                     }
                     RequestBody::Cancel(_) => {}
@@ -1449,6 +1471,50 @@ impl SessionCore {
         conn_state.inflight_incoming.insert(request_id, method_id);
     }
 
+    pub(crate) fn prepare_response_for_method(
+        &self,
+        conn_id: ConnectionId,
+        request_id: RequestId,
+        method_id: roam_types::MethodId,
+        response: &mut RequestResponse<'_>,
+    ) {
+        let mut inner = self.inner.lock().expect("session core mutex poisoned");
+        let conn_state = inner
+            .conns
+            .entry(conn_id)
+            .or_insert_with(SendConnState::new);
+        conn_state.inflight_incoming.remove(&request_id);
+        Self::prepare_response_schemas(conn_state, request_id, method_id, response);
+    }
+
+    fn prepare_response_schemas(
+        conn_state: &mut SendConnState,
+        _request_id: RequestId,
+        method_id: roam_types::MethodId,
+        response: &mut RequestResponse<'_>,
+    ) {
+        let key = (roam_types::BindingDirection::Response, method_id);
+        if !conn_state.method_tracker.contains(&key)
+            && let Payload::Outgoing { shape, .. } = &response.ret
+        {
+            let schemas = conn_state.send_tracker.prepare_send_for_method(
+                method_id,
+                shape,
+                roam_types::BindingDirection::Response,
+            );
+            roam_types::dlog!(
+                "[schema] prepared {} bytes of response schemas for method {:?} (req {:?})",
+                schemas.0.len(),
+                method_id,
+                _request_id
+            );
+            if !schemas.is_empty() {
+                response.schemas = schemas;
+            }
+            conn_state.method_tracker.insert(key);
+        }
+    }
+
     fn replace_tx_and_reset_schemas(&self, tx: Arc<dyn DynConduitTx>) {
         let mut inner = self.inner.lock().expect("session core mutex poisoned");
         inner.tx = tx;
@@ -1464,12 +1530,18 @@ pub(crate) struct RecoveredConduit {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) trait ConduitRecoverer: Send {
-    fn next_conduit(&mut self) -> BoxFut<'_, Result<RecoveredConduit, SessionError>>;
+    fn next_conduit<'a>(
+        &'a mut self,
+        resume_key: Option<&'a SessionResumeKey>,
+    ) -> BoxFut<'a, Result<RecoveredConduit, SessionError>>;
 }
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) trait ConduitRecoverer {
-    fn next_conduit(&mut self) -> BoxFut<'_, Result<RecoveredConduit, SessionError>>;
+    fn next_conduit<'a>(
+        &'a mut self,
+        resume_key: Option<&'a SessionResumeKey>,
+    ) -> BoxFut<'a, Result<RecoveredConduit, SessionError>>;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1527,7 +1599,9 @@ where
 #[cfg(test)]
 mod tests {
     use moire::sync::mpsc;
-    use roam_types::{Backing, Conduit, ConnectionAccept, ConnectionReject, SelfRef};
+    use roam_types::{
+        Backing, Conduit, ConnectionAccept, ConnectionReject, HandshakeResult, SelfRef,
+    };
 
     use super::*;
 
@@ -1544,6 +1618,22 @@ mod tests {
         Session::pre_handshake(
             tx, rx, None, open_rx, close_rx, resume_rx, control_tx, control_rx, None, false, None,
         )
+    }
+
+    fn resumed_handshake(
+        our_settings: ConnectionSettings,
+        peer_settings: ConnectionSettings,
+    ) -> HandshakeResult {
+        HandshakeResult {
+            role: SessionRole::Initiator,
+            our_settings,
+            peer_settings,
+            peer_supports_retry: true,
+            session_resume_key: Some(SessionResumeKey([7; 16])),
+            peer_resume_key: None,
+            our_schema: vec![],
+            peer_schema: vec![],
+        }
     }
 
     fn accept_ref() -> SelfRef<ConnectionAccept<'static>> {
@@ -1684,6 +1774,94 @@ mod tests {
         assert!(
             open_result_rx.await.is_err(),
             "pending open result channel should be closed once the pending slot is removed"
+        );
+    }
+
+    #[test]
+    fn resume_rejects_changed_local_root_settings() {
+        let mut session = make_session();
+        let local_settings = ConnectionSettings {
+            parity: Parity::Odd,
+            max_concurrent_requests: 64,
+        };
+        let peer_settings = ConnectionSettings {
+            parity: Parity::Even,
+            max_concurrent_requests: 64,
+        };
+        let _root = session
+            .establish_from_handshake(resumed_handshake(
+                local_settings.clone(),
+                peer_settings.clone(),
+            ))
+            .expect("initial handshake should establish session");
+
+        let (link_a, _link_b) = crate::memory_link_pair(32);
+        let conduit = crate::BareConduit::new(link_a);
+        let (tx, rx) = conduit.split();
+
+        let result = session.resume_from_handshake(
+            Arc::new(tx),
+            Box::new(rx),
+            resumed_handshake(
+                ConnectionSettings {
+                    parity: Parity::Odd,
+                    max_concurrent_requests: 65,
+                },
+                peer_settings,
+            ),
+        );
+
+        assert!(
+            matches!(
+                &result,
+                Err(SessionError::Protocol(message))
+                    if message == "local root settings changed across session resume"
+            ),
+            "expected local-root-settings mismatch, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn resume_rejects_changed_peer_root_settings() {
+        let mut session = make_session();
+        let local_settings = ConnectionSettings {
+            parity: Parity::Odd,
+            max_concurrent_requests: 64,
+        };
+        let peer_settings = ConnectionSettings {
+            parity: Parity::Even,
+            max_concurrent_requests: 64,
+        };
+        let _root = session
+            .establish_from_handshake(resumed_handshake(
+                local_settings.clone(),
+                peer_settings.clone(),
+            ))
+            .expect("initial handshake should establish session");
+
+        let (link_a, _link_b) = crate::memory_link_pair(32);
+        let conduit = crate::BareConduit::new(link_a);
+        let (tx, rx) = conduit.split();
+
+        let result = session.resume_from_handshake(
+            Arc::new(tx),
+            Box::new(rx),
+            resumed_handshake(
+                local_settings,
+                ConnectionSettings {
+                    parity: Parity::Even,
+                    max_concurrent_requests: 65,
+                },
+            ),
+        );
+
+        assert!(
+            matches!(
+                &result,
+                Err(SessionError::Protocol(message))
+                    if message == "peer root settings changed across session resume"
+            ),
+            "expected peer-root-settings mismatch, got: {result:?}"
         );
     }
 }
