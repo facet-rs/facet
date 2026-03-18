@@ -93,9 +93,10 @@ fn deserialize_value<'de, 'facet, const BORROW: bool>(
     let shape = partial.shape();
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
 
-    // Handle opaque adapters (e.g. Payload). Always length-prefixed.
+    // r[impl zerocopy.framing.value.opaque.length-prefix]
+    // Handle opaque adapters (e.g. Payload). u32le length-prefixed.
     if let Some(adapter) = shape.opaque_adapter {
-        let bytes = cursor.read_byte_slice()?;
+        let bytes = cursor.read_opaque_bytes()?;
         let deser_fn = adapter.deserialize;
         let input = facet::OpaqueDeserialize::Borrowed(bytes);
         #[allow(unsafe_code)]

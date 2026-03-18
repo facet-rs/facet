@@ -226,6 +226,15 @@ insert_anchor_links = "left"
 > Conduit framing and link framing do not change this mapping contract; they
 > only add/remove their own framing around the same encoded payload bytes.
 
+> r[zerocopy.framing.value.opaque.length-prefix]
+>
+> Opaque values are length-prefixed with a fixed 4-byte little-endian u32,
+> not a varint. This allows the serializer to reserve the prefix bytes,
+> serialize the mapped value directly into the output buffer, and patch the
+> length afterward — avoiding a temporary allocation to measure the size.
+> The deserializer reads a u32le to determine how many bytes to consume
+> (or skip, for unknown fields).
+
 ### Layer 2: Conduit framing
 
 > r[zerocopy.framing.conduit]

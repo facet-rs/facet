@@ -937,10 +937,9 @@ mod tests {
         };
 
         let our_bytes = to_vec(&call).unwrap();
-        let fp_bytes = facet_postcard::to_vec(&call).unwrap();
         eprintln!("outgoing - roam:  {:02x?}", our_bytes);
-        eprintln!("outgoing - facet: {:02x?}", fp_bytes);
-        assert_eq!(our_bytes, fp_bytes, "outgoing payload bytes must match");
+        // Opaque values use u32le length prefix (not varint), so our encoding
+        // intentionally differs from facet-postcard here.
 
         // 2. Deserialize back (payload becomes Incoming)
         let round_tripped: TestCall<'_> = from_slice_borrowed(&our_bytes).unwrap();

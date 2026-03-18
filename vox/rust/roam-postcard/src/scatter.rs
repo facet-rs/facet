@@ -4,7 +4,7 @@
 use facet_reflect::Peek;
 
 use crate::error::SerializeError;
-use crate::serialize::{PostcardWriter, Writer};
+use crate::serialize::{PostcardWriter, SizeField, Writer};
 
 /// A segment of the serialized output.
 #[derive(Debug)]
@@ -116,6 +116,22 @@ impl Writer for ScatterBuilder<'_> {
         self.staging.extend_from_slice(bytes);
         self.total_size += bytes.len();
         self.push_staged_segment(offset, bytes.len());
+    }
+
+    fn bytes_written(&self) -> usize {
+        self.total_size
+    }
+
+    fn reserve_size_field(&mut self) -> SizeField {
+        let offset = self.staging.len();
+        self.staging.extend_from_slice(&[0u8; 4]);
+        self.total_size += 4;
+        self.push_staged_segment(offset, 4);
+        SizeField(offset)
+    }
+
+    fn write_size_field(&mut self, handle: SizeField, value: u32) {
+        self.staging[handle.0..handle.0 + 4].copy_from_slice(&value.to_le_bytes());
     }
 }
 

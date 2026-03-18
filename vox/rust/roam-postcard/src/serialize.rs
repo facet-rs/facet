@@ -5,6 +5,10 @@ use facet_reflect::Peek;
 use crate::encode;
 use crate::error::SerializeError;
 
+/// Handle to a reserved u32le size field that can be patched after serialization.
+#[derive(Debug, Clone, Copy)]
+pub struct SizeField(pub(crate) usize);
+
 /// Trait for writing structural bytes during serialization.
 pub trait Writer {
     /// Write a single byte.
@@ -12,6 +16,15 @@ pub trait Writer {
 
     /// Write structural/metadata bytes (always copied).
     fn write_bytes(&mut self, bytes: &[u8]);
+
+    /// Total bytes written so far.
+    fn bytes_written(&self) -> usize;
+
+    /// Reserve 4 bytes for a u32le size field, returning a handle to patch later.
+    fn reserve_size_field(&mut self) -> SizeField;
+
+    /// Patch a previously reserved size field with the actual value.
+    fn write_size_field(&mut self, handle: SizeField, value: u32);
 }
 
 impl Writer for Vec<u8> {
@@ -21,6 +34,20 @@ impl Writer for Vec<u8> {
 
     fn write_bytes(&mut self, bytes: &[u8]) {
         self.extend_from_slice(bytes);
+    }
+
+    fn bytes_written(&self) -> usize {
+        self.len()
+    }
+
+    fn reserve_size_field(&mut self) -> SizeField {
+        let offset = self.len();
+        self.extend_from_slice(&[0u8; 4]);
+        SizeField(offset)
+    }
+
+    fn write_size_field(&mut self, handle: SizeField, value: u32) {
+        self[handle.0..handle.0 + 4].copy_from_slice(&value.to_le_bytes());
     }
 }
 
@@ -51,6 +78,18 @@ impl<W: Writer + ?Sized> Writer for CopyWriter<'_, W> {
 
     fn write_bytes(&mut self, bytes: &[u8]) {
         self.inner.write_bytes(bytes);
+    }
+
+    fn bytes_written(&self) -> usize {
+        self.inner.bytes_written()
+    }
+
+    fn reserve_size_field(&mut self) -> SizeField {
+        self.inner.reserve_size_field()
+    }
+
+    fn write_size_field(&mut self, handle: SizeField, value: u32) {
+        self.inner.write_size_field(handle, value);
     }
 }
 
@@ -115,7 +154,9 @@ fn serialize_peek_inner<'a>(
         return result;
     }
 
-    // Handle opaque adapters (e.g. Payload)
+    // r[impl zerocopy.framing.value.opaque]
+    // r[impl zerocopy.framing.value.opaque.length-prefix]
+    // Handle opaque adapters (e.g. Payload). Length-prefixed with u32le.
     if let Some(adapter) = peek.shape().opaque_adapter {
         #[allow(unsafe_code)]
         let mapped = unsafe { (adapter.serialize)(peek.data()) };
@@ -124,18 +165,19 @@ fn serialize_peek_inner<'a>(
         if let Some(bytes) =
             unsafe { crate::raw::try_decode_passthrough_bytes(mapped.ptr, mapped.shape) }
         {
-            // Passthrough: already-encoded postcard bytes, length-prefixed.
-            encode::write_varint(out, bytes.len() as u64);
+            // Passthrough: already-encoded postcard bytes, u32le length-prefixed.
+            out.write_bytes(&(bytes.len() as u32).to_le_bytes());
             out.write_bytes(bytes);
             return Ok(());
         }
-        // Non-passthrough: serialize the mapped value, length-prefixed.
+        // Non-passthrough: reserve u32le prefix, serialize directly, patch length.
         #[allow(unsafe_code)]
         let mapped_peek = unsafe { Peek::unchecked_new(mapped.ptr, mapped.shape) };
-        let mut tmp = Vec::new();
-        serialize_peek_inner(mapped_peek, &mut CopyWriter::new(&mut tmp))?;
-        encode::write_varint(out, tmp.len() as u64);
-        out.write_bytes(&tmp);
+        let size_field = out.reserve_size_field();
+        let before = out.bytes_written();
+        serialize_peek_inner(mapped_peek, out)?;
+        let len = out.bytes_written() - before;
+        out.write_size_field(size_field, len as u32);
         return Ok(());
     }
 

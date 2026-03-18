@@ -97,6 +97,17 @@ impl<'a> Cursor<'a> {
         let len = self.read_varint()? as usize;
         self.read_bytes(len)
     }
+
+    pub fn read_u32le(&mut self) -> Result<u32, DeserializeError> {
+        let bytes = self.read_bytes(4)?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    /// Read a u32le-length-prefixed byte slice (used for opaque values).
+    pub fn read_opaque_bytes(&mut self) -> Result<&'a [u8], DeserializeError> {
+        let len = self.read_u32le()? as usize;
+        self.read_bytes(len)
+    }
 }
 
 /// Advance the cursor past one postcard-encoded value described by `kind`,
