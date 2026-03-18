@@ -140,6 +140,12 @@ pub struct WithTracker<T> {
     pub tracker: std::sync::Arc<SchemaRecvTracker>,
 }
 
+impl<T> std::fmt::Debug for WithTracker<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WithTracker").finish_non_exhaustive()
+    }
+}
+
 impl<T> std::ops::Deref for WithTracker<T> {
     type Target = T;
     fn deref(&self) -> &T {

@@ -423,7 +423,7 @@ pub trait Handler<R: ReplySink>: MaybeSend + MaybeSync + 'static {
         &self,
         call: SelfRef<crate::RequestCall<'static>>,
         reply: R,
-        schemas: &crate::SchemaRecvTracker,
+        schemas: std::sync::Arc<crate::SchemaRecvTracker>,
     ) -> impl std::future::Future<Output = ()> + MaybeSend + '_;
 }
 
@@ -432,7 +432,7 @@ impl<R: ReplySink> Handler<R> for () {
         &self,
         _call: SelfRef<crate::RequestCall<'static>>,
         _reply: R,
-        _schemas: &crate::SchemaRecvTracker,
+        _schemas: std::sync::Arc<crate::SchemaRecvTracker>,
     ) {
     }
 }
@@ -623,6 +623,7 @@ mod tests {
                 saw_send_reply: Arc::new(Mutex::new(false)),
                 saw_outgoing_payload: Arc::new(Mutex::new(false)),
             },
+            Arc::new(crate::SchemaRecvTracker::new()),
         )
         .await;
     }

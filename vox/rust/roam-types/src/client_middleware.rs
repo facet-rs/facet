@@ -304,8 +304,9 @@ mod tests {
         fn call<'a>(
             &'a self,
             call: RequestCall<'a>,
-        ) -> impl Future<Output = Result<SelfRef<RequestResponse<'static>>, RoamError>>
-        + crate::MaybeSend
+        ) -> impl Future<
+            Output = Result<crate::WithTracker<SelfRef<RequestResponse<'static>>>, RoamError>,
+        > + crate::MaybeSend
         + 'a {
             async move {
                 let seen = call
@@ -324,15 +325,18 @@ mod tests {
                     .lock()
                     .expect("seen metadata mutex poisoned") = seen;
 
-                Ok(SelfRef::owning(
-                    Backing::Boxed(Box::<[u8]>::default()),
-                    RequestResponse {
-                        channels: vec![],
-                        metadata: vec![],
-                        ret: Payload::Incoming(&[]),
-                        schemas: Default::default(),
-                    },
-                ))
+                Ok(crate::WithTracker {
+                    value: SelfRef::owning(
+                        Backing::Boxed(Box::<[u8]>::default()),
+                        RequestResponse {
+                            channels: vec![],
+                            metadata: vec![],
+                            ret: Payload::Incoming(&[]),
+                            schemas: Default::default(),
+                        },
+                    ),
+                    tracker: std::sync::Arc::new(crate::SchemaRecvTracker::new()),
+                })
             }
         }
     }

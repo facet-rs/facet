@@ -261,7 +261,7 @@ struct InFlightHandler {
 
 pub struct Driver<H: Handler<DriverReplySink>> {
     sender: ConnectionSender,
-    rx: mpsc::Receiver<SelfRef<ConnectionMessage<'static>>>,
+    rx: mpsc::Receiver<crate::session::RecvMessage>,
     failures_rx: mpsc::UnboundedReceiver<(RequestId, FailureDisposition)>,
     closed_rx: watch::Receiver<bool>,
     resumed_rx: watch::Receiver<u64>,
@@ -294,7 +294,6 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             resumed_rx,
             parity,
             peer_supports_retry,
-            schema_recv_tracker: _,
         } = handle;
         let drop_control_request = DropControlRequest::Close(conn_id);
         Self {
@@ -351,9 +350,12 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
     pub async fn run(&mut self) {
         loop {
             tokio::select! {
-                msg = self.rx.recv() => {
-                    match msg {
-                        Some(msg) => self.handle_msg(msg),
+                recv = self.rx.recv() => {
+                    match recv {
+                        Some(recv) => {
+                            let crate::session::RecvMessage { schemas, msg } = recv;
+                            self.handle_msg(msg, schemas);
+                        }
                         None => break,
                     }
                 }
@@ -377,19 +379,27 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         }
     }
 
-    fn handle_msg(&mut self, msg: SelfRef<ConnectionMessage<'static>>) {
+    fn handle_msg(
+        &mut self,
+        msg: SelfRef<ConnectionMessage<'static>>,
+        schemas: Arc<roam_types::SchemaRecvTracker>,
+    ) {
         let is_request = matches!(&*msg, ConnectionMessage::Request(_));
         if is_request {
             let msg = msg.map(|m| match m {
                 ConnectionMessage::Request(r) => r,
                 _ => unreachable!(),
             });
-            self.handle_request(msg);
+            self.handle_request(msg, schemas);
         }
         // Channel messages are ignored on wasm (no channel support).
     }
 
-    fn handle_request(&mut self, msg: SelfRef<RequestMessage<'static>>) {
+    fn handle_request(
+        &mut self,
+        msg: SelfRef<RequestMessage<'static>>,
+        schemas: Arc<roam_types::SchemaRecvTracker>,
+    ) {
         let req_id = msg.id;
         let is_call = matches!(&msg.body, RequestBody::Call(_));
         let is_response = matches!(&msg.body, RequestBody::Response(_));
@@ -477,7 +487,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 operations: operation_id.map(|_| Arc::clone(&self.shared.operations)),
             };
             let join_handle = moire::task::spawn(async move {
-                handler.handle(call, reply).await;
+                handler.handle(call, reply, schemas).await;
             });
             self.in_flight_handlers.insert(
                 req_id,

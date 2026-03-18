@@ -78,6 +78,7 @@ pub use roam_types::{
     RpcPlan,
     Rx,
     RxError,
+    SchemaRecvTracker,
     SelfRef,
     ServerCallOutcome,
     ServerMiddleware,
@@ -88,6 +89,7 @@ pub use roam_types::{
     // Channels
     Tx,
     TxError,
+    WithTracker,
     WriteSlot,
     // Channels
     channel,

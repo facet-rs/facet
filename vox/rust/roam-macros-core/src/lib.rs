@@ -437,7 +437,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
                 #roam::RetryPolicy::VOLATILE
             }
 
-            async fn handle(&self, call: #roam::SelfRef<#roam::RequestCall<'static>>, reply: R) {
+            async fn handle(&self, call: #roam::SelfRef<#roam::RequestCall<'static>>, reply: R, schemas: ::std::sync::Arc<#roam::SchemaRecvTracker>) {
                 #dispatch_body
             }
         }
@@ -593,20 +593,10 @@ fn generate_dispatch_arm(
 
     quote! {
         if method_id == #descriptor_fn_name().methods[#idx].id {
-            // r[impl schema.exchange.callee]
-            // Send response schemas using the statically-known response type,
-            // before the handler runs. This ensures the correct Result<T, RoamError<E>>
-            // shape is sent regardless of whether the handler succeeds or fails.
-            #roam::ReplySink::send_response_schemas(
-                &reply,
-                method_id,
-                <::core::result::Result<#ok_ty_static, #roam::RoamError<#err_ty>> as #roam::facet::Facet>::SHAPE,
-            ).await;
-
             #args_let = match #roam::schema_deser::schema_deserialize_args_borrowed(
                 args_bytes,
                 method_id,
-                #roam::ReplySink::schema_tracker_any(&reply),
+                &schemas,
             ) {
                 Ok(v) => v,
                 Err(e) => {

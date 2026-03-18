@@ -262,7 +262,12 @@ where
 struct EchoHandler;
 
 impl Handler<DriverReplySink> for EchoHandler {
-    async fn handle(&self, call: SelfRef<RequestCall<'static>>, reply: DriverReplySink) {
+    async fn handle(
+        &self,
+        call: SelfRef<RequestCall<'static>>,
+        reply: DriverReplySink,
+        _schemas: std::sync::Arc<roam_types::SchemaRecvTracker>,
+    ) {
         let args_bytes = match &call.args {
             Payload::Incoming(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
@@ -292,7 +297,12 @@ impl Handler<DriverReplySink> for BlockingHandler {
         self.retry
     }
 
-    async fn handle(&self, _call: SelfRef<RequestCall<'static>>, reply: DriverReplySink) {
+    async fn handle(
+        &self,
+        _call: SelfRef<RequestCall<'static>>,
+        reply: DriverReplySink,
+        _schemas: std::sync::Arc<roam_types::SchemaRecvTracker>,
+    ) {
         let was_cancelled = self.was_cancelled.clone();
         // Hold the reply to prevent premature DriverReplySink::drop
         let _reply = reply;
@@ -329,7 +339,12 @@ struct RetryAfterResumeHandler {
 struct OperationIdHandler;
 
 impl Handler<DriverReplySink> for OperationIdHandler {
-    async fn handle(&self, call: SelfRef<RequestCall<'static>>, reply: DriverReplySink) {
+    async fn handle(
+        &self,
+        call: SelfRef<RequestCall<'static>>,
+        reply: DriverReplySink,
+        _schemas: std::sync::Arc<roam_types::SchemaRecvTracker>,
+    ) {
         let operation_id = metadata_operation_id(&call.metadata).expect("operation id metadata");
         reply
             .send_reply(RequestResponse {
@@ -400,7 +415,12 @@ impl Handler<DriverReplySink> for ReplayHandler {
         RetryPolicy::PERSIST
     }
 
-    async fn handle(&self, call: SelfRef<RequestCall<'static>>, reply: DriverReplySink) {
+    async fn handle(
+        &self,
+        call: SelfRef<RequestCall<'static>>,
+        reply: DriverReplySink,
+        _schemas: std::sync::Arc<roam_types::SchemaRecvTracker>,
+    ) {
         self.runs.fetch_add(1, Ordering::SeqCst);
         self.release.notified().await;
         let args_bytes = match &call.args {
@@ -424,7 +444,12 @@ impl Handler<DriverReplySink> for PersistentReplyingHandler {
         RetryPolicy::PERSIST
     }
 
-    async fn handle(&self, _call: SelfRef<RequestCall<'static>>, reply: DriverReplySink) {
+    async fn handle(
+        &self,
+        _call: SelfRef<RequestCall<'static>>,
+        reply: DriverReplySink,
+        _schemas: std::sync::Arc<roam_types::SchemaRecvTracker>,
+    ) {
         let was_cancelled = Arc::clone(&self.was_cancelled);
         let release = Arc::clone(&self.release);
         let completed = Arc::new(AtomicBool::new(false));
@@ -465,7 +490,12 @@ impl Handler<DriverReplySink> for ResumableReplyingHandler {
         RetryPolicy::PERSIST
     }
 
-    async fn handle(&self, call: SelfRef<RequestCall<'static>>, reply: DriverReplySink) {
+    async fn handle(
+        &self,
+        call: SelfRef<RequestCall<'static>>,
+        reply: DriverReplySink,
+        _schemas: std::sync::Arc<roam_types::SchemaRecvTracker>,
+    ) {
         self.started.notify_waiters();
         self.release.notified().await;
 
@@ -490,7 +520,12 @@ impl Handler<DriverReplySink> for RetryAfterResumeHandler {
         self.retry
     }
 
-    async fn handle(&self, call: SelfRef<RequestCall<'static>>, reply: DriverReplySink) {
+    async fn handle(
+        &self,
+        call: SelfRef<RequestCall<'static>>,
+        reply: DriverReplySink,
+        _schemas: std::sync::Arc<roam_types::SchemaRecvTracker>,
+    ) {
         let run = self.runs.fetch_add(1, Ordering::SeqCst);
         if run == 0 {
             self.first_started.notify_waiters();
@@ -2034,8 +2069,11 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
         .expect("timed out waiting for call to resolve after peer close")
         .expect("call task join");
     assert!(
-        matches!(result, Err(RoamError::Cancelled)),
-        "expected cancelled after peer close"
+        matches!(
+            result,
+            Err(RoamError::ConnectionClosed) | Err(RoamError::SessionShutdown)
+        ),
+        "expected ConnectionClosed or SessionShutdown after peer close, got: {result:?}"
     );
 
     for _ in 0..20 {
@@ -2101,8 +2139,8 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
         .expect("timed out waiting for call to resolve after keepalive timeout")
         .expect("call task join");
     assert!(
-        matches!(result, Err(RoamError::Cancelled)),
-        "expected cancelled after keepalive timeout"
+        matches!(result, Err(RoamError::ConnectionClosed)),
+        "expected ConnectionClosed after keepalive timeout, got: {result:?}"
     );
 }
 

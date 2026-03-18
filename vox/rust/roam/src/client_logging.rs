@@ -255,7 +255,7 @@ mod tests {
             &'a self,
             _call: RequestCall<'a>,
         ) -> impl std::future::Future<
-            Output = Result<SelfRef<RequestResponse<'static>>, RoamError>,
+            Output = Result<roam_types::WithTracker<SelfRef<RequestResponse<'static>>>, RoamError>,
         > + Send
         + 'a {
             async move { Err(RoamError::Cancelled) }

@@ -126,7 +126,13 @@ impl SubjectSpec {
 struct NoopHandler;
 
 impl roam_types::Handler<DriverReplySink> for NoopHandler {
-    async fn handle(&self, _call: SelfRef<RequestCall<'static>>, _reply: DriverReplySink) {}
+    async fn handle(
+        &self,
+        _call: SelfRef<RequestCall<'static>>,
+        _reply: DriverReplySink,
+        _schemas: std::sync::Arc<roam_types::SchemaRecvTracker>,
+    ) {
+    }
 }
 
 struct BreakableLink {

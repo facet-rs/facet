@@ -573,22 +573,6 @@ impl Caller for DriverCaller {
                 ensure_operation_id(&mut call.metadata, operation_id);
             }
 
-            // r[impl schema.exchange.caller]
-            // r[impl schema.exchange.channels]
-            // Prepare and attach schemas for arg types before serialization.
-            // Must happen here because the call is serialized (to_vec) before
-            // reaching SessionCore::send(), at which point args are Incoming bytes.
-            if let Payload::Outgoing { shape, .. } = &call.args {
-                let schemas = self.sender.sess_core.prepare_call_schemas(call.method_id, shape);
-                if !schemas.is_empty() {
-                    call.schemas = schemas;
-                }
-            }
-
-            let encoded_call: Arc<[u8]> = roam_postcard::to_vec(&call)
-                .map_err(|e| RoamError::InvalidPayload(format!("failed to serialize call: {e}")))?
-                .into();
-
             // Allocate a request ID.
             let req_id = self.shared.request_ids.lock().alloc();
 
@@ -597,15 +581,20 @@ impl Caller for DriverCaller {
             let (tx, rx) = moire::sync::oneshot::channel("driver.response");
             self.shared.pending_responses.lock().insert(req_id, tx);
 
-            let resend_call: RequestCall<'_> =
-                roam_postcard::from_slice_borrowed(encoded_call.as_ref())
-                    .map_err(|e| RoamError::<core::convert::Infallible>::InvalidPayload(format!("failed to re-deserialize call: {e}")))?;
-            if self
-                .sender
-                .send(ConnectionMessage::Request(RequestMessage {
-                    id: req_id,
-                    body: RequestBody::Call(resend_call),
-                }))
+            // r[impl schema.exchange.caller]
+            // r[impl schema.exchange.channels]
+            // Schemas are attached by SessionCore::send() when it sees a Call
+            // with Payload::Outgoing — no separate prepare step needed.
+            if self.sender.send(ConnectionMessage::Request(RequestMessage {
+                id: req_id,
+                body: RequestBody::Call(RequestCall {
+                    method_id: call.method_id,
+                    args: call.args.reborrow(),
+                    channels: call.channels.clone(),
+                    metadata: call.metadata.clone(),
+                    schemas: Default::default(),
+                }),
+            }))
                 .await
                 .is_err()
             {
@@ -668,33 +657,17 @@ impl Caller for DriverCaller {
                                 };
                                 call.channels = channels;
                             }
-                            let resend_args = match &call.args {
-                                Payload::Outgoing { ptr, shape, .. } => unsafe {
-                                    Payload::outgoing_unchecked(*ptr, shape)
-                                },
-                                Payload::Incoming(bytes) => Payload::Incoming(bytes),
-                            };
-                            let resend_call = RequestCall {
+                        }
+                        let _ = self.sender.send(ConnectionMessage::Request(RequestMessage {
+                            id: req_id,
+                            body: RequestBody::Call(RequestCall {
                                 method_id: call.method_id,
-                                args: resend_args,
+                                args: call.args.reborrow(),
                                 channels: call.channels.clone(),
                                 metadata: call.metadata.clone(),
                                 schemas: Default::default(),
-                            };
-                            let _ = self.sender.send(ConnectionMessage::Request(RequestMessage {
-                                id: req_id,
-                                body: RequestBody::Call(resend_call),
-                            })).await;
-                        } else {
-                            let resend_call: Result<RequestCall<'_>, _> =
-                                roam_postcard::from_slice_borrowed(encoded_call.as_ref());
-                            if let Ok(resend_call) = resend_call {
-                            let _ = self.sender.send(ConnectionMessage::Request(RequestMessage {
-                                id: req_id,
-                                body: RequestBody::Call(resend_call),
-                            })).await;
-                            }
-                        }
+                            }),
+                        })).await;
                     }
                     changed = closed_rx.changed() => {
                         if changed.is_err() || *closed_rx.borrow() {
@@ -1211,7 +1184,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             let has_channels = !call.channels.is_empty();
             let join_handle = moire::task::spawn(
                 async move {
-                    handler.handle(call, reply).await;
+                    handler.handle(call, reply, schemas).await;
                 }
                 .named("handler"),
             );

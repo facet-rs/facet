@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     pin::Pin,
     sync::Arc,
     time::Duration,
@@ -7,11 +7,11 @@ use std::{
 
 use moire::sync::mpsc;
 use roam_types::{
-    ChannelMessage, Conduit, ConduitRx, ConduitTx, ConduitTxPermit, ConnectionAccept,
-    ConnectionClose, ConnectionId, ConnectionOpen, ConnectionReject, ConnectionSettings,
-    HandshakeResult, IdAllocator, MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload,
-    Metadata, Parity, Payload, RequestBody, RequestId, RequestMessage, RequestResponse,
-    SchemaSendTracker, SelfRef, SessionResumeKey, SessionRole,
+    BindingDirection, ChannelMessage, Conduit, ConduitRx, ConduitTx, ConduitTxPermit,
+    ConnectionAccept, ConnectionClose, ConnectionId, ConnectionOpen, ConnectionReject,
+    ConnectionSettings, HandshakeResult, IdAllocator, MaybeSend, MaybeSync, Message, MessageFamily,
+    MessagePayload, Metadata, Parity, Payload, RequestBody, RequestId, RequestMessage,
+    RequestResponse, SchemaSendTracker, SelfRef, SessionResumeKey, SessionRole,
 };
 use tokio::sync::watch;
 use tracing::{debug, warn};
@@ -620,7 +620,7 @@ impl Session {
         let sess_core = Arc::new(SessionCore {
             inner: std::sync::Mutex::new(SessionCoreInner {
                 tx: Arc::new(tx) as Arc<dyn DynConduitTx>,
-                send_tracker: roam_types::SchemaSendTracker::new(),
+                conns: HashMap::new(),
             }),
         });
         let (resume_notifier, _resume_rx) = watch::channel(0_u64);
@@ -931,6 +931,11 @@ impl Session {
                             }
                         }
                     }
+                }
+                // Record incoming calls so SessionCore::send() can look up
+                // the method_id when sending the response.
+                if let RequestBody::Call(call) = &r.body {
+                    self.sess_core.record_incoming_call(conn_id, r.id, call.method_id);
                 }
                 let conn_tx = match self.conns.get(&conn_id) {
                     Some(ConnectionSlot::Active(state)) => state.conn_tx.clone(),
@@ -1330,12 +1335,26 @@ pub(crate) struct SessionCore {
 }
 
 struct SendConnState {
-    /// Tracks which schemas we have sent
-    send_tracker: SchemaSendTracker,
+    /// Tracks which methods we've already sent schemas for (per direction).
+    /// If set, we don't need to extract schemas and go through send tracker.
+    method_tracker: HashSet<(roam_types::BindingDirection, roam_types::MethodId)>,
 
-    /// Used to pair outgoing responses to a MethodID, which is going to
-    /// let us know if we need to attach response schemas via the send tracker
+    /// Tracks which schemas we have sent on this connection.
+    send_tracker: roam_types::SchemaSendTracker,
+
+    /// Maps request_id → method_id for in-flight incoming calls, so we can
+    /// look up the method_id when sending the response.
     inflight_incoming: HashMap<RequestId, roam_types::MethodId>,
+}
+
+impl SendConnState {
+    fn new() -> Self {
+        SendConnState {
+            method_tracker: HashSet::new(),
+            send_tracker: roam_types::SchemaSendTracker::new(),
+            inflight_incoming: HashMap::new(),
+        }
+    }
 }
 
 struct SessionCoreInner {
@@ -1347,54 +1366,82 @@ struct SessionCoreInner {
 }
 
 impl SessionCore {
-    pub(crate) async fn send<'a>(&self, msg: Message<'a>) -> Result<(), ()> {
-        let tx = self
-            .inner
-            .lock()
-            .expect("session core mutex poisoned")
-            .tx
-            .clone();
+    // r[impl schema.exchange.ordering]
+    // r[impl schema.principles.sender-driven]
+    pub(crate) async fn send<'a>(&self, mut msg: Message<'a>) -> Result<(), ()> {
+        let tx = {
+            let mut inner = self.inner.lock().expect("session core mutex poisoned");
+            let conn_id = msg.connection_id;
+
+            if let MessagePayload::RequestMessage(req) = &mut msg.payload {
+                let conn_state = inner
+                    .conns
+                    .entry(conn_id)
+                    .or_insert_with(SendConnState::new);
+                match &mut req.body {
+                    RequestBody::Call(call) => {
+                        let key = (roam_types::BindingDirection::Args, call.method_id);
+                        if !conn_state.method_tracker.contains(&key) {
+                            if let Payload::Outgoing { shape, .. } = &call.args {
+                                let schemas = conn_state.send_tracker.prepare_send_for_method(
+                                    call.method_id,
+                                    shape,
+                                    roam_types::BindingDirection::Args,
+                                );
+                                if !schemas.is_empty() {
+                                    call.schemas = schemas;
+                                }
+                                conn_state.method_tracker.insert(key);
+                            }
+                        }
+                    }
+                    RequestBody::Response(resp) => {
+                        if let Some(method_id) = conn_state.inflight_incoming.remove(&req.id) {
+                            let key = (roam_types::BindingDirection::Response, method_id);
+                            if !conn_state.method_tracker.contains(&key) {
+                                if let Payload::Outgoing { shape, .. } = &resp.ret {
+                                    let schemas = conn_state.send_tracker.prepare_send_for_method(
+                                        method_id,
+                                        shape,
+                                        roam_types::BindingDirection::Response,
+                                    );
+                                    if !schemas.is_empty() {
+                                        resp.schemas = schemas;
+                                    }
+                                    conn_state.method_tracker.insert(key);
+                                }
+                            }
+                        }
+                    }
+                    RequestBody::Cancel(_) => {}
+                }
+            }
+
+            inner.tx.clone()
+        };
         tx.send_msg(msg).await.map_err(|_| ())
+    }
+
+    /// Record that an incoming call was received, so we can look up the
+    /// method_id when sending the response.
+    pub(crate) fn record_incoming_call(
+        &self,
+        conn_id: ConnectionId,
+        request_id: RequestId,
+        method_id: roam_types::MethodId,
+    ) {
+        let mut inner = self.inner.lock().expect("session core mutex poisoned");
+        let conn_state = inner
+            .conns
+            .entry(conn_id)
+            .or_insert_with(SendConnState::new);
+        conn_state.inflight_incoming.insert(request_id, method_id);
     }
 
     fn replace_tx_and_reset_schemas(&self, tx: Arc<dyn DynConduitTx>) {
         let mut inner = self.inner.lock().expect("session core mutex poisoned");
         inner.tx = tx;
-        inner.send_tracker.reset();
-    }
-
-    /// Prepare call schemas for a method's arg type.
-    ///
-    /// Called by `DriverCaller::call` before serializing the call, because
-    /// the call is serialized to bytes before reaching `SessionCore::send()`.
-    pub(crate) fn prepare_call_schemas(
-        &self,
-        method_id: roam_types::MethodId,
-        arg_shape: &'static facet_core::Shape,
-    ) -> roam_types::CborPayload {
-        let mut inner = self.inner.lock().expect("session core mutex poisoned");
-        inner.send_tracker.prepare_send_for_method(
-            method_id,
-            arg_shape,
-            roam_types::BindingDirection::Args,
-        )
-    }
-
-    /// Prepare response schemas for a method's response type.
-    ///
-    /// Called by `DriverReplySink::send_response_schemas` before the handler runs.
-    /// Returns a `CborPayload` that should be attached to the `RequestResponse`.
-    pub(crate) fn prepare_response_schemas(
-        &self,
-        method_id: roam_types::MethodId,
-        response_shape: &'static facet_core::Shape,
-    ) -> roam_types::CborPayload {
-        let mut inner = self.inner.lock().expect("session core mutex poisoned");
-        inner.send_tracker.prepare_send_for_method(
-            method_id,
-            response_shape,
-            roam_types::BindingDirection::Response,
-        )
+        inner.conns.clear();
     }
 }
 

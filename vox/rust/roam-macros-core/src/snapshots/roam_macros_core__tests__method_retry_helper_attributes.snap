@@ -110,7 +110,12 @@ where
         }
         ::roam::RetryPolicy::VOLATILE
     }
-    async fn handle(&self, call: ::roam::SelfRef<::roam::RequestCall<'static>>, reply: R) {
+    async fn handle(
+        &self,
+        call: ::roam::SelfRef<::roam::RequestCall<'static>>,
+        reply: R,
+        schemas: ::std::sync::Arc<::roam::SchemaRecvTracker>,
+    ) {
         let method_id = call.method_id;
         let args_bytes = match &call.args {
             ::roam::Payload::Incoming(bytes) => bytes,
@@ -126,11 +131,8 @@ where
             }
         };
         if method_id == billing_service_descriptor().methods[0usize].id {
-            :: roam :: ReplySink :: send_response_schemas (& reply , method_id , < :: core :: result :: Result < u64 , :: roam :: RoamError < :: core :: convert :: Infallible >> as :: roam :: facet :: Facet > :: SHAPE ,) . await ;
             let args: (String,) = match ::roam::schema_deser::schema_deserialize_args_borrowed(
-                args_bytes,
-                method_id,
-                ::roam::ReplySink::schema_tracker_any(&reply),
+                args_bytes, method_id, &schemas,
             ) {
                 Ok(v) => v,
                 Err(e) => {
@@ -165,12 +167,9 @@ where
             return;
         }
         if method_id == billing_service_descriptor().methods[1usize].id {
-            :: roam :: ReplySink :: send_response_schemas (& reply , method_id , < :: core :: result :: Result < u64 , :: roam :: RoamError < TransferError >> as :: roam :: facet :: Facet > :: SHAPE ,) . await ;
             let args: (String, String) =
                 match ::roam::schema_deser::schema_deserialize_args_borrowed(
-                    args_bytes,
-                    method_id,
-                    ::roam::ReplySink::schema_tracker_any(&reply),
+                    args_bytes, method_id, &schemas,
                 ) {
                     Ok(v) => v,
                     Err(e) => {
@@ -249,7 +248,7 @@ impl BillingClient {
             metadata: Default::default(),
             schemas: Default::default(),
         };
-        let response = ::roam::Caller::call(&self.caller, req)
+        let with_tracker = ::roam::Caller::call(&self.caller, req)
             .await
             .map_err(|e| match e {
                 ::roam::RoamError::UnknownMethod => {
@@ -261,11 +260,24 @@ impl BillingClient {
                 ::roam::RoamError::Cancelled => {
                     ::roam::RoamError::<::core::convert::Infallible>::Cancelled
                 }
+                ::roam::RoamError::ConnectionClosed => {
+                    ::roam::RoamError::<::core::convert::Infallible>::ConnectionClosed
+                }
+                ::roam::RoamError::SessionShutdown => {
+                    ::roam::RoamError::<::core::convert::Infallible>::SessionShutdown
+                }
+                ::roam::RoamError::SendFailed => {
+                    ::roam::RoamError::<::core::convert::Infallible>::SendFailed
+                }
                 ::roam::RoamError::Indeterminate => {
                     ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
                 }
                 ::roam::RoamError::User(never) => match never {},
             })?;
+        let ::roam::WithTracker {
+            value: response,
+            tracker: schema_tracker,
+        } = with_tracker;
         let ret_bytes = match &response.ret {
             ::roam::Payload::Incoming(bytes) => bytes,
             _ => {
@@ -280,7 +292,7 @@ impl BillingClient {
             ::roam::schema_deser::schema_deserialize_response(
                 ret_bytes,
                 method_id,
-                ::roam::Caller::schema_tracker_any(&self.caller),
+                &schema_tracker,
             )
             .map_err(|e| {
                 ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
@@ -302,7 +314,7 @@ impl BillingClient {
             metadata: Default::default(),
             schemas: Default::default(),
         };
-        let response = ::roam::Caller::call(&self.caller, req)
+        let with_tracker = ::roam::Caller::call(&self.caller, req)
             .await
             .map_err(|e| match e {
                 ::roam::RoamError::UnknownMethod => {
@@ -312,11 +324,22 @@ impl BillingClient {
                     ::roam::RoamError::<TransferError>::InvalidPayload(msg)
                 }
                 ::roam::RoamError::Cancelled => ::roam::RoamError::<TransferError>::Cancelled,
+                ::roam::RoamError::ConnectionClosed => {
+                    ::roam::RoamError::<TransferError>::ConnectionClosed
+                }
+                ::roam::RoamError::SessionShutdown => {
+                    ::roam::RoamError::<TransferError>::SessionShutdown
+                }
+                ::roam::RoamError::SendFailed => ::roam::RoamError::<TransferError>::SendFailed,
                 ::roam::RoamError::Indeterminate => {
                     ::roam::RoamError::<TransferError>::Indeterminate
                 }
                 ::roam::RoamError::User(never) => match never {},
             })?;
+        let ::roam::WithTracker {
+            value: response,
+            tracker: schema_tracker,
+        } = with_tracker;
         let ret_bytes = match &response.ret {
             ::roam::Payload::Incoming(bytes) => bytes,
             _ => {
@@ -329,7 +352,7 @@ impl BillingClient {
             ::roam::schema_deser::schema_deserialize_response(
                 ret_bytes,
                 method_id,
-                ::roam::Caller::schema_tracker_any(&self.caller),
+                &schema_tracker,
             )
             .map_err(|e| ::roam::RoamError::<TransferError>::InvalidPayload(e.to_string()))?;
         result

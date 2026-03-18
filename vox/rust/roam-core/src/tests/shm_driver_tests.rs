@@ -83,7 +83,12 @@ async fn message_conduit_pair() -> (MessageConduit, MessageConduit, tempfile::Te
 struct EchoHandler;
 
 impl Handler<DriverReplySink> for EchoHandler {
-    async fn handle(&self, call: SelfRef<RequestCall<'static>>, reply: DriverReplySink) {
+    async fn handle(
+        &self,
+        call: SelfRef<RequestCall<'static>>,
+        reply: DriverReplySink,
+        _schemas: std::sync::Arc<roam_types::SchemaRecvTracker>,
+    ) {
         let args_bytes = match &call.args {
             Payload::Incoming(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
@@ -146,7 +151,12 @@ async fn echo_call_across_shm_link() {
 struct BlobEchoHandler;
 
 impl Handler<DriverReplySink> for BlobEchoHandler {
-    async fn handle(&self, call: SelfRef<RequestCall<'static>>, reply: DriverReplySink) {
+    async fn handle(
+        &self,
+        call: SelfRef<RequestCall<'static>>,
+        reply: DriverReplySink,
+        _schemas: std::sync::Arc<roam_types::SchemaRecvTracker>,
+    ) {
         let args_bytes = match &call.args {
             Payload::Incoming(bytes) => *bytes,
             _ => panic!("expected incoming payload"),

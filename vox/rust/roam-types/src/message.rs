@@ -312,7 +312,20 @@ impl<'payload> Payload<'payload> {
         }
     }
 
-    // ps: as_incoming_bytes was a bad idea. it's not here anymore.
+    /// Create a new `Payload` that borrows the same data with a shorter lifetime.
+    ///
+    /// For `Outgoing`: same ptr/shape, new lifetime.
+    /// For `Incoming`: reborrows the byte slice.
+    pub fn reborrow(&self) -> Payload<'_> {
+        match self {
+            Payload::Outgoing { ptr, shape, .. } => Payload::Outgoing {
+                ptr: *ptr,
+                shape,
+                _lt: PhantomData,
+            },
+            Payload::Incoming(bytes) => Payload::Incoming(bytes),
+        }
+    }
 }
 
 // SAFETY: The pointer in `Outgoing` is valid for `'payload` and the caller

@@ -13,7 +13,13 @@ use spec_proto::{
 struct NoopHandler;
 
 impl Handler<DriverReplySink> for NoopHandler {
-    async fn handle(&self, _call: SelfRef<RequestCall<'static>>, _reply: DriverReplySink) {}
+    async fn handle(
+        &self,
+        _call: SelfRef<RequestCall<'static>>,
+        _reply: DriverReplySink,
+        _schemas: std::sync::Arc<roam_types::SchemaRecvTracker>,
+    ) {
+    }
 }
 
 #[derive(Clone)]
