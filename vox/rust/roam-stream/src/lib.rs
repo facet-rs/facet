@@ -119,21 +119,30 @@ where
 
     fn split(self) -> (Self::Tx, Self::Rx) {
         let (tx_chan, mut rx_chan) = mpsc::channel::<Vec<u8>>(1);
+        // Unbounded return channel for buffer recycling. Capacity is naturally
+        // bounded by the number of in-flight buffers (at most 2: one being
+        // written by the background task, one being filled by the next alloc).
+        let (buf_return_tx, buf_return_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         let mut writer = BufWriter::new(self.writer);
 
         let writer_task = tokio::spawn(async move {
-            while let Some(bytes) = rx_chan.recv().await {
+            while let Some(mut bytes) = rx_chan.recv().await {
                 writer
                     .write_all(&(bytes.len() as u32).to_le_bytes())
                     .await?;
                 writer.write_all(&bytes).await?;
+                // Return buffer to pool for reuse.
+                bytes.clear();
+                let _ = buf_return_tx.send(bytes);
                 // Drain any already-queued messages before flushing,
                 // so bursts coalesce into fewer syscalls.
-                while let Ok(bytes) = rx_chan.try_recv() {
+                while let Ok(mut bytes) = rx_chan.try_recv() {
                     writer
                         .write_all(&(bytes.len() as u32).to_le_bytes())
                         .await?;
                     writer.write_all(&bytes).await?;
+                    bytes.clear();
+                    let _ = buf_return_tx.send(bytes);
                 }
                 writer.flush().await?;
             }
@@ -144,6 +153,7 @@ where
         (
             StreamLinkTx {
                 tx: tx_chan,
+                buf_pool: std::sync::Mutex::new(buf_return_rx),
                 writer_task,
             },
             StreamLinkRx {
@@ -164,12 +174,14 @@ where
 /// length-prefixed frames to the underlying stream.
 pub struct StreamLinkTx {
     tx: mpsc::Sender<Vec<u8>>,
+    buf_pool: std::sync::Mutex<mpsc::UnboundedReceiver<Vec<u8>>>,
     writer_task: JoinHandle<io::Result<()>>,
 }
 
 /// Permit for sending one payload through a [`StreamLinkTx`].
 pub struct StreamLinkTxPermit {
     permit: mpsc::OwnedPermit<Vec<u8>>,
+    recycled_buf: Option<Vec<u8>>,
 }
 
 /// Write slot for [`StreamLinkTx`].
@@ -185,7 +197,12 @@ impl LinkTx for StreamLinkTx {
         let permit = self.tx.clone().reserve_owned().await.map_err(|_| {
             io::Error::new(io::ErrorKind::ConnectionReset, "stream writer task stopped")
         })?;
-        Ok(StreamLinkTxPermit { permit })
+        // Try to grab a recycled buffer from the pool (non-blocking).
+        let recycled_buf = self.buf_pool.lock().unwrap().try_recv().ok();
+        Ok(StreamLinkTxPermit {
+            permit,
+            recycled_buf,
+        })
     }
 
     async fn close(self) -> io::Result<()> {
@@ -199,8 +216,10 @@ impl LinkTxPermit for StreamLinkTxPermit {
     type Slot = StreamWriteSlot;
 
     fn alloc(self, len: usize) -> io::Result<Self::Slot> {
+        let mut buf = self.recycled_buf.unwrap_or_default();
+        buf.resize(len, 0);
         Ok(StreamWriteSlot {
-            buf: vec![0u8; len],
+            buf,
             permit: self.permit,
         })
     }

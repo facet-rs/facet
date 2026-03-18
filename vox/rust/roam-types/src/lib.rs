@@ -2,8 +2,7 @@
 #[macro_export]
 macro_rules! dlog {
     ($($arg:tt)*) => {
-        eprintln!($($arg)*)
-        // commented out = silent
+        // eprintln!($($arg)*)
     };
 }
 
