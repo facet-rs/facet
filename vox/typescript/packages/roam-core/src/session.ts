@@ -101,11 +101,72 @@ export interface IncomingCall {
   metadata: MetadataEntry[];
 }
 
+/** Current connectivity state of a resumable session. */
+export type SessionConnectivity =
+  | "connected"
+  | "disconnected"
+  | "reconnecting"
+  | "failed";
+
+/** Policy controlling how a resumable session retries after a connection drop. */
+export interface ReconnectPolicy {
+  /**
+   * Maximum number of reconnect attempts before the session is permanently
+   * failed. Defaults to 10. Set to Infinity to retry indefinitely.
+   */
+  maxAttempts?: number;
+  /**
+   * Base delay in ms for the first retry. Subsequent retries use exponential
+   * backoff: baseDelay * 2^(attempt-1), capped at maxDelay.
+   * Defaults to 500 ms.
+   */
+  baseDelay?: number;
+  /**
+   * Maximum delay in ms between retries. Defaults to 30_000 (30 s).
+   */
+  maxDelay?: number;
+}
+
 export interface SessionBuilderOptions {
   maxConcurrentRequests?: number;
   metadata?: Metadata;
   onConnection?: (connection: ConnectionHandle) => void | Promise<void>;
   resumable?: boolean;
+  /** Reconnect retry policy for resumable sessions. */
+  reconnect?: ReconnectPolicy;
+  /**
+   * If set, the session sends a Ping every `keepaliveIntervalMs` milliseconds
+   * and expects a Pong back within `keepaliveTimeoutMs` (default: half the
+   * interval). If no Pong arrives in time the connection is considered dead
+   * and session recovery begins. Set to 0 or undefined to disable keepalive.
+   *
+   * Recommended for WebSocket connections where silent network drops are
+   * common (proxies, mobile networks, etc.) and the underlying transport
+   * may not surface a close/error event promptly.
+   */
+  keepaliveIntervalMs?: number;
+  /**
+   * How long (ms) to wait for a Pong before declaring the connection dead.
+   * Defaults to half of `keepaliveIntervalMs` when not specified.
+   */
+  keepaliveTimeoutMs?: number;
+  /**
+   * Called when the transport drops and the session enters a reconnecting
+   * state. Receives the attempt number (1-based).
+   */
+  onReconnecting?: (attempt: number) => void;
+  /**
+   * Called after a successful reconnect. The session continues normally.
+   */
+  onReconnected?: () => void;
+  /**
+   * Called when the session gives up reconnecting (all attempts exhausted).
+   */
+  onReconnectFailed?: (error: Error) => void;
+  /**
+   * Called whenever the session connectivity changes.
+   */
+  onConnectivityChange?: (state: SessionConnectivity) => void;
 }
 
 export class SessionRegistry {
@@ -204,24 +265,61 @@ async function makeInitiatorEstablishedTransport(
 
     // For resumable bare sessions: build a recoverConduit that reconnects,
     // re-handshakes with the stored resume key, and returns a fresh conduit.
+    // Retries with exponential backoff according to the reconnect policy.
     if (options.resumable && handshake.sessionResumeKey) {
       // Use a mutable cell so recoverConduit always uses the latest key.
       const keyCell: { value: Uint8Array | null } = {
         value: handshake.sessionResumeKey,
       };
+
+      const policy = options.reconnect ?? {};
+      const maxAttempts = policy.maxAttempts ?? 10;
+      const baseDelay = policy.baseDelay ?? 500;
+      const maxDelay = policy.maxDelay ?? 30_000;
+
       const recoverConduit = async (): Promise<Conduit<Message>> => {
-        const newAttachment = await (transport as LinkSource).nextLink();
-        await requestTransportMode(newAttachment.link, conduitKind);
-        const newHandshake = await handshakeAsInitiator(
-          newAttachment.link,
-          localSettings,
-          true,
-          keyCell.value,
-        );
-        // Update the key for the next reconnect.
-        keyCell.value = newHandshake.sessionResumeKey;
-        return new BareConduit(newAttachment.link);
+        let lastError: Error = new Error("unknown reconnect failure");
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          options.onReconnecting?.(attempt);
+          options.onConnectivityChange?.("reconnecting");
+          roamLogger()?.debug(`[roam:session] reconnect attempt ${attempt}/${maxAttempts}`);
+
+          try {
+            const newAttachment = await (transport as LinkSource).nextLink();
+            await requestTransportMode(newAttachment.link, conduitKind);
+            const newHandshake = await handshakeAsInitiator(
+              newAttachment.link,
+              localSettings,
+              true,
+              keyCell.value,
+            );
+            // Update the key for the next reconnect.
+            keyCell.value = newHandshake.sessionResumeKey;
+            options.onReconnected?.();
+            options.onConnectivityChange?.("connected");
+            roamLogger()?.debug(`[roam:session] reconnect succeeded on attempt ${attempt}`);
+            return new BareConduit(newAttachment.link);
+          } catch (e) {
+            lastError = e instanceof Error ? e : new Error(String(e));
+            roamLogger()?.debug(
+              `[roam:session] reconnect attempt ${attempt} failed: ${lastError.message}`,
+            );
+
+            if (attempt < maxAttempts) {
+              const delay = Math.min(baseDelay * Math.pow(2, attempt - 1), maxDelay);
+              roamLogger()?.debug(`[roam:session] retrying in ${delay}ms`);
+              await new Promise<void>((resolve) => setTimeout(resolve, delay));
+            }
+          }
+        }
+
+        options.onReconnectFailed?.(lastError);
+        options.onConnectivityChange?.("failed");
+        roamLogger()?.error(`[roam:session] all ${maxAttempts} reconnect attempts failed`);
+        throw lastError;
       };
+
       return {
         conduit: new BareConduit(attachment.link),
         handshake,
@@ -328,6 +426,13 @@ class SessionCore {
   private readonly schemaTracker: SchemaTracker;
   private readonly schemaSendTracker = new SchemaSendTracker();
   private readonly recoverConduit?: () => Promise<Conduit<Message>>;
+  private readonly onConnectivityChange?: (state: SessionConnectivity) => void;
+  private readonly keepaliveIntervalMs: number;
+  private readonly keepaliveTimeoutMs: number;
+  private keepaliveTimer: ReturnType<typeof setTimeout> | null = null;
+  private keepalivePendingNonce: bigint | null = null;
+  private keepalivePongTimer: ReturnType<typeof setTimeout> | null = null;
+  private nextKeepaliveNonce = 1n;
   private readonly pendingResumes: Array<{
     conduit: Conduit<Message>;
     result: Deferred<void>;
@@ -343,6 +448,9 @@ class SessionCore {
     sessionResumeKey: Uint8Array | null,
     recoverConduit: (() => Promise<Conduit<Message>>) | undefined,
     private readonly onConnection?: (connection: ConnectionHandle) => void | Promise<void>,
+    onConnectivityChange?: (state: SessionConnectivity) => void,
+    keepaliveIntervalMs = 0,
+    keepaliveTimeoutMs = 0,
   ) {
     this.conduit = conduit;
     this.peerSupportsRetry = peerSupportsRetry;
@@ -352,6 +460,10 @@ class SessionCore {
     this.nextConnectionId = firstIdForParity(localRootSettings.parity);
     this.sessionHandle = new SessionHandle(this);
     this.schemaTracker = new SchemaTracker();
+    this.onConnectivityChange = onConnectivityChange;
+    this.keepaliveIntervalMs = keepaliveIntervalMs;
+    this.keepaliveTimeoutMs =
+      keepaliveTimeoutMs > 0 ? keepaliveTimeoutMs : Math.floor(keepaliveIntervalMs / 2);
   }
 
   sessionHandleValue(): SessionHandle {
@@ -397,6 +509,50 @@ class SessionCore {
       roamLogger()?.error(`[roam:session] run loop error:`, error);
       this.fail(error instanceof SessionError ? error : new SessionError(String(error)));
     });
+    if (this.keepaliveIntervalMs > 0) {
+      this.scheduleKeepalive();
+    }
+  }
+
+  private scheduleKeepalive(): void {
+    if (this.closed || this.keepaliveIntervalMs <= 0) return;
+    this.keepaliveTimer = setTimeout(() => {
+      this.sendKeepalivePing();
+    }, this.keepaliveIntervalMs);
+  }
+
+  private sendKeepalivePing(): void {
+    if (this.closed || this.disconnected) {
+      this.scheduleKeepalive();
+      return;
+    }
+    const nonce = this.nextKeepaliveNonce++;
+    this.keepalivePendingNonce = nonce;
+    void this.sendMessage({ connection_id: 0n, payload: { tag: "Ping", value: { nonce } } }).catch(() => {});
+
+    // Expect a Pong within keepaliveTimeoutMs.
+    this.keepalivePongTimer = setTimeout(() => {
+      if (this.keepalivePendingNonce === nonce && !this.closed) {
+        roamLogger()?.debug(
+          `[roam:session] keepalive timeout — no Pong received, treating as dead connection`,
+        );
+        this.keepalivePendingNonce = null;
+        // Force the conduit closed so the run loop detects the drop.
+        this.conduit.close();
+      }
+    }, this.keepaliveTimeoutMs);
+  }
+
+  private clearKeepaliveTimers(): void {
+    if (this.keepaliveTimer !== null) {
+      clearTimeout(this.keepaliveTimer);
+      this.keepaliveTimer = null;
+    }
+    if (this.keepalivePongTimer !== null) {
+      clearTimeout(this.keepalivePongTimer);
+      this.keepalivePongTimer = null;
+    }
+    this.keepalivePendingNonce = null;
   }
 
   closedPromise(): Promise<void> {
@@ -456,6 +612,7 @@ class SessionCore {
       return;
     }
 
+    this.clearKeepaliveTimers();
     this.closed = true;
     this.closeError = error;
     this.conduit.close();
@@ -508,7 +665,12 @@ class SessionCore {
     while (!this.closed) {
       const message = await this.conduit.recv();
       if (!message) {
+        this.clearKeepaliveTimers();
         if (await this.handleConduitBreak()) {
+          // Reconnected — restart keepalive on the fresh connection.
+          if (this.keepaliveIntervalMs > 0) {
+            this.scheduleKeepalive();
+          }
           continue;
         }
         throw SessionError.closed();
@@ -545,12 +707,11 @@ class SessionCore {
       return false;
     }
     if (!this.resumable) {
-
       return false;
     }
 
     if (this.recoverConduit) {
-
+      this.onConnectivityChange?.("disconnected");
       try {
         const conduit = await this.recoverConduit();
         if (this.closed) {
@@ -560,7 +721,6 @@ class SessionCore {
         this.disconnected = true;
         await this.resumeOnConduit(conduit);
         this.disconnected = false;
-
         this.notifyConnectionsResumed();
         return true;
       } catch {
@@ -640,7 +800,22 @@ class SessionCore {
     roamLogger()?.debug(`[roam:session] handleMessage: tag=${message.payload.tag} conn=${message.connection_id}`);
     switch (message.payload.tag) {
       case "Ping":
+        // Respond to peer's keepalive ping.
+        void this.sendMessage({
+          connection_id: 0n,
+          payload: { tag: "Pong", value: { nonce: message.payload.value.nonce } },
+        }).catch(() => {});
+        return;
+
       case "Pong":
+        // Acknowledge our own keepalive ping.
+        if (this.keepalivePendingNonce === message.payload.value.nonce) {
+          clearTimeout(this.keepalivePongTimer!);
+          this.keepalivePongTimer = null;
+          this.keepalivePendingNonce = null;
+          // Schedule the next ping.
+          this.scheduleKeepalive();
+        }
         return;
 
       case "ProtocolError":
@@ -1262,6 +1437,9 @@ export class Session {
       handshake.sessionResumeKey,
       recoverConduit,
       options.onConnection,
+      options.onConnectivityChange,
+      options.keepaliveIntervalMs ?? 0,
+      options.keepaliveTimeoutMs ?? 0,
     );
     core.rootConnection();
     core.start();
