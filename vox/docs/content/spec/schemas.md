@@ -389,6 +389,13 @@ struct FieldSchema {
     name: String,
     /// The type of this field.
     type_id: TypeSchemaId,
+    /// Whether this field is required (has no default value).
+    /// Included in the schema so that compatibility tooling can detect
+    /// breaking changes — e.g. adding a required field without a default
+    /// is a one-way compatible change, while adding an optional field is
+    /// fully compatible. The receiver uses this for early detection of
+    /// missing fields at translation-plan time rather than mid-stream.
+    required: bool,
 }
 
 /// A variant in an enum.
@@ -459,6 +466,8 @@ The normative rules below define the CBOR encoding of these types.
 >   * `fields`: a CBOR array of field descriptors, each a map with:
 >     - `name`: field name (UTF-8 string)
 >     - `type_id`: a `TypeSchemaId` (CBOR unsigned integer)
+>     - `required`: a CBOR boolean — `true` if the field has no default
+>       value, `false` if it does
 >
 > Fields MUST be listed in declaration order (which is also postcard
 > serialization order).
