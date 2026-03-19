@@ -90,7 +90,8 @@ both hash as `u64`.
 
 > r[schema.type-id.hash.primitives]
 >
-> The hash of a primitive type is `blake3(tag)[0..8]` where `tag` is one
+> The hash of a primitive type is `blake3(len(tag) || tag)[0..8]` where
+> `len(tag)` is the tag's byte length as a `u32` LE, and `tag` is one
 > of the following UTF-8 strings:
 >
 > | Postcard type | Tag string |
@@ -257,9 +258,12 @@ from that ordering.
 Example: a recursive tree type.
 
 ```
+// All strings are length-prefixed: len(s) as u32 LE, then UTF-8 bytes.
+// L("foo") = 03 00 00 00 "foo"
+//
 // Step 1: preliminary hash
-//   TreeNode: blake3("struct" || "label" || hash(string)
-//                    || "children" || hash_of(list, SENTINEL))
+//   TreeNode: blake3(L("struct") || L("label") || hash(string)
+//                    || L("children") || hash_of(list, SENTINEL))
 //   → preliminary_hash = 0xABCD...
 //
 // Step 2: canonical order (only one type, so trivial)
@@ -277,10 +281,10 @@ Example: mutually recursive types.
 // ExprBody { Literal(u64), Add(Expr, Expr) }
 //
 // Step 1: preliminary hashes (recursive refs → sentinel)
-//   Expr:     blake3("struct" || "body" || SENTINEL)     → 0x1111...
-//   ExprBody: blake3("enum" || "Literal" || 0u32 || "newtype" || hash(u64)
-//                    || "Add" || 1u32 || "struct" || "left" || SENTINEL
-//                    || "right" || SENTINEL)              → 0x2222...
+//   Expr:     blake3(L("struct") || L("body") || SENTINEL)         → 0x1111...
+//   ExprBody: blake3(L("enum") || L("Literal") || 0u32 || L("newtype") || hash(u64)
+//                    || L("Add") || 1u32 || L("struct") || L("left") || SENTINEL
+//                    || L("right") || SENTINEL)                    → 0x2222...
 //
 // Step 2: canonical order (sort by preliminary hash)
 //   [Expr (0x1111), ExprBody (0x2222)]
@@ -295,7 +299,7 @@ Example: mutually recursive types.
 
 A schema describes a single type. Schemas are CBOR-encoded and
 self-contained — every type referenced by a schema is either a primitive
-or is referenced by its type ID (a content hash or bundle-local index).
+or is referenced by its `TypeId` (a `u64` content hash).
 
 The following Rust declarations define the schema data model. Other
 language implementations must produce equivalent CBOR encodings.
@@ -717,9 +721,13 @@ and cached for the connection lifetime.
 > r[schema.translation.fill-defaults]
 >
 > If the local type contains fields that do not exist in the remote schema,
-> those fields MUST be filled with their default values. Fields without
-> default values that are missing from the remote schema cause a
-> translation plan error (see `r[schema.errors.missing-required]`).
+> those fields MUST be filled with their default values. Whether a field
+> has a default is determined by the **local** type definition (e.g. a
+> `#[facet(default)]` annotation in Rust, or equivalent in other
+> languages) — this information is not part of the remote schema.
+> Local fields without default values that are missing from the remote
+> schema cause a translation plan error
+> (see `r[schema.errors.missing-required]`).
 
 > r[schema.translation.reorder]
 >
@@ -829,9 +837,11 @@ translation plan — rather than failing mid-stream on corrupt data.
 
 > r[schema.errors.missing-required]
 >
-> If a local struct has a required field (no default value) that is not
+> If a local struct has a field without a default value that is not
 > present in the remote schema, the translation plan MUST fail with an
-> error identifying the missing field by name and type.
+> error identifying the missing field by name and type. Whether a field
+> has a default is a property of the local type definition, not of the
+> remote schema (see `r[schema.translation.fill-defaults]`).
 
 > r[schema.errors.type-mismatch]
 >
