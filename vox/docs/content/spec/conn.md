@@ -312,8 +312,6 @@ starts only after that conduit has been selected and initialized.
 > Every message is composed of a connection identifier and a payload. The
 > connection ID is meaningful for every message type except `ProtocolError`
 > and keepalive (`Ping`/`Pong`), which MUST use connection ID 0.
-> `SchemaMessage` MUST use the connection ID of the connection whose types
-> it describes.
 
 > r[session.message.payloads]
 >
@@ -322,7 +320,6 @@ starts only after that conduit has been selected and initialized.
 >   * ProtocolError
 >   * Ping
 >   * Pong
->   * SchemaMessage
 >   * OpenConnection
 >   * AcceptConnection
 >   * RejectConnection
@@ -334,6 +331,9 @@ starts only after that conduit has been selected and initialized.
 >   * CloseChannel
 >   * ResetChannel
 >   * GrantCredit
+>
+> Schemas are not a standalone message type. They are delivered inline
+> with `Request` and `Response` payloads (see `r[schema.format.delivery]`).
 >
 > `Hello`, `HelloYourself`, `LetsGo`, and `Sorry` are NOT message payloads.
 > They are CBOR-encoded handshake structs exchanged before the postcard
@@ -350,14 +350,16 @@ starts only after that conduit has been selected and initialized.
 > 1. The initiator sends a **`Hello`** containing:
 >    - `parity`: the identifier partition desired by the initiator
 >    - `connection_settings`: limits for the root connection
->    - `message_payload_schema`: the initiator's schema for `MessagePayload`
+>    - `message_payload_schemas`: a self-contained set of schemas describing
+>      the initiator's `MessagePayload` enum and all types it references
 >      (the postcard enum used for all subsequent communication)
 >
 > 2. The acceptor adopts the opposite parity, compares the `MessagePayload`
 >    schemas, and replies with one of:
 >    - **`HelloYourself`** containing:
 >      - `connection_settings`: limits for the root connection
->      - `message_payload_schema`: the acceptor's schema for `MessagePayload`
+>      - `message_payload_schemas`: a self-contained set of schemas describing
+>        the acceptor's `MessagePayload` enum and all types it references
 >    - **`Sorry`** if the schemas are incompatible (see `r[session.handshake.sorry]`)
 >
 > 3. The initiator compares schemas and replies with one of:

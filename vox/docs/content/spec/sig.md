@@ -6,24 +6,30 @@ weight = 13
 
 ## Method Identity
 
-Every method has a unique 64-bit identifier computed from its service name,
-method name, and signature.
+Every method has a unique 64-bit identifier computed from its service name
+and method name only. The signature is deliberately excluded — schema
+exchange (see `r[schema.method-id]`) handles type evolution without
+changing method identity.
 
 > r[method.identity.computation]
 >
 > The method ID MUST be computed as:
 > ```
-> method_id = blake3(kebab(ServiceName) + "." + kebab(methodName) + sig_bytes)[0..8]
+> method_id = blake3(kebab(ServiceName) + "." + kebab(methodName))[0..8]
 > ```
 > Where:
 > - `kebab()` converts to kebab-case (e.g. `TemplateHost` → `template-host`)
-> - `sig_bytes` is the BLAKE3 hash of the method's argument and return types
 > - `[0..8]` takes the first 8 bytes as a u64
+>
+> The signature hash (`sig_bytes`) is NOT included. Only the service name
+> and method name contribute to the method ID.
 
 This means:
 - Renaming a service or method changes the ID (breaking change)
-- Changing the signature changes the ID (breaking change)
 - Case variations normalize to the same ID (`loadTemplate` = `load_template`)
+- Changing argument or return types does NOT change the method ID —
+  schema translation handles type evolution (see the
+  [schema exchange specification](../schemas/))
 
 ## Signature Hash
 

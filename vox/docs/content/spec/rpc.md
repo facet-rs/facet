@@ -39,16 +39,15 @@ layer defines when multiple attempts address the same logical operation.
 
 > r[rpc.method-id]
 >
-> Every method has a unique 64-bit identifier derived from its service name,
-> method name, and signature. This is what gets sent on the wire in `Request`
-> messages.
+> Every method has a unique 64-bit identifier derived from its service name
+> and method name (see `r[schema.method-id]`). The signature is not included —
+> schema exchange handles type evolution. This is what gets sent on the wire
+> in `Request` messages.
 
 > r[rpc.method-id.no-collisions]
 >
 > The method ID ensures that different services can have methods with the same
-> name without collision, and that changing a method's signature produces a
-> different ID (making the change visibly incompatible rather than silently
-> wrong).
+> name without collision.
 
 > r[rpc.method-id.algorithm]
 >
@@ -61,16 +60,13 @@ layer defines when multiple attempts address the same logical operation.
 > Adding new methods to a service is always safe — peers that don't know about
 > a method simply report it as unknown.
 >
-> Most other changes are breaking:
+> Renaming a service or method is a breaking change (the method ID changes).
 >
->   * Renaming a service or method
->   * Changing argument types, order, or return type
->   * Changing the structure of any type used in the signature (field names,
->     order, enum variants)
->   * Substituting container types (e.g. `Vec<T>` → `HashSet<T>`)
->
-> Argument *names* are not part of the wire format and can be changed freely.
-> Only types and their order matter.
+> Changing argument types, return types, or the structure of types used in
+> method signatures may or may not be breaking, depending on whether the
+> schema translation layer can bridge the difference (see the
+> [schema exchange specification](../schemas/) for details on translation
+> plans and compatibility rules).
 
 > r[rpc.one-service-per-connection]
 >
@@ -279,9 +275,9 @@ identity described in [Retry](./retry/).
 
 > r[rpc.channel.placement]
 >
-> `Tx<T, N>` and `Rx<T, N>` may appear in argument types of service methods.
-> They MUST NOT appear in method return types or in the error variant of a
-> `Result` return type.
+> `Tx<T, N>` and `Rx<T, N>` may appear in argument types and in the success
+> return type of service methods. They MUST NOT appear in the error variant
+> of a `Result` return type.
 
 > r[rpc.channel.no-collections]
 >
