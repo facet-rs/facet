@@ -530,6 +530,50 @@ fn generate_spec_matrix(
             call: "testbed::run_rpc_pipelining_multiple_requests",
         },
         TestCase {
+            name: "rpc_reverse_roundtrip",
+            call: "testbed::run_rpc_reverse_roundtrip",
+        },
+        TestCase {
+            name: "rpc_lookup_user_error",
+            call: "testbed::run_rpc_lookup_user_error",
+        },
+        TestCase {
+            name: "rpc_complex_struct_echo",
+            call: "testbed::run_rpc_complex_struct_echo",
+        },
+        TestCase {
+            name: "rpc_optional_field",
+            call: "testbed::run_rpc_optional_field",
+        },
+        TestCase {
+            name: "rpc_nested_struct",
+            call: "testbed::run_rpc_nested_struct",
+        },
+        TestCase {
+            name: "rpc_option_return",
+            call: "testbed::run_rpc_option_return",
+        },
+        TestCase {
+            name: "rpc_enum_struct_variants",
+            call: "testbed::run_rpc_enum_struct_variants",
+        },
+        TestCase {
+            name: "rpc_vec_of_structs",
+            call: "testbed::run_rpc_vec_of_structs",
+        },
+        TestCase {
+            name: "rpc_enum_newtype_variants",
+            call: "testbed::run_rpc_enum_newtype_variants",
+        },
+        TestCase {
+            name: "rpc_vec_return",
+            call: "testbed::run_rpc_vec_return",
+        },
+        TestCase {
+            name: "rpc_tuple_type",
+            call: "testbed::run_rpc_tuple_type",
+        },
+        TestCase {
             name: "channeling_generate_server_to_client",
             call: "channeling::run_channeling_generate_server_to_client",
         },
@@ -546,10 +590,28 @@ fn generate_spec_matrix(
             call: "channel_retry::run_channel_retry_idem_reruns_with_fresh_channels",
         },
     ];
-    let subject_to_harness = [TestCase {
-        name: "channeling_sum_client_to_server",
-        call: "channeling::run_channeling_sum_client_to_server",
-    }];
+    let subject_to_harness = [
+        TestCase {
+            name: "channeling_sum_client_to_server",
+            call: "channeling::run_channeling_sum_client_to_server",
+        },
+        TestCase {
+            name: "subject_calls_echo",
+            call: "testbed::run_subject_calls_echo",
+        },
+        TestCase {
+            name: "subject_calls_shape_area",
+            call: "testbed::run_subject_calls_shape_area",
+        },
+        TestCase {
+            name: "subject_calls_create_canvas",
+            call: "testbed::run_subject_calls_create_canvas",
+        },
+        TestCase {
+            name: "subject_calls_process_message",
+            call: "testbed::run_subject_calls_process_message",
+        },
+    ];
     let bidirectional = [TestCase {
         name: "channeling_transform",
         call: "channeling::run_channeling_transform_bidirectional",

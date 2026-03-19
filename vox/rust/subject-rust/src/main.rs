@@ -265,6 +265,64 @@ async fn run_client() -> Result<(), String> {
                 .map_err(|e| format!("echo failed: {e:?}"))?;
             info!("echo result: {result}");
         }
+        "shape_area" => {
+            use spec_proto::Shape;
+            let area = client
+                .shape_area(Shape::Rectangle {
+                    width: 3.0,
+                    height: 4.0,
+                })
+                .await
+                .map_err(|e| format!("shape_area failed: {e:?}"))?;
+            if (area - 12.0_f64).abs() > 1e-9 {
+                return Err(format!("shape_area: expected 12.0, got {area}"));
+            }
+            info!("shape_area result: {area}");
+        }
+        "create_canvas" => {
+            use spec_proto::{Canvas, Color, Shape};
+            let canvas = client
+                .create_canvas(
+                    "enum-canvas".to_string(),
+                    vec![Shape::Point, Shape::Circle { radius: 2.5 }],
+                    Color::Green,
+                )
+                .await
+                .map_err(|e| format!("create_canvas failed: {e:?}"))?;
+            if canvas.name != "enum-canvas" {
+                return Err(format!(
+                    "create_canvas: expected name 'enum-canvas', got {:?}",
+                    canvas.name
+                ));
+            }
+            if canvas.background != Color::Green {
+                return Err(format!(
+                    "create_canvas: expected Green background, got {:?}",
+                    canvas.background
+                ));
+            }
+            if canvas.shapes.len() != 2 {
+                return Err(format!(
+                    "create_canvas: expected 2 shapes, got {}",
+                    canvas.shapes.len()
+                ));
+            }
+            info!("create_canvas result OK");
+        }
+        "process_message" => {
+            use spec_proto::Message;
+            let result = client
+                .process_message(Message::Data(vec![1, 2, 3, 4]))
+                .await
+                .map_err(|e| format!("process_message failed: {e:?}"))?;
+            match &result {
+                Message::Data(bytes) if bytes == &vec![4, 3, 2, 1] => {}
+                other => {
+                    return Err(format!("process_message: unexpected result {other:?}"));
+                }
+            }
+            info!("process_message result OK");
+        }
         "channel_retry_non_idem" => {
             let (tx, mut rx) = roam::channel::<i32>();
             let call = tokio::spawn({

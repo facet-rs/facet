@@ -39,6 +39,50 @@ mod lang_rust_transport_tcp {
             testbed::run_rpc_pipelining_multiple_requests(SPEC);
         }
         #[test]
+        fn rpc_reverse_roundtrip() {
+            testbed::run_rpc_reverse_roundtrip(SPEC);
+        }
+        #[test]
+        fn rpc_lookup_user_error() {
+            testbed::run_rpc_lookup_user_error(SPEC);
+        }
+        #[test]
+        fn rpc_complex_struct_echo() {
+            testbed::run_rpc_complex_struct_echo(SPEC);
+        }
+        #[test]
+        fn rpc_optional_field() {
+            testbed::run_rpc_optional_field(SPEC);
+        }
+        #[test]
+        fn rpc_nested_struct() {
+            testbed::run_rpc_nested_struct(SPEC);
+        }
+        #[test]
+        fn rpc_option_return() {
+            testbed::run_rpc_option_return(SPEC);
+        }
+        #[test]
+        fn rpc_enum_struct_variants() {
+            testbed::run_rpc_enum_struct_variants(SPEC);
+        }
+        #[test]
+        fn rpc_vec_of_structs() {
+            testbed::run_rpc_vec_of_structs(SPEC);
+        }
+        #[test]
+        fn rpc_enum_newtype_variants() {
+            testbed::run_rpc_enum_newtype_variants(SPEC);
+        }
+        #[test]
+        fn rpc_vec_return() {
+            testbed::run_rpc_vec_return(SPEC);
+        }
+        #[test]
+        fn rpc_tuple_type() {
+            testbed::run_rpc_tuple_type(SPEC);
+        }
+        #[test]
         fn channeling_generate_server_to_client() {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
@@ -60,6 +104,22 @@ mod lang_rust_transport_tcp {
         #[test]
         fn channeling_sum_client_to_server() {
             channeling::run_channeling_sum_client_to_server(SPEC);
+        }
+        #[test]
+        fn subject_calls_echo() {
+            testbed::run_subject_calls_echo(SPEC);
+        }
+        #[test]
+        fn subject_calls_shape_area() {
+            testbed::run_subject_calls_shape_area(SPEC);
+        }
+        #[test]
+        fn subject_calls_create_canvas() {
+            testbed::run_subject_calls_create_canvas(SPEC);
+        }
+        #[test]
+        fn subject_calls_process_message() {
+            testbed::run_subject_calls_process_message(SPEC);
         }
     }
     mod direction_bidirectional {
@@ -88,6 +148,50 @@ mod lang_rust_transport_shm_guest_mode {
             testbed::run_rpc_pipelining_multiple_requests(SPEC);
         }
         #[test]
+        fn rpc_reverse_roundtrip() {
+            testbed::run_rpc_reverse_roundtrip(SPEC);
+        }
+        #[test]
+        fn rpc_lookup_user_error() {
+            testbed::run_rpc_lookup_user_error(SPEC);
+        }
+        #[test]
+        fn rpc_complex_struct_echo() {
+            testbed::run_rpc_complex_struct_echo(SPEC);
+        }
+        #[test]
+        fn rpc_optional_field() {
+            testbed::run_rpc_optional_field(SPEC);
+        }
+        #[test]
+        fn rpc_nested_struct() {
+            testbed::run_rpc_nested_struct(SPEC);
+        }
+        #[test]
+        fn rpc_option_return() {
+            testbed::run_rpc_option_return(SPEC);
+        }
+        #[test]
+        fn rpc_enum_struct_variants() {
+            testbed::run_rpc_enum_struct_variants(SPEC);
+        }
+        #[test]
+        fn rpc_vec_of_structs() {
+            testbed::run_rpc_vec_of_structs(SPEC);
+        }
+        #[test]
+        fn rpc_enum_newtype_variants() {
+            testbed::run_rpc_enum_newtype_variants(SPEC);
+        }
+        #[test]
+        fn rpc_vec_return() {
+            testbed::run_rpc_vec_return(SPEC);
+        }
+        #[test]
+        fn rpc_tuple_type() {
+            testbed::run_rpc_tuple_type(SPEC);
+        }
+        #[test]
         fn channeling_generate_server_to_client() {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
@@ -109,6 +213,22 @@ mod lang_rust_transport_shm_guest_mode {
         #[test]
         fn channeling_sum_client_to_server() {
             channeling::run_channeling_sum_client_to_server(SPEC);
+        }
+        #[test]
+        fn subject_calls_echo() {
+            testbed::run_subject_calls_echo(SPEC);
+        }
+        #[test]
+        fn subject_calls_shape_area() {
+            testbed::run_subject_calls_shape_area(SPEC);
+        }
+        #[test]
+        fn subject_calls_create_canvas() {
+            testbed::run_subject_calls_create_canvas(SPEC);
+        }
+        #[test]
+        fn subject_calls_process_message() {
+            testbed::run_subject_calls_process_message(SPEC);
         }
     }
     mod direction_bidirectional {
@@ -150,6 +270,61 @@ mod lang_typescript_transport_tcp {
         }
         #[ignore]
         #[test]
+        fn rpc_reverse_roundtrip() {
+            testbed::run_rpc_reverse_roundtrip(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_lookup_user_error() {
+            testbed::run_rpc_lookup_user_error(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_complex_struct_echo() {
+            testbed::run_rpc_complex_struct_echo(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_optional_field() {
+            testbed::run_rpc_optional_field(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_nested_struct() {
+            testbed::run_rpc_nested_struct(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_option_return() {
+            testbed::run_rpc_option_return(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_enum_struct_variants() {
+            testbed::run_rpc_enum_struct_variants(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_vec_of_structs() {
+            testbed::run_rpc_vec_of_structs(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_enum_newtype_variants() {
+            testbed::run_rpc_enum_newtype_variants(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_vec_return() {
+            testbed::run_rpc_vec_return(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_tuple_type() {
+            testbed::run_rpc_tuple_type(SPEC);
+        }
+        #[ignore]
+        #[test]
         fn channeling_generate_server_to_client() {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
@@ -175,6 +350,26 @@ mod lang_typescript_transport_tcp {
         #[test]
         fn channeling_sum_client_to_server() {
             channeling::run_channeling_sum_client_to_server(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo() {
+            testbed::run_subject_calls_echo(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_shape_area() {
+            testbed::run_subject_calls_shape_area(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_create_canvas() {
+            testbed::run_subject_calls_create_canvas(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_process_message() {
+            testbed::run_subject_calls_process_message(SPEC);
         }
     }
     mod direction_bidirectional {
@@ -208,6 +403,61 @@ mod lang_swift_transport_tcp {
         }
         #[ignore]
         #[test]
+        fn rpc_reverse_roundtrip() {
+            testbed::run_rpc_reverse_roundtrip(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_lookup_user_error() {
+            testbed::run_rpc_lookup_user_error(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_complex_struct_echo() {
+            testbed::run_rpc_complex_struct_echo(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_optional_field() {
+            testbed::run_rpc_optional_field(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_nested_struct() {
+            testbed::run_rpc_nested_struct(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_option_return() {
+            testbed::run_rpc_option_return(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_enum_struct_variants() {
+            testbed::run_rpc_enum_struct_variants(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_vec_of_structs() {
+            testbed::run_rpc_vec_of_structs(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_enum_newtype_variants() {
+            testbed::run_rpc_enum_newtype_variants(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_vec_return() {
+            testbed::run_rpc_vec_return(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_tuple_type() {
+            testbed::run_rpc_tuple_type(SPEC);
+        }
+        #[ignore]
+        #[test]
         fn channeling_generate_server_to_client() {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
@@ -233,6 +483,26 @@ mod lang_swift_transport_tcp {
         #[test]
         fn channeling_sum_client_to_server() {
             channeling::run_channeling_sum_client_to_server(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo() {
+            testbed::run_subject_calls_echo(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_shape_area() {
+            testbed::run_subject_calls_shape_area(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_create_canvas() {
+            testbed::run_subject_calls_create_canvas(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_process_message() {
+            testbed::run_subject_calls_process_message(SPEC);
         }
     }
     mod direction_bidirectional {
@@ -266,6 +536,61 @@ mod lang_swift_transport_shm_guest_mode {
         }
         #[ignore]
         #[test]
+        fn rpc_reverse_roundtrip() {
+            testbed::run_rpc_reverse_roundtrip(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_lookup_user_error() {
+            testbed::run_rpc_lookup_user_error(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_complex_struct_echo() {
+            testbed::run_rpc_complex_struct_echo(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_optional_field() {
+            testbed::run_rpc_optional_field(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_nested_struct() {
+            testbed::run_rpc_nested_struct(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_option_return() {
+            testbed::run_rpc_option_return(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_enum_struct_variants() {
+            testbed::run_rpc_enum_struct_variants(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_vec_of_structs() {
+            testbed::run_rpc_vec_of_structs(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_enum_newtype_variants() {
+            testbed::run_rpc_enum_newtype_variants(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_vec_return() {
+            testbed::run_rpc_vec_return(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_tuple_type() {
+            testbed::run_rpc_tuple_type(SPEC);
+        }
+        #[ignore]
+        #[test]
         fn channeling_generate_server_to_client() {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
@@ -291,6 +616,26 @@ mod lang_swift_transport_shm_guest_mode {
         #[test]
         fn channeling_sum_client_to_server() {
             channeling::run_channeling_sum_client_to_server(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo() {
+            testbed::run_subject_calls_echo(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_shape_area() {
+            testbed::run_subject_calls_shape_area(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_create_canvas() {
+            testbed::run_subject_calls_create_canvas(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_process_message() {
+            testbed::run_subject_calls_process_message(SPEC);
         }
     }
     mod direction_bidirectional {
@@ -334,6 +679,61 @@ mod lang_swift_transport_shm_host_mode {
         }
         #[ignore]
         #[test]
+        fn rpc_reverse_roundtrip() {
+            testbed::run_rpc_reverse_roundtrip(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_lookup_user_error() {
+            testbed::run_rpc_lookup_user_error(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_complex_struct_echo() {
+            testbed::run_rpc_complex_struct_echo(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_optional_field() {
+            testbed::run_rpc_optional_field(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_nested_struct() {
+            testbed::run_rpc_nested_struct(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_option_return() {
+            testbed::run_rpc_option_return(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_enum_struct_variants() {
+            testbed::run_rpc_enum_struct_variants(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_vec_of_structs() {
+            testbed::run_rpc_vec_of_structs(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_enum_newtype_variants() {
+            testbed::run_rpc_enum_newtype_variants(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_vec_return() {
+            testbed::run_rpc_vec_return(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_tuple_type() {
+            testbed::run_rpc_tuple_type(SPEC);
+        }
+        #[ignore]
+        #[test]
         fn channeling_generate_server_to_client() {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
@@ -359,6 +759,26 @@ mod lang_swift_transport_shm_host_mode {
         #[test]
         fn channeling_sum_client_to_server() {
             channeling::run_channeling_sum_client_to_server(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo() {
+            testbed::run_subject_calls_echo(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_shape_area() {
+            testbed::run_subject_calls_shape_area(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_create_canvas() {
+            testbed::run_subject_calls_create_canvas(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_process_message() {
+            testbed::run_subject_calls_process_message(SPEC);
         }
     }
     mod direction_bidirectional {

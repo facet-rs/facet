@@ -820,6 +820,78 @@ pub async fn accept_subject_spec_resumable(
     }
 }
 
+/// Spawn the subject in client mode, connect to a simple (non-resumable) Rust
+/// server, let the subject run the named scenario, and verify it exits 0.
+///
+/// This is the non-resumable counterpart of `run_subject_client_scenario_resumable`.
+/// Use it for scenarios that don't require session recovery.
+pub fn run_subject_client_scenario(spec: SubjectSpec, scenario: &str) {
+    let scenario = scenario.to_string();
+    let result: Result<(), String> = run_async(async move {
+        if spec.transport != SubjectTestTransport::Tcp {
+            return Ok(());
+        }
+
+        let cmd = subject_cmd_for_language(spec.language);
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .map_err(|e| format!("bind: {e}"))?;
+        let addr = listener
+            .local_addr()
+            .map_err(|e| format!("local_addr: {e}"))?;
+
+        let mut child = spawn_subject_cmd_with_env(
+            &cmd,
+            &addr.to_string(),
+            &[("SUBJECT_MODE", "client"), ("CLIENT_SCENARIO", &scenario)],
+        )
+        .await?;
+
+        // Accept one connection, complete the handshake, serve until the
+        // subject disconnects.
+        let accept_task = tokio::spawn(async move {
+            let (stream, _) = match listener.accept().await {
+                Ok(a) => a,
+                Err(e) => {
+                    eprintln!("[harness] client-scenario accept error: {e}");
+                    return;
+                }
+            };
+            stream.set_nodelay(true).ok();
+            match acceptor_on(StreamLink::tcp(stream))
+                .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
+                .await
+            {
+                Ok((_client, _session)) => {
+                    // Keep the session alive until the subject disconnects by
+                    // waiting forever — the accept_task is aborted after the
+                    // child process exits.
+                    std::future::pending::<()>().await;
+                }
+                Err(e) => {
+                    eprintln!("[harness] client-scenario handshake error: {e}");
+                }
+            }
+        });
+
+        let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
+            .await
+            .map_err(|_| format!("subject client scenario `{scenario}` timed out"))?
+            .map_err(|e| format!("wait on subject process: {e}"))?;
+
+        accept_task.abort();
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "subject client scenario `{scenario}` failed with status {status}"
+            ))
+        }
+    });
+    result.unwrap();
+}
+
 pub async fn run_subject_client_scenario_resumable(
     spec: SubjectSpec,
     scenario: &str,
