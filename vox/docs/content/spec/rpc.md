@@ -275,9 +275,9 @@ identity described in [Retry](./retry/).
 
 > r[rpc.channel.placement]
 >
-> `Tx<T, N>` and `Rx<T, N>` may appear in argument types and in the success
-> return type of service methods. They MUST NOT appear in the error variant
-> of a `Result` return type.
+> `Tx<T, N>` and `Rx<T, N>` may appear in argument types of service methods.
+> They MUST NOT appear in method return types or in the error variant of a
+> `Result` return type.
 
 > r[rpc.channel.no-collections]
 >

@@ -662,8 +662,8 @@ for the entire service interface up front.
 >
 > Channel element types are included in schema exchange. If a method's
 > arguments contain `Tx<T>` or `Rx<T>`, the schema for `T` MUST be included
-> in the caller's schemas. If the response contains channel types,
-> their element schemas MUST be included in the callee's schemas.
+> in the caller's schemas. Channels MUST NOT appear in return types
+> (see `r[rpc.channel.placement]`).
 
 > r[schema.exchange.required]
 >
