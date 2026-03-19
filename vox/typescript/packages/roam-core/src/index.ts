@@ -18,6 +18,11 @@ export {
 } from "./channeling/index.ts";
 
 export {
+  type MethodSendSchemas,
+  type ServiceSendSchemas,
+} from "./schema_tracker.ts";
+
+export {
   type Link,
   type LinkAttachment,
   type LinkSource,

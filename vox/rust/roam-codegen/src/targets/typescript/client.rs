@@ -184,6 +184,9 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             out.push_str(&format!(
                 "          schemaRegistry: {service_name_lower}_descriptor.schema_registry,\n"
             ));
+            out.push_str(&format!(
+                "          sendSchemas: {service_name_lower}_descriptor.send_schemas,\n"
+            ));
             if has_streaming_args {
                 out.push_str("          channels,\n");
                 out.push_str("          prepareRetry,\n");
@@ -214,6 +217,9 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             out.push_str("        descriptor,\n");
             out.push_str(&format!(
                 "        schemaRegistry: {service_name_lower}_descriptor.schema_registry,\n"
+            ));
+            out.push_str(&format!(
+                "        sendSchemas: {service_name_lower}_descriptor.send_schemas,\n"
             ));
             if has_streaming_args {
                 out.push_str("        channels,\n");

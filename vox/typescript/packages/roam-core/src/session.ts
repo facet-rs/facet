@@ -74,6 +74,10 @@ interface PendingResponse {
   payload: Uint8Array;
   metadata: Metadata;
   channels: bigint[];
+  /** Pre-computed args schemas bytes to include on first send. */
+  schemasBytes?: Uint8Array;
+  /** Whether this method uses persist retry policy (affects close behavior). */
+  persist: boolean;
   prepareRetry?: () => {
     payload: Uint8Array;
     channels: bigint[];
@@ -884,6 +888,15 @@ export class ConnectionHandle {
     const requestId = this.nextRequestId;
     this.nextRequestId += 2n;
     const responsePayload = await new Promise<Uint8Array>((resolve, reject) => {
+      // Compute args schemas for first send (before creating state so tracker is updated once).
+      const schemasBytes = request.sendSchemas
+        ? this.session.getSchemaSendTracker().prepareSchemas(
+            request.descriptor.id,
+            "args",
+            request.sendSchemas,
+          )
+        : undefined;
+
       const state: PendingResponse = {
         resolve,
         reject,
@@ -895,6 +908,8 @@ export class ConnectionHandle {
         payload: initial.payload.slice(),
         metadata: cloneMetadata(metadata),
         channels: [...initial.channels],
+        schemasBytes,
+        persist: request.descriptor.retry?.persist ?? false,
         prepareRetry: request.prepareRetry,
         finalizeChannels: request.finalizeChannels,
         requestIds: new Set(),
@@ -1024,7 +1039,13 @@ export class ConnectionHandle {
       clearTimeout(pending.timer);
       pending.requestIds.clear();
       pending.finalizeChannels?.();
-      pending.reject(error);
+      // For persist=true methods, report INDETERMINATE when session closes
+      // (the operation may or may not have executed on the remote side).
+      if (pending.persist && error instanceof SessionError) {
+        pending.reject(new RpcError(RpcErrorCode.INDETERMINATE));
+      } else {
+        pending.reject(error);
+      }
     }
   }
 
@@ -1084,8 +1105,11 @@ export class ConnectionHandle {
           cloneMetadata(state.metadata),
           [...state.channels],
           this.id,
+          state.schemasBytes,
         ),
       );
+      // Clear schemas after first send (only send once per method+direction).
+      state.schemasBytes = undefined;
       await this.flushOutgoing();
     } catch (error) {
       state.requestIds.delete(requestId);

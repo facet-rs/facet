@@ -21,6 +21,7 @@ use roam_types::{MethodDescriptor, ServiceDescriptor};
 pub use client::generate_client;
 pub use http_client::generate_http_client;
 pub use schema::generate_descriptor;
+pub use schema::generate_send_schema_table;
 pub use server::generate_server;
 pub use types::{collect_named_types, generate_named_types};
 
@@ -79,6 +80,9 @@ pub fn generate_service(service: &ServiceDescriptor) -> String {
 
     // Server (handler interface + dispatcher)
     output.push_str(&generate_server(service));
+
+    // Pre-computed CBOR send schema table (must come before descriptor)
+    output.push_str(&generate_send_schema_table(service));
 
     // Service descriptor
     output.push_str(&generate_descriptor(service));

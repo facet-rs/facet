@@ -253,6 +253,7 @@ class RoamCallImpl implements RoamCall {
     private readonly operationId: bigint | undefined,
     private readonly schemaRegistry?: ServiceDescriptor["schema_registry"],
     private readonly schemaSendTracker?: import("./schema_tracker.ts").SchemaSendTracker,
+    private readonly sendSchemas?: import("./schema_tracker.ts").ServiceSendSchemas,
   ) {}
 
   didReply(): boolean {
@@ -299,12 +300,14 @@ class RoamCallImpl implements RoamCall {
   }
 
   private sendPayload(payload: Uint8Array): void {
-    const schemas = this.schemaSendTracker?.prepareSchemas(
-      this.method.id,
-      "response",
-      this.method.result,
-      this.schemaRegistry,
-    );
+    const schemas =
+      this.schemaSendTracker && this.sendSchemas
+        ? this.schemaSendTracker.prepareSchemas(
+            this.method.id,
+            "response",
+            this.sendSchemas,
+          )
+        : undefined;
     if (this.operationId === undefined) {
       this.taskSender({ kind: "response", requestId: this.requestId, payload, schemas });
       return;
@@ -492,6 +495,7 @@ export class Driver {
       operationId,
       descriptor.schema_registry,
       this.connection.getSchemaSendTracker(),
+      descriptor.send_schemas,
     );
 
     let outcome: ServerCallOutcome = { kind: "dropped" };

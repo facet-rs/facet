@@ -258,6 +258,14 @@ impl SchemaSendTracker {
         self.next_id = 1;
     }
 
+    /// Allocate a fresh TypeSchemaId not associated with any Shape.
+    /// Used for synthetic schemas (e.g., args tuple wrappers) created during codegen.
+    pub fn allocate_anonymous_id(&mut self) -> TypeSchemaId {
+        let id = TypeSchemaId(self.next_id);
+        self.next_id += 1;
+        id
+    }
+
     /// Allocate or look up a TypeSchemaId for a Shape.
     fn id_for_shape(&mut self, shape: &'static Shape) -> TypeSchemaId {
         if let Some(&id) = self.shape_to_id.get(shape) {

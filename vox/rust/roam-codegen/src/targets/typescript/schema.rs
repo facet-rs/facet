@@ -16,11 +16,12 @@
 
 use std::collections::HashSet;
 
-use facet_core::{Field, ScalarType, Shape};
+use facet_core::{Facet, Field, ScalarType, Shape};
 use heck::ToLowerCamelCase;
 use roam_types::{
-    EnumInfo, ServiceDescriptor, ShapeKind, StructInfo, VariantKind, classify_shape,
-    classify_variant, is_bytes,
+    EnumInfo, Schema, SchemaKind, SchemaSendTracker, ServiceDescriptor, ShapeKind, StructInfo,
+    TypeSchemaId, VariantKind, VariantPayload, VariantSchema, classify_shape, classify_variant,
+    is_bytes,
 };
 
 /// Generate a TypeScript Schema object literal for a type.
@@ -286,7 +287,7 @@ fn generate_roam_error_schema(err_schema: &str) -> String {
         "{{ kind: 'enum', variants: [\
           {{ name: 'User', fields: {err_schema} }}, \
           {{ name: 'UnknownMethod', fields: null }}, \
-          {{ name: 'InvalidPayload', fields: {{ kind: 'newtype', schema: {{ kind: 'scalar', type: 'string' }} }} }}, \
+          {{ name: 'InvalidPayload', fields: {{ kind: 'string' }} }}, \
           {{ name: 'Cancelled', fields: null }}, \
           {{ name: 'Indeterminate', fields: null }}\
         ] }}"
@@ -302,6 +303,346 @@ fn generate_result_schema(ok_schema: &str, err_schema: &str) -> String {
     format!(
         "{{ kind: 'enum', variants: [{{ name: 'Ok', fields: {ok_schema} }}, {{ name: 'Err', fields: {roam_error} }}] }}"
     )
+}
+
+/// Generate TypeScript constants for pre-computed CBOR schemas.
+///
+/// Produces the `{service}_send_schemas` export with a `schemas` map
+/// (typeId → pre-encoded CBOR bytes) and a `methods` map (methodId → schema info).
+/// The CBOR bytes are generated from Rust's own Facet shapes via `facet_cbor::to_vec`,
+/// so they are guaranteed to match what Rust expects on the wire.
+///
+/// The response schema is ALWAYS wrapped as `Result<T, RoamError<E>>` to match
+/// the actual wire encoding. For infallible methods, E = Infallible (empty enum).
+pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
+    use crate::render::hex_u64;
+
+    let mut tracker = SchemaSendTracker::new();
+    let service_name_lower = service.service_name.to_lower_camel_case();
+
+    // Global schema map: (id, cbor_bytes), in stable insertion order.
+    let mut schema_bytes: Vec<(u32, Vec<u8>)> = Vec::new();
+    let mut schema_ids_seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
+
+    // Helper: add a schema to the map if not already seen.
+    let mut add_schema = |id: u32, bytes: Vec<u8>| {
+        if schema_ids_seen.insert(id) {
+            schema_bytes.push((id, bytes));
+        }
+    };
+
+    // Helper: add dep if not already present.
+    fn add_dep(deps: &mut Vec<u32>, id: u32) {
+        if !deps.contains(&id) {
+            deps.push(id);
+        }
+    }
+
+    // Helper: extract schemas for a shape, add to map, return root id.
+    let mut extract_and_add = |tracker: &mut SchemaSendTracker,
+                               shape: &'static Shape,
+                               deps: &mut Vec<u32>,
+                               schema_bytes_local: &mut Vec<(u32, Vec<u8>)>,
+                               schema_ids_seen_local: &mut std::collections::HashSet<u32>|
+     -> TypeSchemaId {
+        let schemas = tracker.extract_schemas(shape);
+        let root = schemas.last().map(|s| s.type_id).unwrap_or(TypeSchemaId(0));
+        for schema in &schemas {
+            let id = schema.type_id.0;
+            if schema_ids_seen_local.insert(id) {
+                let bytes = facet_cbor::to_vec(schema).expect("failed to CBOR-encode schema");
+                schema_bytes_local.push((id, bytes));
+            }
+            add_dep(deps, id);
+        }
+        root
+    };
+
+    struct MethodInfo {
+        method_id: u64,
+        args_dep_ids: Vec<u32>,
+        args_root_id: u32,
+        response_dep_ids: Vec<u32>,
+        response_root_id: u32,
+    }
+
+    let mut method_infos: Vec<MethodInfo> = Vec::new();
+
+    for method in service.methods {
+        let method_id = crate::method_id(method);
+
+        // --- Args ---
+        let mut args_dep_ids: Vec<u32> = Vec::new();
+        let mut arg_root_ids: Vec<TypeSchemaId> = Vec::new();
+
+        for arg in method.args {
+            let schemas = tracker.extract_schemas(arg.shape);
+            if let Some(root) = schemas.last() {
+                arg_root_ids.push(root.type_id);
+            }
+            for schema in &schemas {
+                let id = schema.type_id.0;
+                if schema_ids_seen.insert(id) {
+                    let bytes = facet_cbor::to_vec(schema).expect("failed to CBOR-encode schema");
+                    schema_bytes.push((id, bytes));
+                }
+                if !args_dep_ids.contains(&id) {
+                    args_dep_ids.push(id);
+                }
+            }
+        }
+
+        let args_root_id = if method.args.is_empty() {
+            0
+        } else {
+            let tuple_id = tracker.allocate_anonymous_id();
+            let tuple_schema = Schema {
+                type_id: tuple_id,
+                name: String::new(),
+                kind: SchemaKind::Tuple {
+                    elements: arg_root_ids,
+                },
+            };
+            let id = tuple_id.0;
+            let bytes =
+                facet_cbor::to_vec(&tuple_schema).expect("failed to CBOR-encode tuple schema");
+            schema_bytes.push((id, bytes));
+            schema_ids_seen.insert(id);
+            args_dep_ids.push(id);
+            id
+        };
+
+        // --- Response ---
+        // The wire encoding is ALWAYS Result<T, RoamError<E>>.
+        // method.return_shape is T for infallible methods, Result<T,E> for fallible.
+        // We need to construct the full Result<T, RoamError<E>> schema synthetically.
+        let mut response_dep_ids: Vec<u32> = Vec::new();
+
+        // Ensure String schema exists (needed for InvalidPayload variant of RoamError).
+        let string_schemas = tracker.extract_schemas(<String as Facet<'static>>::SHAPE);
+        let string_id = string_schemas
+            .last()
+            .map(|s| s.type_id)
+            .unwrap_or(TypeSchemaId(0));
+        for schema in &string_schemas {
+            let id = schema.type_id.0;
+            if schema_ids_seen.insert(id) {
+                let bytes = facet_cbor::to_vec(schema).expect("failed to CBOR-encode schema");
+                schema_bytes.push((id, bytes));
+            }
+            add_dep(&mut response_dep_ids, id);
+        }
+
+        // Determine ok_root_id and err_root_id.
+        let (ok_root_id, err_root_id) = match classify_shape(method.return_shape) {
+            ShapeKind::Result { ok, err } => {
+                // Fallible method: extract ok type and user error type.
+                let ok_schemas = tracker.extract_schemas(ok);
+                let ok_root = ok_schemas
+                    .last()
+                    .map(|s| s.type_id)
+                    .unwrap_or(TypeSchemaId(0));
+                for schema in &ok_schemas {
+                    let id = schema.type_id.0;
+                    if schema_ids_seen.insert(id) {
+                        let bytes =
+                            facet_cbor::to_vec(schema).expect("failed to CBOR-encode schema");
+                        schema_bytes.push((id, bytes));
+                    }
+                    add_dep(&mut response_dep_ids, id);
+                }
+
+                let err_schemas = tracker.extract_schemas(err);
+                let err_root = err_schemas
+                    .last()
+                    .map(|s| s.type_id)
+                    .unwrap_or(TypeSchemaId(0));
+                for schema in &err_schemas {
+                    let id = schema.type_id.0;
+                    if schema_ids_seen.insert(id) {
+                        let bytes =
+                            facet_cbor::to_vec(schema).expect("failed to CBOR-encode schema");
+                        schema_bytes.push((id, bytes));
+                    }
+                    add_dep(&mut response_dep_ids, id);
+                }
+
+                (ok_root, err_root)
+            }
+            _ => {
+                // Infallible method: ok = return_shape, err = Infallible.
+                let ok_schemas = tracker.extract_schemas(method.return_shape);
+                let ok_root = ok_schemas
+                    .last()
+                    .map(|s| s.type_id)
+                    .unwrap_or(TypeSchemaId(0));
+                for schema in &ok_schemas {
+                    let id = schema.type_id.0;
+                    if schema_ids_seen.insert(id) {
+                        let bytes =
+                            facet_cbor::to_vec(schema).expect("failed to CBOR-encode schema");
+                        schema_bytes.push((id, bytes));
+                    }
+                    add_dep(&mut response_dep_ids, id);
+                }
+
+                // Use actual Infallible::SHAPE so facet's extraction logic applies
+                // (Infallible may be transparent to unit, not an empty enum).
+                let infallible_schemas =
+                    tracker.extract_schemas(<std::convert::Infallible as Facet<'static>>::SHAPE);
+                let infallible_id = infallible_schemas
+                    .last()
+                    .map(|s| s.type_id)
+                    .unwrap_or(TypeSchemaId(0));
+                for schema in &infallible_schemas {
+                    let id = schema.type_id.0;
+                    if schema_ids_seen.insert(id) {
+                        let bytes =
+                            facet_cbor::to_vec(schema).expect("failed to CBOR-encode schema");
+                        schema_bytes.push((id, bytes));
+                    }
+                    add_dep(&mut response_dep_ids, id);
+                }
+
+                (ok_root, infallible_id)
+            }
+        };
+
+        // Construct RoamError<E> schema with 5 fixed variants.
+        let roam_error_id = tracker.allocate_anonymous_id();
+        let roam_error_schema = Schema {
+            type_id: roam_error_id,
+            name: String::new(),
+            kind: SchemaKind::Enum {
+                variants: vec![
+                    VariantSchema {
+                        name: "User".to_string(),
+                        index: 0,
+                        payload: VariantPayload::Newtype {
+                            type_id: err_root_id,
+                        },
+                    },
+                    VariantSchema {
+                        name: "UnknownMethod".to_string(),
+                        index: 1,
+                        payload: VariantPayload::Unit,
+                    },
+                    VariantSchema {
+                        name: "InvalidPayload".to_string(),
+                        index: 2,
+                        payload: VariantPayload::Newtype { type_id: string_id },
+                    },
+                    VariantSchema {
+                        name: "Cancelled".to_string(),
+                        index: 3,
+                        payload: VariantPayload::Unit,
+                    },
+                    VariantSchema {
+                        name: "Indeterminate".to_string(),
+                        index: 4,
+                        payload: VariantPayload::Unit,
+                    },
+                ],
+            },
+        };
+        {
+            let id = roam_error_id.0;
+            let bytes = facet_cbor::to_vec(&roam_error_schema)
+                .expect("failed to CBOR-encode RoamError schema");
+            if schema_ids_seen.insert(id) {
+                schema_bytes.push((id, bytes));
+            }
+            add_dep(&mut response_dep_ids, id);
+        }
+
+        // Construct Result<ok, RoamError<E>> schema.
+        let result_id = tracker.allocate_anonymous_id();
+        let result_schema = Schema {
+            type_id: result_id,
+            name: String::new(),
+            kind: SchemaKind::Enum {
+                variants: vec![
+                    VariantSchema {
+                        name: "Ok".to_string(),
+                        index: 0,
+                        payload: VariantPayload::Newtype {
+                            type_id: ok_root_id,
+                        },
+                    },
+                    VariantSchema {
+                        name: "Err".to_string(),
+                        index: 1,
+                        payload: VariantPayload::Newtype {
+                            type_id: roam_error_id,
+                        },
+                    },
+                ],
+            },
+        };
+        {
+            let id = result_id.0;
+            let bytes =
+                facet_cbor::to_vec(&result_schema).expect("failed to CBOR-encode result schema");
+            if schema_ids_seen.insert(id) {
+                schema_bytes.push((id, bytes));
+            }
+            add_dep(&mut response_dep_ids, id);
+        }
+
+        let response_root_id = result_id.0;
+
+        method_infos.push(MethodInfo {
+            method_id,
+            args_dep_ids,
+            args_root_id,
+            response_dep_ids,
+            response_root_id,
+        });
+    }
+
+    // Generate TypeScript output.
+    let mut out = String::new();
+
+    out.push_str(
+        "// Pre-computed CBOR schema bytes for wire schema exchange (TypeScript \u{2192} Rust)\n",
+    );
+    out.push_str("// Generated from Rust Facet shapes \u{2014} do not modify.\n");
+    out.push_str(&format!(
+        "export const {service_name_lower}_send_schemas: import(\"@bearcove/roam-core\").ServiceSendSchemas = {{\n"
+    ));
+    out.push_str("  schemas: new Map<number, Uint8Array>([\n");
+    for (id, bytes) in &schema_bytes {
+        let hex_bytes: Vec<String> = bytes.iter().map(|b| format!("0x{b:02x}")).collect();
+        out.push_str(&format!(
+            "    [{id}, new Uint8Array([{}])],\n",
+            hex_bytes.join(", ")
+        ));
+    }
+    out.push_str("  ]),\n");
+    out.push_str(
+        "  methods: new Map<bigint, import(\"@bearcove/roam-core\").MethodSendSchemas>([\n",
+    );
+    for info in &method_infos {
+        let id_hex = hex_u64(info.method_id);
+        let args_dep_ids_str: Vec<String> =
+            info.args_dep_ids.iter().map(|id| id.to_string()).collect();
+        let response_dep_ids_str: Vec<String> = info
+            .response_dep_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect();
+        out.push_str(&format!(
+            "    [{}n, {{ argsDepIds: [{}], argsRootId: {}, responseDepIds: [{}], responseRootId: {} }}],\n",
+            id_hex,
+            args_dep_ids_str.join(", "),
+            info.args_root_id,
+            response_dep_ids_str.join(", "),
+            info.response_root_id,
+        ));
+    }
+    out.push_str("  ]),\n");
+    out.push_str("};\n\n");
+    out
 }
 
 /// Generate the service descriptor constant.
@@ -338,6 +679,9 @@ pub fn generate_descriptor(service: &ServiceDescriptor) -> String {
     out.push_str(&format!("  service_name: '{}',\n", service.service_name));
     out.push_str(&format!(
         "  schema_registry: {service_name_lower}_schema_registry,\n"
+    ));
+    out.push_str(&format!(
+        "  send_schemas: {service_name_lower}_send_schemas,\n"
     ));
     out.push_str("  methods: [\n");
 

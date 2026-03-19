@@ -47,6 +47,12 @@ export interface CallerRequest {
   schemaRegistry?: SchemaRegistry;
 
   /**
+   * Pre-computed CBOR send schema data (from roam-codegen). Used to send
+   * args schemas with outbound calls so the remote peer can decode them.
+   */
+  sendSchemas?: import("./schema_tracker.ts").ServiceSendSchemas;
+
+  /**
    * Channel IDs for streaming arguments.
    */
   channels?: bigint[];
