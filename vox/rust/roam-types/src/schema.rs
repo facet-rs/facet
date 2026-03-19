@@ -27,6 +27,40 @@ use crate::{MethodId, is_rx, is_tx};
 #[derive(Facet, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct TypeSchemaId(pub u64);
 
+/// A reference to a type in a schema. Either a concrete type (with optional
+/// type arguments for generics) or a type variable bound by the enclosing
+/// generic's `type_params`.
+///
+/// Generic over the ID type: `TypeSchemaId` for final schemas,
+/// `MixedId` during extraction.
+#[derive(Facet, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TypeRef<Id: Copy + std::fmt::Debug + 'static = TypeSchemaId> {
+    /// A concrete type, possibly generic.
+    Concrete {
+        type_id: Id,
+        /// Type arguments for generic types. Empty for non-generic types.
+        args: Vec<TypeRef<Id>>,
+    },
+    /// A reference to a type parameter of the enclosing generic type.
+    /// The index refers to the `type_params` list on the `Schema`.
+    Var(u32),
+}
+
+impl<Id: Copy + std::fmt::Debug + 'static> TypeRef<Id> {
+    /// Shorthand for a non-generic concrete type reference.
+    pub fn concrete(type_id: Id) -> Self {
+        TypeRef::Concrete {
+            type_id,
+            args: Vec::new(),
+        }
+    }
+
+    /// Shorthand for a generic concrete type reference with type arguments.
+    pub fn generic(type_id: Id, args: Vec<TypeRef<Id>>) -> Self {
+        TypeRef::Concrete { type_id, args }
+    }
+}
+
 /// During extraction, IDs can be either already-finalized content hashes
 /// or temporary indices that will be resolved during finalization.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -41,6 +75,9 @@ pub enum MixedId {
 #[derive(Facet, Clone, Debug)]
 pub struct Schema<Id: Copy + std::fmt::Debug + 'static = TypeSchemaId> {
     pub type_id: Id,
+    /// Type parameter names for generic types. Empty for non-generic types.
+    #[facet(default)]
+    pub type_params: Vec<String>,
     pub kind: SchemaKind<Id>,
 }
 
@@ -72,21 +109,21 @@ pub enum SchemaKind<Id: Copy + std::fmt::Debug + 'static = TypeSchemaId> {
         variants: Vec<VariantSchema<Id>>,
     },
     Tuple {
-        elements: Vec<Id>,
+        elements: Vec<TypeRef<Id>>,
     },
     List {
-        element: Id,
+        element: TypeRef<Id>,
     },
     Map {
-        key: Id,
-        value: Id,
+        key: TypeRef<Id>,
+        value: TypeRef<Id>,
     },
     Array {
-        element: Id,
+        element: TypeRef<Id>,
         length: u64,
     },
     Option {
-        element: Id,
+        element: TypeRef<Id>,
     },
     Primitive {
         primitive_type: PrimitiveType,
@@ -101,7 +138,7 @@ pub(crate) type MixedSchemaKind = SchemaKind<MixedId>;
 #[derive(Facet, Clone, Debug)]
 pub struct FieldSchema<Id: Copy + std::fmt::Debug + 'static = TypeSchemaId> {
     pub name: String,
-    pub type_id: Id,
+    pub type_ref: TypeRef<Id>,
     pub required: bool,
 }
 
@@ -118,8 +155,8 @@ pub struct VariantSchema<Id: Copy + std::fmt::Debug + 'static = TypeSchemaId> {
 #[repr(u8)]
 pub enum VariantPayload<Id: Copy + std::fmt::Debug + 'static = TypeSchemaId> {
     Unit,
-    Newtype { type_id: Id },
-    Tuple { types: Vec<Id> },
+    Newtype { type_ref: TypeRef<Id> },
+    Tuple { types: Vec<TypeRef<Id>> },
     Struct { fields: Vec<FieldSchema<Id>> },
 }
 
