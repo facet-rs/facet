@@ -921,6 +921,128 @@ pub async fn accept_subject_spec_resumable(
 ///
 /// This is the non-resumable counterpart of `run_subject_client_scenario_resumable`.
 /// Use it for scenarios that don't require session recovery.
+/// Spawn a subject in `server-listen` mode, wait for it to announce its
+/// bound address on stdout (`LISTEN_ADDR=127.0.0.1:PORT`), then return
+/// the address string and the child process handle.
+///
+/// Spawns the process directly (without the normal log pump) so we can
+/// read the `LISTEN_ADDR=` line from stdout before handing it off.
+/// After reading the address, stderr is pumped to the test output as usual.
+pub async fn spawn_server_subject(spec: SubjectSpec) -> Result<(String, Child), String> {
+    if spec.transport != SubjectTestTransport::Tcp {
+        return Err("server-listen mode is only supported for TCP transport".to_string());
+    }
+
+    let cmd = subject_cmd_for_language(spec.language);
+    eprintln!(
+        "[subject:spawn] cmd={cmd:?} peer_addr=<server-listen> extra_env=SUBJECT_MODE=server-listen LISTEN_PORT=0"
+    );
+
+    let mut command = if cmd.ends_with(".sh") {
+        let mut c = Command::new("sh");
+        c.arg("-lc").arg(cmd);
+        c
+    } else {
+        Command::new(cmd)
+    };
+    command
+        .current_dir(workspace_root())
+        .env("PEER_ADDR", "unused")
+        .env("SUBJECT_MODE", "server-listen")
+        .env("LISTEN_PORT", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped()) // we read this ourselves
+        .stderr(Stdio::piped()); // pumped after addr is read
+
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("failed to spawn server subject: {e}"))?;
+    let pid = child.id().unwrap_or_default();
+    eprintln!("[subject:{pid}] spawned (server-listen)");
+
+    // Read stdout until we see LISTEN_ADDR=.  We must do this before
+    // handing stdout to the log pump, because the pump would consume it.
+    let mut stdout = child.stdout.take().ok_or("no stdout from server subject")?;
+    let addr = tokio::time::timeout(Duration::from_secs(10), async {
+        use tokio::io::AsyncBufReadExt;
+        let mut reader = tokio::io::BufReader::new(&mut stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            reader
+                .read_line(&mut line)
+                .await
+                .map_err(|e| format!("reading server subject stdout: {e}"))?;
+            let trimmed = line.trim();
+            if let Some(addr) = trimmed.strip_prefix("LISTEN_ADDR=") {
+                return Ok::<String, String>(addr.to_string());
+            }
+            if line.is_empty() {
+                return Err("server subject closed stdout without announcing address".to_string());
+            }
+            // Forward any other stdout lines as log output.
+            eprintln!("[subject:{pid}:stdout] {trimmed}");
+        }
+    })
+    .await
+    .map_err(|_| "timed out waiting for server subject to announce listen address".to_string())??;
+
+    // Hand the rest of stdout and all of stderr to the log pump.
+    spawn_subject_log_pump(stdout, pid, "stdout");
+    if let Some(stderr) = child.stderr.take() {
+        spawn_subject_log_pump(stderr, pid, "stderr");
+    }
+
+    eprintln!("[subject:{pid}] server-listen ready at {addr}");
+    Ok((addr, child))
+}
+
+/// Run a cross-language scenario: spawn `server_spec` in server-listen mode,
+/// then spawn `client_spec` as a client pointing at the server.
+/// The harness orchestrates but is not in the data path — all traffic flows
+/// directly between the two subjects.
+pub fn run_cross_language_scenario(
+    server_spec: SubjectSpec,
+    client_spec: SubjectSpec,
+    scenario: &str,
+) {
+    let scenario = scenario.to_string();
+    let result: Result<(), String> = run_async(async move {
+        if server_spec.transport != SubjectTestTransport::Tcp
+            || client_spec.transport != SubjectTestTransport::Tcp
+        {
+            // Only TCP cross-language supported for now.
+            return Ok(());
+        }
+
+        let (server_addr, mut server_child) = spawn_server_subject(server_spec).await?;
+
+        let client_cmd = subject_cmd_for_language(client_spec.language);
+        let mut client_child = spawn_subject_cmd_with_env(
+            &client_cmd,
+            &server_addr,
+            &[("SUBJECT_MODE", "client"), ("CLIENT_SCENARIO", &scenario)],
+        )
+        .await?;
+
+        let status = tokio::time::timeout(Duration::from_secs(15), client_child.wait())
+            .await
+            .map_err(|_| format!("cross-language scenario `{scenario}` timed out"))?
+            .map_err(|e| format!("wait on client subject: {e}"))?;
+
+        server_child.kill().await.ok();
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "cross-language scenario `{scenario}` failed with status {status}"
+            ))
+        }
+    });
+    result.unwrap();
+}
+
 pub fn run_subject_client_scenario(spec: SubjectSpec, scenario: &str) {
     let scenario = scenario.to_string();
     let result: Result<(), String> = run_async(async move {

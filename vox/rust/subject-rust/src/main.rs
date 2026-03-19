@@ -281,9 +281,49 @@ fn main() -> Result<(), String> {
     match mode.as_str() {
         "server" => rt.block_on(connect_and_serve()),
         "client" => rt.block_on(run_client()),
+        "server-listen" => rt.block_on(listen_and_serve()),
         "shm-server" => rt.block_on(connect_and_serve_shm()),
         other => Err(format!("unknown SUBJECT_MODE: {other}")),
     }
+}
+
+/// Bind a TCP listener, announce the address to stdout (for the harness to read),
+/// accept one connection, and serve the Testbed service on it.
+///
+/// Used by cross-language harness tests where another subject acts as the client.
+async fn listen_and_serve() -> Result<(), String> {
+    use roam_core::{TransportMode, acceptor_on};
+    use tokio::net::TcpListener;
+
+    let listen_port: u16 = std::env::var("LISTEN_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    let listener = TcpListener::bind(("127.0.0.1", listen_port))
+        .await
+        .map_err(|e| format!("bind: {e}"))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|e| format!("local_addr: {e}"))?;
+
+    // Signal readiness — the harness reads this line from stdout.
+    println!("LISTEN_ADDR=127.0.0.1:{}", addr.port());
+    info!("server-listen mode: bound to {addr}");
+
+    let (stream, _) = listener
+        .accept()
+        .await
+        .map_err(|e| format!("accept: {e}"))?;
+    stream.set_nodelay(true).ok();
+
+    let (_client, _sh) = acceptor_on(roam_stream::StreamLink::tcp(stream))
+        .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
+        .await
+        .map_err(|e| format!("handshake: {e}"))?;
+
+    std::future::pending::<()>().await;
+    Ok(())
 }
 
 async fn connect_and_serve() -> Result<(), String> {

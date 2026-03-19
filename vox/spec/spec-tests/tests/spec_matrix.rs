@@ -2289,6 +2289,461 @@ mod lang_swift_transport_shm_host_mode {
         }
     }
 }
+mod lang_rust_server_typescript_client_tcp {
+    use super::*;
+    const SERVER: SubjectSpec = SUBJECT_RUST_TCP;
+    const CLIENT: SubjectSpec = SUBJECT_TYPESCRIPT_TCP;
+    #[ignore]
+    #[test]
+    fn echo() {
+        testbed::run_cross_lang_echo(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn divide_zero() {
+        testbed::run_cross_lang_divide_zero(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn lookup_not_found() {
+        testbed::run_cross_lang_lookup_not_found(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn echo_point() {
+        testbed::run_cross_lang_echo_point(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn parse_color() {
+        testbed::run_cross_lang_parse_color(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn shape_area() {
+        testbed::run_cross_lang_shape_area(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn create_canvas() {
+        testbed::run_cross_lang_create_canvas(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn process_message() {
+        testbed::run_cross_lang_process_message(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn pipelining() {
+        testbed::run_cross_lang_pipelining(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn sum_large() {
+        testbed::run_cross_lang_sum_large(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn generate_large() {
+        testbed::run_cross_lang_generate_large(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn transform_bidi() {
+        testbed::run_cross_lang_transform_bidi(SERVER, CLIENT);
+    }
+}
+mod lang_typescript_server_rust_client_tcp {
+    use super::*;
+    const SERVER: SubjectSpec = SUBJECT_TYPESCRIPT_TCP;
+    const CLIENT: SubjectSpec = SUBJECT_RUST_TCP;
+    #[ignore]
+    #[test]
+    fn echo() {
+        testbed::run_cross_lang_echo(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn divide_zero() {
+        testbed::run_cross_lang_divide_zero(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn lookup_not_found() {
+        testbed::run_cross_lang_lookup_not_found(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn echo_point() {
+        testbed::run_cross_lang_echo_point(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn parse_color() {
+        testbed::run_cross_lang_parse_color(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn shape_area() {
+        testbed::run_cross_lang_shape_area(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn create_canvas() {
+        testbed::run_cross_lang_create_canvas(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn process_message() {
+        testbed::run_cross_lang_process_message(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn pipelining() {
+        testbed::run_cross_lang_pipelining(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn sum_large() {
+        testbed::run_cross_lang_sum_large(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn generate_large() {
+        testbed::run_cross_lang_generate_large(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn transform_bidi() {
+        testbed::run_cross_lang_transform_bidi(SERVER, CLIENT);
+    }
+}
+mod lang_typescript_server_typescript_client_tcp {
+    use super::*;
+    const SERVER: SubjectSpec = SUBJECT_TYPESCRIPT_TCP;
+    const CLIENT: SubjectSpec = SUBJECT_TYPESCRIPT_TCP;
+    #[ignore]
+    #[test]
+    fn echo() {
+        testbed::run_cross_lang_echo(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn divide_zero() {
+        testbed::run_cross_lang_divide_zero(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn lookup_not_found() {
+        testbed::run_cross_lang_lookup_not_found(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn echo_point() {
+        testbed::run_cross_lang_echo_point(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn parse_color() {
+        testbed::run_cross_lang_parse_color(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn shape_area() {
+        testbed::run_cross_lang_shape_area(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn create_canvas() {
+        testbed::run_cross_lang_create_canvas(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn process_message() {
+        testbed::run_cross_lang_process_message(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn pipelining() {
+        testbed::run_cross_lang_pipelining(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn sum_large() {
+        testbed::run_cross_lang_sum_large(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn generate_large() {
+        testbed::run_cross_lang_generate_large(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn transform_bidi() {
+        testbed::run_cross_lang_transform_bidi(SERVER, CLIENT);
+    }
+}
+mod lang_rust_server_swift_client_tcp {
+    use super::*;
+    const SERVER: SubjectSpec = SUBJECT_RUST_TCP;
+    const CLIENT: SubjectSpec = SUBJECT_SWIFT_TCP;
+    #[ignore]
+    #[test]
+    fn echo() {
+        testbed::run_cross_lang_echo(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn divide_zero() {
+        testbed::run_cross_lang_divide_zero(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn lookup_not_found() {
+        testbed::run_cross_lang_lookup_not_found(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn echo_point() {
+        testbed::run_cross_lang_echo_point(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn parse_color() {
+        testbed::run_cross_lang_parse_color(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn shape_area() {
+        testbed::run_cross_lang_shape_area(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn create_canvas() {
+        testbed::run_cross_lang_create_canvas(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn process_message() {
+        testbed::run_cross_lang_process_message(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn pipelining() {
+        testbed::run_cross_lang_pipelining(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn sum_large() {
+        testbed::run_cross_lang_sum_large(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn generate_large() {
+        testbed::run_cross_lang_generate_large(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn transform_bidi() {
+        testbed::run_cross_lang_transform_bidi(SERVER, CLIENT);
+    }
+}
+mod lang_swift_server_rust_client_tcp {
+    use super::*;
+    const SERVER: SubjectSpec = SUBJECT_SWIFT_TCP;
+    const CLIENT: SubjectSpec = SUBJECT_RUST_TCP;
+    #[ignore]
+    #[test]
+    fn echo() {
+        testbed::run_cross_lang_echo(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn divide_zero() {
+        testbed::run_cross_lang_divide_zero(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn lookup_not_found() {
+        testbed::run_cross_lang_lookup_not_found(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn echo_point() {
+        testbed::run_cross_lang_echo_point(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn parse_color() {
+        testbed::run_cross_lang_parse_color(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn shape_area() {
+        testbed::run_cross_lang_shape_area(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn create_canvas() {
+        testbed::run_cross_lang_create_canvas(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn process_message() {
+        testbed::run_cross_lang_process_message(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn pipelining() {
+        testbed::run_cross_lang_pipelining(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn sum_large() {
+        testbed::run_cross_lang_sum_large(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn generate_large() {
+        testbed::run_cross_lang_generate_large(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn transform_bidi() {
+        testbed::run_cross_lang_transform_bidi(SERVER, CLIENT);
+    }
+}
+mod lang_typescript_server_swift_client_tcp {
+    use super::*;
+    const SERVER: SubjectSpec = SUBJECT_TYPESCRIPT_TCP;
+    const CLIENT: SubjectSpec = SUBJECT_SWIFT_TCP;
+    #[ignore]
+    #[test]
+    fn echo() {
+        testbed::run_cross_lang_echo(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn divide_zero() {
+        testbed::run_cross_lang_divide_zero(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn lookup_not_found() {
+        testbed::run_cross_lang_lookup_not_found(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn echo_point() {
+        testbed::run_cross_lang_echo_point(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn parse_color() {
+        testbed::run_cross_lang_parse_color(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn shape_area() {
+        testbed::run_cross_lang_shape_area(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn create_canvas() {
+        testbed::run_cross_lang_create_canvas(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn process_message() {
+        testbed::run_cross_lang_process_message(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn pipelining() {
+        testbed::run_cross_lang_pipelining(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn sum_large() {
+        testbed::run_cross_lang_sum_large(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn generate_large() {
+        testbed::run_cross_lang_generate_large(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn transform_bidi() {
+        testbed::run_cross_lang_transform_bidi(SERVER, CLIENT);
+    }
+}
+mod lang_swift_server_typescript_client_tcp {
+    use super::*;
+    const SERVER: SubjectSpec = SUBJECT_SWIFT_TCP;
+    const CLIENT: SubjectSpec = SUBJECT_TYPESCRIPT_TCP;
+    #[ignore]
+    #[test]
+    fn echo() {
+        testbed::run_cross_lang_echo(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn divide_zero() {
+        testbed::run_cross_lang_divide_zero(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn lookup_not_found() {
+        testbed::run_cross_lang_lookup_not_found(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn echo_point() {
+        testbed::run_cross_lang_echo_point(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn parse_color() {
+        testbed::run_cross_lang_parse_color(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn shape_area() {
+        testbed::run_cross_lang_shape_area(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn create_canvas() {
+        testbed::run_cross_lang_create_canvas(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn process_message() {
+        testbed::run_cross_lang_process_message(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn pipelining() {
+        testbed::run_cross_lang_pipelining(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn sum_large() {
+        testbed::run_cross_lang_sum_large(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn generate_large() {
+        testbed::run_cross_lang_generate_large(SERVER, CLIENT);
+    }
+    #[ignore]
+    #[test]
+    fn transform_bidi() {
+        testbed::run_cross_lang_transform_bidi(SERVER, CLIENT);
+    }
+}
 mod lang_typescript_evolved_schema_compat {
     use super::schema_compat;
     #[ignore]

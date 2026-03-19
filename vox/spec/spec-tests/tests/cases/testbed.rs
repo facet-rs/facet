@@ -1,7 +1,8 @@
 use roam::RoamError;
 use spec_proto::{Color, LookupError, MathError, Message, Point, Rectangle, Shape, Status, Tag};
 use spec_tests::harness::{
-    SubjectSpec, accept_subject_spec, run_async, run_subject_client_scenario,
+    SubjectSpec, accept_subject_spec, run_async, run_cross_language_scenario,
+    run_subject_client_scenario,
 };
 
 // r[verify call.initiate]
@@ -895,4 +896,71 @@ pub fn run_subject_calls_sum_client_to_server(spec: SubjectSpec) {
 // r[verify channeling.lifecycle.immediate-data]
 pub fn run_subject_calls_transform_bidi(spec: SubjectSpec) {
     run_subject_client_scenario(spec, "transform_bidi");
+}
+
+// ============================================================================
+// Cross-language tests: server and client are different language subjects.
+// The Rust harness only orchestrates — it is not in the data path.
+// ============================================================================
+
+// r[verify call.initiate]
+// r[verify call.complete]
+pub fn run_cross_lang_echo(server: SubjectSpec, client: SubjectSpec) {
+    run_cross_language_scenario(server, client, "echo");
+}
+
+// r[verify call.error.user]
+pub fn run_cross_lang_divide_zero(server: SubjectSpec, client: SubjectSpec) {
+    run_cross_language_scenario(server, client, "divide_zero");
+}
+
+// r[verify call.error.user]
+pub fn run_cross_lang_lookup_not_found(server: SubjectSpec, client: SubjectSpec) {
+    run_cross_language_scenario(server, client, "lookup_not_found");
+}
+
+// r[verify encoding.struct]
+pub fn run_cross_lang_echo_point(server: SubjectSpec, client: SubjectSpec) {
+    run_cross_language_scenario(server, client, "echo_point");
+}
+
+// r[verify encoding.option.return]
+pub fn run_cross_lang_parse_color(server: SubjectSpec, client: SubjectSpec) {
+    run_cross_language_scenario(server, client, "parse_color");
+}
+
+// r[verify encoding.enum.struct-variants]
+pub fn run_cross_lang_shape_area(server: SubjectSpec, client: SubjectSpec) {
+    run_cross_language_scenario(server, client, "shape_area");
+}
+
+// r[verify encoding.struct.nested]
+// r[verify encoding.vec]
+pub fn run_cross_lang_create_canvas(server: SubjectSpec, client: SubjectSpec) {
+    run_cross_language_scenario(server, client, "create_canvas");
+}
+
+// r[verify encoding.enum.newtype-variants]
+pub fn run_cross_lang_process_message(server: SubjectSpec, client: SubjectSpec) {
+    run_cross_language_scenario(server, client, "process_message");
+}
+
+// r[verify call.pipelining.allowed]
+pub fn run_cross_lang_pipelining(server: SubjectSpec, client: SubjectSpec) {
+    run_cross_language_scenario(server, client, "pipelining");
+}
+
+// r[verify channeling.flow-control]
+pub fn run_cross_lang_sum_large(server: SubjectSpec, client: SubjectSpec) {
+    run_cross_language_scenario(server, client, "sum_large");
+}
+
+// r[verify channeling.flow-control]
+pub fn run_cross_lang_generate_large(server: SubjectSpec, client: SubjectSpec) {
+    run_cross_language_scenario(server, client, "generate_large");
+}
+
+// r[verify channeling.type]
+pub fn run_cross_lang_transform_bidi(server: SubjectSpec, client: SubjectSpec) {
+    run_cross_language_scenario(server, client, "transform_bidi");
 }

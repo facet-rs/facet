@@ -23,7 +23,8 @@ import type {
   TaggedPoint,
 } from "@bearcove/roam-generated/testbed.generated.ts";
 import { TestbedClient, TestbedDispatcher } from "@bearcove/roam-generated/testbed.generated.ts";
-import { tcpConnector } from "@bearcove/roam-tcp";
+import { tcpConnector, acceptTcp } from "@bearcove/roam-tcp";
+import { createServer as createTcpServer, type AddressInfo } from "net";
 import { wsConnector } from "@bearcove/roam-ws";
 import {
   Driver,
@@ -709,11 +710,54 @@ async function runClient() {
 
 }
 
+async function runServerListen() {
+  // Bind a TCP server, announce the address, serve one connection.
+  // Used by cross-language harness tests where another subject is the client.
+  const listenPort = process.env.LISTEN_PORT ? parseInt(process.env.LISTEN_PORT) : 0;
+
+  const tcpServer = createTcpServer();
+  await new Promise<void>((resolve) => tcpServer.listen(listenPort, "127.0.0.1", resolve));
+  const { port } = tcpServer.address() as AddressInfo;
+
+  // Signal readiness to the harness — it reads this line from stdout.
+  process.stdout.write(`LISTEN_ADDR=127.0.0.1:${port}\n`);
+  console.error(`server-listen mode: bound to 127.0.0.1:${port}`);
+
+  const socket = await new Promise<import("net").Socket>((resolve) => {
+    tcpServer.once("connection", (s) => {
+      tcpServer.close();
+      resolve(s);
+    });
+  });
+
+  const established = await session.acceptorOn(acceptTcp(socket), {
+    transport: subjectConduit(),
+    // Provide a session resume key so Rust clients (which default to
+    // resumable=true) don't reject the handshake. The key is generated
+    // randomly; there is no session registry so reconnection won't work,
+    // but the key satisfies the protocol requirement.
+    resumable: true,
+  });
+  const driver = new Driver(
+    established.rootConnection(),
+    new TestbedDispatcher(new TestbedService()),
+  );
+
+  try {
+    await driver.run();
+  } catch (e) {
+    if (e instanceof SessionError) return;
+    throw e;
+  }
+}
+
 async function main() {
   const mode = process.env.SUBJECT_MODE ?? "server";
 
   if (mode === "client") {
     await runClient();
+  } else if (mode === "server-listen") {
+    await runServerListen();
   } else {
     await runServer();
   }

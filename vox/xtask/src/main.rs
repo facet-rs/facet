@@ -791,6 +791,139 @@ fn generate_spec_matrix(
         call: "binary_payloads::run_subject_process_message_binary_payload_shm_cutover_boundaries",
     }];
 
+    // Cross-language pairs: both sides are subject processes; the harness only orchestrates.
+    // Test functions take (SERVER: SubjectSpec, CLIENT: SubjectSpec).
+    struct CrossLangCombo {
+        mod_name: &'static str,
+        server_const: &'static str,
+        client_const: &'static str,
+    }
+
+    let cross_lang_combos = [
+        // Rust server ↔ TypeScript client
+        CrossLangCombo {
+            mod_name: "lang_rust_server_typescript_client_tcp",
+            server_const: "SUBJECT_RUST_TCP",
+            client_const: "SUBJECT_TYPESCRIPT_TCP",
+        },
+        // TypeScript server ↔ Rust client
+        CrossLangCombo {
+            mod_name: "lang_typescript_server_rust_client_tcp",
+            server_const: "SUBJECT_TYPESCRIPT_TCP",
+            client_const: "SUBJECT_RUST_TCP",
+        },
+        // TypeScript server ↔ TypeScript client
+        CrossLangCombo {
+            mod_name: "lang_typescript_server_typescript_client_tcp",
+            server_const: "SUBJECT_TYPESCRIPT_TCP",
+            client_const: "SUBJECT_TYPESCRIPT_TCP",
+        },
+        // Rust server ↔ Swift client
+        CrossLangCombo {
+            mod_name: "lang_rust_server_swift_client_tcp",
+            server_const: "SUBJECT_RUST_TCP",
+            client_const: "SUBJECT_SWIFT_TCP",
+        },
+        // Swift server ↔ Rust client
+        CrossLangCombo {
+            mod_name: "lang_swift_server_rust_client_tcp",
+            server_const: "SUBJECT_SWIFT_TCP",
+            client_const: "SUBJECT_RUST_TCP",
+        },
+        // TypeScript server ↔ Swift client
+        CrossLangCombo {
+            mod_name: "lang_typescript_server_swift_client_tcp",
+            server_const: "SUBJECT_TYPESCRIPT_TCP",
+            client_const: "SUBJECT_SWIFT_TCP",
+        },
+        // Swift server ↔ TypeScript client
+        CrossLangCombo {
+            mod_name: "lang_swift_server_typescript_client_tcp",
+            server_const: "SUBJECT_SWIFT_TCP",
+            client_const: "SUBJECT_TYPESCRIPT_TCP",
+        },
+    ];
+
+    let cross_lang_cases = [
+        TestCase {
+            name: "echo",
+            call: "testbed::run_cross_lang_echo",
+        },
+        TestCase {
+            name: "divide_zero",
+            call: "testbed::run_cross_lang_divide_zero",
+        },
+        TestCase {
+            name: "lookup_not_found",
+            call: "testbed::run_cross_lang_lookup_not_found",
+        },
+        TestCase {
+            name: "echo_point",
+            call: "testbed::run_cross_lang_echo_point",
+        },
+        TestCase {
+            name: "parse_color",
+            call: "testbed::run_cross_lang_parse_color",
+        },
+        TestCase {
+            name: "shape_area",
+            call: "testbed::run_cross_lang_shape_area",
+        },
+        TestCase {
+            name: "create_canvas",
+            call: "testbed::run_cross_lang_create_canvas",
+        },
+        TestCase {
+            name: "process_message",
+            call: "testbed::run_cross_lang_process_message",
+        },
+        TestCase {
+            name: "pipelining",
+            call: "testbed::run_cross_lang_pipelining",
+        },
+        TestCase {
+            name: "sum_large",
+            call: "testbed::run_cross_lang_sum_large",
+        },
+        TestCase {
+            name: "generate_large",
+            call: "testbed::run_cross_lang_generate_large",
+        },
+        TestCase {
+            name: "transform_bidi",
+            call: "testbed::run_cross_lang_transform_bidi",
+        },
+    ];
+
+    let cross_lang_mods: Vec<TokenStream> = cross_lang_combos
+        .iter()
+        .map(|c| {
+            let mod_ident = Ident::new(c.mod_name, Span::call_site());
+            let server: TokenStream = c.server_const.parse().unwrap();
+            let client: TokenStream = c.client_const.parse().unwrap();
+            let fns: Vec<TokenStream> = cross_lang_cases
+                .iter()
+                .map(|t| {
+                    let fn_ident = Ident::new(t.name, Span::call_site());
+                    let call: TokenStream = t.call.parse().unwrap();
+                    quote! {
+                        #[ignore]
+                        #[test]
+                        fn #fn_ident() { #call(SERVER, CLIENT); }
+                    }
+                })
+                .collect();
+            quote! {
+                mod #mod_ident {
+                    use super::*;
+                    const SERVER: SubjectSpec = #server;
+                    const CLIENT: SubjectSpec = #client;
+                    #(#fns)*
+                }
+            }
+        })
+        .collect();
+
     let gen_mod = |mod_name: &str, cases: &[TestCase], ignore: bool| -> TokenStream {
         let mod_ident = Ident::new(mod_name, Span::call_site());
         let fns: Vec<TokenStream> = cases
@@ -885,6 +1018,8 @@ fn generate_spec_matrix(
         const SUBJECT_SWIFT_SHM_HOST: SubjectSpec = SubjectSpec::shm_host(SubjectLanguage::Swift);
 
         #(#combo_mods)*
+
+        #(#cross_lang_mods)*
 
         // Schema compatibility tests: Rust v1 harness ↔ TypeScript evolved (v2) subject.
         // These use a special evolved subject command and are TypeScript-only.
