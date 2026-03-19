@@ -123,6 +123,14 @@ both hash as `u64`.
 >
 > Fields are not length-prefixed — the field name is followed immediately
 > by the 8-byte type hash, which provides an unambiguous boundary.
+>
+> Note: the `required` field is deliberately excluded from the hash.
+> It is schema metadata about default values, not part of the postcard
+> wire layout. Two versions of a struct that differ only in whether a
+> field gained a default value have the same `TypeId` — the wire
+> encoding is identical. The `required` flag affects translation plan
+> construction (see `r[schema.errors.missing-required]`), not type
+> identity.
 
 ## Enum hashes
 
@@ -227,9 +235,11 @@ from that ordering.
 >      one preliminary hash per type.
 >
 >   2. **Canonical ordering.** Sort the types by their preliminary hash
->      (ascending, unsigned integer comparison). This ordering is
->      deterministic because preliminary hashes are computed from
->      structure alone.
+>      (ascending, unsigned integer comparison). If two types in the same
+>      recursive group have the same preliminary hash, this is an error —
+>      the implementation MUST panic or abort. (This would require two
+>      structurally identical types differing only in which types they
+>      recurse into, which is degenerate and not supported.)
 >
 >   3. **Final hashes.** Compute the **group hash** as
 >      `blake3(preliminary_hash_0 || preliminary_hash_1 || ...)[0..8]`
@@ -682,6 +692,8 @@ and cached for the connection lifetime.
 >   * They are both structs and a nested translation plan can be built
 >   * They are both enums and variant matching succeeds
 >     (see `r[schema.translation.enum]`)
+>   * They are both tuples and tuple matching succeeds
+>     (see `r[schema.translation.tuple]`)
 
 > r[schema.translation.serialization-unchanged]
 >
@@ -720,8 +732,22 @@ This allows adding variants to an enum without breaking existing peers.
 >
 > For each variant that exists in both the remote and local types, the
 > variant payloads MUST be compatible: unit matches unit, newtype matches
-> newtype with a compatible inner type, struct matches struct with
-> compatible fields (same rules as top-level struct matching).
+> newtype with a compatible inner type, tuple matches tuple with
+> compatible elements (see `r[schema.translation.tuple]`), struct matches
+> struct with compatible fields (same rules as top-level struct matching).
+
+# Tuple evolution
+
+Tuples are positional — elements are matched by index, not by name.
+This means tuple evolution is more restricted than struct evolution.
+
+> r[schema.translation.tuple]
+>
+> Tuple types MUST have the same arity (number of elements) in both
+> the remote and local types. For each position, the remote element
+> type and local element type MUST be compatible (per
+> `r[schema.translation.type-compat]`). Adding, removing, or
+> reordering tuple elements is a breaking change.
 
 # Error reporting
 
@@ -735,6 +761,15 @@ translation plan — rather than failing mid-stream on corrupt data.
 > receives a schema and attempts to build a translation plan against a
 > local type, all structural incompatibilities MUST be reported before
 > any data of that type is processed.
+
+> r[schema.errors.call-level]
+>
+> A translation plan failure is a **call-level error**, not a connection-level
+> fault. The method call fails with an error response describing the
+> incompatibility (including a diff of the remote schema versus the local
+> type). The connection remains open and other method calls are unaffected.
+> This is distinct from missing schemas entirely (a protocol error per
+> `r[schema.exchange.required]`), which tears down the connection.
 
 > r[schema.errors.missing-required]
 >
