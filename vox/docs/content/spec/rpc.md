@@ -378,8 +378,8 @@ identity described in [Retry](./retry/).
 > `Rx<T, N>` carry a const generic `N: usize` that specifies the initial
 > credit for the channel. When a channel is created (as part of a request
 > or response), the sender starts with `N` units of credit. This value
-> is known at compile time and is part of the signature hash, so both
-> peers always agree on it.
+> is known at compile time and is part of the channel's type definition,
+> so both peers agree on it through schema exchange.
 
 > r[rpc.flow-control.credit.initial.zero]
 >

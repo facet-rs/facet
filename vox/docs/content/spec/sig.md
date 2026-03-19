@@ -33,13 +33,13 @@ This means:
 
 ## Signature Hash
 
-The `sig_bytes` used in method identity is a BLAKE3 hash of the method's
-structural signature. This is computed at compile time by the `#[roam::service]`
-macro using [facet](https://facet.rs) type introspection.
+The signature hash is no longer part of method identity (see
+`r[method.identity.computation]`), but the canonical encoding below is
+still used for schema extraction and compatibility tooling.
 
 > r[signature.hash.algorithm]
 >
-> The signature hash MUST be computed by hashing a canonical byte
+> The signature hash is computed by hashing a canonical byte
 > representation of the method signature using BLAKE3.
 
 > r[signature.varint]
@@ -51,8 +51,6 @@ macro using [facet](https://facet.rs) type introspection.
 > r[signature.endianness]
 >
 > All fixed-width integers in signature encoding are little-endian.
-> The final u64 method ID is extracted as the first 8 bytes of the
-> BLAKE3 hash, interpreted as little-endian.
 
 The canonical representation encodes the method signature as a tuple (see
 `r[signature.method]` below). Each type within is encoded recursively:

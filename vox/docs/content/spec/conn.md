@@ -384,8 +384,9 @@ starts only after that conduit has been selected and initialized.
 
 > r[session.handshake.protocol-schema]
 >
-> The `message_payload_schema` exchanged during the handshake describes the
-> `MessagePayload` enum — the top-level type for all post-handshake
+> The `message_payload_schemas` exchanged during the handshake are a
+> self-contained set of schemas describing the `MessagePayload` enum and
+> all types it references — the top-level type for all post-handshake
 > communication. Each peer builds a translation plan for the other's
 > `MessagePayload` schema. This allows the protocol to evolve: peers with
 > different versions of `MessagePayload` can communicate as long as a
