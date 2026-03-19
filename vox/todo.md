@@ -701,21 +701,21 @@ That would move it farther away from parity.
 ### Wire model
 - [ ] Postcard `Message` type parity
 - [ ] Remove stale postcard hello types
-- [ ] Handshake-specific TS types/helpers
-- [ ] Request/response helper field parity
+- [x] Handshake-specific TS types/helpers
+- [x] Request/response helper field parity (schemas field added to Call/Response)
 - [ ] Generated artifact parity
 
 ### Handshake
-- [ ] Raw CBOR handshake send path
-- [ ] Raw CBOR handshake receive path
-- [ ] Handshake result model
+- [x] Raw CBOR handshake send path
+- [x] Raw CBOR handshake receive path
+- [x] Handshake result model
 - [ ] Message plan bootstrap from handshake schema
 - [ ] Resume-key handling
 
 ### Schema exchange
-- [ ] Send in `RequestCall.schemas`
-- [ ] Send in `RequestResponse.schemas`
-- [ ] Receive from incoming request/response
+- [x] Send in `RequestCall.schemas` (codegen-driven CBOR from Rust Facet shapes)
+- [x] Send in `RequestResponse.schemas` (codegen-driven CBOR from Rust Facet shapes)
+- [x] Receive from incoming request/response
 - [ ] Duplicate type handling
 - [ ] Per-connection reset on reconnect
 
@@ -737,7 +737,7 @@ That would move it farther away from parity.
 - [ ] Durable operation-store abstraction
 - [ ] Persist durability obligations
 - [ ] Resume behavior parity
-- [ ] Indeterminate/sealed/released parity
+- [x] Indeterminate/sealed/released parity (persist=true + failClosedOnDrop → INDETERMINATE)
 
 ### Tests
 - [ ] Remove stale hello-exchange tests
