@@ -112,7 +112,8 @@ export type SessionConnectivity =
 export interface ReconnectPolicy {
   /**
    * Maximum number of reconnect attempts before the session is permanently
-   * failed. Defaults to 10. Set to Infinity to retry indefinitely.
+   * failed. Defaults to Infinity (retry forever). Set to a finite number to
+   * give up after that many attempts.
    */
   maxAttempts?: number;
   /**
@@ -273,7 +274,7 @@ async function makeInitiatorEstablishedTransport(
       };
 
       const policy = options.reconnect ?? {};
-      const maxAttempts = policy.maxAttempts ?? 10;
+      const maxAttempts = policy.maxAttempts ?? Infinity;
       const baseDelay = policy.baseDelay ?? 500;
       const maxDelay = policy.maxDelay ?? 30_000;
 
