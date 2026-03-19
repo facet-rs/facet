@@ -139,8 +139,10 @@ const established = await session.initiator(wsConnector("ws://api.example.com"),
     // 'connected' | 'disconnected' | 'reconnecting' | 'failed'
     setConnectionStatus(state);
   },
-  onReconnecting: (attempt) => {
-    console.log(`Reconnecting… attempt ${attempt}`);
+  onReconnecting: (failedAttempt, nextAttemptAt, retryNow) => {
+    const secs = Math.ceil((nextAttemptAt.getTime() - Date.now()) / 1000);
+    console.log(`Attempt ${failedAttempt} failed. Retrying in ${secs}s…`);
+    // retryNow() skips the wait — wire it to a "Retry Now" button.
   },
   onReconnected: () => {
     toast.success("Reconnected");
@@ -219,6 +221,11 @@ async function connect(): Promise<ApiClient> {
           reconnecting: "↻",
           failed:       "✕",
         }[state];
+      },
+      onReconnecting: (failedAttempt, nextAttemptAt, retryNow) => {
+        const secs = Math.ceil((nextAttemptAt.getTime() - Date.now()) / 1000);
+        // Wire retryNow to a "Retry Now" button so users can skip the wait.
+        showReconnectBanner(`Retrying in ${secs}s`, retryNow);
       },
     },
   );

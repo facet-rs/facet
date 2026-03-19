@@ -152,10 +152,27 @@ export interface SessionBuilderOptions {
    */
   keepaliveTimeoutMs?: number;
   /**
-   * Called when the transport drops and the session enters a reconnecting
-   * state. Receives the attempt number (1-based).
+   * Called after each failed reconnect attempt, while the session is waiting
+   * before the next retry.
+   *
+   * @param failedAttempt - Which attempt just failed (1-based).
+   * @param nextAttemptAt - When the next attempt is scheduled (absolute Date).
+   *   Display `Math.ceil((nextAttemptAt.getTime() - Date.now()) / 1000)` for
+   *   a "retrying in Ns" countdown.
+   * @param retryNow - Call this to cancel the wait and retry immediately.
+   *   Safe to call multiple times; subsequent calls are no-ops.
+   *
+   * @example
+   * onReconnecting: (failed, nextAt, retryNow) => {
+   *   const secs = Math.ceil((nextAt.getTime() - Date.now()) / 1000);
+   *   showBanner(`Reconnecting in ${secs}s`, { onRetry: retryNow });
+   * }
    */
-  onReconnecting?: (attempt: number) => void;
+  onReconnecting?: (
+    failedAttempt: number,
+    nextAttemptAt: Date,
+    retryNow: () => void,
+  ) => void;
   /**
    * Called after a successful reconnect. The session continues normally.
    */
@@ -281,10 +298,11 @@ async function makeInitiatorEstablishedTransport(
       const recoverConduit = async (): Promise<Conduit<Message>> => {
         let lastError: Error = new Error("unknown reconnect failure");
 
+        options.onConnectivityChange?.("disconnected");
+
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-          options.onReconnecting?.(attempt);
           options.onConnectivityChange?.("reconnecting");
-          roamLogger()?.debug(`[roam:session] reconnect attempt ${attempt}/${maxAttempts}`);
+          roamLogger()?.debug(`[roam:session] reconnect attempt ${attempt}`);
 
           try {
             const newAttachment = await (transport as LinkSource).nextLink();
@@ -309,15 +327,41 @@ async function makeInitiatorEstablishedTransport(
 
             if (attempt < maxAttempts) {
               const delay = Math.min(baseDelay * Math.pow(2, attempt - 1), maxDelay);
-              roamLogger()?.debug(`[roam:session] retrying in ${delay}ms`);
-              await new Promise<void>((resolve) => setTimeout(resolve, delay));
+              const nextAttemptAt = new Date(Date.now() + delay);
+
+              // Interruptible sleep — retryNow() cancels the wait.
+              let interruptFired = false;
+              let interruptResolve: (() => void) | null = null;
+              const retryNow = (): void => {
+                if (interruptFired) return;
+                interruptFired = true;
+                interruptResolve?.();
+              };
+
+              const sleepPromise = new Promise<void>((resolve) => {
+                const timer = setTimeout(() => {
+                  interruptResolve = null;
+                  resolve();
+                }, delay);
+                interruptResolve = () => {
+                  clearTimeout(timer);
+                  resolve();
+                };
+              });
+
+              roamLogger()?.debug(
+                `[roam:session] retrying in ${delay}ms (next attempt at ${nextAttemptAt.toISOString()})`,
+              );
+              options.onReconnecting?.(attempt, nextAttemptAt, retryNow);
+
+              await sleepPromise;
             }
           }
         }
 
         options.onReconnectFailed?.(lastError);
         options.onConnectivityChange?.("failed");
-        roamLogger()?.error(`[roam:session] all ${maxAttempts} reconnect attempts failed`);
+        roamLogger()?.error(`[roam:session] all reconnect attempts exhausted`);
         throw lastError;
       };
 
