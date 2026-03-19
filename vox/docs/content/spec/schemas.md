@@ -321,7 +321,29 @@ language implementations must produce equivalent CBOR encodings.
 /// The same type always produces the same TypeSchemaId regardless of
 /// connection, session, process, or language. On the wire (CBOR),
 /// a TypeSchemaId is encoded as a CBOR unsigned integer.
+///
+/// For generic types, the TypeSchemaId identifies the *declaration*
+/// (e.g. `Result`), not a specific instantiation (e.g. `Result<u32, E>`).
+/// Concrete type arguments are provided separately at each use site.
 struct TypeSchemaId(u64);
+
+/// A reference to a type in a schema. Either a concrete type
+/// (identified by its TypeSchemaId with optional type arguments for
+/// generic types) or a type variable bound by the enclosing generic.
+enum TypeRef {
+    /// A concrete type, possibly generic.
+    Concrete {
+        type_id: TypeSchemaId,
+        /// Type arguments for generic types. Empty for non-generic types.
+        /// For example, `Vec<String>` is `Concrete { type_id: <Vec>, args: [<String>] }`.
+        args: Vec<TypeRef>,
+    },
+    /// A reference to a type parameter of the enclosing generic type.
+    /// The index refers to the `type_params` list on the `Schema`.
+    /// For example, in `Result<T, E>`, the `Ok` variant's payload
+    /// references `Var(0)` for `T`.
+    Var(u32),
+}
 
 /// The primitive types of the postcard encoding.
 ///
@@ -349,6 +371,10 @@ enum PrimitiveType {
 }
 
 /// The structural description of a type.
+///
+/// Type references within a schema use `TypeRef`, which can be either
+/// a concrete type (with optional type arguments) or a type variable
+/// bound by the schema's `type_params`.
 enum SchemaKind {
     /// A leaf type with no child types.
     Primitive { primitive_type: PrimitiveType },
@@ -365,21 +391,21 @@ enum SchemaKind {
 
     /// An ordered, fixed-arity product type. Must have 1 or more
     /// elements — use `PrimitiveType::Unit` for the zero case.
-    Tuple { elements: Vec<TypeSchemaId> },
+    Tuple { elements: Vec<TypeRef> },
 
     /// A variable-length homogeneous sequence (`Vec<T>`, `HashSet<T>`,
     /// etc.). Sets and lists have the same postcard encoding and are
     /// not distinguished at the schema level.
-    List { element: TypeSchemaId },
+    List { element: TypeRef },
 
     /// A variable-length collection of key-value pairs.
-    Map { key: TypeSchemaId, value: TypeSchemaId },
+    Map { key: TypeRef, value: TypeRef },
 
     /// A fixed-length homogeneous sequence (`[T; N]`).
-    Array { element: TypeSchemaId, length: u64 },
+    Array { element: TypeRef, length: u64 },
 
     /// A value that may be absent (`Option<T>`).
-    Option { element: TypeSchemaId },
+    Option { element: TypeRef },
 }
 
 /// A field in a struct or struct-variant.
@@ -388,7 +414,7 @@ struct FieldSchema {
     /// renaming a field is a breaking change.
     name: String,
     /// The type of this field.
-    type_id: TypeSchemaId,
+    type_ref: TypeRef,
     /// Whether this field is required (has no default value).
     /// Included in the schema so that compatibility tooling can detect
     /// breaking changes — e.g. adding a required field without a default
@@ -413,24 +439,39 @@ enum VariantPayload {
     /// No payload (e.g. `None`, `Disconnected`).
     Unit,
     /// A single unnamed value (e.g. `Some(T)`, `Ok(T)`).
-    Newtype { type_id: TypeSchemaId },
+    Newtype { type_ref: TypeRef },
     /// A tuple of unnamed values (e.g. `Pair(u32, String)`).
-    Tuple { types: Vec<TypeSchemaId> },
+    Tuple { types: Vec<TypeRef> },
     /// Named fields, like a struct (e.g. `Move { x: i32, y: i32 }`).
     Struct { fields: Vec<FieldSchema> },
 }
 
-/// A complete schema: the type ID and the structural description.
-/// Only nominal types (struct, enum) carry a name — structural types
-/// (tuple, list, map, array, option, primitive) are fully described
-/// by their kind.
+/// A complete schema: the type ID, optional type parameters, and the
+/// structural description.
 struct Schema {
-    /// The content hash that identifies this type.
+    /// The content hash that identifies this type declaration.
+    /// For generic types, this identifies the generic declaration
+    /// (e.g. `Result`), not a specific instantiation.
     type_id: TypeSchemaId,
+    /// Type parameter names for generic types. Empty for non-generic
+    /// types. For `Result<T, E>`, this would be `["T", "E"]`.
+    /// The schema body uses `TypeRef::Var(index)` to reference these.
+    type_params: Vec<String>,
     /// The structural description of this type.
     kind: SchemaKind,
 }
 ```
+
+Generic types are sent once per declaration, not once per instantiation.
+For example, `Result<u32, MyError>` and `Result<String, OtherError>` both
+reference the same `Result` schema — only the type arguments at the use
+site differ. This is more efficient on the wire and enables cross-language
+matching where different languages may format generic type names differently.
+
+Container types (`List`, `Map`, `Array`, `Option`) are built-in generics.
+Their element/key/value references use `TypeRef` like any other type
+reference, but they do not need explicit `type_params` because their
+generic structure is implicit in the `SchemaKind` variant.
 
 The normative rules below define the CBOR encoding of these types.
 
@@ -438,7 +479,9 @@ The normative rules below define the CBOR encoding of these types.
 >
 > A schema MUST be a CBOR map containing:
 >
->   * `type_id` — a CBOR unsigned integer (the type's content hash)
+>   * `type_id` — a CBOR unsigned integer (the type declaration's content hash)
+>   * `type_params` — a CBOR array of type parameter names (UTF-8 strings).
+>     Empty array for non-generic types. MAY be omitted if empty.
 >   * `kind` — one of: `"struct"`, `"enum"`, `"tuple"`, `"list"`, `"map"`,
 >     `"array"`, `"option"`, `"primitive"`
 >   * Kind-specific fields as defined below
@@ -446,6 +489,16 @@ The normative rules below define the CBOR encoding of these types.
 > r[schema.format.type-id]
 >
 > A `TypeSchemaId` MUST be encoded as a CBOR unsigned integer.
+
+> r[schema.format.type-ref]
+>
+> A `TypeRef` MUST be encoded as one of:
+>
+>   * A CBOR map `{"concrete": type_id}` — a non-generic concrete type
+>   * A CBOR map `{"concrete": type_id, "args": [type_ref, ...]}` — a
+>     generic type with type arguments (each argument is itself a `TypeRef`)
+>   * A CBOR map `{"var": index}` — a reference to the `index`th type
+>     parameter of the enclosing schema's `type_params` list
 
 > r[schema.format.primitive]
 >
@@ -465,7 +518,7 @@ The normative rules below define the CBOR encoding of these types.
 >   * `name`: the type name (UTF-8 string, MUST NOT be empty)
 >   * `fields`: a CBOR array of field descriptors, each a map with:
 >     - `name`: field name (UTF-8 string)
->     - `type_id`: a `TypeSchemaId` (CBOR unsigned integer)
+>     - `type_ref`: a `TypeRef` (see `r[schema.format.type-ref]`)
 >     - `required`: a CBOR boolean — `true` if the field has no default
 >       value, `false` if it does
 >
@@ -483,8 +536,8 @@ The normative rules below define the CBOR encoding of these types.
 >     - `index`: the postcard variant index (`u32`)
 >     - `payload`: one of:
 >       - `"unit"` — no payload
->       - `{"newtype": type_id}` — single value
->       - `{"tuple": [type_id, ...]}` — tuple of unnamed values
+>       - `{"newtype": type_ref}` — single value
+>       - `{"tuple": [type_ref, ...]}` — tuple of unnamed values
 >       - `{"struct": [field_descriptors...]}` — struct variant
 >         (field descriptors follow `r[schema.format.struct]`)
 
@@ -493,8 +546,8 @@ The normative rules below define the CBOR encoding of these types.
 > Container schemas MUST contain:
 >
 >   * `kind`: `"list"`, `"map"`, `"array"`, or `"option"`
->   * `element`: a `TypeSchemaId` (for list, array, option)
->   * `key` and `value`: `TypeSchemaId`s (for map)
+>   * `element`: a `TypeRef` (for list, array, option)
+>   * `key` and `value`: `TypeRef`s (for map)
 >   * `length`: a `u64` (for array only)
 >
 > Sets (`HashSet<T>`, `BTreeSet<T>`, etc.) have the same postcard encoding
@@ -506,7 +559,7 @@ The normative rules below define the CBOR encoding of these types.
 > A tuple schema MUST contain:
 >
 >   * `kind`: `"tuple"`
->   * `elements`: a CBOR array of `TypeSchemaId`s, one per element, in order
+>   * `elements`: a CBOR array of `TypeRef`s, one per element, in order
 >
 > The `elements` array MUST contain at least one element. A zero-element
 > tuple is not valid — use `PrimitiveType::Unit` instead.
@@ -535,13 +588,14 @@ binding that tells the receiver which type is the root for this
 method's arguments or response.
 
 ```rust
-/// A method binding maps a method ID to the root TypeSchemaId for its
+/// A method binding maps a method ID to the root type for its
 /// arguments or response type.
 struct MethodSchemaBinding {
     method_id: MethodId,
-    /// The TypeSchemaId of the root type (e.g. the args struct for a
-    /// request, or `Result<T, RoamError<E>>` for a response).
-    root_type_schema_id: TypeSchemaId,
+    /// The root type for this method's args or response. This is a
+    /// TypeRef because the root type may be a generic instantiation
+    /// (e.g. `Result<Profile, RoamError<Infallible>>`).
+    root_type: TypeRef,
     direction: BindingDirection,
 }
 
@@ -558,7 +612,7 @@ struct SchemaPayload {
     /// previously sent on this connection.
     schemas: Vec<Schema>,
     /// Method bindings that map method ID + direction to a root
-    /// TypeSchemaId in the schema set. Tells the receiver which schema
+    /// TypeRef in the schema set. Tells the receiver which schema
     /// describes the postcard payload it is about to deserialize.
     method_bindings: Vec<MethodSchemaBinding>,
 }
