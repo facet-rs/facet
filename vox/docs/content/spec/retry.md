@@ -132,9 +132,9 @@ described by two dimensions.
 disconnect, timeout, or cancellation. Once released, the server is no longer
 responsible for carrying that logical operation to completion.
 
-**Persist** is the opposite of volatile. A persist method becomes sticky from
-the instant it is admitted. The dangerous point is treated as immediate on
-invocation.
+**Persist** is the opposite of volatile. A persist method creates a durability
+obligation from the instant it is admitted. The runtime MUST NOT release the
+operation for any reason after admission.
 
 > r[retry.policy.volatile.default]
 >
@@ -183,14 +183,18 @@ safe. `idem` is orthogonal to `persist`.
 
 The two dimensions produce four static method classes:
 
-1. **volatile + non-idem**: best-effort operations. They may be released. Same
-   operation ID is not transparently rerunnable.
-2. **volatile + idem**: re-executable operations. They may be released and
-   later re-run under the same operation ID.
-3. **persist + non-idem**: sticky operations. Once admitted, they must continue
-   toward a terminal outcome or an honest indeterminate failure.
-4. **persist + idem**: sticky and rerunnable operations. They are not released,
-   but if they reach Indeterminate, re-execution remains safe.
+1. **volatile + non-idem**: the runtime may release the operation on client
+   drop, disconnect, timeout, or cancellation. Re-execution of the same
+   logical operation is not permitted.
+2. **volatile + idem**: the runtime may release the operation, but if it does,
+   it may later re-execute the same logical operation under the same
+   operation ID.
+3. **persist + non-idem**: once admitted, the runtime MUST preserve enough
+   state to reach a terminal outcome or report Indeterminate after recovery.
+   Re-execution is not permitted.
+4. **persist + idem**: once admitted, the runtime MUST preserve enough state
+   to reach a terminal outcome or report Indeterminate. If the operation
+   reaches Indeterminate, re-execution remains safe.
 
 # Duplicate attempt handling
 
