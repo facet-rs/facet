@@ -229,8 +229,9 @@ impl<'de> XmlParser<'de> {
                                 let attr_local_name = key.local_name();
                                 let attr_local = core::str::from_utf8(attr_local_name.as_ref())
                                     .map_err(XmlError::InvalidUtf8)?;
+
                                 let value = attr
-                                    .unescape_value()
+                                    .decode_and_unescape_value(self.reader.decoder())
                                     .map_err(|e| XmlError::Parse(e.to_string()))?;
 
                                 self.pending_attrs.push((
