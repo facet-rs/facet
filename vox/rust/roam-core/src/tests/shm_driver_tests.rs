@@ -99,7 +99,6 @@ impl Handler<DriverReplySink> for EchoHandler {
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&result),
                 schemas: Default::default(),
-                channels: vec![],
                 metadata: Default::default(),
             })
             .await;
@@ -179,7 +178,6 @@ impl Handler<DriverReplySink> for BlobEchoHandler {
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&blob),
                 schemas: Default::default(),
-                channels: vec![],
                 metadata: Default::default(),
             })
             .await;

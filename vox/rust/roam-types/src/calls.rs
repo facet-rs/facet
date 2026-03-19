@@ -162,7 +162,6 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
             let wire: Result<(), RoamError<E>> = Err(error);
             self.send_reply(RequestResponse {
                 ret: Payload::outgoing(&wire),
-                channels: vec![],
                 metadata: Default::default(),
                 schemas: Default::default(),
             })
@@ -419,7 +418,6 @@ where
         self.reply
             .send_reply(RequestResponse {
                 ret,
-                channels: vec![],
                 metadata: Default::default(),
                 schemas: Default::default(),
             })

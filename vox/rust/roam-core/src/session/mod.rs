@@ -357,7 +357,6 @@ fn forwarded_request_body<'a>(body: &'a RequestBody<'static>) -> RequestBody<'a>
             schemas: call.schemas.clone(),
         }),
         RequestBody::Response(response) => RequestBody::Response(RequestResponse {
-            channels: response.channels.clone(),
             metadata: response.metadata.clone(),
             ret: forwarded_payload(&response.ret),
             schemas: response.schemas.clone(),

@@ -295,7 +295,6 @@ fn main() {
                 id: RequestId(11),
                 body: RequestBody::Response(RequestResponse {
                     ret: Payload::outgoing(&ret_response),
-                    channels: vec![ChannelId(7)],
                     metadata: meta.clone(),
                     schemas: Default::default(),
                 }),

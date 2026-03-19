@@ -1021,7 +1021,6 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                             Err(roam_error);
                         let _ = self.sender.send_response(req_id, RequestResponse {
                             ret: Payload::outgoing(&error),
-                            channels: vec![],
                             metadata: Default::default(),
                             schemas: Default::default(),
                         }).await;
@@ -1158,7 +1157,6 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                                         req_id,
                                         RequestResponse {
                                             ret: Payload::outgoing(&error),
-                                            channels: vec![],
                                             metadata: Default::default(),
                                             schemas: Default::default(),
                                         },
@@ -1180,7 +1178,6 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                                         req_id,
                                         RequestResponse {
                                             ret: Payload::outgoing(&error),
-                                            channels: vec![],
                                             metadata: Default::default(),
                                             schemas: Default::default(),
                                         },

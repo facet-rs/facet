@@ -178,9 +178,6 @@ structstruck::strike! {
 
                                 /// Respond to a request
                                 Response(struct RequestResponse<'payload> {
-                                    /// Channel IDs for streams in the response, in return type declaration order.
-                                    pub channels: Vec<ChannelId>,
-
                                     /// Arbitrary response metadata
                                     pub metadata: Metadata<'payload>,
 

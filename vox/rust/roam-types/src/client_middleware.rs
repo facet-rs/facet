@@ -292,7 +292,6 @@ mod tests {
                 value: SelfRef::owning(
                     Backing::Boxed(Box::<[u8]>::default()),
                     RequestResponse {
-                        channels: vec![],
                         metadata: vec![],
                         ret: Payload::Incoming(&[]),
                         schemas: Default::default(),

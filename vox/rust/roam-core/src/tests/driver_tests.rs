@@ -305,7 +305,6 @@ impl Handler<DriverReplySink> for EchoHandler {
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&result),
                 schemas: Default::default(),
-                channels: vec![],
                 metadata: Default::default(),
             })
             .await;
@@ -377,7 +376,6 @@ impl Handler<DriverReplySink> for OperationIdHandler {
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&operation_id),
                 schemas: Default::default(),
-                channels: vec![],
                 metadata: Default::default(),
             })
             .await;
@@ -459,7 +457,6 @@ impl Handler<DriverReplySink> for ReplayHandler {
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&result),
                 schemas: Default::default(),
-                channels: vec![],
                 metadata: Default::default(),
             })
             .await;
@@ -505,7 +502,6 @@ impl Handler<DriverReplySink> for PersistentReplyingHandler {
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&123_u32),
                 schemas: Default::default(),
-                channels: vec![],
                 metadata: Default::default(),
             })
             .await;
@@ -535,7 +531,6 @@ impl Handler<DriverReplySink> for ResumableReplyingHandler {
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&result),
                 schemas: Default::default(),
-                channels: vec![],
                 metadata: Default::default(),
             })
             .await;
@@ -569,7 +564,6 @@ impl Handler<DriverReplySink> for RetryAfterResumeHandler {
             .send_reply(RequestResponse {
                 ret: Payload::outgoing(&result),
                 schemas: Default::default(),
-                channels: vec![],
                 metadata: Default::default(),
             })
             .await;
@@ -3016,7 +3010,6 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
             body: RequestBody::Response(RequestResponse {
                 ret: Payload::outgoing(&123_u32),
                 schemas: Default::default(),
-                channels: vec![],
                 metadata: Default::default(),
             }),
         }))
