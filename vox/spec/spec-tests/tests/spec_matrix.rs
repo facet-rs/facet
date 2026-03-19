@@ -2296,62 +2296,152 @@ mod lang_rust_server_typescript_client_tcp {
     #[ignore]
     #[test]
     fn echo() {
-        testbed::run_cross_lang_echo(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo");
+    }
+    #[ignore]
+    #[test]
+    fn reverse() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "reverse");
+    }
+    #[ignore]
+    #[test]
+    fn divide_success() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_success");
     }
     #[ignore]
     #[test]
     fn divide_zero() {
-        testbed::run_cross_lang_divide_zero(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_zero");
+    }
+    #[ignore]
+    #[test]
+    fn divide_overflow() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_overflow");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_found() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_found_no_email() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found_no_email");
     }
     #[ignore]
     #[test]
     fn lookup_not_found() {
-        testbed::run_cross_lang_lookup_not_found(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_not_found");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_access_denied() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_access_denied");
     }
     #[ignore]
     #[test]
     fn echo_point() {
-        testbed::run_cross_lang_echo_point(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_point");
+    }
+    #[ignore]
+    #[test]
+    fn create_person() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_person");
+    }
+    #[ignore]
+    #[test]
+    fn rectangle_area() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "rectangle_area");
     }
     #[ignore]
     #[test]
     fn parse_color() {
-        testbed::run_cross_lang_parse_color(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "parse_color");
+    }
+    #[ignore]
+    #[test]
+    fn get_points() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "get_points");
+    }
+    #[ignore]
+    #[test]
+    fn swap_pair() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "swap_pair");
+    }
+    #[ignore]
+    #[test]
+    fn echo_bytes() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bytes");
+    }
+    #[ignore]
+    #[test]
+    fn echo_bool() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bool");
+    }
+    #[ignore]
+    #[test]
+    fn echo_u64() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_u64");
+    }
+    #[ignore]
+    #[test]
+    fn echo_option_string() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_option_string");
+    }
+    #[ignore]
+    #[test]
+    fn describe_point() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "describe_point");
+    }
+    #[ignore]
+    #[test]
+    fn all_colors() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "all_colors");
+    }
+    #[ignore]
+    #[test]
+    fn echo_shape() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_shape");
     }
     #[ignore]
     #[test]
     fn shape_area() {
-        testbed::run_cross_lang_shape_area(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "shape_area");
     }
     #[ignore]
     #[test]
     fn create_canvas() {
-        testbed::run_cross_lang_create_canvas(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_canvas");
     }
     #[ignore]
     #[test]
     fn process_message() {
-        testbed::run_cross_lang_process_message(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "process_message");
     }
     #[ignore]
     #[test]
     fn pipelining() {
-        testbed::run_cross_lang_pipelining(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "pipelining");
+    }
+    #[ignore]
+    #[test]
+    fn sum_client_to_server() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_client_to_server");
     }
     #[ignore]
     #[test]
     fn sum_large() {
-        testbed::run_cross_lang_sum_large(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_large");
     }
     #[ignore]
     #[test]
     fn generate_large() {
-        testbed::run_cross_lang_generate_large(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "generate_large");
     }
     #[ignore]
     #[test]
     fn transform_bidi() {
-        testbed::run_cross_lang_transform_bidi(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "transform_bidi");
     }
 }
 mod lang_typescript_server_rust_client_tcp {
@@ -2361,62 +2451,152 @@ mod lang_typescript_server_rust_client_tcp {
     #[ignore]
     #[test]
     fn echo() {
-        testbed::run_cross_lang_echo(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo");
+    }
+    #[ignore]
+    #[test]
+    fn reverse() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "reverse");
+    }
+    #[ignore]
+    #[test]
+    fn divide_success() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_success");
     }
     #[ignore]
     #[test]
     fn divide_zero() {
-        testbed::run_cross_lang_divide_zero(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_zero");
+    }
+    #[ignore]
+    #[test]
+    fn divide_overflow() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_overflow");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_found() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_found_no_email() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found_no_email");
     }
     #[ignore]
     #[test]
     fn lookup_not_found() {
-        testbed::run_cross_lang_lookup_not_found(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_not_found");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_access_denied() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_access_denied");
     }
     #[ignore]
     #[test]
     fn echo_point() {
-        testbed::run_cross_lang_echo_point(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_point");
+    }
+    #[ignore]
+    #[test]
+    fn create_person() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_person");
+    }
+    #[ignore]
+    #[test]
+    fn rectangle_area() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "rectangle_area");
     }
     #[ignore]
     #[test]
     fn parse_color() {
-        testbed::run_cross_lang_parse_color(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "parse_color");
+    }
+    #[ignore]
+    #[test]
+    fn get_points() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "get_points");
+    }
+    #[ignore]
+    #[test]
+    fn swap_pair() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "swap_pair");
+    }
+    #[ignore]
+    #[test]
+    fn echo_bytes() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bytes");
+    }
+    #[ignore]
+    #[test]
+    fn echo_bool() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bool");
+    }
+    #[ignore]
+    #[test]
+    fn echo_u64() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_u64");
+    }
+    #[ignore]
+    #[test]
+    fn echo_option_string() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_option_string");
+    }
+    #[ignore]
+    #[test]
+    fn describe_point() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "describe_point");
+    }
+    #[ignore]
+    #[test]
+    fn all_colors() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "all_colors");
+    }
+    #[ignore]
+    #[test]
+    fn echo_shape() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_shape");
     }
     #[ignore]
     #[test]
     fn shape_area() {
-        testbed::run_cross_lang_shape_area(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "shape_area");
     }
     #[ignore]
     #[test]
     fn create_canvas() {
-        testbed::run_cross_lang_create_canvas(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_canvas");
     }
     #[ignore]
     #[test]
     fn process_message() {
-        testbed::run_cross_lang_process_message(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "process_message");
     }
     #[ignore]
     #[test]
     fn pipelining() {
-        testbed::run_cross_lang_pipelining(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "pipelining");
+    }
+    #[ignore]
+    #[test]
+    fn sum_client_to_server() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_client_to_server");
     }
     #[ignore]
     #[test]
     fn sum_large() {
-        testbed::run_cross_lang_sum_large(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_large");
     }
     #[ignore]
     #[test]
     fn generate_large() {
-        testbed::run_cross_lang_generate_large(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "generate_large");
     }
     #[ignore]
     #[test]
     fn transform_bidi() {
-        testbed::run_cross_lang_transform_bidi(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "transform_bidi");
     }
 }
 mod lang_typescript_server_typescript_client_tcp {
@@ -2426,62 +2606,152 @@ mod lang_typescript_server_typescript_client_tcp {
     #[ignore]
     #[test]
     fn echo() {
-        testbed::run_cross_lang_echo(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo");
+    }
+    #[ignore]
+    #[test]
+    fn reverse() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "reverse");
+    }
+    #[ignore]
+    #[test]
+    fn divide_success() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_success");
     }
     #[ignore]
     #[test]
     fn divide_zero() {
-        testbed::run_cross_lang_divide_zero(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_zero");
+    }
+    #[ignore]
+    #[test]
+    fn divide_overflow() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_overflow");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_found() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_found_no_email() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found_no_email");
     }
     #[ignore]
     #[test]
     fn lookup_not_found() {
-        testbed::run_cross_lang_lookup_not_found(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_not_found");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_access_denied() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_access_denied");
     }
     #[ignore]
     #[test]
     fn echo_point() {
-        testbed::run_cross_lang_echo_point(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_point");
+    }
+    #[ignore]
+    #[test]
+    fn create_person() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_person");
+    }
+    #[ignore]
+    #[test]
+    fn rectangle_area() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "rectangle_area");
     }
     #[ignore]
     #[test]
     fn parse_color() {
-        testbed::run_cross_lang_parse_color(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "parse_color");
+    }
+    #[ignore]
+    #[test]
+    fn get_points() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "get_points");
+    }
+    #[ignore]
+    #[test]
+    fn swap_pair() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "swap_pair");
+    }
+    #[ignore]
+    #[test]
+    fn echo_bytes() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bytes");
+    }
+    #[ignore]
+    #[test]
+    fn echo_bool() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bool");
+    }
+    #[ignore]
+    #[test]
+    fn echo_u64() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_u64");
+    }
+    #[ignore]
+    #[test]
+    fn echo_option_string() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_option_string");
+    }
+    #[ignore]
+    #[test]
+    fn describe_point() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "describe_point");
+    }
+    #[ignore]
+    #[test]
+    fn all_colors() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "all_colors");
+    }
+    #[ignore]
+    #[test]
+    fn echo_shape() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_shape");
     }
     #[ignore]
     #[test]
     fn shape_area() {
-        testbed::run_cross_lang_shape_area(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "shape_area");
     }
     #[ignore]
     #[test]
     fn create_canvas() {
-        testbed::run_cross_lang_create_canvas(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_canvas");
     }
     #[ignore]
     #[test]
     fn process_message() {
-        testbed::run_cross_lang_process_message(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "process_message");
     }
     #[ignore]
     #[test]
     fn pipelining() {
-        testbed::run_cross_lang_pipelining(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "pipelining");
+    }
+    #[ignore]
+    #[test]
+    fn sum_client_to_server() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_client_to_server");
     }
     #[ignore]
     #[test]
     fn sum_large() {
-        testbed::run_cross_lang_sum_large(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_large");
     }
     #[ignore]
     #[test]
     fn generate_large() {
-        testbed::run_cross_lang_generate_large(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "generate_large");
     }
     #[ignore]
     #[test]
     fn transform_bidi() {
-        testbed::run_cross_lang_transform_bidi(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "transform_bidi");
     }
 }
 mod lang_rust_server_swift_client_tcp {
@@ -2491,62 +2761,152 @@ mod lang_rust_server_swift_client_tcp {
     #[ignore]
     #[test]
     fn echo() {
-        testbed::run_cross_lang_echo(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo");
+    }
+    #[ignore]
+    #[test]
+    fn reverse() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "reverse");
+    }
+    #[ignore]
+    #[test]
+    fn divide_success() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_success");
     }
     #[ignore]
     #[test]
     fn divide_zero() {
-        testbed::run_cross_lang_divide_zero(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_zero");
+    }
+    #[ignore]
+    #[test]
+    fn divide_overflow() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_overflow");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_found() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_found_no_email() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found_no_email");
     }
     #[ignore]
     #[test]
     fn lookup_not_found() {
-        testbed::run_cross_lang_lookup_not_found(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_not_found");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_access_denied() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_access_denied");
     }
     #[ignore]
     #[test]
     fn echo_point() {
-        testbed::run_cross_lang_echo_point(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_point");
+    }
+    #[ignore]
+    #[test]
+    fn create_person() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_person");
+    }
+    #[ignore]
+    #[test]
+    fn rectangle_area() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "rectangle_area");
     }
     #[ignore]
     #[test]
     fn parse_color() {
-        testbed::run_cross_lang_parse_color(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "parse_color");
+    }
+    #[ignore]
+    #[test]
+    fn get_points() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "get_points");
+    }
+    #[ignore]
+    #[test]
+    fn swap_pair() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "swap_pair");
+    }
+    #[ignore]
+    #[test]
+    fn echo_bytes() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bytes");
+    }
+    #[ignore]
+    #[test]
+    fn echo_bool() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bool");
+    }
+    #[ignore]
+    #[test]
+    fn echo_u64() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_u64");
+    }
+    #[ignore]
+    #[test]
+    fn echo_option_string() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_option_string");
+    }
+    #[ignore]
+    #[test]
+    fn describe_point() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "describe_point");
+    }
+    #[ignore]
+    #[test]
+    fn all_colors() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "all_colors");
+    }
+    #[ignore]
+    #[test]
+    fn echo_shape() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_shape");
     }
     #[ignore]
     #[test]
     fn shape_area() {
-        testbed::run_cross_lang_shape_area(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "shape_area");
     }
     #[ignore]
     #[test]
     fn create_canvas() {
-        testbed::run_cross_lang_create_canvas(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_canvas");
     }
     #[ignore]
     #[test]
     fn process_message() {
-        testbed::run_cross_lang_process_message(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "process_message");
     }
     #[ignore]
     #[test]
     fn pipelining() {
-        testbed::run_cross_lang_pipelining(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "pipelining");
+    }
+    #[ignore]
+    #[test]
+    fn sum_client_to_server() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_client_to_server");
     }
     #[ignore]
     #[test]
     fn sum_large() {
-        testbed::run_cross_lang_sum_large(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_large");
     }
     #[ignore]
     #[test]
     fn generate_large() {
-        testbed::run_cross_lang_generate_large(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "generate_large");
     }
     #[ignore]
     #[test]
     fn transform_bidi() {
-        testbed::run_cross_lang_transform_bidi(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "transform_bidi");
     }
 }
 mod lang_swift_server_rust_client_tcp {
@@ -2556,62 +2916,152 @@ mod lang_swift_server_rust_client_tcp {
     #[ignore]
     #[test]
     fn echo() {
-        testbed::run_cross_lang_echo(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo");
+    }
+    #[ignore]
+    #[test]
+    fn reverse() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "reverse");
+    }
+    #[ignore]
+    #[test]
+    fn divide_success() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_success");
     }
     #[ignore]
     #[test]
     fn divide_zero() {
-        testbed::run_cross_lang_divide_zero(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_zero");
+    }
+    #[ignore]
+    #[test]
+    fn divide_overflow() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_overflow");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_found() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_found_no_email() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found_no_email");
     }
     #[ignore]
     #[test]
     fn lookup_not_found() {
-        testbed::run_cross_lang_lookup_not_found(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_not_found");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_access_denied() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_access_denied");
     }
     #[ignore]
     #[test]
     fn echo_point() {
-        testbed::run_cross_lang_echo_point(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_point");
+    }
+    #[ignore]
+    #[test]
+    fn create_person() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_person");
+    }
+    #[ignore]
+    #[test]
+    fn rectangle_area() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "rectangle_area");
     }
     #[ignore]
     #[test]
     fn parse_color() {
-        testbed::run_cross_lang_parse_color(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "parse_color");
+    }
+    #[ignore]
+    #[test]
+    fn get_points() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "get_points");
+    }
+    #[ignore]
+    #[test]
+    fn swap_pair() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "swap_pair");
+    }
+    #[ignore]
+    #[test]
+    fn echo_bytes() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bytes");
+    }
+    #[ignore]
+    #[test]
+    fn echo_bool() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bool");
+    }
+    #[ignore]
+    #[test]
+    fn echo_u64() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_u64");
+    }
+    #[ignore]
+    #[test]
+    fn echo_option_string() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_option_string");
+    }
+    #[ignore]
+    #[test]
+    fn describe_point() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "describe_point");
+    }
+    #[ignore]
+    #[test]
+    fn all_colors() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "all_colors");
+    }
+    #[ignore]
+    #[test]
+    fn echo_shape() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_shape");
     }
     #[ignore]
     #[test]
     fn shape_area() {
-        testbed::run_cross_lang_shape_area(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "shape_area");
     }
     #[ignore]
     #[test]
     fn create_canvas() {
-        testbed::run_cross_lang_create_canvas(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_canvas");
     }
     #[ignore]
     #[test]
     fn process_message() {
-        testbed::run_cross_lang_process_message(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "process_message");
     }
     #[ignore]
     #[test]
     fn pipelining() {
-        testbed::run_cross_lang_pipelining(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "pipelining");
+    }
+    #[ignore]
+    #[test]
+    fn sum_client_to_server() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_client_to_server");
     }
     #[ignore]
     #[test]
     fn sum_large() {
-        testbed::run_cross_lang_sum_large(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_large");
     }
     #[ignore]
     #[test]
     fn generate_large() {
-        testbed::run_cross_lang_generate_large(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "generate_large");
     }
     #[ignore]
     #[test]
     fn transform_bidi() {
-        testbed::run_cross_lang_transform_bidi(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "transform_bidi");
     }
 }
 mod lang_typescript_server_swift_client_tcp {
@@ -2621,62 +3071,152 @@ mod lang_typescript_server_swift_client_tcp {
     #[ignore]
     #[test]
     fn echo() {
-        testbed::run_cross_lang_echo(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo");
+    }
+    #[ignore]
+    #[test]
+    fn reverse() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "reverse");
+    }
+    #[ignore]
+    #[test]
+    fn divide_success() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_success");
     }
     #[ignore]
     #[test]
     fn divide_zero() {
-        testbed::run_cross_lang_divide_zero(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_zero");
+    }
+    #[ignore]
+    #[test]
+    fn divide_overflow() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_overflow");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_found() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_found_no_email() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found_no_email");
     }
     #[ignore]
     #[test]
     fn lookup_not_found() {
-        testbed::run_cross_lang_lookup_not_found(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_not_found");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_access_denied() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_access_denied");
     }
     #[ignore]
     #[test]
     fn echo_point() {
-        testbed::run_cross_lang_echo_point(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_point");
+    }
+    #[ignore]
+    #[test]
+    fn create_person() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_person");
+    }
+    #[ignore]
+    #[test]
+    fn rectangle_area() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "rectangle_area");
     }
     #[ignore]
     #[test]
     fn parse_color() {
-        testbed::run_cross_lang_parse_color(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "parse_color");
+    }
+    #[ignore]
+    #[test]
+    fn get_points() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "get_points");
+    }
+    #[ignore]
+    #[test]
+    fn swap_pair() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "swap_pair");
+    }
+    #[ignore]
+    #[test]
+    fn echo_bytes() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bytes");
+    }
+    #[ignore]
+    #[test]
+    fn echo_bool() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bool");
+    }
+    #[ignore]
+    #[test]
+    fn echo_u64() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_u64");
+    }
+    #[ignore]
+    #[test]
+    fn echo_option_string() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_option_string");
+    }
+    #[ignore]
+    #[test]
+    fn describe_point() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "describe_point");
+    }
+    #[ignore]
+    #[test]
+    fn all_colors() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "all_colors");
+    }
+    #[ignore]
+    #[test]
+    fn echo_shape() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_shape");
     }
     #[ignore]
     #[test]
     fn shape_area() {
-        testbed::run_cross_lang_shape_area(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "shape_area");
     }
     #[ignore]
     #[test]
     fn create_canvas() {
-        testbed::run_cross_lang_create_canvas(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_canvas");
     }
     #[ignore]
     #[test]
     fn process_message() {
-        testbed::run_cross_lang_process_message(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "process_message");
     }
     #[ignore]
     #[test]
     fn pipelining() {
-        testbed::run_cross_lang_pipelining(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "pipelining");
+    }
+    #[ignore]
+    #[test]
+    fn sum_client_to_server() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_client_to_server");
     }
     #[ignore]
     #[test]
     fn sum_large() {
-        testbed::run_cross_lang_sum_large(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_large");
     }
     #[ignore]
     #[test]
     fn generate_large() {
-        testbed::run_cross_lang_generate_large(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "generate_large");
     }
     #[ignore]
     #[test]
     fn transform_bidi() {
-        testbed::run_cross_lang_transform_bidi(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "transform_bidi");
     }
 }
 mod lang_swift_server_typescript_client_tcp {
@@ -2686,62 +3226,152 @@ mod lang_swift_server_typescript_client_tcp {
     #[ignore]
     #[test]
     fn echo() {
-        testbed::run_cross_lang_echo(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo");
+    }
+    #[ignore]
+    #[test]
+    fn reverse() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "reverse");
+    }
+    #[ignore]
+    #[test]
+    fn divide_success() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_success");
     }
     #[ignore]
     #[test]
     fn divide_zero() {
-        testbed::run_cross_lang_divide_zero(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_zero");
+    }
+    #[ignore]
+    #[test]
+    fn divide_overflow() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_overflow");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_found() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_found_no_email() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found_no_email");
     }
     #[ignore]
     #[test]
     fn lookup_not_found() {
-        testbed::run_cross_lang_lookup_not_found(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_not_found");
+    }
+    #[ignore]
+    #[test]
+    fn lookup_access_denied() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_access_denied");
     }
     #[ignore]
     #[test]
     fn echo_point() {
-        testbed::run_cross_lang_echo_point(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_point");
+    }
+    #[ignore]
+    #[test]
+    fn create_person() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_person");
+    }
+    #[ignore]
+    #[test]
+    fn rectangle_area() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "rectangle_area");
     }
     #[ignore]
     #[test]
     fn parse_color() {
-        testbed::run_cross_lang_parse_color(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "parse_color");
+    }
+    #[ignore]
+    #[test]
+    fn get_points() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "get_points");
+    }
+    #[ignore]
+    #[test]
+    fn swap_pair() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "swap_pair");
+    }
+    #[ignore]
+    #[test]
+    fn echo_bytes() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bytes");
+    }
+    #[ignore]
+    #[test]
+    fn echo_bool() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bool");
+    }
+    #[ignore]
+    #[test]
+    fn echo_u64() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_u64");
+    }
+    #[ignore]
+    #[test]
+    fn echo_option_string() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_option_string");
+    }
+    #[ignore]
+    #[test]
+    fn describe_point() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "describe_point");
+    }
+    #[ignore]
+    #[test]
+    fn all_colors() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "all_colors");
+    }
+    #[ignore]
+    #[test]
+    fn echo_shape() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_shape");
     }
     #[ignore]
     #[test]
     fn shape_area() {
-        testbed::run_cross_lang_shape_area(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "shape_area");
     }
     #[ignore]
     #[test]
     fn create_canvas() {
-        testbed::run_cross_lang_create_canvas(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_canvas");
     }
     #[ignore]
     #[test]
     fn process_message() {
-        testbed::run_cross_lang_process_message(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "process_message");
     }
     #[ignore]
     #[test]
     fn pipelining() {
-        testbed::run_cross_lang_pipelining(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "pipelining");
+    }
+    #[ignore]
+    #[test]
+    fn sum_client_to_server() {
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_client_to_server");
     }
     #[ignore]
     #[test]
     fn sum_large() {
-        testbed::run_cross_lang_sum_large(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_large");
     }
     #[ignore]
     #[test]
     fn generate_large() {
-        testbed::run_cross_lang_generate_large(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "generate_large");
     }
     #[ignore]
     #[test]
     fn transform_bidi() {
-        testbed::run_cross_lang_transform_bidi(SERVER, CLIENT);
+        spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "transform_bidi");
     }
 }
 mod lang_typescript_evolved_schema_compat {

@@ -844,55 +844,56 @@ fn generate_spec_matrix(
         },
     ];
 
-    let cross_lang_cases = [
-        TestCase {
-            name: "echo",
-            call: "testbed::run_cross_lang_echo",
-        },
-        TestCase {
-            name: "divide_zero",
-            call: "testbed::run_cross_lang_divide_zero",
-        },
-        TestCase {
-            name: "lookup_not_found",
-            call: "testbed::run_cross_lang_lookup_not_found",
-        },
-        TestCase {
-            name: "echo_point",
-            call: "testbed::run_cross_lang_echo_point",
-        },
-        TestCase {
-            name: "parse_color",
-            call: "testbed::run_cross_lang_parse_color",
-        },
-        TestCase {
-            name: "shape_area",
-            call: "testbed::run_cross_lang_shape_area",
-        },
-        TestCase {
-            name: "create_canvas",
-            call: "testbed::run_cross_lang_create_canvas",
-        },
-        TestCase {
-            name: "process_message",
-            call: "testbed::run_cross_lang_process_message",
-        },
-        TestCase {
-            name: "pipelining",
-            call: "testbed::run_cross_lang_pipelining",
-        },
-        TestCase {
-            name: "sum_large",
-            call: "testbed::run_cross_lang_sum_large",
-        },
-        TestCase {
-            name: "generate_large",
-            call: "testbed::run_cross_lang_generate_large",
-        },
-        TestCase {
-            name: "transform_bidi",
-            call: "testbed::run_cross_lang_transform_bidi",
-        },
+    // Cross-language scenario names are the single source of truth.
+    // The xtask generates inline calls to run_cross_language_scenario —
+    // no wrapper functions needed in testbed.rs.
+    let cross_lang_scenarios: &[(&str, &str)] = &[
+        // Basic RPC
+        ("echo", "r[verify call.initiate]"),
+        ("reverse", "r[verify call.initiate]"),
+        // Fallible — all error variants
+        ("divide_success", "r[verify call.error.user]"),
+        ("divide_zero", "r[verify call.error.user]"),
+        ("divide_overflow", "r[verify call.error.user]"),
+        ("lookup_found", "r[verify call.error.user]"),
+        ("lookup_found_no_email", "r[verify call.error.user]"),
+        ("lookup_not_found", "r[verify call.error.user]"),
+        ("lookup_access_denied", "r[verify call.error.user]"),
+        // Struct / nested struct
+        ("echo_point", "r[verify encoding.struct]"),
+        ("create_person", "r[verify encoding.struct]"),
+        ("rectangle_area", "r[verify encoding.struct.nested]"),
+        // Option return
+        ("parse_color", "r[verify encoding.option.return]"),
+        // Vec return
+        ("get_points", "r[verify encoding.vec]"),
+        // Tuple
+        ("swap_pair", "r[verify encoding.tuple]"),
+        // Primitive types
+        ("echo_bytes", "r[verify encoding.bytes]"),
+        ("echo_bool", "r[verify encoding.bool]"),
+        ("echo_u64", "r[verify encoding.u64]"),
+        ("echo_option_string", "r[verify encoding.option]"),
+        // Multi-arg struct return
+        ("describe_point", "r[verify encoding.struct.multi-arg]"),
+        // Enum variants
+        ("all_colors", "r[verify encoding.enum.unit-variants]"),
+        ("echo_shape", "r[verify encoding.enum.struct-variants]"),
+        ("shape_area", "r[verify encoding.enum.struct-variants]"),
+        // Complex nested + Vec<enum>
+        ("create_canvas", "r[verify encoding.struct.nested]"),
+        // Enum with newtype variants
+        (
+            "process_message",
+            "r[verify encoding.enum.newtype-variants]",
+        ),
+        // Pipelining
+        ("pipelining", "r[verify call.pipelining.allowed]"),
+        // Channels
+        ("sum_client_to_server", "r[verify channeling.caller-pov]"),
+        ("sum_large", "r[verify channeling.flow-control]"),
+        ("generate_large", "r[verify channeling.flow-control]"),
+        ("transform_bidi", "r[verify channeling.type]"),
     ];
 
     let cross_lang_mods: Vec<TokenStream> = cross_lang_combos
@@ -901,15 +902,20 @@ fn generate_spec_matrix(
             let mod_ident = Ident::new(c.mod_name, Span::call_site());
             let server: TokenStream = c.server_const.parse().unwrap();
             let client: TokenStream = c.client_const.parse().unwrap();
-            let fns: Vec<TokenStream> = cross_lang_cases
+            // Inline the call directly — no wrapper functions needed.
+            let fns: Vec<TokenStream> = cross_lang_scenarios
                 .iter()
-                .map(|t| {
-                    let fn_ident = Ident::new(t.name, Span::call_site());
-                    let call: TokenStream = t.call.parse().unwrap();
+                .map(|(scenario, _spec_ref)| {
+                    let fn_ident = Ident::new(scenario, Span::call_site());
+                    let scenario_lit = scenario;
                     quote! {
                         #[ignore]
                         #[test]
-                        fn #fn_ident() { #call(SERVER, CLIENT); }
+                        fn #fn_ident() {
+                            spec_tests::harness::run_cross_language_scenario(
+                                SERVER, CLIENT, #scenario_lit,
+                            );
+                        }
                     }
                 })
                 .collect();
