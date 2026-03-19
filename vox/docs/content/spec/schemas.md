@@ -68,23 +68,106 @@ A type ID uniquely identifies a type. It is an enum with two variants:
 
 > r[schema.type-id.hash]
 >
-> The content hash of a non-recursive type is computed from its
-> postcard-level structure:
+> The content hash of a type is computed by feeding a canonical byte
+> sequence into blake3, then taking the first 8 bytes of the output as
+> a little-endian `u64`. The canonical byte sequence is constructed by
+> updating the hasher with the components described below. All strings
+> are fed as raw UTF-8 bytes with no length prefix or terminator. A
+> `u64` value (such as a child type hash or array length) is fed as 8
+> bytes in little-endian order. A `u32` value (such as a variant index)
+> is fed as 4 bytes in little-endian order.
 >
->   * **Primitives:** hash of the kind string (e.g. `"u32"`, `"string"`)
->   * **Structs:** hash of `"struct"`, followed by each field's name and
->     the content hash of its type, in declaration order
->   * **Enums:** hash of `"enum"`, followed by each variant's name,
->     variant index, and payload structure (with content hashes for any
->     types in the payload), in declaration order
->   * **Containers** (list, set, option, etc.): hash of the kind string
->     and the content hash(es) of element/key/value types
->   * **Tuples:** hash of `"tuple"` and the content hashes of each
->     element type, in order
+> Implementations MUST produce identical hashes for structurally
+> identical types regardless of the source language.
+
+## Primitive type hashes
+
+The hash input for a primitive type is a single tag string. Because the
+hash operates at the postcard encoding level — not at the source-language
+type level — Rust newtypes, TypeScript type aliases, and other
+language-level wrappers over the same underlying type all produce the
+same hash. For example, `struct UserId(u64)` and `struct PostId(u64)`
+both hash as `u64`.
+
+> r[schema.type-id.hash.primitives]
 >
-> The hash function is blake3, truncated to 64 bits. Implementations
-> MUST produce identical hashes for structurally identical types
-> regardless of the source language.
+> The hash of a primitive type is `blake3(tag)[0..8]` where `tag` is one
+> of the following UTF-8 strings:
+>
+> | Postcard type | Tag string |
+> |---------------|------------|
+> | bool          | `"bool"`   |
+> | u8            | `"u8"`     |
+> | u16           | `"u16"`    |
+> | u32           | `"u32"`    |
+> | u64           | `"u64"`    |
+> | u128          | `"u128"`   |
+> | i8            | `"i8"`     |
+> | i16           | `"i16"`    |
+> | i32           | `"i32"`    |
+> | i64           | `"i64"`    |
+> | i128          | `"i128"`   |
+> | f32           | `"f32"`    |
+> | f64           | `"f64"`    |
+> | char          | `"char"`   |
+> | string        | `"string"` |
+> | unit          | `"unit"`   |
+> | bytes         | `"bytes"`  |
+>
+> These 17 hashes are constants. Implementations MAY precompute them.
+
+## Struct hashes
+
+> r[schema.type-id.hash.struct]
+>
+> To hash a struct, update the hasher with:
+>
+>   1. The tag `"struct"`
+>   2. For each field, in declaration order:
+>      a. The field name (UTF-8 bytes)
+>      b. The content hash of the field's type (8 bytes, little-endian)
+>
+> Fields are not length-prefixed — the field name is followed immediately
+> by the 8-byte type hash, which provides an unambiguous boundary.
+
+## Enum hashes
+
+> r[schema.type-id.hash.enum]
+>
+> To hash an enum, update the hasher with:
+>
+>   1. The tag `"enum"`
+>   2. For each variant, in declaration order:
+>      a. The variant name (UTF-8 bytes)
+>      b. The variant index as a `u32` (4 bytes, little-endian)
+>      c. The payload tag: `"unit"`, `"newtype"`, or `"struct"`
+>      d. For newtype payloads: the content hash of the inner type
+>         (8 bytes, little-endian)
+>      e. For struct payloads: each field as in `r[schema.type-id.hash.struct]`
+>         step 2 (name then type hash, in order)
+
+## Container hashes
+
+> r[schema.type-id.hash.container]
+>
+> To hash a container type, update the hasher with:
+>
+>   * **List:** `"list"` then the element type hash
+>   * **Set:** `"set"` then the element type hash
+>   * **Option:** `"option"` then the element type hash
+>   * **Array:** `"array"` then the element type hash, then the length
+>     as a `u64` (8 bytes, little-endian)
+>   * **Map:** `"map"` then the key type hash, then the value type hash
+
+## Tuple hashes
+
+> r[schema.type-id.hash.tuple]
+>
+> To hash a tuple, update the hasher with:
+>
+>   1. The tag `"tuple"`
+>   2. The content hash of each element type, in order (8 bytes each,
+>      little-endian)
 
 Content hashes give type IDs a universal meaning. A peer that receives
 a schema tagged with a content hash it has already seen — from this
