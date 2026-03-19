@@ -272,10 +272,12 @@ Example: a recursive tree type.
 //                    || L("children") || hash_of(list, SENTINEL))
 //   → preliminary_hash = 0xABCD...
 //
-// Step 2: canonical order (only one type, so trivial)
+// Step 2: deduplication (only one type, nothing to dedup)
+//
+// Step 3: canonical order (only one type, so trivial)
 //   [TreeNode]
 //
-// Step 3: final hash
+// Step 4: final hash
 //   group_hash = blake3(preliminary_hash)[0..8]
 //   TreeNode.type_id = blake3(group_hash || 0u64)[0..8]
 ```
@@ -292,10 +294,12 @@ Example: mutually recursive types.
 //                    || L("Add") || 1u32 || L("struct") || L("left") || SENTINEL
 //                    || L("right") || SENTINEL)                    → 0x2222...
 //
-// Step 2: canonical order (sort by preliminary hash)
+// Step 2: deduplication (both types are structurally distinct, nothing to dedup)
+//
+// Step 3: canonical order (sort by preliminary hash)
 //   [Expr (0x1111), ExprBody (0x2222)]
 //
-// Step 3: final hashes
+// Step 4: final hashes
 //   group_hash = blake3(0x1111... || 0x2222...)[0..8]
 //   Expr.type_id     = blake3(group_hash || 0u64)[0..8]
 //   ExprBody.type_id = blake3(group_hash || 1u64)[0..8]
