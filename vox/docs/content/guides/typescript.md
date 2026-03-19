@@ -224,8 +224,10 @@ async function connect(): Promise<ApiClient> {
       },
       onReconnecting: (failedAttempt, nextAttemptAt, retryNow) => {
         const secs = Math.ceil((nextAttemptAt.getTime() - Date.now()) / 1000);
-        // Wire retryNow to a "Retry Now" button so users can skip the wait.
-        showReconnectBanner(`Retrying in ${secs}s`, retryNow);
+        // Replace with your own UI — e.g. a banner with a "Retry Now" button.
+        // Call retryNow() from that button's onClick to skip the wait.
+        console.log(`Attempt ${failedAttempt} failed. Retrying in ${secs}s.`);
+        document.getElementById("retry-btn")?.addEventListener("click", retryNow, { once: true });
       },
     },
   );
