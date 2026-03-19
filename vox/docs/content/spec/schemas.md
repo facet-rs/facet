@@ -274,13 +274,117 @@ A schema describes a single type. Schemas are CBOR-encoded and
 self-contained — every type referenced by a schema is either a primitive
 or is referenced by its type ID (a content hash or bundle-local index).
 
+The following Rust declarations define the schema data model. Other
+language implementations must produce equivalent CBOR encodings.
+
+```rust
+/// A type identifier — either a content hash or a bundle-local index.
+enum TypeId {
+    /// Structural content hash (blake3, truncated to 64 bits).
+    Hash(u64),
+    /// Bundle-local index for recursive type references.
+    Index(u64),
+}
+
+/// A primitive postcard type.
+enum PrimitiveType {
+    Bool, U8, U16, U32, U64, U128,
+    I8, I16, I32, I64, I128,
+    F32, F64, Char, String, Unit, Bytes,
+}
+
+/// The structural description of a type.
+enum SchemaKind {
+    Primitive {
+        primitive_type: PrimitiveType,
+    },
+    Struct {
+        fields: Vec<FieldSchema>,
+    },
+    Enum {
+        variants: Vec<VariantSchema>,
+    },
+    Tuple {
+        elements: Vec<TypeId>,
+    },
+    List {
+        element: TypeId,
+    },
+    Map {
+        key: TypeId,
+        value: TypeId,
+    },
+    Set {
+        element: TypeId,
+    },
+    Array {
+        element: TypeId,
+        length: u64,
+    },
+    Option {
+        element: TypeId,
+    },
+}
+
+/// A field in a struct or struct-variant.
+struct FieldSchema {
+    name: String,
+    type_id: TypeId,
+    required: bool,
+}
+
+/// A variant in an enum.
+struct VariantSchema {
+    name: String,
+    index: u32,
+    payload: VariantPayload,
+}
+
+/// The payload of an enum variant.
+enum VariantPayload {
+    Unit,
+    Newtype { type_id: TypeId },
+    Struct { fields: Vec<FieldSchema> },
+}
+
+/// A complete schema: the type ID plus its structural description.
+struct Schema {
+    type_id: TypeId,
+    /// Diagnostic name (e.g. "Point", "Vec<String>"). Not used for
+    /// identity or matching — only for error messages and tooling.
+    name: String,
+    kind: SchemaKind,
+}
+```
+
+The normative rules below define the CBOR encoding of these types.
+
 > r[schema.format]
 >
 > A schema MUST be a CBOR map containing:
 >
+>   * `type_id` — the type ID of the schema (`Hash(u64)` or `Index(u64)`)
+>   * `name` — a diagnostic string (not used for matching)
 >   * `kind` — one of: `"struct"`, `"enum"`, `"tuple"`, `"list"`, `"map"`,
 >     `"set"`, `"array"`, `"option"`, `"primitive"`
 >   * Kind-specific fields as defined below
+
+> r[schema.format.type-id]
+>
+> A `TypeId` MUST be encoded as one of:
+>
+>   * A CBOR unsigned integer — interpreted as `Hash(u64)`
+>   * A CBOR map with a single key `"index"` whose value is a CBOR
+>     unsigned integer — interpreted as `Index(u64)`
+
+> r[schema.format.primitive]
+>
+> A primitive schema MUST contain:
+>
+>   * `kind`: `"primitive"`
+>   * `primitive_type`: one of `"bool"`, `"u8"`, `"u16"`, `"u32"`,
+>     `"u64"`, `"u128"`, `"i8"`, `"i16"`, `"i32"`, `"i64"`, `"i128"`,
+>     `"f32"`, `"f64"`, `"char"`, `"string"`, `"unit"`, `"bytes"`
 
 > r[schema.format.struct]
 >
@@ -289,7 +393,7 @@ or is referenced by its type ID (a content hash or bundle-local index).
 >   * `kind`: `"struct"`
 >   * `fields`: a CBOR array of field descriptors, each a map with:
 >     - `name`: field name (UTF-8 string)
->     - `type_id`: the type ID of the field's type (`Hash(u64)` or `Index(u64)`)
+>     - `type_id`: a `TypeId` (`Hash(u64)` or `Index(u64)`)
 >     - `required`: boolean — `true` if the field has no default value
 >
 > Fields MUST be listed in declaration order (which is also postcard
@@ -302,36 +406,28 @@ or is referenced by its type ID (a content hash or bundle-local index).
 >   * `kind`: `"enum"`
 >   * `variants`: a CBOR array of variant descriptors, each a map with:
 >     - `name`: variant name (UTF-8 string)
->     - `index`: the postcard variant index (varint ordinal)
+>     - `index`: the postcard variant index (`u32`)
 >     - `payload`: one of:
 >       - `"unit"` — no payload
 >       - `{"newtype": type_id}` — single value
 >       - `{"struct": [field_descriptors...]}` — struct variant
+>         (field descriptors follow `r[schema.format.struct]`)
 
 > r[schema.format.container]
 >
 > Container schemas MUST contain:
 >
 >   * `kind`: `"list"`, `"set"`, `"map"`, `"array"`, or `"option"`
->   * `element`: type ID of the element type (for list, set, array, option)
->   * `key` and `value`: type IDs (for map)
->   * `length`: fixed length (for array only)
-
-> r[schema.format.primitive]
->
-> A primitive schema MUST contain:
->
->   * `kind`: `"primitive"`
->   * `type`: one of `"bool"`, `"u8"`, `"u16"`, `"u32"`, `"u64"`, `"u128"`,
->     `"i8"`, `"i16"`, `"i32"`, `"i64"`, `"i128"`, `"f32"`, `"f64"`,
->     `"char"`, `"string"`, `"unit"`, `"bytes"`
+>   * `element`: a `TypeId` (for list, set, array, option)
+>   * `key` and `value`: `TypeId`s (for map)
+>   * `length`: a `u64` (for array only)
 
 > r[schema.format.tuple]
 >
 > A tuple schema MUST contain:
 >
 >   * `kind`: `"tuple"`
->   * `elements`: a CBOR array of type IDs, one per element, in order
+>   * `elements`: a CBOR array of `TypeId`s, one per element, in order
 
 ## Recursive types
 
