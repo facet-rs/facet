@@ -78,6 +78,8 @@ interface PendingResponse {
   schemasBytes?: Uint8Array;
   /** Whether this method uses persist retry policy (affects close behavior). */
   persist: boolean;
+  /** Whether this method is idempotent. */
+  idem: boolean;
   prepareRetry?: () => {
     payload: Uint8Array;
     channels: bigint[];
@@ -910,6 +912,7 @@ export class ConnectionHandle {
         channels: [...initial.channels],
         schemasBytes,
         persist: request.descriptor.retry?.persist ?? false,
+        idem: request.descriptor.retry?.idem ?? false,
         prepareRetry: request.prepareRetry,
         finalizeChannels: request.finalizeChannels,
         requestIds: new Set(),
@@ -1039,9 +1042,12 @@ export class ConnectionHandle {
       clearTimeout(pending.timer);
       pending.requestIds.clear();
       pending.finalizeChannels?.();
-      // For persist=true methods, report INDETERMINATE when session closes
-      // (the operation may or may not have executed on the remote side).
-      if (pending.persist && error instanceof SessionError) {
+      // Report INDETERMINATE when session closes for:
+      //   - persist=true methods (op may have executed on remote)
+      //   - channel-bearing non-idempotent methods (fails-closed: channel
+      //     state is indeterminate after a broken connection)
+      const failClosedOnDrop = pending.channels.length > 0 && !pending.idem;
+      if ((pending.persist || failClosedOnDrop) && error instanceof SessionError) {
         pending.reject(new RpcError(RpcErrorCode.INDETERMINATE));
       } else {
         pending.reject(error);

@@ -29,10 +29,14 @@ import {
   SessionError,
   channel,
   session,
+  setRoamLogger,
   type Tx,
   type Rx,
   type SessionConduitKind,
 } from "@bearcove/roam-core";
+
+// Enable roam internals logging for test visibility
+setRoamLogger(console);
 
 // Service implementation
 class TestbedService implements TestbedHandler {
