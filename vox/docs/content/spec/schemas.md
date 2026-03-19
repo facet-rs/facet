@@ -676,7 +676,10 @@ for the entire service interface up front.
 > If the caller has already sent schemas for a method's argument types
 > (from a previous call to the same or different method using the same
 > types), no schemas need to be included. The `r[schema.principles.once-per-type]`
-> rule applies — each type ID is sent at most once.
+> rule applies — each type ID is sent at most once. However, the
+> `MethodSchemaBinding` for a new (method_id, direction) pair MUST still
+> be sent even when all schemas are already known
+> (see `r[schema.tracking.bindings]`).
 
 # Method identity without signatures
 
