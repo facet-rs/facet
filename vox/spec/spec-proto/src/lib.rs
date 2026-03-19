@@ -25,10 +25,14 @@ pub trait Testbed {
     // Fallible methods (for testing User(E) error path)
     // ========================================================================
 
-    /// Divides two numbers, returning an error if divisor is zero.
+    /// Divides two numbers, returning an error if divisor is zero or would overflow.
     async fn divide(&self, dividend: i64, divisor: i64) -> Result<i64, MathError>;
 
-    /// Looks up a user by ID, returning an error if not found.
+    /// Looks up a user by ID.
+    ///
+    /// - IDs 1..=3: return Ok(Person)
+    /// - IDs 100..=199: return Err(AccessDenied)
+    /// - Anything else: return Err(NotFound)
     async fn lookup(&self, id: u32) -> Result<Person, LookupError>;
 
     // ========================================================================
@@ -92,6 +96,44 @@ pub trait Testbed {
     /// Test tuple types.
     async fn swap_pair(&self, pair: (i32, String)) -> (String, i32);
 
+    /// Echo raw bytes back. Tests Vec<u8> as a first-class arg/return type.
+    async fn echo_bytes(&self, data: Vec<u8>) -> Vec<u8>;
+
+    /// Echo a bool. Tests the bool primitive type.
+    async fn echo_bool(&self, b: bool) -> bool;
+
+    /// Echo a u64. Tests the u64 primitive type.
+    async fn echo_u64(&self, n: u64) -> u64;
+
+    /// Echo an optional string. Tests Option<String> directly.
+    async fn echo_option_string(&self, s: Option<String>) -> Option<String>;
+
+    /// Sum a large stream (tests channel credit/backpressure for > initial credit).
+    ///
+    /// Tests: channel flow control when sender must wait for credit grants.
+    async fn sum_large(&self, numbers: Rx<i32>) -> i64;
+
+    /// Generate a large stream (tests Tx backpressure with > initial credit items).
+    ///
+    /// Tests: server must wait for client to grant credit mid-stream.
+    async fn generate_large(&self, count: u32, output: Tx<i32>);
+
+    /// Return all three Color variants in a Vec, testing enum + vec round-trip.
+    async fn all_colors(&self) -> Vec<Color>;
+
+    /// Accept multiple args of different types; return a summary struct.
+    /// Tests multi-arg encoding and struct return.
+    async fn describe_point(&self, label: String, x: i32, y: i32, active: bool) -> TaggedPoint;
+
+    /// Echo a nested enum back unchanged. Tests deep enum encoding.
+    async fn echo_shape(&self, shape: Shape) -> Shape;
+
+    /// Echo a status back. Tests simple enum with unit variants.
+    async fn echo_status_v1(&self, status: Status) -> Status;
+
+    /// Echo a tag back. Tests struct with String + u32 + String fields.
+    async fn echo_tag_v1(&self, tag: Tag) -> Tag;
+
     // ========================================================================
     // Schema evolution methods
     // ========================================================================
@@ -118,6 +160,16 @@ pub trait Testbed {
 // ============================================================================
 // Complex types for testing encoding/decoding
 // ============================================================================
+
+/// A point with a string label and an active flag.
+/// Used to test multi-arg methods and varied field types.
+#[derive(Debug, Clone, PartialEq, Facet)]
+pub struct TaggedPoint {
+    pub label: String,
+    pub x: i32,
+    pub y: i32,
+    pub active: bool,
+}
 
 /// A simple struct with primitive fields.
 #[derive(Debug, Clone, PartialEq, Facet)]

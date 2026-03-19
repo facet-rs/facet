@@ -7,8 +7,9 @@ use roam_shm::segment::Segment;
 use roam_stream::tcp_connector;
 use spec_proto::{
     Canvas, Color, Config, LookupError, MathError, Measurement, Message, Person, Point, Profile,
-    Record, Rectangle, Shape, Status, Tag, Testbed, TestbedClient, TestbedDispatcher,
+    Record, Rectangle, Shape, Status, Tag, TaggedPoint, Testbed, TestbedClient, TestbedDispatcher,
 };
+use std::future::Future;
 use tracing::{debug, error, info, instrument};
 
 #[cfg(windows)]
@@ -52,7 +53,7 @@ impl Testbed for TestbedService {
         if divisor == 0 {
             Err(MathError::DivisionByZero)
         } else {
-            Ok(dividend / divisor)
+            dividend.checked_div(divisor).ok_or(MathError::Overflow)
         }
     }
 
@@ -75,6 +76,7 @@ impl Testbed for TestbedService {
                 age: 35,
                 email: Some("charlie@example.com".to_string()),
             }),
+            100..=199 => Err(LookupError::AccessDenied),
             _ => Err(LookupError::NotFound),
         }
     }
@@ -176,6 +178,59 @@ impl Testbed for TestbedService {
         (pair.1, pair.0)
     }
 
+    async fn echo_bytes(&self, data: Vec<u8>) -> Vec<u8> {
+        data
+    }
+
+    async fn echo_bool(&self, b: bool) -> bool {
+        b
+    }
+
+    async fn echo_u64(&self, n: u64) -> u64 {
+        n
+    }
+
+    async fn echo_option_string(&self, s: Option<String>) -> Option<String> {
+        s
+    }
+
+    async fn sum_large(&self, mut numbers: Rx<i32>) -> i64 {
+        let mut total: i64 = 0;
+        while let Ok(Some(n)) = numbers.recv().await {
+            total += *n as i64;
+        }
+        total
+    }
+
+    async fn generate_large(&self, count: u32, output: Tx<i32>) {
+        stream_retry_probe_values(count, output).await;
+    }
+
+    async fn all_colors(&self) -> Vec<Color> {
+        vec![Color::Red, Color::Green, Color::Blue]
+    }
+
+    async fn describe_point(&self, label: String, x: i32, y: i32, active: bool) -> TaggedPoint {
+        TaggedPoint {
+            label,
+            x,
+            y,
+            active,
+        }
+    }
+
+    async fn echo_shape(&self, shape: Shape) -> Shape {
+        shape
+    }
+
+    async fn echo_status_v1(&self, status: Status) -> Status {
+        status
+    }
+
+    async fn echo_tag_v1(&self, tag: Tag) -> Tag {
+        tag
+    }
+
     async fn echo_profile(&self, profile: Profile) -> Profile {
         profile
     }
@@ -264,6 +319,373 @@ async fn run_client() -> Result<(), String> {
                 .await
                 .map_err(|e| format!("echo failed: {e:?}"))?;
             info!("echo result: {result}");
+        }
+        "reverse" => {
+            let result = client
+                .reverse("hello".to_string())
+                .await
+                .map_err(|e| format!("reverse failed: {e:?}"))?;
+            if result != "olleh" {
+                return Err(format!("reverse: expected 'olleh', got {result:?}"));
+            }
+            info!("reverse result: {result}");
+        }
+        "divide_success" => {
+            let result = client
+                .divide(10, 3)
+                .await
+                .map_err(|e| format!("divide_success failed: {e:?}"))?;
+            if result != 3 {
+                return Err(format!("divide_success: expected 3, got {result}"));
+            }
+            info!("divide_success result: {result}");
+        }
+        "divide_zero" => {
+            match client.divide(10, 0).await {
+                Err(roam::RoamError::User(MathError::DivisionByZero)) => {}
+                other => {
+                    return Err(format!(
+                        "divide_zero: expected DivisionByZero, got {other:?}"
+                    ));
+                }
+            }
+            info!("divide_zero: got expected DivisionByZero error");
+        }
+        "divide_overflow" => {
+            match client.divide(i64::MIN, -1).await {
+                Err(roam::RoamError::User(MathError::Overflow)) => {}
+                other => return Err(format!("divide_overflow: expected Overflow, got {other:?}")),
+            }
+            info!("divide_overflow: got expected Overflow error");
+        }
+        "lookup_found" => {
+            let p = client
+                .lookup(1)
+                .await
+                .map_err(|e| format!("lookup_found failed: {e:?}"))?;
+            if p.name != "Alice" {
+                return Err(format!("lookup_found: expected Alice, got {p:?}"));
+            }
+            info!("lookup_found: {p:?}");
+        }
+        "lookup_found_no_email" => {
+            let p = client
+                .lookup(2)
+                .await
+                .map_err(|e| format!("lookup_found_no_email failed: {e:?}"))?;
+            if p.name != "Bob" || p.email.is_some() {
+                return Err(format!(
+                    "lookup_found_no_email: expected Bob with no email, got {p:?}"
+                ));
+            }
+            info!("lookup_found_no_email: {p:?}");
+        }
+        "lookup_not_found" => {
+            match client.lookup(999).await {
+                Err(roam::RoamError::User(spec_proto::LookupError::NotFound)) => {}
+                other => {
+                    return Err(format!(
+                        "lookup_not_found: expected NotFound, got {other:?}"
+                    ));
+                }
+            }
+            info!("lookup_not_found: got expected NotFound error");
+        }
+        "lookup_access_denied" => {
+            match client.lookup(100).await {
+                Err(roam::RoamError::User(spec_proto::LookupError::AccessDenied)) => {}
+                other => {
+                    return Err(format!(
+                        "lookup_access_denied: expected AccessDenied, got {other:?}"
+                    ));
+                }
+            }
+            info!("lookup_access_denied: got expected AccessDenied error");
+        }
+        "echo_point" => {
+            let pt = spec_proto::Point { x: 42, y: -7 };
+            let result = client
+                .echo_point(pt.clone())
+                .await
+                .map_err(|e| format!("echo_point failed: {e:?}"))?;
+            if result != pt {
+                return Err(format!("echo_point: expected {pt:?}, got {result:?}"));
+            }
+            info!("echo_point OK");
+        }
+        "create_person" => {
+            let p = client
+                .create_person("Dave".to_string(), 40, Some("dave@example.com".to_string()))
+                .await
+                .map_err(|e| format!("create_person failed: {e:?}"))?;
+            if p.name != "Dave" || p.age != 40 || p.email.as_deref() != Some("dave@example.com") {
+                return Err(format!("create_person: unexpected {p:?}"));
+            }
+            info!("create_person OK: {p:?}");
+        }
+        "rectangle_area" => {
+            use spec_proto::{Point, Rectangle};
+            let area = client
+                .rectangle_area(Rectangle {
+                    top_left: Point { x: 0, y: 10 },
+                    bottom_right: Point { x: 5, y: 0 },
+                    label: None,
+                })
+                .await
+                .map_err(|e| format!("rectangle_area failed: {e:?}"))?;
+            if (area - 50.0_f64).abs() > 1e-9 {
+                return Err(format!("rectangle_area: expected 50.0, got {area}"));
+            }
+            info!("rectangle_area: {area}");
+        }
+        "parse_color" => {
+            for (name, expected) in [
+                ("red", Color::Red),
+                ("green", Color::Green),
+                ("blue", Color::Blue),
+            ] {
+                match client.parse_color(name.to_string()).await {
+                    Ok(Some(c)) if c == expected => {}
+                    other => return Err(format!("parse_color {name}: unexpected {other:?}")),
+                }
+            }
+            match client.parse_color("purple".to_string()).await {
+                Ok(None) => {}
+                other => return Err(format!("parse_color purple: expected None, got {other:?}")),
+            }
+            info!("parse_color: all variants OK");
+        }
+        "get_points" => {
+            let pts = client
+                .get_points(5)
+                .await
+                .map_err(|e| format!("get_points failed: {e:?}"))?;
+            if pts.len() != 5 {
+                return Err(format!("get_points: expected 5, got {}", pts.len()));
+            }
+            info!("get_points: {} points", pts.len());
+        }
+        "swap_pair" => {
+            let (s, n) = client
+                .swap_pair((99, "hello".to_string()))
+                .await
+                .map_err(|e| format!("swap_pair failed: {e:?}"))?;
+            if s != "hello" || n != 99 {
+                return Err(format!(
+                    "swap_pair: expected ('hello', 99), got ({s:?}, {n})"
+                ));
+            }
+            info!("swap_pair OK");
+        }
+        "echo_bytes" => {
+            let data = vec![1u8, 2, 3, 255, 0, 128];
+            let result = client
+                .echo_bytes(data.clone())
+                .await
+                .map_err(|e| format!("echo_bytes failed: {e:?}"))?;
+            if result != data {
+                return Err(format!("echo_bytes: expected {data:?}, got {result:?}"));
+            }
+            info!("echo_bytes OK");
+        }
+        "echo_bool" => {
+            for b in [true, false] {
+                let result = client
+                    .echo_bool(b)
+                    .await
+                    .map_err(|e| format!("echo_bool({b}) failed: {e:?}"))?;
+                if result != b {
+                    return Err(format!("echo_bool: expected {b}, got {result}"));
+                }
+            }
+            info!("echo_bool OK");
+        }
+        "echo_u64" => {
+            for n in [0u64, 1, u64::MAX, 1_000_000_000_000] {
+                let result = client
+                    .echo_u64(n)
+                    .await
+                    .map_err(|e| format!("echo_u64({n}) failed: {e:?}"))?;
+                if result != n {
+                    return Err(format!("echo_u64: expected {n}, got {result}"));
+                }
+            }
+            info!("echo_u64 OK");
+        }
+        "echo_option_string" => {
+            match client.echo_option_string(Some("hello".to_string())).await {
+                Ok(Some(s)) if s == "hello" => {}
+                other => return Err(format!("echo_option_string Some: got {other:?}")),
+            }
+            match client.echo_option_string(None).await {
+                Ok(None) => {}
+                other => return Err(format!("echo_option_string None: got {other:?}")),
+            }
+            info!("echo_option_string OK");
+        }
+        "describe_point" => {
+            let result = client
+                .describe_point("origin".to_string(), 0, 0, true)
+                .await
+                .map_err(|e| format!("describe_point failed: {e:?}"))?;
+            if result.label != "origin" || result.x != 0 || result.y != 0 || !result.active {
+                return Err(format!("describe_point: unexpected {result:?}"));
+            }
+            info!("describe_point OK: {result:?}");
+        }
+        "all_colors" => {
+            let colors = client
+                .all_colors()
+                .await
+                .map_err(|e| format!("all_colors failed: {e:?}"))?;
+            if colors.len() != 3 {
+                return Err(format!("all_colors: expected 3, got {}", colors.len()));
+            }
+            if colors[0] != Color::Red || colors[1] != Color::Green || colors[2] != Color::Blue {
+                return Err(format!("all_colors: unexpected order {colors:?}"));
+            }
+            info!("all_colors OK");
+        }
+        "echo_shape" => {
+            for shape in [
+                spec_proto::Shape::Point,
+                spec_proto::Shape::Circle { radius: 3.14 },
+                spec_proto::Shape::Rectangle {
+                    width: 2.0,
+                    height: 5.0,
+                },
+            ] {
+                let result = client
+                    .echo_shape(shape.clone())
+                    .await
+                    .map_err(|e| format!("echo_shape failed: {e:?}"))?;
+                if result != shape {
+                    return Err(format!("echo_shape: expected {shape:?}, got {result:?}"));
+                }
+            }
+            info!("echo_shape OK (all 3 variants)");
+        }
+        "pipelining" => {
+            let mut handles = Vec::new();
+            for i in 0..10usize {
+                let client = client.clone();
+                let msg = format!("msg{i}");
+                handles.push(tokio::spawn(async move {
+                    client
+                        .echo(msg.clone())
+                        .await
+                        .map_err(|e| format!("pipelining echo {i}: {e:?}"))
+                        .and_then(|r| {
+                            if r == msg {
+                                Ok(r)
+                            } else {
+                                Err(format!("pipelining: expected {msg}, got {r}"))
+                            }
+                        })
+                }));
+            }
+            for h in handles {
+                h.await.map_err(|e| format!("pipelining join: {e}"))??;
+            }
+            info!("pipelining OK (10 concurrent echo calls)");
+        }
+        "sum_large" => {
+            let (tx, rx) = roam::channel::<i32>();
+            let n: i32 = 100;
+            let send_task = tokio::spawn(async move {
+                for i in 0..n {
+                    tx.send(i).await.ok();
+                }
+                tx.close(Default::default()).await.ok();
+            });
+            let result = client
+                .sum_large(rx)
+                .await
+                .map_err(|e| format!("sum_large failed: {e:?}"))?;
+            send_task.await.ok();
+            let expected: i64 = (0..n as i64).sum();
+            if result != expected {
+                return Err(format!("sum_large: expected {expected}, got {result}"));
+            }
+            info!("sum_large OK: {result}");
+        }
+        "generate_large" => {
+            let (tx, mut rx) = roam::channel::<i32>();
+            let n: u32 = 100;
+            let recv_task = tokio::spawn(async move {
+                let mut received = Vec::new();
+                while let Ok(Some(v)) = rx.recv().await {
+                    received.push(*v);
+                }
+                received
+            });
+            client
+                .generate_large(n, tx)
+                .await
+                .map_err(|e| format!("generate_large failed: {e:?}"))?;
+            let received = recv_task.await.map_err(|e| format!("recv task: {e}"))?;
+            if received.len() != n as usize {
+                return Err(format!(
+                    "generate_large: expected {n} items, got {}",
+                    received.len()
+                ));
+            }
+            let expected: Vec<i32> = (0..n as i32).collect();
+            if received != expected {
+                return Err(format!(
+                    "generate_large: expected sequential, got {received:?}"
+                ));
+            }
+            info!("generate_large OK: {} items", received.len());
+        }
+        "sum_client_to_server" => {
+            let (tx, rx) = roam::channel::<i32>();
+            let send_task = tokio::spawn(async move {
+                for n in [1i32, 2, 3, 4, 5] {
+                    tx.send(n).await.unwrap();
+                }
+                tx.close(Default::default()).await.unwrap();
+            });
+            let result = client
+                .sum(rx)
+                .await
+                .map_err(|e| format!("sum_client_to_server failed: {e:?}"))?;
+            send_task.await.ok();
+            if result != 15 {
+                return Err(format!("sum_client_to_server: expected 15, got {result}"));
+            }
+            info!("sum_client_to_server OK: {result}");
+        }
+        "transform_bidi" => {
+            let (input_tx, input_rx) = roam::channel::<String>();
+            let (output_tx, mut output_rx) = roam::channel::<String>();
+            let messages = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
+            let msgs_clone = messages.clone();
+            let send_task = tokio::spawn(async move {
+                for msg in msgs_clone {
+                    input_tx.send(msg).await.unwrap();
+                }
+                input_tx.close(Default::default()).await.unwrap();
+            });
+            let recv_task = tokio::spawn(async move {
+                let mut received = Vec::new();
+                while let Ok(Some(s)) = output_rx.recv().await {
+                    received.push(s.clone());
+                }
+                received
+            });
+            client
+                .transform(input_rx, output_tx)
+                .await
+                .map_err(|e| format!("transform_bidi failed: {e:?}"))?;
+            send_task.await.ok();
+            let received = recv_task.await.map_err(|e| format!("recv: {e}"))?;
+            if received != messages {
+                return Err(format!(
+                    "transform_bidi: expected {messages:?}, got {received:?}"
+                ));
+            }
+            info!("transform_bidi OK");
         }
         "shape_area" => {
             use spec_proto::Shape;

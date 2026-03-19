@@ -86,6 +86,66 @@ mod lang_rust_transport_tcp {
             testbed::run_rpc_tuple_type(SPEC);
         }
         #[test]
+        fn rpc_divide_overflow() {
+            testbed::run_rpc_divide_overflow(SPEC);
+        }
+        #[test]
+        fn rpc_lookup_found() {
+            testbed::run_rpc_lookup_found(SPEC);
+        }
+        #[test]
+        fn rpc_lookup_access_denied() {
+            testbed::run_rpc_lookup_access_denied(SPEC);
+        }
+        #[test]
+        fn rpc_echo_bytes() {
+            testbed::run_rpc_echo_bytes(SPEC);
+        }
+        #[test]
+        fn rpc_echo_bool() {
+            testbed::run_rpc_echo_bool(SPEC);
+        }
+        #[test]
+        fn rpc_echo_u64() {
+            testbed::run_rpc_echo_u64(SPEC);
+        }
+        #[test]
+        fn rpc_echo_option_string() {
+            testbed::run_rpc_echo_option_string(SPEC);
+        }
+        #[test]
+        fn rpc_describe_point() {
+            testbed::run_rpc_describe_point(SPEC);
+        }
+        #[test]
+        fn rpc_all_colors() {
+            testbed::run_rpc_all_colors(SPEC);
+        }
+        #[test]
+        fn rpc_echo_shape() {
+            testbed::run_rpc_echo_shape(SPEC);
+        }
+        #[test]
+        fn rpc_echo_status() {
+            testbed::run_rpc_echo_status(SPEC);
+        }
+        #[test]
+        fn rpc_echo_tag() {
+            testbed::run_rpc_echo_tag(SPEC);
+        }
+        #[test]
+        fn rpc_pipelining_10_concurrent() {
+            testbed::run_rpc_pipelining_10_concurrent(SPEC);
+        }
+        #[test]
+        fn rpc_channeling_large_stream() {
+            testbed::run_rpc_channeling_large_stream(SPEC);
+        }
+        #[test]
+        fn rpc_channeling_sum_large() {
+            testbed::run_rpc_channeling_sum_large(SPEC);
+        }
+        #[test]
         fn channeling_generate_server_to_client() {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
@@ -123,6 +183,110 @@ mod lang_rust_transport_tcp {
         #[test]
         fn subject_calls_process_message() {
             testbed::run_subject_calls_process_message(SPEC);
+        }
+        #[test]
+        fn subject_calls_reverse() {
+            testbed::run_subject_calls_reverse(SPEC);
+        }
+        #[test]
+        fn subject_calls_divide_success() {
+            testbed::run_subject_calls_divide_success(SPEC);
+        }
+        #[test]
+        fn subject_calls_divide_zero() {
+            testbed::run_subject_calls_divide_zero(SPEC);
+        }
+        #[test]
+        fn subject_calls_divide_overflow() {
+            testbed::run_subject_calls_divide_overflow(SPEC);
+        }
+        #[test]
+        fn subject_calls_lookup_found() {
+            testbed::run_subject_calls_lookup_found(SPEC);
+        }
+        #[test]
+        fn subject_calls_lookup_found_no_email() {
+            testbed::run_subject_calls_lookup_found_no_email(SPEC);
+        }
+        #[test]
+        fn subject_calls_lookup_not_found() {
+            testbed::run_subject_calls_lookup_not_found(SPEC);
+        }
+        #[test]
+        fn subject_calls_lookup_access_denied() {
+            testbed::run_subject_calls_lookup_access_denied(SPEC);
+        }
+        #[test]
+        fn subject_calls_echo_point() {
+            testbed::run_subject_calls_echo_point(SPEC);
+        }
+        #[test]
+        fn subject_calls_create_person() {
+            testbed::run_subject_calls_create_person(SPEC);
+        }
+        #[test]
+        fn subject_calls_rectangle_area() {
+            testbed::run_subject_calls_rectangle_area(SPEC);
+        }
+        #[test]
+        fn subject_calls_parse_color() {
+            testbed::run_subject_calls_parse_color(SPEC);
+        }
+        #[test]
+        fn subject_calls_get_points() {
+            testbed::run_subject_calls_get_points(SPEC);
+        }
+        #[test]
+        fn subject_calls_swap_pair() {
+            testbed::run_subject_calls_swap_pair(SPEC);
+        }
+        #[test]
+        fn subject_calls_echo_bytes() {
+            testbed::run_subject_calls_echo_bytes(SPEC);
+        }
+        #[test]
+        fn subject_calls_echo_bool() {
+            testbed::run_subject_calls_echo_bool(SPEC);
+        }
+        #[test]
+        fn subject_calls_echo_u64() {
+            testbed::run_subject_calls_echo_u64(SPEC);
+        }
+        #[test]
+        fn subject_calls_echo_option_string() {
+            testbed::run_subject_calls_echo_option_string(SPEC);
+        }
+        #[test]
+        fn subject_calls_describe_point() {
+            testbed::run_subject_calls_describe_point(SPEC);
+        }
+        #[test]
+        fn subject_calls_all_colors() {
+            testbed::run_subject_calls_all_colors(SPEC);
+        }
+        #[test]
+        fn subject_calls_echo_shape() {
+            testbed::run_subject_calls_echo_shape(SPEC);
+        }
+        #[test]
+        fn subject_calls_pipelining() {
+            testbed::run_subject_calls_pipelining(SPEC);
+        }
+        #[test]
+        fn subject_calls_sum_large() {
+            testbed::run_subject_calls_sum_large(SPEC);
+        }
+        #[test]
+        fn subject_calls_generate_large() {
+            testbed::run_subject_calls_generate_large(SPEC);
+        }
+        #[test]
+        fn subject_calls_sum_client_to_server() {
+            testbed::run_subject_calls_sum_client_to_server(SPEC);
+        }
+        #[test]
+        fn subject_calls_transform_bidi() {
+            testbed::run_subject_calls_transform_bidi(SPEC);
         }
     }
     mod direction_bidirectional {
@@ -195,6 +359,66 @@ mod lang_rust_transport_shm_guest_mode {
             testbed::run_rpc_tuple_type(SPEC);
         }
         #[test]
+        fn rpc_divide_overflow() {
+            testbed::run_rpc_divide_overflow(SPEC);
+        }
+        #[test]
+        fn rpc_lookup_found() {
+            testbed::run_rpc_lookup_found(SPEC);
+        }
+        #[test]
+        fn rpc_lookup_access_denied() {
+            testbed::run_rpc_lookup_access_denied(SPEC);
+        }
+        #[test]
+        fn rpc_echo_bytes() {
+            testbed::run_rpc_echo_bytes(SPEC);
+        }
+        #[test]
+        fn rpc_echo_bool() {
+            testbed::run_rpc_echo_bool(SPEC);
+        }
+        #[test]
+        fn rpc_echo_u64() {
+            testbed::run_rpc_echo_u64(SPEC);
+        }
+        #[test]
+        fn rpc_echo_option_string() {
+            testbed::run_rpc_echo_option_string(SPEC);
+        }
+        #[test]
+        fn rpc_describe_point() {
+            testbed::run_rpc_describe_point(SPEC);
+        }
+        #[test]
+        fn rpc_all_colors() {
+            testbed::run_rpc_all_colors(SPEC);
+        }
+        #[test]
+        fn rpc_echo_shape() {
+            testbed::run_rpc_echo_shape(SPEC);
+        }
+        #[test]
+        fn rpc_echo_status() {
+            testbed::run_rpc_echo_status(SPEC);
+        }
+        #[test]
+        fn rpc_echo_tag() {
+            testbed::run_rpc_echo_tag(SPEC);
+        }
+        #[test]
+        fn rpc_pipelining_10_concurrent() {
+            testbed::run_rpc_pipelining_10_concurrent(SPEC);
+        }
+        #[test]
+        fn rpc_channeling_large_stream() {
+            testbed::run_rpc_channeling_large_stream(SPEC);
+        }
+        #[test]
+        fn rpc_channeling_sum_large() {
+            testbed::run_rpc_channeling_sum_large(SPEC);
+        }
+        #[test]
         fn channeling_generate_server_to_client() {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
@@ -232,6 +456,110 @@ mod lang_rust_transport_shm_guest_mode {
         #[test]
         fn subject_calls_process_message() {
             testbed::run_subject_calls_process_message(SPEC);
+        }
+        #[test]
+        fn subject_calls_reverse() {
+            testbed::run_subject_calls_reverse(SPEC);
+        }
+        #[test]
+        fn subject_calls_divide_success() {
+            testbed::run_subject_calls_divide_success(SPEC);
+        }
+        #[test]
+        fn subject_calls_divide_zero() {
+            testbed::run_subject_calls_divide_zero(SPEC);
+        }
+        #[test]
+        fn subject_calls_divide_overflow() {
+            testbed::run_subject_calls_divide_overflow(SPEC);
+        }
+        #[test]
+        fn subject_calls_lookup_found() {
+            testbed::run_subject_calls_lookup_found(SPEC);
+        }
+        #[test]
+        fn subject_calls_lookup_found_no_email() {
+            testbed::run_subject_calls_lookup_found_no_email(SPEC);
+        }
+        #[test]
+        fn subject_calls_lookup_not_found() {
+            testbed::run_subject_calls_lookup_not_found(SPEC);
+        }
+        #[test]
+        fn subject_calls_lookup_access_denied() {
+            testbed::run_subject_calls_lookup_access_denied(SPEC);
+        }
+        #[test]
+        fn subject_calls_echo_point() {
+            testbed::run_subject_calls_echo_point(SPEC);
+        }
+        #[test]
+        fn subject_calls_create_person() {
+            testbed::run_subject_calls_create_person(SPEC);
+        }
+        #[test]
+        fn subject_calls_rectangle_area() {
+            testbed::run_subject_calls_rectangle_area(SPEC);
+        }
+        #[test]
+        fn subject_calls_parse_color() {
+            testbed::run_subject_calls_parse_color(SPEC);
+        }
+        #[test]
+        fn subject_calls_get_points() {
+            testbed::run_subject_calls_get_points(SPEC);
+        }
+        #[test]
+        fn subject_calls_swap_pair() {
+            testbed::run_subject_calls_swap_pair(SPEC);
+        }
+        #[test]
+        fn subject_calls_echo_bytes() {
+            testbed::run_subject_calls_echo_bytes(SPEC);
+        }
+        #[test]
+        fn subject_calls_echo_bool() {
+            testbed::run_subject_calls_echo_bool(SPEC);
+        }
+        #[test]
+        fn subject_calls_echo_u64() {
+            testbed::run_subject_calls_echo_u64(SPEC);
+        }
+        #[test]
+        fn subject_calls_echo_option_string() {
+            testbed::run_subject_calls_echo_option_string(SPEC);
+        }
+        #[test]
+        fn subject_calls_describe_point() {
+            testbed::run_subject_calls_describe_point(SPEC);
+        }
+        #[test]
+        fn subject_calls_all_colors() {
+            testbed::run_subject_calls_all_colors(SPEC);
+        }
+        #[test]
+        fn subject_calls_echo_shape() {
+            testbed::run_subject_calls_echo_shape(SPEC);
+        }
+        #[test]
+        fn subject_calls_pipelining() {
+            testbed::run_subject_calls_pipelining(SPEC);
+        }
+        #[test]
+        fn subject_calls_sum_large() {
+            testbed::run_subject_calls_sum_large(SPEC);
+        }
+        #[test]
+        fn subject_calls_generate_large() {
+            testbed::run_subject_calls_generate_large(SPEC);
+        }
+        #[test]
+        fn subject_calls_sum_client_to_server() {
+            testbed::run_subject_calls_sum_client_to_server(SPEC);
+        }
+        #[test]
+        fn subject_calls_transform_bidi() {
+            testbed::run_subject_calls_transform_bidi(SPEC);
         }
     }
     mod direction_bidirectional {
@@ -328,6 +656,81 @@ mod lang_typescript_transport_tcp {
         }
         #[ignore]
         #[test]
+        fn rpc_divide_overflow() {
+            testbed::run_rpc_divide_overflow(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_lookup_found() {
+            testbed::run_rpc_lookup_found(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_lookup_access_denied() {
+            testbed::run_rpc_lookup_access_denied(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_bytes() {
+            testbed::run_rpc_echo_bytes(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_bool() {
+            testbed::run_rpc_echo_bool(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_u64() {
+            testbed::run_rpc_echo_u64(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_option_string() {
+            testbed::run_rpc_echo_option_string(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_describe_point() {
+            testbed::run_rpc_describe_point(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_all_colors() {
+            testbed::run_rpc_all_colors(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_shape() {
+            testbed::run_rpc_echo_shape(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_status() {
+            testbed::run_rpc_echo_status(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_tag() {
+            testbed::run_rpc_echo_tag(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_pipelining_10_concurrent() {
+            testbed::run_rpc_pipelining_10_concurrent(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_channeling_large_stream() {
+            testbed::run_rpc_channeling_large_stream(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_channeling_sum_large() {
+            testbed::run_rpc_channeling_sum_large(SPEC);
+        }
+        #[ignore]
+        #[test]
         fn channeling_generate_server_to_client() {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
@@ -373,6 +776,136 @@ mod lang_typescript_transport_tcp {
         #[test]
         fn subject_calls_process_message() {
             testbed::run_subject_calls_process_message(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_reverse() {
+            testbed::run_subject_calls_reverse(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_divide_success() {
+            testbed::run_subject_calls_divide_success(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_divide_zero() {
+            testbed::run_subject_calls_divide_zero(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_divide_overflow() {
+            testbed::run_subject_calls_divide_overflow(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_found() {
+            testbed::run_subject_calls_lookup_found(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_found_no_email() {
+            testbed::run_subject_calls_lookup_found_no_email(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_not_found() {
+            testbed::run_subject_calls_lookup_not_found(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_access_denied() {
+            testbed::run_subject_calls_lookup_access_denied(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_point() {
+            testbed::run_subject_calls_echo_point(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_create_person() {
+            testbed::run_subject_calls_create_person(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_rectangle_area() {
+            testbed::run_subject_calls_rectangle_area(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_parse_color() {
+            testbed::run_subject_calls_parse_color(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_get_points() {
+            testbed::run_subject_calls_get_points(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_swap_pair() {
+            testbed::run_subject_calls_swap_pair(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_bytes() {
+            testbed::run_subject_calls_echo_bytes(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_bool() {
+            testbed::run_subject_calls_echo_bool(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_u64() {
+            testbed::run_subject_calls_echo_u64(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_option_string() {
+            testbed::run_subject_calls_echo_option_string(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_describe_point() {
+            testbed::run_subject_calls_describe_point(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_all_colors() {
+            testbed::run_subject_calls_all_colors(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_shape() {
+            testbed::run_subject_calls_echo_shape(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_pipelining() {
+            testbed::run_subject_calls_pipelining(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_sum_large() {
+            testbed::run_subject_calls_sum_large(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_generate_large() {
+            testbed::run_subject_calls_generate_large(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_sum_client_to_server() {
+            testbed::run_subject_calls_sum_client_to_server(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_transform_bidi() {
+            testbed::run_subject_calls_transform_bidi(SPEC);
         }
     }
     mod direction_bidirectional {
@@ -461,6 +994,81 @@ mod lang_typescript_transport_ws {
         }
         #[ignore]
         #[test]
+        fn rpc_divide_overflow() {
+            testbed::run_rpc_divide_overflow(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_lookup_found() {
+            testbed::run_rpc_lookup_found(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_lookup_access_denied() {
+            testbed::run_rpc_lookup_access_denied(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_bytes() {
+            testbed::run_rpc_echo_bytes(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_bool() {
+            testbed::run_rpc_echo_bool(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_u64() {
+            testbed::run_rpc_echo_u64(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_option_string() {
+            testbed::run_rpc_echo_option_string(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_describe_point() {
+            testbed::run_rpc_describe_point(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_all_colors() {
+            testbed::run_rpc_all_colors(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_shape() {
+            testbed::run_rpc_echo_shape(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_status() {
+            testbed::run_rpc_echo_status(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_tag() {
+            testbed::run_rpc_echo_tag(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_pipelining_10_concurrent() {
+            testbed::run_rpc_pipelining_10_concurrent(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_channeling_large_stream() {
+            testbed::run_rpc_channeling_large_stream(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_channeling_sum_large() {
+            testbed::run_rpc_channeling_sum_large(SPEC);
+        }
+        #[ignore]
+        #[test]
         fn channeling_generate_server_to_client() {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
@@ -506,6 +1114,136 @@ mod lang_typescript_transport_ws {
         #[test]
         fn subject_calls_process_message() {
             testbed::run_subject_calls_process_message(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_reverse() {
+            testbed::run_subject_calls_reverse(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_divide_success() {
+            testbed::run_subject_calls_divide_success(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_divide_zero() {
+            testbed::run_subject_calls_divide_zero(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_divide_overflow() {
+            testbed::run_subject_calls_divide_overflow(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_found() {
+            testbed::run_subject_calls_lookup_found(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_found_no_email() {
+            testbed::run_subject_calls_lookup_found_no_email(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_not_found() {
+            testbed::run_subject_calls_lookup_not_found(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_access_denied() {
+            testbed::run_subject_calls_lookup_access_denied(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_point() {
+            testbed::run_subject_calls_echo_point(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_create_person() {
+            testbed::run_subject_calls_create_person(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_rectangle_area() {
+            testbed::run_subject_calls_rectangle_area(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_parse_color() {
+            testbed::run_subject_calls_parse_color(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_get_points() {
+            testbed::run_subject_calls_get_points(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_swap_pair() {
+            testbed::run_subject_calls_swap_pair(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_bytes() {
+            testbed::run_subject_calls_echo_bytes(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_bool() {
+            testbed::run_subject_calls_echo_bool(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_u64() {
+            testbed::run_subject_calls_echo_u64(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_option_string() {
+            testbed::run_subject_calls_echo_option_string(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_describe_point() {
+            testbed::run_subject_calls_describe_point(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_all_colors() {
+            testbed::run_subject_calls_all_colors(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_shape() {
+            testbed::run_subject_calls_echo_shape(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_pipelining() {
+            testbed::run_subject_calls_pipelining(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_sum_large() {
+            testbed::run_subject_calls_sum_large(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_generate_large() {
+            testbed::run_subject_calls_generate_large(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_sum_client_to_server() {
+            testbed::run_subject_calls_sum_client_to_server(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_transform_bidi() {
+            testbed::run_subject_calls_transform_bidi(SPEC);
         }
     }
     mod direction_bidirectional {
@@ -594,6 +1332,81 @@ mod lang_swift_transport_tcp {
         }
         #[ignore]
         #[test]
+        fn rpc_divide_overflow() {
+            testbed::run_rpc_divide_overflow(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_lookup_found() {
+            testbed::run_rpc_lookup_found(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_lookup_access_denied() {
+            testbed::run_rpc_lookup_access_denied(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_bytes() {
+            testbed::run_rpc_echo_bytes(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_bool() {
+            testbed::run_rpc_echo_bool(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_u64() {
+            testbed::run_rpc_echo_u64(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_option_string() {
+            testbed::run_rpc_echo_option_string(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_describe_point() {
+            testbed::run_rpc_describe_point(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_all_colors() {
+            testbed::run_rpc_all_colors(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_shape() {
+            testbed::run_rpc_echo_shape(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_status() {
+            testbed::run_rpc_echo_status(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_tag() {
+            testbed::run_rpc_echo_tag(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_pipelining_10_concurrent() {
+            testbed::run_rpc_pipelining_10_concurrent(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_channeling_large_stream() {
+            testbed::run_rpc_channeling_large_stream(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_channeling_sum_large() {
+            testbed::run_rpc_channeling_sum_large(SPEC);
+        }
+        #[ignore]
+        #[test]
         fn channeling_generate_server_to_client() {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
@@ -639,6 +1452,136 @@ mod lang_swift_transport_tcp {
         #[test]
         fn subject_calls_process_message() {
             testbed::run_subject_calls_process_message(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_reverse() {
+            testbed::run_subject_calls_reverse(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_divide_success() {
+            testbed::run_subject_calls_divide_success(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_divide_zero() {
+            testbed::run_subject_calls_divide_zero(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_divide_overflow() {
+            testbed::run_subject_calls_divide_overflow(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_found() {
+            testbed::run_subject_calls_lookup_found(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_found_no_email() {
+            testbed::run_subject_calls_lookup_found_no_email(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_not_found() {
+            testbed::run_subject_calls_lookup_not_found(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_access_denied() {
+            testbed::run_subject_calls_lookup_access_denied(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_point() {
+            testbed::run_subject_calls_echo_point(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_create_person() {
+            testbed::run_subject_calls_create_person(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_rectangle_area() {
+            testbed::run_subject_calls_rectangle_area(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_parse_color() {
+            testbed::run_subject_calls_parse_color(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_get_points() {
+            testbed::run_subject_calls_get_points(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_swap_pair() {
+            testbed::run_subject_calls_swap_pair(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_bytes() {
+            testbed::run_subject_calls_echo_bytes(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_bool() {
+            testbed::run_subject_calls_echo_bool(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_u64() {
+            testbed::run_subject_calls_echo_u64(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_option_string() {
+            testbed::run_subject_calls_echo_option_string(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_describe_point() {
+            testbed::run_subject_calls_describe_point(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_all_colors() {
+            testbed::run_subject_calls_all_colors(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_shape() {
+            testbed::run_subject_calls_echo_shape(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_pipelining() {
+            testbed::run_subject_calls_pipelining(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_sum_large() {
+            testbed::run_subject_calls_sum_large(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_generate_large() {
+            testbed::run_subject_calls_generate_large(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_sum_client_to_server() {
+            testbed::run_subject_calls_sum_client_to_server(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_transform_bidi() {
+            testbed::run_subject_calls_transform_bidi(SPEC);
         }
     }
     mod direction_bidirectional {
@@ -727,6 +1670,81 @@ mod lang_swift_transport_shm_guest_mode {
         }
         #[ignore]
         #[test]
+        fn rpc_divide_overflow() {
+            testbed::run_rpc_divide_overflow(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_lookup_found() {
+            testbed::run_rpc_lookup_found(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_lookup_access_denied() {
+            testbed::run_rpc_lookup_access_denied(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_bytes() {
+            testbed::run_rpc_echo_bytes(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_bool() {
+            testbed::run_rpc_echo_bool(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_u64() {
+            testbed::run_rpc_echo_u64(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_option_string() {
+            testbed::run_rpc_echo_option_string(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_describe_point() {
+            testbed::run_rpc_describe_point(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_all_colors() {
+            testbed::run_rpc_all_colors(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_shape() {
+            testbed::run_rpc_echo_shape(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_status() {
+            testbed::run_rpc_echo_status(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_tag() {
+            testbed::run_rpc_echo_tag(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_pipelining_10_concurrent() {
+            testbed::run_rpc_pipelining_10_concurrent(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_channeling_large_stream() {
+            testbed::run_rpc_channeling_large_stream(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_channeling_sum_large() {
+            testbed::run_rpc_channeling_sum_large(SPEC);
+        }
+        #[ignore]
+        #[test]
         fn channeling_generate_server_to_client() {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
@@ -772,6 +1790,136 @@ mod lang_swift_transport_shm_guest_mode {
         #[test]
         fn subject_calls_process_message() {
             testbed::run_subject_calls_process_message(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_reverse() {
+            testbed::run_subject_calls_reverse(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_divide_success() {
+            testbed::run_subject_calls_divide_success(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_divide_zero() {
+            testbed::run_subject_calls_divide_zero(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_divide_overflow() {
+            testbed::run_subject_calls_divide_overflow(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_found() {
+            testbed::run_subject_calls_lookup_found(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_found_no_email() {
+            testbed::run_subject_calls_lookup_found_no_email(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_not_found() {
+            testbed::run_subject_calls_lookup_not_found(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_access_denied() {
+            testbed::run_subject_calls_lookup_access_denied(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_point() {
+            testbed::run_subject_calls_echo_point(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_create_person() {
+            testbed::run_subject_calls_create_person(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_rectangle_area() {
+            testbed::run_subject_calls_rectangle_area(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_parse_color() {
+            testbed::run_subject_calls_parse_color(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_get_points() {
+            testbed::run_subject_calls_get_points(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_swap_pair() {
+            testbed::run_subject_calls_swap_pair(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_bytes() {
+            testbed::run_subject_calls_echo_bytes(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_bool() {
+            testbed::run_subject_calls_echo_bool(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_u64() {
+            testbed::run_subject_calls_echo_u64(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_option_string() {
+            testbed::run_subject_calls_echo_option_string(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_describe_point() {
+            testbed::run_subject_calls_describe_point(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_all_colors() {
+            testbed::run_subject_calls_all_colors(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_shape() {
+            testbed::run_subject_calls_echo_shape(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_pipelining() {
+            testbed::run_subject_calls_pipelining(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_sum_large() {
+            testbed::run_subject_calls_sum_large(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_generate_large() {
+            testbed::run_subject_calls_generate_large(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_sum_client_to_server() {
+            testbed::run_subject_calls_sum_client_to_server(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_transform_bidi() {
+            testbed::run_subject_calls_transform_bidi(SPEC);
         }
     }
     mod direction_bidirectional {
@@ -870,6 +2018,81 @@ mod lang_swift_transport_shm_host_mode {
         }
         #[ignore]
         #[test]
+        fn rpc_divide_overflow() {
+            testbed::run_rpc_divide_overflow(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_lookup_found() {
+            testbed::run_rpc_lookup_found(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_lookup_access_denied() {
+            testbed::run_rpc_lookup_access_denied(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_bytes() {
+            testbed::run_rpc_echo_bytes(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_bool() {
+            testbed::run_rpc_echo_bool(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_u64() {
+            testbed::run_rpc_echo_u64(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_option_string() {
+            testbed::run_rpc_echo_option_string(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_describe_point() {
+            testbed::run_rpc_describe_point(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_all_colors() {
+            testbed::run_rpc_all_colors(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_shape() {
+            testbed::run_rpc_echo_shape(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_status() {
+            testbed::run_rpc_echo_status(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_echo_tag() {
+            testbed::run_rpc_echo_tag(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_pipelining_10_concurrent() {
+            testbed::run_rpc_pipelining_10_concurrent(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_channeling_large_stream() {
+            testbed::run_rpc_channeling_large_stream(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_channeling_sum_large() {
+            testbed::run_rpc_channeling_sum_large(SPEC);
+        }
+        #[ignore]
+        #[test]
         fn channeling_generate_server_to_client() {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
@@ -915,6 +2138,136 @@ mod lang_swift_transport_shm_host_mode {
         #[test]
         fn subject_calls_process_message() {
             testbed::run_subject_calls_process_message(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_reverse() {
+            testbed::run_subject_calls_reverse(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_divide_success() {
+            testbed::run_subject_calls_divide_success(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_divide_zero() {
+            testbed::run_subject_calls_divide_zero(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_divide_overflow() {
+            testbed::run_subject_calls_divide_overflow(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_found() {
+            testbed::run_subject_calls_lookup_found(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_found_no_email() {
+            testbed::run_subject_calls_lookup_found_no_email(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_not_found() {
+            testbed::run_subject_calls_lookup_not_found(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_lookup_access_denied() {
+            testbed::run_subject_calls_lookup_access_denied(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_point() {
+            testbed::run_subject_calls_echo_point(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_create_person() {
+            testbed::run_subject_calls_create_person(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_rectangle_area() {
+            testbed::run_subject_calls_rectangle_area(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_parse_color() {
+            testbed::run_subject_calls_parse_color(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_get_points() {
+            testbed::run_subject_calls_get_points(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_swap_pair() {
+            testbed::run_subject_calls_swap_pair(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_bytes() {
+            testbed::run_subject_calls_echo_bytes(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_bool() {
+            testbed::run_subject_calls_echo_bool(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_u64() {
+            testbed::run_subject_calls_echo_u64(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_option_string() {
+            testbed::run_subject_calls_echo_option_string(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_describe_point() {
+            testbed::run_subject_calls_describe_point(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_all_colors() {
+            testbed::run_subject_calls_all_colors(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo_shape() {
+            testbed::run_subject_calls_echo_shape(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_pipelining() {
+            testbed::run_subject_calls_pipelining(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_sum_large() {
+            testbed::run_subject_calls_sum_large(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_generate_large() {
+            testbed::run_subject_calls_generate_large(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_sum_client_to_server() {
+            testbed::run_subject_calls_sum_client_to_server(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_transform_bidi() {
+            testbed::run_subject_calls_transform_bidi(SPEC);
         }
     }
     mod direction_bidirectional {

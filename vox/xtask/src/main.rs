@@ -580,6 +580,66 @@ fn generate_spec_matrix(
             call: "testbed::run_rpc_tuple_type",
         },
         TestCase {
+            name: "rpc_divide_overflow",
+            call: "testbed::run_rpc_divide_overflow",
+        },
+        TestCase {
+            name: "rpc_lookup_found",
+            call: "testbed::run_rpc_lookup_found",
+        },
+        TestCase {
+            name: "rpc_lookup_access_denied",
+            call: "testbed::run_rpc_lookup_access_denied",
+        },
+        TestCase {
+            name: "rpc_echo_bytes",
+            call: "testbed::run_rpc_echo_bytes",
+        },
+        TestCase {
+            name: "rpc_echo_bool",
+            call: "testbed::run_rpc_echo_bool",
+        },
+        TestCase {
+            name: "rpc_echo_u64",
+            call: "testbed::run_rpc_echo_u64",
+        },
+        TestCase {
+            name: "rpc_echo_option_string",
+            call: "testbed::run_rpc_echo_option_string",
+        },
+        TestCase {
+            name: "rpc_describe_point",
+            call: "testbed::run_rpc_describe_point",
+        },
+        TestCase {
+            name: "rpc_all_colors",
+            call: "testbed::run_rpc_all_colors",
+        },
+        TestCase {
+            name: "rpc_echo_shape",
+            call: "testbed::run_rpc_echo_shape",
+        },
+        TestCase {
+            name: "rpc_echo_status",
+            call: "testbed::run_rpc_echo_status",
+        },
+        TestCase {
+            name: "rpc_echo_tag",
+            call: "testbed::run_rpc_echo_tag",
+        },
+        TestCase {
+            name: "rpc_pipelining_10_concurrent",
+            call: "testbed::run_rpc_pipelining_10_concurrent",
+        },
+        TestCase {
+            name: "rpc_channeling_large_stream",
+            call: "testbed::run_rpc_channeling_large_stream",
+        },
+        TestCase {
+            name: "rpc_channeling_sum_large",
+            call: "testbed::run_rpc_channeling_sum_large",
+        },
+        TestCase {
             name: "channeling_generate_server_to_client",
             call: "channeling::run_channeling_generate_server_to_client",
         },
@@ -616,6 +676,110 @@ fn generate_spec_matrix(
         TestCase {
             name: "subject_calls_process_message",
             call: "testbed::run_subject_calls_process_message",
+        },
+        TestCase {
+            name: "subject_calls_reverse",
+            call: "testbed::run_subject_calls_reverse",
+        },
+        TestCase {
+            name: "subject_calls_divide_success",
+            call: "testbed::run_subject_calls_divide_success",
+        },
+        TestCase {
+            name: "subject_calls_divide_zero",
+            call: "testbed::run_subject_calls_divide_zero",
+        },
+        TestCase {
+            name: "subject_calls_divide_overflow",
+            call: "testbed::run_subject_calls_divide_overflow",
+        },
+        TestCase {
+            name: "subject_calls_lookup_found",
+            call: "testbed::run_subject_calls_lookup_found",
+        },
+        TestCase {
+            name: "subject_calls_lookup_found_no_email",
+            call: "testbed::run_subject_calls_lookup_found_no_email",
+        },
+        TestCase {
+            name: "subject_calls_lookup_not_found",
+            call: "testbed::run_subject_calls_lookup_not_found",
+        },
+        TestCase {
+            name: "subject_calls_lookup_access_denied",
+            call: "testbed::run_subject_calls_lookup_access_denied",
+        },
+        TestCase {
+            name: "subject_calls_echo_point",
+            call: "testbed::run_subject_calls_echo_point",
+        },
+        TestCase {
+            name: "subject_calls_create_person",
+            call: "testbed::run_subject_calls_create_person",
+        },
+        TestCase {
+            name: "subject_calls_rectangle_area",
+            call: "testbed::run_subject_calls_rectangle_area",
+        },
+        TestCase {
+            name: "subject_calls_parse_color",
+            call: "testbed::run_subject_calls_parse_color",
+        },
+        TestCase {
+            name: "subject_calls_get_points",
+            call: "testbed::run_subject_calls_get_points",
+        },
+        TestCase {
+            name: "subject_calls_swap_pair",
+            call: "testbed::run_subject_calls_swap_pair",
+        },
+        TestCase {
+            name: "subject_calls_echo_bytes",
+            call: "testbed::run_subject_calls_echo_bytes",
+        },
+        TestCase {
+            name: "subject_calls_echo_bool",
+            call: "testbed::run_subject_calls_echo_bool",
+        },
+        TestCase {
+            name: "subject_calls_echo_u64",
+            call: "testbed::run_subject_calls_echo_u64",
+        },
+        TestCase {
+            name: "subject_calls_echo_option_string",
+            call: "testbed::run_subject_calls_echo_option_string",
+        },
+        TestCase {
+            name: "subject_calls_describe_point",
+            call: "testbed::run_subject_calls_describe_point",
+        },
+        TestCase {
+            name: "subject_calls_all_colors",
+            call: "testbed::run_subject_calls_all_colors",
+        },
+        TestCase {
+            name: "subject_calls_echo_shape",
+            call: "testbed::run_subject_calls_echo_shape",
+        },
+        TestCase {
+            name: "subject_calls_pipelining",
+            call: "testbed::run_subject_calls_pipelining",
+        },
+        TestCase {
+            name: "subject_calls_sum_large",
+            call: "testbed::run_subject_calls_sum_large",
+        },
+        TestCase {
+            name: "subject_calls_generate_large",
+            call: "testbed::run_subject_calls_generate_large",
+        },
+        TestCase {
+            name: "subject_calls_sum_client_to_server",
+            call: "testbed::run_subject_calls_sum_client_to_server",
+        },
+        TestCase {
+            name: "subject_calls_transform_bidi",
+            call: "testbed::run_subject_calls_transform_bidi",
         },
     ];
     let bidirectional = [TestCase {

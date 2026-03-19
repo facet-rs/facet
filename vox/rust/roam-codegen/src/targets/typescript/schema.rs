@@ -392,8 +392,29 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
             }
         }
 
+        // Always create an args schema and method binding, even for 0-arg methods.
+        // Rust requires a method binding for args on every call so it can build a
+        // translation plan. For 0-arg methods, use ()::SHAPE which Rust extracts as
+        // Primitive { Unit } — NOT an empty Tuple, which would be a type mismatch.
         let args_root_id = if method.args.is_empty() {
-            0
+            // Extract () schema — Rust sees 0-arg methods as () args type
+            let unit_schemas = tracker.extract_schemas(<() as Facet<'static>>::SHAPE);
+            let root = unit_schemas
+                .last()
+                .map(|s| s.type_id)
+                .unwrap_or(TypeSchemaId(0));
+            for schema in &unit_schemas {
+                let id = schema.type_id.0;
+                if schema_ids_seen.insert(id) {
+                    let bytes =
+                        facet_cbor::to_vec(schema).expect("failed to CBOR-encode unit schema");
+                    schema_bytes.push((id, bytes));
+                }
+                if !args_dep_ids.contains(&id) {
+                    args_dep_ids.push(id);
+                }
+            }
+            root.0
         } else {
             let tuple_id = tracker.allocate_anonymous_id();
             let tuple_schema = Schema {
