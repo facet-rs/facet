@@ -112,9 +112,10 @@ both hash as `u64`.
 > | char          | `"char"`   |
 > | string        | `"string"` |
 > | unit          | `"unit"`   |
-> | bytes         | `"bytes"`  |
+> | bytes         | `"bytes"`   |
+> | payload       | `"payload"` |
 >
-> These 17 hashes are constants. Implementations MAY precompute them.
+> These 18 hashes are constants. Implementations MAY precompute them.
 
 ## Struct hashes
 
@@ -140,10 +141,12 @@ both hash as `u64`.
 >   2. For each variant, in declaration order:
 >      a. The variant name (UTF-8 bytes)
 >      b. The variant index as a `u32` (4 bytes, little-endian)
->      c. The payload tag: `"unit"`, `"newtype"`, or `"struct"`
+>      c. The payload tag: `"unit"`, `"newtype"`, `"tuple"`, or `"struct"`
 >      d. For newtype payloads: the content hash of the inner type
 >         (8 bytes, little-endian)
->      e. For struct payloads: each field as in `r[schema.type-id.hash.struct]`
+>      e. For tuple payloads: the content hash of each element type,
+>         in order (8 bytes each, little-endian)
+>      f. For struct payloads: each field as in `r[schema.type-id.hash.struct]`
 >         step 2 (name then type hash, in order)
 
 ## Container hashes
@@ -153,7 +156,6 @@ both hash as `u64`.
 > To hash a container type, update the hasher with:
 >
 >   * **List:** `"list"` then the element type hash
->   * **Set:** `"set"` then the element type hash
 >   * **Option:** `"option"` then the element type hash
 >   * **Array:** `"array"` then the element type hash, then the length
 >     as a `u64` (8 bytes, little-endian)
@@ -279,80 +281,118 @@ language implementations must produce equivalent CBOR encodings.
 
 ```rust
 /// A type identifier — either a content hash or a bundle-local index.
+///
+/// On the wire (CBOR), `Hash` is a bare unsigned integer and `Index`
+/// is a map `{"index": n}` — so the two are unambiguous.
 enum TypeId {
     /// Structural content hash (blake3, truncated to 64 bits).
+    /// Globally unique: the same type always produces the same hash,
+    /// regardless of connection, session, process, or language.
     Hash(u64),
+
     /// Bundle-local index for recursive type references.
+    /// Only meaningful within a schema bundle (see r[schema.bundle]).
     Index(u64),
 }
 
-/// A primitive postcard type.
+/// The primitive types of the postcard encoding.
+///
+/// These are leaves in the type graph — they have no child types.
+/// Language-level wrappers (Rust newtypes, TypeScript type aliases)
+/// are transparent: `struct UserId(u64)` has the same schema as `u64`.
 enum PrimitiveType {
-    Bool, U8, U16, U32, U64, U128,
+    Bool,
+    U8, U16, U32, U64, U128,
     I8, I16, I32, I64, I128,
-    F32, F64, Char, String, Unit, Bytes,
+    F32, F64,
+    Char,
+    String,
+    /// The unit type — zero bytes on the wire. This is the canonical
+    /// representation of "nothing." A zero-element tuple is not valid;
+    /// use Unit instead.
+    Unit,
+    /// A raw byte sequence (`Vec<u8>`, `&[u8]`).
+    Bytes,
+    /// An opaque payload — a length-prefixed byte sequence whose
+    /// internal structure is not described by a schema. Used for
+    /// protocol extensions (e.g. channel payloads routed without
+    /// inspection).
+    Payload,
 }
 
 /// The structural description of a type.
 enum SchemaKind {
-    Primitive {
-        primitive_type: PrimitiveType,
-    },
-    Struct {
-        fields: Vec<FieldSchema>,
-    },
-    Enum {
-        variants: Vec<VariantSchema>,
-    },
-    Tuple {
-        elements: Vec<TypeId>,
-    },
-    List {
-        element: TypeId,
-    },
-    Map {
-        key: TypeId,
-        value: TypeId,
-    },
-    Set {
-        element: TypeId,
-    },
-    Array {
-        element: TypeId,
-        length: u64,
-    },
-    Option {
-        element: TypeId,
-    },
+    /// A leaf type with no child types.
+    Primitive { primitive_type: PrimitiveType },
+
+    /// An ordered collection of named fields.
+    Struct { fields: Vec<FieldSchema> },
+
+    /// A tagged union of named variants.
+    Enum { variants: Vec<VariantSchema> },
+
+    /// An ordered, fixed-arity product type. Must have 1 or more
+    /// elements — use `PrimitiveType::Unit` for the zero case.
+    Tuple { elements: Vec<TypeId> },
+
+    /// A variable-length homogeneous sequence (`Vec<T>`, `HashSet<T>`,
+    /// etc.). Sets and lists have the same postcard encoding and are
+    /// not distinguished at the schema level.
+    List { element: TypeId },
+
+    /// A variable-length collection of key-value pairs.
+    Map { key: TypeId, value: TypeId },
+
+    /// A fixed-length homogeneous sequence (`[T; N]`).
+    Array { element: TypeId, length: u64 },
+
+    /// A value that may be absent (`Option<T>`).
+    Option { element: TypeId },
 }
 
 /// A field in a struct or struct-variant.
 struct FieldSchema {
+    /// The field name. Used for matching across schema versions —
+    /// renaming a field is a breaking change.
     name: String,
+    /// The type of this field, as a TypeId.
     type_id: TypeId,
+    /// Whether the field is required. A required field that is missing
+    /// from the remote schema causes a translation plan error.
     required: bool,
 }
 
 /// A variant in an enum.
 struct VariantSchema {
+    /// The variant name. Used for matching across schema versions.
     name: String,
+    /// The postcard variant index (varint ordinal on the wire).
     index: u32,
+    /// The variant's payload shape.
     payload: VariantPayload,
 }
 
 /// The payload of an enum variant.
 enum VariantPayload {
+    /// No payload (e.g. `None`, `Disconnected`).
     Unit,
+    /// A single unnamed value (e.g. `Some(T)`, `Ok(T)`).
     Newtype { type_id: TypeId },
+    /// A tuple of unnamed values (e.g. `Pair(u32, String)`).
+    Tuple { types: Vec<TypeId> },
+    /// Named fields, like a struct (e.g. `Move { x: i32, y: i32 }`).
     Struct { fields: Vec<FieldSchema> },
 }
 
-/// A complete schema: the type ID plus its structural description.
+/// A complete schema: the type ID, a diagnostic name, and the
+/// structural description.
 struct Schema {
+    /// The content hash (or bundle-local index) that identifies this type.
     type_id: TypeId,
-    /// Diagnostic name (e.g. "Point", "Vec<String>"). Not used for
-    /// identity or matching — only for error messages and tooling.
+    /// A human-readable name for diagnostics (e.g. "Point", "Vec<String>").
+    /// Not used for identity, hashing, or matching.
     name: String,
+    /// The structural description of this type.
     kind: SchemaKind,
 }
 ```
@@ -366,7 +406,7 @@ The normative rules below define the CBOR encoding of these types.
 >   * `type_id` — the type ID of the schema (`Hash(u64)` or `Index(u64)`)
 >   * `name` — a diagnostic string (not used for matching)
 >   * `kind` — one of: `"struct"`, `"enum"`, `"tuple"`, `"list"`, `"map"`,
->     `"set"`, `"array"`, `"option"`, `"primitive"`
+>     `"array"`, `"option"`, `"primitive"`
 >   * Kind-specific fields as defined below
 
 > r[schema.format.type-id]
@@ -384,7 +424,8 @@ The normative rules below define the CBOR encoding of these types.
 >   * `kind`: `"primitive"`
 >   * `primitive_type`: one of `"bool"`, `"u8"`, `"u16"`, `"u32"`,
 >     `"u64"`, `"u128"`, `"i8"`, `"i16"`, `"i32"`, `"i64"`, `"i128"`,
->     `"f32"`, `"f64"`, `"char"`, `"string"`, `"unit"`, `"bytes"`
+>     `"f32"`, `"f64"`, `"char"`, `"string"`, `"unit"`, `"bytes"`,
+>     `"payload"`
 
 > r[schema.format.struct]
 >
@@ -410,6 +451,7 @@ The normative rules below define the CBOR encoding of these types.
 >     - `payload`: one of:
 >       - `"unit"` — no payload
 >       - `{"newtype": type_id}` — single value
+>       - `{"tuple": [type_id, ...]}` — tuple of unnamed values
 >       - `{"struct": [field_descriptors...]}` — struct variant
 >         (field descriptors follow `r[schema.format.struct]`)
 
@@ -417,10 +459,14 @@ The normative rules below define the CBOR encoding of these types.
 >
 > Container schemas MUST contain:
 >
->   * `kind`: `"list"`, `"set"`, `"map"`, `"array"`, or `"option"`
->   * `element`: a `TypeId` (for list, set, array, option)
+>   * `kind`: `"list"`, `"map"`, `"array"`, or `"option"`
+>   * `element`: a `TypeId` (for list, array, option)
 >   * `key` and `value`: `TypeId`s (for map)
 >   * `length`: a `u64` (for array only)
+>
+> Sets (`HashSet<T>`, `BTreeSet<T>`, etc.) have the same postcard encoding
+> as lists and MUST use `kind: "list"`. The schema does not distinguish
+> between ordered and unordered sequences.
 
 > r[schema.format.tuple]
 >
@@ -428,6 +474,9 @@ The normative rules below define the CBOR encoding of these types.
 >
 >   * `kind`: `"tuple"`
 >   * `elements`: a CBOR array of `TypeId`s, one per element, in order
+>
+> The `elements` array MUST contain at least one element. A zero-element
+> tuple is not valid — use `PrimitiveType::Unit` instead.
 
 ## Recursive types
 
