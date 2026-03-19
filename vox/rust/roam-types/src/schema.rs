@@ -267,6 +267,41 @@ pub fn compute_content_hash(
     TypeSchemaId(u64::from_le_bytes(bytes))
 }
 
+/// Collect all TypeSchemaIds directly referenced by a SchemaKind.
+pub fn schema_child_ids(kind: &SchemaKind) -> Vec<TypeSchemaId> {
+    let mut refs = Vec::new();
+    match kind {
+        SchemaKind::Primitive { .. } => {}
+        SchemaKind::Struct { fields, .. } => {
+            for f in fields {
+                refs.push(f.type_id);
+            }
+        }
+        SchemaKind::Enum { variants, .. } => {
+            for v in variants {
+                match &v.payload {
+                    VariantPayload::Unit => {}
+                    VariantPayload::Newtype { type_id } => refs.push(*type_id),
+                    VariantPayload::Tuple { types } => refs.extend(types),
+                    VariantPayload::Struct { fields } => {
+                        for f in fields {
+                            refs.push(f.type_id);
+                        }
+                    }
+                }
+            }
+        }
+        SchemaKind::Tuple { elements } => refs.extend(elements),
+        SchemaKind::List { element } | SchemaKind::Option { element } => refs.push(*element),
+        SchemaKind::Map { key, value } => {
+            refs.push(*key);
+            refs.push(*value);
+        }
+        SchemaKind::Array { element, .. } => refs.push(*element),
+    }
+    refs
+}
+
 /// CBOR-encoded schema payload (schemas + method bindings).
 ///
 /// Newtype over `Vec<u8>` so the type system distinguishes raw bytes from
@@ -635,7 +670,7 @@ pub fn extract_schemas(shape: &'static Shape) -> Vec<Schema> {
 /// types, the 4-step algorithm from r[schema.hash.recursive] is used.
 // r[impl schema.type-id.hash]
 // r[impl schema.hash.recursive]
-fn finalize_content_hashes(mut schemas: Vec<Schema>) -> Vec<Schema> {
+pub fn finalize_content_hashes(mut schemas: Vec<Schema>) -> Vec<Schema> {
     // Build a map from temporary ID -> index in the schemas vec.
     let temp_to_idx: HashMap<TypeSchemaId, usize> = schemas
         .iter()
