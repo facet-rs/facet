@@ -62,11 +62,17 @@ translation plan is built — not mid-stream when a field has the wrong value.
 > The content hash of a type is computed by feeding a canonical byte
 > sequence into blake3, then taking the first 8 bytes of the output as
 > a little-endian `u64`. The canonical byte sequence is constructed by
-> updating the hasher with the components described below. All strings
-> are fed as raw UTF-8 bytes with no length prefix or terminator. A
-> `u64` value (such as a child type hash or array length) is fed as 8
-> bytes in little-endian order. A `u32` value (such as a variant index)
-> is fed as 4 bytes in little-endian order.
+> updating the hasher with the components described below.
+>
+>   * **Strings** (field names, variant names, tag strings) are fed as
+>     their byte length as a `u32` in little-endian order, followed by
+>     the raw UTF-8 bytes. The length prefix ensures the encoding is
+>     injective — no two different type structures produce the same
+>     byte sequence.
+>   * **`u64` values** (child type hashes, array lengths) are fed as 8
+>     bytes in little-endian order.
+>   * **`u32` values** (variant indices) are fed as 4 bytes in
+>     little-endian order.
 >
 > Implementations MUST produce identical hashes for structurally
 > identical types regardless of the source language.
@@ -118,19 +124,8 @@ both hash as `u64`.
 >
 >   1. The tag `"struct"`
 >   2. For each field, in declaration order:
->      a. The field name (UTF-8 bytes)
+>      a. The field name (length-prefixed UTF-8 string)
 >      b. The content hash of the field's type (8 bytes, little-endian)
->
-> Fields are not length-prefixed — the field name is followed immediately
-> by the 8-byte type hash, which provides an unambiguous boundary.
->
-> Note: the `required` field is deliberately excluded from the hash.
-> It is schema metadata about default values, not part of the postcard
-> wire layout. Two versions of a struct that differ only in whether a
-> field gained a default value have the same `TypeId` — the wire
-> encoding is identical. The `required` flag affects translation plan
-> construction (see `r[schema.errors.missing-required]`), not type
-> identity.
 
 ## Enum hashes
 
@@ -140,7 +135,7 @@ both hash as `u64`.
 >
 >   1. The tag `"enum"`
 >   2. For each variant, in declaration order:
->      a. The variant name (UTF-8 bytes)
+>      a. The variant name (length-prefixed UTF-8 string)
 >      b. The variant index as a `u32` (4 bytes, little-endian)
 >      c. The payload tag: `"unit"`, `"newtype"`, `"tuple"`, or `"struct"`
 >      d. For newtype payloads: the content hash of the inner type
@@ -235,11 +230,11 @@ from that ordering.
 >      one preliminary hash per type.
 >
 >   2. **Canonical ordering.** Sort the types by their preliminary hash
->      (ascending, unsigned integer comparison). If two types in the same
->      recursive group have the same preliminary hash, this is an error —
->      the implementation MUST panic or abort. (This would require two
->      structurally identical types differing only in which types they
->      recurse into, which is degenerate and not supported.)
+>      (ascending, unsigned integer comparison). In the unlikely event
+>      that two types have the same preliminary hash (a 64-bit collision),
+>      break the tie by lexicographic comparison of their full canonical
+>      byte sequences (the input to blake3 before truncation, as computed
+>      in step 1).
 >
 >   3. **Final hashes.** Compute the **group hash** as
 >      `blake3(preliminary_hash_0 || preliminary_hash_1 || ...)[0..8]`
@@ -376,9 +371,6 @@ struct FieldSchema {
     name: String,
     /// The type of this field.
     type_id: TypeId,
-    /// Whether the field is required. A required field that is missing
-    /// from the remote schema causes a translation plan error.
-    required: bool,
 }
 
 /// A variant in an enum.
@@ -451,7 +443,6 @@ The normative rules below define the CBOR encoding of these types.
 >   * `fields`: a CBOR array of field descriptors, each a map with:
 >     - `name`: field name (UTF-8 string)
 >     - `type_id`: a `TypeId` (CBOR unsigned integer)
->     - `required`: boolean — `true` if the field has no default value
 >
 > Fields MUST be listed in declaration order (which is also postcard
 > serialization order).
@@ -570,8 +561,11 @@ struct SchemaPayload {
 > handler succeeded or failed.
 >
 > If all schemas for a method's types have already been sent on this
-> connection, the schema payload MAY be empty (zero schemas, zero
-> bindings). Sending a schema whose `TypeId` has already been sent
+> connection, the schemas array MAY be empty — but the method binding
+> MUST still be included if this is the first time this (method_id,
+> direction) pair has been sent on this connection. The receiver needs
+> the binding to know which previously-sent TypeId is the root for
+> this method. Sending a schema whose `TypeId` has already been sent
 > on this connection is a protocol error.
 
 # Schema tracking
@@ -593,10 +587,18 @@ Each peer maintains two sets per connection:
 > r[schema.tracking.transitive]
 >
 > When a schema is sent, all type IDs transitively referenced by that schema
-> are also marked as sent. A schema message is self-contained
+> are also marked as sent. A schema payload is self-contained
 > (see `r[schema.format.self-contained]`), so sending a struct schema
 > implicitly sends the schemas of all its field types, their field types,
 > and so on.
+
+> r[schema.tracking.bindings]
+>
+> Each peer MUST track the set of (method_id, direction) pairs for which
+> it has sent method bindings on this connection. A binding MUST be sent
+> the first time a method's schemas are delivered for a given direction,
+> even if all the schemas themselves were already sent by a previous call
+> to a different method.
 
 # Two levels of schema exchange
 
@@ -809,11 +811,21 @@ translation plan — rather than failing mid-stream on corrupt data.
 > r[schema.errors.call-level]
 >
 > A translation plan failure is a **call-level error**, not a connection-level
-> fault. The method call fails with an error response describing the
-> incompatibility (including a diff of the remote schema versus the local
-> type). The connection remains open and other method calls are unaffected.
+> fault. The connection remains open and other method calls are unaffected.
 > This is distinct from missing schemas entirely (a protocol error per
 > `r[schema.exchange.required]`), which tears down the connection.
+
+> r[schema.errors.call-level.callee]
+>
+> If the callee cannot build a translation plan for incoming request
+> arguments, it MUST respond with an error describing the incompatibility
+> (including a diff of the remote schema versus the local type).
+
+> r[schema.errors.call-level.caller]
+>
+> If the caller cannot build a translation plan for an incoming response,
+> the failure is local — the call's result resolves to an error. There is
+> no further message to send; the response has already been received.
 
 > r[schema.errors.missing-required]
 >
