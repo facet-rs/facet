@@ -189,8 +189,6 @@ identity described in [Retry](./retry/).
 >
 >   * The request ID of the request being responded to
 >   * The serialized return value
->   * A list of channel IDs for channels that appear in the return type,
->     allocated by the callee
 >   * Metadata
 
 > r[rpc.request.id-allocation]
@@ -292,9 +290,9 @@ identity described in [Retry](./retry/).
 
 > r[rpc.channel.lifecycle]
 >
-> Channels are created as part of a request or response, but they outlive
-> both. A channel remains live until it is explicitly closed or reset,
-> or until the connection is torn down.
+> Channels are created as part of a request, but they outlive the
+> request/response exchange. A channel remains live until it is explicitly
+> closed or reset, or until the connection is torn down.
 
 > r[rpc.channel.item]
 >

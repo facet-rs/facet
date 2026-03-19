@@ -76,9 +76,9 @@ replayed as the same logical operation. See [Retry](./retry/).
 >
 > On the wire, a frame is encoded as a postcard-serialized `FrameHeader`
 > (seq + ack) concatenated with the separately postcard-serialized item
-> bytes. This matches the postcard layout of `Frame<T>` and allows the
-> sender to prepend a fresh header to already-encoded item bytes during
-> replay, without re-serializing the item.
+> bytes. The replay buffer stores the complete encoded frame bytes
+> (header + item). On replay, frames are retransmitted with their
+> original sequence numbers preserved.
 
 # Sequencing
 
@@ -114,9 +114,10 @@ replayed as the same logical operation. See [Retry](./retry/).
 
 > r[stable.replay-buffer]
 >
-> The sender MUST retain the encoded bytes of every sent item in a replay
-> buffer until the peer acknowledges receipt via an ack. On reconnection,
-> unacknowledged items are replayed with fresh frame headers.
+> The sender MUST retain the encoded frame bytes (header + item) in a
+> replay buffer until the peer acknowledges receipt via an ack. On
+> reconnection, unacknowledged frames are retransmitted with their
+> original sequence numbers.
 
 > r[stable.replay-buffer.order]
 >
