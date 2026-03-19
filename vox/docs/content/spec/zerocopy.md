@@ -246,7 +246,7 @@ insert_anchor_links = "left"
 >
 > **BareConduit** — no additional framing. The serialized value bytes are
 > passed directly to the link. Suitable for transports where reliability
-> is inherent or unnecessary (shared memory, in-process, localhost).
+> is inherent or unnecessary (shared memory, in-process, memory).
 
 > r[zerocopy.framing.conduit.stable]
 >

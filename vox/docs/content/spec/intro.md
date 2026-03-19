@@ -70,8 +70,8 @@ But how do you obtain a client?
 
 # The connectivity stack
 
-To "handle" a call (ie. send a response to an incoming request), or to "make" a
-call (ie. send a request to the peer, expecting a response), one needs a connection.
+To "handle" a call (i.e. send a response to an incoming request), or to "make" a
+call (i.e. send a request to the peer, expecting a response), one needs a connection.
 
 roam supports various transports, like memory, TCP and other sockets, WebSocket,
 shared memory; but a roam connection sits several layers above a "TCP connection".

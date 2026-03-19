@@ -7,7 +7,7 @@ weight = 14
 Postcard is roam's data wire format. It is compact and fast, but positional —
 fields are identified by their order, not by name. This means that adding,
 removing, or reordering fields changes the byte layout, and a peer reading
-with a different type definition silently gets garbage.
+with a different type definition silently misinterprets the data.
 
 Schema exchange solves this without replacing postcard. The data bytes stay
 the same. What changes is that peers describe their types to each other

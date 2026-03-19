@@ -41,12 +41,12 @@ weight = 11
 
 > r[transport.websocket]
 >
-> Roam provides a Websocket link, which sends payloads via Websocket binary
+> Roam provides a WebSocket link, which sends payloads via WebSocket binary
 > frames.
 
 > r[transport.websocket.platforms]
 >
-> The Websocket link MUST work on platforms where tokio works
+> The WebSocket link MUST work on platforms where tokio works
 > (e.g. `x86_64-unknown-linux-gnu`) and on `wasm32-unknown-unknown`.
 
 > r[transport.inprocess]
@@ -465,10 +465,9 @@ starts only after that conduit has been selected and initialized.
 > `ProtocolError` is always sent on connection ID 0. Sending it on another connection
 > ID is itself, a protocol error.
 >
-> Any pending request MUST be resolved with an error indicating that there's been
-> a protocol error. Any live channel MUST be put in a state where any attempt to
-> send or recv from them MUST return an error indicating that there's been a protocol
-> error.
+> Any pending request MUST be resolved with an error indicating a protocol
+> error. Any live channel MUST be put in a state where any attempt to
+> send or receive returns an error indicating a protocol error.
 
 > r[session.keepalive]
 >
@@ -527,7 +526,7 @@ starts only after that conduit has been selected and initialized.
 > which IDs a peer may allocate for requests and channels, without coordination.
 > Request IDs and channel IDs have separate namespaces within a connection.
 >
-> The parity of virtual connections needn't be the same as the session parity.
+> The parity of virtual connections need not be the same as the session parity.
 >
 > For example, peer Alice may have session parity Odd: she might open a new
 > connection with ID 13 (odd), with parity Even. Within that connection, Alice
