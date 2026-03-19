@@ -52,32 +52,48 @@ translation plan is built — not mid-stream when a field has the wrong value.
 > r[schema.type-id]
 >
 > A type ID is a `u64` content hash — a deterministic structural hash
-> of the type's postcard-level definition. The same type always produces
-> the same hash, regardless of which connection, session, process, or
-> language produced it. On the wire (CBOR), a type ID is encoded as a
-> CBOR unsigned integer.
+> of a type *declaration's* postcard-level definition. For generic types,
+> the hash is of the declaration (with type variable slots), not of any
+> specific instantiation. The same declaration always produces the same
+> hash, regardless of which connection, session, process, or language
+> produced it. On the wire (CBOR), a type ID is encoded as a CBOR
+> unsigned integer.
 
 > r[schema.type-id.hash]
 >
-> The content hash of a type is computed by feeding a canonical byte
-> sequence into blake3, then taking the first 8 bytes of the output as
-> a little-endian `u64`. The canonical byte sequence is constructed by
-> updating the hasher with the components described below.
+> The content hash of a type declaration is computed by feeding a
+> canonical byte sequence into blake3, then taking the first 8 bytes
+> of the output as a little-endian `u64`. The canonical byte sequence
+> is constructed by updating the hasher with the components described
+> below.
 >
->   * **Strings** (field names, variant names, tag strings) are fed as
->     their byte length as a `u32` in little-endian order, followed by
->     the raw UTF-8 bytes. The length prefix ensures the encoding is
->     injective — no two different type structures produce the same
->     byte sequence.
->   * **`u64` values** (child type hashes, array lengths) are fed as 8
->     bytes in little-endian order.
->   * **`u32` values** (variant indices) are fed as 4 bytes in
+>   * **Strings** (field names, variant names, tag strings, type parameter
+>     names) are fed as their byte length as a `u32` in little-endian
+>     order, followed by the raw UTF-8 bytes. The length prefix ensures
+>     the encoding is injective — no two different type structures
+>     produce the same byte sequence.
+>   * **`u64` values** (array lengths) are fed as 8 bytes in
 >     little-endian order.
+>   * **`u32` values** (variant indices, type variable indices) are fed
+>     as 4 bytes in little-endian order.
+>   * **TypeRef values** are fed according to `r[schema.type-id.hash.typeref]`.
 >
 > Implementations MUST produce identical hashes for structurally
-> identical types regardless of the source language.
+> identical type declarations regardless of the source language.
 >
 > For recursive types, see `r[schema.hash.recursive]`.
+
+> r[schema.type-id.hash.typeref]
+>
+> A `TypeRef` is fed into the hasher as follows:
+>
+>   * **`Concrete` without args:** the tag `"concrete"` then the
+>     type's content hash (8 bytes, little-endian)
+>   * **`Concrete` with args:** the tag `"concrete"` then the type's
+>     content hash (8 bytes, little-endian), then the tag `"args"`,
+>     then each argument's `TypeRef` encoding in order (recursive)
+>   * **`Var`:** the tag `"var"` then the index as a `u32`
+>     (4 bytes, little-endian)
 
 ## Primitive type hashes
 
@@ -124,9 +140,12 @@ both hash as `u64`.
 > To hash a struct, update the hasher with:
 >
 >   1. The tag `"struct"`
->   2. For each field, in declaration order:
+>   2. The type name (length-prefixed UTF-8 string)
+>   3. The number of type parameters as a `u32` (4 bytes, LE)
+>   4. Each type parameter name (length-prefixed UTF-8 string), in order
+>   5. For each field, in declaration order:
 >      a. The field name (length-prefixed UTF-8 string)
->      b. The content hash of the field's type (8 bytes, little-endian)
+>      b. The field's `TypeRef` (see `r[schema.type-id.hash.typeref]`)
 
 ## Enum hashes
 
@@ -135,16 +154,17 @@ both hash as `u64`.
 > To hash an enum, update the hasher with:
 >
 >   1. The tag `"enum"`
->   2. For each variant, in declaration order:
+>   2. The type name (length-prefixed UTF-8 string)
+>   3. The number of type parameters as a `u32` (4 bytes, LE)
+>   4. Each type parameter name (length-prefixed UTF-8 string), in order
+>   5. For each variant, in declaration order:
 >      a. The variant name (length-prefixed UTF-8 string)
 >      b. The variant index as a `u32` (4 bytes, little-endian)
 >      c. The payload tag: `"unit"`, `"newtype"`, `"tuple"`, or `"struct"`
->      d. For newtype payloads: the content hash of the inner type
->         (8 bytes, little-endian)
->      e. For tuple payloads: the content hash of each element type,
->         in order (8 bytes each, little-endian)
+>      d. For newtype payloads: the inner `TypeRef`
+>      e. For tuple payloads: each element's `TypeRef`, in order
 >      f. For struct payloads: each field as in `r[schema.type-id.hash.struct]`
->         step 2 (name then type hash, in order)
+>         step 5 (name then TypeRef, in order)
 
 ## Container hashes
 
@@ -152,11 +172,11 @@ both hash as `u64`.
 >
 > To hash a container type, update the hasher with:
 >
->   * **List:** `"list"` then the element type hash
->   * **Option:** `"option"` then the element type hash
->   * **Array:** `"array"` then the element type hash, then the length
+>   * **List:** `"list"` then the element `TypeRef`
+>   * **Option:** `"option"` then the element `TypeRef`
+>   * **Array:** `"array"` then the element `TypeRef`, then the length
 >     as a `u64` (8 bytes, little-endian)
->   * **Map:** `"map"` then the key type hash, then the value type hash
+>   * **Map:** `"map"` then the key `TypeRef`, then the value `TypeRef`
 
 ## Tuple hashes
 
@@ -165,8 +185,7 @@ both hash as `u64`.
 > To hash a tuple, update the hasher with:
 >
 >   1. The tag `"tuple"`
->   2. The content hash of each element type, in order (8 bytes each,
->      little-endian)
+>   2. Each element's `TypeRef`, in order
 
 Content hashes give type IDs a universal meaning. A peer that receives
 a schema tagged with a content hash it has already seen — from this
