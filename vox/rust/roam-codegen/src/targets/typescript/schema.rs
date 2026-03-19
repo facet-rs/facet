@@ -20,8 +20,8 @@ use facet_core::{Facet, Field, ScalarType, Shape};
 use heck::ToLowerCamelCase;
 use roam_types::{
     EnumInfo, Schema, SchemaKind, SchemaSendTracker, ServiceDescriptor, ShapeKind, StructInfo,
-    TypeSchemaId, VariantKind, VariantPayload, VariantSchema, classify_shape, classify_variant,
-    compute_content_hash, is_bytes, schema_child_ids,
+    TypeRef, TypeSchemaId, VariantKind, VariantPayload, VariantSchema, classify_shape,
+    classify_variant, compute_content_hash, is_bytes, schema_child_ids,
 };
 
 /// Generate a TypeScript Schema object literal for a type.
@@ -397,16 +397,22 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
                 &mut all_schemas,
             )
         } else {
-            let arg_root_ids: Vec<TypeSchemaId> = method
+            let arg_root_ids: Vec<TypeRef<TypeSchemaId>> = method
                 .args
                 .iter()
-                .map(|arg| extract_into(&mut tracker, arg.shape, &mut all_schemas))
+                .map(|arg| {
+                    TypeRef::concrete(extract_into(&mut tracker, arg.shape, &mut all_schemas))
+                })
                 .collect();
             let kind = SchemaKind::Tuple {
                 elements: arg_root_ids,
             };
-            let type_id = compute_content_hash(&kind, &|id| id.0);
-            all_schemas.push(Schema { type_id, kind });
+            let type_id = compute_content_hash(&kind, &|id| id);
+            all_schemas.push(Schema {
+                type_id,
+                type_params: vec![],
+                kind,
+            });
             type_id
         };
 
@@ -442,7 +448,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
                     name: "User".into(),
                     index: 0,
                     payload: VariantPayload::Newtype {
-                        type_id: err_root_id,
+                        type_ref: TypeRef::concrete(err_root_id),
                     },
                 },
                 VariantSchema {
@@ -453,7 +459,9 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
                 VariantSchema {
                     name: "InvalidPayload".into(),
                     index: 2,
-                    payload: VariantPayload::Newtype { type_id: string_id },
+                    payload: VariantPayload::Newtype {
+                        type_ref: TypeRef::concrete(string_id),
+                    },
                 },
                 VariantSchema {
                     name: "Cancelled".into(),
@@ -467,9 +475,10 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
                 },
             ],
         };
-        let roam_error_id = compute_content_hash(&roam_error_kind, &|id| id.0);
+        let roam_error_id = compute_content_hash(&roam_error_kind, &|id| id);
         all_schemas.push(Schema {
             type_id: roam_error_id,
+            type_params: vec![],
             kind: roam_error_kind,
         });
 
@@ -481,21 +490,22 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
                     name: "Ok".into(),
                     index: 0,
                     payload: VariantPayload::Newtype {
-                        type_id: ok_root_id,
+                        type_ref: TypeRef::concrete(ok_root_id),
                     },
                 },
                 VariantSchema {
                     name: "Err".into(),
                     index: 1,
                     payload: VariantPayload::Newtype {
-                        type_id: roam_error_id,
+                        type_ref: TypeRef::concrete(roam_error_id),
                     },
                 },
             ],
         };
-        let result_id = compute_content_hash(&result_kind, &|id| id.0);
+        let result_id = compute_content_hash(&result_kind, &|id| id);
         all_schemas.push(Schema {
             type_id: result_id,
+            type_params: vec![],
             kind: result_kind,
         });
 

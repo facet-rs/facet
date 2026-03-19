@@ -34,7 +34,8 @@ pub struct TypeSchemaId(pub u64);
 /// Generic over the ID type: `TypeSchemaId` for final schemas,
 /// `MixedId` during extraction.
 #[derive(Facet, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum TypeRef<Id: Copy + std::fmt::Debug + 'static = TypeSchemaId> {
+#[repr(u8)]
+pub enum TypeRef<Id = TypeSchemaId> {
     /// A concrete type, possibly generic.
     Concrete {
         type_id: Id,
@@ -46,7 +47,7 @@ pub enum TypeRef<Id: Copy + std::fmt::Debug + 'static = TypeSchemaId> {
     Var(u32),
 }
 
-impl<Id: Copy + std::fmt::Debug + 'static> TypeRef<Id> {
+impl<Id> TypeRef<Id> {
     /// Shorthand for a non-generic concrete type reference.
     pub fn concrete(type_id: Id) -> Self {
         TypeRef::Concrete {
@@ -59,11 +60,48 @@ impl<Id: Copy + std::fmt::Debug + 'static> TypeRef<Id> {
     pub fn generic(type_id: Id, args: Vec<TypeRef<Id>>) -> Self {
         TypeRef::Concrete { type_id, args }
     }
+
+    /// Collect all concrete IDs reachable from this TypeRef (depth-first).
+    pub fn collect_ids(&self, out: &mut Vec<Id>)
+    where
+        Id: Copy,
+    {
+        match self {
+            TypeRef::Concrete { type_id, args } => {
+                out.push(*type_id);
+                for arg in args {
+                    arg.collect_ids(out);
+                }
+            }
+            TypeRef::Var(_) => {}
+        }
+    }
+
+    /// Return the concrete type ID if this is a non-generic `Concrete` variant, panicking otherwise.
+    pub fn expect_concrete_id(&self) -> &Id {
+        match self {
+            TypeRef::Concrete { type_id, args } if args.is_empty() => type_id,
+            TypeRef::Concrete { .. } => panic!("TypeRef::expect_concrete_id: has type args"),
+            TypeRef::Var(_) => panic!("TypeRef::expect_concrete_id: is a type variable"),
+        }
+    }
+
+    /// Map a `TypeRef<Id>` to `TypeRef<OtherId>` by applying `f` to every concrete ID.
+    pub fn map<OtherId, F: Fn(Id) -> OtherId + Copy>(self, f: F) -> TypeRef<OtherId> {
+        match self {
+            TypeRef::Concrete { type_id, args } => TypeRef::Concrete {
+                type_id: f(type_id),
+                args: args.into_iter().map(|a| a.map(f)).collect(),
+            },
+            TypeRef::Var(i) => TypeRef::Var(i),
+        }
+    }
 }
 
 /// During extraction, IDs can be either already-finalized content hashes
 /// or temporary indices that will be resolved during finalization.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Facet, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(u8)]
 pub enum MixedId {
     /// A final content hash (from a previously extracted type).
     Final(TypeSchemaId),
@@ -73,7 +111,7 @@ pub enum MixedId {
 
 /// The root schema type, generic over the ID representation.
 #[derive(Facet, Clone, Debug)]
-pub struct Schema<Id: Copy + std::fmt::Debug + 'static = TypeSchemaId> {
+pub struct Schema<Id = TypeSchemaId> {
     pub type_id: Id,
     /// Type parameter names for generic types. Empty for non-generic types.
     #[facet(default)]
@@ -95,7 +133,7 @@ impl Schema {
 /// The structural kind of a type, generic over the ID representation.
 #[derive(Facet, Clone, Debug)]
 #[repr(u8)]
-pub enum SchemaKind<Id: Copy + std::fmt::Debug + 'static = TypeSchemaId> {
+pub enum SchemaKind<Id = TypeSchemaId> {
     Struct {
         /// The type name (e.g. "Point"). Used for matching across schema
         /// versions and for diagnostics. MUST NOT be empty.
@@ -136,7 +174,7 @@ pub(crate) type MixedSchemaKind = SchemaKind<MixedId>;
 
 /// Describes a single field in a struct or struct variant.
 #[derive(Facet, Clone, Debug)]
-pub struct FieldSchema<Id: Copy + std::fmt::Debug + 'static = TypeSchemaId> {
+pub struct FieldSchema<Id = TypeSchemaId> {
     pub name: String,
     pub type_ref: TypeRef<Id>,
     pub required: bool,
@@ -144,7 +182,7 @@ pub struct FieldSchema<Id: Copy + std::fmt::Debug + 'static = TypeSchemaId> {
 
 /// Describes a single variant in an enum.
 #[derive(Facet, Clone, Debug)]
-pub struct VariantSchema<Id: Copy + std::fmt::Debug + 'static = TypeSchemaId> {
+pub struct VariantSchema<Id = TypeSchemaId> {
     pub name: String,
     pub index: u32,
     pub payload: VariantPayload<Id>,
@@ -153,7 +191,7 @@ pub struct VariantSchema<Id: Copy + std::fmt::Debug + 'static = TypeSchemaId> {
 /// The payload of an enum variant.
 #[derive(Facet, Clone, Debug)]
 #[repr(u8)]
-pub enum VariantPayload<Id: Copy + std::fmt::Debug + 'static = TypeSchemaId> {
+pub enum VariantPayload<Id = TypeSchemaId> {
     Unit,
     Newtype { type_ref: TypeRef<Id> },
     Tuple { types: Vec<TypeRef<Id>> },
@@ -217,108 +255,134 @@ impl PrimitiveType {
     }
 }
 
-/// Compute the canonical byte sequence for hashing a SchemaKind.
+/// Context for computing content hashes of schemas.
 ///
-/// The `resolve` function maps TypeSchemaId -> u64 hash value. For non-recursive
-/// types this is just `.0`. For recursive types during preliminary hashing,
-/// intra-group references return the sentinel (0u64).
-// r[impl schema.type-id.hash.primitives]
-// r[impl schema.type-id.hash.struct]
-// r[impl schema.type-id.hash.enum]
-// r[impl schema.type-id.hash.container]
-// r[impl schema.type-id.hash.tuple]
-fn compute_canonical_bytes<Id: Copy + std::fmt::Debug + 'static>(
-    kind: &SchemaKind<Id>,
-    resolve: &impl Fn(Id) -> u64,
-) -> Vec<u8> {
-    let mut buf = Vec::new();
+/// Generic over the ID type so it works with both `MixedId` (during extraction)
+/// and `TypeSchemaId` (for already-finalized schemas).
+struct SchemaHasher<'a, Id: Copy> {
+    hasher: blake3::Hasher,
+    resolve: &'a dyn Fn(Id) -> TypeSchemaId,
+}
 
-    match kind {
-        SchemaKind::Primitive { primitive_type } => {
-            let tag = primitive_type.hash_tag();
-            buf.extend_from_slice(&(tag.len() as u32).to_le_bytes());
-            buf.extend_from_slice(tag.as_bytes());
+impl<'a, Id: Copy> SchemaHasher<'a, Id> {
+    fn new(resolve: &'a dyn Fn(Id) -> TypeSchemaId) -> Self {
+        Self {
+            hasher: blake3::Hasher::new(),
+            resolve,
         }
-        SchemaKind::Struct { fields, .. } => {
-            hash_append_string(&mut buf, "struct");
-            for field in fields {
-                hash_append_string(&mut buf, &field.name);
-                buf.extend_from_slice(&resolve(field.type_id).to_le_bytes());
+    }
+
+    fn feed_string(&mut self, s: &str) {
+        self.hasher.update(&(s.len() as u32).to_le_bytes());
+        self.hasher.update(s.as_bytes());
+    }
+
+    fn feed_type_ref(&mut self, tr: &TypeRef<Id>) {
+        match tr {
+            TypeRef::Concrete { type_id, args } => {
+                self.hasher.update(&[0x00]);
+                let resolved = (self.resolve)(*type_id);
+                self.hasher.update(&resolved.0.to_le_bytes());
+                self.hasher.update(&(args.len() as u32).to_le_bytes());
+                for arg in args {
+                    self.feed_type_ref(arg);
+                }
+            }
+            TypeRef::Var(idx) => {
+                self.hasher.update(&[0x01]);
+                self.hasher.update(&idx.to_le_bytes());
             }
         }
-        SchemaKind::Enum { variants, .. } => {
-            hash_append_string(&mut buf, "enum");
-            for variant in variants {
-                hash_append_string(&mut buf, &variant.name);
-                buf.extend_from_slice(&variant.index.to_le_bytes());
-                match &variant.payload {
-                    VariantPayload::Unit => {
-                        hash_append_string(&mut buf, "unit");
-                    }
-                    VariantPayload::Newtype { type_id } => {
-                        hash_append_string(&mut buf, "newtype");
-                        buf.extend_from_slice(&resolve(*type_id).to_le_bytes());
-                    }
-                    VariantPayload::Tuple { types } => {
-                        hash_append_string(&mut buf, "tuple");
-                        for tid in types {
-                            buf.extend_from_slice(&resolve(*tid).to_le_bytes());
+    }
+
+    // r[impl schema.type-id.hash.primitives]
+    // r[impl schema.type-id.hash.struct]
+    // r[impl schema.type-id.hash.enum]
+    // r[impl schema.type-id.hash.container]
+    // r[impl schema.type-id.hash.tuple]
+    fn feed_kind(&mut self, kind: &SchemaKind<Id>) {
+        match kind {
+            SchemaKind::Primitive { primitive_type } => {
+                self.feed_string(primitive_type.hash_tag());
+            }
+            SchemaKind::Struct { fields, .. } => {
+                self.feed_string("struct");
+                for field in fields {
+                    self.feed_string(&field.name);
+                    self.feed_type_ref(&field.type_ref);
+                }
+            }
+            SchemaKind::Enum { variants, .. } => {
+                self.feed_string("enum");
+                for variant in variants {
+                    self.feed_string(&variant.name);
+                    self.hasher.update(&variant.index.to_le_bytes());
+                    match &variant.payload {
+                        VariantPayload::Unit => {
+                            self.feed_string("unit");
                         }
-                    }
-                    VariantPayload::Struct { fields } => {
-                        hash_append_string(&mut buf, "struct");
-                        for field in fields {
-                            hash_append_string(&mut buf, &field.name);
-                            buf.extend_from_slice(&resolve(field.type_id).to_le_bytes());
+                        VariantPayload::Newtype { type_ref } => {
+                            self.feed_string("newtype");
+                            self.feed_type_ref(type_ref);
+                        }
+                        VariantPayload::Tuple { types } => {
+                            self.feed_string("tuple");
+                            for tr in types {
+                                self.feed_type_ref(tr);
+                            }
+                        }
+                        VariantPayload::Struct { fields } => {
+                            self.feed_string("struct");
+                            for field in fields {
+                                self.feed_string(&field.name);
+                                self.feed_type_ref(&field.type_ref);
+                            }
                         }
                     }
                 }
             }
-        }
-        SchemaKind::Tuple { elements } => {
-            hash_append_string(&mut buf, "tuple");
-            for elem in elements {
-                buf.extend_from_slice(&resolve(*elem).to_le_bytes());
+            SchemaKind::Tuple { elements } => {
+                self.feed_string("tuple");
+                for elem in elements {
+                    self.feed_type_ref(elem);
+                }
             }
-        }
-        SchemaKind::List { element } => {
-            hash_append_string(&mut buf, "list");
-            buf.extend_from_slice(&resolve(*element).to_le_bytes());
-        }
-        SchemaKind::Map { key, value } => {
-            hash_append_string(&mut buf, "map");
-            buf.extend_from_slice(&resolve(*key).to_le_bytes());
-            buf.extend_from_slice(&resolve(*value).to_le_bytes());
-        }
-        SchemaKind::Array { element, length } => {
-            hash_append_string(&mut buf, "array");
-            buf.extend_from_slice(&resolve(*element).to_le_bytes());
-            buf.extend_from_slice(&length.to_le_bytes());
-        }
-        SchemaKind::Option { element } => {
-            hash_append_string(&mut buf, "option");
-            buf.extend_from_slice(&resolve(*element).to_le_bytes());
+            SchemaKind::List { element } => {
+                self.feed_string("list");
+                self.feed_type_ref(element);
+            }
+            SchemaKind::Map { key, value } => {
+                self.feed_string("map");
+                self.feed_type_ref(key);
+                self.feed_type_ref(value);
+            }
+            SchemaKind::Array { element, length } => {
+                self.feed_string("array");
+                self.feed_type_ref(element);
+                self.hasher.update(&length.to_le_bytes());
+            }
+            SchemaKind::Option { element } => {
+                self.feed_string("option");
+                self.feed_type_ref(element);
+            }
         }
     }
 
-    buf
-}
-
-/// Append a length-prefixed string to a byte buffer (same encoding as hash_feed_string).
-fn hash_append_string(buf: &mut Vec<u8>, s: &str) {
-    buf.extend_from_slice(&(s.len() as u32).to_le_bytes());
-    buf.extend_from_slice(s.as_bytes());
+    fn finalize(self) -> TypeSchemaId {
+        let hash = self.hasher.finalize();
+        let bytes: [u8; 8] = hash.as_bytes()[0..8].try_into().expect("slice len");
+        TypeSchemaId(u64::from_le_bytes(bytes))
+    }
 }
 
 /// Compute the content hash of a SchemaKind, given a resolver for child type IDs.
-pub fn compute_content_hash(
-    kind: &SchemaKind,
-    resolve: &impl Fn(TypeSchemaId) -> u64,
+pub fn compute_content_hash<Id: Copy>(
+    kind: &SchemaKind<Id>,
+    resolve: &dyn Fn(Id) -> TypeSchemaId,
 ) -> TypeSchemaId {
-    let canonical = compute_canonical_bytes(kind, resolve);
-    let hash = blake3::hash(&canonical);
-    let bytes: [u8; 8] = hash.as_bytes()[0..8].try_into().expect("slice len");
-    TypeSchemaId(u64::from_le_bytes(bytes))
+    let mut hasher = SchemaHasher::new(resolve);
+    hasher.feed_kind(kind);
+    hasher.finalize()
 }
 
 /// Collect all TypeSchemaIds directly referenced by a SchemaKind.
@@ -328,30 +392,40 @@ pub fn schema_child_ids(kind: &SchemaKind) -> Vec<TypeSchemaId> {
         SchemaKind::Primitive { .. } => {}
         SchemaKind::Struct { fields, .. } => {
             for f in fields {
-                refs.push(f.type_id);
+                f.type_ref.collect_ids(&mut refs);
             }
         }
         SchemaKind::Enum { variants, .. } => {
             for v in variants {
                 match &v.payload {
                     VariantPayload::Unit => {}
-                    VariantPayload::Newtype { type_id } => refs.push(*type_id),
-                    VariantPayload::Tuple { types } => refs.extend(types),
+                    VariantPayload::Newtype { type_ref } => type_ref.collect_ids(&mut refs),
+                    VariantPayload::Tuple { types } => {
+                        for t in types {
+                            t.collect_ids(&mut refs);
+                        }
+                    }
                     VariantPayload::Struct { fields } => {
                         for f in fields {
-                            refs.push(f.type_id);
+                            f.type_ref.collect_ids(&mut refs);
                         }
                     }
                 }
             }
         }
-        SchemaKind::Tuple { elements } => refs.extend(elements),
-        SchemaKind::List { element } | SchemaKind::Option { element } => refs.push(*element),
-        SchemaKind::Map { key, value } => {
-            refs.push(*key);
-            refs.push(*value);
+        SchemaKind::Tuple { elements } => {
+            for e in elements {
+                e.collect_ids(&mut refs);
+            }
         }
-        SchemaKind::Array { element, .. } => refs.push(*element),
+        SchemaKind::List { element } | SchemaKind::Option { element } => {
+            element.collect_ids(&mut refs);
+        }
+        SchemaKind::Map { key, value } => {
+            key.collect_ids(&mut refs);
+            value.collect_ids(&mut refs);
+        }
+        SchemaKind::Array { element, .. } => element.collect_ids(&mut refs),
     }
     refs
 }
@@ -716,11 +790,11 @@ pub fn extract_schemas(shape: &'static Shape) -> Vec<Schema> {
 /// types, the 4-step algorithm from r[schema.hash.recursive] is used.
 // r[impl schema.type-id.hash]
 // r[impl schema.hash.recursive]
-/// Resolve a MixedId to a u64 for hashing purposes.
-fn resolve_mixed(id: MixedId, temp_to_final: &HashMap<u64, TypeSchemaId>) -> u64 {
+/// Resolve a MixedId to a TypeSchemaId for hashing purposes.
+fn resolve_mixed(id: MixedId, temp_to_final: &HashMap<u64, TypeSchemaId>) -> TypeSchemaId {
     match id {
-        MixedId::Final(tid) => tid.0,
-        MixedId::Temp(t) => temp_to_final.get(&t).map(|h| h.0).unwrap_or(0),
+        MixedId::Final(tid) => tid,
+        MixedId::Temp(t) => temp_to_final.get(&t).copied().unwrap_or(TypeSchemaId(0)),
     }
 }
 
@@ -750,30 +824,40 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
             SchemaKind::Primitive { .. } => {}
             SchemaKind::Struct { fields, .. } => {
                 for f in fields {
-                    refs.push(f.type_id);
+                    f.type_ref.collect_ids(&mut refs);
                 }
             }
             SchemaKind::Enum { variants, .. } => {
                 for v in variants {
                     match &v.payload {
                         VariantPayload::Unit => {}
-                        VariantPayload::Newtype { type_id } => refs.push(*type_id),
-                        VariantPayload::Tuple { types } => refs.extend(types),
+                        VariantPayload::Newtype { type_ref } => type_ref.collect_ids(&mut refs),
+                        VariantPayload::Tuple { types } => {
+                            for t in types {
+                                t.collect_ids(&mut refs);
+                            }
+                        }
                         VariantPayload::Struct { fields } => {
                             for f in fields {
-                                refs.push(f.type_id);
+                                f.type_ref.collect_ids(&mut refs);
                             }
                         }
                     }
                 }
             }
-            SchemaKind::Tuple { elements } => refs.extend(elements),
-            SchemaKind::List { element } | SchemaKind::Option { element } => refs.push(*element),
-            SchemaKind::Map { key, value } => {
-                refs.push(*key);
-                refs.push(*value);
+            SchemaKind::Tuple { elements } => {
+                for e in elements {
+                    e.collect_ids(&mut refs);
+                }
             }
-            SchemaKind::Array { element, .. } => refs.push(*element),
+            SchemaKind::List { element } | SchemaKind::Option { element } => {
+                element.collect_ids(&mut refs);
+            }
+            SchemaKind::Map { key, value } => {
+                key.collect_ids(&mut refs);
+                value.collect_ids(&mut refs);
+            }
+            SchemaKind::Array { element, .. } => element.collect_ids(&mut refs),
         }
         refs
     }
@@ -807,11 +891,9 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
             continue;
         }
         if let MixedId::Temp(temp) = schema.type_id {
-            let canonical =
-                compute_canonical_bytes(&schema.kind, &|mid| resolve_mixed(mid, &temp_to_final));
-            let hash = blake3::hash(&canonical);
-            let bytes: [u8; 8] = hash.as_bytes()[0..8].try_into().unwrap();
-            temp_to_final.insert(temp, TypeSchemaId(u64::from_le_bytes(bytes)));
+            let final_id =
+                compute_content_hash(&schema.kind, &|mid| resolve_mixed(mid, &temp_to_final));
+            temp_to_final.insert(temp, final_id);
         }
     }
 
@@ -839,36 +921,29 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
             .collect();
 
         // Step 1: Preliminary hashes — intra-group refs become sentinel (0).
-        let mut prelim_data: Vec<(Vec<u8>, u64)> = Vec::new();
+        let mut prelim_hashes: Vec<TypeSchemaId> = Vec::new();
         for schema in &schemas[group_start..group_end] {
-            let canonical = compute_canonical_bytes(&schema.kind, &|mid| match mid {
-                MixedId::Final(tid) => tid.0,
+            let prelim = compute_content_hash(&schema.kind, &|mid| match mid {
+                MixedId::Final(tid) => tid,
                 MixedId::Temp(t) => {
                     if group_temp_ids.contains(&t) {
-                        0u64 // sentinel
+                        TypeSchemaId(0) // sentinel
                     } else {
-                        temp_to_final.get(&t).map(|h| h.0).unwrap_or(0)
+                        temp_to_final.get(&t).copied().unwrap_or(TypeSchemaId(0))
                     }
                 }
             });
-            let hash = blake3::hash(&canonical);
-            let bytes: [u8; 8] = hash.as_bytes()[0..8].try_into().unwrap();
-            prelim_data.push((canonical, u64::from_le_bytes(bytes)));
+            prelim_hashes.push(prelim);
         }
 
         // Step 3: Canonical ordering.
-        let mut order: Vec<usize> = (0..prelim_data.len()).collect();
-        order.sort_by(|&a, &b| {
-            prelim_data[a]
-                .1
-                .cmp(&prelim_data[b].1)
-                .then_with(|| prelim_data[a].0.cmp(&prelim_data[b].0))
-        });
+        let mut order: Vec<usize> = (0..prelim_hashes.len()).collect();
+        order.sort_by_key(|&i| prelim_hashes[i].0);
 
         // Step 4: Final hashes.
         let mut group_hasher = blake3::Hasher::new();
         for &idx in &order {
-            group_hasher.update(&prelim_data[idx].1.to_le_bytes());
+            group_hasher.update(&prelim_hashes[idx].0.to_le_bytes());
         }
         let gh = group_hasher.finalize();
         let group_hash = u64::from_le_bytes(gh.as_bytes()[0..8].try_into().unwrap());
@@ -900,6 +975,7 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
                     .expect("unresolved temp ID during finalization"),
             }
         };
+        let rt = |type_ref: TypeRef<MixedId>| -> TypeRef<TypeSchemaId> { type_ref.map(r) };
         match kind {
             SchemaKind::Primitive { primitive_type } => SchemaKind::Primitive { primitive_type },
             SchemaKind::Struct { name, fields } => SchemaKind::Struct {
@@ -908,7 +984,7 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
                     .into_iter()
                     .map(|f| FieldSchema {
                         name: f.name,
-                        type_id: r(f.type_id),
+                        type_ref: rt(f.type_ref),
                         required: f.required,
                     })
                     .collect(),
@@ -922,18 +998,18 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
                         index: v.index,
                         payload: match v.payload {
                             VariantPayload::Unit => VariantPayload::Unit,
-                            VariantPayload::Newtype { type_id } => VariantPayload::Newtype {
-                                type_id: r(type_id),
+                            VariantPayload::Newtype { type_ref } => VariantPayload::Newtype {
+                                type_ref: rt(type_ref),
                             },
                             VariantPayload::Tuple { types } => VariantPayload::Tuple {
-                                types: types.into_iter().map(r).collect(),
+                                types: types.into_iter().map(rt).collect(),
                             },
                             VariantPayload::Struct { fields } => VariantPayload::Struct {
                                 fields: fields
                                     .into_iter()
                                     .map(|f| FieldSchema {
                                         name: f.name,
-                                        type_id: r(f.type_id),
+                                        type_ref: rt(f.type_ref),
                                         required: f.required,
                                     })
                                     .collect(),
@@ -943,21 +1019,21 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
                     .collect(),
             },
             SchemaKind::Tuple { elements } => SchemaKind::Tuple {
-                elements: elements.into_iter().map(r).collect(),
+                elements: elements.into_iter().map(rt).collect(),
             },
             SchemaKind::List { element } => SchemaKind::List {
-                element: r(element),
+                element: rt(element),
             },
             SchemaKind::Map { key, value } => SchemaKind::Map {
-                key: r(key),
-                value: r(value),
+                key: rt(key),
+                value: rt(value),
             },
             SchemaKind::Array { element, length } => SchemaKind::Array {
-                element: r(element),
+                element: rt(element),
                 length,
             },
             SchemaKind::Option { element } => SchemaKind::Option {
-                element: r(element),
+                element: rt(element),
             },
         }
     }
@@ -973,6 +1049,7 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
             };
             Schema {
                 type_id,
+                type_params: s.type_params,
                 kind: resolve_kind(s.kind, &temp_to_final),
             }
         })
@@ -991,7 +1068,11 @@ struct ExtractCtx<'a> {
 impl<'a> ExtractCtx<'a> {
     fn push_schema(&mut self, shape: &'static Shape, type_id: MixedId, kind: MixedSchemaKind) {
         if self.seen.insert(shape) {
-            self.schemas.push(MixedSchema { type_id, kind });
+            self.schemas.push(MixedSchema {
+                type_id,
+                type_params: vec![],
+                kind,
+            });
         }
     }
 
@@ -1052,7 +1133,13 @@ impl<'a> ExtractCtx<'a> {
                     );
                 } else {
                     let elem_id = self.extract(list_def.t());
-                    self.push_schema(shape, type_id, SchemaKind::List { element: elem_id });
+                    self.push_schema(
+                        shape,
+                        type_id,
+                        SchemaKind::List {
+                            element: TypeRef::concrete(elem_id),
+                        },
+                    );
                 }
                 return type_id;
             }
@@ -1062,7 +1149,7 @@ impl<'a> ExtractCtx<'a> {
                     shape,
                     type_id,
                     SchemaKind::Array {
-                        element: elem_id,
+                        element: TypeRef::concrete(elem_id),
                         length: array_def.n as u64,
                     },
                 );
@@ -1070,7 +1157,13 @@ impl<'a> ExtractCtx<'a> {
             }
             Def::Slice(slice_def) => {
                 let elem_id = self.extract(slice_def.t());
-                self.push_schema(shape, type_id, SchemaKind::List { element: elem_id });
+                self.push_schema(
+                    shape,
+                    type_id,
+                    SchemaKind::List {
+                        element: TypeRef::concrete(elem_id),
+                    },
+                );
                 return type_id;
             }
             Def::Map(map_def) => {
@@ -1080,20 +1173,32 @@ impl<'a> ExtractCtx<'a> {
                     shape,
                     type_id,
                     SchemaKind::Map {
-                        key: key_id,
-                        value: val_id,
+                        key: TypeRef::concrete(key_id),
+                        value: TypeRef::concrete(val_id),
                     },
                 );
                 return type_id;
             }
             Def::Set(set_def) => {
                 let elem_id = self.extract(set_def.t());
-                self.push_schema(shape, type_id, SchemaKind::List { element: elem_id });
+                self.push_schema(
+                    shape,
+                    type_id,
+                    SchemaKind::List {
+                        element: TypeRef::concrete(elem_id),
+                    },
+                );
                 return type_id;
             }
             Def::Option(opt_def) => {
                 let elem_id = self.extract(opt_def.t());
-                self.push_schema(shape, type_id, SchemaKind::Option { element: elem_id });
+                self.push_schema(
+                    shape,
+                    type_id,
+                    SchemaKind::Option {
+                        element: TypeRef::concrete(elem_id),
+                    },
+                );
                 return type_id;
             }
             Def::Result(result_def) => {
@@ -1108,12 +1213,16 @@ impl<'a> ExtractCtx<'a> {
                             VariantSchema {
                                 name: "Ok".to_string(),
                                 index: 0,
-                                payload: VariantPayload::Newtype { type_id: ok_id },
+                                payload: VariantPayload::Newtype {
+                                    type_ref: TypeRef::concrete(ok_id),
+                                },
                             },
                             VariantSchema {
                                 name: "Err".to_string(),
                                 index: 1,
-                                payload: VariantPayload::Newtype { type_id: err_id },
+                                payload: VariantPayload::Newtype {
+                                    type_ref: TypeRef::concrete(err_id),
+                                },
                             },
                         ],
                     },
@@ -1139,10 +1248,10 @@ impl<'a> ExtractCtx<'a> {
                     primitive_type: PrimitiveType::Unit,
                 },
                 StructKind::TupleStruct | StructKind::Tuple => {
-                    let elements: Vec<MixedId> = struct_type
+                    let elements: Vec<TypeRef<MixedId>> = struct_type
                         .fields
                         .iter()
-                        .map(|f| self.extract(f.shape()))
+                        .map(|f| TypeRef::concrete(self.extract(f.shape())))
                         .collect();
                     SchemaKind::Tuple { elements }
                 }
@@ -1152,7 +1261,7 @@ impl<'a> ExtractCtx<'a> {
                         .iter()
                         .map(|f| FieldSchema {
                             name: f.name.to_string(),
-                            type_id: self.extract(f.shape()),
+                            type_ref: TypeRef::concrete(self.extract(f.shape())),
                             required: f.default.is_none(),
                         })
                         .collect();
@@ -1174,14 +1283,16 @@ impl<'a> ExtractCtx<'a> {
                             StructKind::TupleStruct | StructKind::Tuple => {
                                 if v.data.fields.len() == 1 {
                                     VariantPayload::Newtype {
-                                        type_id: self.extract(v.data.fields[0].shape()),
+                                        type_ref: TypeRef::concrete(
+                                            self.extract(v.data.fields[0].shape()),
+                                        ),
                                     }
                                 } else {
-                                    let types: Vec<MixedId> = v
+                                    let types: Vec<TypeRef<MixedId>> = v
                                         .data
                                         .fields
                                         .iter()
-                                        .map(|f| self.extract(f.shape()))
+                                        .map(|f| TypeRef::concrete(self.extract(f.shape())))
                                         .collect();
                                     VariantPayload::Tuple { types }
                                 }
@@ -1193,7 +1304,7 @@ impl<'a> ExtractCtx<'a> {
                                     .iter()
                                     .map(|f| FieldSchema {
                                         name: f.name.to_string(),
-                                        type_id: self.extract(f.shape()),
+                                        type_ref: TypeRef::concrete(self.extract(f.shape())),
                                         required: true,
                                     })
                                     .collect();
@@ -1292,6 +1403,7 @@ mod tests {
     fn cbor_round_trip() {
         let schema = Schema {
             type_id: TypeSchemaId(1),
+            type_params: vec![],
             kind: SchemaKind::Primitive {
                 primitive_type: PrimitiveType::U32,
             },
@@ -1362,7 +1474,7 @@ mod tests {
                 assert_eq!(fields[0].name, "x");
                 assert_eq!(fields[1].name, "y");
                 assert!(fields[0].required);
-                assert_eq!(fields[0].type_id, fields[1].type_id);
+                assert_eq!(fields[0].type_ref, fields[1].type_ref);
             }
             other => panic!("expected Struct, got {other:?}"),
         }
@@ -1679,9 +1791,7 @@ mod tests {
         // All primitive hashes must be unique.
         let hashes: Vec<TypeSchemaId> = primitives
             .iter()
-            .map(|p| {
-                compute_content_hash(&SchemaKind::Primitive { primitive_type: *p }, &|id| id.0)
-            })
+            .map(|p| compute_content_hash(&SchemaKind::Primitive { primitive_type: *p }, &|id| id))
             .collect();
         let unique: HashSet<TypeSchemaId> = hashes.iter().copied().collect();
         assert_eq!(
@@ -1693,7 +1803,7 @@ mod tests {
         // Verify they're deterministic (same computation, same result).
         for (i, p) in primitives.iter().enumerate() {
             let hash2 =
-                compute_content_hash(&SchemaKind::Primitive { primitive_type: *p }, &|id| id.0);
+                compute_content_hash(&SchemaKind::Primitive { primitive_type: *p }, &|id| id);
             assert_eq!(hashes[i], hash2, "hash for {:?} must be deterministic", p);
         }
     }

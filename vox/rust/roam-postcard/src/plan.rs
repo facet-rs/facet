@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use facet_core::{Shape, Type, UserType};
 use roam_types::{
-    FieldSchema, Schema, SchemaKind, SchemaRegistry, TypeSchemaId, VariantPayload, VariantSchema,
+    FieldSchema, Schema, SchemaKind, SchemaRegistry, TypeRef, TypeSchemaId, VariantPayload,
+    VariantSchema,
 };
 
 use crate::error::{PathSegment, SchemaSide, TranslationError, TranslationErrorKind};
@@ -246,14 +247,18 @@ fn build_struct_plan(
             });
 
             // r[impl schema.translation.type-compat]
-            let nested_plan = nested_plan(&remote_field.type_id, &local_field.type_id, input)
-                .map_err(|e| e.with_path_prefix(PathSegment::Field(remote_field.name.clone())))?;
+            let nested_plan = nested_plan(
+                remote_field.type_ref.expect_concrete_id(),
+                local_field.type_ref.expect_concrete_id(),
+                input,
+            )
+            .map_err(|e| e.with_path_prefix(PathSegment::Field(remote_field.name.clone())))?;
             if let Some(plan) = nested_plan {
                 nested.insert(local_idx, plan);
             }
         } else {
             field_ops.push(FieldOp::Skip {
-                type_id: remote_field.type_id,
+                type_id: *remote_field.type_ref.expect_concrete_id(),
             });
         }
     }
@@ -278,8 +283,8 @@ fn build_struct_plan(
 }
 
 fn build_tuple_plan(
-    remote_elements: &[TypeSchemaId],
-    local_elements: &[TypeSchemaId],
+    remote_elements: &[TypeRef<TypeSchemaId>],
+    local_elements: &[TypeRef<TypeSchemaId>],
     remote_schema: &Schema,
     local_schema: &Schema,
     input: &PlanInput,
@@ -298,15 +303,19 @@ fn build_tuple_plan(
     let mut field_ops = Vec::with_capacity(remote_elements.len());
     let mut nested = HashMap::new();
 
-    for (i, (remote_elem_id, local_elem_id)) in remote_elements
+    for (i, (remote_elem, local_elem)) in remote_elements
         .iter()
         .zip(local_elements.iter())
         .enumerate()
     {
         field_ops.push(FieldOp::Read { local_index: i });
 
-        let nested_plan = nested_plan(remote_elem_id, local_elem_id, input)
-            .map_err(|e| e.with_path_prefix(PathSegment::Index(i)))?;
+        let nested_plan = nested_plan(
+            remote_elem.expect_concrete_id(),
+            local_elem.expect_concrete_id(),
+            input,
+        )
+        .map_err(|e| e.with_path_prefix(PathSegment::Index(i)))?;
         if let Some(plan) = nested_plan {
             nested.insert(i, plan);
         }
@@ -364,7 +373,7 @@ fn build_enum_plan(
                                 }
                             } else {
                                 FieldOp::Skip {
-                                    type_id: rf.type_id,
+                                    type_id: *rf.type_ref.expect_concrete_id(),
                                 }
                             }
                         })
@@ -381,16 +390,20 @@ fn build_enum_plan(
                 // Both newtype — build a nested plan for the inner type
                 (
                     VariantPayload::Newtype {
-                        type_id: remote_inner_id,
+                        type_ref: remote_inner_ref,
                     },
                     VariantPayload::Newtype {
-                        type_id: local_inner_id,
+                        type_ref: local_inner_ref,
                     },
                 ) => {
-                    let inner_plan =
-                        nested_plan(remote_inner_id, local_inner_id, input).map_err(|e| {
-                            e.with_path_prefix(PathSegment::Variant(remote_variant.name.clone()))
-                        })?;
+                    let inner_plan = nested_plan(
+                        remote_inner_ref.expect_concrete_id(),
+                        local_inner_ref.expect_concrete_id(),
+                        input,
+                    )
+                    .map_err(|e| {
+                        e.with_path_prefix(PathSegment::Variant(remote_variant.name.clone()))
+                    })?;
                     if let Some(plan) = inner_plan {
                         nested.insert(local_idx, plan);
                     }
@@ -414,12 +427,14 @@ fn build_enum_plan(
                     for (i, (remote_elem, local_elem)) in
                         remote_types.iter().zip(local_types.iter()).enumerate()
                     {
-                        let inner_plan =
-                            nested_plan(remote_elem, local_elem, input).map_err(|e| {
-                                e.with_path_prefix(PathSegment::Variant(
-                                    remote_variant.name.clone(),
-                                ))
-                            })?;
+                        let inner_plan = nested_plan(
+                            remote_elem.expect_concrete_id(),
+                            local_elem.expect_concrete_id(),
+                            input,
+                        )
+                        .map_err(|e| {
+                            e.with_path_prefix(PathSegment::Variant(remote_variant.name.clone()))
+                        })?;
                         if let Some(plan) = inner_plan {
                             // Use a synthetic index for tuple element plans
                             nested.insert(local_idx * 1000 + i, plan);

@@ -121,7 +121,7 @@ pub fn skip_value(
         SchemaKind::Primitive { primitive_type } => skip_primitive(cursor, *primitive_type),
         SchemaKind::Struct { fields, .. } => {
             for field in fields {
-                let field_kind = lookup_kind(&field.type_id, registry)?;
+                let field_kind = lookup_kind(field.type_ref.expect_concrete_id(), registry)?;
                 skip_value(cursor, field_kind, registry)?;
             }
             Ok(())
@@ -137,20 +137,21 @@ pub fn skip_value(
                 })?;
             match &variant.payload {
                 roam_types::VariantPayload::Unit => Ok(()),
-                roam_types::VariantPayload::Newtype { type_id } => {
-                    let inner_kind = lookup_kind(type_id, registry)?;
+                roam_types::VariantPayload::Newtype { type_ref } => {
+                    let inner_kind = lookup_kind(type_ref.expect_concrete_id(), registry)?;
                     skip_value(cursor, inner_kind, registry)
                 }
                 roam_types::VariantPayload::Tuple { types } => {
-                    for type_id in types {
-                        let inner_kind = lookup_kind(type_id, registry)?;
+                    for type_ref in types {
+                        let inner_kind = lookup_kind(type_ref.expect_concrete_id(), registry)?;
                         skip_value(cursor, inner_kind, registry)?;
                     }
                     Ok(())
                 }
                 roam_types::VariantPayload::Struct { fields } => {
                     for field in fields {
-                        let field_kind = lookup_kind(&field.type_id, registry)?;
+                        let field_kind =
+                            lookup_kind(field.type_ref.expect_concrete_id(), registry)?;
                         skip_value(cursor, field_kind, registry)?;
                     }
                     Ok(())
@@ -158,15 +159,15 @@ pub fn skip_value(
             }
         }
         SchemaKind::Tuple { elements } => {
-            for elem_id in elements {
-                let elem_kind = lookup_kind(elem_id, registry)?;
+            for elem_ref in elements {
+                let elem_kind = lookup_kind(elem_ref.expect_concrete_id(), registry)?;
                 skip_value(cursor, elem_kind, registry)?;
             }
             Ok(())
         }
         SchemaKind::List { element } => {
             let count = cursor.read_varint()? as usize;
-            let elem_kind = lookup_kind(element, registry)?;
+            let elem_kind = lookup_kind(element.expect_concrete_id(), registry)?;
             for _ in 0..count {
                 skip_value(cursor, elem_kind, registry)?;
             }
@@ -174,8 +175,8 @@ pub fn skip_value(
         }
         SchemaKind::Map { key, value } => {
             let count = cursor.read_varint()? as usize;
-            let key_kind = lookup_kind(key, registry)?;
-            let val_kind = lookup_kind(value, registry)?;
+            let key_kind = lookup_kind(key.expect_concrete_id(), registry)?;
+            let val_kind = lookup_kind(value.expect_concrete_id(), registry)?;
             for _ in 0..count {
                 skip_value(cursor, key_kind, registry)?;
                 skip_value(cursor, val_kind, registry)?;
@@ -183,7 +184,7 @@ pub fn skip_value(
             Ok(())
         }
         SchemaKind::Array { element, length } => {
-            let elem_kind = lookup_kind(element, registry)?;
+            let elem_kind = lookup_kind(element.expect_concrete_id(), registry)?;
             for _ in 0..*length {
                 skip_value(cursor, elem_kind, registry)?;
             }
@@ -194,7 +195,7 @@ pub fn skip_value(
             match tag {
                 0x00 => Ok(()),
                 0x01 => {
-                    let inner_kind = lookup_kind(element, registry)?;
+                    let inner_kind = lookup_kind(element.expect_concrete_id(), registry)?;
                     skip_value(cursor, inner_kind, registry)
                 }
                 other => Err(DeserializeError::InvalidOptionTag {

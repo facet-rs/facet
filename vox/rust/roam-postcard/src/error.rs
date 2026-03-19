@@ -293,7 +293,7 @@ impl fmt::Display for TranslationError {
                     f,
                     "required field '{}' (type {:?}) missing from remote '{}'",
                     field.name,
-                    field.type_id,
+                    field.type_ref,
                     schema_label(remote_struct),
                 )?;
                 if let SchemaKind::Struct { fields, .. } = &remote_struct.kind {
