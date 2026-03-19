@@ -239,10 +239,9 @@ impl TranslationError {
 }
 
 fn schema_label(schema: &Schema) -> &str {
-    if schema.name.is_empty() {
-        schema_kind_str(&schema.kind)
-    } else {
-        &schema.name
+    match &schema.kind {
+        SchemaKind::Struct { name, .. } | SchemaKind::Enum { name, .. } => name.as_str(),
+        other => schema_kind_str(other),
     }
 }
 
@@ -253,7 +252,6 @@ fn schema_kind_str(kind: &SchemaKind) -> &'static str {
         SchemaKind::Tuple { .. } => "tuple",
         SchemaKind::List { .. } => "list",
         SchemaKind::Map { .. } => "map",
-        SchemaKind::Set { .. } => "set",
         SchemaKind::Array { .. } => "array",
         SchemaKind::Option { .. } => "option",
         SchemaKind::Primitive { .. } => "primitive",
@@ -298,7 +296,7 @@ impl fmt::Display for TranslationError {
                     field.type_id,
                     schema_label(remote_struct),
                 )?;
-                if let SchemaKind::Struct { fields } = &remote_struct.kind {
+                if let SchemaKind::Struct { fields, .. } = &remote_struct.kind {
                     write!(f, " (remote has fields: ")?;
                     for (i, rf) in fields.iter().enumerate() {
                         if i > 0 {
@@ -359,6 +357,7 @@ fn variant_payload_str(payload: &roam_types::VariantPayload) -> &'static str {
     match payload {
         roam_types::VariantPayload::Unit => "unit",
         roam_types::VariantPayload::Newtype { .. } => "newtype",
+        roam_types::VariantPayload::Tuple { .. } => "tuple",
         roam_types::VariantPayload::Struct { .. } => "struct",
     }
 }

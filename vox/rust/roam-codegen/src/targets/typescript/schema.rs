@@ -445,7 +445,6 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
             let tuple_id = tracker.allocate_anonymous_id();
             let tuple_schema = Schema {
                 type_id: tuple_id,
-                name: String::new(),
                 kind: SchemaKind::Tuple {
                     elements: arg_root_ids,
                 },
@@ -559,8 +558,8 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         let roam_error_id = tracker.allocate_anonymous_id();
         let roam_error_schema = Schema {
             type_id: roam_error_id,
-            name: String::new(),
             kind: SchemaKind::Enum {
+                name: "RoamError".to_string(),
                 variants: vec![
                     VariantSchema {
                         name: "User".to_string(),
@@ -606,8 +605,8 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         let result_id = tracker.allocate_anonymous_id();
         let result_schema = Schema {
             type_id: result_id,
-            name: String::new(),
             kind: SchemaKind::Enum {
+                name: "Result".to_string(),
                 variants: vec![
                     VariantSchema {
                         name: "Ok".to_string(),

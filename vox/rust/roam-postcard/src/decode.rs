@@ -119,14 +119,14 @@ pub fn skip_value(
 ) -> Result<(), DeserializeError> {
     match kind {
         SchemaKind::Primitive { primitive_type } => skip_primitive(cursor, *primitive_type),
-        SchemaKind::Struct { fields } => {
+        SchemaKind::Struct { fields, .. } => {
             for field in fields {
                 let field_kind = lookup_kind(&field.type_id, registry)?;
                 skip_value(cursor, field_kind, registry)?;
             }
             Ok(())
         }
-        SchemaKind::Enum { variants } => {
+        SchemaKind::Enum { variants, .. } => {
             let disc = cursor.read_varint()? as usize;
             let variant = variants
                 .get(disc)
@@ -140,6 +140,13 @@ pub fn skip_value(
                 roam_types::VariantPayload::Newtype { type_id } => {
                     let inner_kind = lookup_kind(type_id, registry)?;
                     skip_value(cursor, inner_kind, registry)
+                }
+                roam_types::VariantPayload::Tuple { types } => {
+                    for type_id in types {
+                        let inner_kind = lookup_kind(type_id, registry)?;
+                        skip_value(cursor, inner_kind, registry)?;
+                    }
+                    Ok(())
                 }
                 roam_types::VariantPayload::Struct { fields } => {
                     for field in fields {
@@ -157,7 +164,7 @@ pub fn skip_value(
             }
             Ok(())
         }
-        SchemaKind::List { element } | SchemaKind::Set { element } => {
+        SchemaKind::List { element } => {
             let count = cursor.read_varint()? as usize;
             let elem_kind = lookup_kind(element, registry)?;
             for _ in 0..count {
@@ -229,6 +236,13 @@ fn skip_primitive(cursor: &mut Cursor<'_>, prim: PrimitiveType) -> Result<(), De
         }
         PrimitiveType::Char | PrimitiveType::String | PrimitiveType::Bytes => {
             let len = cursor.read_varint()? as usize;
+            cursor.read_bytes(len)?;
+            Ok(())
+        }
+        PrimitiveType::Payload => {
+            // Payload uses a u32 LE length prefix, not a varint
+            let len_bytes = cursor.read_bytes(4)?;
+            let len = u32::from_le_bytes(len_bytes.try_into().unwrap()) as usize;
             cursor.read_bytes(len)?;
             Ok(())
         }

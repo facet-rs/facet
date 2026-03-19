@@ -31,10 +31,18 @@ pub struct TypeSchemaId(pub u32);
 #[derive(Facet, Clone, Debug)]
 pub struct Schema {
     pub type_id: TypeSchemaId,
-    /// The Rust type name (e.g. "Point", "Vec<String>"). For diagnostics.
-    #[facet(default)]
-    pub name: String,
     pub kind: SchemaKind,
+}
+
+impl Schema {
+    /// Returns the type name for nominal types (struct/enum), or `None` for
+    /// structural types (tuple, list, map, etc.).
+    pub fn name(&self) -> Option<&str> {
+        match &self.kind {
+            SchemaKind::Struct { name, .. } | SchemaKind::Enum { name, .. } => Some(name.as_str()),
+            _ => None,
+        }
+    }
 }
 
 /// The structural kind of a type.
@@ -42,9 +50,15 @@ pub struct Schema {
 #[repr(u8)]
 pub enum SchemaKind {
     Struct {
+        /// The type name (e.g. "Point"). Used for matching across schema
+        /// versions and for diagnostics. MUST NOT be empty.
+        name: String,
         fields: Vec<FieldSchema>,
     },
     Enum {
+        /// The type name (e.g. "Color"). Used for matching across schema
+        /// versions and for diagnostics. MUST NOT be empty.
+        name: String,
         variants: Vec<VariantSchema>,
     },
     Tuple {
@@ -56,9 +70,6 @@ pub enum SchemaKind {
     Map {
         key: TypeSchemaId,
         value: TypeSchemaId,
-    },
-    Set {
-        element: TypeSchemaId,
     },
     Array {
         element: TypeSchemaId,
@@ -94,6 +105,7 @@ pub struct VariantSchema {
 pub enum VariantPayload {
     Unit,
     Newtype { type_id: TypeSchemaId },
+    Tuple { types: Vec<TypeSchemaId> },
     Struct { fields: Vec<FieldSchema> },
 }
 
@@ -118,6 +130,10 @@ pub enum PrimitiveType {
     String,
     Unit,
     Bytes,
+    /// An opaque payload — a length-prefixed byte sequence whose
+    /// length prefix is a little-endian u32 (not a varint like other
+    /// postcard sequences).
+    Payload,
 }
 
 /// CBOR-encoded schema payload (schemas + method bindings).
@@ -135,7 +151,7 @@ impl CborPayload {
     }
 
     /// Parse the CBOR-encoded schema message payload.
-    pub fn parse(&self) -> Result<SchemaMessagePayload, facet_cbor::CborError> {
+    pub fn parse(&self) -> Result<SchemaPayload, facet_cbor::CborError> {
         parse_schema_message(&self.0)
     }
 }
@@ -172,7 +188,7 @@ pub enum BindingDirection {
 /// CBOR-encoded payload inside a schema wire message.
 /// A struct so new fields can be added without breaking the wire format.
 #[derive(Facet, Clone, Debug)]
-pub struct SchemaMessagePayload {
+pub struct SchemaPayload {
     pub schemas: Vec<Schema>,
     #[facet(default)]
     pub method_bindings: Vec<MethodSchemaBinding>,
@@ -186,7 +202,7 @@ pub fn build_schema_message(
     schemas: &[Schema],
     method_bindings: &[MethodSchemaBinding],
 ) -> Vec<u8> {
-    let payload = SchemaMessagePayload {
+    let payload = SchemaPayload {
         schemas: schemas.to_vec(),
         method_bindings: method_bindings.to_vec(),
     };
@@ -196,7 +212,7 @@ pub fn build_schema_message(
 /// Parse a CBOR-encoded schema message.
 // r[impl schema.format.batch]
 // r[impl schema.principles.cbor]
-pub fn parse_schema_message(bytes: &[u8]) -> Result<SchemaMessagePayload, facet_cbor::CborError> {
+pub fn parse_schema_message(bytes: &[u8]) -> Result<SchemaPayload, facet_cbor::CborError> {
     facet_cbor::from_slice(bytes)
 }
 
@@ -408,10 +424,7 @@ impl SchemaRecvTracker {
     ///
     /// Returns `Err` if a TypeSchemaId was already received — this is a
     /// protocol error (the send tracker didn't reset on reconnection).
-    pub fn record_received(
-        &self,
-        payload: SchemaMessagePayload,
-    ) -> Result<(), DuplicateSchemaError> {
+    pub fn record_received(&self, payload: SchemaPayload) -> Result<(), DuplicateSchemaError> {
         {
             let mut received = self.received.lock().unwrap();
             for schema in payload.schemas {
@@ -495,11 +508,7 @@ struct ExtractCtx<'a> {
 impl<'a> ExtractCtx<'a> {
     fn push_schema(&mut self, shape: &'static Shape, type_id: TypeSchemaId, kind: SchemaKind) {
         if self.seen.insert(shape) {
-            self.schemas.push(Schema {
-                type_id,
-                name: format!("{shape}"),
-                kind,
-            });
+            self.schemas.push(Schema { type_id, kind });
         }
     }
 
@@ -596,7 +605,7 @@ impl<'a> ExtractCtx<'a> {
             }
             Def::Set(set_def) => {
                 let elem_id = self.extract(set_def.t());
-                self.push_schema(shape, type_id, SchemaKind::Set { element: elem_id });
+                self.push_schema(shape, type_id, SchemaKind::List { element: elem_id });
                 return type_id;
             }
             Def::Option(opt_def) => {
@@ -611,6 +620,7 @@ impl<'a> ExtractCtx<'a> {
                     shape,
                     type_id,
                     SchemaKind::Enum {
+                        name: format!("{shape}"),
                         variants: vec![
                             VariantSchema {
                                 name: "Ok".to_string(),
@@ -663,7 +673,10 @@ impl<'a> ExtractCtx<'a> {
                             required: f.default.is_none(),
                         })
                         .collect();
-                    SchemaKind::Struct { fields }
+                    SchemaKind::Struct {
+                        name: format!("{shape}"),
+                        fields,
+                    }
                 }
             },
             // r[impl schema.format.enum]
@@ -681,18 +694,13 @@ impl<'a> ExtractCtx<'a> {
                                         type_id: self.extract(v.data.fields[0].shape()),
                                     }
                                 } else {
-                                    let fields: Vec<FieldSchema> = v
+                                    let types: Vec<TypeSchemaId> = v
                                         .data
                                         .fields
                                         .iter()
-                                        .enumerate()
-                                        .map(|(j, f)| FieldSchema {
-                                            name: j.to_string(),
-                                            type_id: self.extract(f.shape()),
-                                            required: true,
-                                        })
+                                        .map(|f| self.extract(f.shape()))
                                         .collect();
-                                    VariantPayload::Struct { fields }
+                                    VariantPayload::Tuple { types }
                                 }
                             }
                             StructKind::Struct => {
@@ -716,7 +724,10 @@ impl<'a> ExtractCtx<'a> {
                         }
                     })
                     .collect();
-                SchemaKind::Enum { variants }
+                SchemaKind::Enum {
+                    name: format!("{shape}"),
+                    variants,
+                }
             }
             Type::User(UserType::Opaque) => {
                 // Opaque types (like Payload) are represented as bytes on the wire.
@@ -798,7 +809,6 @@ mod tests {
     fn cbor_round_trip() {
         let schema = Schema {
             type_id: TypeSchemaId(1),
-            name: "u32".into(),
             kind: SchemaKind::Primitive {
                 primitive_type: PrimitiveType::U32,
             },
@@ -860,7 +870,11 @@ mod tests {
 
         let point_schema = schemas.last().unwrap();
         match &point_schema.kind {
-            SchemaKind::Struct { fields } => {
+            SchemaKind::Struct { name, fields } => {
+                assert!(
+                    name.contains("Point"),
+                    "expected name to contain Point, got {name}"
+                );
                 assert_eq!(fields.len(), 2);
                 assert_eq!(fields[0].name, "x");
                 assert_eq!(fields[1].name, "y");
@@ -885,7 +899,7 @@ mod tests {
         let schemas = extract_schemas(Color::SHAPE);
         let color_schema = schemas.last().unwrap();
         match &color_schema.kind {
-            SchemaKind::Enum { variants } => {
+            SchemaKind::Enum { variants, .. } => {
                 assert_eq!(variants.len(), 3);
                 assert_eq!(variants[0].name, "Red");
                 assert_eq!(variants[1].name, "Green");
@@ -911,7 +925,7 @@ mod tests {
         let schemas = extract_schemas(Shape::SHAPE);
         let shape_schema = schemas.last().unwrap();
         match &shape_schema.kind {
-            SchemaKind::Enum { variants } => {
+            SchemaKind::Enum { variants, .. } => {
                 assert_eq!(variants.len(), 3);
                 assert!(matches!(
                     variants[0].payload,
@@ -1118,7 +1132,7 @@ mod tests {
         let id = schemas[0].type_id;
         assert!(tracker.get_received(&id).is_none());
         tracker
-            .record_received(SchemaMessagePayload {
+            .record_received(SchemaPayload {
                 schemas,
                 method_bindings: vec![],
             })
@@ -1176,7 +1190,7 @@ mod tests {
         // Record received bindings and verify they go to separate maps
         let recv_tracker = SchemaRecvTracker::new();
         recv_tracker
-            .record_received(SchemaMessagePayload {
+            .record_received(SchemaPayload {
                 schemas: extract_schemas(<u64 as Facet>::SHAPE),
                 method_bindings: vec![
                     MethodSchemaBinding {
@@ -1208,13 +1222,13 @@ mod tests {
         let tracker = SchemaRecvTracker::new();
         let schemas = extract_schemas(<u32 as Facet>::SHAPE);
         tracker
-            .record_received(SchemaMessagePayload {
+            .record_received(SchemaPayload {
                 schemas: schemas.clone(),
                 method_bindings: vec![],
             })
             .expect("first record should succeed");
         let err = tracker
-            .record_received(SchemaMessagePayload {
+            .record_received(SchemaPayload {
                 schemas,
                 method_bindings: vec![],
             })

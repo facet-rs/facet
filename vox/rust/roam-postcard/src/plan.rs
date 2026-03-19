@@ -125,29 +125,35 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
     let remote = &input.remote.root;
     let local = &input.local.root;
 
-    // Validate type names match (when both are non-empty).
-    if !remote.name.is_empty() && !local.name.is_empty() && remote.name != local.name {
-        return Err(TranslationError::new(TranslationErrorKind::NameMismatch {
-            remote: remote.clone(),
-            local: local.clone(),
-        }));
+    // Validate type names match for nominal types (struct/enum).
+    if let (Some(remote_name), Some(local_name)) = (remote.name(), local.name()) {
+        if remote_name != local_name {
+            return Err(TranslationError::new(TranslationErrorKind::NameMismatch {
+                remote: remote.clone(),
+                local: local.clone(),
+            }));
+        }
     }
 
     match (&remote.kind, &local.kind) {
         (
             SchemaKind::Struct {
                 fields: remote_fields,
+                ..
             },
             SchemaKind::Struct {
                 fields: local_fields,
+                ..
             },
         ) => build_struct_plan(remote_fields, local_fields, remote, local, input),
         (
             SchemaKind::Enum {
                 variants: remote_variants,
+                ..
             },
             SchemaKind::Enum {
                 variants: local_variants,
+                ..
             },
         ) => build_enum_plan(remote_variants, local_variants, remote, local, input),
         (
@@ -162,7 +168,6 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
         (SchemaKind::Primitive { .. }, SchemaKind::Primitive { .. })
         | (SchemaKind::List { .. }, SchemaKind::List { .. })
         | (SchemaKind::Map { .. }, SchemaKind::Map { .. })
-        | (SchemaKind::Set { .. }, SchemaKind::Set { .. })
         | (SchemaKind::Array { .. }, SchemaKind::Array { .. })
         | (SchemaKind::Option { .. }, SchemaKind::Option { .. }) => Ok(TranslationPlan {
             field_ops: Vec::new(),
@@ -388,6 +393,37 @@ fn build_enum_plan(
                         })?;
                     if let Some(plan) = inner_plan {
                         nested.insert(local_idx, plan);
+                    }
+                }
+                // Both tuple — check arity matches and build nested plans
+                (
+                    VariantPayload::Tuple {
+                        types: remote_types,
+                    },
+                    VariantPayload::Tuple { types: local_types },
+                ) => {
+                    if remote_types.len() != local_types.len() {
+                        return Err(TranslationError::new(
+                            TranslationErrorKind::IncompatibleVariantPayload {
+                                remote_variant: remote_variant.clone(),
+                                local_variant: local_variant.clone(),
+                            },
+                        )
+                        .with_path_prefix(PathSegment::Variant(remote_variant.name.clone())));
+                    }
+                    for (i, (remote_elem, local_elem)) in
+                        remote_types.iter().zip(local_types.iter()).enumerate()
+                    {
+                        let inner_plan =
+                            nested_plan(remote_elem, local_elem, input).map_err(|e| {
+                                e.with_path_prefix(PathSegment::Variant(
+                                    remote_variant.name.clone(),
+                                ))
+                            })?;
+                        if let Some(plan) = inner_plan {
+                            // Use a synthetic index for tuple element plans
+                            nested.insert(local_idx * 1000 + i, plan);
+                        }
                     }
                 }
                 (VariantPayload::Unit, VariantPayload::Unit) => {}

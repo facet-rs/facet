@@ -251,7 +251,7 @@ from that ordering.
 >      position in the canonical order, encoded as a `u64` in
 >      little-endian order.
 >
-> These final hashes are the types' `TypeId`s — plain `u64` values,
+> These final hashes are the types' `TypeSchemaId`s — plain `u64` values,
 > indistinguishable from non-recursive type hashes. No special
 > representation is needed on the wire or in data structures.
 
@@ -309,7 +309,7 @@ Example: mutually recursive types.
 
 A schema describes a single type. Schemas are CBOR-encoded and
 self-contained — every type referenced by a schema is either a primitive
-or is referenced by its `TypeId` (a `u64` content hash).
+or is referenced by its `TypeSchemaId` (a `u64` content hash).
 
 The following Rust declarations define the schema data model. Other
 language implementations must produce equivalent CBOR encodings.
@@ -318,10 +318,10 @@ language implementations must produce equivalent CBOR encodings.
 /// A content hash that uniquely identifies a type's postcard-level
 /// structure. Computed via blake3, truncated to 64 bits.
 ///
-/// The same type always produces the same TypeId regardless of
+/// The same type always produces the same TypeSchemaId regardless of
 /// connection, session, process, or language. On the wire (CBOR),
-/// a TypeId is encoded as a CBOR unsigned integer.
-struct TypeId(u64);
+/// a TypeSchemaId is encoded as a CBOR unsigned integer.
+struct TypeSchemaId(u64);
 
 /// The primitive types of the postcard encoding.
 ///
@@ -354,28 +354,32 @@ enum SchemaKind {
     Primitive { primitive_type: PrimitiveType },
 
     /// An ordered collection of named fields.
-    Struct { fields: Vec<FieldSchema> },
+    /// `name` is the type name (e.g. "Point"). MUST NOT be empty.
+    /// Used for matching across schema versions and for diagnostics.
+    Struct { name: String, fields: Vec<FieldSchema> },
 
     /// A tagged union of named variants.
-    Enum { variants: Vec<VariantSchema> },
+    /// `name` is the type name (e.g. "Color"). MUST NOT be empty.
+    /// Used for matching across schema versions and for diagnostics.
+    Enum { name: String, variants: Vec<VariantSchema> },
 
     /// An ordered, fixed-arity product type. Must have 1 or more
     /// elements — use `PrimitiveType::Unit` for the zero case.
-    Tuple { elements: Vec<TypeId> },
+    Tuple { elements: Vec<TypeSchemaId> },
 
     /// A variable-length homogeneous sequence (`Vec<T>`, `HashSet<T>`,
     /// etc.). Sets and lists have the same postcard encoding and are
     /// not distinguished at the schema level.
-    List { element: TypeId },
+    List { element: TypeSchemaId },
 
     /// A variable-length collection of key-value pairs.
-    Map { key: TypeId, value: TypeId },
+    Map { key: TypeSchemaId, value: TypeSchemaId },
 
     /// A fixed-length homogeneous sequence (`[T; N]`).
-    Array { element: TypeId, length: u64 },
+    Array { element: TypeSchemaId, length: u64 },
 
     /// A value that may be absent (`Option<T>`).
-    Option { element: TypeId },
+    Option { element: TypeSchemaId },
 }
 
 /// A field in a struct or struct-variant.
@@ -384,7 +388,7 @@ struct FieldSchema {
     /// renaming a field is a breaking change.
     name: String,
     /// The type of this field.
-    type_id: TypeId,
+    type_id: TypeSchemaId,
 }
 
 /// A variant in an enum.
@@ -402,22 +406,20 @@ enum VariantPayload {
     /// No payload (e.g. `None`, `Disconnected`).
     Unit,
     /// A single unnamed value (e.g. `Some(T)`, `Ok(T)`).
-    Newtype { type_id: TypeId },
+    Newtype { type_id: TypeSchemaId },
     /// A tuple of unnamed values (e.g. `Pair(u32, String)`).
-    Tuple { types: Vec<TypeId> },
+    Tuple { types: Vec<TypeSchemaId> },
     /// Named fields, like a struct (e.g. `Move { x: i32, y: i32 }`).
     Struct { fields: Vec<FieldSchema> },
 }
 
-/// A complete schema: the type ID, a name, and the structural
-/// description.
+/// A complete schema: the type ID and the structural description.
+/// Only nominal types (struct, enum) carry a name — structural types
+/// (tuple, list, map, array, option, primitive) are fully described
+/// by their kind.
 struct Schema {
     /// The content hash that identifies this type.
-    type_id: TypeId,
-    /// The type's name (e.g. "Point", "Vec<String>"). Required and
-    /// MUST NOT be empty. Used for matching across schema versions
-    /// and for diagnostics.
-    name: String,
+    type_id: TypeSchemaId,
     /// The structural description of this type.
     kind: SchemaKind,
 }
@@ -430,14 +432,13 @@ The normative rules below define the CBOR encoding of these types.
 > A schema MUST be a CBOR map containing:
 >
 >   * `type_id` — a CBOR unsigned integer (the type's content hash)
->   * `name` — the type's name (UTF-8 string, required, MUST NOT be empty)
 >   * `kind` — one of: `"struct"`, `"enum"`, `"tuple"`, `"list"`, `"map"`,
 >     `"array"`, `"option"`, `"primitive"`
 >   * Kind-specific fields as defined below
 
 > r[schema.format.type-id]
 >
-> A `TypeId` MUST be encoded as a CBOR unsigned integer.
+> A `TypeSchemaId` MUST be encoded as a CBOR unsigned integer.
 
 > r[schema.format.primitive]
 >
@@ -454,9 +455,10 @@ The normative rules below define the CBOR encoding of these types.
 > A struct schema MUST contain:
 >
 >   * `kind`: `"struct"`
+>   * `name`: the type name (UTF-8 string, MUST NOT be empty)
 >   * `fields`: a CBOR array of field descriptors, each a map with:
 >     - `name`: field name (UTF-8 string)
->     - `type_id`: a `TypeId` (CBOR unsigned integer)
+>     - `type_id`: a `TypeSchemaId` (CBOR unsigned integer)
 >
 > Fields MUST be listed in declaration order (which is also postcard
 > serialization order).
@@ -466,6 +468,7 @@ The normative rules below define the CBOR encoding of these types.
 > An enum schema MUST contain:
 >
 >   * `kind`: `"enum"`
+>   * `name`: the type name (UTF-8 string, MUST NOT be empty)
 >   * `variants`: a CBOR array of variant descriptors, each a map with:
 >     - `name`: variant name (UTF-8 string)
 >     - `index`: the postcard variant index (`u32`)
@@ -481,8 +484,8 @@ The normative rules below define the CBOR encoding of these types.
 > Container schemas MUST contain:
 >
 >   * `kind`: `"list"`, `"map"`, `"array"`, or `"option"`
->   * `element`: a `TypeId` (for list, array, option)
->   * `key` and `value`: `TypeId`s (for map)
+>   * `element`: a `TypeSchemaId` (for list, array, option)
+>   * `key` and `value`: `TypeSchemaId`s (for map)
 >   * `length`: a `u64` (for array only)
 >
 > Sets (`HashSet<T>`, `BTreeSet<T>`, etc.) have the same postcard encoding
@@ -494,14 +497,14 @@ The normative rules below define the CBOR encoding of these types.
 > A tuple schema MUST contain:
 >
 >   * `kind`: `"tuple"`
->   * `elements`: a CBOR array of `TypeId`s, one per element, in order
+>   * `elements`: a CBOR array of `TypeSchemaId`s, one per element, in order
 >
 > The `elements` array MUST contain at least one element. A zero-element
 > tuple is not valid — use `PrimitiveType::Unit` instead.
 
 ## Recursive types on the wire
 
-Recursive types reference each other by their final `TypeId` — the
+Recursive types reference each other by their final `TypeSchemaId` — the
 same plain `u64` content hash as any other type. There is no special
 wire representation for recursive references. The schemas for all
 types in a recursive group simply reference each other by hash.
@@ -510,7 +513,7 @@ types in a recursive group simply reference each other by hash.
 >
 > When sending schemas for a recursive group, the sender MUST include
 > all schemas in the group that have not already been sent on this
-> connection. The receiver MUST be able to resolve every `TypeId`
+> connection. The receiver MUST be able to resolve every `TypeSchemaId`
 > referenced in the schemas using either the schemas included in the
 > current `SchemaPayload` or schemas previously received on this
 > connection.
@@ -523,13 +526,13 @@ binding that tells the receiver which type is the root for this
 method's arguments or response.
 
 ```rust
-/// A method binding maps a method ID to the root TypeId for its
+/// A method binding maps a method ID to the root TypeSchemaId for its
 /// arguments or response type.
 struct MethodSchemaBinding {
     method_id: MethodId,
-    /// The TypeId of the root type (e.g. the args struct for a
+    /// The TypeSchemaId of the root type (e.g. the args struct for a
     /// request, or `Result<T, RoamError<E>>` for a response).
-    root_type_id: TypeId,
+    root_type_schema_id: TypeSchemaId,
     direction: BindingDirection,
 }
 
@@ -546,7 +549,7 @@ struct SchemaPayload {
     /// previously sent on this connection.
     schemas: Vec<Schema>,
     /// Method bindings that map method ID + direction to a root
-    /// TypeId in the schema set. Tells the receiver which schema
+    /// TypeSchemaId in the schema set. Tells the receiver which schema
     /// describes the postcard payload it is about to deserialize.
     method_bindings: Vec<MethodSchemaBinding>,
 }
@@ -555,7 +558,7 @@ struct SchemaPayload {
 > r[schema.format.self-contained]
 >
 > When a `Request` or `Response` includes schemas, the set of schemas
-> MUST be self-contained. Every `TypeId` referenced by any schema in
+> MUST be self-contained. Every `TypeSchemaId` referenced by any schema in
 > the set MUST either be defined in the same set or have been previously
 > sent on this connection. The receiver MUST be able to build translation
 > plans for all included types before deserializing the payload.
@@ -569,7 +572,7 @@ struct SchemaPayload {
 >     previously sent on this connection
 >   * A `MethodSchemaBinding` that maps the method ID and direction
 >     (`Args` for requests, `Response` for responses) to the root
->     `TypeId` of the payload being sent
+>     `TypeSchemaId` of the payload being sent
 >
 > The root type for a response is always the full
 > `Result<T, RoamError<E>>` wire type, regardless of whether the
@@ -579,8 +582,8 @@ struct SchemaPayload {
 > connection, the schemas array MAY be empty — but the method binding
 > MUST still be included if this is the first time this (method_id,
 > direction) pair has been sent on this connection. The receiver needs
-> the binding to know which previously-sent TypeId is the root for
-> this method. Sending a schema whose `TypeId` has already been sent
+> the binding to know which previously-sent TypeSchemaId is the root for
+> this method. Sending a schema whose `TypeSchemaId` has already been sent
 > on this connection is a protocol error.
 
 # Schema tracking
