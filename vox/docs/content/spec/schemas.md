@@ -512,7 +512,39 @@ types in a recursive group simply reference each other by hash.
 ## Schema delivery
 
 Schemas are not sent as standalone messages. They are bundled with
-the `Request` or `Response` that needs them.
+the `Request` or `Response` that needs them, along with a method
+binding that tells the receiver which type is the root for this
+method's arguments or response.
+
+```rust
+/// A method binding maps a method ID to the root TypeId for its
+/// arguments or response type.
+struct MethodSchemaBinding {
+    method_id: MethodId,
+    /// The TypeId of the root type (e.g. the args struct for a
+    /// request, or `Result<T, RoamError<E>>` for a response).
+    root_type_id: TypeId,
+    direction: BindingDirection,
+}
+
+enum BindingDirection {
+    /// This binding is for the method's argument type.
+    Args,
+    /// This binding is for the method's response type.
+    Response,
+}
+
+/// The CBOR-encoded payload attached to a Request or Response.
+struct SchemaPayload {
+    /// All schemas needed by the receiver that have not been
+    /// previously sent on this connection.
+    schemas: Vec<Schema>,
+    /// Method bindings that map method ID + direction to a root
+    /// TypeId in the schema set. Tells the receiver which schema
+    /// describes the postcard payload it is about to deserialize.
+    method_bindings: Vec<MethodSchemaBinding>,
+}
+```
 
 > r[schema.format.self-contained]
 >
@@ -524,11 +556,23 @@ the `Request` or `Response` that needs them.
 
 > r[schema.format.delivery]
 >
-> Schemas are delivered as a CBOR-encoded array of `Schema` values
-> attached to a `Request` or `Response`. The array MUST include all
-> schemas needed for the method's types that have not been previously
-> sent on this connection. Sending a schema whose `TypeId` has already
-> been sent on this connection is a protocol error.
+> Schemas are delivered as a CBOR-encoded `SchemaPayload` attached to
+> a `Request` or `Response`. The payload MUST include:
+>
+>   * All schemas needed for the method's types that have not been
+>     previously sent on this connection
+>   * A `MethodSchemaBinding` that maps the method ID and direction
+>     (`Args` for requests, `Response` for responses) to the root
+>     `TypeId` of the payload being sent
+>
+> The root type for a response is always the full
+> `Result<T, RoamError<E>>` wire type, regardless of whether the
+> handler succeeded or failed.
+>
+> If all schemas for a method's types have already been sent on this
+> connection, the schema payload MAY be empty (zero schemas, zero
+> bindings). Sending a schema whose `TypeId` has already been sent
+> on this connection is a protocol error.
 
 # Schema tracking
 
