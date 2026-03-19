@@ -656,11 +656,12 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
     out.push_str(&format!(
         "export const {service_name_lower}_send_schemas: import(\"@bearcove/roam-core\").ServiceSendSchemas = {{\n"
     ));
-    out.push_str("  schemas: new Map<number, Uint8Array>([\n");
+    out.push_str("  schemas: new Map<bigint, Uint8Array>([\n");
     for (id, bytes) in &schema_bytes {
         let hex_bytes: Vec<String> = bytes.iter().map(|b| format!("0x{b:02x}")).collect();
+        let id_hex = hex_u64(*id);
         out.push_str(&format!(
-            "    [{id}, new Uint8Array([{}])],\n",
+            "    [{id_hex}n, new Uint8Array([{}])],\n",
             hex_bytes.join(", ")
         ));
     }
@@ -670,20 +671,25 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
     );
     for info in &method_infos {
         let id_hex = hex_u64(info.method_id);
-        let args_dep_ids_str: Vec<String> =
-            info.args_dep_ids.iter().map(|id| id.to_string()).collect();
+        let args_dep_ids_str: Vec<String> = info
+            .args_dep_ids
+            .iter()
+            .map(|id| format!("0x{:016x}n", id))
+            .collect();
         let response_dep_ids_str: Vec<String> = info
             .response_dep_ids
             .iter()
-            .map(|id| id.to_string())
+            .map(|id| format!("0x{:016x}n", id))
             .collect();
+        let args_root_hex = hex_u64(info.args_root_id);
+        let response_root_hex = hex_u64(info.response_root_id);
         out.push_str(&format!(
-            "    [{}n, {{ argsDepIds: [{}], argsRootId: {}, responseDepIds: [{}], responseRootId: {} }}],\n",
+            "    [{}n, {{ argsDepIds: [{}], argsRootId: {}n, responseDepIds: [{}], responseRootId: {}n }}],\n",
             id_hex,
             args_dep_ids_str.join(", "),
-            info.args_root_id,
+            args_root_hex,
             response_dep_ids_str.join(", "),
-            info.response_root_id,
+            response_root_hex,
         ));
     }
     out.push_str("  ]),\n");

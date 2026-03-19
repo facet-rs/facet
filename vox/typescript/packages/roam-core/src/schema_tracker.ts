@@ -39,12 +39,11 @@ interface RemoteSchema {
 
 type RemoteSchemaKind =
   | { tag: "Primitive"; primitiveType: string }
-  | { tag: "Struct"; fields: RemoteFieldSchema[] }
-  | { tag: "Enum"; variants: RemoteVariantSchema[] }
+  | { tag: "Struct"; name: string; fields: RemoteFieldSchema[] }
+  | { tag: "Enum"; name: string; variants: RemoteVariantSchema[] }
   | { tag: "Tuple"; elements: TypeIdHex[] }
   | { tag: "List"; element: TypeIdHex }
   | { tag: "Map"; key: TypeIdHex; value: TypeIdHex }
-  | { tag: "Set"; element: TypeIdHex }
   | { tag: "Array"; element: TypeIdHex; length: number }
   | { tag: "Option"; element: TypeIdHex };
 
@@ -63,10 +62,11 @@ interface RemoteVariantSchema {
 type RemoteVariantPayload =
   | { tag: "Unit" }
   | { tag: "Newtype"; typeIdHex: TypeIdHex }
+  | { tag: "Tuple"; elements: TypeIdHex[] }
   | { tag: "Struct"; fields: RemoteFieldSchema[] };
 
 interface RemoteMethodBinding {
-  methodId: number;
+  methodId: bigint;
   rootTypeIdHex: TypeIdHex;
 }
 
@@ -96,7 +96,7 @@ export type FieldOp =
  */
 export class SchemaTracker {
   private remoteSchemas = new Map<TypeIdHex, RemoteSchema>();
-  private methodBindings = new Map<number, TypeIdHex>();
+  private methodBindings = new Map<bigint, TypeIdHex>();
 
   /**
    * Record a CBOR-encoded SchemaMessage payload from the remote peer.
@@ -141,7 +141,7 @@ export class SchemaTracker {
     localArgs: TupleSchema,
     localRegistry?: SchemaRegistry,
   ): { remoteArgsSchema: TupleSchema; transforms: ArgTransform[] } | null {
-    const rootHex = this.methodBindings.get(Number(methodId));
+    const rootHex = this.methodBindings.get(methodId);
     if (!rootHex) {
       return null;
     }
@@ -512,6 +512,10 @@ export class SchemaTracker {
         return null;
       case "Newtype":
         return this.remoteTypeToSchema(payload.typeIdHex);
+      case "Tuple": {
+        // Tuple variant payloads are represented as Schema[] (array of element schemas).
+        return payload.elements.map((hex) => this.remoteTypeToSchema(hex)) as unknown as Schema;
+      }
       case "Struct": {
         const fields: Record<string, Schema> = {};
         for (const f of payload.fields) {
@@ -540,25 +544,26 @@ export class SchemaTranslationError extends Error {
 // ============================================================================
 
 function parseTypeIdHex(raw: CborValue): TypeIdHex {
-  // TypeSchemaId is currently a tuple struct wrapping a u32.
-  // In CBOR that arrives as array(1) containing the numeric ID.
+  // TypeSchemaId is a u64 content hash. On the wire (CBOR) it is a
+  // tuple struct wrapping a u64, which facet-cbor encodes as array(1)
+  // containing the numeric value.
   //
-  // Older experimental code paths expected a [u8; 16] payload, so we
-  // continue to accept that shape as a fallback for compatibility.
+  // CBOR integers > 2^53 arrive as bigint in our decoder.
   if (Array.isArray(raw)) {
     const first = raw[0];
 
-    if (typeof first === "number") {
+    if (typeof first === "number" || typeof first === "bigint") {
       return String(first);
     }
 
+    // Legacy: [u8; 16] fallback
     if (Array.isArray(first)) {
       const bytes = new Uint8Array(first as number[]);
       return hexFromBytes(bytes);
     }
   }
 
-  if (typeof raw === "number") {
+  if (typeof raw === "number" || typeof raw === "bigint") {
     return String(raw);
   }
 
@@ -597,14 +602,16 @@ function parseSchemaKind(kindMap: CborMap): RemoteSchemaKind {
       return { tag: "Primitive", primitiveType: ptKeys[0] };
     }
     case "Struct": {
+      const name = payload["name"] as string;
       const fieldsRaw = payload["fields"] as CborValue[];
       const fields = fieldsRaw.map(parseFieldSchema);
-      return { tag: "Struct", fields };
+      return { tag: "Struct", name, fields };
     }
     case "Enum": {
+      const name = payload["name"] as string;
       const variantsRaw = payload["variants"] as CborValue[];
       const variants = variantsRaw.map(parseVariantSchema);
-      return { tag: "Enum", variants };
+      return { tag: "Enum", name, variants };
     }
     case "Tuple": {
       const elementsRaw = payload["elements"] as CborValue[];
@@ -619,8 +626,6 @@ function parseSchemaKind(kindMap: CborMap): RemoteSchemaKind {
         key: parseTypeIdHex(payload["key"]),
         value: parseTypeIdHex(payload["value"]),
       };
-    case "Set":
-      return { tag: "Set", element: parseTypeIdHex(payload["element"]) };
     case "Array":
       return {
         tag: "Array",
@@ -636,8 +641,10 @@ function parseSchemaKind(kindMap: CborMap): RemoteSchemaKind {
 
 function parseMethodBinding(raw: CborValue): RemoteMethodBinding {
   const map = raw as CborMap;
+  const rawMethodId = map["method_id"];
+  const methodId = typeof rawMethodId === "bigint" ? rawMethodId : BigInt(rawMethodId as number);
   return {
-    methodId: map["method_id"] as number,
+    methodId,
     rootTypeIdHex: parseTypeIdHex(map["root_type_schema_id"]),
   };
 }
@@ -674,6 +681,11 @@ function parseVariantPayload(raw: CborValue): RemoteVariantPayload {
     case "Newtype": {
       const inner = map["Newtype"] as CborMap;
       return { tag: "Newtype", typeIdHex: parseTypeIdHex(inner["type_id"]) };
+    }
+    case "Tuple": {
+      const inner = map["Tuple"] as CborMap;
+      const typesRaw = inner["types"] as CborValue[];
+      return { tag: "Tuple", elements: typesRaw.map(parseTypeIdHex) };
     }
     case "Struct": {
       const inner = map["Struct"] as CborMap;
@@ -720,19 +732,19 @@ function resolveLocal(schema: Schema, registry?: SchemaRegistry): Schema {
 /** Info for a single method's schema exchange requirements. */
 export interface MethodSendSchemas {
   /** All transitive type IDs needed for encoding args (in dep order). */
-  argsDepIds: number[];
-  /** Root type ID for the args tuple schema. 0 if method has no args. */
-  argsRootId: number;
+  argsDepIds: bigint[];
+  /** Root type ID for the args tuple schema. 0n if method has no args. */
+  argsRootId: bigint;
   /** All transitive type IDs needed for encoding the response (in dep order). */
-  responseDepIds: number[];
+  responseDepIds: bigint[];
   /** Root type ID for the response schema. */
-  responseRootId: number;
+  responseRootId: bigint;
 }
 
 /** Pre-computed send schema data for a service (generated by roam-codegen). */
 export interface ServiceSendSchemas {
-  /** All type schemas used by this service. typeId → pre-encoded CBOR bytes for Schema struct. */
-  schemas: Map<number, Uint8Array>;
+  /** All type schemas used by this service. typeId (content hash) → pre-encoded CBOR bytes for Schema struct. */
+  schemas: Map<bigint, Uint8Array>;
   /** Per-method schema info. method_id (bigint) → schema info. */
   methods: Map<bigint, MethodSendSchemas>;
 }
@@ -745,7 +757,7 @@ export interface ServiceSendSchemas {
  * to embed in RequestCall.schemas / RequestResponse.schemas.
  */
 export class SchemaSendTracker {
-  private sentTypeIds = new Set<number>();
+  private sentTypeIds = new Set<bigint>();
   private sentMethods = new Set<string>();
 
   reset(): void {
@@ -773,7 +785,7 @@ export class SchemaSendTracker {
     const deps = direction === "args" ? methodInfo.argsDepIds : methodInfo.responseDepIds;
     const rootId = direction === "args" ? methodInfo.argsRootId : methodInfo.responseRootId;
 
-    if (rootId === 0) return new Uint8Array(0);
+    if (rootId === 0n) return new Uint8Array(0);
 
     const newDeps = deps.filter((id) => !this.sentTypeIds.has(id));
     for (const id of newDeps) this.sentTypeIds.add(id);
@@ -784,7 +796,7 @@ export class SchemaSendTracker {
 
     const bindingCbor = cborMap([
       ["method_id", cborUint64(methodId)],
-      ["root_type_schema_id", cborTupleStruct1(cborUint(rootId))],
+      ["root_type_schema_id", cborTupleStruct1(cborUint64(rootId))],
       ["direction", cborEnum(direction === "args" ? "Args" : "Response", cborNull())],
     ]);
 
