@@ -252,6 +252,7 @@ class RoamCallImpl implements RoamCall {
     private readonly operations: OperationStore,
     private readonly operationId: bigint | undefined,
     private readonly schemaRegistry?: ServiceDescriptor["schema_registry"],
+    private readonly schemaSendTracker?: import("./schema_tracker.ts").SchemaSendTracker,
   ) {}
 
   didReply(): boolean {
@@ -298,13 +299,19 @@ class RoamCallImpl implements RoamCall {
   }
 
   private sendPayload(payload: Uint8Array): void {
+    const schemas = this.schemaSendTracker?.prepareSchemas(
+      this.method.id,
+      "response",
+      this.method.result,
+      this.schemaRegistry,
+    );
     if (this.operationId === undefined) {
-      this.taskSender({ kind: "response", requestId: this.requestId, payload });
+      this.taskSender({ kind: "response", requestId: this.requestId, payload, schemas });
       return;
     }
     const waiters = this.operations.seal(this.operationId, this.requestId, payload);
     for (const waiter of waiters) {
-      this.taskSender({ kind: "response", requestId: waiter, payload: payload.slice() });
+      this.taskSender({ kind: "response", requestId: waiter, payload: payload.slice(), schemas });
     }
   }
 }
@@ -420,7 +427,7 @@ export class Driver {
           await this.connection.sendChannelCredit(message.channelId, message.additional).catch(() => {});
           break;
         case "response":
-          await this.connection.sendResponse(message.requestId, message.payload).catch(() => {});
+          await this.connection.sendResponse(message.requestId, message.payload, [], [], message.schemas).catch(() => {});
           break;
       }
     }
@@ -484,6 +491,7 @@ export class Driver {
       this.operations,
       operationId,
       descriptor.schema_registry,
+      this.connection.getSchemaSendTracker(),
     );
 
     let outcome: ServerCallOutcome = { kind: "dropped" };

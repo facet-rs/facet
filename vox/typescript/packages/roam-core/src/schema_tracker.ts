@@ -14,7 +14,21 @@
 // r[impl schema.errors.missing-required]
 
 import type { Schema, StructSchema, EnumSchema, TupleSchema, SchemaRegistry } from "@bearcove/roam-postcard";
-import { decodeCbor, type CborMap, type CborValue } from "./cbor.ts";
+import {
+  decodeCbor,
+  cborUint,
+  cborUint64,
+  cborNull,
+  cborBool,
+  cborText,
+  cborTupleStruct1,
+  cborArray,
+  cborMap,
+  cborEmptyMap,
+  cborEnum,
+  type CborMap,
+  type CborValue,
+} from "./cbor.ts";
 import { roamLogger } from "./logger.ts";
 
 // A 16-byte type identifier, stored as a hex string for Map keying.
@@ -691,4 +705,277 @@ function resolveLocal(schema: Schema, registry?: SchemaRegistry): Schema {
     if (resolved) return resolved;
   }
   return schema;
+}
+
+// ============================================================================
+// SchemaSendTracker — outbound schema exchange (TypeScript → Rust CBOR format)
+// ============================================================================
+
+// One Rust-format Schema entry ready for CBOR encoding.
+interface RustSchema {
+  typeId: number;
+  name: string;
+  kindBytes: Uint8Array; // pre-encoded CBOR for the SchemaKind enum value
+}
+
+/**
+ * Tracks which method+direction schemas have been sent on a connection.
+ *
+ * Mirrors Rust's `SchemaSendTracker`. Call `reset()` on reconnect.
+ * Call `prepareSchemas()` to get the CBOR bytes to embed in
+ * RequestCall.schemas / RequestResponse.schemas.
+ */
+export class SchemaSendTracker {
+  private sentMethods = new Set<string>();
+  private nextTypeId = 1;
+  // fingerprint → assigned TypeSchemaId
+  private schemaIds = new Map<string, number>();
+  // All schemas already sent (typeId → schema), for dedup
+  private sentTypeIds = new Set<number>();
+
+  reset(): void {
+    this.sentMethods.clear();
+    this.nextTypeId = 1;
+    this.schemaIds.clear();
+    this.sentTypeIds.clear();
+  }
+
+  /**
+   * Returns CBOR bytes for the SchemaMessagePayload to embed in a
+   * request/response for method `methodId` in `direction`.
+   * Returns empty Uint8Array if schemas for this method+direction were already sent.
+   */
+  prepareSchemas(
+    methodId: bigint,
+    direction: "args" | "response",
+    schema: Schema,
+    registry: SchemaRegistry | undefined,
+  ): Uint8Array {
+    const key = `${methodId}:${direction}`;
+    if (this.sentMethods.has(key)) return new Uint8Array(0);
+    this.sentMethods.add(key);
+
+    const collected: RustSchema[] = [];
+    const rootId = this._collectSchema(schema, registry, collected);
+
+    // Filter to only unsent schemas
+    const newSchemas = collected.filter((s) => !this.sentTypeIds.has(s.typeId));
+    for (const s of newSchemas) this.sentTypeIds.add(s.typeId);
+
+    if (newSchemas.length === 0 && rootId === 0) return new Uint8Array(0);
+
+    const schemasCbor = cborArray(newSchemas.map(encodeSingleSchema));
+
+    // MethodSchemaBinding: struct map
+    const bindingCbor = cborMap([
+      ["method_id", cborUint64(methodId)],
+      ["root_type_schema_id", cborTupleStruct1(cborUint(rootId))],
+      ["direction", cborEnum(direction === "args" ? "Args" : "Response", cborNull())],
+    ]);
+    const bindingsCbor = cborArray([bindingCbor]);
+
+    // SchemaMessagePayload: struct map
+    return cborMap([
+      ["schemas", schemasCbor],
+      ["method_bindings", bindingsCbor],
+    ]);
+  }
+
+  private _fingerprintSchema(schema: Schema, registry: SchemaRegistry | undefined): string {
+    const resolved = resolveLocal(schema, registry);
+    if (resolved.kind === "ref") {
+      return `ref:${(resolved as { kind: "ref"; name: string }).name}`;
+    }
+    return JSON.stringify(resolved);
+  }
+
+  private _idForSchema(schema: Schema, registry: SchemaRegistry | undefined): number {
+    const fp = this._fingerprintSchema(schema, registry);
+    const existing = this.schemaIds.get(fp);
+    if (existing !== undefined) return existing;
+    const id = this.nextTypeId++;
+    this.schemaIds.set(fp, id);
+    return id;
+  }
+
+  /**
+   * Recursively collect all schemas reachable from `schema`.
+   * Returns the TypeSchemaId for the root schema.
+   */
+  private _collectSchema(
+    schema: Schema,
+    registry: SchemaRegistry | undefined,
+    out: RustSchema[],
+  ): number {
+    const resolved = resolveLocal(schema, registry);
+
+    // If already assigned an ID and already collected, just return the ID.
+    const fp = this._fingerprintSchema(resolved, registry);
+    const existing = this.schemaIds.get(fp);
+    if (existing !== undefined) return existing;
+
+    const id = this._idForSchema(resolved, registry);
+    // Send empty name — TypeScript doesn't know Rust type names.
+    // Rust skips the name-mismatch check when remote name is empty.
+    const typeName = "";
+
+    // Build the SchemaKind CBOR bytes
+    const kindBytes = this._encodeSchemaKind(resolved, registry, out);
+    out.push({ typeId: id, name: typeName, kindBytes });
+    return id;
+  }
+
+  private _encodeSchemaKind(
+    schema: Schema,
+    registry: SchemaRegistry | undefined,
+    out: RustSchema[],
+  ): Uint8Array {
+    switch (schema.kind) {
+      case "struct": {
+        const s = schema as import("@bearcove/roam-postcard").StructSchema;
+        const fields = Object.entries(s.fields).map(([name, fieldSchema]) => {
+          const fieldId = this._collectSchema(fieldSchema as Schema, registry, out);
+          const required = !(fieldSchema as Schema & { optional?: boolean }).optional;
+          return cborMap([
+            ["name", cborText(name)],
+            ["type_id", cborTupleStruct1(cborUint(fieldId))],
+            ["required", cborBool(required)],
+          ]);
+        });
+        return cborEnum("Struct", cborMap([["fields", cborArray(fields)]]));
+      }
+      case "enum": {
+        const e = schema as import("@bearcove/roam-postcard").EnumSchema;
+        const variants = e.variants.map((v, idx) => {
+          const discriminant = v.discriminant ?? idx;
+          const payload = this._encodeVariantPayload(v.fields, registry, out);
+          return cborMap([
+            ["name", cborText(v.name)],
+            ["index", cborUint(discriminant)],
+            ["payload", payload],
+          ]);
+        });
+        return cborEnum("Enum", cborMap([["variants", cborArray(variants)]]));
+      }
+      case "tuple": {
+        const t = schema as import("@bearcove/roam-postcard").TupleSchema;
+        const elemIds = t.elements.map((e) => {
+          const id = this._collectSchema(e as Schema, registry, out);
+          return cborTupleStruct1(cborUint(id));
+        });
+        return cborEnum("Tuple", cborMap([["elements", cborArray(elemIds)]]));
+      }
+      case "vec": {
+        const v = schema as import("@bearcove/roam-postcard").VecSchema;
+        const elemId = this._collectSchema(v.element as Schema, registry, out);
+        return cborEnum("List", cborMap([["element", cborTupleStruct1(cborUint(elemId))]]));
+      }
+      case "option": {
+        const o = schema as import("@bearcove/roam-postcard").OptionSchema;
+        const innerId = this._collectSchema(o.inner as Schema, registry, out);
+        return cborEnum("Option", cborMap([["element", cborTupleStruct1(cborUint(innerId))]]));
+      }
+      case "map": {
+        const m = schema as import("@bearcove/roam-postcard").MapSchema;
+        const keyId = this._collectSchema(m.key as Schema, registry, out);
+        const valId = this._collectSchema(m.value as Schema, registry, out);
+        return cborEnum("Map", cborMap([
+          ["key", cborTupleStruct1(cborUint(keyId))],
+          ["value", cborTupleStruct1(cborUint(valId))],
+        ]));
+      }
+
+      case "bytes":
+        return cborEnum("Primitive", cborMap([["primitive_type", cborEnum("Bytes", cborNull())]]));
+      case "string":
+        return cborEnum("Primitive", cborMap([["primitive_type", cborEnum("String", cborNull())]]));
+      case "bool":
+        return cborEnum("Primitive", cborMap([["primitive_type", cborEnum("Bool", cborNull())]]));
+      case "u8":
+        return cborEnum("Primitive", cborMap([["primitive_type", cborEnum("U8", cborNull())]]));
+      case "u16":
+        return cborEnum("Primitive", cborMap([["primitive_type", cborEnum("U16", cborNull())]]));
+      case "u32":
+        return cborEnum("Primitive", cborMap([["primitive_type", cborEnum("U32", cborNull())]]));
+      case "u64":
+        return cborEnum("Primitive", cborMap([["primitive_type", cborEnum("U64", cborNull())]]));
+      case "i8":
+        return cborEnum("Primitive", cborMap([["primitive_type", cborEnum("I8", cborNull())]]));
+      case "i16":
+        return cborEnum("Primitive", cborMap([["primitive_type", cborEnum("I16", cborNull())]]));
+      case "i32":
+        return cborEnum("Primitive", cborMap([["primitive_type", cborEnum("I32", cborNull())]]));
+      case "i64":
+        return cborEnum("Primitive", cborMap([["primitive_type", cborEnum("I64", cborNull())]]));
+      case "f32":
+        return cborEnum("Primitive", cborMap([["primitive_type", cborEnum("F32", cborNull())]]));
+      case "f64":
+        return cborEnum("Primitive", cborMap([["primitive_type", cborEnum("F64", cborNull())]]));
+      case "ref": {
+        const name = (schema as { kind: "ref"; name: string }).name;
+        const resolved = registry?.get(name);
+        if (resolved) {
+          return this._encodeSchemaKind(resolved, registry, out);
+        }
+        // Fallback: treat as unknown struct
+        return cborEnum("Struct", cborMap([["fields", cborArray([])]]));
+      }
+      // tx/rx are channel types — encode as unit (no schema needed)
+      case "tx":
+      case "rx":
+        return cborEnum("Primitive", cborMap([["primitive_type", cborEnum("Unit", cborNull())]]));
+      default:
+        return cborEnum("Primitive", cborMap([["primitive_type", cborEnum("Unit", cborNull())]]));
+    }
+  }
+
+  private _encodeVariantPayload(
+    fields: Schema | Schema[] | { [key: string]: Schema } | null | undefined,
+    registry: SchemaRegistry | undefined,
+    out: RustSchema[],
+  ): Uint8Array {
+    if (fields === null || fields === undefined) {
+      return cborEnum("Unit", cborNull());
+    }
+    // Tuple variant (Schema[]) — treat as Newtype if 1 element, else Struct with "0","1",... names
+    if (Array.isArray(fields)) {
+      if (fields.length === 1) {
+        const innerId = this._collectSchema(fields[0] as Schema, registry, out);
+        return cborEnum("Newtype", cborMap([["type_id", cborTupleStruct1(cborUint(innerId))]]));
+      }
+      const fieldEntries = fields.map((fieldSchema, idx) => {
+        const fieldId = this._collectSchema(fieldSchema as Schema, registry, out);
+        return cborMap([
+          ["name", cborText(String(idx))],
+          ["type_id", cborTupleStruct1(cborUint(fieldId))],
+          ["required", cborBool(true)],
+        ]);
+      });
+      return cborEnum("Struct", cborMap([["fields", cborArray(fieldEntries)]]));
+    }
+    if (typeof fields === "object" && "kind" in fields) {
+      // Newtype variant — single schema
+      const innerId = this._collectSchema(fields as Schema, registry, out);
+      return cborEnum("Newtype", cborMap([["type_id", cborTupleStruct1(cborUint(innerId))]]));
+    }
+    // Struct variant
+    const fieldMap = fields as { [key: string]: Schema };
+    const fieldEntries = Object.entries(fieldMap).map(([name, fieldSchema]) => {
+      const fieldId = this._collectSchema(fieldSchema as Schema, registry, out);
+      return cborMap([
+        ["name", cborText(name)],
+        ["type_id", cborTupleStruct1(cborUint(fieldId))],
+        ["required", cborBool(true)],
+      ]);
+    });
+    return cborEnum("Struct", cborMap([["fields", cborArray(fieldEntries)]]));
+  }
+}
+
+function encodeSingleSchema(s: RustSchema): Uint8Array {
+  return cborMap([
+    ["type_id", cborTupleStruct1(cborUint(s.typeId))],
+    ["name", cborText(s.name)],
+    ["kind", s.kindBytes],
+  ]);
 }

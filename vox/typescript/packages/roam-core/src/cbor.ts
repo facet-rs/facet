@@ -1,10 +1,116 @@
-// Minimal CBOR decoder for parsing SchemaMessagePayload.
+// Minimal CBOR codec for SchemaMessagePayload.
 //
-// Only implements the subset needed to decode facet-cbor-serialized
-// schema messages: maps, arrays, text strings, byte strings, unsigned
+// Decoder: handles maps, arrays, text strings, byte strings, unsigned
 // integers, booleans, and null.
+//
+// Encoder: produces facet-cbor-compatible CBOR for sending schema payloads.
 
 // r[impl schema.principles.cbor]
+
+// ============================================================================
+// CBOR Encoding
+// ============================================================================
+
+function cborMajor(major: number, value: number): Uint8Array {
+  if (value < 24) return Uint8Array.of((major << 5) | value);
+  if (value <= 0xff) return Uint8Array.of((major << 5) | 24, value);
+  if (value <= 0xffff)
+    return Uint8Array.of((major << 5) | 25, value >> 8, value & 0xff);
+  return Uint8Array.of(
+    (major << 5) | 26,
+    (value >>> 24) & 0xff,
+    (value >>> 16) & 0xff,
+    (value >>> 8) & 0xff,
+    value & 0xff,
+  );
+}
+
+function cborMajorBig(major: number, value: bigint): Uint8Array {
+  if (value < 24n) return Uint8Array.of((major << 5) | Number(value));
+  if (value <= 0xffn) return Uint8Array.of((major << 5) | 24, Number(value));
+  if (value <= 0xffffn) {
+    return Uint8Array.of((major << 5) | 25, Number(value >> 8n), Number(value & 0xffn));
+  }
+  if (value <= 0xffffffffn) {
+    return Uint8Array.of(
+      (major << 5) | 26,
+      Number((value >> 24n) & 0xffn),
+      Number((value >> 16n) & 0xffn),
+      Number((value >> 8n) & 0xffn),
+      Number(value & 0xffn),
+    );
+  }
+  // 8-byte uint
+  const out = new Uint8Array(9);
+  out[0] = (major << 5) | 27;
+  let v = value;
+  for (let i = 8; i >= 1; i--) {
+    out[i] = Number(v & 0xffn);
+    v >>= 8n;
+  }
+  return out;
+}
+
+function cborConcat(chunks: Uint8Array[]): Uint8Array {
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
+}
+
+export function cborUint(value: number): Uint8Array {
+  return cborMajor(0, value);
+}
+
+/** Encode a u64 bigint as CBOR unsigned integer (for method_id etc). */
+export function cborUint64(value: bigint): Uint8Array {
+  return cborMajorBig(0, value);
+}
+
+export function cborNull(): Uint8Array {
+  return Uint8Array.of(0xf6);
+}
+
+export function cborBool(value: boolean): Uint8Array {
+  return Uint8Array.of(value ? 0xf5 : 0xf4);
+}
+
+export function cborText(value: string): Uint8Array {
+  const enc = new TextEncoder().encode(value);
+  return cborConcat([cborMajor(3, enc.length), enc]);
+}
+
+/** Encode a 1-element tuple struct (TupleStruct in facet-cbor → CBOR array). */
+export function cborTupleStruct1(inner: Uint8Array): Uint8Array {
+  return cborConcat([cborMajor(4, 1), inner]);
+}
+
+/** Encode a CBOR array. */
+export function cborArray(items: Uint8Array[]): Uint8Array {
+  return cborConcat([cborMajor(4, items.length), ...items]);
+}
+
+/** Encode a CBOR map with string keys. */
+export function cborMap(entries: Array<[string, Uint8Array]>): Uint8Array {
+  const chunks: Uint8Array[] = [cborMajor(5, entries.length)];
+  for (const [k, v] of entries) {
+    chunks.push(cborText(k), v);
+  }
+  return cborConcat(chunks);
+}
+
+/** Encode an empty CBOR map (unit/empty struct in facet-cbor). */
+export function cborEmptyMap(): Uint8Array {
+  return Uint8Array.of(0xa0);
+}
+
+/** Encode a facet-cbor enum: 1-entry map {variant_name: payload}. */
+export function cborEnum(variantName: string, payload: Uint8Array): Uint8Array {
+  return cborMap([[variantName, payload]]);
+}
+
 
 export type CborValue =
   | number

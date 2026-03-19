@@ -50,7 +50,7 @@ import {
 } from "./internal/parity.ts";
 import { BareConduit } from "./conduit.ts";
 import { roamLogger } from "./logger.ts";
-import { SchemaTracker } from "./schema_tracker.ts";
+import { SchemaTracker, SchemaSendTracker } from "./schema_tracker.ts";
 import type { Link, LinkSource } from "./link.ts";
 import { singleLinkSource } from "./link.ts";
 import { StableConduit } from "./stable_conduit.ts";
@@ -289,7 +289,8 @@ class SessionCore {
   private peerSupportsRetry: boolean;
   private readonly resumable: boolean;
   private sessionResumeKey: Uint8Array | null;
-  private readonly schemaTracker = new SchemaTracker();
+  private readonly schemaTracker: SchemaTracker;
+  private readonly schemaSendTracker = new SchemaSendTracker();
   private readonly recoverConduit?: () => Promise<Conduit<Message>>;
   private readonly pendingResumes: Array<{
     conduit: Conduit<Message>;
@@ -314,6 +315,7 @@ class SessionCore {
     this.recoverConduit = recoverConduit;
     this.nextConnectionId = firstIdForParity(localRootSettings.parity);
     this.sessionHandle = new SessionHandle(this);
+    this.schemaTracker = new SchemaTracker();
   }
 
   sessionHandleValue(): SessionHandle {
@@ -705,7 +707,11 @@ class SessionCore {
     // r[impl rpc.cancel]
     const connection = this.getConnection(connectionId);
     switch (request.body.tag) {
-      case "Call":
+      case "Call": {
+        const callSchemas = request.body.value.schemas;
+        if (callSchemas && callSchemas.length > 0) {
+          try { this.schemaTracker.recordReceived(callSchemas); } catch {}
+        }
         connection.enqueueIncomingCall({
           requestId: request.id,
           methodId: request.body.value.method_id,
@@ -714,10 +720,16 @@ class SessionCore {
           metadata: request.body.value.metadata,
         });
         return;
+      }
 
-      case "Response":
+      case "Response": {
+        const responseSchemas = request.body.value.schemas;
+        if (responseSchemas && responseSchemas.length > 0) {
+          try { this.schemaTracker.recordReceived(responseSchemas); } catch {}
+        }
         connection.resolveResponse(request.id, request.body.value.ret);
         return;
+      }
 
       case "Cancel":
         connection.enqueueIncomingCancel(request.id);
@@ -752,6 +764,10 @@ class SessionCore {
 
   getSchemaTracker(): SchemaTracker {
     return this.schemaTracker;
+  }
+
+  getSchemaSendTracker(): SchemaSendTracker {
+    return this.schemaSendTracker;
   }
 }
 
@@ -837,6 +853,10 @@ export class ConnectionHandle {
     return this.session.getSchemaTracker();
   }
 
+  getSchemaSendTracker(): import("./schema_tracker.ts").SchemaSendTracker {
+    return this.session.getSchemaSendTracker();
+  }
+
   isClosed(): boolean {
     return this.closed;
   }
@@ -920,8 +940,9 @@ export class ConnectionHandle {
     payload: Uint8Array,
     metadata: Metadata = [],
     channels: bigint[] = [],
+    schemas: Uint8Array = new Uint8Array(0),
   ): Promise<void> {
-    await this.session.sendMessage(messageResponse(requestId, payload, metadata, channels, this.id));
+    await this.session.sendMessage(messageResponse(requestId, payload, metadata, channels, this.id, schemas));
   }
 
   async sendCancel(requestId: bigint, metadata: Metadata = []): Promise<void> {

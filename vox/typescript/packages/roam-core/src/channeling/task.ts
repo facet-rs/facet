@@ -15,7 +15,7 @@ export type TaskMessage =
   | { kind: "data"; channelId: ChannelId; payload: Uint8Array }
   | { kind: "close"; channelId: ChannelId }
   | { kind: "grantCredit"; channelId: ChannelId; additional: number }
-  | { kind: "response"; requestId: bigint; payload: Uint8Array };
+  | { kind: "response"; requestId: bigint; payload: Uint8Array; schemas?: Uint8Array };
 
 /**
  * Callback for sending task messages to the connection driver.
