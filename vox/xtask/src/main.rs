@@ -701,6 +701,8 @@ fn generate_spec_matrix(
         mod channel_retry;
         #[path = "cases/channeling.rs"]
         mod channeling;
+        #[path = "cases/schema_compat.rs"]
+        mod schema_compat;
         #[path = "cases/testbed.rs"]
         mod testbed;
 
@@ -719,6 +721,42 @@ fn generate_spec_matrix(
         const SUBJECT_SWIFT_SHM_HOST: SubjectSpec = SubjectSpec::shm_host(SubjectLanguage::Swift);
 
         #(#combo_mods)*
+
+        // Schema compatibility tests: Rust v1 harness ↔ TypeScript evolved (v2) subject.
+        // These use a special evolved subject command and are TypeScript-only.
+        mod lang_typescript_evolved_schema_compat {
+            use super::schema_compat;
+            #[ignore]
+            #[test]
+            fn added_optional_field() {
+                schema_compat::run_schema_compat_added_optional_field();
+            }
+            #[ignore]
+            #[test]
+            fn reordered_fields() {
+                schema_compat::run_schema_compat_reordered_fields();
+            }
+            #[ignore]
+            #[test]
+            fn added_enum_variant() {
+                schema_compat::run_schema_compat_added_enum_variant();
+            }
+            #[ignore]
+            #[test]
+            fn removed_field() {
+                schema_compat::run_schema_compat_removed_field();
+            }
+            #[ignore]
+            #[test]
+            fn incompatible_type_change() {
+                schema_compat::run_schema_compat_incompatible_type_change();
+            }
+            #[ignore]
+            #[test]
+            fn missing_required_field() {
+                schema_compat::run_schema_compat_missing_required_field();
+            }
+        }
 
         #[test]
         fn lang_rust_to_rust_transport_mem_direction_bidirectional_binary_payload_transport_matrix() {

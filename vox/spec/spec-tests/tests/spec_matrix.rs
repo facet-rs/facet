@@ -12,6 +12,8 @@ mod channeling;
 #[cfg(all(unix, target_os = "macos"))]
 #[path = "cases/cross_language_shm_guest_matrix.rs"]
 mod cross_language_shm_guest_matrix;
+#[path = "cases/schema_compat.rs"]
+mod schema_compat;
 #[path = "cases/testbed.rs"]
 mod testbed;
 use spec_tests::harness::{SubjectLanguage, SubjectSpec};
@@ -932,6 +934,39 @@ mod lang_swift_transport_shm_host_mode {
                 SPEC,
             );
         }
+    }
+}
+mod lang_typescript_evolved_schema_compat {
+    use super::schema_compat;
+    #[ignore]
+    #[test]
+    fn added_optional_field() {
+        schema_compat::run_schema_compat_added_optional_field();
+    }
+    #[ignore]
+    #[test]
+    fn reordered_fields() {
+        schema_compat::run_schema_compat_reordered_fields();
+    }
+    #[ignore]
+    #[test]
+    fn added_enum_variant() {
+        schema_compat::run_schema_compat_added_enum_variant();
+    }
+    #[ignore]
+    #[test]
+    fn removed_field() {
+        schema_compat::run_schema_compat_removed_field();
+    }
+    #[ignore]
+    #[test]
+    fn incompatible_type_change() {
+        schema_compat::run_schema_compat_incompatible_type_change();
+    }
+    #[ignore]
+    #[test]
+    fn missing_required_field() {
+        schema_compat::run_schema_compat_missing_required_field();
     }
 }
 #[test]
