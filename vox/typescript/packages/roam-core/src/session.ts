@@ -74,8 +74,12 @@ interface PendingResponse {
   payload: Uint8Array;
   metadata: Metadata;
   channels: bigint[];
-  /** Pre-computed args schemas bytes to include on first send. */
-  schemasBytes?: Uint8Array;
+  /**
+   * Lazily computes args schemas bytes for each send attempt.
+   * Called on every send so that after a SchemaSendTracker.reset() (session
+   * resume), fresh schemas are included in the retried request.
+   */
+  computeSchemas?: () => Uint8Array;
   /** Whether this method uses persist retry policy (affects close behavior). */
   persist: boolean;
   /** Whether this method is idempotent. */
@@ -175,39 +179,65 @@ function cloneMetadata(metadata: Metadata): Metadata {
 interface EstablishedTransport {
   conduit: Conduit<Message>;
   handshake: HandshakeResult;
+  recoverConduit?: () => Promise<Conduit<Message>>;
 }
 
 async function makeInitiatorEstablishedTransport(
   transport: SessionTransport,
   options: SessionTransportOptions,
 ): Promise<EstablishedTransport> {
-  const conduit = options.transport ?? options.conduit ?? "bare";
+  const conduitKind = options.transport ?? options.conduit ?? "bare";
   const localSettings: ConnectionSettings = {
     parity: { tag: "Odd" },
     max_concurrent_requests: options.maxConcurrentRequests ?? 64,
   };
 
-  if (options.resumable) {
-    throw SessionError.protocol("raw CBOR session resumption is not implemented in TypeScript yet");
-  }
-
   if (isLinkSource(transport)) {
     const attachment = await transport.nextLink();
-    await requestTransportMode(attachment.link, conduit);
+    await requestTransportMode(attachment.link, conduitKind);
     const handshake = await handshakeAsInitiator(attachment.link, localSettings, true, null);
-    if (conduit === "stable") {
+
+    if (conduitKind === "stable") {
       const stableConduit = await StableConduit.connect(singleLinkSource(attachment.link));
       return { conduit: stableConduit, handshake };
     }
+
+    // For resumable bare sessions: build a recoverConduit that reconnects,
+    // re-handshakes with the stored resume key, and returns a fresh conduit.
+    if (options.resumable && handshake.sessionResumeKey) {
+      // Use a mutable cell so recoverConduit always uses the latest key.
+      const keyCell: { value: Uint8Array | null } = {
+        value: handshake.sessionResumeKey,
+      };
+      const recoverConduit = async (): Promise<Conduit<Message>> => {
+        const newAttachment = await (transport as LinkSource).nextLink();
+        await requestTransportMode(newAttachment.link, conduitKind);
+        const newHandshake = await handshakeAsInitiator(
+          newAttachment.link,
+          localSettings,
+          true,
+          keyCell.value,
+        );
+        // Update the key for the next reconnect.
+        keyCell.value = newHandshake.sessionResumeKey;
+        return new BareConduit(newAttachment.link);
+      };
+      return {
+        conduit: new BareConduit(attachment.link),
+        handshake,
+        recoverConduit,
+      };
+    }
+
     return {
       conduit: new BareConduit(attachment.link),
       handshake,
     };
   }
 
-  await requestTransportMode(transport, conduit);
+  await requestTransportMode(transport, conduitKind);
   const handshake = await handshakeAsInitiator(transport, localSettings, true, null);
-  if (conduit === "stable") {
+  if (conduitKind === "stable") {
     const stableConduit = await StableConduit.connect(singleLinkSource(transport));
     return { conduit: stableConduit, handshake };
   }
@@ -515,10 +545,12 @@ class SessionCore {
       return false;
     }
     if (!this.resumable) {
+
       return false;
     }
 
     if (this.recoverConduit) {
+
       try {
         const conduit = await this.recoverConduit();
         if (this.closed) {
@@ -528,6 +560,7 @@ class SessionCore {
         this.disconnected = true;
         await this.resumeOnConduit(conduit);
         this.disconnected = false;
+
         this.notifyConnectionsResumed();
         return true;
       } catch {
@@ -561,9 +594,14 @@ class SessionCore {
     if (!this.sessionResumeKey) {
       throw SessionError.protocol("session is not resumable");
     }
+
     // CBOR handshake (including resume key exchange) is performed by the
     // caller before the conduit is handed in. Just switch to the new conduit.
     this.conduit = conduit;
+    // Reset the schema send tracker so schemas are re-sent on the resumed
+    // connection. The Rust peer resets its receive tracker on resume, so we
+    // must re-announce all schemas that were previously sent.
+    this.schemaSendTracker.reset();
   }
 
   private enqueueResume(request: { conduit: Conduit<Message>; result: Deferred<void> }): void {
@@ -890,13 +928,17 @@ export class ConnectionHandle {
     const requestId = this.nextRequestId;
     this.nextRequestId += 2n;
     const responsePayload = await new Promise<Uint8Array>((resolve, reject) => {
-      // Compute args schemas for first send (before creating state so tracker is updated once).
-      const schemasBytes = request.sendSchemas
-        ? this.session.getSchemaSendTracker().prepareSchemas(
-            request.descriptor.id,
-            "args",
-            request.sendSchemas,
-          )
+      // Build a lazy schema computer so each send attempt (including retries
+      // after session reconnect) can call into the tracker which may have
+      // been reset. On first call the tracker returns the full schema bytes;
+      // on subsequent calls within the same connection it returns empty bytes.
+      const computeSchemas: (() => Uint8Array) | undefined = request.sendSchemas
+        ? () =>
+            this.session.getSchemaSendTracker().prepareSchemas(
+              request.descriptor.id,
+              "args",
+              request.sendSchemas!,
+            )
         : undefined;
 
       const state: PendingResponse = {
@@ -910,7 +952,7 @@ export class ConnectionHandle {
         payload: initial.payload.slice(),
         metadata: cloneMetadata(metadata),
         channels: [...initial.channels],
-        schemasBytes,
+        computeSchemas,
         persist: request.descriptor.retry?.persist ?? false,
         idem: request.descriptor.retry?.idem ?? false,
         prepareRetry: request.prepareRetry,
@@ -946,6 +988,9 @@ export class ConnectionHandle {
         throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
       case "Cancelled":
         throw new RpcError(RpcErrorCode.CANCELLED);
+      case "ConnectionClosed":
+      case "SessionShutdown":
+      case "SendFailed":
       case "Indeterminate":
         throw new RpcError(RpcErrorCode.INDETERMINATE);
       default:
@@ -1111,11 +1156,9 @@ export class ConnectionHandle {
           cloneMetadata(state.metadata),
           [...state.channels],
           this.id,
-          state.schemasBytes,
+          state.computeSchemas?.(),
         ),
       );
-      // Clear schemas after first send (only send once per method+direction).
-      state.schemasBytes = undefined;
       await this.flushOutgoing();
     } catch (error) {
       state.requestIds.delete(requestId);
@@ -1293,9 +1336,9 @@ export const session = {
       established.handshake,
       {
         ...options,
-        resumable: false,
+        resumable: options.resumable ?? false,
       },
-      undefined,
+      established.recoverConduit,
     );
   },
 

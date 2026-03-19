@@ -324,8 +324,11 @@ async function runClient() {
   const scenario = process.env.CLIENT_SCENARIO ?? "echo";
   console.error(`client mode: connecting to ${addr}, scenario=${scenario}`);
 
+  // Enable session resumption when the peer supports it — this allows
+  // automatic reconnect and retry for idempotent/persist methods.
   const established = await session.initiator(makeConnector(addr), {
     transport: subjectConduit(),
+    resumable: true,
   });
   const client = new TestbedClient(established.rootConnection().caller());
   const handle = established.handle();

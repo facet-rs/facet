@@ -274,23 +274,49 @@ fn generate_scalar_schema(scalar: ScalarType) -> String {
     }
 }
 
-/// Generate the `RoamError<E>` enum schema.
+/// Generate the `RoamError<E>` enum schema using Rust reflection.
 ///
-/// Always has five variants at fixed indices:
-/// - 0: User(E)        — user-defined error (null for infallible)
-/// - 1: UnknownMethod  — unit
-/// - 2: InvalidPayload — newtype(String)
-/// - 3: Cancelled      — unit
-/// - 4: Indeterminate  — unit
+/// Instead of hardcoding variants, uses `classify_shape` on `RoamError<Infallible>` to
+/// get the exact variant list (names, indices, payloads) matching Rust's `#[repr(u8)]`.
+/// Only the `User` variant's inner type is replaced with `err_schema`.
 fn generate_roam_error_schema(err_schema: &str) -> String {
+    use roam_types::VariantKind;
+
+    let roam_error_shape =
+        <roam_types::RoamError<std::convert::Infallible> as Facet<'static>>::SHAPE;
+    let ShapeKind::Enum(EnumInfo { variants, .. }) = classify_shape(roam_error_shape) else {
+        panic!("RoamError must be an enum");
+    };
+
+    let mut state = SchemaGenState::default();
+    let variant_schemas: Vec<String> = variants
+        .iter()
+        .map(|variant| match classify_variant(variant) {
+            VariantKind::Unit => {
+                format!("{{ name: '{}', fields: null }}", variant.name)
+            }
+            VariantKind::Newtype { inner } => {
+                if variant.name == "User" {
+                    // Replace Infallible with the actual user error schema.
+                    format!("{{ name: 'User', fields: {} }}", err_schema)
+                } else {
+                    let inner_schema = generate_schema_with_field(inner, None, &mut state);
+                    format!("{{ name: '{}', fields: {} }}", variant.name, inner_schema)
+                }
+            }
+            VariantKind::Struct { .. } | VariantKind::Tuple { .. } => {
+                // RoamError has no struct/tuple variants; panic if Rust ever adds one.
+                panic!(
+                    "unexpected struct/tuple variant in RoamError: {}",
+                    variant.name
+                )
+            }
+        })
+        .collect();
+
     format!(
-        "{{ kind: 'enum', variants: [\
-          {{ name: 'User', fields: {err_schema} }}, \
-          {{ name: 'UnknownMethod', fields: null }}, \
-          {{ name: 'InvalidPayload', fields: {{ kind: 'string' }} }}, \
-          {{ name: 'Cancelled', fields: null }}, \
-          {{ name: 'Indeterminate', fields: null }}\
-        ] }}"
+        "{{ kind: 'enum', variants: [{}] }}",
+        variant_schemas.join(", ")
     )
 }
 
