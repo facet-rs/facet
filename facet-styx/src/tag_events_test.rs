@@ -141,3 +141,15 @@ fn test_12_at_as_key() {
     // @ {x 1} -> FieldKey("@"), StructStart, FieldKey("x"), Scalar(1), StructEnd
     insta::assert_snapshot!(collect_events("@ {x 1}"));
 }
+
+#[test]
+fn test_13_chained_tag_object_payload() {
+    insta::assert_snapshot!(collect_events(
+        "x @must_emit/@discover_start{executor default}"
+    ));
+}
+
+#[test]
+fn test_14_chained_tag_unit_payload() {
+    insta::assert_snapshot!(collect_events("x @must_not_emit/@exec_start"));
+}

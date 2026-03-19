@@ -456,20 +456,31 @@ impl<'src> CstParser<'src> {
 
     /// Parse `@name` (tag) with optional payload.
     fn parse_tag(&mut self) {
-        self.builder.start_node(SyntaxKind::TAG.into());
-
         // Consume the tag token (@name)
         let tag_token = self.lexer.next();
         let tag_end = tag_token.as_ref().map(|t| t.span.end).unwrap_or(0);
 
         if let Some(token) = tag_token {
-            self.builder.token(SyntaxKind::TAG_TOKEN.into(), token.text);
+            let segments: Vec<&str> = token.text.split("/@").collect();
+            self.parse_tag_segments(&segments, tag_end);
         }
+    }
 
-        // Check for payload - must IMMEDIATELY follow tag (no whitespace)
-        // Per grammar: Tag ::= '@' TagName TagPayload?
-        // TagPayload ::= Object | Sequence | QuotedScalar | RawScalar | HeredocScalar | '@'
-        let has_immediate_payload = self.lexer.peek().is_some_and(|t| {
+    fn parse_tag_segments(&mut self, segments: &[&str], tag_end: u32) {
+        self.builder.start_node(SyntaxKind::TAG.into());
+        let tag_text = if segments[0].starts_with('@') {
+            segments[0].to_string()
+        } else {
+            format!("@{}", segments[0])
+        };
+        self.builder.token(SyntaxKind::TAG_TOKEN.into(), &tag_text);
+
+        if segments.len() > 1 {
+            self.builder.start_node(SyntaxKind::TAG_PAYLOAD.into());
+            self.builder.token(SyntaxKind::SLASH.into(), "/");
+            self.parse_tag_segments(&segments[1..], tag_end);
+            self.builder.finish_node();
+        } else if self.lexer.peek().is_some_and(|t| {
             t.span.start == tag_end
                 && matches!(
                     t.kind,
@@ -481,9 +492,7 @@ impl<'src> CstParser<'src> {
                         | TokenKind::At
                         | TokenKind::Tag
                 )
-        });
-
-        if has_immediate_payload {
+        }) {
             self.builder.start_node(SyntaxKind::TAG_PAYLOAD.into());
             self.parse_atom();
             self.builder.finish_node();
@@ -681,6 +690,38 @@ id> value
         let key = entry.children().next().unwrap();
         let tag = key.children().next().unwrap();
         assert_eq!(tag.kind(), SyntaxKind::TAG);
+    }
+
+    #[test]
+    fn test_chained_tag_roundtrip() {
+        let source = "value @must_emit/@discover_start{executor default}";
+        let parse = parse(source);
+        assert!(parse.is_ok(), "errors: {:?}", parse.errors());
+        assert_eq!(source, parse.syntax().to_string());
+    }
+
+    #[test]
+    fn test_three_segment_chained_tag_roundtrip() {
+        let source = "value @a/@b/@c";
+        let parse = parse(source);
+        assert!(parse.is_ok(), "errors: {:?}", parse.errors());
+        assert_eq!(source, parse.syntax().to_string());
+    }
+
+    #[test]
+    fn test_chained_tag_with_scalar_leaf_roundtrip() {
+        let source = r#"value @a/@b"foo""#;
+        let parse = parse(source);
+        assert!(parse.is_ok(), "errors: {:?}", parse.errors());
+        assert_eq!(source, parse.syntax().to_string());
+    }
+
+    #[test]
+    fn test_chained_tag_with_heredoc_leaf_roundtrip() {
+        let source = "value @a/@b<<EOF\nhello\nEOF";
+        let parse = parse(source);
+        assert!(parse.is_ok(), "errors: {:?}", parse.errors());
+        assert_eq!(source, parse.syntax().to_string());
     }
 
     #[test]

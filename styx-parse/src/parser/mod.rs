@@ -718,9 +718,12 @@ impl<'src> Parser<'src> {
                 name,
                 has_payload,
             } => {
+                let chain = split_chained_tag_name(name, span.start);
+                let has_chained_payload = chain.len() > 1;
+
                 // Check if this tag is followed by an adjacent scalar starting with '.'
                 // This happens with @Some.Type where lexer produces Tag("Some") + Scalar(".Type")
-                if !has_payload {
+                if !has_payload && !has_chained_payload {
                     let next = self.source.next();
                     if let Lexeme::Scalar {
                         span: scalar_span,
@@ -745,25 +748,22 @@ impl<'src> Parser<'src> {
                     self.source.stash(next);
                 }
 
-                let invalid_name = !is_valid_tag_name(name);
-                let payload = if has_payload {
+                let trailing_payload = if has_chained_payload {
                     let next = self.source.next();
-                    Some(Box::new(self.parse_atom(next)))
+                    if next.span().start == span.end && lexeme_can_be_tag_payload(&next) {
+                        Some(self.parse_atom(next))
+                    } else {
+                        self.source.stash(next);
+                        None
+                    }
+                } else if has_payload {
+                    let next = self.source.next();
+                    Some(self.parse_atom(next))
                 } else {
                     None
                 };
-                let end = payload.as_ref().map(|p| p.span.end).unwrap_or(span.end);
-                // For invalid tags, error span includes the @ (it's part of the tag)
-                let error_span = if invalid_name { Some(span) } else { None };
-                Atom {
-                    span: Span::new(span.start, end),
-                    content: AtomContent::Tag {
-                        name,
-                        payload,
-                        invalid_name,
-                        error_span,
-                    },
-                }
+
+                build_tag_chain(&chain, trailing_payload)
             }
             Lexeme::ObjectStart { span } => self.parse_object_atom(span),
             Lexeme::SeqStart { span } => self.parse_sequence_atom(span),
@@ -1800,6 +1800,57 @@ impl PathState {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+fn split_chained_tag_name(name: &str, start: u32) -> Vec<(&str, Span)> {
+    let mut segments = Vec::new();
+    let mut tag_start = start;
+
+    for segment in name.split("/@") {
+        let end = tag_start + 1 + segment.len() as u32;
+        segments.push((segment, Span::new(tag_start, end)));
+        tag_start = end + 1;
+    }
+
+    segments
+}
+
+fn build_tag_chain<'src>(
+    segments: &[(&'src str, Span)],
+    trailing_payload: Option<Atom<'src>>,
+) -> Atom<'src> {
+    debug_assert!(!segments.is_empty());
+
+    let (name, tag_span) = segments[0];
+    let payload = if segments.len() > 1 {
+        Some(Box::new(build_tag_chain(&segments[1..], trailing_payload)))
+    } else {
+        trailing_payload.map(Box::new)
+    };
+    let end = payload.as_ref().map(|p| p.span.end).unwrap_or(tag_span.end);
+    let invalid_name = !is_valid_tag_name(name);
+    let error_span = invalid_name.then_some(tag_span);
+
+    Atom {
+        span: Span::new(tag_span.start, end),
+        content: AtomContent::Tag {
+            name,
+            payload,
+            invalid_name,
+            error_span,
+        },
+    }
+}
+
+fn lexeme_can_be_tag_payload(lexeme: &Lexeme<'_>) -> bool {
+    matches!(
+        lexeme,
+        Lexeme::Scalar { .. }
+            | Lexeme::Unit { .. }
+            | Lexeme::Tag { .. }
+            | Lexeme::ObjectStart { .. }
+            | Lexeme::SeqStart { .. }
+    )
+}
 
 fn is_valid_tag_name(name: &str) -> bool {
     let mut chars = name.chars();

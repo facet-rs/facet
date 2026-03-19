@@ -204,6 +204,128 @@ fn test_other_variant_nested() {
     );
 }
 
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename_all = "snake_case")]
+#[repr(u8)]
+enum EventPattern {
+    DiscoverStart { executor: String },
+    DiscoverEnd,
+    ExecStart,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename_all = "snake_case")]
+#[repr(u8)]
+enum EventAssertion {
+    MustEmit(EventPattern),
+    MustNotEmit(EventPattern),
+    Before {
+        first: EventPattern,
+        then: EventPattern,
+    },
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct EventDoc {
+    events: Vec<EventAssertion>,
+}
+
+#[test]
+fn test_chained_tags_deserialize_nested_newtypes() {
+    let input = r#"
+events (
+  @must_emit/@discover_start{executor default}
+  @must_emit/@discover_end
+  @must_not_emit/@exec_start
+  @before{
+    first @discover_start{executor default}
+    then @discover_end
+  }
+)
+"#;
+
+    let result: EventDoc = from_str(input).unwrap();
+    assert_eq!(
+        result,
+        EventDoc {
+            events: vec![
+                EventAssertion::MustEmit(EventPattern::DiscoverStart {
+                    executor: "default".into(),
+                }),
+                EventAssertion::MustEmit(EventPattern::DiscoverEnd),
+                EventAssertion::MustNotEmit(EventPattern::ExecStart),
+                EventAssertion::Before {
+                    first: EventPattern::DiscoverStart {
+                        executor: "default".into(),
+                    },
+                    then: EventPattern::DiscoverEnd,
+                },
+            ],
+        }
+    );
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename_all = "snake_case")]
+#[repr(u8)]
+enum C {
+    Done,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename_all = "snake_case")]
+#[repr(u8)]
+enum B {
+    Inner(C),
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename_all = "snake_case")]
+#[repr(u8)]
+enum A {
+    Outer(B),
+}
+
+#[test]
+fn test_chained_tags_deserialize_three_nested_newtypes() {
+    let result: A = crate::from_str_expr("@outer/@inner/@done").unwrap();
+    assert_eq!(result, A::Outer(B::Inner(C::Done)));
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename_all = "snake_case")]
+#[repr(u8)]
+enum MessagePattern {
+    Message(String),
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename_all = "snake_case")]
+#[repr(u8)]
+enum MessageAssertion {
+    MustEmit(MessagePattern),
+}
+
+#[test]
+fn test_chained_tags_deserialize_scalar_leaf_newtype() {
+    let result: MessageAssertion =
+        crate::from_str_expr(r#"@must_emit/@message"hello world""#).unwrap();
+    assert_eq!(
+        result,
+        MessageAssertion::MustEmit(MessagePattern::Message("hello world".into()))
+    );
+}
+
+#[test]
+fn test_chained_tags_deserialize_heredoc_leaf_newtype() {
+    let result: MessageAssertion =
+        crate::from_str_expr("@must_emit/@message<<EOF\nhello\nworld\nEOF").unwrap();
+    assert_eq!(
+        result,
+        MessageAssertion::MustEmit(MessagePattern::Message("hello\nworld\n".into()))
+    );
+}
+
 // ============================================================================
 // Round-trip tests for #[facet(other)] variants (Issue #2004)
 // ============================================================================

@@ -683,7 +683,7 @@ inner @tagged{field value}
 
             // Roundtrip
             let s = to_string(&c).unwrap();
-            assert_eq!(s.trim(), r#"inner @tagged{field "value"}"#);
+            assert_eq!(s.trim(), r#"inner @tagged{field value}"#);
         },
     );
 }

@@ -399,6 +399,7 @@ impl<'de> StyxParser<'de> {
 
             EventKind::TagStart { name } => {
                 self.current_span = Some(span);
+                self.mark_tag_has_payload();
                 // Empty name means unit tag (@), which maps to VariantTag(None)
                 let tag = if name.is_empty() { None } else { Some(name) };
                 trace!(?tag, "convert_event: TagStart -> VariantTag");

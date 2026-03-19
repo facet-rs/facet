@@ -619,6 +619,51 @@ mod tests {
     }
 
     #[test]
+    fn test_chained_tag_payload_is_nested_tag() {
+        let d = doc("value @must_emit/@discover_start{executor default}");
+        let entry = d.entries().next().unwrap();
+        let value = entry.value().unwrap();
+        let outer_tag = Tag::cast(value.syntax().children().next().unwrap()).unwrap();
+
+        assert_eq!(outer_tag.name(), Some("must_emit".to_string()));
+
+        let inner = outer_tag.payload().unwrap();
+        let inner_tag = Tag::cast(inner).unwrap();
+        assert_eq!(inner_tag.name(), Some("discover_start".to_string()));
+        assert!(
+            inner_tag.payload().is_some(),
+            "inner tag should keep payload"
+        );
+    }
+
+    #[test]
+    fn test_three_segment_chained_tag_payload_is_nested_tags() {
+        let d = doc("value @a/@b/@c");
+        let entry = d.entries().next().unwrap();
+        let value = entry.value().unwrap();
+        let outer = Tag::cast(value.syntax().children().next().unwrap()).unwrap();
+        assert_eq!(outer.name(), Some("a".to_string()));
+
+        let middle = Tag::cast(outer.payload().unwrap()).unwrap();
+        assert_eq!(middle.name(), Some("b".to_string()));
+
+        let inner = Tag::cast(middle.payload().unwrap()).unwrap();
+        assert_eq!(inner.name(), Some("c".to_string()));
+        assert!(inner.payload().is_none(), "leaf tag should be unit");
+    }
+
+    #[test]
+    fn test_chained_tag_scalar_leaf_payload_is_scalar() {
+        let d = doc(r#"value @a/@b"foo""#);
+        let entry = d.entries().next().unwrap();
+        let value = entry.value().unwrap();
+        let outer = Tag::cast(value.syntax().children().next().unwrap()).unwrap();
+        let inner = Tag::cast(outer.payload().unwrap()).unwrap();
+        let payload = Scalar::cast(inner.payload().unwrap()).unwrap();
+        assert_eq!(payload.text_content(), "foo");
+    }
+
+    #[test]
     fn test_unit() {
         let d = doc("empty @");
         let entry = d.entries().next().unwrap();

@@ -1,0 +1,9 @@
+---
+source: crates/facet-styx/src/tag_events_test.rs
+assertion_line: 152
+expression: "collect_events(\"x @must_not_emit/@exec_start\")"
+---
+FieldKey(Some("x"))
+VariantTag("must_not_emit")
+VariantTag("exec_start")
+Scalar(Unit)

@@ -214,6 +214,21 @@ When you write `@pending`, the full form is `@pending@` — tag is `pending`, pa
 
 When you write `@rgb(255 128 0)`, you're explicitly setting both: tag is `rgb`, payload is the sequence `(255 128 0)`.
 
+Sometimes the payload you want is itself exactly one tagged value. For that case,
+Styx supports chained tags:
+
+```styx
+@must_emit/@discover_start{executor default}
+@must_not_emit/@exec_start
+```
+
+This is nested tagging, not a one-element sequence:
+
+- `@must_emit/@discover_start{...}` means `must_emit` wrapping one tagged `discover_start` value
+- `@must_emit(@discover_start{...})` means `must_emit` with a sequence payload containing one element
+
+The difference matters for enum newtypes. `()` still always means sequence, never grouping.
+
 ### Tags in practice
 
 Tags are useful for:

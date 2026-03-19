@@ -170,6 +170,23 @@ A tag labels a value with an identifier.
 >
 > Bare scalars cannot be tagged — there's no delimiter to separate tag from value.
 
+> parser[tag.chain]
+> A tag MAY also chain directly into another tag using `/@`, producing a nested tagged value.
+> Chaining is right-associative and does NOT change the meaning of `()`.
+>
+> ```styx
+> @must_emit/@discover_start{executor default}
+> @must_not_emit/@exec_start
+> @outer/@inner"payload"
+> ```
+>
+> These mean:
+>
+> - `@must_emit/@discover_start{...}` == `@must_emit(<single tagged value @discover_start{...}>)`
+> - `@outer/@inner"payload"` == `@outer(<single tagged value @inner"payload">)`
+>
+> In particular, `@a/@b(...)` is a nested tagged value, while `@a(@b(...))` is a sequence payload containing one element.
+
 ## Sequences
 
 > parser[sequence.syntax]

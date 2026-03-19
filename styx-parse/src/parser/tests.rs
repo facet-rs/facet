@@ -692,6 +692,166 @@ fn test_tagged_scalar() {
 }
 
 #[test]
+fn test_chained_tag_events() {
+    let source = "events (@must_emit/@discover_start{executor default} @must_not_emit/@exec_start)";
+    let events = parse(source);
+    assert_events_eq!(
+        source,
+        events,
+        r#"
+        DocumentStart
+        ObjectStart
+        EntryStart
+        Key("events")
+        SequenceStart
+        TagStart(@must_emit)
+        TagStart(@discover_start)
+        ObjectStart
+        EntryStart
+        Key("executor")
+        Scalar("default")
+        EntryEnd
+        ObjectEnd
+        TagEnd
+        TagEnd
+        TagStart(@must_not_emit)
+        TagStart(@exec_start)
+        TagEnd
+        TagEnd
+        SequenceEnd
+        EntryEnd
+        ObjectEnd
+        DocumentEnd
+        "#
+    );
+}
+
+#[test]
+fn test_chained_tag_is_not_sequence_payload() {
+    let events = parse("x @must_emit/@discover_end");
+    let sequence_starts = events
+        .iter()
+        .filter(|e| matches!(e.kind, EventKind::SequenceStart))
+        .count();
+    assert_eq!(sequence_starts, 0);
+    let tags: Vec<_> = events
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EventKind::TagStart { name } => Some(*name),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tags, vec!["must_emit", "discover_end"]);
+}
+
+#[test]
+fn test_three_segment_chained_tag_events() {
+    let source = "x @a/@b/@c";
+    let events = parse(source);
+    assert_events_eq!(
+        source,
+        events,
+        r#"
+        DocumentStart
+        ObjectStart
+        EntryStart
+        Key("x")
+        TagStart(@a)
+        TagStart(@b)
+        TagStart(@c)
+        TagEnd
+        TagEnd
+        TagEnd
+        EntryEnd
+        ObjectEnd
+        DocumentEnd
+        "#
+    );
+}
+
+#[test]
+fn test_chained_tag_with_quoted_leaf_payload_events() {
+    let source = r#"x @a/@b"foo""#;
+    let events = parse(source);
+    assert_events_eq!(
+        source,
+        events,
+        r#"
+        DocumentStart
+        ObjectStart
+        EntryStart
+        Key("x")
+        TagStart(@a)
+        TagStart(@b)
+        Scalar("foo", Quoted)
+        TagEnd
+        TagEnd
+        EntryEnd
+        ObjectEnd
+        DocumentEnd
+        "#
+    );
+}
+
+#[test]
+fn test_chained_tag_with_raw_leaf_payload_events() {
+    let source = r##"x @a/@br#"foo"#"##;
+    let events = parse(source);
+    assert_events_eq!(
+        source,
+        events,
+        r#"
+        DocumentStart
+        ObjectStart
+        EntryStart
+        Key("x")
+        TagStart(@a)
+        TagStart(@b)
+        Scalar("foo", Raw)
+        TagEnd
+        TagEnd
+        EntryEnd
+        ObjectEnd
+        DocumentEnd
+        "#
+    );
+}
+
+#[test]
+fn test_chained_tag_with_heredoc_leaf_payload_events() {
+    let source = "x @a/@b<<EOF\nhello\nEOF";
+    let events = parse(source);
+    assert_events_eq!(
+        source,
+        events,
+        r#"
+        DocumentStart
+        ObjectStart
+        EntryStart
+        Key("x")
+        TagStart(@a)
+        TagStart(@b)
+        Scalar("hello\n", Heredoc)
+        TagEnd
+        TagEnd
+        EntryEnd
+        ObjectEnd
+        DocumentEnd
+        "#
+    );
+}
+
+#[test]
+fn test_invalid_chained_tag_name_segment() {
+    assert_parse_errors(
+        r#"
+x @a/@1
+  ^^^^^ InvalidTagName
+"#,
+    );
+}
+
+#[test]
 fn test_tag_whitespace_gap() {
     let events = parse("x @tag\ny {a b}");
     let tag_events: Vec<_> = events

@@ -1,0 +1,12 @@
+---
+source: crates/facet-styx/src/tag_events_test.rs
+assertion_line: 147
+expression: "collect_events(\"x @must_emit/@discover_start{executor default}\")"
+---
+FieldKey(Some("x"))
+VariantTag("must_emit")
+VariantTag("discover_start")
+StructStart
+  FieldKey(Some("executor"))
+  Scalar("default")
+StructEnd

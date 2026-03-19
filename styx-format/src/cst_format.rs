@@ -110,6 +110,7 @@ impl CstFormatter {
             | SyntaxKind::GT
             | SyntaxKind::AT
             | SyntaxKind::TAG_TOKEN
+            | SyntaxKind::SLASH
             | SyntaxKind::BARE_SCALAR
             | SyntaxKind::QUOTED_SCALAR
             | SyntaxKind::RAW_SCALAR
@@ -542,17 +543,23 @@ impl CstFormatter {
     }
 
     fn format_tag_payload(&mut self, node: &SyntaxNode) {
-        for child in node.children() {
-            match child.kind() {
-                SyntaxKind::SEQUENCE => {
-                    // Sequence payload: @tag(...)
-                    self.format_sequence(&child);
+        for el in node.children_with_tokens() {
+            match el {
+                NodeOrToken::Token(token) if token.kind() == SyntaxKind::SLASH => {
+                    self.write("/");
                 }
-                SyntaxKind::OBJECT => {
-                    // Object payload: @tag{...}
-                    self.format_object(&child);
-                }
-                _ => self.format_node(&child),
+                NodeOrToken::Node(child) => match child.kind() {
+                    SyntaxKind::SEQUENCE => {
+                        // Sequence payload: @tag(...)
+                        self.format_sequence(&child);
+                    }
+                    SyntaxKind::OBJECT => {
+                        // Object payload: @tag{...}
+                        self.format_object(&child);
+                    }
+                    _ => self.format_node(&child),
+                },
+                _ => {}
             }
         }
     }
@@ -776,6 +783,38 @@ age 30"#;
         let output = format(input);
         // The formatter must preserve the space before the nested payload
         assert_eq!(output.trim(), "@seq(@string @Schema)");
+    }
+
+    #[test]
+    fn test_chained_tag_roundtrip() {
+        let input =
+            "events (@must_emit/@discover_start{executor default} @must_not_emit/@exec_start)";
+        let output = format(input);
+        assert_eq!(
+            output.trim(),
+            "events (@must_emit/@discover_start{executor default} @must_not_emit/@exec_start)"
+        );
+    }
+
+    #[test]
+    fn test_three_segment_chained_tag_roundtrip() {
+        let input = "value @a/@b/@c";
+        let output = format(input);
+        assert_eq!(output.trim(), input);
+    }
+
+    #[test]
+    fn test_chained_tag_with_raw_leaf_roundtrip() {
+        let input = r##"value @a/@br#"foo"#"##;
+        let output = format(input);
+        assert_eq!(output.trim(), input);
+    }
+
+    #[test]
+    fn test_chained_tag_with_heredoc_leaf_roundtrip() {
+        let input = "value @a/@b<<EOF\nhello\nEOF";
+        let output = format(input);
+        assert_eq!(output.trim_end(), input);
     }
 
     #[test]

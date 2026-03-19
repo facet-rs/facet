@@ -536,10 +536,18 @@ impl StyxWriter {
         self.write_variant_tag(name);
     }
 
-    /// Clear the skip_next_before_value flag.
-    /// Call this when a tag's payload is skipped (e.g., None for a unit variant).
+    /// Append a chained tag segment (e.g. `/@inner`) after an already-written tag.
+    pub fn write_tag_chain_segment(&mut self, name: &str) {
+        self.out.extend_from_slice(b"/@");
+        self.out.extend_from_slice(name.as_bytes());
+        self.skip_next_before_value = true;
+        self.force_quote_next_scalar = true;
+    }
+
+    /// Clear tag-follow state when no attached payload will be written.
     pub fn clear_skip_before_value(&mut self) {
         self.skip_next_before_value = false;
+        self.force_quote_next_scalar = false;
     }
 
     /// Begin a sequence directly after a tag (no space before the paren).

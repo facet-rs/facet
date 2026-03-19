@@ -226,17 +226,23 @@ impl FormatSerializer for StyxSerializer {
         let is_root = self.at_root;
         trace!(is_root, "begin_struct");
         self.at_root = false;
+        self.just_wrote_tag = false;
+        self.writer.clear_skip_before_value();
         self.writer.begin_struct(is_root);
         Ok(())
     }
 
     fn field_key(&mut self, key: &str) -> Result<(), Self::Error> {
         trace!(key, "field_key");
+        self.just_wrote_tag = false;
+        self.writer.clear_skip_before_value();
         self.writer.field_key(key).map_err(StyxSerializeError::new)
     }
 
     fn emit_field_key(&mut self, key: &facet_format::FieldKey<'_>) -> Result<(), Self::Error> {
         trace!(?key, "emit_field_key");
+        self.just_wrote_tag = false;
+        self.writer.clear_skip_before_value();
 
         let doc_lines: Vec<&str> = key
             .doc()
@@ -318,6 +324,8 @@ impl FormatSerializer for StyxSerializer {
     fn begin_seq(&mut self) -> Result<(), Self::Error> {
         trace!("begin_seq");
         self.at_root = false;
+        self.just_wrote_tag = false;
+        self.writer.clear_skip_before_value();
         self.writer.begin_seq();
         Ok(())
     }
@@ -369,8 +377,12 @@ impl FormatSerializer for StyxSerializer {
     fn write_variant_tag(&mut self, variant_name: &str) -> Result<bool, Self::Error> {
         trace!(variant_name, "write_variant_tag");
         self.at_root = false;
+        if self.just_wrote_tag {
+            self.writer.write_tag_chain_segment(variant_name);
+        } else {
+            self.writer.write_tag(variant_name);
+        }
         self.just_wrote_tag = true;
-        self.writer.write_tag(variant_name);
         Ok(true)
     }
 
@@ -618,12 +630,14 @@ pub fn peek_to_string_expr<'input, 'facet>(
 /// A variant of StyxSerializer that always wraps in braces (for compact mode).
 struct CompactStyxSerializer {
     writer: StyxWriter,
+    just_wrote_tag: bool,
 }
 
 impl CompactStyxSerializer {
     fn with_options(options: FormatOptions) -> Self {
         Self {
             writer: StyxWriter::with_options(options),
+            just_wrote_tag: false,
         }
     }
 
@@ -638,11 +652,15 @@ impl FormatSerializer for CompactStyxSerializer {
 
     fn begin_struct(&mut self) -> Result<(), Self::Error> {
         // Never treat as root in compact mode
+        self.just_wrote_tag = false;
+        self.writer.clear_skip_before_value();
         self.writer.begin_struct(false);
         Ok(())
     }
 
     fn field_key(&mut self, key: &str) -> Result<(), Self::Error> {
+        self.just_wrote_tag = false;
+        self.writer.clear_skip_before_value();
         self.writer.field_key(key).map_err(StyxSerializeError::new)
     }
 
@@ -651,6 +669,8 @@ impl FormatSerializer for CompactStyxSerializer {
     }
 
     fn begin_seq(&mut self) -> Result<(), Self::Error> {
+        self.just_wrote_tag = false;
+        self.writer.clear_skip_before_value();
         self.writer.begin_seq();
         Ok(())
     }
@@ -660,6 +680,12 @@ impl FormatSerializer for CompactStyxSerializer {
     }
 
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error> {
+        if self.just_wrote_tag && matches!(scalar, ScalarValue::Unit | ScalarValue::Null) {
+            self.just_wrote_tag = false;
+            self.writer.clear_skip_before_value();
+            return Ok(());
+        }
+        self.just_wrote_tag = false;
         match scalar {
             ScalarValue::Unit | ScalarValue::Null => self.writer.write_null(),
             ScalarValue::Bool(v) => self.writer.write_bool(v),
@@ -676,22 +702,40 @@ impl FormatSerializer for CompactStyxSerializer {
     }
 
     fn serialize_none(&mut self) -> Result<(), Self::Error> {
+        if self.just_wrote_tag {
+            self.just_wrote_tag = false;
+            self.writer.clear_skip_before_value();
+            return Ok(());
+        }
         self.writer.write_null();
         Ok(())
     }
 
     fn write_variant_tag(&mut self, variant_name: &str) -> Result<bool, Self::Error> {
-        self.writer.write_tag(variant_name);
+        if self.just_wrote_tag {
+            self.writer.write_tag_chain_segment(variant_name);
+        } else {
+            self.writer.write_tag(variant_name);
+        }
+        self.just_wrote_tag = true;
         Ok(true)
     }
 
     fn begin_struct_after_tag(&mut self) -> Result<(), Self::Error> {
+        self.just_wrote_tag = false;
         self.writer.begin_struct_after_tag(false);
         Ok(())
     }
 
     fn begin_seq_after_tag(&mut self) -> Result<(), Self::Error> {
+        self.just_wrote_tag = false;
         self.writer.begin_seq_after_tag();
+        Ok(())
+    }
+
+    fn finish_variant_tag_unit_payload(&mut self) -> Result<(), Self::Error> {
+        self.just_wrote_tag = false;
+        self.writer.clear_skip_before_value();
         Ok(())
     }
 }
@@ -902,6 +946,125 @@ mod tests {
         assert_eq!(original.name, parsed.name);
         assert_eq!(original.point.x, parsed.point.x);
         assert_eq!(original.point.y, parsed.point.y);
+    }
+
+    #[test]
+    fn test_nested_newtype_variants_serialize_as_chained_tags() {
+        use crate::{from_str_expr, peek_to_string_expr};
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        enum EventPattern {
+            DiscoverStart { executor: String },
+            DiscoverEnd,
+            ExecStart,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        enum EventAssertion {
+            MustEmit(EventPattern),
+            MustNotEmit(EventPattern),
+        }
+
+        let original = EventAssertion::MustEmit(EventPattern::DiscoverStart {
+            executor: "default".into(),
+        });
+
+        let serialized = peek_to_string_expr(Peek::new(&original)).unwrap();
+        assert_eq!(serialized, "@must_emit/@discover_start{executor default}");
+
+        let parsed: EventAssertion = from_str_expr(&serialized).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn test_nested_unit_variants_serialize_as_chained_tags() {
+        use crate::{from_str_expr, peek_to_string_expr};
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        enum EventPattern {
+            DiscoverEnd,
+            ExecStart,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        enum EventAssertion {
+            MustEmit(EventPattern),
+            MustNotEmit(EventPattern),
+        }
+
+        let original = EventAssertion::MustNotEmit(EventPattern::ExecStart);
+        let serialized = peek_to_string_expr(Peek::new(&original)).unwrap();
+        assert_eq!(serialized, "@must_not_emit/@exec_start");
+
+        let parsed: EventAssertion = from_str_expr(&serialized).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn test_three_nested_newtype_variants_serialize_as_chained_tags() {
+        use crate::{from_str_expr, peek_to_string_expr};
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        enum Leaf {
+            Done,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        enum Middle {
+            Inner(Leaf),
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        enum Outer {
+            Wrapper(Middle),
+        }
+
+        let original = Outer::Wrapper(Middle::Inner(Leaf::Done));
+        let serialized = peek_to_string_expr(Peek::new(&original)).unwrap();
+        assert_eq!(serialized, "@wrapper/@inner/@done");
+
+        let parsed: Outer = from_str_expr(&serialized).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn test_nested_scalar_newtype_variants_serialize_as_chained_tags() {
+        use crate::{from_str_expr, peek_to_string_expr};
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        enum EventPattern {
+            Message(String),
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(rename_all = "snake_case")]
+        #[repr(u8)]
+        enum EventAssertion {
+            MustEmit(EventPattern),
+        }
+
+        let original = EventAssertion::MustEmit(EventPattern::Message("hello world".into()));
+        let serialized = peek_to_string_expr(Peek::new(&original)).unwrap();
+        assert_eq!(serialized, r#"@must_emit/@message"hello world""#);
+
+        let parsed: EventAssertion = from_str_expr(&serialized).unwrap();
+        assert_eq!(parsed, original);
     }
 
     #[test]
