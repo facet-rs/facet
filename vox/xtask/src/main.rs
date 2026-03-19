@@ -204,13 +204,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             swift_server,
             swift_wire,
         } => {
-            if typescript {
+            let none_specified =
+                !typescript && !swift && !swift_client && !swift_server && !swift_wire;
+            if typescript || none_specified {
                 codegen_typescript(&workspace_root)?;
             }
-            if swift || swift_client || swift_server {
-                codegen_swift(&workspace_root, swift, swift_client, swift_server)?;
+            if swift || swift_client || swift_server || none_specified {
+                codegen_swift(
+                    &workspace_root,
+                    swift || none_specified,
+                    swift_client || none_specified,
+                    swift_server || none_specified,
+                )?;
             }
-            if swift_wire {
+            if swift_wire || none_specified {
                 codegen_swift_wire(&workspace_root)?;
             }
         }

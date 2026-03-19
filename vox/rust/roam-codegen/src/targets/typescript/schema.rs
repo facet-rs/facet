@@ -21,7 +21,7 @@ use heck::ToLowerCamelCase;
 use roam_types::{
     EnumInfo, Schema, SchemaKind, SchemaSendTracker, ServiceDescriptor, ShapeKind, StructInfo,
     TypeSchemaId, VariantKind, VariantPayload, VariantSchema, classify_shape, classify_variant,
-    is_bytes, schema_child_ids,
+    compute_content_hash, is_bytes, schema_child_ids,
 };
 
 /// Generate a TypeScript Schema object literal for a type.
@@ -402,14 +402,12 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
                 .iter()
                 .map(|arg| extract_into(&mut tracker, arg.shape, &mut all_schemas))
                 .collect();
-            let tuple_id = tracker.allocate_anonymous_id();
-            all_schemas.push(Schema {
-                type_id: tuple_id,
-                kind: SchemaKind::Tuple {
-                    elements: arg_root_ids,
-                },
-            });
-            tuple_id
+            let kind = SchemaKind::Tuple {
+                elements: arg_root_ids,
+            };
+            let type_id = compute_content_hash(&kind, &|id| id.0);
+            all_schemas.push(Schema { type_id, kind });
+            type_id
         };
 
         // --- Response ---
@@ -437,66 +435,68 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         };
 
         // Construct RoamError<E> schema.
-        let roam_error_id = tracker.allocate_anonymous_id();
+        let roam_error_kind = SchemaKind::Enum {
+            name: "RoamError".to_string(),
+            variants: vec![
+                VariantSchema {
+                    name: "User".into(),
+                    index: 0,
+                    payload: VariantPayload::Newtype {
+                        type_id: err_root_id,
+                    },
+                },
+                VariantSchema {
+                    name: "UnknownMethod".into(),
+                    index: 1,
+                    payload: VariantPayload::Unit,
+                },
+                VariantSchema {
+                    name: "InvalidPayload".into(),
+                    index: 2,
+                    payload: VariantPayload::Newtype { type_id: string_id },
+                },
+                VariantSchema {
+                    name: "Cancelled".into(),
+                    index: 3,
+                    payload: VariantPayload::Unit,
+                },
+                VariantSchema {
+                    name: "Indeterminate".into(),
+                    index: 4,
+                    payload: VariantPayload::Unit,
+                },
+            ],
+        };
+        let roam_error_id = compute_content_hash(&roam_error_kind, &|id| id.0);
         all_schemas.push(Schema {
             type_id: roam_error_id,
-            kind: SchemaKind::Enum {
-                name: "RoamError".to_string(),
-                variants: vec![
-                    VariantSchema {
-                        name: "User".into(),
-                        index: 0,
-                        payload: VariantPayload::Newtype {
-                            type_id: err_root_id,
-                        },
-                    },
-                    VariantSchema {
-                        name: "UnknownMethod".into(),
-                        index: 1,
-                        payload: VariantPayload::Unit,
-                    },
-                    VariantSchema {
-                        name: "InvalidPayload".into(),
-                        index: 2,
-                        payload: VariantPayload::Newtype { type_id: string_id },
-                    },
-                    VariantSchema {
-                        name: "Cancelled".into(),
-                        index: 3,
-                        payload: VariantPayload::Unit,
-                    },
-                    VariantSchema {
-                        name: "Indeterminate".into(),
-                        index: 4,
-                        payload: VariantPayload::Unit,
-                    },
-                ],
-            },
+            kind: roam_error_kind,
         });
 
         // Construct Result<T, RoamError<E>> schema.
-        let result_id = tracker.allocate_anonymous_id();
+        let result_kind = SchemaKind::Enum {
+            name: "Result".to_string(),
+            variants: vec![
+                VariantSchema {
+                    name: "Ok".into(),
+                    index: 0,
+                    payload: VariantPayload::Newtype {
+                        type_id: ok_root_id,
+                    },
+                },
+                VariantSchema {
+                    name: "Err".into(),
+                    index: 1,
+                    payload: VariantPayload::Newtype {
+                        type_id: roam_error_id,
+                    },
+                },
+            ],
+        };
+        let result_id = compute_content_hash(&result_kind, &|id| id.0);
         all_schemas.push(Schema {
             type_id: result_id,
-            kind: SchemaKind::Enum {
-                name: "Result".to_string(),
-                variants: vec![
-                    VariantSchema {
-                        name: "Ok".into(),
-                        index: 0,
-                        payload: VariantPayload::Newtype {
-                            type_id: ok_root_id,
-                        },
-                    },
-                    VariantSchema {
-                        name: "Err".into(),
-                        index: 1,
-                        payload: VariantPayload::Newtype {
-                            type_id: roam_error_id,
-                        },
-                    },
-                ],
-            },
+            kind: result_kind,
         });
 
         method_schema_infos.push(MethodSchemaInfo {
@@ -505,10 +505,6 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
             response_root: result_id,
         });
     }
-
-    // Finalize content hashes for all schemas (extracted ones already have
-    // correct hashes, but the constructed ones need hashing too).
-    let all_schemas = roam_types::finalize_content_hashes(all_schemas);
 
     // Dedup and CBOR-encode.
     for schema in &all_schemas {
