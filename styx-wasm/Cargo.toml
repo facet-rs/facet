@@ -1,6 +1,6 @@
 [package]
 name = "styx-wasm"
-version = "2.0.0"
+version = "3.0.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -21,8 +21,8 @@ serde_json = { version = "1", features = ["preserve_order"] }
 serde-wasm-bindgen = "0.6"
 
 # Styx crates
-styx-parse = { path = "../styx-parse", version = "2.0" }
-styx-tree = { path = "../styx-tree", version = "2.0" }
-styx-format = { path = "../styx-format", version = "2.0" }
+styx-parse = { path = "../styx-parse", version = "3.0" }
+styx-tree = { path = "../styx-tree", version = "3.0" }
+styx-format = { path = "../styx-format", version = "3.0" }
 
 [dev-dependencies]
