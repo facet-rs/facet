@@ -67,7 +67,6 @@ where
     SessionSourceInitiatorBuilder::new(source, mode)
 }
 
-// r[impl session.role]
 pub fn acceptor_conduit<I: IntoConduit>(
     into_conduit: I,
     handshake_result: HandshakeResult,

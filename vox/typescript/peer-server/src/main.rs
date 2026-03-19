@@ -9,7 +9,7 @@ use roam_core::{SessionAcceptOutcome, SessionRegistry, acceptor_transport};
 use roam_websocket::WsLink;
 use spec_proto::{
     Canvas, Color, Config, LookupError, MathError, Measurement, Message, Person, Point, Profile,
-    Record, Rectangle, Shape, Status, Tag,
+    Record, Rectangle, Shape, Status, Tag, TaggedPoint,
 };
 use spec_proto::{Testbed, TestbedClient, TestbedDispatcher};
 use std::env;
@@ -174,6 +174,59 @@ impl Testbed for TestbedService {
 
     async fn echo_config(&self, c: Config) -> Config {
         c
+    }
+
+    async fn echo_bytes(&self, data: Vec<u8>) -> Vec<u8> {
+        data
+    }
+
+    async fn echo_bool(&self, b: bool) -> bool {
+        b
+    }
+
+    async fn echo_u64(&self, n: u64) -> u64 {
+        n
+    }
+
+    async fn echo_option_string(&self, s: Option<String>) -> Option<String> {
+        s
+    }
+
+    async fn sum_large(&self, mut numbers: Rx<i32>) -> i64 {
+        let mut total: i64 = 0;
+        while let Ok(Some(n)) = numbers.recv().await {
+            total += *n as i64;
+        }
+        total
+    }
+
+    async fn generate_large(&self, count: u32, output: Tx<i32>) {
+        stream_retry_probe_values(count, output).await;
+    }
+
+    async fn all_colors(&self) -> Vec<Color> {
+        vec![Color::Red, Color::Green, Color::Blue]
+    }
+
+    async fn describe_point(&self, label: String, x: i32, y: i32, active: bool) -> TaggedPoint {
+        TaggedPoint {
+            label,
+            x,
+            y,
+            active,
+        }
+    }
+
+    async fn echo_shape(&self, shape: Shape) -> Shape {
+        shape
+    }
+
+    async fn echo_status_v1(&self, status: Status) -> Status {
+        status
+    }
+
+    async fn echo_tag_v1(&self, tag: Tag) -> Tag {
+        tag
     }
 }
 

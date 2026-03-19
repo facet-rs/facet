@@ -589,6 +589,7 @@ async fn run_client() -> Result<(), String> {
         "echo_shape" => {
             for shape in [
                 spec_proto::Shape::Point,
+                #[allow(clippy::approx_constant)]
                 spec_proto::Shape::Circle { radius: 3.14 },
                 spec_proto::Shape::Rectangle {
                     width: 2.0,

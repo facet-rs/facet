@@ -6,7 +6,7 @@
 //! handler. Schema exchange sends type metadata before payloads, and
 //! translation plans handle the schema differences.
 
-use roam_core::{BareConduit, MemoryLink, acceptor, initiator_conduit, memory_link_pair};
+use roam_core::{BareConduit, MemoryLink, acceptor_conduit, initiator_conduit, memory_link_pair};
 use roam_types::{ConnectionSettings, HandshakeResult, MessageFamily, Parity, SessionRole};
 
 type MessageConduit = BareConduit<MessageFamily, MemoryLink>;
@@ -122,7 +122,7 @@ async fn v1_client_v2_server_fills_default() {
     let (client_conduit, server_conduit) = conduit_pair();
 
     let server_task = tokio::task::spawn(async move {
-        let (_server_caller, _sh) = acceptor(server_conduit, test_acceptor_handshake())
+        let (_server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
             .establish::<point_v2::GeometryClient>(point_v2::GeometryDispatcher::new(
                 V2GeometryService,
             ))
@@ -156,7 +156,7 @@ async fn v2_client_v1_server_skips_unknown_field() {
     let (client_conduit, server_conduit) = conduit_pair();
 
     let server_task = tokio::task::spawn(async move {
-        let (_server_caller, _sh) = acceptor(server_conduit, test_acceptor_handshake())
+        let (_server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
             .establish::<point_v1::GeometryClient>(point_v1::GeometryDispatcher::new(
                 V1GeometryService,
             ))
@@ -234,7 +234,7 @@ async fn reordered_fields_are_matched_by_name() {
     let (client_conduit, server_conduit) = conduit_pair();
 
     let server_task = tokio::task::spawn(async move {
-        let (_server_caller, _sh) = acceptor(server_conduit, test_acceptor_handshake())
+        let (_server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
             .establish::<reordered_v1::PairServiceClient>(reordered_v1::PairServiceDispatcher::new(
                 PairEchoV1,
             ))
@@ -318,7 +318,7 @@ async fn evolved_schema_combined_changes() {
     let (client_conduit, server_conduit) = conduit_pair();
 
     let server_task = tokio::task::spawn(async move {
-        let (_server_caller, _sh) = acceptor(server_conduit, test_acceptor_handshake())
+        let (_server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
             .establish::<evolved_v1::ConfigServiceClient>(evolved_v1::ConfigServiceDispatcher::new(
                 ConfigServiceV1,
             ))

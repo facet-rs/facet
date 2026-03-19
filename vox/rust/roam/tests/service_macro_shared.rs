@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 
-use roam_core::{BareConduit, acceptor, initiator_conduit};
+use roam_core::{BareConduit, acceptor_conduit, initiator_conduit};
 use roam_types::{ConnectionSettings, HandshakeResult, Link, Parity, SessionRole};
 
 fn test_acceptor_handshake() -> HandshakeResult {
@@ -311,10 +311,11 @@ pub async fn run_adder_end_to_end<L>(
 
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
-        let (server_caller_guard, _sh) = acceptor(server_conduit, test_acceptor_handshake())
-            .establish::<AdderClient>(AdderDispatcher::new(MyAdder))
-            .await
-            .expect("server handshake failed");
+        let (server_caller_guard, _sh) =
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
+                .establish::<AdderClient>(AdderDispatcher::new(MyAdder))
+                .await
+                .expect("server handshake failed");
         let _ = server_ready_tx.send(());
         let _server_caller_guard = server_caller_guard;
         std::future::pending::<()>().await;
@@ -345,10 +346,11 @@ pub async fn run_request_context_end_to_end<L>(
 
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
-        let (server_caller_guard, _sh) = acceptor(server_conduit, test_acceptor_handshake())
-            .establish::<ContextProbeClient>(ContextProbeDispatcher::new(ContextProbeService))
-            .await
-            .expect("server handshake failed");
+        let (server_caller_guard, _sh) =
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
+                .establish::<ContextProbeClient>(ContextProbeDispatcher::new(ContextProbeService))
+                .await
+                .expect("server handshake failed");
         let _ = server_ready_tx.send(());
         let _server_caller_guard = server_caller_guard;
         std::future::pending::<()>().await;
@@ -399,10 +401,11 @@ pub async fn run_server_middleware_end_to_end<L>(
         let dispatcher = MiddlewareProbeDispatcher::new(MiddlewareProbeService)
             .with_middleware(first)
             .with_middleware(second);
-        let (server_caller_guard, _sh) = acceptor(server_conduit, test_acceptor_handshake())
-            .establish::<MiddlewareProbeClient>(dispatcher)
-            .await
-            .expect("server handshake failed");
+        let (server_caller_guard, _sh) =
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
+                .establish::<MiddlewareProbeClient>(dispatcher)
+                .await
+                .expect("server handshake failed");
         let _ = server_ready_tx.send(());
         let _server_caller_guard = server_caller_guard;
         std::future::pending::<()>().await;
@@ -451,12 +454,13 @@ pub async fn run_client_middleware_end_to_end<L>(
 
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
-        let (server_caller_guard, _sh) = acceptor(server_conduit, test_acceptor_handshake())
-            .establish::<ClientMiddlewareProbeClient>(ClientMiddlewareProbeDispatcher::new(
-                ClientMiddlewareProbeService,
-            ))
-            .await
-            .expect("server handshake failed");
+        let (server_caller_guard, _sh) =
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
+                .establish::<ClientMiddlewareProbeClient>(ClientMiddlewareProbeDispatcher::new(
+                    ClientMiddlewareProbeService,
+                ))
+                .await
+                .expect("server handshake failed");
         let _ = server_ready_tx.send(());
         let _server_caller_guard = server_caller_guard;
         std::future::pending::<()>().await;
@@ -511,12 +515,13 @@ pub async fn run_borrowed_return_survives_teardown_over_generated_client<L>(
 
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
-        let (server_caller_guard, _sh) = acceptor(server_conduit, test_acceptor_handshake())
-            .establish::<BorrowedPayloadProbeClient>(BorrowedPayloadProbeDispatcher::new(
-                BorrowedPayloadProbeService::new(),
-            ))
-            .await
-            .expect("server handshake failed");
+        let (server_caller_guard, _sh) =
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
+                .establish::<BorrowedPayloadProbeClient>(BorrowedPayloadProbeDispatcher::new(
+                    BorrowedPayloadProbeService::new(),
+                ))
+                .await
+                .expect("server handshake failed");
         let _ = server_ready_tx.send(());
         let _server_caller_guard = server_caller_guard;
         std::future::pending::<()>().await;
