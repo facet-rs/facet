@@ -230,14 +230,20 @@ from that ordering.
 >      the group use their real content hashes as normal. The result is
 >      one preliminary hash per type.
 >
->   2. **Canonical ordering.** Sort the types by their preliminary hash
->      (ascending, unsigned integer comparison). In the unlikely event
->      that two types have the same preliminary hash (a 64-bit collision),
->      break the tie by lexicographic comparison of their full canonical
->      byte sequences (the input to blake3 before truncation, as computed
->      in step 1).
+>   2. **Deduplication.** If two types in the group have identical
+>      canonical byte sequences (the full input to blake3 from step 1),
+>      they are structurally identical at the postcard level and MUST be
+>      deduplicated — collapsed to a single entry before proceeding.
+>      (Type identity is structural; two nominal types with the same
+>      postcard-level structure are the same type.)
 >
->   3. **Final hashes.** Compute the **group hash** as
+>   3. **Canonical ordering.** Sort the (now-unique) types by their
+>      preliminary hash (ascending, unsigned integer comparison). In the
+>      unlikely event that two types have the same preliminary hash but
+>      different canonical byte sequences (a 64-bit collision), break the
+>      tie by lexicographic comparison of their canonical byte sequences.
+>
+>   4. **Final hashes.** Compute the **group hash** as
 >      `blake3(preliminary_hash_0 || preliminary_hash_1 || ...)[0..8]`
 >      where the preliminary hashes are concatenated in canonical order.
 >      Then each type's final content hash is
@@ -501,8 +507,9 @@ types in a recursive group simply reference each other by hash.
 > When sending schemas for a recursive group, the sender MUST include
 > all schemas in the group that have not already been sent on this
 > connection. The receiver MUST be able to resolve every `TypeId`
-> referenced in the schemas using either the current batch of schemas
-> or schemas previously received on this connection.
+> referenced in the schemas using either the schemas included in the
+> current `SchemaPayload` or schemas previously received on this
+> connection.
 
 ## Schema delivery
 
@@ -657,11 +664,12 @@ for the entire service interface up front.
 > r[schema.exchange.required]
 >
 > Application-level schema exchange is mandatory. If a peer receives a
-> `Request` or `Response` for a method whose schemas have not been
-> received on that connection, this is a protocol error and the
-> connection MUST be torn down. There is no fallback to identity
-> deserialization — the sender is always responsible for including schemas
-> with the data that needs them.
+> `Request` or `Response` and either (a) the schemas for any referenced
+> type have not been received on that connection, or (b) no
+> `MethodSchemaBinding` for this (method_id, direction) pair has been
+> received on this connection, this is a protocol error and the
+> connection MUST be torn down. The sender is always responsible for
+> including both schemas and bindings with the data that needs them.
 
 > r[schema.exchange.idempotent]
 >
