@@ -49,22 +49,13 @@ translation plan is built — not mid-stream when a field has the wrong value.
 
 # Type identity
 
-A type ID uniquely identifies a type. It is an enum with two variants:
-
 > r[schema.type-id]
 >
-> A type ID is one of:
->
->   * `Hash(u64)` — a **content hash**, a deterministic hash of the type's
->     structural definition. The same type always produces the same hash,
->     regardless of which connection, session, process, or language produced
->     it.
->   * `Index(u64)` — a **bundle-local index** used for recursive type
->     references within a schema bundle (see `r[schema.bundle]`).
->
-> On the wire (CBOR), `Hash` is encoded as a CBOR unsigned integer and
-> `Index` is encoded as a CBOR map with a single key `"index"` whose
-> value is the unsigned integer index.
+> A type ID is a `u64` content hash — a deterministic structural hash
+> of the type's postcard-level definition. The same type always produces
+> the same hash, regardless of which connection, session, process, or
+> language produced it. On the wire (CBOR), a type ID is encoded as a
+> CBOR unsigned integer.
 
 > r[schema.type-id.hash]
 >
@@ -79,6 +70,8 @@ A type ID uniquely identifies a type. It is an enum with two variants:
 >
 > Implementations MUST produce identical hashes for structurally
 > identical types regardless of the source language.
+>
+> For recursive types, see `r[schema.hash.recursive]`.
 
 ## Primitive type hashes
 
@@ -211,63 +204,86 @@ connection 0's schemas; it only sees connection 1. Each connection is
 an independent communication channel that may reach a different peer,
 so schema state must be tracked independently per connection.
 
-# Schema bundles
+# Hashing recursive types
 
 Non-recursive types have straightforward content hashes — hash the
 structure, reference child types by their hashes. Recursive types
 create a cycle: the hash of `TreeNode` depends on the hash of
 `Vec<TreeNode>`, which depends on the hash of `TreeNode`.
 
-Schema bundles solve this using bundle-local indices, analogous to
-De Bruijn indices in lambda calculus.
+The solution is a three-step algorithm that computes preliminary
+hashes to establish a canonical ordering, then derives final hashes
+from that ordering.
 
-> r[schema.bundle]
+> r[schema.hash.recursive]
 >
-> A **schema bundle** is an ordered list of type definitions that form a
-> mutually recursive group. Within a bundle, types reference each other
-> using `Index(n)` type IDs: `Index(0)` refers to the first type in the
-> bundle, `Index(1)` to the second, and so on.
+> To compute content hashes for a mutually recursive group of types:
+>
+>   1. **Preliminary hashes.** Hash each type in the group using the
+>      normal rules (see `r[schema.type-id.hash]`), except that any
+>      reference to another type in the same recursive group is replaced
+>      with 8 zero bytes (the **sentinel**). References to types outside
+>      the group use their real content hashes as normal. The result is
+>      one preliminary hash per type.
+>
+>   2. **Canonical ordering.** Sort the types by their preliminary hash
+>      (ascending, unsigned integer comparison). This ordering is
+>      deterministic because preliminary hashes are computed from
+>      structure alone.
+>
+>   3. **Final hashes.** Compute the **group hash** as
+>      `blake3(preliminary_hash_0 || preliminary_hash_1 || ...)[0..8]`
+>      where the preliminary hashes are concatenated in canonical order.
+>      Then each type's final content hash is
+>      `blake3(group_hash || index)[0..8]` where `index` is the type's
+>      position in the canonical order, encoded as a `u64` in
+>      little-endian order.
+>
+> These final hashes are the types' `TypeId`s — plain `u64` values,
+> indistinguishable from non-recursive type hashes. No special
+> representation is needed on the wire or in data structures.
 
-> r[schema.bundle.hash]
+> r[schema.hash.recursive.non-recursive]
 >
-> The content hash of a bundle is computed over the entire bundle as a
-> unit — all type definitions with their internal cross-references as
-> indices. The hash of the bundle's **entry point** (the first type,
-> `Index(0)`) is the bundle hash. Types within the bundle do not have
-> independent content hashes; they are identified by (bundle hash, index)
-> pairs.
-
-> r[schema.bundle.non-recursive]
->
-> A non-recursive type is a degenerate bundle of size 1 with no `Index`
-> references. Its content hash is computed directly from its structure
-> as described in `r[schema.type-id.hash]`. Implementations MAY treat
-> non-recursive types as bundles of size 1 or as standalone schemas —
-> the content hash is the same either way.
-
-> r[schema.bundle.identity]
->
-> Two bundles that contain the same types but entered from different roots
-> (i.e. with a different type at `Index(0)`) are distinct bundles with
-> different hashes. This is acceptable — the redundancy is limited to
-> mutually recursive type groups, which are rare in practice.
+> A non-recursive type does not participate in this algorithm. Its
+> content hash is computed directly from its structure as described
+> in `r[schema.type-id.hash]`.
 
 Example: a recursive tree type.
 
 ```
-Bundle (entry point = TreeNode):
-  Index(0): Struct "TreeNode" { label: Hash(string), children: Hash(Vec<Index(0)>) }
+// Step 1: preliminary hash
+//   TreeNode: blake3("struct" || "label" || hash(string)
+//                    || "children" || hash_of(list, SENTINEL))
+//   → preliminary_hash = 0xABCD...
+//
+// Step 2: canonical order (only one type, so trivial)
+//   [TreeNode]
+//
+// Step 3: final hash
+//   group_hash = blake3(preliminary_hash)[0..8]
+//   TreeNode.type_id = blake3(group_hash || 0u64)[0..8]
 ```
 
 Example: mutually recursive types.
 
 ```
-Bundle (entry point = Expr):
-  Index(0): Struct "Expr" { body: Index(1) }
-  Index(1): Enum "ExprBody" {
-        Literal { value: Hash(u64) },
-        Add { left: Index(0), right: Index(0) }
-      }
+// Expr { body: ExprBody }
+// ExprBody { Literal(u64), Add(Expr, Expr) }
+//
+// Step 1: preliminary hashes (recursive refs → sentinel)
+//   Expr:     blake3("struct" || "body" || SENTINEL)     → 0x1111...
+//   ExprBody: blake3("enum" || "Literal" || 0u32 || "newtype" || hash(u64)
+//                    || "Add" || 1u32 || "struct" || "left" || SENTINEL
+//                    || "right" || SENTINEL)              → 0x2222...
+//
+// Step 2: canonical order (sort by preliminary hash)
+//   [Expr (0x1111), ExprBody (0x2222)]
+//
+// Step 3: final hashes
+//   group_hash = blake3(0x1111... || 0x2222...)[0..8]
+//   Expr.type_id     = blake3(group_hash || 0u64)[0..8]
+//   ExprBody.type_id = blake3(group_hash || 1u64)[0..8]
 ```
 
 # Schema format
@@ -280,20 +296,13 @@ The following Rust declarations define the schema data model. Other
 language implementations must produce equivalent CBOR encodings.
 
 ```rust
-/// A type identifier — either a content hash or a bundle-local index.
+/// A content hash that uniquely identifies a type's postcard-level
+/// structure. Computed via blake3, truncated to 64 bits.
 ///
-/// On the wire (CBOR), `Hash` is a bare unsigned integer and `Index`
-/// is a map `{"index": n}` — so the two are unambiguous.
-enum TypeId {
-    /// Structural content hash (blake3, truncated to 64 bits).
-    /// Globally unique: the same type always produces the same hash,
-    /// regardless of connection, session, process, or language.
-    Hash(u64),
-
-    /// Bundle-local index for recursive type references.
-    /// Only meaningful within a schema bundle (see r[schema.bundle]).
-    Index(u64),
-}
+/// The same type always produces the same TypeId regardless of
+/// connection, session, process, or language. On the wire (CBOR),
+/// a TypeId is encoded as a CBOR unsigned integer.
+struct TypeId(u64);
 
 /// The primitive types of the postcard encoding.
 ///
@@ -314,9 +323,9 @@ enum PrimitiveType {
     /// A raw byte sequence (`Vec<u8>`, `&[u8]`).
     Bytes,
     /// An opaque payload — a length-prefixed byte sequence whose
-    /// internal structure is not described by a schema. Used for
-    /// protocol extensions (e.g. channel payloads routed without
-    /// inspection).
+    /// length prefix is a little-endian u32 (not a varint like other
+    /// postcard sequences). Used for protocol extensions where the
+    /// sender must reserve space before writing the payload.
     Payload,
 }
 
@@ -355,7 +364,7 @@ struct FieldSchema {
     /// The field name. Used for matching across schema versions —
     /// renaming a field is a breaking change.
     name: String,
-    /// The type of this field, as a TypeId.
+    /// The type of this field.
     type_id: TypeId,
     /// Whether the field is required. A required field that is missing
     /// from the remote schema causes a translation plan error.
@@ -384,13 +393,14 @@ enum VariantPayload {
     Struct { fields: Vec<FieldSchema> },
 }
 
-/// A complete schema: the type ID, a diagnostic name, and the
-/// structural description.
+/// A complete schema: the type ID, a name, and the structural
+/// description.
 struct Schema {
-    /// The content hash (or bundle-local index) that identifies this type.
+    /// The content hash that identifies this type.
     type_id: TypeId,
-    /// A human-readable name for diagnostics (e.g. "Point", "Vec<String>").
-    /// Not used for identity, hashing, or matching.
+    /// The type's name (e.g. "Point", "Vec<String>"). Required and
+    /// MUST NOT be empty. Used for matching across schema versions
+    /// and for diagnostics.
     name: String,
     /// The structural description of this type.
     kind: SchemaKind,
@@ -403,19 +413,15 @@ The normative rules below define the CBOR encoding of these types.
 >
 > A schema MUST be a CBOR map containing:
 >
->   * `type_id` — the type ID of the schema (`Hash(u64)` or `Index(u64)`)
->   * `name` — a diagnostic string (not used for matching)
+>   * `type_id` — a CBOR unsigned integer (the type's content hash)
+>   * `name` — the type's name (UTF-8 string, required, MUST NOT be empty)
 >   * `kind` — one of: `"struct"`, `"enum"`, `"tuple"`, `"list"`, `"map"`,
 >     `"array"`, `"option"`, `"primitive"`
 >   * Kind-specific fields as defined below
 
 > r[schema.format.type-id]
 >
-> A `TypeId` MUST be encoded as one of:
->
->   * A CBOR unsigned integer — interpreted as `Hash(u64)`
->   * A CBOR map with a single key `"index"` whose value is a CBOR
->     unsigned integer — interpreted as `Index(u64)`
+> A `TypeId` MUST be encoded as a CBOR unsigned integer.
 
 > r[schema.format.primitive]
 >
@@ -434,7 +440,7 @@ The normative rules below define the CBOR encoding of these types.
 >   * `kind`: `"struct"`
 >   * `fields`: a CBOR array of field descriptors, each a map with:
 >     - `name`: field name (UTF-8 string)
->     - `type_id`: a `TypeId` (`Hash(u64)` or `Index(u64)`)
+>     - `type_id`: a `TypeId` (CBOR unsigned integer)
 >     - `required`: boolean — `true` if the field has no default value
 >
 > Fields MUST be listed in declaration order (which is also postcard
@@ -478,37 +484,41 @@ The normative rules below define the CBOR encoding of these types.
 > The `elements` array MUST contain at least one element. A zero-element
 > tuple is not valid — use `PrimitiveType::Unit` instead.
 
-## Recursive types
+## Recursive types on the wire
 
-Types can reference themselves — a tree node contains child tree nodes.
-Recursive types use schema bundles (see `r[schema.bundle]`) to break
-the hash cycle: within a bundle, recursive references use `Index(n)`
-type IDs instead of content hashes.
+Recursive types reference each other by their final `TypeId` — the
+same plain `u64` content hash as any other type. There is no special
+wire representation for recursive references. The schemas for all
+types in a recursive group simply reference each other by hash.
 
 > r[schema.format.recursive]
 >
-> Recursive type references MUST use `Index(n)` type IDs. The schema
-> for a recursive type MUST be sent as a schema bundle containing all
-> types in the recursive group. The receiver resolves `Index` references
-> within the bundle to reconstruct the type graph.
+> When sending schemas for a recursive group, the sender MUST include
+> all schemas in the group that have not already been sent on this
+> connection. The receiver MUST be able to resolve every `TypeId`
+> referenced in the schemas using either the current batch of schemas
+> or schemas previously received on this connection.
 
-## Self-contained schema messages
+## Schema delivery
+
+Schemas are not sent as standalone messages. They are bundled with
+the `Request` or `Response` that needs them.
 
 > r[schema.format.self-contained]
 >
-> A schema message sent over the wire MUST be self-contained. If a struct
-> schema references a field whose type ID has not been previously sent to
-> this peer, the field type's schema MUST be included in the same schema
-> message. The receiver MUST be able to fully interpret every type ID
-> referenced in the message using only the schemas in that message plus
-> schemas previously received on this connection.
+> When a `Request` or `Response` includes schemas, the set of schemas
+> MUST be self-contained. Every `TypeId` referenced by any schema in
+> the set MUST either be defined in the same set or have been previously
+> sent on this connection. The receiver MUST be able to build translation
+> plans for all included types before deserializing the payload.
 
-> r[schema.format.batch]
+> r[schema.format.delivery]
 >
-> A schema message is a CBOR-encoded payload containing a list of schemas
-> (each with its type ID) and a list of method bindings (mapping method ID
-> to root type ID). Schemas SHOULD be ordered so that dependencies appear
-> before dependents, but receivers MUST handle any order.
+> Schemas are delivered as a CBOR-encoded array of `Schema` values
+> attached to a `Request` or `Response`. The array MUST include all
+> schemas needed for the method's types that have not been previously
+> sent on this connection. Sending a schema whose `TypeId` has already
+> been sent on this connection is a protocol error.
 
 # Schema tracking
 
@@ -544,8 +554,9 @@ Schema exchange operates at two levels:
    changes.
 
 2. **Application level (per-connection):** Method argument and response
-   schemas are exchanged lazily via `SchemaMessage` payloads, scoped to
-   each connection. This allows service types to evolve independently.
+   schemas are exchanged lazily, bundled with `Request` and `Response`
+   payloads, scoped to each connection. This allows service types to
+   evolve independently.
 
 The rest of this section describes application-level schema exchange.
 
@@ -560,15 +571,15 @@ for the entire service interface up front.
 >
 > Before sending a `Request`, the caller MUST check whether the schemas for
 > the method's argument types have been sent to this peer on this connection.
-> If any have not, the caller MUST send a `SchemaMessage` containing all
-> unsent schemas before sending the `Request`.
+> If any have not, the caller MUST include all unsent schemas in the
+> `Request` (see `r[schema.format.delivery]`).
 
 > r[schema.exchange.callee]
 >
 > Before sending any `Response` for a method, the callee MUST check whether
 > the schemas for the method's **statically-known response type** have been
 > sent to this peer on this connection. If any have not, the callee MUST
-> send a `SchemaMessage` before the `Response`.
+> include all unsent schemas in the `Response`.
 >
 > The response schema is determined by the method signature — it is the
 > full `Result<T, RoamError<E>>` wire type. It MUST NOT vary based on
@@ -580,15 +591,8 @@ for the entire service interface up front.
 >
 > Channel element types are included in schema exchange. If a method's
 > arguments contain `Tx<T>` or `Rx<T>`, the schema for `T` MUST be included
-> in the caller's schema message. If the response contains channel types,
-> their element schemas MUST be included in the callee's schema message.
-
-> r[schema.exchange.ordering]
->
-> `SchemaMessage` MUST arrive before the `Request` or `Response` that
-> references those types on the same connection. The receiver MUST be
-> able to build a translation plan for the incoming data before
-> deserializing it.
+> in the caller's schemas. If the response contains channel types,
+> their element schemas MUST be included in the callee's schemas.
 
 > r[schema.exchange.required]
 >
@@ -596,14 +600,14 @@ for the entire service interface up front.
 > `Request` or `Response` for a method whose schemas have not been
 > received on that connection, this is a protocol error and the
 > connection MUST be torn down. There is no fallback to identity
-> deserialization — the sender is always responsible for sending schemas
-> before data.
+> deserialization — the sender is always responsible for including schemas
+> with the data that needs them.
 
 > r[schema.exchange.idempotent]
 >
 > If the caller has already sent schemas for a method's argument types
 > (from a previous call to the same or different method using the same
-> types), no schema message is needed. The `r[schema.principles.once-per-type]`
+> types), no schemas need to be included. The `r[schema.principles.once-per-type]`
 > rule applies — each type ID is sent at most once.
 
 # Method identity without signatures
