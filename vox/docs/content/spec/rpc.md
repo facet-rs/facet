@@ -374,8 +374,8 @@ identity described in [Retry](./retry/).
 >
 > Initial credit is part of the channel's type signature. `Tx<T, N>` and
 > `Rx<T, N>` carry a const generic `N: usize` that specifies the initial
-> credit for the channel. When a channel is created (as part of a request
-> or response), the sender starts with `N` units of credit. This value
+> credit for the channel. When a channel is created (as part of a request),
+> the sender starts with `N` units of credit. This value
 > is known at compile time and is part of the channel's type definition,
 > so both peers agree on it through schema exchange.
 
@@ -520,7 +520,7 @@ metadata.push((
 >
 > `Tx<T, N>` and `Rx<T, N>` values in the serialized payload MUST be encoded as
 > unit placeholders. The actual channel IDs are carried out-of-band in the
-> `channels` field of the `Request` or `Response` message.
+> `channels` field of the `Request` message.
 
 > r[rpc.channel.binding]
 >
@@ -546,8 +546,7 @@ metadata.push((
 > (created via `channel()`), the binding is stored in the shared core.
 > The paired handle — which the caller or callee kept — reads or takes
 > the binding from the same core. This allows the framework to bind
-> both ends by touching only the handle that appears in the args or
-> return value.
+> both ends by touching only the handle that appears in the args.
 
 ## Caller-side binding (args)
 
