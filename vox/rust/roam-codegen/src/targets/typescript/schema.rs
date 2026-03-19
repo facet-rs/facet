@@ -347,18 +347,18 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
     let service_name_lower = service.service_name.to_lower_camel_case();
 
     // Global schema map: (id, cbor_bytes), in stable insertion order.
-    let mut schema_bytes: Vec<(u32, Vec<u8>)> = Vec::new();
-    let mut schema_ids_seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    let mut schema_bytes: Vec<(u64, Vec<u8>)> = Vec::new();
+    let mut schema_ids_seen: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
     // Helper: add a schema to the map if not already seen.
-    let mut add_schema = |id: u32, bytes: Vec<u8>| {
+    let mut add_schema = |id: u64, bytes: Vec<u8>| {
         if schema_ids_seen.insert(id) {
             schema_bytes.push((id, bytes));
         }
     };
 
     // Helper: add dep if not already present.
-    fn add_dep(deps: &mut Vec<u32>, id: u32) {
+    fn add_dep(deps: &mut Vec<u64>, id: u64) {
         if !deps.contains(&id) {
             deps.push(id);
         }
@@ -367,9 +367,9 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
     // Helper: extract schemas for a shape, add to map, return root id.
     let mut extract_and_add = |tracker: &mut SchemaSendTracker,
                                shape: &'static Shape,
-                               deps: &mut Vec<u32>,
-                               schema_bytes_local: &mut Vec<(u32, Vec<u8>)>,
-                               schema_ids_seen_local: &mut std::collections::HashSet<u32>|
+                               deps: &mut Vec<u64>,
+                               schema_bytes_local: &mut Vec<(u64, Vec<u8>)>,
+                               schema_ids_seen_local: &mut std::collections::HashSet<u64>|
      -> TypeSchemaId {
         let schemas = tracker.extract_schemas(shape);
         let root = schemas.last().map(|s| s.type_id).unwrap_or(TypeSchemaId(0));
@@ -386,10 +386,10 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
 
     struct MethodInfo {
         method_id: u64,
-        args_dep_ids: Vec<u32>,
-        args_root_id: u32,
-        response_dep_ids: Vec<u32>,
-        response_root_id: u32,
+        args_dep_ids: Vec<u64>,
+        args_root_id: u64,
+        response_dep_ids: Vec<u64>,
+        response_root_id: u64,
     }
 
     let mut method_infos: Vec<MethodInfo> = Vec::new();
@@ -398,7 +398,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         let method_id = crate::method_id(method);
 
         // --- Args ---
-        let mut args_dep_ids: Vec<u32> = Vec::new();
+        let mut args_dep_ids: Vec<u64> = Vec::new();
         let mut arg_root_ids: Vec<TypeSchemaId> = Vec::new();
 
         for arg in method.args {
@@ -462,7 +462,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         // The wire encoding is ALWAYS Result<T, RoamError<E>>.
         // method.return_shape is T for infallible methods, Result<T,E> for fallible.
         // We need to construct the full Result<T, RoamError<E>> schema synthetically.
-        let mut response_dep_ids: Vec<u32> = Vec::new();
+        let mut response_dep_ids: Vec<u64> = Vec::new();
 
         // Ensure String schema exists (needed for InvalidPayload variant of RoamError).
         let string_schemas = tracker.extract_schemas(<String as Facet<'static>>::SHAPE);

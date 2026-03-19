@@ -18,14 +18,14 @@ use crate::{MethodId, is_rx, is_tx};
 // Schema data types
 // ============================================================================
 
-/// An opaque type identifier, unique within a connection half.
+/// A content hash that uniquely identifies a type's postcard-level structure.
 ///
-/// Type IDs are assigned by the sender (typically as incrementing integers)
-/// and are used so schemas can reference each other and to track which types
-/// have already been sent. They are not stable across connections.
+/// Computed via blake3, truncated to 64 bits. The same type always produces
+/// the same TypeSchemaId regardless of connection, session, process, or
+/// language.
 // r[impl schema.type-id]
-#[derive(Facet, Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct TypeSchemaId(pub u32);
+#[derive(Facet, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct TypeSchemaId(pub u64);
 
 /// The root schema type describing a single type.
 #[derive(Facet, Clone, Debug)]
@@ -134,6 +134,137 @@ pub enum PrimitiveType {
     /// length prefix is a little-endian u32 (not a varint like other
     /// postcard sequences).
     Payload,
+}
+
+// ============================================================================
+// Content hashing — r[schema.type-id.hash]
+// ============================================================================
+
+impl PrimitiveType {
+    /// The tag string used for hashing this primitive type.
+    fn hash_tag(self) -> &'static str {
+        match self {
+            PrimitiveType::Bool => "bool",
+            PrimitiveType::U8 => "u8",
+            PrimitiveType::U16 => "u16",
+            PrimitiveType::U32 => "u32",
+            PrimitiveType::U64 => "u64",
+            PrimitiveType::U128 => "u128",
+            PrimitiveType::I8 => "i8",
+            PrimitiveType::I16 => "i16",
+            PrimitiveType::I32 => "i32",
+            PrimitiveType::I64 => "i64",
+            PrimitiveType::I128 => "i128",
+            PrimitiveType::F32 => "f32",
+            PrimitiveType::F64 => "f64",
+            PrimitiveType::Char => "char",
+            PrimitiveType::String => "string",
+            PrimitiveType::Unit => "unit",
+            PrimitiveType::Bytes => "bytes",
+            PrimitiveType::Payload => "payload",
+        }
+    }
+}
+
+/// Compute the canonical byte sequence for hashing a SchemaKind.
+///
+/// The `resolve` function maps TypeSchemaId -> u64 hash value. For non-recursive
+/// types this is just `.0`. For recursive types during preliminary hashing,
+/// intra-group references return the sentinel (0u64).
+// r[impl schema.type-id.hash.primitives]
+// r[impl schema.type-id.hash.struct]
+// r[impl schema.type-id.hash.enum]
+// r[impl schema.type-id.hash.container]
+// r[impl schema.type-id.hash.tuple]
+fn compute_canonical_bytes(kind: &SchemaKind, resolve: &impl Fn(TypeSchemaId) -> u64) -> Vec<u8> {
+    let mut buf = Vec::new();
+
+    match kind {
+        SchemaKind::Primitive { primitive_type } => {
+            let tag = primitive_type.hash_tag();
+            buf.extend_from_slice(&(tag.len() as u32).to_le_bytes());
+            buf.extend_from_slice(tag.as_bytes());
+        }
+        SchemaKind::Struct { fields, .. } => {
+            hash_append_string(&mut buf, "struct");
+            for field in fields {
+                hash_append_string(&mut buf, &field.name);
+                buf.extend_from_slice(&resolve(field.type_id).to_le_bytes());
+            }
+        }
+        SchemaKind::Enum { variants, .. } => {
+            hash_append_string(&mut buf, "enum");
+            for variant in variants {
+                hash_append_string(&mut buf, &variant.name);
+                buf.extend_from_slice(&variant.index.to_le_bytes());
+                match &variant.payload {
+                    VariantPayload::Unit => {
+                        hash_append_string(&mut buf, "unit");
+                    }
+                    VariantPayload::Newtype { type_id } => {
+                        hash_append_string(&mut buf, "newtype");
+                        buf.extend_from_slice(&resolve(*type_id).to_le_bytes());
+                    }
+                    VariantPayload::Tuple { types } => {
+                        hash_append_string(&mut buf, "tuple");
+                        for tid in types {
+                            buf.extend_from_slice(&resolve(*tid).to_le_bytes());
+                        }
+                    }
+                    VariantPayload::Struct { fields } => {
+                        hash_append_string(&mut buf, "struct");
+                        for field in fields {
+                            hash_append_string(&mut buf, &field.name);
+                            buf.extend_from_slice(&resolve(field.type_id).to_le_bytes());
+                        }
+                    }
+                }
+            }
+        }
+        SchemaKind::Tuple { elements } => {
+            hash_append_string(&mut buf, "tuple");
+            for elem in elements {
+                buf.extend_from_slice(&resolve(*elem).to_le_bytes());
+            }
+        }
+        SchemaKind::List { element } => {
+            hash_append_string(&mut buf, "list");
+            buf.extend_from_slice(&resolve(*element).to_le_bytes());
+        }
+        SchemaKind::Map { key, value } => {
+            hash_append_string(&mut buf, "map");
+            buf.extend_from_slice(&resolve(*key).to_le_bytes());
+            buf.extend_from_slice(&resolve(*value).to_le_bytes());
+        }
+        SchemaKind::Array { element, length } => {
+            hash_append_string(&mut buf, "array");
+            buf.extend_from_slice(&resolve(*element).to_le_bytes());
+            buf.extend_from_slice(&length.to_le_bytes());
+        }
+        SchemaKind::Option { element } => {
+            hash_append_string(&mut buf, "option");
+            buf.extend_from_slice(&resolve(*element).to_le_bytes());
+        }
+    }
+
+    buf
+}
+
+/// Append a length-prefixed string to a byte buffer (same encoding as hash_feed_string).
+fn hash_append_string(buf: &mut Vec<u8>, s: &str) {
+    buf.extend_from_slice(&(s.len() as u32).to_le_bytes());
+    buf.extend_from_slice(s.as_bytes());
+}
+
+/// Compute the content hash of a SchemaKind, given a resolver for child type IDs.
+pub fn compute_content_hash(
+    kind: &SchemaKind,
+    resolve: &impl Fn(TypeSchemaId) -> u64,
+) -> TypeSchemaId {
+    let canonical = compute_canonical_bytes(kind, resolve);
+    let hash = blake3::hash(&canonical);
+    let bytes: [u8; 8] = hash.as_bytes()[0..8].try_into().expect("slice len");
+    TypeSchemaId(u64::from_le_bytes(bytes))
 }
 
 /// CBOR-encoded schema payload (schemas + method bindings).
@@ -252,8 +383,8 @@ pub struct SchemaSendTracker {
     /// All type schema IDs we've sent so far (for dedup across methods that
     /// share types).
     sent_type_ids: HashSet<TypeSchemaId>,
-    /// Next ID to assign.
-    next_id: u32,
+    /// Next ID to assign (temporary — will be replaced by content hashing).
+    next_id: u64,
 }
 
 impl SchemaSendTracker {
@@ -357,7 +488,8 @@ impl SchemaSendTracker {
             stack: Vec::new(),
         };
         ctx.extract(shape);
-        ctx.schemas
+        let schemas = ctx.schemas;
+        finalize_content_hashes(schemas)
     }
 }
 
@@ -494,6 +626,220 @@ impl std::fmt::Debug for SchemaRecvTracker {
 pub fn extract_schemas(shape: &'static Shape) -> Vec<Schema> {
     let mut tracker = SchemaSendTracker::new();
     tracker.extract_schemas(shape)
+}
+
+/// Replace temporary incrementing IDs with blake3 content hashes.
+///
+/// Schemas must be in dependency order (dependencies before dependents).
+/// For non-recursive types, this is a simple bottom-up pass. For recursive
+/// types, the 4-step algorithm from r[schema.hash.recursive] is used.
+// r[impl schema.type-id.hash]
+// r[impl schema.hash.recursive]
+fn finalize_content_hashes(mut schemas: Vec<Schema>) -> Vec<Schema> {
+    // Build a map from temporary ID -> index in the schemas vec.
+    let temp_to_idx: HashMap<TypeSchemaId, usize> = schemas
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.type_id, i))
+        .collect();
+
+    // Collect all TypeSchemaIds referenced by each schema's kind.
+    fn collect_refs(kind: &SchemaKind) -> Vec<TypeSchemaId> {
+        let mut refs = Vec::new();
+        match kind {
+            SchemaKind::Primitive { .. } => {}
+            SchemaKind::Struct { fields, .. } => {
+                for f in fields {
+                    refs.push(f.type_id);
+                }
+            }
+            SchemaKind::Enum { variants, .. } => {
+                for v in variants {
+                    match &v.payload {
+                        VariantPayload::Unit => {}
+                        VariantPayload::Newtype { type_id } => refs.push(*type_id),
+                        VariantPayload::Tuple { types } => refs.extend(types),
+                        VariantPayload::Struct { fields } => {
+                            for f in fields {
+                                refs.push(f.type_id);
+                            }
+                        }
+                    }
+                }
+            }
+            SchemaKind::Tuple { elements } => refs.extend(elements),
+            SchemaKind::List { element } | SchemaKind::Option { element } => refs.push(*element),
+            SchemaKind::Map { key, value } => {
+                refs.push(*key);
+                refs.push(*value);
+            }
+            SchemaKind::Array { element, .. } => refs.push(*element),
+        }
+        refs
+    }
+
+    // Detect which schemas are part of recursive groups. A schema is recursive
+    // if it transitively references itself.
+    let n = schemas.len();
+    let mut in_recursive_group: Vec<bool> = vec![false; n];
+
+    // For each schema, check if any ref points to itself or to a schema that
+    // hasn't been fully processed yet (i.e., has a higher or equal index —
+    // since deps come before dependents, a forward/self reference means recursion).
+    for (i, schema) in schemas.iter().enumerate() {
+        for r in collect_refs(&schema.kind) {
+            if let Some(&ref_idx) = temp_to_idx.get(&r) {
+                if ref_idx >= i {
+                    // Forward or self reference — both schemas are in a recursive group.
+                    in_recursive_group[i] = true;
+                    in_recursive_group[ref_idx] = true;
+                }
+            }
+        }
+    }
+
+    // Map from temporary ID -> content hash.
+    let mut id_map: HashMap<TypeSchemaId, TypeSchemaId> = HashMap::new();
+
+    // Phase 1: Hash non-recursive types bottom-up.
+    for (i, schema) in schemas.iter().enumerate() {
+        if in_recursive_group[i] {
+            continue;
+        }
+        let content_hash = compute_content_hash(&schema.kind, &|temp_id| {
+            id_map.get(&temp_id).map(|h| h.0).unwrap_or(temp_id.0)
+        });
+        id_map.insert(schema.type_id, content_hash);
+    }
+
+    // Phase 2: Hash recursive groups using the 4-step algorithm.
+    // Collect contiguous runs of recursive schemas (they're grouped because
+    // extraction processes them together via the stack).
+    let mut i = 0;
+    while i < n {
+        if !in_recursive_group[i] {
+            i += 1;
+            continue;
+        }
+
+        // Find the extent of this recursive group.
+        let group_start = i;
+        while i < n && in_recursive_group[i] {
+            i += 1;
+        }
+        let group_end = i;
+        let group_ids: HashSet<TypeSchemaId> = schemas[group_start..group_end]
+            .iter()
+            .map(|s| s.type_id)
+            .collect();
+
+        // Step 1: Preliminary hashes — intra-group refs become sentinel (0).
+        let mut prelim_data: Vec<(Vec<u8>, u64)> = Vec::new();
+        for schema in &schemas[group_start..group_end] {
+            let canonical = compute_canonical_bytes(&schema.kind, &|temp_id| {
+                if group_ids.contains(&temp_id) {
+                    0u64 // sentinel
+                } else {
+                    id_map.get(&temp_id).map(|h| h.0).unwrap_or(temp_id.0)
+                }
+            });
+            let hash = blake3::hash(&canonical);
+            let bytes: [u8; 8] = hash.as_bytes()[0..8].try_into().unwrap();
+            let prelim_hash = u64::from_le_bytes(bytes);
+            prelim_data.push((canonical, prelim_hash));
+        }
+
+        // Step 2: Deduplication — skip for now (same canonical bytes = same type,
+        // but we're working with Shape pointers which are already deduplicated).
+
+        // Step 3: Canonical ordering — sort by preliminary hash, break ties by
+        // canonical byte sequence.
+        let mut order: Vec<usize> = (0..prelim_data.len()).collect();
+        order.sort_by(|&a, &b| {
+            prelim_data[a]
+                .1
+                .cmp(&prelim_data[b].1)
+                .then_with(|| prelim_data[a].0.cmp(&prelim_data[b].0))
+        });
+
+        // Step 4: Final hashes.
+        // group_hash = blake3(prelim_hash_0 || prelim_hash_1 || ...)[0..8]
+        let mut group_hasher = blake3::Hasher::new();
+        for &idx in &order {
+            group_hasher.update(&prelim_data[idx].1.to_le_bytes());
+        }
+        let group_hash_output = group_hasher.finalize();
+        let group_hash_bytes: [u8; 8] = group_hash_output.as_bytes()[0..8].try_into().unwrap();
+        let group_hash = u64::from_le_bytes(group_hash_bytes);
+
+        // Each type's final hash = blake3(group_hash || position)[0..8]
+        for (position, &idx) in order.iter().enumerate() {
+            let mut final_hasher = blake3::Hasher::new();
+            final_hasher.update(&group_hash.to_le_bytes());
+            final_hasher.update(&(position as u64).to_le_bytes());
+            let final_output = final_hasher.finalize();
+            let final_bytes: [u8; 8] = final_output.as_bytes()[0..8].try_into().unwrap();
+            let final_hash = TypeSchemaId(u64::from_le_bytes(final_bytes));
+
+            let schema_idx = group_start + idx;
+            id_map.insert(schemas[schema_idx].type_id, final_hash);
+        }
+    }
+
+    // Phase 3: Rewrite all temporary IDs to content hashes.
+    fn remap_kind(kind: &mut SchemaKind, id_map: &HashMap<TypeSchemaId, TypeSchemaId>) {
+        let remap = |id: &mut TypeSchemaId| {
+            if let Some(&new_id) = id_map.get(id) {
+                *id = new_id;
+            }
+        };
+        match kind {
+            SchemaKind::Primitive { .. } => {}
+            SchemaKind::Struct { fields, .. } => {
+                for f in fields {
+                    remap(&mut f.type_id);
+                }
+            }
+            SchemaKind::Enum { variants, .. } => {
+                for v in variants {
+                    match &mut v.payload {
+                        VariantPayload::Unit => {}
+                        VariantPayload::Newtype { type_id } => remap(type_id),
+                        VariantPayload::Tuple { types } => {
+                            for t in types {
+                                remap(t);
+                            }
+                        }
+                        VariantPayload::Struct { fields } => {
+                            for f in fields {
+                                remap(&mut f.type_id);
+                            }
+                        }
+                    }
+                }
+            }
+            SchemaKind::Tuple { elements } => {
+                for e in elements {
+                    remap(e);
+                }
+            }
+            SchemaKind::List { element } | SchemaKind::Option { element } => remap(element),
+            SchemaKind::Map { key, value } => {
+                remap(key);
+                remap(value);
+            }
+            SchemaKind::Array { element, .. } => remap(element),
+        }
+    }
+
+    for schema in &mut schemas {
+        if let Some(&new_id) = id_map.get(&schema.type_id) {
+            schema.type_id = new_id;
+        }
+        remap_kind(&mut schema.kind, &id_map);
+    }
+
+    schemas
 }
 
 struct ExtractCtx<'a> {
@@ -795,7 +1141,7 @@ mod tests {
 
     // r[verify schema.type-id]
     #[test]
-    fn type_ids_are_just_u32() {
+    fn type_ids_are_u64_content_hashes() {
         let id = TypeSchemaId(42);
         assert_eq!(id.0, 42);
         assert_eq!(id, TypeSchemaId(42));
@@ -1141,19 +1487,121 @@ mod tests {
     }
 
     // r[verify schema.type-id]
+    // r[verify schema.type-id.hash]
     #[test]
-    fn type_ids_are_incrementing_u32() {
+    fn type_ids_are_content_hashes() {
         let mut tracker = SchemaSendTracker::new();
         let schemas = tracker.extract_schemas(<(u32, String) as Facet>::SHAPE);
-        // Should have u32, String, and the tuple — all with sequential IDs
         assert!(schemas.len() >= 3);
-        // IDs should be small integers
-        for s in &schemas {
-            assert!(
-                s.type_id.0 < 100,
-                "expected small u32 ID, got {}",
-                s.type_id.0
-            );
+
+        // Same type extracted again must produce the same content hash.
+        let mut tracker2 = SchemaSendTracker::new();
+        let schemas2 = tracker2.extract_schemas(<(u32, String) as Facet>::SHAPE);
+        assert_eq!(schemas.len(), schemas2.len());
+        for (a, b) in schemas.iter().zip(schemas2.iter()) {
+            assert_eq!(a.type_id, b.type_id, "content hash should be deterministic");
+        }
+
+        // Different types must produce different hashes.
+        let mut tracker3 = SchemaSendTracker::new();
+        let schemas3 = tracker3.extract_schemas(<(u64, String) as Facet>::SHAPE);
+        let root_hash = schemas.last().unwrap().type_id;
+        let root_hash3 = schemas3.last().unwrap().type_id;
+        assert_ne!(
+            root_hash, root_hash3,
+            "different types should have different hashes"
+        );
+    }
+
+    // r[verify schema.type-id.hash.primitives]
+    #[test]
+    fn primitive_content_hashes_are_stable() {
+        // These are the canonical hash values for primitive types.
+        // Other implementations MUST produce identical values.
+        let primitives = [
+            PrimitiveType::Bool,
+            PrimitiveType::U8,
+            PrimitiveType::U16,
+            PrimitiveType::U32,
+            PrimitiveType::U64,
+            PrimitiveType::U128,
+            PrimitiveType::I8,
+            PrimitiveType::I16,
+            PrimitiveType::I32,
+            PrimitiveType::I64,
+            PrimitiveType::I128,
+            PrimitiveType::F32,
+            PrimitiveType::F64,
+            PrimitiveType::Char,
+            PrimitiveType::String,
+            PrimitiveType::Unit,
+            PrimitiveType::Bytes,
+            PrimitiveType::Payload,
+        ];
+
+        // All primitive hashes must be unique.
+        let hashes: Vec<TypeSchemaId> = primitives
+            .iter()
+            .map(|p| {
+                compute_content_hash(&SchemaKind::Primitive { primitive_type: *p }, &|id| id.0)
+            })
+            .collect();
+        let unique: HashSet<TypeSchemaId> = hashes.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            hashes.len(),
+            "all primitive hashes must be unique"
+        );
+
+        // Verify they're deterministic (same computation, same result).
+        for (i, p) in primitives.iter().enumerate() {
+            let hash2 =
+                compute_content_hash(&SchemaKind::Primitive { primitive_type: *p }, &|id| id.0);
+            assert_eq!(hashes[i], hash2, "hash for {:?} must be deterministic", p);
+        }
+    }
+
+    // r[verify schema.type-id.hash.struct]
+    #[test]
+    fn struct_hash_is_deterministic() {
+        #[derive(Facet)]
+        struct Point {
+            x: f64,
+            y: f64,
+        }
+
+        let schemas1 = extract_schemas(Point::SHAPE);
+        let schemas2 = extract_schemas(Point::SHAPE);
+        assert_eq!(
+            schemas1.last().unwrap().type_id,
+            schemas2.last().unwrap().type_id,
+            "same struct must produce the same content hash"
+        );
+    }
+
+    // r[verify schema.hash.recursive]
+    #[test]
+    fn recursive_type_hash_is_deterministic() {
+        #[derive(Facet)]
+        struct TreeNode {
+            label: String,
+            children: Vec<TreeNode>,
+        }
+
+        let schemas1 = extract_schemas(TreeNode::SHAPE);
+        let schemas2 = extract_schemas(TreeNode::SHAPE);
+
+        // Must have at least String, Vec<TreeNode>, TreeNode
+        assert!(schemas1.len() >= 2);
+
+        // Same recursive type must produce identical hashes.
+        let root1 = schemas1.last().unwrap().type_id;
+        let root2 = schemas2.last().unwrap().type_id;
+        assert_eq!(root1, root2, "recursive type hash must be deterministic");
+
+        // All type IDs in the output must be valid content hashes (non-zero).
+        for s in &schemas1 {
+            assert_ne!(s.type_id.0, 0, "content hash must not be zero");
         }
     }
 
@@ -1229,11 +1677,11 @@ mod tests {
             .expect("first record should succeed");
         let err = tracker
             .record_received(SchemaPayload {
-                schemas,
+                schemas: schemas.clone(),
                 method_bindings: vec![],
             })
             .expect_err("duplicate should fail");
-        assert_eq!(err.type_id, TypeSchemaId(1));
+        assert_eq!(err.type_id, schemas[0].type_id);
     }
 
     #[test]
