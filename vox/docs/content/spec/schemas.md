@@ -49,25 +49,61 @@ translation plan is built — not mid-stream when a field has the wrong value.
 
 # Type identity
 
-Schemas reference other types by type ID. A type ID is an opaque `u32`
-handle assigned by the sender.
+A type ID uniquely identifies a type. It is an enum with two variants:
 
 > r[schema.type-id]
 >
-> A type ID is a `u32` assigned by the sender. It MUST be unique within
-> the sender's half of a connection — no two distinct types sent by the
-> same peer may share a type ID. Each peer assigns its own type IDs
-> independently; the two peers' ID spaces do not interact. Type IDs do
-> not need to be stable across connections, sessions, or compiles.
-> Incrementing integers are valid. (If your service has more than 2³²
-> distinct types, please get in touch — we'd love to hear about it.)
+> A type ID is one of:
+>
+>   * `Hash(u64)` — a **content hash**, a deterministic hash of the type's
+>     structural definition. The same type always produces the same hash,
+>     regardless of which connection, session, process, or language produced
+>     it.
+>   * `Index(u64)` — a **bundle-local index** used for recursive type
+>     references within a schema bundle (see `r[schema.bundle]`).
+>
+> On the wire (CBOR), `Hash` is encoded as a CBOR unsigned integer and
+> `Index` is encoded as a CBOR map with a single key `"index"` whose
+> value is the unsigned integer index.
+
+> r[schema.type-id.hash]
+>
+> The content hash of a non-recursive type is computed from its
+> postcard-level structure:
+>
+>   * **Primitives:** hash of the kind string (e.g. `"u32"`, `"string"`)
+>   * **Structs:** hash of `"struct"`, followed by each field's name and
+>     the content hash of its type, in declaration order
+>   * **Enums:** hash of `"enum"`, followed by each variant's name,
+>     variant index, and payload structure (with content hashes for any
+>     types in the payload), in declaration order
+>   * **Containers** (list, set, option, etc.): hash of the kind string
+>     and the content hash(es) of element/key/value types
+>   * **Tuples:** hash of `"tuple"` and the content hashes of each
+>     element type, in order
+>
+> The hash function is blake3, truncated to 64 bits. Implementations
+> MUST produce identical hashes for structurally identical types
+> regardless of the source language.
+
+Content hashes give type IDs a universal meaning. A peer that receives
+a schema tagged with a content hash it has already seen — from this
+connection, a previous connection, or even a persistent store — knows
+it already has that schema. This is critical for operation stores
+(see `r[schema.interaction.retry]`) and for efficient schema tracking
+across connection resumes.
 
 > r[schema.type-id.per-connection]
 >
 > Every connection starts with zero schema knowledge. A peer MUST NOT
 > assume that schemas sent on one connection are available on another,
 > even within the same session. Each connection half has its own
-> independent namespace of type IDs and its own sent/received tracking.
+> sent/received tracking. However, because type IDs are content hashes,
+> a peer MAY use a previously received schema (from another connection
+> or a persistent cache) to build a translation plan without waiting for
+> the schema to be resent — as long as it does not send data until the
+> remote peer has confirmed (by sending its own schemas) that it can
+> read it.
 
 Per-connection tracking is required because connections within a session
 may terminate at different peers. Consider this topology:
@@ -90,15 +126,70 @@ connection 0's schemas; it only sees connection 1. Each connection is
 an independent communication channel that may reach a different peer,
 so schema state must be tracked independently per connection.
 
-Type IDs exist so schemas can reference each other (a struct field points
-to its field type's schema by type ID) and so the sender can track which
-types it has already sent. They are bookkeeping, not identity.
+# Schema bundles
+
+Non-recursive types have straightforward content hashes — hash the
+structure, reference child types by their hashes. Recursive types
+create a cycle: the hash of `TreeNode` depends on the hash of
+`Vec<TreeNode>`, which depends on the hash of `TreeNode`.
+
+Schema bundles solve this using bundle-local indices, analogous to
+De Bruijn indices in lambda calculus.
+
+> r[schema.bundle]
+>
+> A **schema bundle** is an ordered list of type definitions that form a
+> mutually recursive group. Within a bundle, types reference each other
+> using `Index(n)` type IDs: `Index(0)` refers to the first type in the
+> bundle, `Index(1)` to the second, and so on.
+
+> r[schema.bundle.hash]
+>
+> The content hash of a bundle is computed over the entire bundle as a
+> unit — all type definitions with their internal cross-references as
+> indices. The hash of the bundle's **entry point** (the first type,
+> `Index(0)`) is the bundle hash. Types within the bundle do not have
+> independent content hashes; they are identified by (bundle hash, index)
+> pairs.
+
+> r[schema.bundle.non-recursive]
+>
+> A non-recursive type is a degenerate bundle of size 1 with no `Index`
+> references. Its content hash is computed directly from its structure
+> as described in `r[schema.type-id.hash]`. Implementations MAY treat
+> non-recursive types as bundles of size 1 or as standalone schemas —
+> the content hash is the same either way.
+
+> r[schema.bundle.identity]
+>
+> Two bundles that contain the same types but entered from different roots
+> (i.e. with a different type at `Index(0)`) are distinct bundles with
+> different hashes. This is acceptable — the redundancy is limited to
+> mutually recursive type groups, which are rare in practice.
+
+Example: a recursive tree type.
+
+```
+Bundle (entry point = TreeNode):
+  Index(0): Struct "TreeNode" { label: Hash(string), children: Hash(Vec<Index(0)>) }
+```
+
+Example: mutually recursive types.
+
+```
+Bundle (entry point = Expr):
+  Index(0): Struct "Expr" { body: Index(1) }
+  Index(1): Enum "ExprBody" {
+        Literal { value: Hash(u64) },
+        Add { left: Index(0), right: Index(0) }
+      }
+```
 
 # Schema format
 
 A schema describes a single type. Schemas are CBOR-encoded and
 self-contained — every type referenced by a schema is either a primitive
-or is referenced by its type ID.
+or is referenced by its type ID (a content hash or bundle-local index).
 
 > r[schema.format]
 >
@@ -115,7 +206,7 @@ or is referenced by its type ID.
 >   * `kind`: `"struct"`
 >   * `fields`: a CBOR array of field descriptors, each a map with:
 >     - `name`: field name (UTF-8 string)
->     - `type_id`: the 16-byte type ID of the field's type
+>     - `type_id`: the type ID of the field's type (`Hash(u64)` or `Index(u64)`)
 >     - `required`: boolean — `true` if the field has no default value
 >
 > Fields MUST be listed in declaration order (which is also postcard
@@ -162,16 +253,16 @@ or is referenced by its type ID.
 ## Recursive types
 
 Types can reference themselves — a tree node contains child tree nodes.
-Since type IDs are opaque handles (not derived from the schema content),
-recursive types are straightforward: the recursive field simply references
-the type ID of the containing type.
+Recursive types use schema bundles (see `r[schema.bundle]`) to break
+the hash cycle: within a bundle, recursive references use `Index(n)`
+type IDs instead of content hashes.
 
 > r[schema.format.recursive]
 >
-> Recursive type references MUST use the type ID of the referenced type.
-> Since the schema for the recursive type is included in the same batch,
-> the receiver can resolve the reference. No special backreference markers
-> are needed.
+> Recursive type references MUST use `Index(n)` type IDs. The schema
+> for a recursive type MUST be sent as a schema bundle containing all
+> types in the recursive group. The receiver resolves `Index` references
+> within the bundle to reconstruct the type graph.
 
 ## Self-contained schema messages
 
@@ -496,11 +587,19 @@ Schema exchange is designed to be transparent to the rest of the protocol.
 
 > r[schema.interaction.retry]
 >
-> Retry semantics are unaffected by schema exchange. Operation IDs, the
-> commit point, and sealed replay all work identically. The translation
-> plan for a sealed response is the same one built when the type's schema
-> was first received — replayed responses use the same deserialization
-> path as live ones.
+> Operation stores MUST store schemas alongside serialized payloads.
+> A sealed operation contains postcard-encoded bytes that are only
+> meaningful together with the schemas that describe them. When replaying
+> a sealed response, the replaying peer MUST send schemas for the
+> response types on the current connection if they have not already been
+> sent, just as it would for a live response.
+>
+> Because type IDs are content hashes, the operation store does not need
+> a per-connection schema ID namespace. The stored schemas use the same
+> content hashes regardless of which connection originally produced them
+> or which connection replays them. A disk-backed operation store that
+> survives process restarts can use content hashes as stable keys for
+> its schema cache.
 
 > r[schema.interaction.metadata]
 >
