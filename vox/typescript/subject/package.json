@@ -9,7 +9,8 @@
   "dependencies": {
     "@bearcove/roam-core": "workspace:*",
     "@bearcove/roam-generated": "workspace:*",
-    "@bearcove/roam-tcp": "workspace:*"
+    "@bearcove/roam-tcp": "workspace:*",
+    "@bearcove/roam-ws": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22"

@@ -18,6 +18,7 @@ use spec_tests::harness::{SubjectLanguage, SubjectSpec};
 const SUBJECT_RUST_TCP: SubjectSpec = SubjectSpec::tcp(SubjectLanguage::Rust);
 const SUBJECT_RUST_SHM_GUEST: SubjectSpec = SubjectSpec::shm_guest(SubjectLanguage::Rust);
 const SUBJECT_TYPESCRIPT_TCP: SubjectSpec = SubjectSpec::tcp(SubjectLanguage::TypeScript);
+const SUBJECT_TYPESCRIPT_WS: SubjectSpec = SubjectSpec::ws(SubjectLanguage::TypeScript);
 const SUBJECT_SWIFT_TCP: SubjectSpec = SubjectSpec::tcp(SubjectLanguage::Swift);
 const SUBJECT_SWIFT_SHM_GUEST: SubjectSpec = SubjectSpec::shm_guest(SubjectLanguage::Swift);
 const SUBJECT_SWIFT_SHM_HOST: SubjectSpec = SubjectSpec::shm_host(SubjectLanguage::Swift);
@@ -251,6 +252,139 @@ mod lang_rust_transport_shm_guest_mode {
 mod lang_typescript_transport_tcp {
     use super::*;
     const SPEC: SubjectSpec = SUBJECT_TYPESCRIPT_TCP;
+    mod direction_harness_to_subject {
+        use super::*;
+        #[ignore]
+        #[test]
+        fn rpc_echo_roundtrip() {
+            testbed::run_rpc_echo_roundtrip(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_user_error_roundtrip() {
+            testbed::run_rpc_user_error_roundtrip(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_pipelining_multiple_requests() {
+            testbed::run_rpc_pipelining_multiple_requests(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_reverse_roundtrip() {
+            testbed::run_rpc_reverse_roundtrip(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_lookup_user_error() {
+            testbed::run_rpc_lookup_user_error(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_complex_struct_echo() {
+            testbed::run_rpc_complex_struct_echo(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_optional_field() {
+            testbed::run_rpc_optional_field(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_nested_struct() {
+            testbed::run_rpc_nested_struct(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_option_return() {
+            testbed::run_rpc_option_return(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_enum_struct_variants() {
+            testbed::run_rpc_enum_struct_variants(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_vec_of_structs() {
+            testbed::run_rpc_vec_of_structs(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_enum_newtype_variants() {
+            testbed::run_rpc_enum_newtype_variants(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_vec_return() {
+            testbed::run_rpc_vec_return(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn rpc_tuple_type() {
+            testbed::run_rpc_tuple_type(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn channeling_generate_server_to_client() {
+            channeling::run_channeling_generate_server_to_client(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn binary_payload_sizes() {
+            binary_payloads::run_subject_process_message_binary_payload_sizes(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn channel_retry_non_idem_fails_closed() {
+            channel_retry::run_channel_retry_non_idem_fails_closed(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn channel_retry_idem_reruns_with_fresh_channels() {
+            channel_retry::run_channel_retry_idem_reruns_with_fresh_channels(SPEC);
+        }
+    }
+    mod direction_subject_to_harness {
+        use super::*;
+        #[ignore]
+        #[test]
+        fn channeling_sum_client_to_server() {
+            channeling::run_channeling_sum_client_to_server(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_echo() {
+            testbed::run_subject_calls_echo(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_shape_area() {
+            testbed::run_subject_calls_shape_area(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_create_canvas() {
+            testbed::run_subject_calls_create_canvas(SPEC);
+        }
+        #[ignore]
+        #[test]
+        fn subject_calls_process_message() {
+            testbed::run_subject_calls_process_message(SPEC);
+        }
+    }
+    mod direction_bidirectional {
+        use super::*;
+        #[ignore]
+        #[test]
+        fn channeling_transform() {
+            channeling::run_channeling_transform_bidirectional(SPEC);
+        }
+    }
+}
+mod lang_typescript_transport_ws {
+    use super::*;
+    const SPEC: SubjectSpec = SUBJECT_TYPESCRIPT_WS;
     mod direction_harness_to_subject {
         use super::*;
         #[ignore]

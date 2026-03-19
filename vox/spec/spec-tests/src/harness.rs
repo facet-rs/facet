@@ -25,6 +25,7 @@ use roam_shm::segment::{Segment, SegmentConfig};
 use roam_shm::varslot::SizeClassConfig as RoamShmSizeClassConfig;
 use roam_stream::StreamLink;
 use roam_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, RequestCall, SelfRef, WriteSlot};
+use roam_websocket::WsLink;
 use shm_primitives::FileCleanup;
 use shm_primitives::SizeClassConfig;
 use spec_proto::{
@@ -81,6 +82,7 @@ pub enum SubjectLanguage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SubjectTestTransport {
     Tcp,
+    Ws,
     Shm,
 }
 
@@ -102,6 +104,14 @@ impl SubjectSpec {
         Self {
             language,
             transport: SubjectTestTransport::Tcp,
+            shm_mode: SubjectShmMode::GuestServer,
+        }
+    }
+
+    pub const fn ws(language: SubjectLanguage) -> Self {
+        Self {
+            language,
+            transport: SubjectTestTransport::Ws,
             shm_mode: SubjectShmMode::GuestServer,
         }
     }
@@ -770,8 +780,39 @@ fn keep_tempdir_alive(dir: tempfile::TempDir) {
     leaked_dirs().lock().expect("tempdir mutex").push(dir);
 }
 
-/// Listen on a random TCP port, spawn the subject (which connects to us),
-/// complete the roam handshake as acceptor, and return a ready `TestbedClient`.
+/// Listen on a random TCP port, upgrade incoming connection to WebSocket,
+/// complete the roam handshake, and return a ready `TestbedClient`.
+pub async fn accept_subject_ws(cmd: &str) -> Result<(TestbedClient, Child), String> {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| format!("bind: {e}"))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| format!("local_addr: {e}"))?
+        .port();
+    let ws_url = format!("ws://127.0.0.1:{port}/");
+
+    let child = spawn_subject_cmd_with_env(cmd, &ws_url, &[]).await?;
+
+    // Use a timeout to catch subjects that fail to connect.
+    let (tcp_stream, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+        .await
+        .map_err(|_| "timed out waiting for WebSocket subject to connect".to_string())?
+        .map_err(|e| format!("accept: {e}"))?;
+    tcp_stream.set_nodelay(true).ok();
+
+    let ws = WsLink::server(tcp_stream)
+        .await
+        .map_err(|e| format!("WebSocket upgrade: {e}"))?;
+
+    let (client, _sh) = acceptor_on(ws)
+        .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
+        .await
+        .map_err(|e| format!("handshake: {e}"))?;
+
+    Ok((client, child))
+}
+
 pub async fn accept_subject() -> Result<(TestbedClient, Child), String> {
     let spec = SubjectSpec {
         language: SubjectLanguage::Rust,
@@ -785,6 +826,7 @@ pub async fn accept_subject_spec(spec: SubjectSpec) -> Result<(TestbedClient, Ch
     let cmd = subject_cmd_for_language(spec.language);
     match spec.transport {
         SubjectTestTransport::Tcp => accept_subject_tcp(&cmd).await,
+        SubjectTestTransport::Ws => accept_subject_ws(&cmd).await,
         SubjectTestTransport::Shm => match spec.shm_mode {
             SubjectShmMode::GuestServer => accept_subject_shm_subject_is_guest(&cmd).await,
             SubjectShmMode::HostServer => accept_subject_shm_subject_is_host(&cmd).await,
@@ -814,8 +856,8 @@ pub async fn accept_subject_spec_resumable(
     let cmd = subject_cmd_for_language(spec.language);
     match spec.transport {
         SubjectTestTransport::Tcp => accept_subject_tcp_resumable(&cmd).await,
-        SubjectTestTransport::Shm => {
-            Err("resumable subject harness is only supported for TCP transports".to_string())
+        SubjectTestTransport::Ws | SubjectTestTransport::Shm => {
+            Err("resumable subject harness is only supported for TCP transport".to_string())
         }
     }
 }
@@ -828,68 +870,140 @@ pub async fn accept_subject_spec_resumable(
 pub fn run_subject_client_scenario(spec: SubjectSpec, scenario: &str) {
     let scenario = scenario.to_string();
     let result: Result<(), String> = run_async(async move {
-        if spec.transport != SubjectTestTransport::Tcp {
-            return Ok(());
-        }
-
-        let cmd = subject_cmd_for_language(spec.language);
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .map_err(|e| format!("bind: {e}"))?;
-        let addr = listener
-            .local_addr()
-            .map_err(|e| format!("local_addr: {e}"))?;
-
-        let mut child = spawn_subject_cmd_with_env(
-            &cmd,
-            &addr.to_string(),
-            &[("SUBJECT_MODE", "client"), ("CLIENT_SCENARIO", &scenario)],
-        )
-        .await?;
-
-        // Accept one connection, complete the handshake, serve until the
-        // subject disconnects.
-        let accept_task = tokio::spawn(async move {
-            let (stream, _) = match listener.accept().await {
-                Ok(a) => a,
-                Err(e) => {
-                    eprintln!("[harness] client-scenario accept error: {e}");
-                    return;
-                }
-            };
-            stream.set_nodelay(true).ok();
-            match acceptor_on(StreamLink::tcp(stream))
-                .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
-                .await
-            {
-                Ok((_client, _session)) => {
-                    // Keep the session alive until the subject disconnects by
-                    // waiting forever — the accept_task is aborted after the
-                    // child process exits.
-                    std::future::pending::<()>().await;
-                }
-                Err(e) => {
-                    eprintln!("[harness] client-scenario handshake error: {e}");
-                }
+        match spec.transport {
+            SubjectTestTransport::Tcp => {
+                run_subject_client_scenario_tcp(spec.language, &scenario).await
             }
-        });
-
-        let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
-            .await
-            .map_err(|_| format!("subject client scenario `{scenario}` timed out"))?
-            .map_err(|e| format!("wait on subject process: {e}"))?;
-
-        accept_task.abort();
-
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "subject client scenario `{scenario}` failed with status {status}"
-            ))
+            SubjectTestTransport::Ws => {
+                run_subject_client_scenario_ws(spec.language, &scenario).await
+            }
+            SubjectTestTransport::Shm => Ok(()), // not supported for client scenarios
         }
     });
     result.unwrap();
+}
+
+async fn run_subject_client_scenario_tcp(
+    language: SubjectLanguage,
+    scenario: &str,
+) -> Result<(), String> {
+    let cmd = subject_cmd_for_language(language);
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| format!("bind: {e}"))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|e| format!("local_addr: {e}"))?;
+
+    let mut child = spawn_subject_cmd_with_env(
+        &cmd,
+        &addr.to_string(),
+        &[("SUBJECT_MODE", "client"), ("CLIENT_SCENARIO", scenario)],
+    )
+    .await?;
+
+    let accept_task = tokio::spawn(async move {
+        let (stream, _) = match listener.accept().await {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("[harness] client-scenario accept error: {e}");
+                return;
+            }
+        };
+        stream.set_nodelay(true).ok();
+        match acceptor_on(StreamLink::tcp(stream))
+            .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
+            .await
+        {
+            Ok((_client, _session)) => {
+                std::future::pending::<()>().await;
+            }
+            Err(e) => {
+                eprintln!("[harness] client-scenario handshake error: {e}");
+            }
+        }
+    });
+
+    let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
+        .await
+        .map_err(|_| format!("subject client scenario `{scenario}` timed out"))?
+        .map_err(|e| format!("wait on subject process: {e}"))?;
+
+    accept_task.abort();
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "subject client scenario `{scenario}` failed with status {status}"
+        ))
+    }
+}
+
+async fn run_subject_client_scenario_ws(
+    language: SubjectLanguage,
+    scenario: &str,
+) -> Result<(), String> {
+    let cmd = subject_cmd_for_language(language);
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| format!("bind: {e}"))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| format!("local_addr: {e}"))?
+        .port();
+    let ws_url = format!("ws://127.0.0.1:{port}/");
+
+    let mut child = spawn_subject_cmd_with_env(
+        &cmd,
+        &ws_url,
+        &[("SUBJECT_MODE", "client"), ("CLIENT_SCENARIO", scenario)],
+    )
+    .await?;
+
+    let accept_task = tokio::spawn(async move {
+        let (tcp_stream, _) = match listener.accept().await {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("[harness] ws client-scenario accept error: {e}");
+                return;
+            }
+        };
+        tcp_stream.set_nodelay(true).ok();
+        let ws = match WsLink::server(tcp_stream).await {
+            Ok(ws) => ws,
+            Err(e) => {
+                eprintln!("[harness] ws upgrade error: {e}");
+                return;
+            }
+        };
+        match acceptor_on(ws)
+            .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
+            .await
+        {
+            Ok((_client, _session)) => {
+                std::future::pending::<()>().await;
+            }
+            Err(e) => {
+                eprintln!("[harness] ws client-scenario handshake error: {e}");
+            }
+        }
+    });
+
+    let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
+        .await
+        .map_err(|_| format!("subject client scenario (ws) `{scenario}` timed out"))?
+        .map_err(|e| format!("wait on subject process: {e}"))?;
+
+    accept_task.abort();
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "subject client scenario (ws) `{scenario}` failed with status {status}"
+        ))
+    }
 }
 
 pub async fn run_subject_client_scenario_resumable(

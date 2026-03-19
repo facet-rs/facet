@@ -497,6 +497,12 @@ fn generate_spec_matrix(
             ignore: true,
         },
         Combo {
+            mod_name: "lang_typescript_transport_ws",
+            spec_const: "SUBJECT_TYPESCRIPT_WS",
+            shm: false,
+            ignore: true,
+        },
+        Combo {
             mod_name: "lang_swift_transport_tcp",
             spec_const: "SUBJECT_SWIFT_TCP",
             shm: false,
@@ -707,6 +713,7 @@ fn generate_spec_matrix(
         const SUBJECT_RUST_TCP: SubjectSpec = SubjectSpec::tcp(SubjectLanguage::Rust);
         const SUBJECT_RUST_SHM_GUEST: SubjectSpec = SubjectSpec::shm_guest(SubjectLanguage::Rust);
         const SUBJECT_TYPESCRIPT_TCP: SubjectSpec = SubjectSpec::tcp(SubjectLanguage::TypeScript);
+        const SUBJECT_TYPESCRIPT_WS: SubjectSpec = SubjectSpec::ws(SubjectLanguage::TypeScript);
         const SUBJECT_SWIFT_TCP: SubjectSpec = SubjectSpec::tcp(SubjectLanguage::Swift);
         const SUBJECT_SWIFT_SHM_GUEST: SubjectSpec = SubjectSpec::shm_guest(SubjectLanguage::Swift);
         const SUBJECT_SWIFT_SHM_HOST: SubjectSpec = SubjectSpec::shm_host(SubjectLanguage::Swift);

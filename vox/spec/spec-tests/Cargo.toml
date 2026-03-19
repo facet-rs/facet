@@ -12,6 +12,7 @@ roam-core = { workspace = true }
 roam-local.workspace = true
 roam-shm.workspace = true
 roam-stream = { workspace = true }
+roam-websocket = { workspace = true }
 roam-types = { workspace = true }
 shm-primitives = { workspace = true }
 spec-proto.workspace = true

@@ -23,6 +23,7 @@ import type {
 } from "@bearcove/roam-generated/testbed.generated.ts";
 import { TestbedClient, TestbedDispatcher } from "@bearcove/roam-generated/testbed.generated.ts";
 import { tcpConnector } from "@bearcove/roam-tcp";
+import { wsConnector } from "@bearcove/roam-ws";
 import {
   Driver,
   RpcErrorCode,
@@ -215,6 +216,13 @@ function expectSequentialPrefix(received: number[], label: string): void {
 }
 
 
+function makeConnector(addr: string) {
+  if (addr.startsWith("ws://") || addr.startsWith("wss://")) {
+    return wsConnector(addr);
+  }
+  return tcpConnector(addr);
+}
+
 async function runServer() {
   const addr = process.env.PEER_ADDR;
   if (!addr) {
@@ -225,7 +233,7 @@ async function runServer() {
   const acceptConnections = process.env.ACCEPT_CONNECTIONS === "1";
 
   console.error(`server mode: connecting to ${addr}, acceptConnections=${acceptConnections}`);
-  const established = await session.initiator(tcpConnector(addr), {
+  const established = await session.initiator(makeConnector(addr), {
     transport: subjectConduit(),
     onConnection: acceptConnections
       ? (connection) => {
@@ -260,7 +268,7 @@ async function runClient() {
   const scenario = process.env.CLIENT_SCENARIO ?? "echo";
   console.error(`client mode: connecting to ${addr}, scenario=${scenario}`);
 
-  const established = await session.initiator(tcpConnector(addr), {
+  const established = await session.initiator(makeConnector(addr), {
     transport: subjectConduit(),
   });
   const client = new TestbedClient(established.rootConnection().caller());

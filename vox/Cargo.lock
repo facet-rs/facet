@@ -2841,6 +2841,7 @@ dependencies = [
  "roam-shm",
  "roam-stream",
  "roam-types",
+ "roam-websocket",
  "shm-primitives",
  "shm-primitives-async",
  "spec-proto",

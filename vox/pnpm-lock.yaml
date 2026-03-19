@@ -112,6 +112,9 @@ importers:
       '@bearcove/roam-tcp':
         specifier: workspace:*
         version: link:../packages/roam-tcp
+      '@bearcove/roam-ws':
+        specifier: workspace:*
+        version: link:../packages/roam-ws
     devDependencies:
       '@types/node':
         specifier: ^22
