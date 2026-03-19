@@ -114,6 +114,7 @@ export function cborEnum(variantName: string, payload: Uint8Array): Uint8Array {
 
 export type CborValue =
   | number
+  | bigint
   | string
   | boolean
   | null
@@ -168,7 +169,7 @@ export function decodeCbor(buf: Uint8Array, offset = 0): DecodeResult {
   }
 }
 
-function decodeArgument(buf: Uint8Array, offset: number): { value: number; next: number } {
+function decodeArgument(buf: Uint8Array, offset: number): { value: number | bigint; next: number } {
   const additional = buf[offset] & 0x1f;
   if (additional < 24) {
     return { value: additional, next: offset + 1 };
@@ -189,37 +190,38 @@ function decodeArgument(buf: Uint8Array, offset: number): { value: number; next:
     return { value: value >>> 0, next: offset + 5 };
   }
   if (additional === 27) {
-    // 8-byte integer — for method_id (u64)
+    // 8-byte integer — return as bigint to avoid precision loss for u64 values.
     const view = new DataView(buf.buffer, buf.byteOffset + offset + 1, 8);
-    const hi = view.getUint32(0);
-    const lo = view.getUint32(4);
-    // Return as number if it fits, otherwise we'd need BigInt
-    // For schema purposes, method_id fits in Number.MAX_SAFE_INTEGER territory
-    const value = hi * 0x100000000 + lo;
+    const value = view.getBigUint64(0);
     return { value, next: offset + 9 };
   }
   throw new Error(`CBOR: unsupported additional info ${additional} at offset ${offset}`);
 }
 
-function decodeUint(buf: Uint8Array, offset: number): { value: number; next: number } {
+function decodeUint(buf: Uint8Array, offset: number): { value: number | bigint; next: number } {
   return decodeArgument(buf, offset);
 }
 
+function decodeLength(buf: Uint8Array, offset: number): { value: number; next: number } {
+  const result = decodeArgument(buf, offset);
+  return { value: Number(result.value), next: result.next };
+}
+
 function decodeByteString(buf: Uint8Array, offset: number): { value: Uint8Array; next: number } {
-  const { value: length, next: start } = decodeArgument(buf, offset);
+  const { value: length, next: start } = decodeLength(buf, offset);
   const end = start + length;
   return { value: buf.subarray(start, end), next: end };
 }
 
 function decodeTextString(buf: Uint8Array, offset: number): { value: string; next: number } {
-  const { value: length, next: start } = decodeArgument(buf, offset);
+  const { value: length, next: start } = decodeLength(buf, offset);
   const end = start + length;
   const text = new TextDecoder().decode(buf.subarray(start, end));
   return { value: text, next: end };
 }
 
 function decodeArray(buf: Uint8Array, offset: number): { value: CborValue[]; next: number } {
-  const { value: count, next: start } = decodeArgument(buf, offset);
+  const { value: count, next: start } = decodeLength(buf, offset);
   const items: CborValue[] = [];
   let pos = start;
   for (let i = 0; i < count; i++) {
@@ -231,7 +233,7 @@ function decodeArray(buf: Uint8Array, offset: number): { value: CborValue[]; nex
 }
 
 function decodeMap(buf: Uint8Array, offset: number): { value: CborMap; next: number } {
-  const { value: count, next: start } = decodeArgument(buf, offset);
+  const { value: count, next: start } = decodeLength(buf, offset);
   const map: CborMap = {};
   let pos = start;
   for (let i = 0; i < count; i++) {
