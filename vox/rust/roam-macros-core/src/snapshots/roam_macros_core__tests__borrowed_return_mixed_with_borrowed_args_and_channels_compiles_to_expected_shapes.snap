@@ -112,9 +112,18 @@ where
             }
         };
         if method_id == word_lab_service_descriptor().methods[0usize].id {
-            let args: (&'static str,) = match ::roam::schema_deser::schema_deserialize_args_borrowed(
-                args_bytes, method_id, &schemas,
-            ) {
+            let deser_result = if let Some(binder) = reply.channel_binder() {
+                ::roam::with_channel_binder(binder, || {
+                    ::roam::schema_deser::schema_deserialize_args_borrowed(
+                        args_bytes, method_id, &schemas,
+                    )
+                })
+            } else {
+                ::roam::schema_deser::schema_deserialize_args_borrowed(
+                    args_bytes, method_id, &schemas,
+                )
+            };
+            let args: (&'static str,) = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
                     reply
@@ -148,9 +157,18 @@ where
             return;
         }
         if method_id == word_lab_service_descriptor().methods[1usize].id {
-            let args: (String,) = match ::roam::schema_deser::schema_deserialize_args_borrowed(
-                args_bytes, method_id, &schemas,
-            ) {
+            let deser_result = if let Some(binder) = reply.channel_binder() {
+                ::roam::with_channel_binder(binder, || {
+                    ::roam::schema_deser::schema_deserialize_args_borrowed(
+                        args_bytes, method_id, &schemas,
+                    )
+                })
+            } else {
+                ::roam::schema_deser::schema_deserialize_args_borrowed(
+                    args_bytes, method_id, &schemas,
+                )
+            };
+            let args: (String,) = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
                     reply
@@ -183,40 +201,30 @@ where
             return;
         }
         if method_id == word_lab_service_descriptor().methods[2usize].id {
-            let mut args: (&'static str, Rx<String>, Tx<String>) =
-                match ::roam::schema_deser::schema_deserialize_args_borrowed(
+            let deser_result = if let Some(binder) = reply.channel_binder() {
+                ::roam::with_channel_binder(binder, || {
+                    ::roam::schema_deser::schema_deserialize_args_borrowed(
+                        args_bytes, method_id, &schemas,
+                    )
+                })
+            } else {
+                ::roam::schema_deser::schema_deserialize_args_borrowed(
                     args_bytes, method_id, &schemas,
-                ) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        reply
-                            .send_error(
-                                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
-                                    e.to_string(),
-                                ),
-                            )
-                            .await;
-                        return;
-                    }
-                };
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                if let Some(binder) = reply.channel_binder() {
-                    let plan =
-                        ::roam::RpcPlan::for_type::<(&'static str, Rx<String>, Tx<String>)>();
-                    if !plan.channel_locations.is_empty() {
-                        #[allow(unsafe_code)]
-                        unsafe {
-                            ::roam::bind_channels_callee_args(
-                                &mut args as *mut _ as *mut u8,
-                                plan,
-                                &call.channels,
-                                binder,
-                            );
-                        }
-                    }
+                )
+            };
+            let args: (&'static str, Rx<String>, Tx<String>) = match deser_result {
+                Ok(v) => v,
+                Err(e) => {
+                    reply
+                        .send_error(
+                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
+                                e.to_string(),
+                            ),
+                        )
+                        .await;
+                    return;
                 }
-            }
+            };
             let (prefix, input, output) = args;
             let extensions = ::roam::Extensions::new();
             let context = ::roam::RequestContext::with_extensions(
@@ -274,11 +282,9 @@ impl WordLabClient {
     pub async fn is_short(&self, word: &str) -> Result<bool, ::roam::RoamError> {
         let method_id = word_lab_service_descriptor().methods[0usize].id;
         let args = (word,);
-        let channels = vec![];
         let req = ::roam::RequestCall {
             method_id,
             args: ::roam::Payload::outgoing(&args),
-            channels,
             metadata: Default::default(),
             schemas: Default::default(),
         };
@@ -339,11 +345,9 @@ impl WordLabClient {
     ) -> Result<::roam::SelfRef<&'static str>, ::roam::RoamError> {
         let method_id = word_lab_service_descriptor().methods[1usize].id;
         let args = (word,);
-        let channels = vec![];
         let req = ::roam::RequestCall {
             method_id,
             args: ::roam::Payload::outgoing(&args),
-            channels,
             metadata: Default::default(),
             schemas: Default::default(),
         };
@@ -408,23 +412,10 @@ impl WordLabClient {
         output: Tx<String>,
     ) -> Result<u32, ::roam::RoamError> {
         let method_id = word_lab_service_descriptor().methods[2usize].id;
-        let mut args = (prefix, input, output);
-        #[cfg(not(target_arch = "wasm32"))]
-        let channels = if let Some(binder) = ::roam::Caller::channel_binder(&self.caller) {
-            let plan = ::roam::RpcPlan::for_type::<(&'static str, Rx<String>, Tx<String>)>();
-            #[allow(unsafe_code)]
-            unsafe {
-                ::roam::bind_channels_caller_args(&mut args as *mut _ as *mut u8, plan, binder)
-            }
-        } else {
-            vec![]
-        };
-        #[cfg(target_arch = "wasm32")]
-        let channels: Vec<::roam::ChannelId> = vec![];
+        let args = (prefix, input, output);
         let req = ::roam::RequestCall {
             method_id,
             args: ::roam::Payload::outgoing(&args),
-            channels,
             metadata: Default::default(),
             schemas: Default::default(),
         };

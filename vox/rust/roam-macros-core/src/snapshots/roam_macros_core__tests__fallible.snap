@@ -113,9 +113,18 @@ where
             }
         };
         if method_id == calc_service_descriptor().methods[0usize].id {
-            let args: (f64, f64) = match ::roam::schema_deser::schema_deserialize_args_borrowed(
-                args_bytes, method_id, &schemas,
-            ) {
+            let deser_result = if let Some(binder) = reply.channel_binder() {
+                ::roam::with_channel_binder(binder, || {
+                    ::roam::schema_deser::schema_deserialize_args_borrowed(
+                        args_bytes, method_id, &schemas,
+                    )
+                })
+            } else {
+                ::roam::schema_deser::schema_deserialize_args_borrowed(
+                    args_bytes, method_id, &schemas,
+                )
+            };
+            let args: (f64, f64) = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
                     reply
@@ -185,11 +194,9 @@ impl CalcClient {
     pub async fn div(&self, a: f64, b: f64) -> Result<f64, ::roam::RoamError<DivError>> {
         let method_id = calc_service_descriptor().methods[0usize].id;
         let args = (a, b);
-        let channels = vec![];
         let req = ::roam::RequestCall {
             method_id,
             args: ::roam::Payload::outgoing(&args),
-            channels,
             metadata: Default::default(),
             schemas: Default::default(),
         };

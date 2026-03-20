@@ -129,9 +129,18 @@ where
             }
         };
         if method_id == audit_service_descriptor().methods[0usize].id {
-            let args: (String,) = match ::roam::schema_deser::schema_deserialize_args_borrowed(
-                args_bytes, method_id, &schemas,
-            ) {
+            let deser_result = if let Some(binder) = reply.channel_binder() {
+                ::roam::with_channel_binder(binder, || {
+                    ::roam::schema_deser::schema_deserialize_args_borrowed(
+                        args_bytes, method_id, &schemas,
+                    )
+                })
+            } else {
+                ::roam::schema_deser::schema_deserialize_args_borrowed(
+                    args_bytes, method_id, &schemas,
+                )
+            };
+            let args: (String,) = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
                     reply
@@ -164,9 +173,18 @@ where
             return;
         }
         if method_id == audit_service_descriptor().methods[1usize].id {
-            let args: () = match ::roam::schema_deser::schema_deserialize_args_borrowed(
-                args_bytes, method_id, &schemas,
-            ) {
+            let deser_result = if let Some(binder) = reply.channel_binder() {
+                ::roam::with_channel_binder(binder, || {
+                    ::roam::schema_deser::schema_deserialize_args_borrowed(
+                        args_bytes, method_id, &schemas,
+                    )
+                })
+            } else {
+                ::roam::schema_deser::schema_deserialize_args_borrowed(
+                    args_bytes, method_id, &schemas,
+                )
+            };
+            let args: () = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
                     reply
@@ -239,11 +257,9 @@ impl AuditClient {
     ) -> Result<::roam::SelfRef<&'static str>, ::roam::RoamError> {
         let method_id = audit_service_descriptor().methods[0usize].id;
         let args = (payload,);
-        let channels = vec![];
         let req = ::roam::RequestCall {
             method_id,
             args: ::roam::Payload::outgoing(&args),
-            channels,
             metadata: Default::default(),
             schemas: Default::default(),
         };
@@ -304,11 +320,9 @@ impl AuditClient {
     pub async fn ping(&self) -> Result<u64, ::roam::RoamError> {
         let method_id = audit_service_descriptor().methods[1usize].id;
         let args = ();
-        let channels = vec![];
         let req = ::roam::RequestCall {
             method_id,
             args: ::roam::Payload::outgoing(&args),
-            channels,
             metadata: Default::default(),
             schemas: Default::default(),
         };

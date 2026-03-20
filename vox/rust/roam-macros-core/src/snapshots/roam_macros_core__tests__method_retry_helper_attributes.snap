@@ -131,9 +131,18 @@ where
             }
         };
         if method_id == billing_service_descriptor().methods[0usize].id {
-            let args: (String,) = match ::roam::schema_deser::schema_deserialize_args_borrowed(
-                args_bytes, method_id, &schemas,
-            ) {
+            let deser_result = if let Some(binder) = reply.channel_binder() {
+                ::roam::with_channel_binder(binder, || {
+                    ::roam::schema_deser::schema_deserialize_args_borrowed(
+                        args_bytes, method_id, &schemas,
+                    )
+                })
+            } else {
+                ::roam::schema_deser::schema_deserialize_args_borrowed(
+                    args_bytes, method_id, &schemas,
+                )
+            };
+            let args: (String,) = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
                     reply
@@ -167,22 +176,30 @@ where
             return;
         }
         if method_id == billing_service_descriptor().methods[1usize].id {
-            let args: (String, String) =
-                match ::roam::schema_deser::schema_deserialize_args_borrowed(
+            let deser_result = if let Some(binder) = reply.channel_binder() {
+                ::roam::with_channel_binder(binder, || {
+                    ::roam::schema_deser::schema_deserialize_args_borrowed(
+                        args_bytes, method_id, &schemas,
+                    )
+                })
+            } else {
+                ::roam::schema_deser::schema_deserialize_args_borrowed(
                     args_bytes, method_id, &schemas,
-                ) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        reply
-                            .send_error(
-                                ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
-                                    e.to_string(),
-                                ),
-                            )
-                            .await;
-                        return;
-                    }
-                };
+                )
+            };
+            let args: (String, String) = match deser_result {
+                Ok(v) => v,
+                Err(e) => {
+                    reply
+                        .send_error(
+                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
+                                e.to_string(),
+                            ),
+                        )
+                        .await;
+                    return;
+                }
+            };
             let (from, to) = args;
             let extensions = ::roam::Extensions::new();
             let context = ::roam::RequestContext::with_extensions(
@@ -240,11 +257,9 @@ impl BillingClient {
     pub async fn get_balance(&self, account: String) -> Result<u64, ::roam::RoamError> {
         let method_id = billing_service_descriptor().methods[0usize].id;
         let args = (account,);
-        let channels = vec![];
         let req = ::roam::RequestCall {
             method_id,
             args: ::roam::Payload::outgoing(&args),
-            channels,
             metadata: Default::default(),
             schemas: Default::default(),
         };
@@ -306,11 +321,9 @@ impl BillingClient {
     ) -> Result<u64, ::roam::RoamError<TransferError>> {
         let method_id = billing_service_descriptor().methods[1usize].id;
         let args = (from, to);
-        let channels = vec![];
         let req = ::roam::RequestCall {
             method_id,
             args: ::roam::Payload::outgoing(&args),
-            channels,
             metadata: Default::default(),
             schemas: Default::default(),
         };

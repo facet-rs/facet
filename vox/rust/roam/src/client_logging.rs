@@ -218,7 +218,6 @@ mod tests {
         let _ = caller
             .call(RequestCall {
                 method_id: MethodId(7),
-                channels: vec![],
                 metadata: vec![
                     MetadataEntry {
                         key: "authorization",

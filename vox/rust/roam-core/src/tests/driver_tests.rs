@@ -783,17 +783,15 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
     let client_session = client_session_rx.await.expect("client session handle sent");
 
     let (updates_tx, mut updates_rx) = channel::<u32>();
-    let mut args = SubscribeArgs {
+    let args = SubscribeArgs {
         updates: updates_tx,
     };
-    let channel_ids = unsafe {
-        bind_channels_caller_args(
-            (&mut args as *mut SubscribeArgs).cast::<u8>(),
-            RpcPlan::for_type::<SubscribeArgs>(),
-            &root_caller,
-        )
-    };
-    assert_eq!(channel_ids.as_slice(), &[ChannelId(1)]);
+    // Serializing the args binds the Tx's paired Rx via the thread-local binder.
+    let _bytes = roam_types::channel::with_channel_binder(&root_caller, || {
+        roam_postcard::to_vec(&args).expect("serialize args")
+    });
+    // The first allocated channel ID is 1 (odd parity).
+    let channel_id = ChannelId(1);
     drop(args);
     drop(root_caller);
 
@@ -807,7 +805,7 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
     server_caller
         .connection_sender()
         .send(ConnectionMessage::Channel(ChannelMessage {
-            id: channel_ids[0],
+            id: channel_id,
             body: ChannelBody::Item(ChannelItem {
                 item: Payload::outgoing(&value),
             }),
@@ -825,7 +823,7 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
     server_caller
         .connection_sender()
         .send(ConnectionMessage::Channel(ChannelMessage {
-            id: channel_ids[0],
+            id: channel_id,
             body: ChannelBody::Close(ChannelClose {
                 metadata: Default::default(),
             }),
@@ -2865,6 +2863,14 @@ async fn grant_credit_unblocks_driver_created_tx_channel() {
     let server_caller = server_task.await.expect("server setup failed");
     let (channel_id, sink) = server_caller.create_tx_channel();
 
+    // Exhaust the default 16 credits.
+    for _ in 0..16 {
+        let value = 0_u32;
+        sink.send_payload(Payload::outgoing(&value))
+            .await
+            .expect("send within initial credit");
+    }
+
     let send_task = moire::task::spawn(async move {
         let value = 42_u32;
         sink.send_payload(Payload::outgoing(&value)).await
@@ -2873,7 +2879,7 @@ async fn grant_credit_unblocks_driver_created_tx_channel() {
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     assert!(
         !send_task.is_finished(),
-        "send should block when initial credit is zero"
+        "send should block when credit is exhausted"
     );
 
     client_sender

@@ -308,7 +308,8 @@ pub fn run_message_v7_case() {
             id: RequestId(11),
             body: RequestBody::Call(call),
         }) => {
-            assert_eq!(call.channels, vec![ChannelId(3), ChannelId(5)]);
+            // Channel IDs are now inline in the serialized payload,
+            // no longer in a separate sidecar field.
             let payload = match call.args {
                 Payload::Incoming(bytes) => bytes,
                 _ => panic!("expected incoming bytes payload"),
