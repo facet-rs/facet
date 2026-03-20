@@ -1018,8 +1018,17 @@ impl SchemaRecvTracker {
     pub fn record_received(&self, payload: SchemaPayload) -> Result<(), DuplicateSchemaError> {
         {
             let mut received = self.received.lock().unwrap();
+            for schema in &payload.schemas {
+                dlog!("[schema] record_received: id={:?}", schema.id);
+            }
             for schema in payload.schemas {
-                if received.contains_key(&schema.id) {
+                if let Some(existing) = received.get(&schema.id) {
+                    dlog!(
+                        "[schema] DUPLICATE: id={:?} existing={:?} new={:?}",
+                        schema.id,
+                        existing,
+                        schema
+                    );
                     return Err(DuplicateSchemaError { type_id: schema.id });
                 }
                 received.insert(schema.id, schema);
@@ -1257,6 +1266,7 @@ fn finalize_content_hashes(
             type_ref.try_map(&resolve)
         };
 
+    let mut seen_ids = HashSet::new();
     let finalized: Vec<Schema> = schemas
         .into_iter()
         .map(|s| {
@@ -1267,7 +1277,10 @@ fn finalize_content_hashes(
                 kind: s.kind.try_map_type_refs(&mut resolve_type_ref)?,
             })
         })
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|s| seen_ids.insert(s.id))
+        .collect();
 
     Ok((finalized, temp_to_final))
 }

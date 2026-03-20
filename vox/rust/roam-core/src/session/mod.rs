@@ -955,19 +955,24 @@ impl Session {
                         RequestBody::Response(resp) => Some(&resp.schemas),
                         _ => None,
                     };
+                    roam_types::dlog!(
+                        "[schema] recv ({:?}): req={:?} body={} schemas_len={:?}",
+                        self.role,
+                        r.id,
+                        match &r.body {
+                            RequestBody::Call(_) => "Call",
+                            RequestBody::Response(_) => "Response",
+                            RequestBody::Cancel(_) => "Cancel",
+                        },
+                        schemas_cbor.map(|s| s.0.len())
+                    );
                     if let Some(schemas_cbor) = schemas_cbor
                         && !schemas_cbor.is_empty()
                     {
-                        match schemas_cbor.parse() {
-                            Ok(payload) => {
-                                if let Err(e) = self.schema_recv_tracker.record_received(payload) {
-                                    warn!("failed to record received schemas: {}", e);
-                                }
-                            }
-                            Err(e) => {
-                                warn!("failed to parse inlined schemas: {}", e);
-                            }
-                        }
+                        let payload = schemas_cbor.parse()
+                            .expect("inlined schemas must be valid CBOR");
+                        self.schema_recv_tracker.record_received(payload)
+                            .expect("received schemas must not contain duplicate type IDs");
                     }
                 }
                 // Record incoming calls so SessionCore::send() can look up

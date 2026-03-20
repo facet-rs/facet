@@ -1,8 +1,23 @@
-/// Debug logging macro — toggle by commenting/uncommenting the body.
+/// Debug logging macro — enabled by setting ROAM_DLOG=1 environment variable.
 #[macro_export]
 macro_rules! dlog {
     ($($arg:tt)*) => {
-        // eprintln!($($arg)*)
+        {
+            use ::std::sync::atomic::{AtomicU8, Ordering};
+            static ENABLED: AtomicU8 = AtomicU8::new(2); // 2 = uninitialized
+            let enabled = match ENABLED.load(Ordering::Relaxed) {
+                0 => false,
+                1 => true,
+                _ => {
+                    let val = ::std::env::var("ROAM_DLOG").is_ok_and(|v| v == "1");
+                    ENABLED.store(val as u8, Ordering::Relaxed);
+                    val
+                }
+            };
+            if enabled {
+                eprintln!($($arg)*);
+            }
+        }
     };
 }
 
