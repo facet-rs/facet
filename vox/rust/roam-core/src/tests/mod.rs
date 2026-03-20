@@ -1,5 +1,4 @@
 use facet::Facet;
-use facet_core::ConstParamKind;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -175,23 +174,6 @@ async fn interleaved_send_recv() {
         let received = client_rx.recv().await.unwrap().unwrap();
         assert_eq!(&*received, &format!("s2c-{i}"));
     }
-}
-
-#[test]
-fn tx_rx_const_param_n() {
-    let tx_shape = Tx::<String, 32>::SHAPE;
-    let cp = tx_shape.const_params;
-    assert_eq!(cp.len(), 1);
-    assert_eq!(cp[0].name, "N");
-    assert_eq!(cp[0].kind, ConstParamKind::Usize);
-    assert_eq!(cp[0].value, 32);
-
-    let rx_shape = Rx::<String, 8>::SHAPE;
-    let cp = rx_shape.const_params;
-    assert_eq!(cp.len(), 1);
-    assert_eq!(cp[0].name, "N");
-    assert_eq!(cp[0].kind, ConstParamKind::Usize);
-    assert_eq!(cp[0].value, 8);
 }
 
 struct TestSink {

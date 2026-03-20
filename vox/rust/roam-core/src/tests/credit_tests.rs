@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use roam_types::{ChannelSink, CreditSink, Metadata, Payload, RpcPlan, Rx, Tx, TxError};
+use roam_types::{ChannelSink, CreditSink, Metadata, Payload, Tx, TxError};
 
 /// A sink that completes immediately, counting sends.
 struct ImmediateSink {
