@@ -2201,4 +2201,139 @@ mod tests {
         let result: HashSet<u32> = from_slice(&bytes).unwrap();
         assert_eq!(result, val);
     }
+
+    // ========================================================================
+    // Skip f32 and i128 fields (exercises specific skip_primitive branches)
+    // ========================================================================
+
+    #[test]
+    fn skip_f32_field() {
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Msg {
+                pub id: u32,
+                pub temp: f32,
+                pub name: String,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Msg {
+                pub id: u32,
+                pub name: String,
+            }
+        }
+
+        let r = plan_for(remote::Msg::SHAPE, local::Msg::SHAPE).unwrap();
+        let bytes = to_vec(&remote::Msg {
+            id: 1,
+            temp: 3.14,
+            name: "x".into(),
+        })
+        .unwrap();
+        let result: local::Msg = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::Msg {
+                id: 1,
+                name: "x".into()
+            }
+        );
+    }
+
+    #[test]
+    fn skip_i128_field() {
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Msg {
+                pub id: u32,
+                pub big: i128,
+                pub name: String,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Msg {
+                pub id: u32,
+                pub name: String,
+            }
+        }
+
+        let r = plan_for(remote::Msg::SHAPE, local::Msg::SHAPE).unwrap();
+        let bytes = to_vec(&remote::Msg {
+            id: 1,
+            big: i128::MIN,
+            name: "y".into(),
+        })
+        .unwrap();
+        let result: local::Msg = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::Msg {
+                id: 1,
+                name: "y".into()
+            }
+        );
+    }
+
+    // ========================================================================
+    // Truncated input (EOF errors)
+    // ========================================================================
+
+    #[test]
+    fn truncated_struct_input_errors() {
+        #[derive(Facet, Debug)]
+        struct Msg {
+            id: u32,
+            name: String,
+        }
+
+        // Serialize a valid struct, then truncate the bytes
+        let bytes = to_vec(&Msg {
+            id: 42,
+            name: "hello world".into(),
+        })
+        .unwrap();
+        // Truncate to just the first byte (the varint for id)
+        let truncated = &bytes[..1];
+        let result: Result<Msg, _> = from_slice(truncated);
+        assert!(result.is_err(), "truncated input should error");
+    }
+
+    #[test]
+    fn truncated_list_input_errors() {
+        // Serialize a Vec, truncate mid-stream
+        let bytes = to_vec(&vec![1u32, 2, 3, 4, 5]).unwrap();
+        let truncated = &bytes[..2]; // length prefix + partial data
+        let result: Result<Vec<u32>, _> = from_slice(truncated);
+        assert!(result.is_err(), "truncated list should error");
+    }
+
+    // ========================================================================
+    // Round trip f32 (exercises f32-specific serialization)
+    // ========================================================================
+
+    #[test]
+    fn round_trip_f32() {
+        let val: f32 = 3.14;
+        let bytes = to_vec(&val).unwrap();
+        let result: f32 = from_slice(&bytes).unwrap();
+        assert!((result - val).abs() < f32::EPSILON);
+    }
+
+    // ========================================================================
+    // Slice-like types
+    // ========================================================================
+
+    #[test]
+    fn round_trip_boxed_str() {
+        let val: Box<str> = "hello".into();
+        let bytes = to_vec(&val).unwrap();
+        let result: String = from_slice(&bytes).unwrap();
+        assert_eq!(result, "hello");
+    }
 }
