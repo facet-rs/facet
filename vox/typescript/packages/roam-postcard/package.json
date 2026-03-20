@@ -26,7 +26,8 @@
     "README.md"
   ],
   "devDependencies": {
-    "vitest": "^2.1.0"
+    "@vitest/coverage-v8": "^4.1.0",
+    "vitest": "^4.1.0"
   },
   "license": "MIT OR Apache-2.0",
   "description": "Postcard serialization helpers for Roam service definitions",
