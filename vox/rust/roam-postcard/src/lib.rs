@@ -1719,4 +1719,238 @@ mod tests {
         let result: local::Msg = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
         assert_eq!(result, local::Msg::Pair(42, "hi".into()));
     }
+
+    // ========================================================================
+    // Round-trip tests for structural types (Array, Map, Set)
+    // ========================================================================
+
+    #[test]
+    fn round_trip_array() {
+        let val: [u32; 4] = [1, 2, 3, 4];
+        let bytes = to_vec(&val).unwrap();
+        let result: [u32; 4] = from_slice(&bytes).unwrap();
+        assert_eq!(result, val);
+    }
+
+    #[test]
+    fn round_trip_hashmap() {
+        let mut val = std::collections::HashMap::new();
+        val.insert("one".to_string(), 1u32);
+        val.insert("two".to_string(), 2);
+        let bytes = to_vec(&val).unwrap();
+        let result: std::collections::HashMap<String, u32> = from_slice(&bytes).unwrap();
+        assert_eq!(result, val);
+    }
+
+    #[test]
+    fn round_trip_unit_struct() {
+        #[derive(Facet, Debug, PartialEq)]
+        struct Empty;
+
+        let bytes = to_vec(&Empty).unwrap();
+        let result: Empty = from_slice(&bytes).unwrap();
+        assert_eq!(result, Empty);
+    }
+
+    // ========================================================================
+    // Planned deserialization with container-type fields
+    // ========================================================================
+
+    #[test]
+    fn translation_struct_with_array_field() {
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Data {
+                pub coords: [f64; 3],
+                pub label: String,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Data {
+                pub label: String,
+                pub coords: [f64; 3],
+            }
+        }
+
+        let r = plan_for(remote::Data::SHAPE, local::Data::SHAPE).unwrap();
+        let bytes = to_vec(&remote::Data {
+            coords: [1.0, 2.0, 3.0],
+            label: "pt".into(),
+        })
+        .unwrap();
+        let result: local::Data =
+            from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::Data {
+                label: "pt".into(),
+                coords: [1.0, 2.0, 3.0],
+            }
+        );
+    }
+
+    #[test]
+    fn translation_struct_with_map_field() {
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Data {
+                pub meta: std::collections::HashMap<String, u32>,
+                pub id: u32,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Data {
+                pub id: u32,
+                pub meta: std::collections::HashMap<String, u32>,
+            }
+        }
+
+        let r = plan_for(remote::Data::SHAPE, local::Data::SHAPE).unwrap();
+        let mut meta = std::collections::HashMap::new();
+        meta.insert("x".into(), 10);
+        let bytes = to_vec(&remote::Data {
+            meta: meta.clone(),
+            id: 5,
+        })
+        .unwrap();
+        let result: local::Data =
+            from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(result, local::Data { id: 5, meta });
+    }
+
+    #[test]
+    fn translation_struct_with_pointer_field() {
+        // Box<T> is a pointer type — tests the Pointer deserialization branch
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Data {
+                pub inner: Box<String>,
+                pub id: u32,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Data {
+                pub id: u32,
+                pub inner: Box<String>,
+            }
+        }
+
+        let r = plan_for(remote::Data::SHAPE, local::Data::SHAPE).unwrap();
+        let bytes = to_vec(&remote::Data {
+            inner: Box::new("hello".into()),
+            id: 7,
+        })
+        .unwrap();
+        let result: local::Data =
+            from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::Data {
+                id: 7,
+                inner: Box::new("hello".into()),
+            }
+        );
+    }
+
+    // ========================================================================
+    // Transparent wrapper deserialization
+    // ========================================================================
+
+    #[test]
+    fn round_trip_transparent_wrapper() {
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(transparent)]
+        struct Wrapper(u32);
+
+        let bytes = to_vec(&Wrapper(42)).unwrap();
+        let result: Wrapper = from_slice(&bytes).unwrap();
+        assert_eq!(result, Wrapper(42));
+    }
+
+    #[test]
+    fn translation_struct_field_reorder_with_nested_struct() {
+        // Tests that planned deserialization handles nested structs
+        // through the transparent wrapper / inner deserialization path
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Outer {
+                pub inner: Inner,
+                pub id: u32,
+            }
+            #[derive(Facet, Debug)]
+            pub struct Inner {
+                pub value: String,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Outer {
+                pub id: u32,
+                pub inner: Inner,
+            }
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Inner {
+                pub value: String,
+            }
+        }
+
+        let r = plan_for(remote::Outer::SHAPE, local::Outer::SHAPE).unwrap();
+        let bytes = to_vec(&remote::Outer {
+            inner: remote::Inner {
+                value: "hello".into(),
+            },
+            id: 42,
+        })
+        .unwrap();
+        let result: local::Outer =
+            from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::Outer {
+                id: 42,
+                inner: local::Inner {
+                    value: "hello".into(),
+                },
+            }
+        );
+    }
+
+    // ========================================================================
+    // 128-bit integer round trips
+    // ========================================================================
+
+    #[test]
+    fn round_trip_u128() {
+        let val: u128 = 340282366920938463463374607431768211455; // u128::MAX
+        let bytes = to_vec(&val).unwrap();
+        let result: u128 = from_slice(&bytes).unwrap();
+        assert_eq!(result, val);
+    }
+
+    #[test]
+    fn round_trip_i128() {
+        let val: i128 = -170141183460469231731687303715884105728; // i128::MIN
+        let bytes = to_vec(&val).unwrap();
+        let result: i128 = from_slice(&bytes).unwrap();
+        assert_eq!(result, val);
+    }
+
+    #[test]
+    fn round_trip_u128_zero() {
+        let val: u128 = 0;
+        let bytes = to_vec(&val).unwrap();
+        let result: u128 = from_slice(&bytes).unwrap();
+        assert_eq!(result, val);
+    }
 }
