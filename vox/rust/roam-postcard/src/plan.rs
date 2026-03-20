@@ -212,36 +212,26 @@ fn nested_plan(
     input: &PlanInput,
 ) -> Result<Option<TranslationPlan>, TranslationError> {
     let resolve_schema = |type_ref: &TypeRef, registry: &SchemaRegistry, side: SchemaSide| {
-        let kind = type_ref.resolve_kind(registry).ok_or_else(|| {
-            TranslationError::new(TranslationErrorKind::SchemaNotFound {
-                type_id: match type_ref {
-                    TypeRef::Concrete { type_id, .. } => *type_id,
-                    TypeRef::Var(_) => TypeSchemaId(0),
-                },
-                side,
-            })
-        })?;
-        // Get the base schema for metadata (id, name, type_params)
-        let base = match type_ref {
-            TypeRef::Concrete { type_id, .. } => registry.get(type_id).cloned(),
-            _ => None,
-        };
-        let schema = match base {
-            Some(s) => Schema {
-                id: s.id,
-                type_params: vec![], // resolved — no more params
-                kind,
-            },
-            None => {
-                return Err(TranslationError::new(
-                    TranslationErrorKind::SchemaNotFound {
-                        type_id: TypeSchemaId(0),
-                        side,
-                    },
-                ));
+        let type_id = match type_ref {
+            TypeRef::Concrete { type_id, .. } => *type_id,
+            TypeRef::Var(name) => {
+                return Err(TranslationError::new(TranslationErrorKind::UnresolvedVar {
+                    name: format!("{name:?}"),
+                    side,
+                }));
             }
         };
-        Ok(schema)
+        let kind = type_ref.resolve_kind(registry).ok_or_else(|| {
+            TranslationError::new(TranslationErrorKind::SchemaNotFound { type_id, side })
+        })?;
+        let base = registry.get(&type_id).ok_or_else(|| {
+            TranslationError::new(TranslationErrorKind::SchemaNotFound { type_id, side })
+        })?;
+        Ok(Schema {
+            id: base.id,
+            type_params: vec![],
+            kind,
+        })
     };
 
     let remote_schema =

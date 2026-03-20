@@ -205,6 +205,10 @@ pub enum TranslationErrorKind {
         remote_len: usize,
         local_len: usize,
     },
+    /// A type variable (Var) appeared where a concrete type was expected.
+    /// This means Var substitution didn't happen — a bug in the extraction
+    /// or plan building pipeline.
+    UnresolvedVar { name: String, side: SchemaSide },
 }
 
 /// Which side of the schema comparison a missing schema was on.
@@ -348,6 +352,12 @@ impl fmt::Display for TranslationError {
                     "tuple length mismatch: remote '{}' has {remote_len} elements, local '{}' has {local_len} elements",
                     schema_label(remote),
                     schema_label(local),
+                )
+            }
+            TranslationErrorKind::UnresolvedVar { name, side } => {
+                write!(
+                    f,
+                    "unresolved type variable {name} on {side} side — Var substitution failed"
                 )
             }
         }

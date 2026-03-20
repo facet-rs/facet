@@ -2336,4 +2336,73 @@ mod tests {
         let result: String = from_slice(&bytes).unwrap();
         assert_eq!(result, "hello");
     }
+
+    // ========================================================================
+    // Proxy type deserialization
+    // ========================================================================
+
+    #[test]
+    fn proxy_type_round_trip() {
+        // Proxied<T> is serialized as its proxy type (u32), then convert_in
+        // builds the actual value. This exercises the proxy deserialization path.
+        #[derive(Debug, PartialEq, Facet)]
+        #[facet(proxy = u32)]
+        struct Proxied {
+            inner: u32,
+        }
+
+        impl From<u32> for Proxied {
+            fn from(v: u32) -> Self {
+                Proxied { inner: v }
+            }
+        }
+
+        impl From<&Proxied> for u32 {
+            fn from(p: &Proxied) -> Self {
+                p.inner
+            }
+        }
+
+        // Serialize the proxy value (u32)
+        let bytes = to_vec(&42u32).unwrap();
+        // Deserialize as Proxied — should go through proxy path
+        let result: Proxied = from_slice(&bytes).unwrap();
+        assert_eq!(result, Proxied { inner: 42 });
+    }
+
+    #[test]
+    fn proxy_type_in_struct_round_trip() {
+        // Test that a struct containing a proxied field round-trips correctly.
+        #[derive(Debug, PartialEq, Facet)]
+        #[facet(proxy = u32)]
+        struct Proxied {
+            inner: u32,
+        }
+
+        impl From<u32> for Proxied {
+            fn from(v: u32) -> Self {
+                Proxied { inner: v }
+            }
+        }
+
+        impl From<&Proxied> for u32 {
+            fn from(p: &Proxied) -> Self {
+                p.inner
+            }
+        }
+
+        #[derive(Debug, PartialEq, Facet)]
+        struct Msg {
+            name: String,
+            value: Proxied,
+        }
+
+        let msg = Msg {
+            name: "test".into(),
+            value: Proxied { inner: 99 },
+        };
+        let bytes = to_vec(&msg).unwrap();
+        let result: Msg = from_slice(&bytes).unwrap();
+        assert_eq!(result, msg);
+    }
 }
