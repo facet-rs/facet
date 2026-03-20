@@ -9,7 +9,6 @@ use spec_proto::{
     Canvas, Color, Config, LookupError, MathError, Measurement, Message, Person, Point, Profile,
     Record, Rectangle, Shape, Status, Tag, TaggedPoint, Testbed, TestbedClient, TestbedDispatcher,
 };
-use std::future::Future;
 use tracing::{debug, error, info, instrument};
 
 #[cfg(windows)]
@@ -292,7 +291,7 @@ fn main() -> Result<(), String> {
 ///
 /// Used by cross-language harness tests where another subject acts as the client.
 async fn listen_and_serve() -> Result<(), String> {
-    use roam_core::{TransportMode, acceptor_on};
+    use roam_core::acceptor_on;
     use tokio::net::TcpListener;
 
     let listen_port: u16 = std::env::var("LISTEN_PORT")
@@ -743,7 +742,7 @@ async fn run_client() -> Result<(), String> {
             info!("shape_area result: {area}");
         }
         "create_canvas" => {
-            use spec_proto::{Canvas, Color, Shape};
+            use spec_proto::{Color, Shape};
             let canvas = client
                 .create_canvas(
                     "enum-canvas".to_string(),

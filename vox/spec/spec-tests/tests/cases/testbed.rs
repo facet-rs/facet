@@ -1,5 +1,5 @@
 use roam::RoamError;
-use spec_proto::{Color, LookupError, MathError, Message, Point, Rectangle, Shape, Status, Tag};
+use spec_proto::{Color, LookupError, MathError, Message, Point, Rectangle, Shape, Tag};
 use spec_tests::harness::{
     SubjectSpec, accept_subject_spec, run_async, run_subject_client_scenario,
 };

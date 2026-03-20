@@ -27,6 +27,37 @@ use crate::{MethodId, is_rx, is_tx};
 #[derive(Facet, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct TypeSchemaId(pub u64);
 
+/// Temporary index assigned during schema extraction to handle cycles in
+/// recursive types. Completely unrelated to type parameters — this is purely
+/// a bookkeeping index for the extraction/hashing pipeline.
+#[derive(Facet, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct CycleSchemaIndex(u64);
+
+impl CycleSchemaIndex {
+    /// The starting index for a fresh extraction pass.
+    fn first() -> Self {
+        Self(1)
+    }
+
+    /// Return the current index and advance to the next one.
+    fn next(&mut self) -> Self {
+        let current = *self;
+        self.0 += 1;
+        current
+    }
+}
+
+/// The name of a generic type parameter (e.g. `"T"`, `"K"`, `"V"`).
+///
+/// Used in two places:
+/// - `Schema::type_params` — declares the parameter names for a generic type
+/// - `TypeRef::Var` — references a parameter by name at usage sites
+///
+/// Cannot be constructed outside this module — the only legitimate source
+/// is facet's `TypeParam::name`.
+#[derive(Facet, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct TypeParamName(String);
+
 /// A reference to a type in a schema. Either a concrete type (with optional
 /// type arguments for generics) or a type variable bound by the enclosing
 /// generic's `type_params`.
@@ -42,9 +73,9 @@ pub enum TypeRef<Id = TypeSchemaId> {
         /// Type arguments for generic types. Empty for non-generic types.
         args: Vec<TypeRef<Id>>,
     },
-    /// A reference to a type parameter of the enclosing generic type.
-    /// The index refers to the `type_params` list on the `Schema`.
-    Var(u32),
+    /// A reference to a type parameter of the enclosing generic type,
+    /// by name (e.g. `TypeParamName("T")`).
+    Var(TypeParamName),
 }
 
 impl<Id> TypeRef<Id> {
@@ -106,16 +137,21 @@ pub enum MixedId {
     /// A final content hash (from a previously extracted type).
     Final(TypeSchemaId),
     /// A temporary index assigned during the current extraction pass.
-    Temp(u64),
+    /// Used only for cycle detection/resolution during hashing.
+    Temp(CycleSchemaIndex),
 }
 
 /// The root schema type, generic over the ID representation.
 #[derive(Facet, Clone, Debug)]
 pub struct Schema<Id = TypeSchemaId> {
-    pub type_id: Id,
+    /// A unique identifier for this schema (hash of its contents)
+    pub id: Id,
+
     /// Type parameter names for generic types. Empty for non-generic types.
     #[facet(default)]
-    pub type_params: Vec<String>,
+    pub type_params: Vec<TypeParamName>,
+
+    /// The inner description of the schema, if it's a struct, an enum, etc.
     pub kind: SchemaKind<Id>,
 }
 
@@ -456,7 +492,7 @@ pub type SchemaRegistry = HashMap<TypeSchemaId, Schema>;
 
 /// Build a SchemaRegistry from a list of schemas.
 pub fn build_registry(schemas: &[Schema]) -> SchemaRegistry {
-    schemas.iter().map(|s| (s.type_id, s.clone())).collect()
+    schemas.iter().map(|s| (s.id, s.clone())).collect()
 }
 
 /// Binds a method to the root TypeSchemaId of the type being sent for that
@@ -546,8 +582,8 @@ pub struct SchemaSendTracker {
     /// All type schema IDs we've sent so far (for dedup across methods that
     /// share types).
     sent_type_ids: HashSet<TypeSchemaId>,
-    /// Next ID to assign (temporary — will be replaced by content hashing).
-    next_id: u64,
+    /// Next index to assign during extraction.
+    next_id: CycleSchemaIndex,
 }
 
 impl SchemaSendTracker {
@@ -556,7 +592,7 @@ impl SchemaSendTracker {
             sent_methods: HashMap::new(),
             shape_to_id: HashMap::new(),
             sent_type_ids: HashSet::new(),
-            next_id: 1,
+            next_id: CycleSchemaIndex::first(),
         }
     }
 
@@ -565,7 +601,7 @@ impl SchemaSendTracker {
         self.sent_methods.clear();
         self.shape_to_id.clear();
         self.sent_type_ids.clear();
-        self.next_id = 1;
+        self.next_id = CycleSchemaIndex::first();
     }
 
     /// Allocate or look up a MixedId for a Shape.
@@ -573,8 +609,7 @@ impl SchemaSendTracker {
         if let Some(&id) = self.shape_to_id.get(shape) {
             return id;
         }
-        let id = MixedId::Temp(self.next_id);
-        self.next_id += 1;
+        let id = MixedId::Temp(self.next_id.next());
         self.shape_to_id.insert(shape, id);
         id
     }
@@ -606,13 +641,13 @@ impl SchemaSendTracker {
         // Slow path: extract, deduplicate, encode.
         let all_schemas = self.extract_schemas(shape);
         let root_type_schema_id = match all_schemas.last() {
-            Some(s) => s.type_id,
+            Some(s) => s.id,
             None => return CborPayload::default(),
         };
 
         let unsent: Vec<Schema> = all_schemas
             .into_iter()
-            .filter(|s| self.sent_type_ids.insert(s.type_id))
+            .filter(|s| self.sent_type_ids.insert(s.id))
             .collect();
 
         let method_binding = MethodSchemaBinding {
@@ -715,12 +750,10 @@ impl SchemaRecvTracker {
         {
             let mut received = self.received.lock().unwrap();
             for schema in payload.schemas {
-                if received.contains_key(&schema.type_id) {
-                    return Err(DuplicateSchemaError {
-                        type_id: schema.type_id,
-                    });
+                if received.contains_key(&schema.id) {
+                    return Err(DuplicateSchemaError { type_id: schema.id });
                 }
-                received.insert(schema.type_id, schema);
+                received.insert(schema.id, schema);
             }
         }
         for binding in payload.method_bindings {
@@ -791,7 +824,10 @@ pub fn extract_schemas(shape: &'static Shape) -> Vec<Schema> {
 // r[impl schema.type-id.hash]
 // r[impl schema.hash.recursive]
 /// Resolve a MixedId to a TypeSchemaId for hashing purposes.
-fn resolve_mixed(id: MixedId, temp_to_final: &HashMap<u64, TypeSchemaId>) -> TypeSchemaId {
+fn resolve_mixed(
+    id: MixedId,
+    temp_to_final: &HashMap<CycleSchemaIndex, TypeSchemaId>,
+) -> TypeSchemaId {
     match id {
         MixedId::Final(tid) => tid,
         MixedId::Temp(t) => temp_to_final.get(&t).copied().unwrap_or(TypeSchemaId(0)),
@@ -808,10 +844,10 @@ fn resolve_mixed(id: MixedId, temp_to_final: &HashMap<u64, TypeSchemaId>) -> Typ
 // r[impl schema.hash.recursive]
 fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
     // Only Temp entries need hashing. Build index of temp IDs.
-    let temp_to_idx: HashMap<u64, usize> = schemas
+    let temp_to_idx: HashMap<CycleSchemaIndex, usize> = schemas
         .iter()
         .enumerate()
-        .filter_map(|(i, s)| match s.type_id {
+        .filter_map(|(i, s)| match s.id {
             MixedId::Temp(t) => Some((t, i)),
             MixedId::Final(_) => None,
         })
@@ -867,7 +903,7 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
     let mut in_recursive_group: Vec<bool> = vec![false; n];
 
     for (i, schema) in schemas.iter().enumerate() {
-        if matches!(schema.type_id, MixedId::Final(_)) {
+        if matches!(schema.id, MixedId::Final(_)) {
             continue; // Already finalized, skip.
         }
         for r in collect_refs(&schema.kind) {
@@ -883,14 +919,14 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
     }
 
     // Map from temp ID -> final content hash.
-    let mut temp_to_final: HashMap<u64, TypeSchemaId> = HashMap::new();
+    let mut temp_to_final: HashMap<CycleSchemaIndex, TypeSchemaId> = HashMap::new();
 
     // Phase 1: Hash non-recursive temp types bottom-up.
     for (i, schema) in schemas.iter().enumerate() {
         if in_recursive_group[i] {
             continue;
         }
-        if let MixedId::Temp(temp) = schema.type_id {
+        if let MixedId::Temp(temp) = schema.id {
             let final_id =
                 compute_content_hash(&schema.kind, &|mid| resolve_mixed(mid, &temp_to_final));
             temp_to_final.insert(temp, final_id);
@@ -912,9 +948,9 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
         let group_end = i;
 
         // Collect the temp IDs in this group.
-        let group_temp_ids: HashSet<u64> = schemas[group_start..group_end]
+        let group_temp_ids: HashSet<CycleSchemaIndex> = schemas[group_start..group_end]
             .iter()
-            .filter_map(|s| match s.type_id {
+            .filter_map(|s| match s.id {
                 MixedId::Temp(t) => Some(t),
                 _ => None,
             })
@@ -956,7 +992,7 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
             let final_hash =
                 TypeSchemaId(u64::from_le_bytes(fo.as_bytes()[0..8].try_into().unwrap()));
 
-            if let MixedId::Temp(t) = schemas[group_start + idx].type_id {
+            if let MixedId::Temp(t) = schemas[group_start + idx].id {
                 temp_to_final.insert(t, final_hash);
             }
         }
@@ -965,7 +1001,7 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
     // Phase 3: Convert MixedSchema -> Schema by resolving all MixedIds.
     fn resolve_kind(
         kind: MixedSchemaKind,
-        temp_to_final: &HashMap<u64, TypeSchemaId>,
+        temp_to_final: &HashMap<CycleSchemaIndex, TypeSchemaId>,
     ) -> SchemaKind {
         let r = |mid: MixedId| -> TypeSchemaId {
             match mid {
@@ -1041,14 +1077,14 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
     schemas
         .into_iter()
         .map(|s| {
-            let type_id = match s.type_id {
+            let type_id = match s.id {
                 MixedId::Final(tid) => tid,
                 MixedId::Temp(t) => *temp_to_final
                     .get(&t)
                     .expect("unresolved temp ID during finalization"),
             };
             Schema {
-                type_id,
+                id: type_id,
                 type_params: s.type_params,
                 kind: resolve_kind(s.kind, &temp_to_final),
             }
@@ -1069,7 +1105,7 @@ impl<'a> ExtractCtx<'a> {
     fn push_schema(&mut self, shape: &'static Shape, type_id: MixedId, kind: MixedSchemaKind) {
         if self.seen.insert(shape) {
             self.schemas.push(MixedSchema {
-                type_id,
+                id: type_id,
                 type_params: vec![],
                 kind,
             });
@@ -1402,7 +1438,7 @@ mod tests {
     #[test]
     fn cbor_round_trip() {
         let schema = Schema {
-            type_id: TypeSchemaId(1),
+            id: TypeSchemaId(1),
             type_params: vec![],
             kind: SchemaKind::Primitive {
                 primitive_type: PrimitiveType::U32,
@@ -1411,7 +1447,7 @@ mod tests {
         let bytes = build_schema_message(std::slice::from_ref(&schema), &[]);
         let payload = parse_schema_message(&bytes).expect("should parse CBOR");
         assert_eq!(payload.schemas.len(), 1);
-        assert_eq!(payload.schemas[0].type_id, schema.type_id);
+        assert_eq!(payload.schemas[0].id, schema.id);
     }
 
     // r[verify schema.format.primitive]
@@ -1724,7 +1760,7 @@ mod tests {
     fn tracker_record_and_get_received() {
         let tracker = SchemaRecvTracker::new();
         let schemas = extract_schemas(<u32 as Facet>::SHAPE);
-        let id = schemas[0].type_id;
+        let id = schemas[0].id;
         assert!(tracker.get_received(&id).is_none());
         tracker
             .record_received(SchemaPayload {
@@ -1748,14 +1784,14 @@ mod tests {
         let schemas2 = tracker2.extract_schemas(<(u32, String) as Facet>::SHAPE);
         assert_eq!(schemas.len(), schemas2.len());
         for (a, b) in schemas.iter().zip(schemas2.iter()) {
-            assert_eq!(a.type_id, b.type_id, "content hash should be deterministic");
+            assert_eq!(a.id, b.id, "content hash should be deterministic");
         }
 
         // Different types must produce different hashes.
         let mut tracker3 = SchemaSendTracker::new();
         let schemas3 = tracker3.extract_schemas(<(u64, String) as Facet>::SHAPE);
-        let root_hash = schemas.last().unwrap().type_id;
-        let root_hash3 = schemas3.last().unwrap().type_id;
+        let root_hash = schemas.last().unwrap().id;
+        let root_hash3 = schemas3.last().unwrap().id;
         assert_ne!(
             root_hash, root_hash3,
             "different types should have different hashes"
@@ -1820,8 +1856,8 @@ mod tests {
         let schemas1 = extract_schemas(Point::SHAPE);
         let schemas2 = extract_schemas(Point::SHAPE);
         assert_eq!(
-            schemas1.last().unwrap().type_id,
-            schemas2.last().unwrap().type_id,
+            schemas1.last().unwrap().id,
+            schemas2.last().unwrap().id,
             "same struct must produce the same content hash"
         );
     }
@@ -1842,13 +1878,13 @@ mod tests {
         assert!(schemas1.len() >= 2);
 
         // Same recursive type must produce identical hashes.
-        let root1 = schemas1.last().unwrap().type_id;
-        let root2 = schemas2.last().unwrap().type_id;
+        let root1 = schemas1.last().unwrap().id;
+        let root2 = schemas2.last().unwrap().id;
         assert_eq!(root1, root2, "recursive type hash must be deterministic");
 
         // All type IDs in the output must be valid content hashes (non-zero).
         for s in &schemas1 {
-            assert_ne!(s.type_id.0, 0, "content hash must not be zero");
+            assert_ne!(s.id.0, 0, "content hash must not be zero");
         }
     }
 
@@ -1928,7 +1964,7 @@ mod tests {
                 method_bindings: vec![],
             })
             .expect_err("duplicate should fail");
-        assert_eq!(err.type_id, schemas[0].type_id);
+        assert_eq!(err.type_id, schemas[0].id);
     }
 
     #[test]

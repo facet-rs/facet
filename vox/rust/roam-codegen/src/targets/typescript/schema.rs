@@ -371,7 +371,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         all_schemas: &mut Vec<Schema>,
     ) -> TypeSchemaId {
         let schemas = tracker.extract_schemas(shape);
-        let root = schemas.last().map(|s| s.type_id).unwrap_or(TypeSchemaId(0));
+        let root = schemas.last().map(|s| s.id).unwrap_or(TypeSchemaId(0));
         all_schemas.extend(schemas);
         root
     }
@@ -409,7 +409,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
             };
             let type_id = compute_content_hash(&kind, &|id| id);
             all_schemas.push(Schema {
-                type_id,
+                id: type_id,
                 type_params: vec![],
                 kind,
             });
@@ -477,7 +477,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         };
         let roam_error_id = compute_content_hash(&roam_error_kind, &|id| id);
         all_schemas.push(Schema {
-            type_id: roam_error_id,
+            id: roam_error_id,
             type_params: vec![],
             kind: roam_error_kind,
         });
@@ -504,7 +504,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         };
         let result_id = compute_content_hash(&result_kind, &|id| id);
         all_schemas.push(Schema {
-            type_id: result_id,
+            id: result_id,
             type_params: vec![],
             kind: result_kind,
         });
@@ -518,7 +518,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
 
     // Dedup and CBOR-encode.
     for schema in &all_schemas {
-        let id = schema.type_id.0;
+        let id = schema.id.0;
         if schema_ids_seen.insert(id) {
             let bytes = facet_cbor::to_vec(schema).expect("failed to CBOR-encode schema");
             schema_bytes.push((id, bytes));
@@ -527,7 +527,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
 
     // Build the schema ID → index map for dep tracking.
     let schema_id_set: std::collections::HashSet<u64> =
-        all_schemas.iter().map(|s| s.type_id.0).collect();
+        all_schemas.iter().map(|s| s.id.0).collect();
 
     // Build method infos with final content-hashed IDs.
     for info in &method_schema_infos {
@@ -545,7 +545,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
                 }
                 deps.push(id.0);
                 // Find the schema and add its children.
-                if let Some(schema) = all_schemas.iter().find(|s| s.type_id == id) {
+                if let Some(schema) = all_schemas.iter().find(|s| s.id == id) {
                     for child in schema_child_ids(&schema.kind) {
                         queue.push(child);
                     }
