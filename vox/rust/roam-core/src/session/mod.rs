@@ -280,9 +280,6 @@ pub struct Session {
     keepalive: Option<SessionKeepaliveConfig>,
     resume_notifier: watch::Sender<u64>,
     recoverer: Option<Box<dyn ConduitRecoverer>>,
-
-    /// Schema recv tracker — shared across all connections, reset on reconnection.
-    schema_recv_tracker: Arc<roam_types::SchemaRecvTracker>,
 }
 
 #[derive(Debug)]
@@ -311,6 +308,9 @@ pub struct ConnectionState {
     /// Sender for routing incoming messages to the per-connection driver task.
     conn_tx: mpsc::Sender<RecvMessage>,
     closed_tx: watch::Sender<bool>,
+
+    /// Per-connection schema recv tracker — schemas are scoped to a connection.
+    schema_recv_tracker: Arc<roam_types::SchemaRecvTracker>,
 }
 
 #[derive(Debug)]
@@ -676,7 +676,6 @@ impl Session {
             keepalive,
             resume_notifier,
             recoverer,
-            schema_recv_tracker: Arc::new(roam_types::SchemaRecvTracker::new()),
         }
     }
 
@@ -739,6 +738,7 @@ impl Session {
                 peer_settings,
                 conn_tx,
                 closed_tx,
+                schema_recv_tracker: Arc::new(roam_types::SchemaRecvTracker::new()),
             }),
         );
 
@@ -916,8 +916,11 @@ impl Session {
 
         self.sess_core.replace_tx_and_reset_schemas(tx);
         self.rx = rx;
-        // Reset the recv tracker on reconnection — type IDs are per-connection
-        self.schema_recv_tracker = Arc::new(roam_types::SchemaRecvTracker::new());
+        // Reset the root connection's recv tracker on reconnection —
+        // type IDs are per-connection and must not carry over.
+        if let Some(ConnectionSlot::Active(state)) = self.conns.get_mut(&ConnectionId::ROOT) {
+            state.schema_recv_tracker = Arc::new(roam_types::SchemaRecvTracker::new());
+        }
         Ok(())
     }
 
@@ -969,12 +972,16 @@ impl Session {
                         },
                         schemas_cbor.map(|s| s.0.len())
                     );
+                    let state = match self.conns.get(&conn_id) {
+                        Some(ConnectionSlot::Active(state)) => state,
+                        _ => return,
+                    };
                     if let Some(schemas_cbor) = schemas_cbor
                         && !schemas_cbor.is_empty()
                     {
                         let payload = schemas_cbor.parse()
                             .expect("inlined schemas must be valid CBOR");
-                        self.schema_recv_tracker.record_received(payload)
+                        state.schema_recv_tracker.record_received(payload)
                             .expect("received schemas must not contain duplicate type IDs");
                     }
                 }
@@ -983,12 +990,13 @@ impl Session {
                 if let RequestBody::Call(call) = &r.body {
                     self.sess_core.record_incoming_call(conn_id, r.id, call.method_id);
                 }
-                let conn_tx = match self.conns.get(&conn_id) {
-                    Some(ConnectionSlot::Active(state)) => state.conn_tx.clone(),
+                let state = match self.conns.get(&conn_id) {
+                    Some(ConnectionSlot::Active(state)) => state,
                     _ => return,
                 };
+                let conn_tx = state.conn_tx.clone();
                 let recv_msg = RecvMessage {
-                    schemas: Arc::clone(&self.schema_recv_tracker),
+                    schemas: Arc::clone(&state.schema_recv_tracker),
                     msg: r.map(ConnectionMessage::Request),
                 };
                 if conn_tx.send(recv_msg).await.is_err() {
@@ -997,12 +1005,13 @@ impl Session {
                 }
             }
             MessagePayload::ChannelMessage(c) => {
-                let conn_tx = match self.conns.get(&conn_id) {
-                    Some(ConnectionSlot::Active(state)) => state.conn_tx.clone(),
+                let state = match self.conns.get(&conn_id) {
+                    Some(ConnectionSlot::Active(state)) => state,
                     _ => return,
                 };
+                let conn_tx = state.conn_tx.clone();
                 let recv_msg = RecvMessage {
-                    schemas: Arc::clone(&self.schema_recv_tracker),
+                    schemas: Arc::clone(&state.schema_recv_tracker),
                     msg: c.map(ConnectionMessage::Channel),
                 };
                 if conn_tx.send(recv_msg).await.is_err() {
