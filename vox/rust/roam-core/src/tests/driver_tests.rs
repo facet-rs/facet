@@ -2131,6 +2131,88 @@ async fn open_virtual_connection_and_call() {
     assert_eq!(result, 123);
 }
 
+/// Regression test: schema recv tracker must be per-connection.
+/// If it were per-session, the second call (on the virtual connection) would
+/// fail because the response schemas overlap with the root connection's.
+#[tokio::test]
+async fn schema_tracker_is_per_connection_not_per_session() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
+    let server_task = moire::task::spawn(
+        async move {
+            let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
+                .on_connection(EchoAcceptor)
+                .establish::<DriverCaller>(EchoHandler)
+                .await
+                .expect("server handshake failed");
+            server_caller
+        }
+        .named("server_setup"),
+    );
+
+    let (root_caller, session_handle) =
+        initiator_conduit(client_conduit, test_initiator_handshake())
+            .establish::<DriverCaller>(())
+            .await
+            .expect("client handshake failed");
+
+    let _server_caller_guard = server_task.await.expect("server setup failed");
+
+    // Call on the root connection — this sends and receives schemas.
+    let args_value: u32 = 100;
+    let response = root_caller
+        .call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&args_value),
+            schemas: Default::default(),
+            metadata: Default::default(),
+        })
+        .await
+        .expect("root call should succeed");
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload"),
+    };
+    let result: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize root response");
+    assert_eq!(result, 100);
+
+    // Open a virtual connection and call on it.
+    // The same schema types (u32, Result, etc.) appear on both connections.
+    // If the recv tracker were shared, recording the virtual connection's
+    // schemas would hit a duplicate and panic.
+    let vconn_handle = session_handle
+        .open_connection(
+            ConnectionSettings {
+                parity: Parity::Odd,
+                max_concurrent_requests: 64,
+            },
+            vec![],
+        )
+        .await
+        .expect("open virtual connection");
+
+    let mut vconn_driver = Driver::new(vconn_handle, ());
+    let vconn_caller = vconn_driver.caller();
+    moire::task::spawn(async move { vconn_driver.run().await }.named("vconn_driver"));
+
+    let args_value: u32 = 200;
+    let response = vconn_caller
+        .call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&args_value),
+            schemas: Default::default(),
+            metadata: Default::default(),
+        })
+        .await
+        .expect("virtual connection call should succeed");
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload"),
+    };
+    let result: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize vconn response");
+    assert_eq!(result, 200);
+}
+
 #[tokio::test]
 async fn initiator_builder_customization_controls_allocated_connection_parity() {
     let (client_conduit, server_conduit) = message_conduit_pair();
