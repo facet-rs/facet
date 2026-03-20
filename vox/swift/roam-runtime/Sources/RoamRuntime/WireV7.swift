@@ -408,17 +408,14 @@ public struct ConnectionCloseV7: Sendable, Equatable {
 
 public struct RequestCallV7: Sendable, Equatable {
   public var methodId: UInt64
-  public var channels: [UInt64]
   public var metadata: [MetadataEntryV7]
   public var args: OpaquePayloadV7
   public var schemas: [UInt8]
 
   public init(
-    methodId: UInt64, channels: [UInt64], metadata: [MetadataEntryV7], args: OpaquePayloadV7,
-    schemas: [UInt8]
+    methodId: UInt64, metadata: [MetadataEntryV7], args: OpaquePayloadV7, schemas: [UInt8]
   ) {
     self.methodId = methodId
-    self.channels = channels
     self.metadata = metadata
     self.args = args
     self.schemas = schemas
@@ -427,7 +424,6 @@ public struct RequestCallV7: Sendable, Equatable {
   func encode() -> [UInt8] {
     var out: [UInt8] = []
     out += encodeVarint(methodId)
-    out += encodeVec(channels, encoder: { encodeVarint($0) })
     out += encodeVec(metadata, encoder: { $0.encode() })
     out += args.encode()
     out += encodeBytes(schemas)
@@ -436,16 +432,12 @@ public struct RequestCallV7: Sendable, Equatable {
 
   static func decode(from data: Data, offset: inout Int) throws -> Self {
     let methodId = try decodeVarint(from: data, offset: &offset)
-    let channels = try decodeVec(
-      from: data, offset: &offset,
-      decoder: { data, off in try decodeVarint(from: data, offset: &off) })
     let metadata = try decodeVec(
       from: data, offset: &offset,
       decoder: { data, off in try MetadataEntryV7.decode(from: data, offset: &off) })
     let args = try OpaquePayloadV7.decode(from: data, offset: &offset)
     let schemas = Array(try decodeBytesV7(from: data, offset: &offset))
-    return .init(
-      methodId: methodId, channels: channels, metadata: metadata, args: args, schemas: schemas)
+    return .init(methodId: methodId, metadata: metadata, args: args, schemas: schemas)
   }
 }
 

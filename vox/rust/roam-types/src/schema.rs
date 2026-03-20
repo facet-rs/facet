@@ -61,6 +61,13 @@ impl CycleSchemaIndex {
 #[facet(transparent)]
 pub struct TypeParamName(String);
 
+impl TypeParamName {
+    /// Get the type parameter name as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// A reference to a type in a schema. Either a concrete type (with optional
 /// type arguments for generics) or a type variable bound by the enclosing
 /// generic's `type_params`.

@@ -335,16 +335,14 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
     let mut tracker = SchemaSendTracker::new();
     let service_name_lower = service.service_name.to_lower_camel_case();
 
-    // Global schema map: (id, cbor_bytes), in stable insertion order.
-    let mut schema_bytes: Vec<(u64, Vec<u8>)> = Vec::new();
     let mut schema_ids_seen: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
     struct MethodInfo {
         method_id: u64,
         args_dep_ids: Vec<u64>,
-        args_root_id: u64,
+        args_root_ref: TypeRef<SchemaHash>,
         response_dep_ids: Vec<u64>,
-        response_root_id: u64,
+        response_root_ref: TypeRef<SchemaHash>,
     }
 
     let mut method_infos: Vec<MethodInfo> = Vec::new();
@@ -497,12 +495,12 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         });
     }
 
-    // Dedup and CBOR-encode.
+    // Dedup schemas by ID.
+    let mut deduped_schemas: Vec<&Schema> = Vec::new();
     for schema in &all_schemas {
         let id = schema.id.0;
         if schema_ids_seen.insert(id) {
-            let bytes = facet_cbor::to_vec(schema).expect("failed to CBOR-encode schema");
-            schema_bytes.push((id, bytes));
+            deduped_schemas.push(schema);
         }
     }
 
@@ -516,7 +514,6 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         let collect_deps = |root: &TypeRef<SchemaHash>| -> Vec<u64> {
             let mut deps = Vec::new();
             let mut visited = std::collections::HashSet::new();
-            // Seed the queue with all concrete IDs from the root TypeRef.
             let mut queue = Vec::new();
             root.collect_ids(&mut queue);
             while let Some(id) = queue.pop() {
@@ -527,7 +524,6 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
                     continue;
                 }
                 deps.push(id.0);
-                // Find the schema and add its children.
                 if let Some(schema) = all_schemas.iter().find(|s| s.id == id) {
                     for child in schema_child_ids(&schema.kind) {
                         queue.push(child);
@@ -540,45 +536,34 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         let args_dep_ids = collect_deps(&info.args_root);
         let response_dep_ids = collect_deps(&info.response_root);
 
-        // Extract root IDs for the method info.
-        let args_root_id = match &info.args_root {
-            TypeRef::Concrete { type_id, .. } => type_id.0,
-            _ => 0,
-        };
-        let response_root_id = match &info.response_root {
-            TypeRef::Concrete { type_id, .. } => type_id.0,
-            _ => 0,
-        };
-
         method_infos.push(MethodInfo {
             method_id: info.method_id,
             args_dep_ids,
-            args_root_id,
+            args_root_ref: info.args_root.clone(),
             response_dep_ids,
-            response_root_id,
+            response_root_ref: info.response_root.clone(),
         });
     }
 
-    // Generate TypeScript output.
+    // Generate TypeScript output — Schema objects as typed literals, not CBOR bytes.
     let mut out = String::new();
 
-    out.push_str(
-        "// Pre-computed CBOR schema bytes for wire schema exchange (TypeScript \u{2192} Rust)\n",
-    );
+    out.push_str("// Schema objects for wire schema exchange (TypeScript \u{2192} Rust)\n");
     out.push_str("// Generated from Rust Facet shapes \u{2014} do not modify.\n");
     out.push_str(&format!(
         "export const {service_name_lower}_send_schemas: import(\"@bearcove/roam-core\").ServiceSendSchemas = {{\n"
     ));
-    out.push_str("  schemas: new Map<bigint, Uint8Array>([\n");
-    for (id, bytes) in &schema_bytes {
-        let hex_bytes: Vec<String> = bytes.iter().map(|b| format!("0x{b:02x}")).collect();
-        let id_hex = hex_u64(*id);
-        out.push_str(&format!(
-            "    [{id_hex}n, new Uint8Array([{}])],\n",
-            hex_bytes.join(", ")
-        ));
+
+    // schemas: Map<bigint, WireSchema>
+    out.push_str("  schemas: new Map<bigint, import(\"@bearcove/roam-postcard\").WireSchema>([\n");
+    for schema in &deduped_schemas {
+        let id_hex = hex_u64(schema.id.0);
+        let schema_ts = render_schema(schema);
+        out.push_str(&format!("    [{id_hex}n, {schema_ts}],\n"));
     }
     out.push_str("  ]),\n");
+
+    // methods: Map<bigint, MethodSendSchemas>
     out.push_str(
         "  methods: new Map<bigint, import(\"@bearcove/roam-core\").MethodSendSchemas>([\n",
     );
@@ -594,15 +579,15 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
             .iter()
             .map(|id| format!("0x{:016x}n", id))
             .collect();
-        let args_root_hex = hex_u64(info.args_root_id);
-        let response_root_hex = hex_u64(info.response_root_id);
+        let args_root_ref_ts = render_type_ref(&info.args_root_ref);
+        let response_root_ref_ts = render_type_ref(&info.response_root_ref);
         out.push_str(&format!(
-            "    [{}n, {{ argsDepIds: [{}], argsRootId: {}n, responseDepIds: [{}], responseRootId: {}n }}],\n",
+            "    [{}n, {{ argsDepIds: [{}], argsRootRef: {}, responseDepIds: [{}], responseRootRef: {} }}],\n",
             id_hex,
             args_dep_ids_str.join(", "),
-            args_root_hex,
+            args_root_ref_ts,
             response_dep_ids_str.join(", "),
-            response_root_hex,
+            response_root_ref_ts,
         ));
     }
     out.push_str("  ]),\n");
@@ -715,4 +700,169 @@ pub fn generate_descriptor(service: &ServiceDescriptor) -> String {
     out.push_str("  ],\n");
     out.push_str("};\n\n");
     out
+}
+
+// ============================================================================
+// Rendering helpers: Rust Schema → TypeScript object literal strings
+// ============================================================================
+
+use roam_types::{ChannelDirection, FieldSchema, PrimitiveType, TypeParamName};
+
+fn render_schema(schema: &Schema) -> String {
+    use crate::render::hex_u64;
+
+    let id_hex = hex_u64(schema.id.0);
+    let type_params = if schema.type_params.is_empty() {
+        "[]".to_string()
+    } else {
+        let params: Vec<String> = schema
+            .type_params
+            .iter()
+            .map(|p| format!("'{}'", p.as_str()))
+            .collect();
+        format!("[{}]", params.join(", "))
+    };
+    let kind = render_schema_kind(&schema.kind);
+    format!("{{ id: {id_hex}n, type_params: {type_params}, kind: {kind} }}")
+}
+
+fn render_schema_kind(kind: &SchemaKind) -> String {
+    match kind {
+        SchemaKind::Struct { name, fields } => {
+            let fields_ts: Vec<String> = fields.iter().map(render_field_schema).collect();
+            format!(
+                "{{ tag: 'struct', name: '{}', fields: [{}] }}",
+                name,
+                fields_ts.join(", ")
+            )
+        }
+        SchemaKind::Enum { name, variants } => {
+            let variants_ts: Vec<String> = variants.iter().map(render_variant_schema).collect();
+            format!(
+                "{{ tag: 'enum', name: '{}', variants: [{}] }}",
+                name,
+                variants_ts.join(", ")
+            )
+        }
+        SchemaKind::Tuple { elements } => {
+            let elems: Vec<String> = elements.iter().map(render_type_ref).collect();
+            format!("{{ tag: 'tuple', elements: [{}] }}", elems.join(", "))
+        }
+        SchemaKind::List { element } => {
+            format!("{{ tag: 'list', element: {} }}", render_type_ref(element))
+        }
+        SchemaKind::Map { key, value } => {
+            format!(
+                "{{ tag: 'map', key: {}, value: {} }}",
+                render_type_ref(key),
+                render_type_ref(value)
+            )
+        }
+        SchemaKind::Array { element, length } => {
+            format!(
+                "{{ tag: 'array', element: {}, length: {} }}",
+                render_type_ref(element),
+                length
+            )
+        }
+        SchemaKind::Option { element } => {
+            format!("{{ tag: 'option', element: {} }}", render_type_ref(element))
+        }
+        SchemaKind::Channel { direction, element } => {
+            let dir = match direction {
+                ChannelDirection::Tx => "tx",
+                ChannelDirection::Rx => "rx",
+            };
+            format!(
+                "{{ tag: 'channel', direction: '{}', element: {} }}",
+                dir,
+                render_type_ref(element)
+            )
+        }
+        SchemaKind::Primitive { primitive_type } => {
+            format!(
+                "{{ tag: 'primitive', primitive_type: '{}' }}",
+                render_primitive_type(primitive_type)
+            )
+        }
+    }
+}
+
+fn render_type_ref(type_ref: &TypeRef) -> String {
+    use crate::render::hex_u64;
+
+    match type_ref {
+        TypeRef::Concrete { type_id, args } => {
+            let id_hex = hex_u64(type_id.0);
+            let args_ts: Vec<String> = args.iter().map(render_type_ref).collect();
+            format!(
+                "{{ tag: 'concrete', type_id: {id_hex}n, args: [{}] }}",
+                args_ts.join(", ")
+            )
+        }
+        TypeRef::Var { name } => {
+            format!("{{ tag: 'var', name: '{}' }}", name.as_str())
+        }
+    }
+}
+
+fn render_field_schema(field: &FieldSchema) -> String {
+    format!(
+        "{{ name: '{}', type_ref: {}, required: {} }}",
+        field.name,
+        render_type_ref(&field.type_ref),
+        field.required
+    )
+}
+
+fn render_variant_schema(variant: &VariantSchema) -> String {
+    format!(
+        "{{ name: '{}', index: {}, payload: {} }}",
+        variant.name,
+        variant.index,
+        render_variant_payload(&variant.payload)
+    )
+}
+
+fn render_variant_payload(payload: &VariantPayload) -> String {
+    match payload {
+        VariantPayload::Unit => "{ tag: 'unit' }".to_string(),
+        VariantPayload::Newtype { type_ref } => {
+            format!(
+                "{{ tag: 'newtype', type_ref: {} }}",
+                render_type_ref(type_ref)
+            )
+        }
+        VariantPayload::Tuple { types } => {
+            let types_ts: Vec<String> = types.iter().map(render_type_ref).collect();
+            format!("{{ tag: 'tuple', types: [{}] }}", types_ts.join(", "))
+        }
+        VariantPayload::Struct { fields } => {
+            let fields_ts: Vec<String> = fields.iter().map(render_field_schema).collect();
+            format!("{{ tag: 'struct', fields: [{}] }}", fields_ts.join(", "))
+        }
+    }
+}
+
+fn render_primitive_type(pt: &PrimitiveType) -> &'static str {
+    match pt {
+        PrimitiveType::Bool => "bool",
+        PrimitiveType::U8 => "u8",
+        PrimitiveType::U16 => "u16",
+        PrimitiveType::U32 => "u32",
+        PrimitiveType::U64 => "u64",
+        PrimitiveType::U128 => "u128",
+        PrimitiveType::I8 => "i8",
+        PrimitiveType::I16 => "i16",
+        PrimitiveType::I32 => "i32",
+        PrimitiveType::I64 => "i64",
+        PrimitiveType::I128 => "i128",
+        PrimitiveType::F32 => "f32",
+        PrimitiveType::F64 => "f64",
+        PrimitiveType::Char => "char",
+        PrimitiveType::String => "string",
+        PrimitiveType::Unit => "unit",
+        PrimitiveType::Bytes => "bytes",
+        PrimitiveType::Payload => "payload",
+    }
 }
