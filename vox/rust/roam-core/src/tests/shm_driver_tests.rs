@@ -9,7 +9,7 @@ use roam_types::{
 };
 use shm_primitives::FileCleanup;
 
-use crate::session::{acceptor, initiator_conduit};
+use crate::session::{acceptor_conduit, initiator_conduit};
 use crate::{BareConduit, DriverCaller, DriverReplySink};
 
 fn test_acceptor_handshake() -> HandshakeResult {
@@ -111,7 +111,7 @@ async fn echo_call_across_shm_link() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (server_caller, _sh) = acceptor(server_conduit, test_acceptor_handshake())
+            let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .establish::<DriverCaller>(EchoHandler)
                 .await
                 .expect("server handshake failed");
@@ -190,7 +190,7 @@ async fn echo_blob_stress_over_shm_link() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (server_caller, _sh) = acceptor(server_conduit, test_acceptor_handshake())
+            let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .establish::<DriverCaller>(BlobEchoHandler)
                 .await
                 .expect("server handshake failed");

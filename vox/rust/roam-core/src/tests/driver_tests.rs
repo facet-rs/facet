@@ -2231,7 +2231,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
 
 #[tokio::test]
 async fn acceptor_builder_customization_supports_opening_connections() {
-    let (client_conduit, acceptor_conduit) = message_conduit_pair();
+    let (client_conduit, server_conduit) = message_conduit_pair();
 
     let initiator_task = moire::task::spawn(
         async move {
@@ -2264,7 +2264,7 @@ async fn acceptor_builder_customization_supports_opening_connections() {
     );
 
     let (_acceptor_caller_guard, acceptor_session_handle) = acceptor_conduit(
-        acceptor_conduit,
+        server_conduit,
         HandshakeResult {
             role: SessionRole::Acceptor,
             our_settings: ConnectionSettings {

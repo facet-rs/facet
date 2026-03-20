@@ -183,58 +183,87 @@ public struct MetadataEntryV7: Sendable, Equatable {
 }
 
 public struct HelloV7: Sendable, Equatable {
-  public var version: UInt32
+  public var parity: ParityV7
   public var connectionSettings: ConnectionSettingsV7
-  public var metadata: [MetadataEntryV7]
+  public var messagePayloadSchema: [Schema]
+  public var supportsRetry: Bool
+  public var resumeKey: ResumeKeyBytes?
 
   public init(
-    version: UInt32, connectionSettings: ConnectionSettingsV7, metadata: [MetadataEntryV7]
+    parity: ParityV7, connectionSettings: ConnectionSettingsV7, messagePayloadSchema: [Schema],
+    supportsRetry: Bool, resumeKey: ResumeKeyBytes?
   ) {
-    self.version = version
+    self.parity = parity
     self.connectionSettings = connectionSettings
-    self.metadata = metadata
+    self.messagePayloadSchema = messagePayloadSchema
+    self.supportsRetry = supportsRetry
+    self.resumeKey = resumeKey
   }
 
   func encode() -> [UInt8] {
     var out: [UInt8] = []
-    out += encodeVarint(UInt64(version))
+    out += parity.encode()
     out += connectionSettings.encode()
-    out += encodeVec(metadata, encoder: { $0.encode() })
+    out += encodeVec(messagePayloadSchema, encoder: { $0.encode() })
+    out += encodeBool(supportsRetry)
+    out += encodeOption(resumeKey, encoder: { $0.encode() })
     return out
   }
 
   static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let version = try decodeVarintU32V7(from: data, offset: &offset)
+    let parity = try ParityV7.decode(from: data, offset: &offset)
     let connectionSettings = try ConnectionSettingsV7.decode(from: data, offset: &offset)
-    let metadata = try decodeVec(
+    let messagePayloadSchema = try decodeVec(
       from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntryV7.decode(from: data, offset: &off) })
-    return .init(version: version, connectionSettings: connectionSettings, metadata: metadata)
+      decoder: { data, off in try Schema.decode(from: data, offset: &off) })
+    let supportsRetry = try decodeBool(from: data, offset: &offset)
+    let resumeKey = try decodeOption(
+      from: data, offset: &offset,
+      decoder: { data, off in try ResumeKeyBytes.decode(from: data, offset: &off) })
+    return .init(
+      parity: parity, connectionSettings: connectionSettings,
+      messagePayloadSchema: messagePayloadSchema, supportsRetry: supportsRetry, resumeKey: resumeKey
+    )
   }
 }
 
 public struct HelloYourselfV7: Sendable, Equatable {
   public var connectionSettings: ConnectionSettingsV7
-  public var metadata: [MetadataEntryV7]
+  public var messagePayloadSchema: [Schema]
+  public var supportsRetry: Bool
+  public var resumeKey: ResumeKeyBytes?
 
-  public init(connectionSettings: ConnectionSettingsV7, metadata: [MetadataEntryV7]) {
+  public init(
+    connectionSettings: ConnectionSettingsV7, messagePayloadSchema: [Schema], supportsRetry: Bool,
+    resumeKey: ResumeKeyBytes?
+  ) {
     self.connectionSettings = connectionSettings
-    self.metadata = metadata
+    self.messagePayloadSchema = messagePayloadSchema
+    self.supportsRetry = supportsRetry
+    self.resumeKey = resumeKey
   }
 
   func encode() -> [UInt8] {
     var out: [UInt8] = []
     out += connectionSettings.encode()
-    out += encodeVec(metadata, encoder: { $0.encode() })
+    out += encodeVec(messagePayloadSchema, encoder: { $0.encode() })
+    out += encodeBool(supportsRetry)
+    out += encodeOption(resumeKey, encoder: { $0.encode() })
     return out
   }
 
   static func decode(from data: Data, offset: inout Int) throws -> Self {
     let connectionSettings = try ConnectionSettingsV7.decode(from: data, offset: &offset)
-    let metadata = try decodeVec(
+    let messagePayloadSchema = try decodeVec(
       from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntryV7.decode(from: data, offset: &off) })
-    return .init(connectionSettings: connectionSettings, metadata: metadata)
+      decoder: { data, off in try Schema.decode(from: data, offset: &off) })
+    let supportsRetry = try decodeBool(from: data, offset: &offset)
+    let resumeKey = try decodeOption(
+      from: data, offset: &offset,
+      decoder: { data, off in try ResumeKeyBytes.decode(from: data, offset: &off) })
+    return .init(
+      connectionSettings: connectionSettings, messagePayloadSchema: messagePayloadSchema,
+      supportsRetry: supportsRetry, resumeKey: resumeKey)
   }
 }
 
@@ -382,14 +411,17 @@ public struct RequestCallV7: Sendable, Equatable {
   public var channels: [UInt64]
   public var metadata: [MetadataEntryV7]
   public var args: OpaquePayloadV7
+  public var schemas: [UInt8]
 
   public init(
-    methodId: UInt64, channels: [UInt64], metadata: [MetadataEntryV7], args: OpaquePayloadV7
+    methodId: UInt64, channels: [UInt64], metadata: [MetadataEntryV7], args: OpaquePayloadV7,
+    schemas: [UInt8]
   ) {
     self.methodId = methodId
     self.channels = channels
     self.metadata = metadata
     self.args = args
+    self.schemas = schemas
   }
 
   func encode() -> [UInt8] {
@@ -397,7 +429,8 @@ public struct RequestCallV7: Sendable, Equatable {
     out += encodeVarint(methodId)
     out += encodeVec(channels, encoder: { encodeVarint($0) })
     out += encodeVec(metadata, encoder: { $0.encode() })
-    out += args.encodeTrailing()
+    out += args.encode()
+    out += encodeBytes(schemas)
     return out
   }
 
@@ -409,39 +442,39 @@ public struct RequestCallV7: Sendable, Equatable {
     let metadata = try decodeVec(
       from: data, offset: &offset,
       decoder: { data, off in try MetadataEntryV7.decode(from: data, offset: &off) })
-    let args = OpaquePayloadV7.decodeTrailing(from: data, offset: &offset)
-    return .init(methodId: methodId, channels: channels, metadata: metadata, args: args)
+    let args = try OpaquePayloadV7.decode(from: data, offset: &offset)
+    let schemas = Array(try decodeBytesV7(from: data, offset: &offset))
+    return .init(
+      methodId: methodId, channels: channels, metadata: metadata, args: args, schemas: schemas)
   }
 }
 
 public struct RequestResponseV7: Sendable, Equatable {
-  public var channels: [UInt64]
   public var metadata: [MetadataEntryV7]
   public var ret: OpaquePayloadV7
+  public var schemas: [UInt8]
 
-  public init(channels: [UInt64], metadata: [MetadataEntryV7], ret: OpaquePayloadV7) {
-    self.channels = channels
+  public init(metadata: [MetadataEntryV7], ret: OpaquePayloadV7, schemas: [UInt8]) {
     self.metadata = metadata
     self.ret = ret
+    self.schemas = schemas
   }
 
   func encode() -> [UInt8] {
     var out: [UInt8] = []
-    out += encodeVec(channels, encoder: { encodeVarint($0) })
     out += encodeVec(metadata, encoder: { $0.encode() })
-    out += ret.encodeTrailing()
+    out += ret.encode()
+    out += encodeBytes(schemas)
     return out
   }
 
   static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let channels = try decodeVec(
-      from: data, offset: &offset,
-      decoder: { data, off in try decodeVarint(from: data, offset: &off) })
     let metadata = try decodeVec(
       from: data, offset: &offset,
       decoder: { data, off in try MetadataEntryV7.decode(from: data, offset: &off) })
-    let ret = OpaquePayloadV7.decodeTrailing(from: data, offset: &offset)
-    return .init(channels: channels, metadata: metadata, ret: ret)
+    let ret = try OpaquePayloadV7.decode(from: data, offset: &offset)
+    let schemas = Array(try decodeBytesV7(from: data, offset: &offset))
+    return .init(metadata: metadata, ret: ret, schemas: schemas)
   }
 }
 
@@ -526,11 +559,11 @@ public struct ChannelItemV7: Sendable, Equatable {
   }
 
   func encode() -> [UInt8] {
-    item.encodeTrailing()
+    item.encode()
   }
 
   static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let item = OpaquePayloadV7.decodeTrailing(from: data, offset: &offset)
+    let item = try OpaquePayloadV7.decode(from: data, offset: &offset)
     return .init(item: item)
   }
 }
@@ -650,8 +683,6 @@ public struct ChannelMessageV7: Sendable, Equatable {
 }
 
 public enum MessagePayloadV7: Sendable, Equatable {
-  case hello(HelloV7)
-  case helloYourself(HelloYourselfV7)
   case protocolError(ProtocolErrorV7)
   case connectionOpen(ConnectionOpenV7)
   case connectionAccept(ConnectionAcceptV7)
@@ -664,28 +695,24 @@ public enum MessagePayloadV7: Sendable, Equatable {
 
   func encode() -> [UInt8] {
     switch self {
-    case .hello(let val):
-      return encodeVarint(UInt64(0)) + val.encode()
-    case .helloYourself(let val):
-      return encodeVarint(UInt64(1)) + val.encode()
     case .protocolError(let val):
-      return encodeVarint(UInt64(2)) + val.encode()
+      return encodeVarint(UInt64(0)) + val.encode()
     case .connectionOpen(let val):
-      return encodeVarint(UInt64(3)) + val.encode()
+      return encodeVarint(UInt64(1)) + val.encode()
     case .connectionAccept(let val):
-      return encodeVarint(UInt64(4)) + val.encode()
+      return encodeVarint(UInt64(2)) + val.encode()
     case .connectionReject(let val):
-      return encodeVarint(UInt64(5)) + val.encode()
+      return encodeVarint(UInt64(3)) + val.encode()
     case .connectionClose(let val):
-      return encodeVarint(UInt64(6)) + val.encode()
+      return encodeVarint(UInt64(4)) + val.encode()
     case .requestMessage(let val):
-      return encodeVarint(UInt64(7)) + val.encode()
+      return encodeVarint(UInt64(5)) + val.encode()
     case .channelMessage(let val):
-      return encodeVarint(UInt64(8)) + val.encode()
+      return encodeVarint(UInt64(6)) + val.encode()
     case .ping(let val):
-      return encodeVarint(UInt64(9)) + val.encode()
+      return encodeVarint(UInt64(7)) + val.encode()
     case .pong(let val):
-      return encodeVarint(UInt64(10)) + val.encode()
+      return encodeVarint(UInt64(8)) + val.encode()
     }
   }
 
@@ -693,26 +720,22 @@ public enum MessagePayloadV7: Sendable, Equatable {
     let disc = try decodeVarint(from: data, offset: &offset)
     switch disc {
     case 0:
-      return .hello(try HelloV7.decode(from: data, offset: &offset))
-    case 1:
-      return .helloYourself(try HelloYourselfV7.decode(from: data, offset: &offset))
-    case 2:
       return .protocolError(try ProtocolErrorV7.decode(from: data, offset: &offset))
-    case 3:
+    case 1:
       return .connectionOpen(try ConnectionOpenV7.decode(from: data, offset: &offset))
-    case 4:
+    case 2:
       return .connectionAccept(try ConnectionAcceptV7.decode(from: data, offset: &offset))
-    case 5:
+    case 3:
       return .connectionReject(try ConnectionRejectV7.decode(from: data, offset: &offset))
-    case 6:
+    case 4:
       return .connectionClose(try ConnectionCloseV7.decode(from: data, offset: &offset))
-    case 7:
+    case 5:
       return .requestMessage(try RequestMessageV7.decode(from: data, offset: &offset))
-    case 8:
+    case 6:
       return .channelMessage(try ChannelMessageV7.decode(from: data, offset: &offset))
-    case 9:
+    case 7:
       return .ping(try PingV7.decode(from: data, offset: &offset))
-    case 10:
+    case 8:
       return .pong(try PongV7.decode(from: data, offset: &offset))
     default:
       throw WireV7Error.unknownVariant(disc)
@@ -753,14 +776,6 @@ public struct MessageV7: Sendable, Equatable {
 }
 
 extension MessageV7 {
-  public static func hello(_ value: HelloV7) -> MessageV7 {
-    MessageV7(connectionId: 0, payload: .hello(value))
-  }
-
-  public static func helloYourself(_ value: HelloYourselfV7) -> MessageV7 {
-    MessageV7(connectionId: 0, payload: .helloYourself(value))
-  }
-
   public static func protocolError(_ value: ProtocolErrorV7) -> MessageV7 {
     MessageV7(connectionId: 0, payload: .protocolError(value))
   }
