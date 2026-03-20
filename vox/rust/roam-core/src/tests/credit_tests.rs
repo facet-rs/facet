@@ -47,7 +47,7 @@ impl ChannelSink for ImmediateSink {
 async fn credit_blocks_at_zero() {
     let (inner, _count) = ImmediateSink::new();
     let credit_sink = Arc::new(CreditSink::new(inner, 0));
-    let mut tx = Tx::<String, 0>::unbound();
+    let mut tx = Tx::<String>::unbound();
     tx.bind(credit_sink.clone());
 
     // With zero credit, send should block
@@ -70,7 +70,7 @@ async fn credit_blocks_at_zero() {
 async fn credit_allows_n_sends() {
     let (inner, count) = ImmediateSink::new();
     let credit_sink = Arc::new(CreditSink::new(inner, 4));
-    let mut tx = Tx::<String, 4>::unbound();
+    let mut tx = Tx::<String>::unbound();
     tx.bind(credit_sink.clone());
 
     // Should succeed for 4 sends (initial credit = 4)
@@ -115,7 +115,7 @@ async fn credit_allows_n_sends() {
 async fn credit_grants_are_additive() {
     let (inner, count) = ImmediateSink::new();
     let credit_sink = Arc::new(CreditSink::new(inner, 0));
-    let mut tx = Tx::<String, 0>::unbound();
+    let mut tx = Tx::<String>::unbound();
     tx.bind(credit_sink.clone());
 
     // Grant credit in two batches: 3 + 5 = 8
@@ -144,7 +144,7 @@ async fn credit_grants_are_additive() {
 async fn credit_initial_zero_blocks_first_send() {
     let (inner, _count) = ImmediateSink::new();
     let credit_sink = Arc::new(CreditSink::new(inner, 0));
-    let mut tx = Tx::<String, 0>::unbound();
+    let mut tx = Tx::<String>::unbound();
     tx.bind(credit_sink.clone());
 
     // N=0: first send must block
@@ -158,34 +158,4 @@ async fn credit_initial_zero_blocks_first_send() {
     // Explicit grant unblocks
     credit_sink.credit().add_permits(1);
     fut.await.expect("should succeed after explicit grant");
-}
-
-#[test]
-fn initial_credit_from_const_generic() {
-    use facet::Facet;
-    use roam_types::ChannelKind;
-
-    // A struct containing channels with various N values
-    #[derive(Facet)]
-    struct MixedChannels {
-        tx_default: Tx<String>,     // N = 16
-        tx_small: Tx<String, 4>,    // N = 4
-        rx_zero: Rx<String, 0>,     // N = 0
-        tx_large: Tx<String, 1024>, // N = 1024
-    }
-
-    let plan = RpcPlan::for_type::<MixedChannels>();
-    assert_eq!(plan.channel_locations.len(), 4);
-
-    assert_eq!(plan.channel_locations[0].kind, ChannelKind::Tx);
-    assert_eq!(plan.channel_locations[0].initial_credit, 16);
-
-    assert_eq!(plan.channel_locations[1].kind, ChannelKind::Tx);
-    assert_eq!(plan.channel_locations[1].initial_credit, 4);
-
-    assert_eq!(plan.channel_locations[2].kind, ChannelKind::Rx);
-    assert_eq!(plan.channel_locations[2].initial_credit, 0);
-
-    assert_eq!(plan.channel_locations[3].kind, ChannelKind::Tx);
-    assert_eq!(plan.channel_locations[3].initial_credit, 1024);
 }

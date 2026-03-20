@@ -442,7 +442,7 @@ impl ReplenisherSlot {
 // r[impl rpc.channel.payload-encoding]
 #[derive(Facet)]
 #[facet(proxy = ())]
-pub struct Tx<T, const N: usize = 16> {
+pub struct Tx<T> {
     pub(crate) sink: SinkSlot,
     pub(crate) core: CoreSlot,
     pub(crate) liveness: LivenessSlot,
@@ -453,7 +453,7 @@ pub struct Tx<T, const N: usize = 16> {
     _marker: PhantomData<T>,
 }
 
-impl<T, const N: usize> Tx<T, N> {
+impl<T> Tx<T> {
     /// Create a standalone unbound Tx (used by deserialization).
     pub fn unbound() -> Self {
         Self {
@@ -559,7 +559,7 @@ impl<T, const N: usize> Tx<T, N> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl<T, const N: usize> Drop for Tx<T, N> {
+impl<T> Drop for Tx<T> {
     fn drop(&mut self) {
         if self.closed.swap(true, Ordering::AcqRel) {
             return;
@@ -583,16 +583,16 @@ impl<T, const N: usize> Drop for Tx<T, N> {
 }
 
 #[allow(clippy::infallible_try_from)]
-impl<T, const N: usize> TryFrom<&Tx<T, N>> for () {
+impl<T> TryFrom<&Tx<T>> for () {
     type Error = Infallible;
 
-    fn try_from(_value: &Tx<T, N>) -> Result<Self, Self::Error> {
+    fn try_from(_value: &Tx<T>) -> Result<Self, Self::Error> {
         Ok(())
     }
 }
 
 #[allow(clippy::infallible_try_from)]
-impl<T, const N: usize> TryFrom<()> for Tx<T, N> {
+impl<T> TryFrom<()> for Tx<T> {
     type Error = Infallible;
 
     fn try_from(_value: ()) -> Result<Self, Self::Error> {
@@ -626,7 +626,7 @@ impl std::error::Error for TxError {}
 /// in `Message::Request.channels`.
 #[derive(Facet)]
 #[facet(proxy = ())]
-pub struct Rx<T, const N: usize = 16> {
+pub struct Rx<T> {
     pub(crate) receiver: ReceiverSlot,
     pub(crate) logical_receiver: LogicalReceiverSlot,
     pub(crate) core: CoreSlot,
@@ -636,7 +636,7 @@ pub struct Rx<T, const N: usize = 16> {
     _marker: PhantomData<T>,
 }
 
-impl<T, const N: usize> Rx<T, N> {
+impl<T> Rx<T> {
     /// Create a standalone unbound Rx (used by deserialization).
     pub fn unbound() -> Self {
         Self {
@@ -787,16 +787,16 @@ impl<T, const N: usize> Rx<T, N> {
 }
 
 #[allow(clippy::infallible_try_from)]
-impl<T, const N: usize> TryFrom<&Rx<T, N>> for () {
+impl<T> TryFrom<&Rx<T>> for () {
     type Error = Infallible;
 
-    fn try_from(_value: &Rx<T, N>) -> Result<Self, Self::Error> {
+    fn try_from(_value: &Rx<T>) -> Result<Self, Self::Error> {
         Ok(())
     }
 }
 
 #[allow(clippy::infallible_try_from)]
-impl<T, const N: usize> TryFrom<()> for Rx<T, N> {
+impl<T> TryFrom<()> for Rx<T> {
     type Error = Infallible;
 
     fn try_from(_value: ()) -> Result<Self, Self::Error> {

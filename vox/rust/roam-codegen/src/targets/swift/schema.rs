@@ -20,15 +20,6 @@ pub fn generate_schemas(service: &ServiceDescriptor) -> String {
     out
 }
 
-fn extract_initial_credit(shape: &'static Shape) -> u32 {
-    shape
-        .const_params
-        .iter()
-        .find(|cp| cp.name == "N")
-        .map(|cp| cp.value as u32)
-        .unwrap_or(16)
-}
-
 /// Generate method schemas for runtime channel binding.
 fn generate_method_schemas(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
@@ -92,16 +83,8 @@ fn shape_to_schema(shape: &'static Shape) -> String {
                 shape_to_schema(value)
             )
         }
-        ShapeKind::Tx { inner } => format!(
-            ".tx(initialCredit: {}, element: {})",
-            extract_initial_credit(shape),
-            shape_to_schema(inner)
-        ),
-        ShapeKind::Rx { inner } => format!(
-            ".rx(initialCredit: {}, element: {})",
-            extract_initial_credit(shape),
-            shape_to_schema(inner)
-        ),
+        ShapeKind::Tx { inner } => format!(".tx(element: {})", shape_to_schema(inner)),
+        ShapeKind::Rx { inner } => format!(".rx(element: {})", shape_to_schema(inner)),
         ShapeKind::Tuple { elements } => {
             let inner: Vec<String> = elements.iter().map(|p| shape_to_schema(p.shape)).collect();
             format!(".tuple(elements: [{}])", inner.join(", "))

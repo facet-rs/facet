@@ -24,9 +24,6 @@ pub struct ChannelLocation {
 
     /// Whether this is an Rx or Tx channel.
     pub kind: ChannelKind,
-
-    /// Initial credit for this channel, from the const generic `N`.
-    pub initial_credit: u32,
 }
 
 /// The kind of a channel.
@@ -72,16 +69,6 @@ impl RpcPlan {
     }
 }
 
-/// Extract the initial credit `N` from a Tx/Rx shape's const params.
-fn extract_initial_credit(shape: &'static Shape) -> u32 {
-    shape
-        .const_params
-        .iter()
-        .find(|cp| cp.name == "N")
-        .map(|cp| cp.value as u32)
-        .unwrap_or(16)
-}
-
 /// Visitor that discovers Rx/Tx channel locations in a type structure.
 // r[impl rpc.channel.discovery]
 // r[impl rpc.channel.no-collections]
@@ -95,7 +82,6 @@ impl facet_path::ShapeVisitor for ChannelDiscovery {
             self.locations.push(ChannelLocation {
                 path: path.clone(),
                 kind: ChannelKind::Tx,
-                initial_credit: extract_initial_credit(shape),
             });
             return facet_path::VisitDecision::SkipChildren;
         }
@@ -104,7 +90,6 @@ impl facet_path::ShapeVisitor for ChannelDiscovery {
             self.locations.push(ChannelLocation {
                 path: path.clone(),
                 kind: ChannelKind::Rx,
-                initial_credit: extract_initial_credit(shape),
             });
             return facet_path::VisitDecision::SkipChildren;
         }

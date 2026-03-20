@@ -133,8 +133,8 @@ mod tests {
     use roam_types::{MethodDescriptor, RetryPolicy, ServiceDescriptor, method_descriptor};
 
     #[test]
-    fn generated_swift_preserves_channel_initial_credit() {
-        let subscribe = method_descriptor::<(Tx<u32>, Rx<u32, 32>), ()>(
+    fn generated_swift_emits_channel_schemas() {
+        let subscribe = method_descriptor::<(Tx<u32>, Rx<u32>), ()>(
             "StreamSvc",
             "subscribe",
             &["output", "input"],
@@ -150,12 +150,12 @@ mod tests {
         let generated = generate_service(&service);
 
         assert!(
-            generated.contains(".tx(initialCredit: 16, element: .u32)"),
-            "generated Swift should preserve default channel credit:\n{generated}"
+            generated.contains(".tx(element: .u32)"),
+            "generated Swift should emit Tx channel schema:\n{generated}"
         );
         assert!(
-            generated.contains(".rx(initialCredit: 32, element: .u32)"),
-            "generated Swift should preserve custom channel credit:\n{generated}"
+            generated.contains(".rx(element: .u32)"),
+            "generated Swift should emit Rx channel schema:\n{generated}"
         );
     }
 

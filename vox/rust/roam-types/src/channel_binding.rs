@@ -26,22 +26,20 @@ use facet_path::PathAccessError;
 pub trait ChannelBinder: Send + Sync {
     /// Allocate a channel ID and create a sink for sending items.
     ///
-    /// `initial_credit` is the const generic `N` from `Tx<T, N>` or `Rx<T, N>`.
-    fn create_tx(&self, initial_credit: u32) -> (ChannelId, Arc<dyn ChannelSink>);
+    fn create_tx(&self) -> (ChannelId, Arc<dyn ChannelSink>);
 
     /// Allocate a channel ID, register it for routing, and return a receiver.
-    fn create_rx(&self, initial_credit: u32) -> (ChannelId, BoundChannelReceiver);
+    fn create_rx(&self) -> (ChannelId, BoundChannelReceiver);
 
     /// Create a sink for a known channel ID (callee side).
     ///
     /// The channel ID comes from `Request.channels`.
-    /// `initial_credit` is the const generic `N` from `Tx<T, N>`.
-    fn bind_tx(&self, channel_id: ChannelId, initial_credit: u32) -> Arc<dyn ChannelSink>;
+    fn bind_tx(&self, channel_id: ChannelId) -> Arc<dyn ChannelSink>;
 
     /// Register an inbound channel by ID and return the receiver (callee side).
     ///
     /// The channel ID comes from `Request.channels`.
-    fn register_rx(&self, channel_id: ChannelId, initial_credit: u32) -> BoundChannelReceiver;
+    fn register_rx(&self, channel_id: ChannelId) -> BoundChannelReceiver;
 
     /// Optional opaque handle that keeps the underlying session/connection alive
     /// for the lifetime of any bound channel handle.
@@ -82,7 +80,7 @@ pub unsafe fn bind_channels_caller_args(
                 // Create a sink and store it in the shared core so the caller's
                 // paired Tx can send through it.
                 ChannelKind::Rx => {
-                    let (channel_id, sink) = binder.create_tx(loc.initial_credit);
+                    let (channel_id, sink) = binder.create_tx();
                     channel_ids.push(channel_id);
                     let liveness = binder.channel_liveness();
                     if let Ok(mut ps) = channel_poke.into_struct()
@@ -98,7 +96,7 @@ pub unsafe fn bind_channels_caller_args(
                 // Create a receiver and store it in the shared core so the caller's
                 // paired Rx can receive from it.
                 ChannelKind::Tx => {
-                    let (channel_id, bound) = binder.create_rx(loc.initial_credit);
+                    let (channel_id, bound) = binder.create_rx();
                     channel_ids.push(channel_id);
                     if let Ok(mut ps) = channel_poke.into_struct()
                         && let Ok(mut core_field) = ps.field_by_name("core")
@@ -188,7 +186,7 @@ pub unsafe fn bind_channels_callee_args(
                     // r[impl rpc.channel.binding.callee-args.tx]
                     // Tx in args: handler sends. Bind a sink directly.
                     ChannelKind::Tx => {
-                        let sink = binder.bind_tx(channel_id, loc.initial_credit);
+                        let sink = binder.bind_tx(channel_id);
                         let liveness = binder.channel_liveness();
                         if let Ok(mut ps) = channel_poke.into_struct() {
                             if let Ok(mut sink_field) = ps.field_by_name("sink")
@@ -207,7 +205,7 @@ pub unsafe fn bind_channels_callee_args(
                     // r[impl rpc.channel.binding.callee-args.rx]
                     // Rx in args: handler receives. Register and bind a receiver directly.
                     ChannelKind::Rx => {
-                        let bound = binder.register_rx(channel_id, loc.initial_credit);
+                        let bound = binder.register_rx(channel_id);
                         if let Ok(mut ps) = channel_poke.into_struct() {
                             if let Ok(mut receiver_field) = ps.field_by_name("receiver")
                                 && let Ok(slot) = receiver_field.get_mut::<ReceiverSlot>()
@@ -276,9 +274,9 @@ mod tests {
     #[derive(Default)]
     struct TestBinder {
         next_id: Mutex<u64>,
-        create_tx_credits: Mutex<Vec<u32>>,
-        bind_tx_calls: Mutex<Vec<(ChannelId, u32)>>,
-        register_rx_calls: Mutex<Vec<(ChannelId, u32)>>,
+        create_tx_count: Mutex<u32>,
+        bind_tx_calls: Mutex<Vec<ChannelId>>,
+        register_rx_calls: Mutex<Vec<ChannelId>>,
         rx_senders: Mutex<HashMap<u64, mpsc::Sender<IncomingChannelMessage>>>,
     }
 
@@ -308,15 +306,15 @@ mod tests {
     }
 
     impl ChannelBinder for TestBinder {
-        fn create_tx(&self, initial_credit: u32) -> (ChannelId, Arc<dyn ChannelSink>) {
-            self.create_tx_credits
+        fn create_tx(&self) -> (ChannelId, Arc<dyn ChannelSink>) {
+            *self
+                .create_tx_count
                 .lock()
-                .expect("create-tx mutex poisoned")
-                .push(initial_credit);
+                .expect("create-tx mutex poisoned") += 1;
             (self.alloc_id(), Arc::new(TestSink))
         }
 
-        fn create_rx(&self, _initial_credit: u32) -> (ChannelId, BoundChannelReceiver) {
+        fn create_rx(&self) -> (ChannelId, BoundChannelReceiver) {
             let channel_id = self.alloc_id();
             let (tx, rx) = mpsc::channel(8);
             self.rx_senders
@@ -333,19 +331,19 @@ mod tests {
             )
         }
 
-        fn bind_tx(&self, channel_id: ChannelId, initial_credit: u32) -> Arc<dyn ChannelSink> {
+        fn bind_tx(&self, channel_id: ChannelId) -> Arc<dyn ChannelSink> {
             self.bind_tx_calls
                 .lock()
                 .expect("bind-tx mutex poisoned")
-                .push((channel_id, initial_credit));
+                .push(channel_id);
             Arc::new(TestSink)
         }
 
-        fn register_rx(&self, channel_id: ChannelId, initial_credit: u32) -> BoundChannelReceiver {
+        fn register_rx(&self, channel_id: ChannelId) -> BoundChannelReceiver {
             self.register_rx_calls
                 .lock()
                 .expect("register-rx mutex poisoned")
-                .push((channel_id, initial_credit));
+                .push(channel_id);
             let (tx, rx) = mpsc::channel(8);
             self.rx_senders
                 .lock()
@@ -361,16 +359,16 @@ mod tests {
 
     #[derive(Facet)]
     struct CallerArgs {
-        tx: crate::Tx<u32, 16>,
-        rx: crate::Rx<u32, 16>,
-        maybe_tx: Option<crate::Tx<u32, 16>>,
-        maybe_rx: Option<crate::Rx<u32, 16>>,
+        tx: crate::Tx<u32>,
+        rx: crate::Rx<u32>,
+        maybe_tx: Option<crate::Tx<u32>>,
+        maybe_rx: Option<crate::Rx<u32>>,
     }
 
     #[derive(Facet)]
     struct CalleeArgs {
-        tx: crate::Tx<u32, 16>,
-        rx: crate::Rx<u32, 16>,
+        tx: crate::Tx<u32>,
+        rx: crate::Rx<u32>,
     }
 
     #[tokio::test]
@@ -397,13 +395,12 @@ mod tests {
             "only present channels should be bound"
         );
         assert_eq!(
-            binder
-                .create_tx_credits
+            *binder
+                .create_tx_count
                 .lock()
-                .expect("create-tx mutex poisoned")
-                .as_slice(),
-            &[16],
-            "Rx<T, N> in caller args should allocate sink with declared N credit"
+                .expect("create-tx mutex poisoned"),
+            1,
+            "Rx<T> in caller args should allocate one sink"
         );
 
         tx_peer
@@ -471,7 +468,7 @@ mod tests {
                 .lock()
                 .expect("bind-tx mutex poisoned")
                 .as_slice(),
-            &[(ChannelId(41), 16)]
+            &[ChannelId(41)]
         );
         assert_eq!(
             binder
@@ -479,7 +476,7 @@ mod tests {
                 .lock()
                 .expect("register-rx mutex poisoned")
                 .as_slice(),
-            &[(ChannelId(43), 16)]
+            &[ChannelId(43)]
         );
     }
 

@@ -331,18 +331,18 @@ struct DriverChannelBinder {
     drop_guard: Option<Arc<CallerDropGuard>>,
 }
 
+/// Default initial credit for all channels.
+const DEFAULT_CHANNEL_CREDIT: u32 = 16;
+
 impl DriverChannelBinder {
-    fn create_tx_channel(
-        &self,
-        initial_credit: u32,
-    ) -> (ChannelId, Arc<CreditSink<DriverChannelSink>>) {
+    fn create_tx_channel(&self) -> (ChannelId, Arc<CreditSink<DriverChannelSink>>) {
         let channel_id = self.shared.channel_ids.lock().alloc();
         let inner = DriverChannelSink {
             sender: self.sender.clone(),
             channel_id,
             local_control_tx: self.local_control_tx.clone(),
         };
-        let sink = Arc::new(CreditSink::new(inner, initial_credit));
+        let sink = Arc::new(CreditSink::new(inner, DEFAULT_CHANNEL_CREDIT));
         self.shared
             .channel_credits
             .lock()
@@ -350,11 +350,7 @@ impl DriverChannelBinder {
         (channel_id, sink)
     }
 
-    fn register_rx_channel(
-        &self,
-        channel_id: ChannelId,
-        initial_credit: u32,
-    ) -> roam_types::BoundChannelReceiver {
+    fn register_rx_channel(&self, channel_id: ChannelId) -> roam_types::BoundChannelReceiver {
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let mut terminal_buffered = false;
         if let Some(buffered) = self.shared.channel_buffers.lock().remove(&channel_id) {
@@ -385,7 +381,7 @@ impl DriverChannelBinder {
             liveness: self.channel_liveness(),
             replenisher: Some(Arc::new(DriverChannelCreditReplenisher::new(
                 channel_id,
-                initial_credit,
+                DEFAULT_CHANNEL_CREDIT,
                 self.local_control_tx.clone(),
             )) as ChannelCreditReplenisherHandle),
         }
@@ -393,24 +389,24 @@ impl DriverChannelBinder {
 }
 
 impl ChannelBinder for DriverChannelBinder {
-    fn create_tx(&self, initial_credit: u32) -> (ChannelId, Arc<dyn ChannelSink>) {
-        let (id, sink) = self.create_tx_channel(initial_credit);
+    fn create_tx(&self) -> (ChannelId, Arc<dyn ChannelSink>) {
+        let (id, sink) = self.create_tx_channel();
         (id, sink as Arc<dyn ChannelSink>)
     }
 
-    fn create_rx(&self, initial_credit: u32) -> (ChannelId, roam_types::BoundChannelReceiver) {
+    fn create_rx(&self) -> (ChannelId, roam_types::BoundChannelReceiver) {
         let channel_id = self.shared.channel_ids.lock().alloc();
-        let rx = self.register_rx_channel(channel_id, initial_credit);
+        let rx = self.register_rx_channel(channel_id);
         (channel_id, rx)
     }
 
-    fn bind_tx(&self, channel_id: ChannelId, initial_credit: u32) -> Arc<dyn ChannelSink> {
+    fn bind_tx(&self, channel_id: ChannelId) -> Arc<dyn ChannelSink> {
         let inner = DriverChannelSink {
             sender: self.sender.clone(),
             channel_id,
             local_control_tx: self.local_control_tx.clone(),
         };
-        let sink = Arc::new(CreditSink::new(inner, initial_credit));
+        let sink = Arc::new(CreditSink::new(inner, DEFAULT_CHANNEL_CREDIT));
         self.shared
             .channel_credits
             .lock()
@@ -418,12 +414,8 @@ impl ChannelBinder for DriverChannelBinder {
         sink
     }
 
-    fn register_rx(
-        &self,
-        channel_id: ChannelId,
-        initial_credit: u32,
-    ) -> roam_types::BoundChannelReceiver {
-        self.register_rx_channel(channel_id, initial_credit)
+    fn register_rx(&self, channel_id: ChannelId) -> roam_types::BoundChannelReceiver {
+        self.register_rx_channel(channel_id)
     }
 
     fn channel_liveness(&self) -> Option<ChannelLivenessHandle> {
@@ -451,20 +443,16 @@ pub struct DriverCaller {
 impl DriverCaller {
     /// Allocate a channel ID and create a credit-controlled sink for outbound items.
     ///
-    /// `initial_credit` is the const generic `N` from `Tx<T, N>`.
     /// The returned sink enforces credit; the semaphore is registered so
     /// `GrantCredit` messages can add permits.
-    pub fn create_tx_channel(
-        &self,
-        initial_credit: u32,
-    ) -> (ChannelId, Arc<CreditSink<DriverChannelSink>>) {
+    pub fn create_tx_channel(&self) -> (ChannelId, Arc<CreditSink<DriverChannelSink>>) {
         let channel_id = self.shared.channel_ids.lock().alloc();
         let inner = DriverChannelSink {
             sender: self.sender.clone(),
             channel_id,
             local_control_tx: self.local_control_tx.clone(),
         };
-        let sink = Arc::new(CreditSink::new(inner, initial_credit));
+        let sink = Arc::new(CreditSink::new(inner, DEFAULT_CHANNEL_CREDIT));
         self.shared
             .channel_credits
             .lock()
@@ -485,11 +473,7 @@ impl DriverCaller {
     ///
     /// The channel ID comes from the peer (e.g. from `RequestCall.channels`).
     /// The returned receiver should be bound to an `Rx` handle via `Rx::bind()`.
-    pub fn register_rx_channel(
-        &self,
-        channel_id: ChannelId,
-        initial_credit: u32,
-    ) -> roam_types::BoundChannelReceiver {
+    pub fn register_rx_channel(&self, channel_id: ChannelId) -> roam_types::BoundChannelReceiver {
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let mut terminal_buffered = false;
         // Drain any buffered messages that arrived before registration.
@@ -521,7 +505,7 @@ impl DriverCaller {
             liveness: self.channel_liveness(),
             replenisher: Some(Arc::new(DriverChannelCreditReplenisher::new(
                 channel_id,
-                initial_credit,
+                DEFAULT_CHANNEL_CREDIT,
                 self.local_control_tx.clone(),
             )) as ChannelCreditReplenisherHandle),
         }
@@ -529,24 +513,24 @@ impl DriverCaller {
 }
 
 impl ChannelBinder for DriverCaller {
-    fn create_tx(&self, initial_credit: u32) -> (ChannelId, Arc<dyn ChannelSink>) {
-        let (id, sink) = self.create_tx_channel(initial_credit);
+    fn create_tx(&self) -> (ChannelId, Arc<dyn ChannelSink>) {
+        let (id, sink) = self.create_tx_channel();
         (id, sink as Arc<dyn ChannelSink>)
     }
 
-    fn create_rx(&self, initial_credit: u32) -> (ChannelId, roam_types::BoundChannelReceiver) {
+    fn create_rx(&self) -> (ChannelId, roam_types::BoundChannelReceiver) {
         let channel_id = self.shared.channel_ids.lock().alloc();
-        let rx = self.register_rx_channel(channel_id, initial_credit);
+        let rx = self.register_rx_channel(channel_id);
         (channel_id, rx)
     }
 
-    fn bind_tx(&self, channel_id: ChannelId, initial_credit: u32) -> Arc<dyn ChannelSink> {
+    fn bind_tx(&self, channel_id: ChannelId) -> Arc<dyn ChannelSink> {
         let inner = DriverChannelSink {
             sender: self.sender.clone(),
             channel_id,
             local_control_tx: self.local_control_tx.clone(),
         };
-        let sink = Arc::new(CreditSink::new(inner, initial_credit));
+        let sink = Arc::new(CreditSink::new(inner, DEFAULT_CHANNEL_CREDIT));
         self.shared
             .channel_credits
             .lock()
@@ -554,12 +538,8 @@ impl ChannelBinder for DriverCaller {
         sink
     }
 
-    fn register_rx(
-        &self,
-        channel_id: ChannelId,
-        initial_credit: u32,
-    ) -> roam_types::BoundChannelReceiver {
-        self.register_rx_channel(channel_id, initial_credit)
+    fn register_rx(&self, channel_id: ChannelId) -> roam_types::BoundChannelReceiver {
+        self.register_rx_channel(channel_id)
     }
 
     fn channel_liveness(&self) -> Option<ChannelLivenessHandle> {

@@ -572,7 +572,7 @@ impl Handler<DriverReplySink> for RetryAfterResumeHandler {
 
 #[derive(Facet)]
 struct SubscribeArgs {
-    updates: Tx<u32, 16>,
+    updates: Tx<u32>,
 }
 
 // r[verify rpc.caller.liveness.refcounted]

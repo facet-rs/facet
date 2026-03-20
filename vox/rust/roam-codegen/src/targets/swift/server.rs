@@ -26,15 +26,6 @@ fn dispatch_helper_name(method_name: &str) -> String {
     format!("dispatch_{method_name}")
 }
 
-fn extract_initial_credit(shape: &'static Shape) -> u32 {
-    shape
-        .const_params
-        .iter()
-        .find(|cp| cp.name == "N")
-        .map(|cp| cp.value as u32)
-        .unwrap_or(16)
-}
-
 /// Generate complete server code (handler protocol + dispatchers).
 pub fn generate_server(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
@@ -426,8 +417,7 @@ fn generate_channeling_decode_arg(
             cw_writeln!(w, "{channel_cursor_var} += 1").unwrap();
             cw_writeln!(
                 w,
-                "let {name}Receiver = await registry.register({name}ChannelId, initialCredit: {}, onConsumed: {{ [taskSender = self.taskSender] additional in taskSender(.grantCredit(channelId: {name}ChannelId, bytes: additional)) }})",
-                extract_initial_credit(shape)
+                "let {name}Receiver = await registry.register({name}ChannelId, initialCredit: 16, onConsumed: {{ [taskSender = self.taskSender] additional in taskSender(.grantCredit(channelId: {name}ChannelId, bytes: additional)) }})"
             )
             .unwrap();
             cw_writeln!(
@@ -458,8 +448,7 @@ fn generate_channeling_decode_arg(
             cw_writeln!(w, "{channel_cursor_var} += 1").unwrap();
             cw_writeln!(
                 w,
-                "let {name} = await createServerTx(channelId: {name}ChannelId, taskSender: taskSender, registry: registry, initialCredit: {}, serialize: ({encode_closure}))",
-                extract_initial_credit(shape)
+                "let {name} = await createServerTx(channelId: {name}ChannelId, taskSender: taskSender, registry: registry, initialCredit: 16, serialize: ({encode_closure}))"
             )
             .unwrap();
         }

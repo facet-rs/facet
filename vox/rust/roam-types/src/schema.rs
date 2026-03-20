@@ -259,8 +259,6 @@ pub enum SchemaKind<Id = TypeSchemaId> {
     Channel {
         direction: ChannelDirection,
         element: TypeRef<Id>,
-        /// Initial credit (buffer size) for flow control.
-        initial_credit: u32,
     },
     Primitive {
         primitive_type: PrimitiveType,
@@ -336,14 +334,9 @@ impl<Id> SchemaKind<Id> {
             Self::Option { element } => SchemaKind::Option {
                 element: f(element)?,
             },
-            Self::Channel {
-                direction,
-                element,
-                initial_credit,
-            } => SchemaKind::Channel {
+            Self::Channel { direction, element } => SchemaKind::Channel {
                 direction,
                 element: f(element)?,
-                initial_credit,
             },
         })
     }
@@ -650,18 +643,13 @@ impl<'a, Id: Copy> SchemaHasher<'a, Id> {
                 self.feed_string("option");
                 self.feed_type_ref(element);
             }
-            SchemaKind::Channel {
-                direction,
-                element,
-                initial_credit,
-            } => {
+            SchemaKind::Channel { direction, element } => {
                 self.feed_string("channel");
                 self.feed_string(match direction {
                     ChannelDirection::Send => "send",
                     ChannelDirection::Recv => "recv",
                 });
                 self.feed_type_ref(element);
-                self.hasher.update(&initial_credit.to_le_bytes());
             }
         }
     }
@@ -1351,7 +1339,6 @@ impl<'a> ExtractCtx<'a> {
                 let elem_ref = self.extract(inner.shape)?;
                 let decl_id = shape.decl_id;
                 let id = self.id_for_decl(decl_id);
-                let initial_credit = extract_channel_credit(shape);
                 // For channels, the element in the schema body uses Var("T")
                 // since channels are generic over their element type.
                 let type_params = vec![TypeParamName("T".to_string())];
@@ -1363,7 +1350,6 @@ impl<'a> ExtractCtx<'a> {
                         kind: SchemaKind::Channel {
                             direction,
                             element: TypeRef::Var(TypeParamName("T".to_string())),
-                            initial_credit,
                         },
                     },
                 );
@@ -1724,16 +1710,6 @@ impl<'a> ExtractCtx<'a> {
         }
         Ok(args)
     }
-}
-
-/// Extract the initial credit `N` from a Tx/Rx shape's const params.
-fn extract_channel_credit(shape: &'static Shape) -> u32 {
-    shape
-        .const_params
-        .iter()
-        .find(|cp| cp.name == "N")
-        .map(|cp| cp.value as u32)
-        .unwrap_or(16)
 }
 
 fn scalar_to_primitive(scalar: ScalarType) -> PrimitiveType {

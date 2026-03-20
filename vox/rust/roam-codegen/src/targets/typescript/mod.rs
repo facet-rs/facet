@@ -375,8 +375,8 @@ mod tests {
     }
 
     #[test]
-    fn generated_typescript_preserves_channel_initial_credit() {
-        let subscribe = method_descriptor::<(Tx<u32>, Rx<u32, 32>), ()>(
+    fn generated_typescript_emits_channel_schemas() {
+        let subscribe = method_descriptor::<(Tx<u32>, Rx<u32>), ()>(
             "StreamSvc",
             "subscribe",
             &["output", "input"],
@@ -391,12 +391,12 @@ mod tests {
 
         let generated = generate_service(&service);
         assert!(
-            generated.contains("{ kind: 'tx', initial_credit: 16, element: { kind: 'u32' } }"),
-            "default Tx<T> credit must be emitted into the descriptor:\n{generated}"
+            generated.contains("{ kind: 'tx', element: { kind: 'u32' } }"),
+            "Tx<T> must be emitted into the descriptor:\n{generated}"
         );
         assert!(
-            generated.contains("{ kind: 'rx', initial_credit: 32, element: { kind: 'u32' } }"),
-            "explicit Rx<T, N> credit must be emitted into the descriptor:\n{generated}"
+            generated.contains("{ kind: 'rx', element: { kind: 'u32' } }"),
+            "Rx<T> must be emitted into the descriptor:\n{generated}"
         );
     }
 
