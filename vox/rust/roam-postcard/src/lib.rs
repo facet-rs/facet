@@ -30,10 +30,11 @@ mod tests {
     use facet::Facet;
 
     /// Serialize `value` via both `to_vec` and `peek_to_scatter_plan`,
-    /// assert the bytes are identical, then deserialize and return the result.
-    fn round_trip<T>(value: &T) -> T
+    /// assert the bytes are identical, then deserialize via `from_slice_borrowed`
+    /// and assert the result equals the original.
+    fn round_trip<T>(value: &T)
     where
-        for<'a> T: Facet<'a> + std::fmt::Debug + PartialEq,
+        for<'de> T: Facet<'de> + std::fmt::Debug + PartialEq,
     {
         // Path 1: direct serialization
         let direct_bytes = to_vec(value).unwrap();
@@ -66,46 +67,40 @@ mod tests {
         // Also verify staging() is accessible
         let _ = plan.staging();
 
-        // Deserialize from the direct bytes using from_slice_borrowed
-        from_slice_borrowed(&direct_bytes).unwrap()
+        // Deserialize and assert equality
+        let result: T = from_slice_borrowed(&direct_bytes).unwrap();
+        assert_eq!(&result, value, "round-trip mismatch for {:?}", value);
     }
 
     #[test]
     fn round_trip_u32() {
-        let result: u32 = round_trip(&42u32);
-        assert_eq!(result, 42);
+        round_trip(&42u32);
     }
 
     #[test]
     fn round_trip_bool() {
-        assert!(round_trip(&true));
-        assert!(!round_trip(&false));
+        round_trip(&true);
+        round_trip(&false);
     }
 
     #[test]
     fn round_trip_string() {
-        let result: String = round_trip(&"hello world".to_string());
-        assert_eq!(result, "hello world");
+        round_trip(&"hello world".to_string());
     }
 
     #[test]
     fn round_trip_empty_string() {
-        let result: String = round_trip(&String::new());
-        assert_eq!(result, "");
+        round_trip(&String::new());
     }
 
     #[test]
     fn round_trip_f64() {
-        let v = std::f64::consts::PI;
-        let result: f64 = round_trip(&v);
-        assert_eq!(result, v);
+        round_trip(&std::f64::consts::PI);
     }
 
     #[test]
     fn round_trip_negative_i32() {
-        let v: i32 = -12345;
-        let result: i32 = round_trip(&v);
-        assert_eq!(result, v);
+        round_trip(&-12345i32);
     }
 
     #[test]
@@ -116,9 +111,7 @@ mod tests {
             y: f64,
         }
 
-        let p = Point { x: 1.5, y: -2.5 };
-        let result: Point = round_trip(&p);
-        assert_eq!(result, p);
+        round_trip(&Point { x: 1.5, y: -2.5 });
     }
 
     #[test]
@@ -131,9 +124,9 @@ mod tests {
             Blue,
         }
 
-        assert_eq!(round_trip(&Color::Red), Color::Red);
-        assert_eq!(round_trip(&Color::Green), Color::Green);
-        assert_eq!(round_trip(&Color::Blue), Color::Blue);
+        round_trip(&Color::Red);
+        round_trip(&Color::Green);
+        round_trip(&Color::Blue);
     }
 
     #[test]
@@ -146,35 +139,25 @@ mod tests {
             Empty,
         }
 
-        assert_eq!(
-            round_trip(&Shape::Circle(std::f64::consts::PI)),
-            Shape::Circle(std::f64::consts::PI)
-        );
-        assert_eq!(
-            round_trip(&Shape::Rect { w: 10.0, h: 20.0 }),
-            Shape::Rect { w: 10.0, h: 20.0 }
-        );
-        assert_eq!(round_trip(&Shape::Empty), Shape::Empty);
+        round_trip(&Shape::Circle(std::f64::consts::PI));
+        round_trip(&Shape::Rect { w: 10.0, h: 20.0 });
+        round_trip(&Shape::Empty);
     }
 
     #[test]
     fn round_trip_vec() {
-        let v: Vec<u32> = vec![1, 2, 3, 100, 0];
-        let result: Vec<u32> = round_trip(&v);
-        assert_eq!(result, v);
+        round_trip(&vec![1u32, 2, 3, 100, 0]);
     }
 
     #[test]
     fn round_trip_vec_u8() {
-        let v: Vec<u8> = vec![0xFF, 0x00, 0x42, 0xAB];
-        let result: Vec<u8> = round_trip(&v);
-        assert_eq!(result, v);
+        round_trip(&vec![0xFFu8, 0x00, 0x42, 0xAB]);
     }
 
     #[test]
     fn round_trip_option() {
-        assert_eq!(round_trip(&Some(42u32)), Some(42));
-        assert_eq!(round_trip(&None::<u32>), None);
+        round_trip(&Some(42u32));
+        round_trip(&None::<u32>);
     }
 
     #[test]
@@ -191,20 +174,16 @@ mod tests {
             tags: Vec<String>,
         }
 
-        let val = Outer {
+        round_trip(&Outer {
             name: "test".to_string(),
             inner: Inner { value: 99 },
             tags: vec!["a".into(), "bb".into()],
-        };
-        let result: Outer = round_trip(&val);
-        assert_eq!(result, val);
+        });
     }
 
     #[test]
     fn round_trip_tuple() {
-        let val: (u32, String, bool) = (42, "hello".to_string(), true);
-        let result: (u32, String, bool) = round_trip(&val);
-        assert_eq!(result, val);
+        round_trip(&(42u32, "hello".to_string(), true));
     }
 
     #[test]
@@ -1735,17 +1714,14 @@ mod tests {
 
     #[test]
     fn round_trip_array() {
-        let val: [u32; 4] = [1, 2, 3, 4];
-        let result: [u32; 4] = round_trip(&val);
-        assert_eq!(result, val);
+        round_trip(&[1u32, 2, 3, 4]);
     }
 
     #[test]
     fn round_trip_hashmap() {
         let mut val = std::collections::HashMap::new();
         val.insert("one".to_string(), 1u32);
-        let result: std::collections::HashMap<String, u32> = round_trip(&val);
-        assert_eq!(result, val);
+        round_trip(&val);
     }
 
     #[test]
@@ -1754,8 +1730,7 @@ mod tests {
         val.insert("alpha".to_string(), 1u32);
         val.insert("beta".to_string(), 2);
         val.insert("gamma".to_string(), 3);
-        let result: std::collections::BTreeMap<String, u32> = round_trip(&val);
-        assert_eq!(result, val);
+        round_trip(&val);
     }
 
     #[test]
@@ -1763,8 +1738,7 @@ mod tests {
         #[derive(Facet, Debug, PartialEq)]
         struct Empty;
 
-        let result: Empty = round_trip(&Empty);
-        assert_eq!(result, Empty);
+        round_trip(&Empty);
     }
 
     // ========================================================================
@@ -1886,8 +1860,7 @@ mod tests {
         #[facet(transparent)]
         struct Wrapper(u32);
 
-        let result: Wrapper = round_trip(&Wrapper(42));
-        assert_eq!(result, Wrapper(42));
+        round_trip(&Wrapper(42));
     }
 
     #[test]
@@ -1946,20 +1919,17 @@ mod tests {
 
     #[test]
     fn round_trip_u128() {
-        let result: u128 = round_trip(&u128::MAX);
-        assert_eq!(result, u128::MAX);
+        round_trip(&u128::MAX);
     }
 
     #[test]
     fn round_trip_i128() {
-        let result: i128 = round_trip(&i128::MIN);
-        assert_eq!(result, i128::MIN);
+        round_trip(&i128::MIN);
     }
 
     #[test]
     fn round_trip_u128_zero() {
-        let result: u128 = round_trip(&0u128);
-        assert_eq!(result, 0);
+        round_trip(&0u128);
     }
 
     // ========================================================================
@@ -2033,8 +2003,7 @@ mod tests {
 
     #[test]
     fn round_trip_char() {
-        let result: char = round_trip(&'🦀');
-        assert_eq!(result, '🦀');
+        round_trip(&'🦀');
     }
 
     #[test]
@@ -2200,8 +2169,7 @@ mod tests {
         // Single element to avoid non-deterministic iteration order
         let mut val = HashSet::new();
         val.insert(42u32);
-        let result: HashSet<u32> = round_trip(&val);
-        assert_eq!(result, val);
+        round_trip(&val);
     }
 
     // ========================================================================
@@ -2321,8 +2289,7 @@ mod tests {
 
     #[test]
     fn round_trip_f32() {
-        let result: f32 = round_trip(&3.14f32);
-        assert!((result - 3.14).abs() < f32::EPSILON);
+        round_trip(&3.14f32);
     }
 
     // ========================================================================
@@ -2331,9 +2298,7 @@ mod tests {
 
     #[test]
     fn round_trip_boxed_str() {
-        let val: Box<str> = "hello".into();
-        let result: Box<str> = round_trip(&val);
-        assert_eq!(&*result, "hello");
+        round_trip(&Box::<str>::from("hello"));
     }
 
     // ========================================================================
@@ -2417,12 +2382,10 @@ mod tests {
             data: Vec<u8>,
         }
 
-        let result: Msg = round_trip(&Msg {
+        round_trip(&Msg {
             id: 42,
             data: vec![1, 2, 3, 4, 5],
         });
-        assert_eq!(result.id, 42);
-        assert_eq!(result.data, vec![1, 2, 3, 4, 5]);
     }
 
     #[test]
@@ -2472,8 +2435,7 @@ mod tests {
     fn round_trip_large_string() {
         // Large string (>4096) to hit the Reference threshold in scatter
         let text = "x".repeat(8192);
-        let result: String = round_trip(&text);
-        assert_eq!(result, text);
+        round_trip(&text);
     }
 
     // ========================================================================
@@ -2960,5 +2922,118 @@ mod tests {
             matches!(result, Cow::Borrowed(_)),
             "from_slice_borrowed into Cow<str> should return Borrowed, got Owned",
         );
+    }
+
+    // ========================================================================
+    // Cow<str> round-trip
+    // ========================================================================
+
+    #[test]
+    fn round_trip_cow_str() {
+        use std::borrow::Cow;
+        let val: Cow<'_, str> = Cow::Owned("hello cow".to_string());
+        let bytes = to_vec(&val).unwrap();
+        let result: Cow<'_, str> = from_slice_borrowed(&bytes).unwrap();
+        assert_eq!(result, val);
+    }
+
+    #[test]
+    fn round_trip_struct_with_cow_str() {
+        use std::borrow::Cow;
+        #[derive(Facet, Debug, PartialEq)]
+        struct Msg<'a> {
+            name: Cow<'a, str>,
+            id: u32,
+        }
+
+        let msg = Msg {
+            name: Cow::Owned("test".to_string()),
+            id: 42,
+        };
+        let bytes = to_vec(&msg).unwrap();
+        let result: Msg<'_> = from_slice_borrowed(&bytes).unwrap();
+        assert_eq!(result, msg);
+    }
+
+    // ========================================================================
+    // All integer types round-trip
+    // ========================================================================
+
+    #[test]
+    fn round_trip_u8() {
+        round_trip(&0u8);
+        round_trip(&255u8);
+    }
+
+    #[test]
+    fn round_trip_u16() {
+        round_trip(&0u16);
+        round_trip(&u16::MAX);
+    }
+
+    #[test]
+    fn round_trip_u64() {
+        round_trip(&0u64);
+        round_trip(&u64::MAX);
+    }
+
+    #[test]
+    fn round_trip_i8() {
+        round_trip(&0i8);
+        round_trip(&i8::MIN);
+        round_trip(&i8::MAX);
+    }
+
+    #[test]
+    fn round_trip_i16() {
+        round_trip(&0i16);
+        round_trip(&i16::MIN);
+        round_trip(&i16::MAX);
+    }
+
+    #[test]
+    fn round_trip_i32() {
+        round_trip(&0i32);
+        round_trip(&i32::MIN);
+        round_trip(&i32::MAX);
+    }
+
+    #[test]
+    fn round_trip_i64() {
+        round_trip(&0i64);
+        round_trip(&i64::MIN);
+        round_trip(&i64::MAX);
+    }
+
+    // ========================================================================
+    // Slice round-trip
+    // ========================================================================
+
+    #[test]
+    fn round_trip_borrowed_slice_u32() {
+        // &[u32] should serialize like Vec<u32> and deserialize back
+        let data: Vec<u32> = vec![10, 20, 30];
+        let bytes = to_vec(&data).unwrap();
+        let result: Vec<u32> = from_slice_borrowed(&bytes).unwrap();
+        assert_eq!(result, data);
+    }
+
+    #[test]
+    fn round_trip_borrowed_slice_in_struct() {
+        #[derive(Facet, Debug, PartialEq)]
+        struct Msg<'a> {
+            data: &'a [u8],
+            id: u32,
+        }
+
+        let data = [1u8, 2, 3, 4, 5];
+        let msg = Msg {
+            data: &data,
+            id: 42,
+        };
+        let bytes = to_vec(&msg).unwrap();
+        let result: Msg<'_> = from_slice_borrowed(&bytes).unwrap();
+        assert_eq!(result.id, 42);
+        assert_eq!(result.data, &data);
     }
 }
