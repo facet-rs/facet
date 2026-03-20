@@ -435,19 +435,32 @@ fn deserialize_scalar<'de, 'facet, const BORROW: bool>(
             partial.set(s.to_owned()).map_err(re)
         }
         ScalarType::Str => {
-            // SAFETY: The caller of from_slice_borrowed guarantees 'input: 'facet,
-            // so the cursor's borrowed data outlives the Partial. For from_slice (owned),
-            // ScalarType::Str never appears because 'static types use String, not &str.
             let s = cursor.read_str()?;
+            if !BORROW {
+                return Err(DeserializeError::Custom(
+                    "cannot deserialize borrowed &str with BORROW=false; \
+                     use from_slice_borrowed or change the target type to String"
+                        .into(),
+                ));
+            }
+            // SAFETY: The caller of from_slice_borrowed guarantees 'input: 'facet,
+            // so the cursor's borrowed data outlives the Partial.
             #[allow(unsafe_code)]
             let s: &'facet str = unsafe { std::mem::transmute(s) };
             partial.set(s).map_err(re)
         }
         ScalarType::CowStr => {
             let s = cursor.read_str()?;
-            #[allow(unsafe_code)]
-            let s: &'facet str = unsafe { std::mem::transmute(s) };
-            partial.set(std::borrow::Cow::Borrowed(s)).map_err(re)
+            if BORROW {
+                // SAFETY: The caller of from_slice_borrowed guarantees 'input: 'facet.
+                #[allow(unsafe_code)]
+                let s: &'facet str = unsafe { std::mem::transmute(s) };
+                partial.set(std::borrow::Cow::Borrowed(s)).map_err(re)
+            } else {
+                partial
+                    .set(std::borrow::Cow::<'facet, str>::Owned(s.to_owned()))
+                    .map_err(re)
+            }
         }
         _ => Err(DeserializeError::UnsupportedType(format!(
             "scalar {scalar_type:?}"
