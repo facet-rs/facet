@@ -442,3 +442,93 @@ describe("Composite golden vectors (Rust cross-language)", () => {
     );
   });
 });
+
+// ============================================================================
+// Result / RoamError golden vectors
+// ============================================================================
+
+// Rust's Result<T, RoamError<E>> is encoded as an enum:
+//   Ok(T)  = variant 0, newtype
+//   Err(RoamError<E>) = variant 1, newtype
+// RoamError<E> is:
+//   User(E)           = variant 0, newtype
+//   UnknownMethod     = variant 1, unit
+//   InvalidPayload(S) = variant 2, newtype (string)
+//   Cancelled         = variant 3, unit
+//   Indeterminate     = variant 4, unit
+
+const RoamErrorInfallibleSchema: EnumSchema = {
+  kind: "enum",
+  variants: [
+    { name: "User", discriminant: 0, fields: null }, // Infallible has no encoding
+    { name: "UnknownMethod", discriminant: 1, fields: null },
+    { name: "InvalidPayload", discriminant: 2, fields: { kind: "string" } },
+    { name: "Cancelled", discriminant: 3, fields: null },
+    { name: "Indeterminate", discriminant: 4, fields: null },
+  ],
+};
+
+const RoamErrorStringSchema: EnumSchema = {
+  kind: "enum",
+  variants: [
+    { name: "User", discriminant: 0, fields: { kind: "string" } },
+    { name: "UnknownMethod", discriminant: 1, fields: null },
+    { name: "InvalidPayload", discriminant: 2, fields: { kind: "string" } },
+    { name: "Cancelled", discriminant: 3, fields: null },
+    { name: "Indeterminate", discriminant: 4, fields: null },
+  ],
+};
+
+function makeResultSchema(okSchema: Schema, errSchema: EnumSchema): EnumSchema {
+  return {
+    kind: "enum",
+    variants: [
+      { name: "Ok", discriminant: 0, fields: okSchema },
+      { name: "Err", discriminant: 1, fields: errSchema },
+    ],
+  };
+}
+
+describe("Result/RoamError golden vectors (Rust cross-language)", () => {
+  it("decodes Ok(string)", () => {
+    const schema = makeResultSchema({ kind: "string" }, RoamErrorInfallibleSchema);
+    assertDecode("result/ok_string.bin", schema, { tag: "Ok", value: "hello" });
+  });
+
+  it("decodes Ok(u32)", () => {
+    const schema = makeResultSchema({ kind: "u32" }, RoamErrorInfallibleSchema);
+    assertDecode("result/ok_u32.bin", schema, { tag: "Ok", value: 42 });
+  });
+
+  it("decodes Err(UnknownMethod)", () => {
+    const schema = makeResultSchema({ kind: "u32" }, RoamErrorInfallibleSchema);
+    assertDecode("result/err_unknown_method.bin", schema, {
+      tag: "Err",
+      value: { tag: "UnknownMethod" },
+    });
+  });
+
+  it("decodes Err(InvalidPayload)", () => {
+    const schema = makeResultSchema({ kind: "u32" }, RoamErrorInfallibleSchema);
+    assertDecode("result/err_invalid_payload.bin", schema, {
+      tag: "Err",
+      value: { tag: "InvalidPayload", value: "" },
+    });
+  });
+
+  it("decodes Err(Cancelled)", () => {
+    const schema = makeResultSchema({ kind: "u32" }, RoamErrorInfallibleSchema);
+    assertDecode("result/err_cancelled.bin", schema, {
+      tag: "Err",
+      value: { tag: "Cancelled" },
+    });
+  });
+
+  it("decodes Err(User(string))", () => {
+    const schema = makeResultSchema({ kind: "u32" }, RoamErrorStringSchema);
+    assertDecode("result/err_user_string.bin", schema, {
+      tag: "Err",
+      value: { tag: "User", value: "oops" },
+    });
+  });
+});
