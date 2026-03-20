@@ -14,7 +14,7 @@ use spec_tests::harness::{SubjectSpec, accept_subject_spec, run_async, spawn_lou
 // r[verify channeling.allocation.caller]
 pub fn run_channeling_sum_client_to_server(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
 
         let (tx, rx) = roam::channel::<i32>();
         spawn_loud(async move {
@@ -40,7 +40,7 @@ pub fn run_channeling_sum_client_to_server(spec: SubjectSpec) {
 // r[verify channeling.close]
 pub fn run_channeling_generate_server_to_client(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
 
         let (tx, mut rx) = roam::channel::<i32>();
         let recv = spawn_loud(async move {
@@ -72,7 +72,7 @@ pub fn run_channeling_generate_server_to_client(spec: SubjectSpec) {
 // r[verify channeling.lifecycle.immediate-data]
 pub fn run_channeling_transform_bidirectional(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
 
         let (input_tx, input_rx) = roam::channel::<String>();
         let (output_tx, mut output_rx) = roam::channel::<String>();

@@ -11,7 +11,7 @@ use spec_tests::harness::{
 // r[verify transport.message.binary]
 pub fn run_rpc_echo_roundtrip(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let resp = client
             .echo("hello".to_string())
             .await
@@ -28,7 +28,7 @@ pub fn run_rpc_echo_roundtrip(spec: SubjectSpec) {
 // r[verify call.error.user]
 pub fn run_rpc_user_error_roundtrip(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let result = client.divide(10, 0).await;
         match result {
             Err(RoamError::User(MathError::DivisionByZero)) => {}
@@ -56,7 +56,7 @@ pub fn run_rpc_user_error_roundtrip(spec: SubjectSpec) {
 // r[verify core.call.request-id]
 pub fn run_rpc_pipelining_multiple_requests(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let (r1, r2, r3) = tokio::join!(
             client.echo("first".to_string()),
             client.echo("second".to_string()),
@@ -81,7 +81,7 @@ pub fn run_rpc_pipelining_multiple_requests(spec: SubjectSpec) {
 // r[verify call.complete]
 pub fn run_rpc_reverse_roundtrip(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let resp = client
             .reverse("hello".to_string())
             .await
@@ -98,7 +98,7 @@ pub fn run_rpc_reverse_roundtrip(spec: SubjectSpec) {
 // r[verify call.error.user]
 pub fn run_rpc_lookup_user_error(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let result = client.lookup(999).await;
         match result {
             Err(RoamError::User(err)) => {
@@ -122,7 +122,7 @@ pub fn run_rpc_lookup_user_error(spec: SubjectSpec) {
 // r[verify encoding.struct]
 pub fn run_rpc_complex_struct_echo(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let point = Point { x: 3, y: 7 };
         let resp = client
             .echo_point(point.clone())
@@ -140,7 +140,7 @@ pub fn run_rpc_complex_struct_echo(spec: SubjectSpec) {
 // r[verify encoding.option]
 pub fn run_rpc_optional_field(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         // Test with Some email
         let p1 = client
             .create_person(
@@ -170,7 +170,7 @@ pub fn run_rpc_optional_field(spec: SubjectSpec) {
 // r[verify encoding.struct.nested]
 pub fn run_rpc_nested_struct(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let rect = Rectangle {
             top_left: Point { x: 0, y: 10 },
             bottom_right: Point { x: 5, y: 0 },
@@ -193,7 +193,7 @@ pub fn run_rpc_nested_struct(spec: SubjectSpec) {
 // r[verify encoding.option.return]
 pub fn run_rpc_option_return(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         // Known color
         let color = client
             .parse_color("red".to_string())
@@ -219,7 +219,7 @@ pub fn run_rpc_option_return(spec: SubjectSpec) {
 // r[verify encoding.enum.struct-variants]
 pub fn run_rpc_enum_struct_variants(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let area_circle = client
             .shape_area(Shape::Circle { radius: 1.0 })
             .await
@@ -256,7 +256,7 @@ pub fn run_rpc_enum_struct_variants(spec: SubjectSpec) {
 // r[verify encoding.enum]
 pub fn run_rpc_vec_of_structs(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let canvas = client
             .create_canvas(
                 "test".to_string(),
@@ -299,7 +299,7 @@ pub fn run_rpc_vec_of_structs(spec: SubjectSpec) {
 // r[verify encoding.enum.newtype-variants]
 pub fn run_rpc_enum_newtype_variants(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         // Text variant — subject prefixes with "processed: "
         let text_out = client
             .process_message(Message::Text("hello".to_string()))
@@ -348,7 +348,7 @@ pub fn run_rpc_enum_newtype_variants(spec: SubjectSpec) {
 // r[verify encoding.vec]
 pub fn run_rpc_vec_return(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let points = client
             .get_points(3)
             .await
@@ -365,7 +365,7 @@ pub fn run_rpc_vec_return(spec: SubjectSpec) {
 // r[verify encoding.tuple]
 pub fn run_rpc_tuple_type(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let (s, n) = client
             .swap_pair((42, "hello".to_string()))
             .await
@@ -414,7 +414,7 @@ pub fn run_subject_calls_process_message(spec: SubjectSpec) {
 // r[verify call.error.user]
 pub fn run_rpc_divide_overflow(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         // i64::MIN / -1 overflows
         let result = client.divide(i64::MIN, -1).await;
         match result {
@@ -431,7 +431,7 @@ pub fn run_rpc_divide_overflow(spec: SubjectSpec) {
 // r[verify call.error.user]
 pub fn run_rpc_lookup_found(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         // id=1 → Alice with email
         let alice = client
             .lookup(1)
@@ -457,7 +457,7 @@ pub fn run_rpc_lookup_found(spec: SubjectSpec) {
 // r[verify call.error.user]
 pub fn run_rpc_lookup_access_denied(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let result = client.lookup(100).await;
         match result {
             Err(RoamError::User(LookupError::AccessDenied)) => {}
@@ -477,7 +477,7 @@ pub fn run_rpc_lookup_access_denied(spec: SubjectSpec) {
 // r[verify encoding.bytes]
 pub fn run_rpc_echo_bytes(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let data = vec![0u8, 1, 127, 128, 255];
         let result = client
             .echo_bytes(data.clone())
@@ -503,7 +503,7 @@ pub fn run_rpc_echo_bytes(spec: SubjectSpec) {
 // r[verify encoding.bool]
 pub fn run_rpc_echo_bool(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         for b in [true, false] {
             let result = client
                 .echo_bool(b)
@@ -522,7 +522,7 @@ pub fn run_rpc_echo_bool(spec: SubjectSpec) {
 // r[verify encoding.u64]
 pub fn run_rpc_echo_u64(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         for n in [0u64, 1, u64::MAX, 1_000_000_000_000] {
             let result = client
                 .echo_u64(n)
@@ -541,7 +541,7 @@ pub fn run_rpc_echo_u64(spec: SubjectSpec) {
 // r[verify encoding.option]
 pub fn run_rpc_echo_option_string(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let some = client
             .echo_option_string(Some("hello".to_string()))
             .await
@@ -565,7 +565,7 @@ pub fn run_rpc_echo_option_string(spec: SubjectSpec) {
 // r[verify encoding.struct.multi-arg]
 pub fn run_rpc_describe_point(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let tp = client
             .describe_point("test".to_string(), 5, -3, true)
             .await
@@ -589,7 +589,7 @@ pub fn run_rpc_describe_point(spec: SubjectSpec) {
 // r[verify encoding.enum.unit-variants]
 pub fn run_rpc_all_colors(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let colors = client
             .all_colors()
             .await
@@ -608,7 +608,7 @@ pub fn run_rpc_all_colors(spec: SubjectSpec) {
 // r[verify encoding.enum.struct-variants]
 pub fn run_rpc_echo_shape(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         for shape in [
             Shape::Point,
             Shape::Circle { radius: 1.5 },
@@ -634,7 +634,7 @@ pub fn run_rpc_echo_shape(spec: SubjectSpec) {
 // r[verify encoding.enum.unit-variants]
 pub fn run_rpc_echo_status(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         for status in [spec_proto::Status::Active, spec_proto::Status::Inactive] {
             let result = client
                 .echo_status_v1(status.clone())
@@ -655,7 +655,7 @@ pub fn run_rpc_echo_status(spec: SubjectSpec) {
 // r[verify encoding.struct]
 pub fn run_rpc_echo_tag(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let tag = Tag {
             label: "important".to_string(),
             priority: 42,
@@ -677,7 +677,7 @@ pub fn run_rpc_echo_tag(spec: SubjectSpec) {
 // r[verify call.pipelining.allowed]
 pub fn run_rpc_pipelining_10_concurrent(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let mut handles = Vec::new();
         for i in 0..10usize {
             let client = client.clone();
@@ -708,7 +708,7 @@ pub fn run_rpc_pipelining_10_concurrent(spec: SubjectSpec) {
 // r[verify channeling.flow-control]
 pub fn run_rpc_channeling_large_stream(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let n: u32 = 100; // well above default initial_credit of 16
         let (tx, mut rx) = roam::channel::<i32>();
         let recv = spec_tests::harness::spawn_loud(async move {
@@ -739,7 +739,7 @@ pub fn run_rpc_channeling_large_stream(spec: SubjectSpec) {
 // r[verify channeling.flow-control]
 pub fn run_rpc_channeling_sum_large(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let n: i32 = 100;
         let (tx, rx) = roam::channel::<i32>();
         spec_tests::harness::spawn_loud(async move {

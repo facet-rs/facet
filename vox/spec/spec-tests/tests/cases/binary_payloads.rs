@@ -47,7 +47,7 @@ fn make_payload(size: usize) -> Vec<u8> {
 // r[verify transport.message.binary]
 pub fn run_subject_process_message_binary_payload_sizes(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         for &size in payload_sizes() {
             let payload = make_payload(size);
             let resp = client
@@ -84,7 +84,7 @@ pub fn run_subject_process_message_binary_payload_sizes(spec: SubjectSpec) {
 // r[verify shm.framing.threshold]
 pub fn run_subject_process_message_binary_payload_shm_cutover_boundaries(spec: SubjectSpec) {
     run_async(async {
-        let (client, mut child) = accept_subject_spec(spec).await?;
+        let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         for &size in shm_cutover_payload_sizes() {
             let payload = make_payload(size);
             let resp = tokio::time::timeout(

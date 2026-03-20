@@ -11,8 +11,8 @@ use std::os::fd::{AsRawFd, IntoRawFd};
 
 use roam::{Rx, Tx};
 use roam_core::{
-    DriverReplySink, SessionAcceptOutcome, SessionRegistry, TransportMode, acceptor_conduit,
-    acceptor_on, acceptor_transport, initiator_on, memory_link_pair,
+    DriverReplySink, SessionAcceptOutcome, SessionHandle, SessionRegistry, TransportMode,
+    acceptor_conduit, acceptor_on, acceptor_transport, initiator_on, memory_link_pair,
 };
 use roam_shm::HostHub;
 use roam_shm::ShmLink;
@@ -836,7 +836,7 @@ fn keep_tempdir_alive(dir: tempfile::TempDir) {
 
 /// Listen on a random TCP port, upgrade incoming connection to WebSocket,
 /// complete the roam handshake, and return a ready `TestbedClient`.
-pub async fn accept_subject_ws(cmd: &str) -> Result<(TestbedClient, Child), String> {
+pub async fn accept_subject_ws(cmd: &str) -> Result<(TestbedClient, Child, SessionHandle), String> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("bind: {e}"))?;
@@ -859,15 +859,15 @@ pub async fn accept_subject_ws(cmd: &str) -> Result<(TestbedClient, Child), Stri
         .await
         .map_err(|e| format!("WebSocket upgrade: {e}"))?;
 
-    let (client, _sh) = acceptor_on(ws)
+    let (client, sh) = acceptor_on(ws)
         .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
         .await
         .map_err(|e| format!("handshake: {e}"))?;
 
-    Ok((client, child))
+    Ok((client, child, sh))
 }
 
-pub async fn accept_subject() -> Result<(TestbedClient, Child), String> {
+pub async fn accept_subject() -> Result<(TestbedClient, Child, SessionHandle), String> {
     let spec = SubjectSpec {
         language: SubjectLanguage::Rust,
         transport: subject_transport(),
@@ -876,7 +876,9 @@ pub async fn accept_subject() -> Result<(TestbedClient, Child), String> {
     accept_subject_spec(spec).await
 }
 
-pub async fn accept_subject_spec(spec: SubjectSpec) -> Result<(TestbedClient, Child), String> {
+pub async fn accept_subject_spec(
+    spec: SubjectSpec,
+) -> Result<(TestbedClient, Child, SessionHandle), String> {
     let cmd = subject_cmd_for_language(spec.language);
     match spec.transport {
         SubjectTestTransport::Tcp => accept_subject_tcp(&cmd).await,
@@ -889,13 +891,72 @@ pub async fn accept_subject_spec(spec: SubjectSpec) -> Result<(TestbedClient, Ch
 }
 
 /// Accept a subject over TCP given a custom command string.
-pub async fn accept_subject_cmd_tcp(cmd: &str) -> Result<(TestbedClient, Child), String> {
+pub async fn accept_subject_cmd_tcp(
+    cmd: &str,
+) -> Result<(TestbedClient, Child, SessionHandle), String> {
     accept_subject_tcp(cmd).await
+}
+
+/// Spawn a subject, establish a connection, run a test closure, and clean up.
+///
+/// Monitors the child process in a background task — if the subject dies,
+/// the session handle is dropped so pending calls fail immediately instead
+/// of hanging until a timeout.
+pub async fn with_subject<F, T>(spec: SubjectSpec, f: F) -> Result<T, String>
+where
+    F: AsyncFnOnce(&TestbedClient) -> Result<T, String>,
+{
+    let cmd = subject_cmd_for_language(spec.language);
+    with_subject_cmd(spec, &cmd, f).await
+}
+
+/// Like [`with_subject`] but with a custom command string (e.g. for evolved TS subjects).
+pub async fn with_subject_cmd<F, T>(spec: SubjectSpec, cmd: &str, f: F) -> Result<T, String>
+where
+    F: AsyncFnOnce(&TestbedClient) -> Result<T, String>,
+{
+    let (client, mut child, session_handle) = match spec.transport {
+        SubjectTestTransport::Tcp => accept_subject_tcp(cmd).await?,
+        SubjectTestTransport::Ws => accept_subject_ws(cmd).await?,
+        SubjectTestTransport::Shm => match spec.shm_mode {
+            SubjectShmMode::GuestServer => accept_subject_shm_subject_is_guest(cmd).await?,
+            SubjectShmMode::HostServer => accept_subject_shm_subject_is_host(cmd).await?,
+        },
+    };
+
+    // Monitor the child process — if it dies, drop the session handle
+    // so pending RPCs fail immediately.
+    let child_pid = child.id().unwrap_or_default();
+    let (child_died_tx, child_died_rx) = tokio::sync::oneshot::channel::<String>();
+    let monitor = tokio::task::spawn(async move {
+        let status = child.wait().await;
+        let msg = match status {
+            Ok(s) => format!("subject (pid={child_pid}) exited: {s}"),
+            Err(e) => format!("subject (pid={child_pid}) wait error: {e}"),
+        };
+        eprintln!("[harness] {msg}");
+        // Drop the session handle to close the session, which unblocks
+        // any pending RPCs on the client.
+        drop(session_handle);
+        let _ = child_died_tx.send(msg);
+    });
+
+    let result = tokio::select! {
+        result = f(&client) => result,
+        Ok(msg) = child_died_rx => {
+            Err(format!("subject died during test: {msg}"))
+        }
+    };
+
+    // Clean up: abort the monitor and kill the child if still alive.
+    monitor.abort();
+
+    result
 }
 
 pub async fn accept_subject_with_transport(
     transport: SubjectTestTransport,
-) -> Result<(TestbedClient, Child), String> {
+) -> Result<(TestbedClient, Child, SessionHandle), String> {
     accept_subject_spec(SubjectSpec {
         language: SubjectLanguage::Rust,
         transport,
@@ -1438,7 +1499,7 @@ where
     Ok(client)
 }
 
-async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient, Child), String> {
+async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient, Child, SessionHandle), String> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("bind: {e}"))?;
@@ -1491,12 +1552,12 @@ async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient, Child), String>
     };
     stream.set_nodelay(true).unwrap();
 
-    let (client, _sh) = acceptor_transport(StreamLink::tcp(stream))
+    let (client, sh) = acceptor_transport(StreamLink::tcp(stream))
         .establish::<TestbedClient>(NoopHandler)
         .await
         .map_err(|e| format!("handshake: {e}"))?;
 
-    Ok((client, child))
+    Ok((client, child, sh))
 }
 
 async fn accept_subject_tcp_resumable(cmd: &str) -> Result<ResumableSubjectHarness, String> {
@@ -1570,7 +1631,9 @@ async fn accept_subject_tcp_resumable(cmd: &str) -> Result<ResumableSubjectHarne
     })
 }
 
-async fn accept_subject_shm_subject_is_guest(cmd: &str) -> Result<(TestbedClient, Child), String> {
+async fn accept_subject_shm_subject_is_guest(
+    cmd: &str,
+) -> Result<(TestbedClient, Child, SessionHandle), String> {
     let dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
     let sid = sid_hex_32();
     let control_sock_path = dir.path().join("bootstrap.sock");
@@ -1766,17 +1829,19 @@ async fn accept_subject_shm_subject_is_guest(cmd: &str) -> Result<(TestbedClient
         eprintln!("[harness] accept_doorbell ok");
     }
     eprintln!("[harness] handshake...");
-    let (client, _sh) = acceptor_on(link)
+    let (client, sh) = acceptor_on(link)
         .establish::<TestbedClient>(NoopHandler)
         .await
         .map_err(|e| format!("handshake: {e}"))?;
     eprintln!("[harness] handshake ok");
 
     keep_tempdir_alive(dir);
-    Ok((client, child))
+    Ok((client, child, sh))
 }
 
-async fn accept_subject_shm_subject_is_host(cmd: &str) -> Result<(TestbedClient, Child), String> {
+async fn accept_subject_shm_subject_is_host(
+    cmd: &str,
+) -> Result<(TestbedClient, Child, SessionHandle), String> {
     let dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
     let sid = sid_hex_32();
     let control_sock_path = dir.path().join("bootstrap.sock");
@@ -1808,7 +1873,7 @@ async fn accept_subject_shm_subject_is_host(cmd: &str) -> Result<(TestbedClient,
     .await?;
     let pid = child.id().unwrap_or_default();
 
-    let setup_result: Result<TestbedClient, String> = async {
+    let setup_result: Result<(TestbedClient, SessionHandle), String> = async {
         eprintln!(
             "[subject:{pid}] waiting for subject-host bootstrap socket {}",
             control_sock_path.display()
@@ -2053,19 +2118,19 @@ async fn accept_subject_shm_subject_is_host(cmd: &str) -> Result<(TestbedClient,
             .map_err(|e| format!("guest_link_from_names: {e}"))?
         };
 
-        let (client, _sh) = initiator_on(link, requested_transport_mode())
+        let (client, sh) = initiator_on(link, requested_transport_mode())
             .establish::<TestbedClient>(NoopHandler)
             .await
             .map_err(|e| format!("handshake: {e}"))?;
 
-        Ok::<_, String>(client)
+        Ok::<_, String>((client, sh))
     }
     .await;
 
     match setup_result {
-        Ok(client) => {
+        Ok((client, sh)) => {
             keep_tempdir_alive(dir);
-            Ok((client, child))
+            Ok((client, child, sh))
         }
         Err(e) => {
             let status_note = match child.try_wait() {

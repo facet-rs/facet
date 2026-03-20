@@ -69,7 +69,7 @@ async fn run_for_transport(transport: RustTransport) -> Result<(), String> {
 }
 
 async fn run_for_subject_transport(spec: SubjectSpec) -> Result<(), String> {
-    let (client, mut child) = accept_subject_spec(spec).await?;
+    let (client, mut child, _sh) = accept_subject_spec(spec).await?;
     for &size in payload_sizes() {
         eprintln!("[test] sending size={size}");
         let payload = make_payload(size);
