@@ -2893,4 +2893,72 @@ mod tests {
             }
         );
     }
+
+    // ========================================================================
+    // Memory safety: borrowed vs owned deserialization
+    // ========================================================================
+
+    #[test]
+    fn non_borrowed_into_borrowed_str_must_fail() {
+        // Deserializing into a type with &str using from_slice (BORROW=false)
+        // must fail — the returned value would contain a dangling reference
+        // to the input bytes which are not guaranteed to outlive the value.
+        #[derive(Facet, Debug, PartialEq)]
+        struct Msg<'a> {
+            name: &'a str,
+        }
+
+        let bytes = to_vec(&"hello".to_string()).unwrap();
+        // from_slice uses BORROW=false — it cannot produce borrowed references
+        let result: Result<Msg<'_>, _> = from_slice(&bytes);
+        assert!(
+            result.is_err(),
+            "from_slice (non-borrowed) into &str should fail, got: {:?}",
+            result,
+        );
+    }
+
+    #[test]
+    fn borrowed_into_borrowed_str_must_succeed() {
+        // from_slice_borrowed (BORROW=true) into &str must succeed —
+        // the returned value borrows directly from the input.
+        #[derive(Facet, Debug, PartialEq)]
+        struct Msg<'a> {
+            name: &'a str,
+        }
+
+        let bytes = to_vec(&"hello".to_string()).unwrap();
+        let result: Msg<'_> = from_slice_borrowed(&bytes).unwrap();
+        assert_eq!(result.name, "hello");
+    }
+
+    #[test]
+    fn non_borrowed_cow_str_returns_owned() {
+        // from_slice (BORROW=false) into Cow<str> must succeed and return
+        // Cow::Owned — it can't borrow, so it clones into an owned String.
+        use std::borrow::Cow;
+
+        let bytes = to_vec(&"hello".to_string()).unwrap();
+        let result: Cow<'_, str> = from_slice(&bytes).unwrap();
+        assert_eq!(&*result, "hello");
+        assert!(
+            matches!(result, Cow::Owned(_)),
+            "from_slice into Cow<str> should return Owned, got Borrowed",
+        );
+    }
+
+    #[test]
+    fn borrowed_cow_str_returns_borrowed() {
+        // from_slice_borrowed (BORROW=true) into Cow<str> must succeed and
+        // return Cow::Borrowed — it can borrow directly from the input.
+        use std::borrow::Cow;
+
+        let bytes = to_vec(&"hello".to_string()).unwrap();
+        let result: Cow<'_, str> = from_slice_borrowed(&bytes).unwrap();
+        assert_eq!(&*result, "hello");
+        assert!(
+            matches!(result, Cow::Borrowed(_)),
+            "from_slice_borrowed into Cow<str> should return Borrowed, got Owned",
+        );
+    }
 }
