@@ -13,8 +13,41 @@ use facet_core::PtrConst;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::{Semaphore, mpsc};
 
+use crate::ChannelId;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{Backing, ChannelClose, ChannelItem, ChannelReset, Metadata, Payload, SelfRef};
+
+// ---------------------------------------------------------------------------
+// Thread-local channel binder — set during deserialization so TryFrom impls
+// can bind channels immediately.
+// ---------------------------------------------------------------------------
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::channel_binding::ChannelBinder;
+
+#[cfg(not(target_arch = "wasm32"))]
+std::thread_local! {
+    static CHANNEL_BINDER: std::cell::RefCell<Option<&'static dyn ChannelBinder>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Set the thread-local channel binder for the duration of `f`.
+///
+/// Any `Tx<T>` or `Rx<T>` deserialized (via `TryFrom<ChannelId>`) during `f`
+/// will be bound through this binder.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn with_channel_binder<R>(binder: &dyn ChannelBinder, f: impl FnOnce() -> R) -> R {
+    // SAFETY: we restore the previous value (always None in practice) on exit,
+    // so the binder reference doesn't escape the closure's lifetime.
+    #[allow(unsafe_code)]
+    let static_ref: &'static dyn ChannelBinder = unsafe { std::mem::transmute(binder) };
+    CHANNEL_BINDER.with(|cell| {
+        let prev = cell.borrow_mut().replace(static_ref);
+        let result = f();
+        *cell.borrow_mut() = prev;
+        result
+    })
+}
 
 // r[impl rpc.channel.pair]
 /// The binding stored in a channel core — either a sink or a receiver, never both.
@@ -441,8 +474,9 @@ impl ReplenisherSlot {
 // r[impl rpc.channel.direction]
 // r[impl rpc.channel.payload-encoding]
 #[derive(Facet)]
-#[facet(proxy = ())]
+#[facet(proxy = crate::ChannelId)]
 pub struct Tx<T> {
+    pub(crate) channel_id: ChannelId,
     pub(crate) sink: SinkSlot,
     pub(crate) core: CoreSlot,
     pub(crate) liveness: LivenessSlot,
@@ -457,6 +491,7 @@ impl<T> Tx<T> {
     /// Create a standalone unbound Tx (used by deserialization).
     pub fn unbound() -> Self {
         Self {
+            channel_id: ChannelId::RESERVED,
             sink: SinkSlot::empty(),
             core: CoreSlot::empty(),
             liveness: LivenessSlot::empty(),
@@ -470,6 +505,7 @@ impl<T> Tx<T> {
     #[cfg(not(target_arch = "wasm32"))]
     fn paired(core: Arc<ChannelCore>) -> Self {
         Self {
+            channel_id: ChannelId::RESERVED,
             sink: SinkSlot::empty(),
             core: CoreSlot { inner: Some(core) },
             liveness: LivenessSlot::empty(),
@@ -583,20 +619,31 @@ impl<T> Drop for Tx<T> {
 }
 
 #[allow(clippy::infallible_try_from)]
-impl<T> TryFrom<&Tx<T>> for () {
+impl<T> TryFrom<&Tx<T>> for ChannelId {
     type Error = Infallible;
 
-    fn try_from(_value: &Tx<T>) -> Result<Self, Self::Error> {
-        Ok(())
+    fn try_from(value: &Tx<T>) -> Result<Self, Self::Error> {
+        Ok(value.channel_id)
     }
 }
 
-#[allow(clippy::infallible_try_from)]
-impl<T> TryFrom<()> for Tx<T> {
-    type Error = Infallible;
+impl<T> TryFrom<ChannelId> for Tx<T> {
+    type Error = String;
 
-    fn try_from(_value: ()) -> Result<Self, Self::Error> {
-        Ok(Self::unbound())
+    fn try_from(channel_id: ChannelId) -> Result<Self, Self::Error> {
+        let mut tx = Self::unbound();
+        tx.channel_id = channel_id;
+
+        #[cfg(not(target_arch = "wasm32"))]
+        CHANNEL_BINDER.with(|cell| {
+            if let Some(binder) = *cell.borrow() {
+                let sink = binder.bind_tx(channel_id);
+                let liveness = binder.channel_liveness();
+                tx.bind_with_liveness(sink, liveness);
+            }
+        });
+
+        Ok(tx)
     }
 }
 
@@ -622,11 +669,11 @@ impl std::error::Error for TxError {}
 ///
 /// In method args, the handler holds it (handler receives ← caller).
 ///
-/// Wire encoding is always unit (`()`), with channel IDs carried exclusively
-/// in `Message::Request.channels`.
+/// Channel IDs are serialized inline in the postcard payload.
 #[derive(Facet)]
-#[facet(proxy = ())]
+#[facet(proxy = crate::ChannelId)]
 pub struct Rx<T> {
+    pub(crate) channel_id: ChannelId,
     pub(crate) receiver: ReceiverSlot,
     pub(crate) logical_receiver: LogicalReceiverSlot,
     pub(crate) core: CoreSlot,
@@ -640,6 +687,7 @@ impl<T> Rx<T> {
     /// Create a standalone unbound Rx (used by deserialization).
     pub fn unbound() -> Self {
         Self {
+            channel_id: ChannelId::RESERVED,
             receiver: ReceiverSlot::empty(),
             logical_receiver: LogicalReceiverSlot::empty(),
             core: CoreSlot::empty(),
@@ -653,6 +701,7 @@ impl<T> Rx<T> {
     #[cfg(not(target_arch = "wasm32"))]
     fn paired(core: Arc<ChannelCore>) -> Self {
         Self {
+            channel_id: ChannelId::RESERVED,
             receiver: ReceiverSlot::empty(),
             logical_receiver: LogicalReceiverSlot::empty(),
             core: CoreSlot { inner: Some(core) },
@@ -787,20 +836,32 @@ impl<T> Rx<T> {
 }
 
 #[allow(clippy::infallible_try_from)]
-impl<T> TryFrom<&Rx<T>> for () {
+impl<T> TryFrom<&Rx<T>> for ChannelId {
     type Error = Infallible;
 
-    fn try_from(_value: &Rx<T>) -> Result<Self, Self::Error> {
-        Ok(())
+    fn try_from(value: &Rx<T>) -> Result<Self, Self::Error> {
+        Ok(value.channel_id)
     }
 }
 
-#[allow(clippy::infallible_try_from)]
-impl<T> TryFrom<()> for Rx<T> {
-    type Error = Infallible;
+impl<T> TryFrom<ChannelId> for Rx<T> {
+    type Error = String;
 
-    fn try_from(_value: ()) -> Result<Self, Self::Error> {
-        Ok(Self::unbound())
+    fn try_from(channel_id: ChannelId) -> Result<Self, Self::Error> {
+        let mut rx = Self::unbound();
+        rx.channel_id = channel_id;
+
+        #[cfg(not(target_arch = "wasm32"))]
+        CHANNEL_BINDER.with(|cell| {
+            if let Some(binder) = *cell.borrow() {
+                let bound = binder.register_rx(channel_id);
+                rx.receiver.inner = Some(bound.receiver);
+                rx.liveness.inner = bound.liveness;
+                rx.replenisher.inner = bound.replenisher;
+            }
+        });
+
+        Ok(rx)
     }
 }
 
