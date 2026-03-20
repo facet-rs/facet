@@ -15,8 +15,8 @@ use roam_types::{
     BoxFut, CallResult, Caller, ChannelBinder, ChannelBody, ChannelClose, ChannelCreditReplenisher,
     ChannelCreditReplenisherHandle, ChannelId, ChannelItem, ChannelLivenessHandle, ChannelMessage,
     ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage, Payload, ReplySink,
-    RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse, RoamError, RpcPlan,
-    SelfRef, TxError, ensure_operation_id, finalize_channels_caller_args, metadata_operation_id,
+    RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse, RoamError, SelfRef,
+    TxError, ensure_operation_id, metadata_operation_id,
 };
 
 use crate::session::{
@@ -586,7 +586,6 @@ impl Caller for DriverCaller {
                 body: RequestBody::Call(RequestCall {
                     method_id: call.method_id,
                     args: call.args.reborrow(),
-                    channels: call.channels.clone(),
                     metadata: call.metadata.clone(),
                     schemas: Default::default(),
                 }),
@@ -645,7 +644,7 @@ impl Caller for DriverCaller {
                     }
                     if let Some((args_ptr, plan)) = caller_channel_plan
                         && let Some(binder) = self.channel_binder()
-                    {
+                  {
                         let channels = unsafe {
                             roam_types::bind_channels_caller_args(
                                 args_ptr as *mut u8,
@@ -653,7 +652,6 @@ impl Caller for DriverCaller {
                                 binder,
                             )
                         };
-                        call.channels = channels;
                     }
                     let _ = self.sender.send(ConnectionMessage::Request(RequestMessage {
                         id: req_id,

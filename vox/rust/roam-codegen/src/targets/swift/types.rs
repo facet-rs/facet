@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use facet_core::{ScalarType, Shape};
 use heck::ToLowerCamelCase;
 use roam_types::{
-    EnumInfo, RpcPlan, ServiceDescriptor, ShapeKind, StructInfo, VariantKind, classify_shape,
+    EnumInfo, ServiceDescriptor, ShapeKind, StructInfo, VariantKind, classify_shape,
     classify_variant, is_bytes, is_rx, is_tx,
 };
 

@@ -529,7 +529,6 @@ mod tests {
             crate::Backing::Boxed(Box::<[u8]>::default()),
             RequestCall {
                 method_id: crate::MethodId(1),
-                channels: vec![],
                 metadata: Metadata::default(),
                 args: Payload::Incoming(&[]),
                 schemas: Default::default(),

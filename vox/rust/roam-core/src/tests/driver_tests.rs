@@ -11,9 +11,8 @@ use roam_types::{
     ChannelItem, ChannelMessage, ChannelSink, Conduit, ConduitRx, ConnectionSettings, Handler,
     IncomingChannelMessage, Link, LinkRx, LinkTx, LinkTxPermit, Message, MessageFamily,
     MessagePayload, Metadata, MethodId, Parity, Payload, ReplySink, RequestBody, RequestCall,
-    RequestCancel, RequestId, RequestMessage, RequestResponse, RetryPolicy, RoamError, RpcPlan,
-    SelfRef, Tx, WriteSlot, bind_channels_caller_args, channel, ensure_operation_id,
-    metadata_operation_id,
+    RequestCancel, RequestId, RequestMessage, RequestResponse, RetryPolicy, RoamError, SelfRef, Tx,
+    WriteSlot, channel, ensure_operation_id, metadata_operation_id,
 };
 
 use roam_types::{HandshakeResult, SessionResumeKey, SessionRole};
@@ -621,7 +620,6 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
             method_id: MethodId(1),
             args: Payload::outgoing(&42_u32),
             schemas: Default::default(),
-            channels: vec![],
             metadata: Default::default(),
         })
         .await
@@ -733,7 +731,6 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
             method_id: MethodId(1),
             args: Payload::outgoing(&7_u32),
             schemas: Default::default(),
-            channels: vec![],
             metadata: Default::default(),
         })
         .await
@@ -897,7 +894,6 @@ async fn cancel_aborts_in_flight_handler() {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&args_value),
                     schemas: Default::default(),
-                    channels: vec![],
                     metadata: Default::default(),
                 })
                 .await
@@ -988,7 +984,6 @@ async fn cancel_does_not_abort_persist_handler() {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&99_u32),
                     schemas: Default::default(),
-                    channels: vec![],
                     metadata: Default::default(),
                 })
                 .await
@@ -1056,7 +1051,6 @@ async fn caller_injects_operation_id_when_peer_supports_retry() {
             method_id: MethodId(1),
             args: Payload::outgoing(&7_u32),
             schemas: Default::default(),
-            channels: vec![],
             metadata: Default::default(),
         })
         .await
@@ -1100,7 +1094,6 @@ async fn builder_uses_custom_operation_store() {
             method_id: MethodId(1),
             args: Payload::outgoing(&7_u32),
             schemas: Default::default(),
-            channels: vec![],
             metadata: Default::default(),
         })
         .await
@@ -1152,7 +1145,6 @@ async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
                         method_id: MethodId(1),
                         args: Payload::outgoing(&11_u32),
                         schemas: Default::default(),
-                        channels: vec![],
                         metadata,
                     })
                     .await
@@ -1171,7 +1163,6 @@ async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
                         method_id: MethodId(1),
                         args: Payload::outgoing(&11_u32),
                         schemas: Default::default(),
-                        channels: vec![],
                         metadata,
                     })
                     .await
@@ -1204,7 +1195,6 @@ async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
             method_id: MethodId(1),
             args: Payload::outgoing(&11_u32),
             schemas: Default::default(),
-            channels: vec![],
             metadata,
         })
         .await
@@ -1288,7 +1278,6 @@ async fn call_through_cbor_handshake_reaches_handler() {
             method_id: MethodId(1),
             args: Payload::outgoing(&42_u32),
             schemas: Default::default(),
-            channels: vec![],
             metadata: Default::default(),
         }),
     )
@@ -1330,7 +1319,6 @@ async fn call_through_stable_conduit_reaches_handler() {
             method_id: MethodId(1),
             args: Payload::outgoing(&42_u32),
             schemas: Default::default(),
-            channels: vec![],
             metadata: Default::default(),
         }),
     )
@@ -1373,7 +1361,6 @@ async fn multiple_calls_through_stable_conduit() {
                 method_id: MethodId(1),
                 args: Payload::outgoing(&i),
                 schemas: Default::default(),
-                channels: vec![],
                 metadata: Default::default(),
             }),
         )
@@ -1430,7 +1417,6 @@ async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&55_u32),
                     schemas: Default::default(),
-                    channels: vec![],
                     metadata: Default::default(),
                 })
                 .await
@@ -1513,7 +1499,6 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
                     method_id: MethodId(1),
                     args: Payload::outgoing(&66_u32),
                     schemas: Default::default(),
-                    channels: vec![],
                     metadata: Default::default(),
                 })
                 .await
@@ -1637,7 +1622,6 @@ async fn resumable_source_initiator_keeps_pending_call_alive_across_auto_resume(
                     method_id: MethodId(1),
                     args: Payload::outgoing(&77_u32),
                     schemas: Default::default(),
-                    channels: vec![],
                     metadata: Default::default(),
                 })
                 .await
@@ -1732,7 +1716,6 @@ async fn resumable_session_reruns_released_idem_call_after_manual_resume() {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&77_u32),
                     schemas: Default::default(),
-                    channels: vec![],
                     metadata: Default::default(),
                 })
                 .await
@@ -1817,7 +1800,6 @@ async fn resumable_session_returns_indeterminate_for_released_non_idem_call_afte
                     method_id: MethodId(1),
                     args: Payload::outgoing(&88_u32),
                     schemas: Default::default(),
-                    channels: vec![],
                     metadata: Default::default(),
                 })
                 .await
@@ -1901,7 +1883,6 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&123_u32),
                     schemas: Default::default(),
-                    channels: vec![],
                     metadata: Default::default(),
                 })
                 .await
@@ -1975,7 +1956,6 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&123_u32),
                     schemas: Default::default(),
-                    channels: vec![],
                     metadata: Default::default(),
                 })
                 .await
@@ -2140,7 +2120,6 @@ async fn open_virtual_connection_and_call() {
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
             schemas: Default::default(),
-            channels: vec![],
             metadata: Default::default(),
         })
         .await
@@ -2552,7 +2531,6 @@ async fn close_virtual_connection() {
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
             schemas: Default::default(),
-            channels: vec![],
             metadata: Default::default(),
         })
         .await
@@ -2678,7 +2656,6 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
             method_id: MethodId(1),
             args: Payload::outgoing(&11_u32),
             schemas: Default::default(),
-            channels: vec![],
             metadata: Default::default(),
         })
         .await
@@ -2796,7 +2773,6 @@ async fn echo_call_across_memory_link() {
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
             schemas: Default::default(),
-            channels: vec![],
             metadata: Default::default(),
         })
         .await
@@ -3024,7 +3000,6 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
             schemas: Default::default(),
-            channels: vec![],
             metadata: Default::default(),
         })
         .await
@@ -3167,7 +3142,6 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
             schemas: Default::default(),
-            channels: vec![],
             metadata: Default::default(),
         })
         .await

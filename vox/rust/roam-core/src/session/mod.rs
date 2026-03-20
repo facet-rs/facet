@@ -351,7 +351,6 @@ fn forwarded_request_body<'a>(body: &'a RequestBody<'static>) -> RequestBody<'a>
     match body {
         RequestBody::Call(call) => RequestBody::Call(roam_types::RequestCall {
             method_id: call.method_id,
-            channels: call.channels.clone(),
             metadata: call.metadata.clone(),
             args: forwarded_payload(&call.args),
             schemas: call.schemas.clone(),

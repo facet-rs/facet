@@ -9,7 +9,7 @@ use std::collections::HashSet;
 
 use facet_core::{ScalarType, Shape};
 use roam_types::{
-    EnumInfo, RpcPlan, ServiceDescriptor, ShapeKind, StructInfo, VariantKind, classify_shape,
+    EnumInfo, ServiceDescriptor, ShapeKind, StructInfo, VariantKind, classify_shape,
     classify_variant, is_bytes,
 };
 
@@ -413,11 +413,4 @@ pub fn is_fully_supported(shape: &'static Shape) -> bool {
         ShapeKind::Result { ok, err } => is_fully_supported(ok) && is_fully_supported(err),
         ShapeKind::Opaque => false,
     }
-}
-
-fn assert_no_channels_in_return_shape(shape: &'static Shape) {
-    assert!(
-        RpcPlan::for_shape(shape).channel_locations.is_empty(),
-        "channels are not allowed in return types"
-    );
 }

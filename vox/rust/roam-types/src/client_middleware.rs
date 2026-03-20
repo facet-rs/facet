@@ -239,7 +239,6 @@ mod tests {
     fn client_request_can_add_owned_metadata() {
         let mut call = RequestCall {
             method_id: MethodId(1),
-            channels: vec![],
             metadata: vec![],
             args: Payload::Incoming(&[]),
             schemas: Default::default(),
@@ -358,7 +357,6 @@ mod tests {
         let response: CallResult = caller
             .call(RequestCall {
                 method_id: MethodId(7),
-                channels: vec![],
                 metadata: vec![],
                 args: Payload::Incoming(&[]),
                 schemas: Default::default(),

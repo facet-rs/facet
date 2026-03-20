@@ -1206,7 +1206,11 @@ mod tests {
         let r = plan_for(remote::Msg::SHAPE, local::Msg::SHAPE).unwrap();
         let bytes = to_vec(&remote::Msg {
             id: 1,
-            extra: remote::Point { x: 3.14, y: 2.72 },
+            extra: remote::Point {
+                #[allow(clippy::approx_constant)]
+                x: 3.14,
+                y: 2.72,
+            },
             name: "hi".into(),
         })
         .unwrap();
@@ -1443,6 +1447,7 @@ mod tests {
             }
             #[derive(Facet, Debug)]
             #[repr(u8)]
+            #[allow(dead_code)]
             pub enum Shape {
                 Circle(f64) = 0,
                 Rect { w: f64, h: f64 } = 1,
@@ -1657,6 +1662,7 @@ mod tests {
             use facet::Facet;
             #[derive(Facet, Debug)]
             #[repr(u8)]
+            #[allow(dead_code)]
             pub enum Shape {
                 Circle { radius: f64 } = 0,
                 Rect { w: f64, h: f64 } = 1,
@@ -1687,6 +1693,7 @@ mod tests {
             use facet::Facet;
             #[derive(Facet, Debug)]
             #[repr(u8)]
+            #[allow(dead_code)]
             pub enum Msg {
                 Pair(u32, String) = 0,
                 Single(u32) = 1,
@@ -1820,6 +1827,7 @@ mod tests {
             use facet::Facet;
             #[derive(Facet, Debug)]
             pub struct Data {
+                #[allow(clippy::box_collection)]
                 pub inner: Box<String>,
                 pub id: u32,
             }
@@ -1829,6 +1837,7 @@ mod tests {
             #[derive(Facet, Debug, PartialEq)]
             pub struct Data {
                 pub id: u32,
+                #[allow(clippy::box_collection)]
                 pub inner: Box<String>,
             }
         }
@@ -1948,6 +1957,7 @@ mod tests {
             }
             #[derive(Facet, Debug)]
             #[repr(u8)]
+            #[allow(dead_code)]
             pub enum Event {
                 Click(u32, u32) = 0,
                 Key(String) = 1,
@@ -2199,6 +2209,7 @@ mod tests {
         let r = plan_for(remote::Msg::SHAPE, local::Msg::SHAPE).unwrap();
         let bytes = to_vec(&remote::Msg {
             id: 1,
+            #[allow(clippy::approx_constant)]
             temp: 3.14,
             name: "x".into(),
         })
@@ -2289,7 +2300,10 @@ mod tests {
 
     #[test]
     fn round_trip_f32() {
-        round_trip(&3.14f32);
+        round_trip(
+            #[allow(clippy::approx_constant)]
+            &3.14f32,
+        );
     }
 
     // ========================================================================

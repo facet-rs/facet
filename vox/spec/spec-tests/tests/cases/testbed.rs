@@ -319,7 +319,7 @@ pub fn run_rpc_enum_newtype_variants(spec: SubjectSpec) {
             .await
             .map_err(|e| format!("process_message number: {e:?}"))?;
         match num_out {
-            Message::Number(n) if n == 42 => {}
+            Message::Number(42) => {}
             other => {
                 return Err(format!(
                     "process_message number: expected Number(42), got {other:?}"

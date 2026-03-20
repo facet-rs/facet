@@ -160,10 +160,6 @@ structstruck::strike! {
                                     /// Unique method identifier, hash of fully qualified name + args etc.
                                     pub method_id: MethodId,
 
-                                    /// Channel identifiers, allocated by the caller, that are passed as part
-                                    /// of the arguments.
-                                    pub channels: Vec<ChannelId>,
-
                                     /// Metadata associated with this call
                                     pub metadata: Metadata<'payload>,
 

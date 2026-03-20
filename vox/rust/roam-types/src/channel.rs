@@ -23,9 +23,6 @@ use crate::{Backing, ChannelClose, ChannelItem, ChannelReset, Metadata, Payload,
 // ---------------------------------------------------------------------------
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::channel_binding::ChannelBinder;
-
-#[cfg(not(target_arch = "wasm32"))]
 std::thread_local! {
     static CHANNEL_BINDER: std::cell::RefCell<Option<&'static dyn ChannelBinder>> =
         const { std::cell::RefCell::new(None) };
@@ -900,6 +897,31 @@ pub fn is_rx(shape: &facet_core::Shape) -> bool {
 /// Check if a shape represents any channel type (`Tx` or `Rx`).
 pub fn is_channel(shape: &facet_core::Shape) -> bool {
     is_tx(shape) || is_rx(shape)
+}
+
+pub trait ChannelBinder: Send + Sync {
+    /// Allocate a channel ID and create a sink for sending items.
+    ///
+    fn create_tx(&self) -> (ChannelId, Arc<dyn ChannelSink>);
+
+    /// Allocate a channel ID, register it for routing, and return a receiver.
+    fn create_rx(&self) -> (ChannelId, BoundChannelReceiver);
+
+    /// Create a sink for a known channel ID (callee side).
+    ///
+    /// The channel ID comes from `Request.channels`.
+    fn bind_tx(&self, channel_id: ChannelId) -> Arc<dyn ChannelSink>;
+
+    /// Register an inbound channel by ID and return the receiver (callee side).
+    ///
+    /// The channel ID comes from `Request.channels`.
+    fn register_rx(&self, channel_id: ChannelId) -> BoundChannelReceiver;
+
+    /// Optional opaque handle that keeps the underlying session/connection alive
+    /// for the lifetime of any bound channel handle.
+    fn channel_liveness(&self) -> Option<ChannelLivenessHandle> {
+        None
+    }
 }
 
 #[cfg(test)]

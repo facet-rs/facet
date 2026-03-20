@@ -5,7 +5,7 @@ use std::future::Future;
 use facet::Facet;
 use facet_core::Shape;
 
-use crate::{MaybeSend, RpcPlan, SelfRef};
+use crate::{MaybeSend, SelfRef};
 
 /// Maps a lifetime to a concrete message type.
 ///
@@ -19,10 +19,6 @@ pub trait MsgFamily: 'static {
 
     fn shape() -> &'static Shape {
         <Self::Msg<'static> as Facet<'static>>::SHAPE
-    }
-
-    fn rpc_plan() -> &'static RpcPlan {
-        RpcPlan::for_shape(Self::shape())
     }
 }
 

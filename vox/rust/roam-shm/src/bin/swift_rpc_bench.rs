@@ -178,7 +178,6 @@ fn main() {
                 body: RequestBody::Call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&payload),
-                    channels: Vec::new(),
                     metadata: vec![],
                     schemas: Default::default(),
                 }),

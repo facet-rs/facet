@@ -492,7 +492,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
 
         method_schema_infos.push(MethodSchemaInfo {
             method_id,
-            args_root: args_root,
+            args_root,
             response_root: TypeRef::concrete(result_id),
         });
     }

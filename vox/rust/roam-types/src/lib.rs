@@ -75,9 +75,6 @@ impl<T: IdType> IdAllocator<T> {
     }
 }
 
-mod rpc_plan;
-pub use rpc_plan::*;
-
 mod roam_error;
 pub use roam_error::*;
 
@@ -125,11 +122,6 @@ pub use calls::*;
 
 mod channel;
 pub use channel::*;
-
-#[cfg(not(target_arch = "wasm32"))]
-mod channel_binding;
-#[cfg(not(target_arch = "wasm32"))]
-pub use channel_binding::*;
 
 mod shape_classify;
 pub use shape_classify::*;

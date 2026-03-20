@@ -133,7 +133,6 @@ async fn echo_call_across_shm_link() {
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
             schemas: Default::default(),
-            channels: vec![],
             metadata: Default::default(),
         })
         .await
@@ -215,7 +214,6 @@ async fn echo_blob_stress_over_shm_link() {
                 method_id: MethodId(2),
                 args: Payload::outgoing(&payload),
                 schemas: Default::default(),
-                channels: vec![],
                 metadata: Default::default(),
             })
             .await

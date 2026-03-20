@@ -427,9 +427,9 @@ impl<Id> VariantPayload<Id> {
 #[repr(u8)]
 pub enum ChannelDirection {
     /// A sending channel (`Tx<T>`).
-    Send,
+    Tx,
     /// A receiving channel (`Rx<T>`).
-    Recv,
+    Rx,
 }
 
 /// Type aliases for schemas during extraction (mixed temp/final IDs).
@@ -646,8 +646,8 @@ impl<'a, Id: Copy> SchemaHasher<'a, Id> {
             SchemaKind::Channel { direction, element } => {
                 self.feed_string("channel");
                 self.feed_string(match direction {
-                    ChannelDirection::Send => "send",
-                    ChannelDirection::Recv => "recv",
+                    ChannelDirection::Tx => "send",
+                    ChannelDirection::Rx => "recv",
                 });
                 self.feed_type_ref(element);
             }
@@ -1331,9 +1331,9 @@ impl<'a> ExtractCtx<'a> {
         // Channel types: emit a Channel schema with direction and element type.
         if is_tx(shape) || is_rx(shape) {
             let direction = if is_tx(shape) {
-                ChannelDirection::Send
+                ChannelDirection::Tx
             } else {
-                ChannelDirection::Recv
+                ChannelDirection::Rx
             };
             if let Some(inner) = shape.type_params.first() {
                 let elem_ref = self.extract(inner.shape)?;
@@ -1370,10 +1370,10 @@ impl<'a> ExtractCtx<'a> {
 
         // Pointer types (Box, Arc, etc.): follow through to pointee.
         // Must be before id_for_decl to avoid orphaned temp IDs.
-        if let Def::Pointer(ptr_def) = shape.def {
-            if let Some(pointee) = ptr_def.pointee {
-                return self.extract(pointee);
-            }
+        if let Def::Pointer(ptr_def) = shape.def
+            && let Some(pointee) = ptr_def.pointee
+        {
+            return self.extract(pointee);
         }
 
         let decl_id = shape.decl_id;
