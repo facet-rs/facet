@@ -382,4 +382,39 @@ export {
 
 export { encodeWithSchema, decodeWithSchema } from "./schema_codec.ts";
 
+// ============================================================================
+// Wire schema types (new, matches Rust CBOR wire format)
+// ============================================================================
+
+export type {
+  SchemaHash,
+  WireTypeRef,
+  WireSchema,
+  WireSchemaKind,
+  WirePrimitiveType,
+  WireChannelDirection,
+  WireFieldSchema,
+  WireVariantSchema,
+  WireVariantPayload,
+  WireSchemaRegistry,
+  WireSchemaPayload,
+  WireBindingDirection,
+  WireMethodSchemaBinding,
+} from "./schema.ts";
+
+export { resolveWireTypeRef } from "./schema.ts";
+
+// ============================================================================
+// Translation plan
+// ============================================================================
+
+export type { TranslationPlan, FieldOp, SchemaSet } from "./plan.ts";
+export { buildPlan, schemaSetFromSchemas, TranslationError, IDENTITY } from "./plan.ts";
+
+// ============================================================================
+// Plan-driven wire codec
+// ============================================================================
+
+export { skipValue, decodeWithPlan } from "./wire_codec.ts";
+
 export { type RoamErrorPayload } from "./result.ts";

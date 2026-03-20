@@ -278,6 +278,225 @@ fn test_deterministic() {
 }
 
 // =============================================================================
+// Internally-tagged enums (#[facet(tag = "...")])
+// =============================================================================
+
+/// All-unit enum with internal tag: each variant serializes as just a string
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+#[facet(tag = "tag", rename_all = "snake_case")]
+#[allow(dead_code)]
+enum PrimType {
+    Bool,
+    U8,
+    U16,
+    String,
+}
+
+#[test]
+fn test_internally_tagged_unit_variant() {
+    // Unit variant with internal tag → just the renamed variant name as a string
+    let bytes = to_vec(&PrimType::Bool).unwrap();
+    // Should be just text("bool")
+    assert_eq!(bytes, vec![0x64, b'b', b'o', b'o', b'l']);
+}
+
+#[test]
+fn test_internally_tagged_unit_variant_u8() {
+    let bytes = to_vec(&PrimType::U8).unwrap();
+    // text("u8")
+    assert_eq!(bytes, vec![0x62, b'u', b'8']);
+}
+
+#[test]
+fn test_internally_tagged_unit_variant_string() {
+    let bytes = to_vec(&PrimType::String).unwrap();
+    // text("string")
+    assert_eq!(bytes, vec![0x66, b's', b't', b'r', b'i', b'n', b'g']);
+}
+
+/// Enum with struct variants and internal tag
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+#[facet(tag = "tag", rename_all = "snake_case")]
+#[allow(dead_code)]
+enum TaggedShape {
+    Struct { name: String, field_count: u32 },
+    Primitive { primitive_type: String },
+}
+
+#[test]
+fn test_internally_tagged_struct_variant() {
+    let s = TaggedShape::Primitive {
+        primitive_type: "bool".to_string(),
+    };
+    let bytes = to_vec(&s).unwrap();
+    // map(2) { "tag": "primitive", "primitive_type": "bool" }
+    let decoded: std::collections::HashMap<String, String> =
+        facet_cbor::from_slice(&bytes).unwrap();
+    assert_eq!(decoded.get("tag").unwrap(), "primitive");
+    assert_eq!(decoded.get("primitive_type").unwrap(), "bool");
+}
+
+#[test]
+fn test_internally_tagged_struct_variant_multi_field() {
+    let s = TaggedShape::Struct {
+        name: "Foo".to_string(),
+        field_count: 3,
+    };
+    let bytes = to_vec(&s).unwrap();
+    // Should be map(3) { "tag": "struct", "name": "Foo", "field_count": 3 }
+    // Verify by decoding as a generic map
+    let mut offset = 0;
+    // Read map header
+    assert_eq!(bytes[0], 0xa3); // map(3)
+    offset += 1;
+
+    // Read "tag" key
+    let tag_key_len = bytes[offset] - 0x60;
+    offset += 1;
+    let tag_key = std::str::from_utf8(&bytes[offset..offset + tag_key_len as usize]).unwrap();
+    assert_eq!(tag_key, "tag");
+    offset += tag_key_len as usize;
+
+    // Read "struct" value
+    let tag_val_len = bytes[offset] - 0x60;
+    offset += 1;
+    let tag_val = std::str::from_utf8(&bytes[offset..offset + tag_val_len as usize]).unwrap();
+    assert_eq!(tag_val, "struct");
+}
+
+/// Mixed enum: both unit and struct variants
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+#[facet(tag = "tag", rename_all = "snake_case")]
+#[allow(dead_code)]
+enum MixedTagged {
+    Unit,
+    WithData { value: u32 },
+}
+
+#[test]
+fn test_internally_tagged_mixed_unit() {
+    let bytes = to_vec(&MixedTagged::Unit).unwrap();
+    // text("unit")
+    assert_eq!(bytes, vec![0x64, b'u', b'n', b'i', b't']);
+}
+
+#[test]
+fn test_internally_tagged_mixed_struct() {
+    let bytes = to_vec(&MixedTagged::WithData { value: 42 }).unwrap();
+    // map(2) { "tag": "with_data", "value": 42 }
+    assert_eq!(bytes[0], 0xa2); // map(2)
+}
+
+/// Roundtrip test: serialize then deserialize
+#[test]
+fn test_internally_tagged_roundtrip_unit() {
+    let original = PrimType::U16;
+    let bytes = to_vec(&original).unwrap();
+    let decoded: PrimType = facet_cbor::from_slice(&bytes).unwrap();
+    assert_eq!(decoded, original);
+}
+
+#[test]
+fn test_internally_tagged_roundtrip_struct() {
+    let original = TaggedShape::Primitive {
+        primitive_type: "u32".to_string(),
+    };
+    let bytes = to_vec(&original).unwrap();
+    let decoded: TaggedShape = facet_cbor::from_slice(&bytes).unwrap();
+    assert_eq!(decoded, original);
+}
+
+#[test]
+fn test_internally_tagged_roundtrip_struct_multi_field() {
+    let original = TaggedShape::Struct {
+        name: "Point".to_string(),
+        field_count: 2,
+    };
+    let bytes = to_vec(&original).unwrap();
+    let decoded: TaggedShape = facet_cbor::from_slice(&bytes).unwrap();
+    assert_eq!(decoded, original);
+}
+
+#[test]
+fn test_internally_tagged_roundtrip_mixed() {
+    for original in [MixedTagged::Unit, MixedTagged::WithData { value: 99 }] {
+        let bytes = to_vec(&original).unwrap();
+        let decoded: MixedTagged = facet_cbor::from_slice(&bytes).unwrap();
+        assert_eq!(decoded, original);
+    }
+}
+
+/// Verify that rename_all = "snake_case" converts PascalCase correctly
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+#[facet(tag = "tag", rename_all = "snake_case")]
+#[allow(dead_code)]
+enum CasingTest {
+    SimpleCase,
+    TwoWords,
+    XMLParser,
+}
+
+#[test]
+fn test_rename_all_snake_case() {
+    // SimpleCase → "simple_case"
+    let bytes = to_vec(&CasingTest::SimpleCase).unwrap();
+    let s = std::str::from_utf8(&bytes[1..]).unwrap(); // skip length byte
+    assert_eq!(s, "simple_case");
+}
+
+#[test]
+fn test_rename_all_two_words() {
+    let bytes = to_vec(&CasingTest::TwoWords).unwrap();
+    let s = std::str::from_utf8(&bytes[1..]).unwrap();
+    assert_eq!(s, "two_words");
+}
+
+/// Verify externally-tagged enums still use original names (no rename)
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+#[allow(dead_code)]
+enum NoRename {
+    MyVariant,
+}
+
+#[test]
+fn test_externally_tagged_no_rename() {
+    let bytes = to_vec(&NoRename::MyVariant).unwrap();
+    // map(1) { "MyVariant": null } — should use original PascalCase name
+    let mut expected = Vec::new();
+    expected.push(0xa1); // map(1)
+    expected.extend_from_slice(&[0x69]); // text(9)
+    expected.extend_from_slice(b"MyVariant");
+    expected.push(0xf6); // null
+    assert_eq!(bytes, expected);
+}
+
+/// Verify externally-tagged + rename_all uses renamed names
+#[derive(Facet, Debug, PartialEq)]
+#[repr(u8)]
+#[facet(rename_all = "snake_case")]
+#[allow(dead_code)]
+enum ExtRename {
+    MyVariant,
+}
+
+#[test]
+fn test_externally_tagged_with_rename() {
+    let bytes = to_vec(&ExtRename::MyVariant).unwrap();
+    // map(1) { "my_variant": null } — should use renamed name
+    let mut expected = Vec::new();
+    expected.push(0xa1); // map(1)
+    expected.extend_from_slice(&[0x6a]); // text(10)
+    expected.extend_from_slice(b"my_variant");
+    expected.push(0xf6); // null
+    assert_eq!(bytes, expected);
+}
+
+// =============================================================================
 // Negative integer encoding
 // =============================================================================
 

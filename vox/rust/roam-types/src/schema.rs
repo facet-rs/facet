@@ -26,6 +26,7 @@ use crate::{MethodId, is_rx, is_tx};
 /// language.
 // r[impl schema.type-id]
 #[derive(Facet, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[facet(transparent)]
 pub struct SchemaHash(pub u64);
 
 /// Temporary index assigned during schema extraction to handle cycles in
@@ -57,6 +58,7 @@ impl CycleSchemaIndex {
 /// Cannot be constructed outside this module — the only legitimate source
 /// is facet's `TypeParam::name`.
 #[derive(Facet, Clone, PartialEq, Eq, Hash, Debug)]
+#[facet(transparent)]
 pub struct TypeParamName(String);
 
 /// A reference to a type in a schema. Either a concrete type (with optional
@@ -67,6 +69,7 @@ pub struct TypeParamName(String);
 /// `MixedId` during extraction.
 #[derive(Facet, Clone, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+#[facet(tag = "tag", rename_all = "snake_case")]
 pub enum TypeRef<Id = SchemaHash> {
     /// A concrete type, possibly generic.
     Concrete {
@@ -76,7 +79,7 @@ pub enum TypeRef<Id = SchemaHash> {
     },
     /// A reference to a type parameter of the enclosing generic type,
     /// by name (e.g. `TypeParamName("T")`).
-    Var(TypeParamName),
+    Var { name: TypeParamName },
 }
 
 impl<Id> TypeRef<Id> {
@@ -105,7 +108,7 @@ impl<Id> TypeRef<Id> {
                     arg.collect_ids(out);
                 }
             }
-            TypeRef::Var(_) => {}
+            TypeRef::Var { .. } => {}
         }
     }
 
@@ -114,7 +117,7 @@ impl<Id> TypeRef<Id> {
         match self {
             TypeRef::Concrete { type_id, args } if args.is_empty() => type_id,
             TypeRef::Concrete { .. } => panic!("TypeRef::expect_concrete_id: has type args"),
-            TypeRef::Var(_) => panic!("TypeRef::expect_concrete_id: is a type variable"),
+            TypeRef::Var { .. } => panic!("TypeRef::expect_concrete_id: is a type variable"),
         }
     }
 
@@ -125,7 +128,7 @@ impl<Id> TypeRef<Id> {
                 type_id: f(type_id),
                 args: args.into_iter().map(|a| a.map(f)).collect(),
             },
-            TypeRef::Var(i) => TypeRef::Var(i),
+            TypeRef::Var { name } => TypeRef::Var { name },
         }
     }
 
@@ -142,7 +145,7 @@ impl<Id> TypeRef<Id> {
                     .map(|a| a.try_map(f))
                     .collect::<Result<_, _>>()?,
             }),
-            TypeRef::Var(i) => Ok(TypeRef::Var(i)),
+            TypeRef::Var { name } => Ok(TypeRef::Var { name }),
         }
     }
 }
@@ -158,7 +161,7 @@ impl TypeRef {
     /// Returns `None` if the schema is not in the registry or this is a `Var`.
     pub fn resolve_kind(&self, registry: &SchemaRegistry) -> Option<SchemaKind> {
         match self {
-            TypeRef::Var(_) => None,
+            TypeRef::Var { .. } => None,
             TypeRef::Concrete { type_id, args } => {
                 let schema = registry.get(type_id)?;
                 if args.is_empty() {
@@ -172,7 +175,7 @@ impl TypeRef {
                     .clone()
                     .try_map_type_refs(&mut |tr| -> Result<TypeRef, std::convert::Infallible> {
                         Ok(match tr {
-                            TypeRef::Var(ref name) => match subst.get(name) {
+                            TypeRef::Var { ref name } => match subst.get(name) {
                                 Some(concrete) => (*concrete).clone(),
                                 None => tr,
                             },
@@ -226,6 +229,7 @@ impl Schema {
 /// The structural kind of a type, generic over the ID representation.
 #[derive(Facet, Clone, Debug)]
 #[repr(u8)]
+#[facet(tag = "tag", rename_all = "snake_case")]
 pub enum SchemaKind<Id = SchemaHash> {
     Struct {
         /// The type name (e.g. "Point"). Used for matching across schema
@@ -425,6 +429,7 @@ impl<Id> VariantPayload<Id> {
 /// The direction of a channel type.
 #[derive(Facet, Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
+#[facet(tag = "tag", rename_all = "snake_case")]
 pub enum ChannelDirection {
     /// A sending channel (`Tx<T>`).
     Tx,
@@ -455,6 +460,7 @@ pub struct VariantSchema<Id = SchemaHash> {
 /// The payload of an enum variant.
 #[derive(Facet, Clone, Debug)]
 #[repr(u8)]
+#[facet(tag = "tag", rename_all = "snake_case")]
 pub enum VariantPayload<Id = SchemaHash> {
     Unit,
     Newtype { type_ref: TypeRef<Id> },
@@ -465,6 +471,7 @@ pub enum VariantPayload<Id = SchemaHash> {
 /// Primitive types supported by the wire format.
 #[derive(Facet, Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
+#[facet(tag = "tag", rename_all = "snake_case")]
 pub enum PrimitiveType {
     Bool,
     U8,
@@ -554,7 +561,7 @@ impl<'a, Id: Copy> SchemaHasher<'a, Id> {
                     }
                 }
             }
-            TypeRef::Var(name) => {
+            TypeRef::Var { name } => {
                 self.feed_string("var");
                 self.feed_string(&name.0);
             }
@@ -723,6 +730,7 @@ pub struct MethodSchemaBinding {
 /// Whether a method schema binding describes args or the response type.
 #[derive(Facet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
+#[facet(tag = "tag", rename_all = "snake_case")]
 pub enum BindingDirection {
     /// The sender will send data of this type as method arguments.
     Args,
@@ -1329,7 +1337,7 @@ impl<'a> ExtractCtx<'a> {
             // This shape is a type parameter — emit Var reference.
             // But we still need to extract the concrete type's schema.
             self.extract(shape)?;
-            Ok(TypeRef::Var(name.clone()))
+            Ok(TypeRef::Var { name: name.clone() })
         } else {
             self.extract(shape)
         }
@@ -1359,7 +1367,9 @@ impl<'a> ExtractCtx<'a> {
                         type_params,
                         kind: SchemaKind::Channel {
                             direction,
-                            element: TypeRef::Var(TypeParamName("T".to_string())),
+                            element: TypeRef::Var {
+                                name: TypeParamName("T".to_string()),
+                            },
                         },
                     },
                 );
@@ -2355,7 +2365,7 @@ mod tests {
         match &list_schema.kind {
             SchemaKind::List { element } => {
                 assert!(
-                    matches!(element, TypeRef::Var(_)),
+                    matches!(element, TypeRef::Var { .. }),
                     "element should be Var, got {element:?}"
                 );
             }
@@ -2380,7 +2390,7 @@ mod tests {
         match &opt_schema.kind {
             SchemaKind::Option { element } => {
                 assert!(
-                    matches!(element, TypeRef::Var(_)),
+                    matches!(element, TypeRef::Var { .. }),
                     "element should be Var, got {element:?}"
                 );
             }
@@ -2503,7 +2513,10 @@ mod tests {
             .unwrap();
         match &opt_schema.kind {
             SchemaKind::Option { element } => {
-                assert!(matches!(element, TypeRef::Var(_)), "element should be Var");
+                assert!(
+                    matches!(element, TypeRef::Var { .. }),
+                    "element should be Var"
+                );
             }
             _ => unreachable!(),
         }
@@ -2530,8 +2543,8 @@ mod tests {
         );
         match &map_schema.kind {
             SchemaKind::Map { key, value } => {
-                assert!(matches!(key, TypeRef::Var(_)), "key should be Var");
-                assert!(matches!(value, TypeRef::Var(_)), "value should be Var");
+                assert!(matches!(key, TypeRef::Var { .. }), "key should be Var");
+                assert!(matches!(value, TypeRef::Var { .. }), "value should be Var");
             }
             _ => unreachable!(),
         }

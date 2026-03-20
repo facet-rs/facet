@@ -97,7 +97,7 @@ impl SchemaSet {
             .expect("root schema must be in registry");
         let root_id = match &extracted.root_type_ref {
             TypeRef::Concrete { type_id, .. } => *type_id,
-            TypeRef::Var(_) => unreachable!("root type ref is never a Var"),
+            TypeRef::Var { .. } => unreachable!("root type ref is never a Var"),
         };
         let root = Schema {
             id: root_id,
@@ -288,7 +288,7 @@ fn nested_plan(
     let resolve_schema = |type_ref: &TypeRef, registry: &SchemaRegistry, side: SchemaSide| {
         let type_id = match type_ref {
             TypeRef::Concrete { type_id, .. } => *type_id,
-            TypeRef::Var(name) => {
+            TypeRef::Var { name } => {
                 return Err(TranslationError::new(TranslationErrorKind::UnresolvedVar {
                     name: format!("{name:?}"),
                     side,

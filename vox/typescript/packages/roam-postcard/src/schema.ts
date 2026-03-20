@@ -346,3 +346,201 @@ export interface MethodSchema {
   args: Schema[];
   wire: EnumSchema;
 }
+
+// ============================================================================
+// New Wire Schema Types (matches Rust's facet-cbor internally-tagged format)
+// ============================================================================
+// These types match the CBOR wire format directly — decodeCbor() output is
+// already this shape thanks to #[facet(tag = "tag", rename_all = "snake_case")].
+
+/** Content hash uniquely identifying a type's postcard-level structure. */
+export type SchemaHash = bigint;
+
+/**
+ * A reference to a type in a schema. Matches Rust's TypeRef enum.
+ * Discriminated by `tag` field (internally-tagged CBOR encoding).
+ */
+export type WireTypeRef =
+  | { tag: "concrete"; type_id: SchemaHash; args: WireTypeRef[] }
+  | { tag: "var"; name: string };
+
+/** A complete schema for a single type. */
+export interface WireSchema {
+  id: SchemaHash;
+  type_params: string[];
+  kind: WireSchemaKind;
+}
+
+/**
+ * The structural kind of a type. Matches Rust's SchemaKind enum.
+ * Discriminated by `tag` field.
+ */
+export type WireSchemaKind =
+  | { tag: "struct"; name: string; fields: WireFieldSchema[] }
+  | { tag: "enum"; name: string; variants: WireVariantSchema[] }
+  | { tag: "tuple"; elements: WireTypeRef[] }
+  | { tag: "list"; element: WireTypeRef }
+  | { tag: "map"; key: WireTypeRef; value: WireTypeRef }
+  | { tag: "array"; element: WireTypeRef; length: number }
+  | { tag: "option"; element: WireTypeRef }
+  | { tag: "channel"; direction: WireChannelDirection; element: WireTypeRef }
+  | { tag: "primitive"; primitive_type: WirePrimitiveType };
+
+/** Primitive types supported by the wire format. Just a string (unit variant). */
+export type WirePrimitiveType =
+  | "bool"
+  | "u8"
+  | "u16"
+  | "u32"
+  | "u64"
+  | "u128"
+  | "i8"
+  | "i16"
+  | "i32"
+  | "i64"
+  | "i128"
+  | "f32"
+  | "f64"
+  | "char"
+  | "string"
+  | "unit"
+  | "bytes"
+  | "payload";
+
+/** Channel direction. Just a string (unit variant). */
+export type WireChannelDirection = "tx" | "rx";
+
+/** Describes a single field in a struct or struct variant. */
+export interface WireFieldSchema {
+  name: string;
+  type_ref: WireTypeRef;
+  required: boolean;
+}
+
+/** Describes a single variant in an enum. */
+export interface WireVariantSchema {
+  name: string;
+  index: number;
+  payload: WireVariantPayload;
+}
+
+/** The payload of an enum variant. Discriminated by `tag`. */
+export type WireVariantPayload =
+  | { tag: "unit" }
+  | { tag: "newtype"; type_ref: WireTypeRef }
+  | { tag: "tuple"; types: WireTypeRef[] }
+  | { tag: "struct"; fields: WireFieldSchema[] };
+
+/** Registry mapping SchemaHash → WireSchema. */
+export type WireSchemaRegistry = Map<SchemaHash, WireSchema>;
+
+// --- Wire exchange types ---
+
+/** CBOR-encoded payload inside a schema wire message. */
+export interface WireSchemaPayload {
+  schemas: WireSchema[];
+  method_bindings: WireMethodSchemaBinding[];
+}
+
+/** Binding direction for method schema bindings. Just a string (unit variant). */
+export type WireBindingDirection = "args" | "response";
+
+/** Associates a method ID with its root type ref for args or response. */
+export interface WireMethodSchemaBinding {
+  method_id: bigint;
+  root_type_ref: WireTypeRef;
+  direction: WireBindingDirection;
+}
+
+// --- Helper ---
+
+/**
+ * Look up the schema for a WireTypeRef in the registry and return
+ * the schema's kind with all type variables substituted.
+ */
+export function resolveWireTypeRef(
+  ref_: WireTypeRef,
+  registry: WireSchemaRegistry,
+): WireSchemaKind | undefined {
+  if (ref_.tag === "var") return undefined;
+  const schema = registry.get(ref_.type_id);
+  if (!schema) return undefined;
+  if (ref_.args.length === 0) return schema.kind;
+
+  // Build substitution map: type param name → concrete TypeRef
+  const subst = new Map<string, WireTypeRef>();
+  for (let i = 0; i < schema.type_params.length && i < ref_.args.length; i++) {
+    subst.set(schema.type_params[i], ref_.args[i]);
+  }
+  return substituteTypeRefs(schema.kind, subst);
+}
+
+function substituteTypeRef(
+  ref_: WireTypeRef,
+  subst: Map<string, WireTypeRef>,
+): WireTypeRef {
+  if (ref_.tag === "var") {
+    return subst.get(ref_.name) ?? ref_;
+  }
+  return {
+    tag: "concrete",
+    type_id: ref_.type_id,
+    args: ref_.args.map((a) => substituteTypeRef(a, subst)),
+  };
+}
+
+function substituteTypeRefs(
+  kind: WireSchemaKind,
+  subst: Map<string, WireTypeRef>,
+): WireSchemaKind {
+  const sub = (r: WireTypeRef) => substituteTypeRef(r, subst);
+  switch (kind.tag) {
+    case "primitive":
+      return kind;
+    case "struct":
+      return {
+        ...kind,
+        fields: kind.fields.map((f) => ({ ...f, type_ref: sub(f.type_ref) })),
+      };
+    case "enum":
+      return {
+        ...kind,
+        variants: kind.variants.map((v) => ({
+          ...v,
+          payload: substitutePayload(v.payload, subst),
+        })),
+      };
+    case "tuple":
+      return { ...kind, elements: kind.elements.map(sub) };
+    case "list":
+      return { ...kind, element: sub(kind.element) };
+    case "map":
+      return { ...kind, key: sub(kind.key), value: sub(kind.value) };
+    case "array":
+      return { ...kind, element: sub(kind.element) };
+    case "option":
+      return { ...kind, element: sub(kind.element) };
+    case "channel":
+      return { ...kind, direction: kind.direction, element: sub(kind.element) };
+  }
+}
+
+function substitutePayload(
+  payload: WireVariantPayload,
+  subst: Map<string, WireTypeRef>,
+): WireVariantPayload {
+  const sub = (r: WireTypeRef) => substituteTypeRef(r, subst);
+  switch (payload.tag) {
+    case "unit":
+      return payload;
+    case "newtype":
+      return { ...payload, type_ref: sub(payload.type_ref) };
+    case "tuple":
+      return { ...payload, types: payload.types.map(sub) };
+    case "struct":
+      return {
+        ...payload,
+        fields: payload.fields.map((f) => ({ ...f, type_ref: sub(f.type_ref) })),
+      };
+  }
+}

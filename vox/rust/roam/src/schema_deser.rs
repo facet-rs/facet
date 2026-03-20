@@ -75,7 +75,7 @@ fn resolve_plan<'facet, T: Facet<'facet>>(
     })?;
     let root_id = match &remote_root_ref {
         TypeRef::Concrete { type_id, .. } => *type_id,
-        TypeRef::Var(_) => {
+        TypeRef::Var { .. } => {
             return Err(DeserializeError::protocol(
                 "remote root type ref is a Var — protocol error",
             ));

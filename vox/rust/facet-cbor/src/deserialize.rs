@@ -77,7 +77,13 @@ fn deserialize_into<'facet>(
                 Ok(partial)
             }
         },
-        Type::User(UserType::Enum(_)) => deserialize_enum(partial, input, offset),
+        Type::User(UserType::Enum(_)) => {
+            if shape.tag.is_some() {
+                deserialize_enum_internally_tagged(partial, input, offset)
+            } else {
+                deserialize_enum(partial, input, offset)
+            }
+        }
         _ => Err(CborError::UnsupportedType(format!("{}", shape))),
     }
 }
@@ -396,6 +402,116 @@ fn deserialize_enum<'facet>(
     }
 
     Ok(partial)
+}
+
+/// Deserialize an internally-tagged enum.
+///
+/// When `#[facet(tag = "...")]` is set:
+/// - If the CBOR value is a text string → unit variant (the string is the variant name)
+/// - If the CBOR value is a map → read the tag field to find variant name, rest are struct fields
+fn deserialize_enum_internally_tagged<'facet>(
+    partial: Partial<'facet, false>,
+    input: &[u8],
+    offset: &mut usize,
+) -> Result<Partial<'facet, false>, CborError> {
+    let re = |e: facet_reflect::ReflectError| CborError::ReflectError(e.to_string());
+    let tag_key = partial
+        .shape()
+        .tag
+        .expect("internally-tagged enum must have tag");
+
+    if *offset >= input.len() {
+        return Err(CborError::InvalidCbor("unexpected end of input".into()));
+    }
+
+    let major = input[*offset] >> 5;
+    if major == 3 {
+        // Text string → unit variant
+        let variant_name = decode::read_text(input, offset)?;
+        let partial = partial.select_variant_named(variant_name).map_err(re)?;
+        Ok(partial)
+    } else if major == 5 {
+        // Map → struct variant with tag field
+        let map_len = decode::read_map_header(input, offset)? as usize;
+
+        // First, find the tag field to determine which variant we're deserializing.
+        // We need to scan through map entries to find the tag key.
+        // For efficiency, we expect the tag to be the first entry.
+        let mut variant_name: Option<&str> = None;
+        let mut saved_offset = *offset;
+
+        // Read the first key — it should be the tag
+        let first_key = decode::read_text(input, offset)?;
+        if first_key == tag_key {
+            variant_name = Some(decode::read_text(input, offset)?);
+        } else {
+            // Tag wasn't first; scan the whole map from the start
+            *offset = saved_offset;
+            let scan_offset = &mut saved_offset;
+            *scan_offset = *offset;
+            for _ in 0..map_len {
+                let key = decode::read_text(input, scan_offset)?;
+                if key == tag_key {
+                    variant_name = Some(decode::read_text(input, scan_offset)?);
+                    break;
+                }
+                decode::skip_value(input, scan_offset)?;
+            }
+            // Reset to after the first key we already read
+        }
+
+        let variant_name = variant_name.ok_or_else(|| {
+            CborError::InvalidCbor(format!(
+                "internally-tagged enum map missing '{}' field",
+                tag_key
+            ))
+        })?;
+
+        // Find variant info before selecting
+        let (_, variant) = partial.find_variant(variant_name).ok_or_else(|| {
+            CborError::InvalidCbor(format!("unknown enum variant: {variant_name}"))
+        })?;
+        let kind = variant.data.kind;
+
+        if kind != StructKind::Struct {
+            return Err(CborError::InvalidCbor(format!(
+                "internally-tagged enum variant '{}' must be a struct variant",
+                variant_name
+            )));
+        }
+
+        let mut partial = partial.select_variant_named(variant_name).map_err(re)?;
+
+        // Now re-read the map from the beginning, skipping the tag field,
+        // and deserializing all other fields as struct fields.
+        // We need to re-parse from after the map header.
+        // Actually, we've already consumed the first key. Let's handle this properly.
+        // Reset offset to after map header and re-read all entries.
+        // But we already consumed some bytes... Let me restructure.
+
+        // We consumed: map_header + first_key("tag") + first_value(variant_name)
+        // Now read remaining map_len - 1 entries as struct fields
+        for _ in 1..map_len {
+            let field_name = decode::read_text(input, offset)?;
+            if field_name == tag_key {
+                // Skip duplicate tag field
+                decode::skip_value(input, offset)?;
+            } else if partial.field_index(field_name).is_some() {
+                partial = partial.begin_field(field_name).map_err(re)?;
+                partial = deserialize_into(partial, input, offset)?;
+                partial = partial.end().map_err(re)?;
+            } else {
+                decode::skip_value(input, offset)?;
+            }
+        }
+
+        Ok(partial)
+    } else {
+        Err(CborError::InvalidCbor(format!(
+            "internally-tagged enum expected text string or map, got major type {}",
+            major
+        )))
+    }
 }
 
 fn deserialize_pointer<'facet>(

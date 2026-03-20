@@ -159,9 +159,16 @@ pub fn serialize_peek(peek: Peek<'_, '_>, out: &mut Vec<u8>) -> Result<(), CborE
                 .active_variant()
                 .map_err(|e| CborError::ReflectError(e.to_string()))?;
 
-            // Map with one entry: variant_name → payload
+            let effective_name = variant.rename.unwrap_or(variant.name);
+
+            if let Some(tag_key) = peek.shape().tag {
+                // Internally-tagged enum: tag is merged into the payload
+                return serialize_enum_internally_tagged(pe, variant, effective_name, tag_key, out);
+            }
+
+            // Externally-tagged enum: map with one entry: variant_name → payload
             encode::write_map_header(out, 1);
-            encode::write_text(out, variant.name);
+            encode::write_text(out, effective_name);
 
             match variant.data.kind {
                 StructKind::Unit => {
@@ -373,6 +380,54 @@ fn serialize_scalar(
         _ => {
             return Err(CborError::UnsupportedType(format!(
                 "scalar type {scalar_type:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Serialize an internally-tagged enum.
+///
+/// When `#[facet(tag = "tag")]` is set on an enum:
+/// - Unit variants → just the tag value as a CBOR text string: `"variant_name"`
+/// - Struct variants → CBOR map with tag field merged: `{ "tag": "variant_name", field1: ..., ... }`
+/// - Newtype/tuple variants → not supported (returns error)
+fn serialize_enum_internally_tagged(
+    pe: facet_reflect::PeekEnum<'_, '_>,
+    variant: &facet_core::Variant,
+    effective_name: &str,
+    tag_key: &str,
+    out: &mut Vec<u8>,
+) -> Result<(), CborError> {
+    match variant.data.kind {
+        StructKind::Unit => {
+            // Unit variant: just the tag value as a string
+            encode::write_text(out, effective_name);
+        }
+        StructKind::Struct => {
+            // Struct variant: map with tag field + all struct fields
+            let field_count = variant.data.fields.len();
+            encode::write_map_header(out, (field_count + 1) as u64);
+            // Write tag entry first
+            encode::write_text(out, tag_key);
+            encode::write_text(out, effective_name);
+            // Write struct fields
+            for i in 0..field_count {
+                let field = &variant.data.fields[i];
+                encode::write_text(out, field.name);
+                let field_peek = pe
+                    .field(i)
+                    .map_err(|e| CborError::ReflectError(e.to_string()))?
+                    .ok_or_else(|| {
+                        CborError::ReflectError("missing struct variant field".into())
+                    })?;
+                serialize_peek(field_peek, out)?;
+            }
+        }
+        StructKind::TupleStruct | StructKind::Tuple => {
+            return Err(CborError::UnsupportedType(format!(
+                "internally-tagged enum cannot have tuple variant '{}'",
+                variant.name
             )));
         }
     }
