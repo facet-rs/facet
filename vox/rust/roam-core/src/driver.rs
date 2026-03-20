@@ -301,62 +301,21 @@ pub struct DriverReplySink {
 
 /// Replay a sealed response from the operation store.
 ///
-/// The stored bytes do NOT contain schemas. Schemas are re-attached via
-/// `prepare_response_for_method` / the send tracker, which knows whether
-/// schemas have already been sent on the current connection.
+/// The stored bytes do NOT contain schemas. Schemas are sourced from the
+/// operation store via the send tracker, which deduplicates against what
+/// was already sent on this connection.
 async fn replay_sealed_response(
     sender: ConnectionSender,
     request_id: RequestId,
     method_id: roam_types::MethodId,
     encoded_response: &[u8],
-    root_type_ref: roam_types::TypeRef,
+    root_type: TypeRef,
     operations: &dyn OperationStore,
 ) -> Result<(), ()> {
     let mut response: RequestResponse<'_> =
         roam_postcard::from_slice_borrowed(encoded_response).map_err(|_| ())?;
-    // Rebuild the schema payload from the operation store's schema table.
-    // prepare_response_for_method won't help here because the payload is
-    // Incoming bytes (no Shape). We reconstruct the CBOR schema payload
-    // by walking the type graph from the root.
-    let schemas = collect_schemas_from_store(&root_type_ref, operations);
-    if !schemas.is_empty() {
-        let binding = roam_types::MethodSchemaBinding {
-            method_id: roam_types::MethodId(method_id.0),
-            root_type_ref,
-            direction: roam_types::BindingDirection::Response,
-        };
-        let payload_bytes = roam_types::build_schema_message(&schemas, &[binding]);
-        response.schemas = roam_types::CborPayload(payload_bytes);
-    }
-    // send_response_for_method will check the method_tracker and strip
-    // schemas if they were already sent on this connection.
-    sender
-        .send_response_for_method(request_id, method_id, response)
-        .await
-}
-
-/// Walk the schema graph from a root TypeRef, collecting all schemas from
-/// the operation store.
-fn collect_schemas_from_store(
-    root: &roam_types::TypeRef,
-    store: &dyn OperationStore,
-) -> Vec<Schema> {
-    let mut result = Vec::new();
-    let mut visited = std::collections::HashSet::new();
-    let mut queue = Vec::new();
-    root.collect_ids(&mut queue);
-    while let Some(id) = queue.pop() {
-        if !visited.insert(id) {
-            continue;
-        }
-        if let Some(schema) = store.get_schema(id) {
-            for child_id in roam_types::schema_child_ids(&schema.kind) {
-                queue.push(child_id);
-            }
-            result.push(schema);
-        }
-    }
-    result
+    sender.prepare_replay_schemas(method_id, &root_type, operations, &mut response);
+    sender.send_response(request_id, response).await
 }
 
 /// Extract the root TypeRef from a response's schema CBOR payload.
@@ -461,10 +420,10 @@ impl Drop for DriverReplySink {
             };
 
             if let Some(operation_id) = self.operation_id {
-                // Remove from persistent store (was admitted but never sealed).
-                if let Some(operations) = self.operations.take() {
-                    operations.remove(operation_id);
-                }
+                // Don't remove from persistent store — non-idem ops stay as
+                // Admitted so future lookups return Indeterminate. Idem ops
+                // were never admitted to the store in the first place.
+
                 // Release waiters from the live tracker.
                 if let Some(live_ops) = self.live_operations.take() {
                     if let Some(live) = live_ops.lock().release(operation_id) {
@@ -1388,8 +1347,11 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         return;
                     }
                     crate::OperationState::Unknown => {
-                        // New operation — admit in the persistent store and proceed.
-                        self.shared.operations.admit(operation_id);
+                        // New operation — admit in the persistent store if non-idem.
+                        // Idem operations can safely be re-executed, no need to track.
+                        if !retry.idem {
+                            self.shared.operations.admit(operation_id);
+                        }
                     }
                 }
             }

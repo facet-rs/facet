@@ -427,8 +427,8 @@ impl OperationStore for CountingOperationStore {
         self.inner.remove(operation_id)
     }
 
-    fn get_schema(&self, id: roam_types::SchemaHash) -> Option<roam_types::Schema> {
-        self.inner.get_schema(id)
+    fn schema_source(&self) -> &dyn roam_types::SchemaSource {
+        self.inner.schema_source()
     }
 }
 

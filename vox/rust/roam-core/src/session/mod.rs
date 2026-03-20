@@ -485,6 +485,23 @@ impl ConnectionSender {
     pub fn schema_registry(&self) -> roam_types::SchemaRegistry {
         self.sess_core.schema_registry(self.connection_id)
     }
+
+    /// Prepare schemas for a replay response using the operation store as schema source.
+    pub fn prepare_replay_schemas(
+        &self,
+        method_id: roam_types::MethodId,
+        root_type: &roam_types::TypeRef,
+        store: &dyn crate::OperationStore,
+        response: &mut RequestResponse<'_>,
+    ) {
+        self.sess_core.prepare_replay_schemas(
+            self.connection_id,
+            method_id,
+            root_type,
+            store,
+            response,
+        );
+    }
 }
 
 pub struct ConnectionHandle {
@@ -1526,6 +1543,31 @@ impl SessionCore {
             .get(&conn_id)
             .map(|cs| cs.send_tracker.registry().clone())
             .unwrap_or_default()
+    }
+
+    /// Prepare schemas for a replay response, sourcing from the operation store.
+    pub(crate) fn prepare_replay_schemas(
+        &self,
+        conn_id: ConnectionId,
+        method_id: roam_types::MethodId,
+        root_type: &roam_types::TypeRef,
+        store: &dyn crate::OperationStore,
+        response: &mut RequestResponse<'_>,
+    ) {
+        let mut inner = self.inner.lock().expect("session core mutex poisoned");
+        let conn_state = inner
+            .conns
+            .entry(conn_id)
+            .or_insert_with(SendConnState::new);
+        let cbor = conn_state.send_tracker.prepare_send(
+            method_id,
+            roam_types::BindingDirection::Response,
+            root_type,
+            store.schema_source(),
+        );
+        if !cbor.is_empty() {
+            response.schemas = cbor;
+        }
     }
 
     fn prepare_response_schemas(

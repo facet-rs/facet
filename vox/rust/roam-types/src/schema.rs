@@ -722,6 +722,21 @@ pub fn build_registry(schemas: &[Schema]) -> SchemaRegistry {
     schemas.iter().map(|s| (s.id, s.clone())).collect()
 }
 
+/// Anything that can look up schemas by their content hash.
+///
+/// Implemented by SchemaRegistry (HashMap), the operation store, etc.
+/// Used by the send tracker to source schemas without caring where they
+/// come from.
+pub trait SchemaSource {
+    fn get_schema(&self, id: SchemaHash) -> Option<Schema>;
+}
+
+impl SchemaSource for SchemaRegistry {
+    fn get_schema(&self, id: SchemaHash) -> Option<Schema> {
+        self.get(&id).cloned()
+    }
+}
+
 /// Binds a method to the root type of the type being sent for that
 /// method. Sent once per method per direction.
 #[derive(Facet, Clone, Debug)]
@@ -848,6 +863,8 @@ pub struct SchemaSendTracker {
     /// DeclIds we've already finalized and sent — maps to their content hash.
     /// Persists across method calls for the lifetime of the connection.
     emitted: HashMap<DeclId, SchemaHash>,
+    /// SchemaHashes already sent on this connection.
+    sent_schemas: HashSet<SchemaHash>,
     /// Next index to assign during extraction.
     next_id: CycleSchemaIndex,
     /// All extracted schemas, kept for the operation store to pull from.
@@ -859,6 +876,7 @@ impl SchemaSendTracker {
         SchemaSendTracker {
             registry: HashMap::new(),
             sent_methods: HashMap::new(),
+            sent_schemas: HashSet::new(),
             emitted: HashMap::new(),
             next_id: CycleSchemaIndex::first(),
         }
@@ -868,6 +886,7 @@ impl SchemaSendTracker {
     /// The registry is preserved (schemas don't change across connections).
     pub fn reset(&mut self) {
         self.sent_methods.clear();
+        self.sent_schemas.clear();
         self.emitted.clear();
         self.next_id = CycleSchemaIndex::first();
     }
@@ -919,6 +938,11 @@ impl SchemaSendTracker {
             .filter(|s| !already_sent.contains(&s.id))
             .collect();
 
+        // Track sent schemas.
+        for s in &unsent {
+            self.sent_schemas.insert(s.id);
+        }
+
         let method_binding = MethodSchemaBinding {
             method_id,
             root_type_ref: extracted.root_type_ref,
@@ -932,6 +956,81 @@ impl SchemaSendTracker {
         let cbor = prepared.to_cbor();
         self.sent_methods.insert(key, cbor.clone());
         Ok(cbor)
+    }
+
+    /// Prepare schemas for sending, sourcing them from a `SchemaSource`.
+    ///
+    /// Used for replay paths where we don't have a Shape but have a root
+    /// TypeRef and an external schema source (e.g. the operation store).
+    ///
+    /// Returns empty payload if schemas reachable from `root_type` were
+    /// already sent on this connection.
+    // r[impl schema.tracking.transitive]
+    // r[impl schema.exchange.idempotent]
+    // r[impl schema.principles.once-per-type]
+    pub fn prepare_send(
+        &mut self,
+        method_id: MethodId,
+        direction: BindingDirection,
+        root_type: &TypeRef,
+        source: &dyn SchemaSource,
+    ) -> CborPayload {
+        let key = (method_id, direction);
+
+        // Fast path: already sent for this method+direction.
+        if self.sent_methods.contains_key(&key) {
+            return CborPayload::default();
+        }
+
+        // Walk the type graph from root, collect all schemas from source.
+        let already_sent: HashSet<SchemaHash> = self.sent_schemas.clone();
+        let mut all_schemas = Vec::new();
+        let mut visited = HashSet::new();
+        let mut queue = Vec::new();
+        root_type.collect_ids(&mut queue);
+        while let Some(id) = queue.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            if let Some(schema) = source.get_schema(id) {
+                for child_id in schema_child_ids(&schema.kind) {
+                    queue.push(child_id);
+                }
+                all_schemas.push(schema);
+            }
+        }
+
+        // Add to our registry.
+        for schema in &all_schemas {
+            self.registry
+                .entry(schema.id)
+                .or_insert_with(|| schema.clone());
+        }
+
+        // Filter to unsent.
+        let unsent: Vec<Schema> = all_schemas
+            .into_iter()
+            .filter(|s| !already_sent.contains(&s.id))
+            .collect();
+
+        // Track what we're sending.
+        for s in &unsent {
+            self.sent_schemas.insert(s.id);
+        }
+
+        let method_binding = MethodSchemaBinding {
+            method_id,
+            root_type_ref: root_type.clone(),
+            direction,
+        };
+
+        let prepared = PreparedSchemaMessage {
+            schemas: unsent,
+            method_bindings: vec![method_binding],
+        };
+        let cbor = prepared.to_cbor();
+        self.sent_methods.insert(key, cbor.clone());
+        cbor
     }
 
     /// Extract all schemas for a type and its transitive dependencies.

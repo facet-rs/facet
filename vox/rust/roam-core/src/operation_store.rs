@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use moire::sync::SyncMutex;
 use roam_types::{
-    MaybeSend, MaybeSync, MethodId, OperationId, PostcardPayload, RequestId, Schema, SchemaHash,
-    SchemaRegistry, TypeRef,
+    MaybeSend, MaybeSync, OperationId, PostcardPayload, Schema, SchemaHash, SchemaRegistry,
+    SchemaSource, TypeRef,
 };
 
 /// A sealed response stored in the operation store.
@@ -31,8 +31,7 @@ pub enum OperationState {
 ///
 /// Schemas are stored separately from payloads, deduplicated by SchemaHash.
 pub trait OperationStore: MaybeSend + MaybeSync + 'static {
-    /// Record that we've started processing this operation.
-    /// Called before the handler runs.
+    /// Record that we're starting to process this operation.
     fn admit(&self, operation_id: OperationId);
 
     /// Check the state of an operation.
@@ -56,8 +55,8 @@ pub trait OperationStore: MaybeSend + MaybeSync + 'static {
     /// Remove an admitted (but not sealed) operation, e.g. after handler failure.
     fn remove(&self, operation_id: OperationId);
 
-    /// Retrieve a schema by its content hash.
-    fn get_schema(&self, id: SchemaHash) -> Option<Schema>;
+    /// Access the store's schema source for looking up schemas by hash.
+    fn schema_source(&self) -> &dyn SchemaSource;
 }
 
 // ============================================================================
@@ -94,6 +93,12 @@ impl Default for InMemoryOperationStore {
         Self {
             inner: SyncMutex::new("driver.operations", InMemoryRegistry::default()),
         }
+    }
+}
+
+impl SchemaSource for InMemoryOperationStore {
+    fn get_schema(&self, id: SchemaHash) -> Option<Schema> {
+        self.inner.lock().schemas.get(&id).cloned()
     }
 }
 
@@ -174,7 +179,7 @@ impl OperationStore for InMemoryOperationStore {
         }
     }
 
-    fn get_schema(&self, id: SchemaHash) -> Option<Schema> {
-        self.inner.lock().schemas.get(&id).cloned()
+    fn schema_source(&self) -> &dyn SchemaSource {
+        self
     }
 }
