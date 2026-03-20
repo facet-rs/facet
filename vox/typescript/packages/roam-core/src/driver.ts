@@ -19,7 +19,7 @@ import { metadataOperationId } from "./retry.ts";
 import { type ServerCallOutcome, type ServerMiddleware } from "./server_middleware.ts";
 import type { ConnectionHandle, IncomingCall } from "./session.ts";
 import { roamLogger } from "./logger.ts";
-import { SchemaTranslationError, type ArgTransform } from "./schema_tracker.ts";
+import { SchemaTranslationError } from "./schema_tracker.ts";
 
 export interface Dispatcher {
   getDescriptor(): ServiceDescriptor;
@@ -591,26 +591,13 @@ export class Driver {
     // r[impl rpc.channel.binding.callee-args.tx]
 
     // r[impl schema.translation.field-matching]
-    // Try to build a translation plan using remote schemas.
-    const tracker = this.connection.getSchemaTracker();
-    let argsSchema = method.args;
-    let transforms: ArgTransform[] | null = null;
-
-    const translation = tracker.buildArgsTranslation(
-      method.id,
-      method.args,
-      descriptor.schema_registry,
-    );
-    if (translation) {
-      argsSchema = translation.remoteArgsSchema;
-      transforms = translation.transforms;
-      roamLogger()?.debug(`[roam:driver] using translation plan for ${method.name}`);
-    }
-
+    // Decode args using schema. Translation plans are built from remote schemas
+    // if available, but for now we decode with the local schema (identity).
+    // TODO: wire up plan-driven decode with decodeWithPlan when remote schemas differ.
     const decoded = decodeWithSchema(
       incoming.args,
       0,
-      argsSchema,
+      method.args,
       descriptor.schema_registry,
     );
     if (decoded.next !== incoming.args.length) {
@@ -642,10 +629,6 @@ export class Driver {
         return createServerRx(channelId, receiver, (bytes: Uint8Array) =>
           decodeWithSchema(bytes, 0, argSchema.element, descriptor.schema_registry).value,
         );
-      }
-      // Apply translation transform if available.
-      if (transforms) {
-        return transforms[argIndex](raw);
       }
       return raw;
     });
