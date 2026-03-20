@@ -174,3 +174,129 @@ describe("Primitive encoding", () => {
     assertEncoding(encodeVec(["a", "b"], encodeString), "primitives/vec_string.bin");
   });
 });
+
+// ============================================================================
+// Composite golden vector tests (cross-language conformance)
+// ============================================================================
+
+import { encodeWithSchema, decodeWithSchema } from "./schema_codec.ts";
+import type { Schema, StructSchema, EnumSchema, TupleSchema } from "./schema.ts";
+
+/** Assert that schema-encoded bytes match a golden vector, and decode back */
+function assertSchemaRoundTrip(value: unknown, schema: Schema, vectorPath: string) {
+  const encoded = encodeWithSchema(value, schema);
+  const expected = loadGoldenVector(vectorPath);
+  expect(Array.from(encoded), `encode mismatch for ${vectorPath}`).toEqual(Array.from(expected));
+  const decoded = decodeWithSchema(expected, 0, schema);
+  expect(decoded.value, `decode mismatch for ${vectorPath}`).toEqual(value);
+}
+
+const PointSchema: StructSchema = {
+  kind: "struct",
+  fields: {
+    x: { kind: "i32" },
+    y: { kind: "i32" },
+  },
+};
+
+const NestedSchema: StructSchema = {
+  kind: "struct",
+  fields: {
+    name: { kind: "string" },
+    point: PointSchema,
+    tags: { kind: "vec", element: { kind: "string" } },
+  },
+};
+
+const ColorSchema: EnumSchema = {
+  kind: "enum",
+  variants: [
+    { name: "Red", fields: null },
+    { name: "Green", fields: null },
+    { name: "Blue", fields: null },
+  ],
+};
+
+const ShapeSchema: EnumSchema = {
+  kind: "enum",
+  variants: [
+    { name: "Circle", fields: { kind: "f64" } },
+    { name: "Rect", fields: { w: { kind: "f64" }, h: { kind: "f64" } } },
+    { name: "Empty", fields: null },
+  ],
+};
+
+describe("Composite golden vectors (Rust cross-language)", () => {
+  it("struct Point", () => {
+    assertSchemaRoundTrip({ x: 10, y: -20 }, PointSchema, "composite/struct_point.bin");
+  });
+
+  it("struct Nested", () => {
+    assertSchemaRoundTrip(
+      { name: "test", point: { x: 1, y: 2 }, tags: ["a", "bb"] },
+      NestedSchema,
+      "composite/struct_nested.bin",
+    );
+  });
+
+  it("enum unit variants", () => {
+    assertSchemaRoundTrip({ tag: "Red" }, ColorSchema, "composite/enum_red.bin");
+    assertSchemaRoundTrip({ tag: "Green" }, ColorSchema, "composite/enum_green.bin");
+    assertSchemaRoundTrip({ tag: "Blue" }, ColorSchema, "composite/enum_blue.bin");
+  });
+
+  it("enum newtype variant", () => {
+    assertSchemaRoundTrip({ tag: "Circle", value: 3.14 }, ShapeSchema, "composite/enum_circle.bin");
+  });
+
+  it("enum struct variant", () => {
+    assertSchemaRoundTrip(
+      { tag: "Rect", w: 10.0, h: 20.0 },
+      ShapeSchema,
+      "composite/enum_rect.bin",
+    );
+  });
+
+  it("enum empty variant", () => {
+    assertSchemaRoundTrip({ tag: "Empty" }, ShapeSchema, "composite/enum_empty.bin");
+  });
+
+  it("tuple (u32, string)", () => {
+    const schema: TupleSchema = {
+      kind: "tuple",
+      elements: [{ kind: "u32" }, { kind: "string" }],
+    };
+    assertSchemaRoundTrip([42, "hello"], schema, "composite/tuple_u32_string.bin");
+  });
+
+  it("tuple (bool, i64)", () => {
+    const schema: TupleSchema = {
+      kind: "tuple",
+      elements: [{ kind: "bool" }, { kind: "i64" }],
+    };
+    assertSchemaRoundTrip([true, -99n], schema, "composite/tuple_bool_i64.bin");
+  });
+
+  it("option Some(Point)", () => {
+    const schema: Schema = { kind: "option", inner: PointSchema };
+    assertSchemaRoundTrip({ x: 5, y: 6 }, schema, "composite/option_some_point.bin");
+  });
+
+  it("option None (Point)", () => {
+    const schema: Schema = { kind: "option", inner: PointSchema };
+    assertSchemaRoundTrip(null, schema, "composite/option_none_point.bin");
+  });
+
+  it("vec of Points", () => {
+    const schema: Schema = { kind: "vec", element: PointSchema };
+    assertSchemaRoundTrip(
+      [
+        { x: 1, y: 2 },
+        { x: 3, y: 4 },
+        { x: 5, y: 6 },
+      ],
+      schema,
+      "composite/vec_points.bin",
+    );
+  });
+});

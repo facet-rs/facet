@@ -174,6 +174,78 @@ fn main() {
     );
 
     // -------------------------------------------------------------------------
+    // Composite types (structs, enums, tuples)
+    // -------------------------------------------------------------------------
+    {
+        use facet::Facet;
+
+        #[derive(Facet)]
+        struct Point {
+            x: i32,
+            y: i32,
+        }
+        write_value!("composite/struct_point.bin", Point { x: 10, y: -20 });
+
+        #[derive(Facet)]
+        struct Nested {
+            name: String,
+            point: Point,
+            tags: Vec<String>,
+        }
+        write_value!(
+            "composite/struct_nested.bin",
+            Nested {
+                name: "test".to_string(),
+                point: Point { x: 1, y: 2 },
+                tags: vec!["a".to_string(), "bb".to_string()],
+            }
+        );
+
+        #[derive(Facet)]
+        #[repr(u8)]
+        enum Color {
+            Red,
+            Green,
+            Blue,
+        }
+        write_value!("composite/enum_red.bin", Color::Red);
+        write_value!("composite/enum_green.bin", Color::Green);
+        write_value!("composite/enum_blue.bin", Color::Blue);
+
+        #[derive(Facet)]
+        #[repr(u8)]
+        enum Shape {
+            Circle(f64),
+            Rect { w: f64, h: f64 },
+            Empty,
+        }
+        write_value!("composite/enum_circle.bin", Shape::Circle(3.14));
+        write_value!("composite/enum_rect.bin", Shape::Rect { w: 10.0, h: 20.0 });
+        write_value!("composite/enum_empty.bin", Shape::Empty);
+
+        write_value!(
+            "composite/tuple_u32_string.bin",
+            (42u32, "hello".to_string())
+        );
+        write_value!("composite/tuple_bool_i64.bin", (true, -99i64));
+
+        write_value!(
+            "composite/option_some_point.bin",
+            Some(Point { x: 5, y: 6 })
+        );
+        write_value!("composite/option_none_point.bin", Option::<Point>::None);
+
+        write_value!(
+            "composite/vec_points.bin",
+            vec![
+                Point { x: 1, y: 2 },
+                Point { x: 3, y: 4 },
+                Point { x: 5, y: 6 },
+            ]
+        );
+    }
+
+    // -------------------------------------------------------------------------
     // Result / RoamError
     // -------------------------------------------------------------------------
     write_value!(
