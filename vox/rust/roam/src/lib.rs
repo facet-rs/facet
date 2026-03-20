@@ -75,7 +75,6 @@ pub use roam_types::{
     ResponseParts,
     RetryPolicy,
     RoamError,
-    RpcPlan,
     Rx,
     RxError,
     SchemaRecvTracker,
@@ -104,9 +103,9 @@ pub use roam_core::*;
 #[cfg(feature = "runtime")]
 pub use roam_core::{InMemoryOperationStore, OperationAdmit, OperationCancel, OperationStore};
 
-// Channel binding is only available on non-wasm32 targets
+// Channel binding via thread-local binder during deserialization
 #[cfg(not(target_arch = "wasm32"))]
-pub use roam_types::{bind_channels_callee_args, bind_channels_caller_args};
+pub use roam_types::channel::with_channel_binder;
 
 // Re-export the session module (generated code uses `roam::session::ServiceDescriptor`)
 pub mod session {

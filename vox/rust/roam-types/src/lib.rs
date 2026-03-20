@@ -120,7 +120,7 @@ pub use client_middleware::*;
 mod calls;
 pub use calls::*;
 
-mod channel;
+pub mod channel;
 pub use channel::*;
 
 mod shape_classify;

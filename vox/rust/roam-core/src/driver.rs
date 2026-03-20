@@ -60,9 +60,9 @@ struct DriverShared {
     /// Buffer for channel messages that arrive before the channel is registered.
     ///
     /// This handles the race between the caller sending items immediately after
-    /// `bind_channels_caller_args` creates the sink, and the callee's handler task
-    /// calling `register_rx` via `bind_channels_callee_args`. Items arriving in
-    /// that window are buffered here and drained when the channel is registered.
+    /// channel binding, and the callee's handler task registering the channel
+    /// receiver. Items arriving in that window are buffered here and drained
+    /// when the channel is registered.
     channel_buffers: SyncMutex<BTreeMap<ChannelId, Vec<IncomingChannelMessage>>>,
     /// Credit semaphores for outbound channels (Tx on our side).
     /// The driver's GrantCredit handler adds permits to these.
@@ -551,14 +551,6 @@ impl ChannelBinder for DriverCaller {
 
 impl Caller for DriverCaller {
     async fn call<'a>(&'a self, mut call: RequestCall<'a>) -> CallResult {
-        let caller_channel_plan = match &call.args {
-            Payload::Outgoing { ptr, shape, .. } => {
-                let plan = RpcPlan::for_shape(shape);
-                (!plan.channel_locations.is_empty()).then_some((ptr.raw_ptr() as usize, plan))
-            }
-            Payload::Incoming(_) => None,
-        };
-
         if self.peer_supports_retry {
             let operation_id = self
                 .shared
@@ -579,6 +571,9 @@ impl Caller for DriverCaller {
         // r[impl schema.exchange.channels]
         // Schemas are attached by SessionCore::send() when it sees a Call
         // with Payload::Outgoing — no separate prepare step needed.
+        //
+        // Channel binding happens during serialization via the thread-local
+        // ChannelBinder — no post-hoc walk needed.
         if self
             .sender
             .send(ConnectionMessage::Request(RequestMessage {
@@ -594,9 +589,6 @@ impl Caller for DriverCaller {
             .is_err()
         {
             self.shared.pending_responses.lock().remove(&req_id);
-            if let Some((args_ptr, plan)) = caller_channel_plan {
-                unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
-            }
             return Err(RoamError::SendFailed);
         }
 
@@ -612,9 +604,6 @@ impl Caller for DriverCaller {
                     match result {
                         Ok(pending) => break pending,
                         Err(_) => {
-                            if let Some((args_ptr, plan)) = caller_channel_plan {
-                                unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
-                            }
                             return Err(RoamError::ConnectionClosed);
                         }
                     }
@@ -623,9 +612,6 @@ impl Caller for DriverCaller {
                     roam_types::dlog!("[CALLER] resumed_rx fired");
                     if changed.is_err() {
                         self.shared.pending_responses.lock().remove(&req_id);
-                        if let Some((args_ptr, plan)) = caller_channel_plan {
-                            unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
-                        }
                         return Err(RoamError::SessionShutdown);
                     }
                     let generation = *resumed_rx.borrow();
@@ -636,29 +622,17 @@ impl Caller for DriverCaller {
                     while *resume_processed_rx.borrow() < generation {
                         if resume_processed_rx.changed().await.is_err() {
                             self.shared.pending_responses.lock().remove(&req_id);
-                            if let Some((args_ptr, plan)) = caller_channel_plan {
-                                unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
-                            }
                             return Err(RoamError::SessionShutdown);
                         }
                     }
-                    if let Some((args_ptr, plan)) = caller_channel_plan
-                        && let Some(binder) = self.channel_binder()
-                  {
-                        let channels = unsafe {
-                            roam_types::bind_channels_caller_args(
-                                args_ptr as *mut u8,
-                                plan,
-                                binder,
-                            )
-                        };
-                    }
+                    // Re-send the request after resume.
+                    // Channel binding is embedded in the serialized payload,
+                    // so no separate re-binding step is needed.
                     let _ = self.sender.send(ConnectionMessage::Request(RequestMessage {
                         id: req_id,
                         body: RequestBody::Call(RequestCall {
                             method_id: call.method_id,
                             args: call.args.reborrow(),
-                            channels: call.channels.clone(),
                             metadata: call.metadata.clone(),
                             schemas: Default::default(),
                         }),
@@ -668,9 +642,6 @@ impl Caller for DriverCaller {
                     roam_types::dlog!("[CALLER] closed_rx fired, value={}", *closed_rx.borrow());
                     if changed.is_err() || *closed_rx.borrow() {
                         self.shared.pending_responses.lock().remove(&req_id);
-                        if let Some((args_ptr, plan)) = caller_channel_plan {
-                            unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
-                        }
                         return Err(RoamError::ConnectionClosed);
                     }
                 }
@@ -687,11 +658,6 @@ impl Caller for DriverCaller {
             _ => unreachable!("pending_responses only gets Response variants"),
         });
 
-        if let Some((args_ptr, plan)) = caller_channel_plan
-            && payload_is_runtime_error(&response.ret)
-        {
-            unsafe { finalize_channels_caller_args(args_ptr as *mut u8, plan) };
-        }
         Ok(roam_types::WithTracker {
             value: response,
             tracker: response_schemas,
@@ -1178,7 +1144,9 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 operations: operation_id.map(|_| Arc::clone(&self.shared.operations)),
                 binder: self.internal_binder(),
             };
-            let has_channels = !call.channels.is_empty();
+            // TODO: detect channel presence from the deserialized payload
+            // instead of the removed sidecar. For now, assume no channels.
+            let has_channels = false;
             let join_handle = moire::task::spawn(
                 async move {
                     handler.handle(call, reply, schemas).await;

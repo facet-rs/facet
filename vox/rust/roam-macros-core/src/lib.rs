@@ -484,40 +484,7 @@ fn generate_dispatch_arm(
 
     let _ = idx;
 
-    let has_channels = method.args().any(|a| a.ty.contains_channel());
-
-    let channel_binding = if has_channels {
-        quote! {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                if let Some(binder) = reply.channel_binder() {
-                    let plan = #roam::RpcPlan::for_type::<#args_tuple_type>();
-                    if !plan.channel_locations.is_empty() {
-                        // SAFETY: args is a valid, initialized value of type #args_tuple_type
-                        // and we have exclusive access to it via &mut.
-                        #[allow(unsafe_code)]
-                        unsafe {
-                            #roam::bind_channels_callee_args(
-                                &mut args as *mut _ as *mut u8,
-                                plan,
-                                &call.channels,
-                                binder,
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        quote! {}
-    };
-
-    // When there are channels, args must be mut for binding
-    let args_let = if has_channels {
-        quote! { let mut args: #args_tuple_type }
-    } else {
-        quote! { let args: #args_tuple_type }
-    };
+    let args_let = quote! { let args: #args_tuple_type };
 
     let return_type = method.return_type();
     let (ok_ty_ref, err_ty_ref) = method_ok_and_err_types(&return_type);
@@ -593,18 +560,29 @@ fn generate_dispatch_arm(
 
     quote! {
         if method_id == #descriptor_fn_name().methods[#idx].id {
-            #args_let = match #roam::schema_deser::schema_deserialize_args_borrowed(
-                args_bytes,
-                method_id,
-                &schemas,
-            ) {
+            // Channel binding happens during deserialization via thread-local binder.
+            let deser_result = if let Some(binder) = reply.channel_binder() {
+                #roam::with_channel_binder(binder, || {
+                    #roam::schema_deser::schema_deserialize_args_borrowed(
+                        args_bytes,
+                        method_id,
+                        &schemas,
+                    )
+                })
+            } else {
+                #roam::schema_deser::schema_deserialize_args_borrowed(
+                    args_bytes,
+                    method_id,
+                    &schemas,
+                )
+            };
+            #args_let = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
                     reply.send_error(#roam::RoamError::<::core::convert::Infallible>::InvalidPayload(e.to_string())).await;
                     return;
                 }
             };
-            #channel_binding
             #destructure
             #context_setup
             #invoke_and_reply
@@ -770,38 +748,7 @@ fn generate_client_method(
         )
     };
 
-    let has_channels = method.args().any(|a| a.ty.contains_channel());
-
-    let (args_binding, channel_binding) = if has_channels {
-        (
-            quote! { let mut args = #args_tuple; },
-            quote! {
-                #[cfg(not(target_arch = "wasm32"))]
-                let channels = if let Some(binder) = #roam::Caller::channel_binder(&self.caller) {
-                    let plan = #roam::RpcPlan::for_type::<#args_tuple_type>();
-                    // SAFETY: args is a valid, initialized value of the args tuple type
-                    // and we have exclusive access to it via &mut.
-                    #[allow(unsafe_code)]
-                    unsafe {
-                        #roam::bind_channels_caller_args(
-                            &mut args as *mut _ as *mut u8,
-                            plan,
-                            binder,
-                        )
-                    }
-                } else {
-                    vec![]
-                };
-                #[cfg(target_arch = "wasm32")]
-                let channels: Vec<#roam::ChannelId> = vec![];
-            },
-        )
-    } else {
-        (
-            quote! { let args = #args_tuple; },
-            quote! { let channels = vec![]; },
-        )
-    };
+    let args_binding = quote! { let args = #args_tuple; };
 
     if ok_uses_roam_lifetime {
         quote! {
@@ -809,11 +756,9 @@ fn generate_client_method(
             pub async fn #method_name(&self, #(#params),*) -> #client_return {
                 let method_id = #descriptor_fn_name().methods[#idx].id;
                 #args_binding
-                #channel_binding
                 let req = #roam::RequestCall {
                     method_id,
                     args: #roam::Payload::outgoing(&args),
-                    channels,
                     metadata: Default::default(),
                     schemas: Default::default(),
                 };
@@ -847,11 +792,9 @@ fn generate_client_method(
             pub async fn #method_name(&self, #(#params),*) -> #client_return {
                 let method_id = #descriptor_fn_name().methods[#idx].id;
                 #args_binding
-                #channel_binding
                 let req = #roam::RequestCall {
                     method_id,
                     args: #roam::Payload::outgoing(&args),
-                    channels,
                     metadata: Default::default(),
                     schemas: Default::default(),
                 };

@@ -317,9 +317,8 @@ pub fn format_doc(doc: &str, indent: &str) -> String {
 }
 
 pub fn assert_no_channels_in_return_shape(shape: &'static Shape) {
-    use crate::classify::ShapeKind;
     fn has_channel(shape: &'static Shape) -> bool {
-        match crate::classify::classify_shape(shape) {
+        match classify_shape(shape) {
             ShapeKind::Tx { .. } | ShapeKind::Rx { .. } => true,
             _ => false,
         }

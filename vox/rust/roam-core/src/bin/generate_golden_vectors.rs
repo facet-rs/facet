@@ -368,7 +368,6 @@ fn main() {
                 body: RequestBody::Call(RequestCall {
                     method_id: MethodId(0xE5A1_D6B2_C390_F001),
                     args: Payload::outgoing(&args_call),
-                    channels: vec![ChannelId(3), ChannelId(5)],
                     metadata: meta.clone(),
                     schemas: Default::default(),
                 }),
