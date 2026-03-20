@@ -489,27 +489,21 @@ fn deserialize_result<'de, 'facet, const BORROW: bool>(
     match variant_index {
         0 => {
             let partial = partial.begin_ok().map_err(re)?;
-            let fallback;
-            let inner_plan = match plan.nested.get(&0) {
-                Some(p) => p,
-                None => {
-                    fallback = build_identity_plan(partial.shape());
-                    &fallback
-                }
-            };
+            let inner_plan = plan.nested.get(&0).ok_or_else(|| {
+                DeserializeError::Custom(
+                    "Result::Ok nested plan missing — plan must include nested plans for Result variants".into(),
+                )
+            })?;
             let partial = deserialize_value::<BORROW>(partial, cursor, inner_plan, registry)?;
             partial.end().map_err(re)
         }
         1 => {
             let partial = partial.begin_err().map_err(re)?;
-            let fallback;
-            let inner_plan = match plan.nested.get(&1) {
-                Some(p) => p,
-                None => {
-                    fallback = build_identity_plan(partial.shape());
-                    &fallback
-                }
-            };
+            let inner_plan = plan.nested.get(&1).ok_or_else(|| {
+                DeserializeError::Custom(
+                    "Result::Err nested plan missing — plan must include nested plans for Result variants".into(),
+                )
+            })?;
             let partial = deserialize_value::<BORROW>(partial, cursor, inner_plan, registry)?;
             partial.end().map_err(re)
         }

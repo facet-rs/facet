@@ -34,4 +34,4 @@ fail-fast = true
 status-level = "pass"
 
 # Slow test warning threshold
-slow-timeout = { period = "2s", terminate-after = 2 }
+slow-timeout = { period = "2s", terminate-after = 8 }

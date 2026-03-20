@@ -2623,4 +2623,274 @@ mod tests {
         let msg = format!("{with_path}");
         assert!(msg.contains(".foo"), "should contain path: {msg}");
     }
+
+    // ========================================================================
+    // Failing tests: translation plans don't recurse into containers
+    // ========================================================================
+
+    #[test]
+    fn translation_through_vec_skips_extra_field() {
+        // Remote B has an extra field that local B doesn't have.
+        // The translation is inside a Vec — the plan must recurse into
+        // the Vec's element type to produce the skip.
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct A {
+                pub items: Vec<B>,
+            }
+            #[derive(Facet, Debug)]
+            pub struct B {
+                pub x: u32,
+                pub extra: String,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct A {
+                pub items: Vec<B>,
+            }
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct B {
+                pub x: u32,
+            }
+        }
+
+        let r = plan_for(remote::A::SHAPE, local::A::SHAPE).unwrap();
+        let bytes = to_vec(&remote::A {
+            items: vec![
+                remote::B {
+                    x: 1,
+                    extra: "a".into(),
+                },
+                remote::B {
+                    x: 2,
+                    extra: "bb".into(),
+                },
+                remote::B {
+                    x: 3,
+                    extra: "ccc".into(),
+                },
+            ],
+        })
+        .unwrap();
+        let result: local::A = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::A {
+                items: vec![local::B { x: 1 }, local::B { x: 2 }, local::B { x: 3 }],
+            }
+        );
+    }
+
+    #[test]
+    fn translation_through_option_skips_extra_field() {
+        // Translation change is inside an Option<B>.
+        // A trailing field `id` after the Option exposes cursor misalignment.
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct A {
+                pub maybe: Option<B>,
+                pub id: u32,
+            }
+            #[derive(Facet, Debug)]
+            pub struct B {
+                pub x: u32,
+                pub extra: String,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct A {
+                pub maybe: Option<B>,
+                pub id: u32,
+            }
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct B {
+                pub x: u32,
+            }
+        }
+
+        let r = plan_for(remote::A::SHAPE, local::A::SHAPE).unwrap();
+        let bytes = to_vec(&remote::A {
+            maybe: Some(remote::B {
+                x: 42,
+                extra: "gone".into(),
+            }),
+            id: 99,
+        })
+        .unwrap();
+        let result: local::A = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::A {
+                maybe: Some(local::B { x: 42 }),
+                id: 99,
+            }
+        );
+    }
+
+    #[test]
+    fn translation_through_result_skips_extra_field() {
+        // Translation change is inside a Result<B, String>.
+        // Trailing field `id` exposes cursor misalignment.
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct A {
+                pub result: Result<B, String>,
+                pub id: u32,
+            }
+            #[derive(Facet, Debug)]
+            pub struct B {
+                pub x: u32,
+                pub extra: String,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct A {
+                pub result: Result<B, String>,
+                pub id: u32,
+            }
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct B {
+                pub x: u32,
+            }
+        }
+
+        let r = plan_for(remote::A::SHAPE, local::A::SHAPE).unwrap();
+        let bytes = to_vec(&remote::A {
+            result: Ok(remote::B {
+                x: 99,
+                extra: "dropped".into(),
+            }),
+            id: 77,
+        })
+        .unwrap();
+        let result: local::A = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::A {
+                result: Ok(local::B { x: 99 }),
+                id: 77,
+            }
+        );
+    }
+
+    #[test]
+    fn translation_through_map_value_skips_extra_field() {
+        // Translation change is in the value type of a HashMap.
+        // Trailing field `id` exposes cursor misalignment.
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct A {
+                pub map: std::collections::HashMap<String, B>,
+                pub id: u32,
+            }
+            #[derive(Facet, Debug)]
+            pub struct B {
+                pub x: u32,
+                pub extra: String,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct A {
+                pub map: std::collections::HashMap<String, B>,
+                pub id: u32,
+            }
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct B {
+                pub x: u32,
+            }
+        }
+
+        let r = plan_for(remote::A::SHAPE, local::A::SHAPE).unwrap();
+        let mut remote_map = std::collections::HashMap::new();
+        remote_map.insert(
+            "key".into(),
+            remote::B {
+                x: 7,
+                extra: "nope".into(),
+            },
+        );
+        let bytes = to_vec(&remote::A {
+            map: remote_map,
+            id: 55,
+        })
+        .unwrap();
+        let result: local::A = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        let mut expected_map = std::collections::HashMap::new();
+        expected_map.insert("key".into(), local::B { x: 7 });
+        assert_eq!(
+            result,
+            local::A {
+                map: expected_map,
+                id: 55,
+            }
+        );
+    }
+
+    #[test]
+    fn translation_nested_three_levels_deep() {
+        // Change is 3 levels deep: A -> Vec<B> -> C (C has extra field).
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct A {
+                pub items: Vec<B>,
+            }
+            #[derive(Facet, Debug)]
+            pub struct B {
+                pub inner: C,
+            }
+            #[derive(Facet, Debug)]
+            pub struct C {
+                pub x: u32,
+                pub extra: String,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct A {
+                pub items: Vec<B>,
+            }
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct B {
+                pub inner: C,
+            }
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct C {
+                pub x: u32,
+            }
+        }
+
+        let r = plan_for(remote::A::SHAPE, local::A::SHAPE).unwrap();
+        let bytes = to_vec(&remote::A {
+            items: vec![remote::B {
+                inner: remote::C {
+                    x: 42,
+                    extra: "deep".into(),
+                },
+            }],
+        })
+        .unwrap();
+        let result: local::A = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::A {
+                items: vec![local::B {
+                    inner: local::C { x: 42 },
+                }],
+            }
+        );
+    }
 }
