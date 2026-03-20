@@ -92,10 +92,10 @@ impl SchemaSet {
         let registry = roam_types::build_registry(&extracted.schemas);
         // Resolve the root schema's kind using the root TypeRef's args.
         let root_kind = extracted
-            .root_type_ref
+            .root
             .resolve_kind(&registry)
             .expect("root schema must be in registry");
-        let root_id = match &extracted.root_type_ref {
+        let root_id = match &extracted.root {
             TypeRef::Concrete { type_id, .. } => *type_id,
             TypeRef::Var { .. } => unreachable!("root type ref is never a Var"),
         };
@@ -175,6 +175,8 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
         return Err(TranslationError::new(TranslationErrorKind::NameMismatch {
             remote: remote.clone(),
             local: local.clone(),
+            remote_rust: crate::error::format_schema_rust(remote, &input.remote.registry),
+            local_rust: crate::error::format_schema_rust(local, &input.local.registry),
         }));
     }
 
@@ -266,6 +268,16 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
                 element: Box::new(element_plan.unwrap_or(TranslationPlan::Identity)),
             })
         }
+        (
+            SchemaKind::Channel {
+                direction: remote_direction,
+                ..
+            },
+            SchemaKind::Channel {
+                direction: local_direction,
+                ..
+            },
+        ) if remote_direction == local_direction => Ok(TranslationPlan::Identity),
         // Primitives — no translation needed
         (SchemaKind::Primitive { .. }, SchemaKind::Primitive { .. }) => {
             Ok(TranslationPlan::Identity)
@@ -274,6 +286,8 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
         _ => Err(TranslationError::new(TranslationErrorKind::KindMismatch {
             remote: remote.clone(),
             local: local.clone(),
+            remote_rust: crate::error::format_schema_rust(remote, &input.remote.registry),
+            local_rust: crate::error::format_schema_rust(local, &input.local.registry),
         })),
     }
 }
@@ -387,6 +401,11 @@ fn build_tuple_plan(
             TranslationErrorKind::TupleLengthMismatch {
                 remote: remote_schema.clone(),
                 local: local_schema.clone(),
+                remote_rust: crate::error::format_schema_rust(
+                    remote_schema,
+                    &input.remote.registry,
+                ),
+                local_rust: crate::error::format_schema_rust(local_schema, &input.local.registry),
                 remote_len: remote_elements.len(),
                 local_len: local_elements.len(),
             },

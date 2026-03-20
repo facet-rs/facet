@@ -2536,10 +2536,14 @@ mod tests {
             TranslationError::new(TranslationErrorKind::NameMismatch {
                 remote: dummy_struct.clone(),
                 local: dummy_enum.clone(),
+                remote_rust: "Dummy".into(),
+                local_rust: "Dummy".into(),
             }),
             TranslationError::new(TranslationErrorKind::KindMismatch {
                 remote: dummy_struct.clone(),
                 local: dummy_prim.clone(),
+                remote_rust: "Dummy".into(),
+                local_rust: "u32".into(),
             }),
             TranslationError::new(TranslationErrorKind::MissingRequiredField {
                 field: FieldSchema {
@@ -2570,6 +2574,8 @@ mod tests {
             TranslationError::new(TranslationErrorKind::TupleLengthMismatch {
                 remote: dummy_prim.clone(),
                 local: dummy_prim.clone(),
+                remote_rust: "(u32, u32)".into(),
+                local_rust: "(u32, u32, u32)".into(),
                 remote_len: 2,
                 local_len: 3,
             }),

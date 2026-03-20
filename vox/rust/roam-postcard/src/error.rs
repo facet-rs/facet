@@ -1,6 +1,9 @@
 use std::fmt;
 
-use roam_types::{FieldSchema, Schema, SchemaHash, SchemaKind, VariantSchema};
+use roam_types::{
+    ChannelDirection, FieldSchema, PrimitiveType, Schema, SchemaHash, SchemaKind, SchemaRegistry,
+    TypeRef, VariantSchema,
+};
 
 #[derive(Debug)]
 pub enum SerializeError {
@@ -167,9 +170,19 @@ pub struct TranslationError {
 #[derive(Debug)]
 pub enum TranslationErrorKind {
     /// The root type names don't match.
-    NameMismatch { remote: Schema, local: Schema },
+    NameMismatch {
+        remote: Schema,
+        local: Schema,
+        remote_rust: String,
+        local_rust: String,
+    },
     /// The structural kinds don't match (e.g. remote is enum, local is struct).
-    KindMismatch { remote: Schema, local: Schema },
+    KindMismatch {
+        remote: Schema,
+        local: Schema,
+        remote_rust: String,
+        local_rust: String,
+    },
     // r[impl schema.errors.missing-required]
     /// A required local field has no corresponding remote field and no default.
     MissingRequiredField {
@@ -202,6 +215,8 @@ pub enum TranslationErrorKind {
     TupleLengthMismatch {
         remote: Schema,
         local: Schema,
+        remote_rust: String,
+        local_rust: String,
         remote_len: usize,
         local_len: usize,
     },
@@ -242,24 +257,93 @@ impl TranslationError {
     }
 }
 
-fn schema_label(schema: &Schema) -> &str {
+pub(crate) fn format_schema_rust(schema: &Schema, registry: &SchemaRegistry) -> String {
     match &schema.kind {
-        SchemaKind::Struct { name, .. } | SchemaKind::Enum { name, .. } => name.as_str(),
-        other => schema_kind_str(other),
+        SchemaKind::Struct { name, .. } | SchemaKind::Enum { name, .. } => name.clone(),
+        kind => format_schema_kind_rust(kind, registry),
     }
 }
 
-fn schema_kind_str(kind: &SchemaKind) -> &'static str {
+pub(crate) fn format_type_ref_rust(type_ref: &TypeRef, registry: &SchemaRegistry) -> String {
+    match type_ref {
+        TypeRef::Var { name } => name.as_str().to_string(),
+        TypeRef::Concrete { type_id, args } => {
+            let Some(schema) = registry.get(type_id) else {
+                return format!("<missing:{type_id:?}>");
+            };
+            match &schema.kind {
+                SchemaKind::Struct { name, .. } | SchemaKind::Enum { name, .. } => {
+                    if args.is_empty() {
+                        name.clone()
+                    } else {
+                        let args = args
+                            .iter()
+                            .map(|arg| format_type_ref_rust(arg, registry))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!("{name}<{args}>")
+                    }
+                }
+                kind => format_schema_kind_rust(kind, registry),
+            }
+        }
+    }
+}
+
+fn format_schema_kind_rust(kind: &SchemaKind, registry: &SchemaRegistry) -> String {
     match kind {
-        SchemaKind::Struct { .. } => "struct",
-        SchemaKind::Enum { .. } => "enum",
-        SchemaKind::Tuple { .. } => "tuple",
-        SchemaKind::List { .. } => "list",
-        SchemaKind::Map { .. } => "map",
-        SchemaKind::Array { .. } => "array",
-        SchemaKind::Option { .. } => "option",
-        SchemaKind::Primitive { .. } => "primitive",
-        SchemaKind::Channel { .. } => "channel",
+        SchemaKind::Struct { name, .. } | SchemaKind::Enum { name, .. } => name.clone(),
+        SchemaKind::Tuple { elements } => {
+            let elements = elements
+                .iter()
+                .map(|element| format_type_ref_rust(element, registry))
+                .collect::<Vec<_>>();
+            match elements.len() {
+                0 => "()".to_string(),
+                1 => format!("({},)", elements[0]),
+                _ => format!("({})", elements.join(", ")),
+            }
+        }
+        SchemaKind::List { element } => format!("Vec<{}>", format_type_ref_rust(element, registry)),
+        SchemaKind::Map { key, value } => format!(
+            "HashMap<{}, {}>",
+            format_type_ref_rust(key, registry),
+            format_type_ref_rust(value, registry)
+        ),
+        SchemaKind::Array { element, length } => {
+            format!("[{}; {length}]", format_type_ref_rust(element, registry))
+        }
+        SchemaKind::Option { element } => {
+            format!("Option<{}>", format_type_ref_rust(element, registry))
+        }
+        SchemaKind::Channel { direction, element } => format!(
+            "{}<{}>",
+            match direction {
+                ChannelDirection::Tx => "Tx",
+                ChannelDirection::Rx => "Rx",
+            },
+            format_type_ref_rust(element, registry)
+        ),
+        SchemaKind::Primitive { primitive_type } => match primitive_type {
+            PrimitiveType::Bool => "bool".to_string(),
+            PrimitiveType::U8 => "u8".to_string(),
+            PrimitiveType::U16 => "u16".to_string(),
+            PrimitiveType::U32 => "u32".to_string(),
+            PrimitiveType::U64 => "u64".to_string(),
+            PrimitiveType::U128 => "u128".to_string(),
+            PrimitiveType::I8 => "i8".to_string(),
+            PrimitiveType::I16 => "i16".to_string(),
+            PrimitiveType::I32 => "i32".to_string(),
+            PrimitiveType::I64 => "i64".to_string(),
+            PrimitiveType::I128 => "i128".to_string(),
+            PrimitiveType::F32 => "f32".to_string(),
+            PrimitiveType::F64 => "f64".to_string(),
+            PrimitiveType::Char => "char".to_string(),
+            PrimitiveType::String => "String".to_string(),
+            PrimitiveType::Unit => "()".to_string(),
+            PrimitiveType::Bytes => "Vec<u8>".to_string(),
+            PrimitiveType::Payload => "Payload".to_string(),
+        },
     }
 }
 
@@ -270,24 +354,27 @@ impl fmt::Display for TranslationError {
         }
 
         match &*self.kind {
-            TranslationErrorKind::NameMismatch { remote, local } => {
+            TranslationErrorKind::NameMismatch {
+                remote,
+                local,
+                remote_rust,
+                local_rust,
+            } => {
                 write!(
                     f,
-                    "type name mismatch: remote is '{}' ({}), local is '{}' ({})",
-                    schema_label(remote),
-                    schema_kind_str(&remote.kind),
-                    schema_label(local),
-                    schema_kind_str(&local.kind),
+                    "type name mismatch: remote is `{remote_rust}`, local is `{local_rust}` (remote name `{}`, local name `{}`)",
+                    remote.name().unwrap_or("<anonymous>"),
+                    local.name().unwrap_or("<anonymous>"),
                 )
             }
-            TranslationErrorKind::KindMismatch { remote, local } => {
+            TranslationErrorKind::KindMismatch {
+                remote_rust,
+                local_rust,
+                ..
+            } => {
                 write!(
                     f,
-                    "structural mismatch: remote '{}' is {}, local '{}' is {}",
-                    schema_label(remote),
-                    schema_kind_str(&remote.kind),
-                    schema_label(local),
-                    schema_kind_str(&local.kind),
+                    "structural mismatch: remote is `{remote_rust}`, local is `{local_rust}`",
                 )
             }
             TranslationErrorKind::MissingRequiredField {
@@ -299,7 +386,7 @@ impl fmt::Display for TranslationError {
                     "required field '{}' (type {:?}) missing from remote '{}'",
                     field.name,
                     field.type_ref,
-                    schema_label(remote_struct),
+                    format_schema_rust(remote_struct, &SchemaRegistry::new()),
                 )?;
                 if let SchemaKind::Struct { fields, .. } = &remote_struct.kind {
                     write!(f, " (remote has fields: ")?;
@@ -322,8 +409,8 @@ impl fmt::Display for TranslationError {
                 write!(
                     f,
                     "field '{field_name}' type mismatch: remote is '{}', local is '{}': {source}",
-                    schema_label(remote_field_type),
-                    schema_label(local_field_type),
+                    format_schema_rust(remote_field_type, &SchemaRegistry::new()),
+                    format_schema_rust(local_field_type, &SchemaRegistry::new()),
                 )
             }
             TranslationErrorKind::IncompatibleVariantPayload {
@@ -342,16 +429,15 @@ impl fmt::Display for TranslationError {
                 write!(f, "{side} schema not found for type ID {type_id:?}")
             }
             TranslationErrorKind::TupleLengthMismatch {
-                remote,
-                local,
+                remote_rust,
+                local_rust,
                 remote_len,
                 local_len,
+                ..
             } => {
                 write!(
                     f,
-                    "tuple length mismatch: remote '{}' has {remote_len} elements, local '{}' has {local_len} elements",
-                    schema_label(remote),
-                    schema_label(local),
+                    "tuple length mismatch: remote `{remote_rust}` has {remote_len} elements, local `{local_rust}` has {local_len} elements",
                 )
             }
             TranslationErrorKind::UnresolvedVar { name, side } => {

@@ -626,7 +626,7 @@ impl<T> TryFrom<&Tx<T>> for ChannelId {
             let channel_id = CHANNEL_BINDER.with(|cell| {
                 let borrow = cell.borrow();
                 let Some(binder) = *borrow else {
-                    return Ok(value.channel_id);
+                    return Err("serializing Tx requires an active ChannelBinder".to_string());
                 };
                 let (channel_id, bound) = binder.create_rx();
                 if let Some(core) = &value.core.inner {
@@ -650,12 +650,14 @@ impl<T> TryFrom<ChannelId> for Tx<T> {
 
         #[cfg(not(target_arch = "wasm32"))]
         CHANNEL_BINDER.with(|cell| {
-            if let Some(binder) = *cell.borrow() {
-                let sink = binder.bind_tx(channel_id);
-                let liveness = binder.channel_liveness();
-                tx.bind_with_liveness(sink, liveness);
-            }
-        });
+            let Some(binder) = *cell.borrow() else {
+                return Err("deserializing Tx requires an active ChannelBinder".to_string());
+            };
+            let sink = binder.bind_tx(channel_id);
+            let liveness = binder.channel_liveness();
+            tx.bind_with_liveness(sink, liveness);
+            Ok(())
+        })?;
 
         Ok(tx)
     }
@@ -776,7 +778,7 @@ impl<T> Rx<T> {
                 }) => {
                     let value = msg
                         .try_repack(|item, _backing_bytes| {
-                            let Payload::Incoming(bytes) = item.item else {
+                            let Payload::Incoming(_) = item.item else {
                                 return Err(RxError::Protocol(
                                     "incoming channel item payload was not Incoming".into(),
                                 ));
@@ -861,7 +863,7 @@ impl<T> TryFrom<&Rx<T>> for ChannelId {
             let channel_id = CHANNEL_BINDER.with(|cell| {
                 let borrow = cell.borrow();
                 let Some(binder) = *borrow else {
-                    return Ok(value.channel_id);
+                    return Err("serializing Rx requires an active ChannelBinder".to_string());
                 };
                 let (channel_id, sink) = binder.create_tx();
                 let liveness = binder.channel_liveness();
@@ -886,13 +888,15 @@ impl<T> TryFrom<ChannelId> for Rx<T> {
 
         #[cfg(not(target_arch = "wasm32"))]
         CHANNEL_BINDER.with(|cell| {
-            if let Some(binder) = *cell.borrow() {
-                let bound = binder.register_rx(channel_id);
-                rx.receiver.inner = Some(bound.receiver);
-                rx.liveness.inner = bound.liveness;
-                rx.replenisher.inner = bound.replenisher;
-            }
-        });
+            let Some(binder) = *cell.borrow() else {
+                return Err("deserializing Rx requires an active ChannelBinder".to_string());
+            };
+            let bound = binder.register_rx(channel_id);
+            rx.receiver.inner = Some(bound.receiver);
+            rx.liveness.inner = bound.liveness;
+            rx.replenisher.inner = bound.replenisher;
+            Ok(())
+        })?;
 
         Ok(rx)
     }

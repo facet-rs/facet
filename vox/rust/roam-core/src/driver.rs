@@ -761,15 +761,18 @@ impl Caller for DriverCaller {
         // ChannelBinder — no post-hoc walk needed.
         if self
             .sender
-            .send(ConnectionMessage::Request(RequestMessage {
-                id: req_id,
-                body: RequestBody::Call(RequestCall {
-                    method_id: call.method_id,
-                    args: call.args.reborrow(),
-                    metadata: call.metadata.clone(),
-                    schemas: Default::default(),
+            .send_with_binder(
+                ConnectionMessage::Request(RequestMessage {
+                    id: req_id,
+                    body: RequestBody::Call(RequestCall {
+                        method_id: call.method_id,
+                        args: call.args.reborrow(),
+                        metadata: call.metadata.clone(),
+                        schemas: Default::default(),
+                    }),
                 }),
-            }))
+                Some(self),
+            )
             .await
             .is_err()
         {
@@ -813,15 +816,18 @@ impl Caller for DriverCaller {
                     // Re-send the request after resume.
                     // Channel binding is embedded in the serialized payload,
                     // so no separate re-binding step is needed.
-                    let _ = self.sender.send(ConnectionMessage::Request(RequestMessage {
-                        id: req_id,
-                        body: RequestBody::Call(RequestCall {
-                            method_id: call.method_id,
-                            args: call.args.reborrow(),
-                            metadata: call.metadata.clone(),
-                            schemas: Default::default(),
+                    let _ = self.sender.send_with_binder(
+                        ConnectionMessage::Request(RequestMessage {
+                            id: req_id,
+                            body: RequestBody::Call(RequestCall {
+                                method_id: call.method_id,
+                                args: call.args.reborrow(),
+                                metadata: call.metadata.clone(),
+                                schemas: Default::default(),
+                            }),
                         }),
-                    })).await;
+                        Some(self),
+                    ).await;
                 }
                 changed = closed_rx.changed() => {
                     roam_types::dlog!("[CALLER] closed_rx fired, value={}", *closed_rx.borrow());
