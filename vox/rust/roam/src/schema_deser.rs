@@ -1,7 +1,7 @@
 use facet::Facet;
 use roam_postcard::error::DeserializeError;
 use roam_postcard::plan::{PlanInput, SchemaSet, TranslationPlan, build_plan};
-use roam_types::{BindingDirection, MethodId, SchemaRecvTracker, extract_schemas};
+use roam_types::{BindingDirection, MethodId, Schema, SchemaRecvTracker, TypeRef, extract_schemas};
 
 /// Deserialize args from a request (caller → callee direction).
 // r[impl schema.exchange.required]
@@ -57,7 +57,7 @@ fn resolve_plan<'facet, T: Facet<'facet>>(
         BindingDirection::Response => "response",
     };
 
-    let remote_root_id = match direction {
+    let remote_root_ref = match direction {
         BindingDirection::Args => tracker.get_remote_args_root(method_id),
         BindingDirection::Response => tracker.get_remote_response_root(method_id),
     }
@@ -67,15 +67,27 @@ fn resolve_plan<'facet, T: Facet<'facet>>(
         ))
     })?;
 
-    let remote_root = tracker.get_received(&remote_root_id).ok_or_else(|| {
+    let registry = tracker.received_registry();
+    let root_kind = remote_root_ref.resolve_kind(&registry).ok_or_else(|| {
         DeserializeError::protocol(&format!(
-            "remote root type ID {remote_root_id:?} not found in received schemas"
+            "remote root type ref {remote_root_ref:?} not found in received schemas"
         ))
     })?;
-
+    let root_id = match &remote_root_ref {
+        TypeRef::Concrete { type_id, .. } => *type_id,
+        TypeRef::Var(_) => {
+            return Err(DeserializeError::protocol(
+                "remote root type ref is a Var — protocol error",
+            ));
+        }
+    };
     let remote = SchemaSet {
-        root: remote_root,
-        registry: tracker.received_registry(),
+        root: Schema {
+            id: root_id,
+            type_params: vec![],
+            kind: root_kind,
+        },
+        registry,
     };
 
     let local = SchemaSet::from_extracted(

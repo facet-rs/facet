@@ -720,12 +720,14 @@ pub fn build_registry(schemas: &[Schema]) -> SchemaRegistry {
     schemas.iter().map(|s| (s.id, s.clone())).collect()
 }
 
-/// Binds a method to the root TypeSchemaId of the type being sent for that
+/// Binds a method to the root type of the type being sent for that
 /// method. Sent once per method per direction.
 #[derive(Facet, Clone, Debug)]
 pub struct MethodSchemaBinding {
     pub method_id: MethodId,
-    pub root_type_schema_id: TypeSchemaId,
+    /// The root TypeRef, including type arguments for generic types
+    /// (e.g. `Result<T, E>` → `Concrete { id: result_id, args: [ok_ref, err_ref] }`).
+    pub root_type_ref: TypeRef,
     /// Whether this binding is for args (caller → callee) or response (callee → caller).
     pub direction: BindingDirection,
 }
@@ -891,11 +893,6 @@ impl SchemaSendTracker {
         // Snapshot already-sent TypeSchemaIds before extraction adds new ones.
         let already_sent: HashSet<TypeSchemaId> = self.emitted.values().copied().collect();
         let extracted = self.extract_schemas(shape)?;
-        let root_type_schema_id = match &extracted.root_type_ref {
-            TypeRef::Concrete { type_id, .. } => *type_id,
-            TypeRef::Var(_) => unreachable!("root type ref is never a Var"),
-        };
-
         // Filter to only schemas not already sent.
         let unsent: Vec<Schema> = extracted
             .schemas
@@ -905,7 +902,7 @@ impl SchemaSendTracker {
 
         let method_binding = MethodSchemaBinding {
             method_id,
-            root_type_schema_id,
+            root_type_ref: extracted.root_type_ref,
             direction,
         };
 
@@ -993,10 +990,10 @@ impl std::fmt::Debug for SchemaSendTracker {
 pub struct SchemaRecvTracker {
     /// Type schemas received from the remote peer.
     received: Mutex<HashMap<TypeSchemaId, Schema>>,
-    /// Args bindings received: method_id → root TypeSchemaId for args.
-    received_args_bindings: Mutex<HashMap<MethodId, TypeSchemaId>>,
-    /// Response bindings received: method_id → root TypeSchemaId for response.
-    received_response_bindings: Mutex<HashMap<MethodId, TypeSchemaId>>,
+    /// Args bindings received: method_id → root TypeRef for args.
+    received_args_bindings: Mutex<HashMap<MethodId, TypeRef>>,
+    /// Response bindings received: method_id → root TypeRef for response.
+    received_response_bindings: Mutex<HashMap<MethodId, TypeRef>>,
 }
 
 /// Error returned when recording received schemas detects a protocol violation.
@@ -1047,27 +1044,27 @@ impl SchemaRecvTracker {
             };
             map.lock()
                 .unwrap()
-                .insert(binding.method_id, binding.root_type_schema_id);
+                .insert(binding.method_id, binding.root_type_ref);
         }
         Ok(())
     }
 
-    /// Look up the remote's root TypeSchemaId for a method's args.
-    pub fn get_remote_args_root(&self, method_id: MethodId) -> Option<TypeSchemaId> {
+    /// Look up the remote's root TypeRef for a method's args.
+    pub fn get_remote_args_root(&self, method_id: MethodId) -> Option<TypeRef> {
         self.received_args_bindings
             .lock()
             .unwrap()
             .get(&method_id)
-            .copied()
+            .cloned()
     }
 
-    /// Look up the remote's root TypeSchemaId for a method's response.
-    pub fn get_remote_response_root(&self, method_id: MethodId) -> Option<TypeSchemaId> {
+    /// Look up the remote's root TypeRef for a method's response.
+    pub fn get_remote_response_root(&self, method_id: MethodId) -> Option<TypeRef> {
         self.received_response_bindings
             .lock()
             .unwrap()
             .get(&method_id)
-            .copied()
+            .cloned()
     }
 
     /// Look up a received schema by type ID.
@@ -1798,7 +1795,7 @@ mod tests {
     // r[verify schema.format.primitive]
     #[test]
     fn primitive_u32() {
-        let schemas = extract_schemas(<u32 as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<u32 as Facet>::SHAPE).unwrap().schemas;
         assert_eq!(schemas.len(), 1);
         assert!(matches!(
             schemas[0].kind,
@@ -1810,7 +1807,7 @@ mod tests {
 
     #[test]
     fn primitive_string() {
-        let schemas = extract_schemas(<String as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<String as Facet>::SHAPE).unwrap().schemas;
         assert_eq!(schemas.len(), 1);
         assert!(matches!(
             schemas[0].kind,
@@ -1822,7 +1819,7 @@ mod tests {
 
     #[test]
     fn primitive_bool() {
-        let schemas = extract_schemas(<bool as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<bool as Facet>::SHAPE).unwrap().schemas;
         assert_eq!(schemas.len(), 1);
         assert!(matches!(
             schemas[0].kind,
@@ -1841,7 +1838,7 @@ mod tests {
             y: f64,
         }
 
-        let schemas = extract_schemas(Point::SHAPE).unwrap();
+        let schemas = extract_schemas(Point::SHAPE).unwrap().schemas;
         assert!(schemas.len() >= 2);
 
         let point_schema = schemas.last().unwrap();
@@ -1872,7 +1869,7 @@ mod tests {
             Blue,
         }
 
-        let schemas = extract_schemas(Color::SHAPE).unwrap();
+        let schemas = extract_schemas(Color::SHAPE).unwrap().schemas;
         let color_schema = schemas.last().unwrap();
         match &color_schema.kind {
             SchemaKind::Enum { variants, .. } => {
@@ -1898,7 +1895,7 @@ mod tests {
             Empty,
         }
 
-        let schemas = extract_schemas(Shape::SHAPE).unwrap();
+        let schemas = extract_schemas(Shape::SHAPE).unwrap().schemas;
         let shape_schema = schemas.last().unwrap();
         match &shape_schema.kind {
             SchemaKind::Enum { variants, .. } => {
@@ -1924,7 +1921,7 @@ mod tests {
     // r[verify schema.format.container]
     #[test]
     fn container_vec() {
-        let schemas = extract_schemas(<Vec<u32> as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<Vec<u32> as Facet>::SHAPE).unwrap().schemas;
         assert_eq!(schemas.len(), 2);
         assert!(matches!(
             schemas[0].kind,
@@ -1938,7 +1935,9 @@ mod tests {
     // r[verify schema.format.container]
     #[test]
     fn container_option() {
-        let schemas = extract_schemas(<Option<String> as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<Option<String> as Facet>::SHAPE)
+            .unwrap()
+            .schemas;
         assert_eq!(schemas.len(), 2);
         assert!(matches!(
             schemas[0].kind,
@@ -1958,7 +1957,7 @@ mod tests {
             next: Option<Box<Node>>,
         }
 
-        let schemas = extract_schemas(Node::SHAPE).unwrap();
+        let schemas = extract_schemas(Node::SHAPE).unwrap().schemas;
         assert!(schemas.len() >= 2);
 
         let node_schema = schemas.last().unwrap();
@@ -1968,7 +1967,7 @@ mod tests {
     // r[verify schema.format.primitive]
     #[test]
     fn vec_u8_is_bytes() {
-        let schemas = extract_schemas(<Vec<u8> as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<Vec<u8> as Facet>::SHAPE).unwrap().schemas;
         assert_eq!(schemas.len(), 1);
         assert!(matches!(
             schemas[0].kind,
@@ -1987,7 +1986,7 @@ mod tests {
             b: u32,
         }
 
-        let schemas = extract_schemas(TwoU32::SHAPE).unwrap();
+        let schemas = extract_schemas(TwoU32::SHAPE).unwrap().schemas;
         let u32_count = schemas
             .iter()
             .filter(|s| {
@@ -2006,8 +2005,9 @@ mod tests {
     // r[verify schema.format.container]
     #[test]
     fn container_map() {
-        let schemas =
-            extract_schemas(<std::collections::HashMap<String, u32> as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<std::collections::HashMap<String, u32> as Facet>::SHAPE)
+            .unwrap()
+            .schemas;
         let map_schema = schemas.last().unwrap();
         assert!(matches!(map_schema.kind, SchemaKind::Map { .. }));
     }
@@ -2015,7 +2015,7 @@ mod tests {
     // r[verify schema.format.container]
     #[test]
     fn container_array() {
-        let schemas = extract_schemas(<[u32; 4] as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<[u32; 4] as Facet>::SHAPE).unwrap().schemas;
         let arr_schema = schemas.last().unwrap();
         match &arr_schema.kind {
             SchemaKind::Array { length, .. } => assert_eq!(*length, 4),
@@ -2026,7 +2026,9 @@ mod tests {
     // r[verify schema.format.tuple]
     #[test]
     fn tuple_type() {
-        let schemas = extract_schemas(<(u32, String) as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<(u32, String) as Facet>::SHAPE)
+            .unwrap()
+            .schemas;
         let tuple_schema = schemas.last().unwrap();
         match &tuple_schema.kind {
             SchemaKind::Tuple { elements } => {
@@ -2047,7 +2049,7 @@ mod tests {
             pair: (u8, u8),
         }
 
-        let schemas = extract_schemas(Mixed::SHAPE).unwrap();
+        let schemas = extract_schemas(Mixed::SHAPE).unwrap().schemas;
         assert!(schemas.len() >= 4);
     }
 
@@ -2110,7 +2112,7 @@ mod tests {
     #[test]
     fn tracker_record_and_get_received() {
         let tracker = SchemaRecvTracker::new();
-        let schemas = extract_schemas(<u32 as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<u32 as Facet>::SHAPE).unwrap().schemas;
         let id = schemas[0].id;
         assert!(tracker.get_received(&id).is_none());
         tracker
@@ -2129,14 +2131,16 @@ mod tests {
         let mut tracker = SchemaSendTracker::new();
         let schemas = tracker
             .extract_schemas(<(u32, String) as Facet>::SHAPE)
-            .unwrap();
+            .unwrap()
+            .schemas;
         assert!(schemas.len() >= 3);
 
         // Same type extracted again must produce the same content hash.
         let mut tracker2 = SchemaSendTracker::new();
         let schemas2 = tracker2
             .extract_schemas(<(u32, String) as Facet>::SHAPE)
-            .unwrap();
+            .unwrap()
+            .schemas;
         assert_eq!(schemas.len(), schemas2.len());
         for (a, b) in schemas.iter().zip(schemas2.iter()) {
             assert_eq!(a.id, b.id, "content hash should be deterministic");
@@ -2146,7 +2150,8 @@ mod tests {
         let mut tracker3 = SchemaSendTracker::new();
         let schemas3 = tracker3
             .extract_schemas(<(u64, String) as Facet>::SHAPE)
-            .unwrap();
+            .unwrap()
+            .schemas;
         let root_hash = schemas.last().unwrap().id;
         let root_hash3 = schemas3.last().unwrap().id;
         assert_ne!(
@@ -2212,8 +2217,8 @@ mod tests {
             y: f64,
         }
 
-        let schemas1 = extract_schemas(Point::SHAPE).unwrap();
-        let schemas2 = extract_schemas(Point::SHAPE).unwrap();
+        let schemas1 = extract_schemas(Point::SHAPE).unwrap().schemas;
+        let schemas2 = extract_schemas(Point::SHAPE).unwrap().schemas;
         assert_eq!(
             schemas1.last().unwrap().id,
             schemas2.last().unwrap().id,
@@ -2230,8 +2235,8 @@ mod tests {
             children: Vec<TreeNode>,
         }
 
-        let schemas1 = extract_schemas(TreeNode::SHAPE).unwrap();
-        let schemas2 = extract_schemas(TreeNode::SHAPE).unwrap();
+        let schemas1 = extract_schemas(TreeNode::SHAPE).unwrap().schemas;
+        let schemas2 = extract_schemas(TreeNode::SHAPE).unwrap().schemas;
 
         // Must have at least String, Vec<TreeNode>, TreeNode
         assert!(schemas1.len() >= 2);
@@ -2280,16 +2285,16 @@ mod tests {
         let recv_tracker = SchemaRecvTracker::new();
         recv_tracker
             .record_received(SchemaPayload {
-                schemas: extract_schemas(<u64 as Facet>::SHAPE).unwrap(),
+                schemas: extract_schemas(<u64 as Facet>::SHAPE).unwrap().schemas,
                 method_bindings: vec![
                     MethodSchemaBinding {
                         method_id: MethodId(42),
-                        root_type_schema_id: TypeSchemaId(100),
+                        root_type_ref: TypeRef::concrete(TypeSchemaId(100)),
                         direction: BindingDirection::Args,
                     },
                     MethodSchemaBinding {
                         method_id: MethodId(42),
-                        root_type_schema_id: TypeSchemaId(200),
+                        root_type_ref: TypeRef::concrete(TypeSchemaId(200)),
                         direction: BindingDirection::Response,
                     },
                 ],
@@ -2298,18 +2303,18 @@ mod tests {
 
         assert_eq!(
             recv_tracker.get_remote_args_root(MethodId(42)),
-            Some(TypeSchemaId(100))
+            Some(TypeRef::concrete(TypeSchemaId(100)))
         );
         assert_eq!(
             recv_tracker.get_remote_response_root(MethodId(42)),
-            Some(TypeSchemaId(200))
+            Some(TypeRef::concrete(TypeSchemaId(200)))
         );
     }
 
     #[test]
     fn duplicate_schema_is_protocol_error() {
         let tracker = SchemaRecvTracker::new();
-        let schemas = extract_schemas(<u32 as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<u32 as Facet>::SHAPE).unwrap().schemas;
         tracker
             .record_received(SchemaPayload {
                 schemas: schemas.clone(),
@@ -2351,7 +2356,7 @@ mod tests {
 
     #[test]
     fn generic_vec_uses_var_in_body() {
-        let schemas = extract_schemas(<Vec<u32> as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<Vec<u32> as Facet>::SHAPE).unwrap().schemas;
         let list_schema = schemas
             .iter()
             .find(|s| matches!(s.kind, SchemaKind::List { .. }))
@@ -2374,7 +2379,9 @@ mod tests {
 
     #[test]
     fn generic_option_uses_var_in_body() {
-        let schemas = extract_schemas(<Option<String> as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<Option<String> as Facet>::SHAPE)
+            .unwrap()
+            .schemas;
         let opt_schema = schemas
             .iter()
             .find(|s| matches!(s.kind, SchemaKind::Option { .. }))
@@ -2399,7 +2406,9 @@ mod tests {
     fn vec_of_option_of_u32_deduplicates() {
         // Vec<Option<u32>> should produce: u32, Option<T>, Vec<T>
         // NOT: u32, Option<u32>, Vec<Option<u32>>
-        let schemas = extract_schemas(<Vec<Option<u32>> as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<Vec<Option<u32>> as Facet>::SHAPE)
+            .unwrap()
+            .schemas;
 
         let list_count = schemas
             .iter()
@@ -2421,7 +2430,7 @@ mod tests {
             b: Vec<String>,
         }
 
-        let schemas = extract_schemas(Both::SHAPE).unwrap();
+        let schemas = extract_schemas(Both::SHAPE).unwrap().schemas;
         let list_count = schemas
             .iter()
             .filter(|s| matches!(s.kind, SchemaKind::List { .. }))
@@ -2434,7 +2443,7 @@ mod tests {
 
     #[test]
     fn resolve_kind_substitutes_vars() {
-        let schemas = extract_schemas(<Vec<u32> as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<Vec<u32> as Facet>::SHAPE).unwrap().schemas;
         let registry = build_registry(&schemas);
 
         // The root schema is Vec<u32> — find it
@@ -2472,7 +2481,9 @@ mod tests {
     #[test]
     fn nested_generic_vec_of_vec_of_u32() {
         // Vec<Vec<u32>> — should produce u32, Vec<T>, not u32, Vec<u32>, Vec<Vec<u32>>
-        let schemas = extract_schemas(<Vec<Vec<u32>> as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<Vec<Vec<u32>> as Facet>::SHAPE)
+            .unwrap()
+            .schemas;
         let list_count = schemas
             .iter()
             .filter(|s| matches!(s.kind, SchemaKind::List { .. }))
@@ -2491,7 +2502,7 @@ mod tests {
             next: Option<Box<Node>>,
         }
 
-        let schemas = extract_schemas(Node::SHAPE).unwrap();
+        let schemas = extract_schemas(Node::SHAPE).unwrap().schemas;
         // Should have: u32, Option<T>, Node
         let option_count = schemas
             .iter()
@@ -2519,8 +2530,9 @@ mod tests {
 
     #[test]
     fn map_schema_is_generic() {
-        let schemas =
-            extract_schemas(<std::collections::HashMap<String, u32> as Facet>::SHAPE).unwrap();
+        let schemas = extract_schemas(<std::collections::HashMap<String, u32> as Facet>::SHAPE)
+            .unwrap()
+            .schemas;
         let map_schema = schemas
             .iter()
             .find(|s| matches!(s.kind, SchemaKind::Map { .. }))
