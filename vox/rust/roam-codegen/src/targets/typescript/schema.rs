@@ -19,8 +19,8 @@ use std::collections::HashSet;
 use facet_core::{Facet, Field, ScalarType, Shape};
 use heck::ToLowerCamelCase;
 use roam_types::{
-    EnumInfo, Schema, SchemaKind, SchemaSendTracker, ServiceDescriptor, ShapeKind, StructInfo,
-    TypeRef, TypeSchemaId, VariantKind, VariantPayload, VariantSchema, classify_shape,
+    EnumInfo, Schema, SchemaHash, SchemaKind, SchemaSendTracker, ServiceDescriptor, ShapeKind,
+    StructInfo, TypeRef, VariantKind, VariantPayload, VariantSchema, classify_shape,
     classify_variant, compute_content_hash, is_bytes, schema_child_ids,
 };
 
@@ -358,7 +358,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         tracker: &mut SchemaSendTracker,
         shape: &'static Shape,
         all_schemas: &mut Vec<Schema>,
-    ) -> TypeRef<TypeSchemaId> {
+    ) -> TypeRef<SchemaHash> {
         let extracted = tracker.extract_schemas(shape).expect("schema extraction");
         let root = extracted.root_type_ref.clone();
         all_schemas.extend(extracted.schemas);
@@ -368,8 +368,8 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
     // Track per-method info with full TypeRefs (preserving generic args).
     struct MethodSchemaInfo {
         method_id: u64,
-        args_root: TypeRef<TypeSchemaId>,
-        response_root: TypeRef<TypeSchemaId>,
+        args_root: TypeRef<SchemaHash>,
+        response_root: TypeRef<SchemaHash>,
     }
 
     let mut method_schema_infos: Vec<MethodSchemaInfo> = Vec::new();
@@ -386,7 +386,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
                 &mut all_schemas,
             )
         } else {
-            let arg_refs: Vec<TypeRef<TypeSchemaId>> = method
+            let arg_refs: Vec<TypeRef<SchemaHash>> = method
                 .args
                 .iter()
                 .map(|arg| extract_into(&mut tracker, arg.shape, &mut all_schemas))
@@ -513,7 +513,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
     // Build method infos with final content-hashed IDs.
     for info in &method_schema_infos {
         // Collect all dep IDs reachable from a root TypeRef by walking the schema graph.
-        let collect_deps = |root: &TypeRef<TypeSchemaId>| -> Vec<u64> {
+        let collect_deps = |root: &TypeRef<SchemaHash>| -> Vec<u64> {
             let mut deps = Vec::new();
             let mut visited = std::collections::HashSet::new();
             // Seed the queue with all concrete IDs from the root TypeRef.

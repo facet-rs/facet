@@ -1,6 +1,6 @@
 use std::fmt;
 
-use roam_types::{FieldSchema, Schema, SchemaKind, TypeSchemaId, VariantSchema};
+use roam_types::{FieldSchema, Schema, SchemaHash, SchemaKind, VariantSchema};
 
 #[derive(Debug)]
 pub enum SerializeError {
@@ -194,7 +194,7 @@ pub enum TranslationErrorKind {
     },
     /// A type ID referenced by the remote schema was not found in the registry.
     SchemaNotFound {
-        type_id: TypeSchemaId,
+        type_id: SchemaHash,
         /// Which side was missing it.
         side: SchemaSide,
     },

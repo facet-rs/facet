@@ -26,7 +26,7 @@ use crate::{MethodId, is_rx, is_tx};
 /// language.
 // r[impl schema.type-id]
 #[derive(Facet, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct TypeSchemaId(pub u64);
+pub struct SchemaHash(pub u64);
 
 /// Temporary index assigned during schema extraction to handle cycles in
 /// recursive types. Completely unrelated to type parameters — this is purely
@@ -67,7 +67,7 @@ pub struct TypeParamName(String);
 /// `MixedId` during extraction.
 #[derive(Facet, Clone, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
-pub enum TypeRef<Id = TypeSchemaId> {
+pub enum TypeRef<Id = SchemaHash> {
     /// A concrete type, possibly generic.
     Concrete {
         type_id: Id,
@@ -192,7 +192,7 @@ impl TypeRef {
 #[repr(u8)]
 pub enum MixedId {
     /// A final content hash (from a previously extracted type).
-    Final(TypeSchemaId),
+    Final(SchemaHash),
     /// A temporary index assigned during the current extraction pass.
     /// Used only for cycle detection/resolution during hashing.
     Temp(CycleSchemaIndex),
@@ -200,7 +200,7 @@ pub enum MixedId {
 
 /// The root schema type, generic over the ID representation.
 #[derive(Facet, Clone, Debug)]
-pub struct Schema<Id = TypeSchemaId> {
+pub struct Schema<Id = SchemaHash> {
     /// A unique identifier for this schema (hash of its contents)
     pub id: Id,
 
@@ -226,7 +226,7 @@ impl Schema {
 /// The structural kind of a type, generic over the ID representation.
 #[derive(Facet, Clone, Debug)]
 #[repr(u8)]
-pub enum SchemaKind<Id = TypeSchemaId> {
+pub enum SchemaKind<Id = SchemaHash> {
     Struct {
         /// The type name (e.g. "Point"). Used for matching across schema
         /// versions and for diagnostics. MUST NOT be empty.
@@ -438,7 +438,7 @@ pub(crate) type MixedSchemaKind = SchemaKind<MixedId>;
 
 /// Describes a single field in a struct or struct variant.
 #[derive(Facet, Clone, Debug)]
-pub struct FieldSchema<Id = TypeSchemaId> {
+pub struct FieldSchema<Id = SchemaHash> {
     pub name: String,
     pub type_ref: TypeRef<Id>,
     pub required: bool,
@@ -446,7 +446,7 @@ pub struct FieldSchema<Id = TypeSchemaId> {
 
 /// Describes a single variant in an enum.
 #[derive(Facet, Clone, Debug)]
-pub struct VariantSchema<Id = TypeSchemaId> {
+pub struct VariantSchema<Id = SchemaHash> {
     pub name: String,
     pub index: u32,
     pub payload: VariantPayload<Id>,
@@ -455,7 +455,7 @@ pub struct VariantSchema<Id = TypeSchemaId> {
 /// The payload of an enum variant.
 #[derive(Facet, Clone, Debug)]
 #[repr(u8)]
-pub enum VariantPayload<Id = TypeSchemaId> {
+pub enum VariantPayload<Id = SchemaHash> {
     Unit,
     Newtype { type_ref: TypeRef<Id> },
     Tuple { types: Vec<TypeRef<Id>> },
@@ -525,11 +525,11 @@ impl PrimitiveType {
 /// and `TypeSchemaId` (for already-finalized schemas).
 struct SchemaHasher<'a, Id: Copy> {
     hasher: blake3::Hasher,
-    resolve: &'a dyn Fn(Id) -> TypeSchemaId,
+    resolve: &'a dyn Fn(Id) -> SchemaHash,
 }
 
 impl<'a, Id: Copy> SchemaHasher<'a, Id> {
-    fn new(resolve: &'a dyn Fn(Id) -> TypeSchemaId) -> Self {
+    fn new(resolve: &'a dyn Fn(Id) -> SchemaHash) -> Self {
         Self {
             hasher: blake3::Hasher::new(),
             resolve,
@@ -654,10 +654,10 @@ impl<'a, Id: Copy> SchemaHasher<'a, Id> {
         }
     }
 
-    fn finalize(self) -> TypeSchemaId {
+    fn finalize(self) -> SchemaHash {
         let hash = self.hasher.finalize();
         let bytes: [u8; 8] = hash.as_bytes()[0..8].try_into().expect("slice len");
-        TypeSchemaId(u64::from_le_bytes(bytes))
+        SchemaHash(u64::from_le_bytes(bytes))
     }
 }
 
@@ -665,15 +665,15 @@ impl<'a, Id: Copy> SchemaHasher<'a, Id> {
 pub fn compute_content_hash<Id: Copy>(
     kind: &SchemaKind<Id>,
     type_params: &[TypeParamName],
-    resolve: &dyn Fn(Id) -> TypeSchemaId,
-) -> TypeSchemaId {
+    resolve: &dyn Fn(Id) -> SchemaHash,
+) -> SchemaHash {
     let mut hasher = SchemaHasher::new(resolve);
     hasher.feed_schema(kind, type_params);
     hasher.finalize()
 }
 
 /// Collect all TypeSchemaIds directly referenced by a SchemaKind.
-pub fn schema_child_ids(kind: &SchemaKind) -> Vec<TypeSchemaId> {
+pub fn schema_child_ids(kind: &SchemaKind) -> Vec<SchemaHash> {
     let mut refs = Vec::new();
     kind.for_each_type_ref(&mut |tr| tr.collect_ids(&mut refs));
     refs
@@ -701,7 +701,7 @@ impl CborPayload {
 
 /// Lookup table mapping TypeSchemaId → Schema, used for resolving type
 /// references during deserialization with translation plans.
-pub type SchemaRegistry = HashMap<TypeSchemaId, Schema>;
+pub type SchemaRegistry = HashMap<SchemaHash, Schema>;
 
 /// Build a SchemaRegistry from a list of schemas.
 pub fn build_registry(schemas: &[Schema]) -> SchemaRegistry {
@@ -832,7 +832,7 @@ pub struct SchemaSendTracker {
     sent_methods: HashMap<(MethodId, BindingDirection), CborPayload>,
     /// DeclIds we've already finalized and sent — maps to their content hash.
     /// Persists across method calls for the lifetime of the connection.
-    emitted: HashMap<DeclId, TypeSchemaId>,
+    emitted: HashMap<DeclId, SchemaHash>,
     /// Next index to assign during extraction.
     next_id: CycleSchemaIndex,
 }
@@ -879,7 +879,7 @@ impl SchemaSendTracker {
 
         // Slow path: extract, deduplicate, encode.
         // Snapshot already-sent TypeSchemaIds before extraction adds new ones.
-        let already_sent: HashSet<TypeSchemaId> = self.emitted.values().copied().collect();
+        let already_sent: HashSet<SchemaHash> = self.emitted.values().copied().collect();
         let extracted = self.extract_schemas(shape)?;
         // Filter to only schemas not already sent.
         let unsent: Vec<Schema> = extracted
@@ -937,10 +937,10 @@ impl SchemaSendTracker {
         }
 
         // Resolve the root TypeRef from MixedId to TypeSchemaId.
-        let resolve = |mid: MixedId| -> TypeSchemaId {
+        let resolve = |mid: MixedId| -> SchemaHash {
             match mid {
                 MixedId::Final(tid) => tid,
-                MixedId::Temp(t) => temp_to_final.get(&t).copied().unwrap_or(TypeSchemaId(0)),
+                MixedId::Temp(t) => temp_to_final.get(&t).copied().unwrap_or(SchemaHash(0)),
             }
         };
         let root_type_ref = root_mixed_ref.map(resolve);
@@ -977,7 +977,7 @@ impl std::fmt::Debug for SchemaSendTracker {
 // r[impl schema.type-id.per-connection]
 pub struct SchemaRecvTracker {
     /// Type schemas received from the remote peer.
-    received: Mutex<HashMap<TypeSchemaId, Schema>>,
+    received: Mutex<HashMap<SchemaHash, Schema>>,
     /// Args bindings received: method_id → root TypeRef for args.
     received_args_bindings: Mutex<HashMap<MethodId, TypeRef>>,
     /// Response bindings received: method_id → root TypeRef for response.
@@ -987,7 +987,7 @@ pub struct SchemaRecvTracker {
 /// Error returned when recording received schemas detects a protocol violation.
 #[derive(Debug)]
 pub struct DuplicateSchemaError {
-    pub type_id: TypeSchemaId,
+    pub type_id: SchemaHash,
 }
 
 impl std::fmt::Display for DuplicateSchemaError {
@@ -1065,7 +1065,7 @@ impl SchemaRecvTracker {
     }
 
     /// Look up a received schema by type ID.
-    pub fn get_received(&self, type_id: &TypeSchemaId) -> Option<Schema> {
+    pub fn get_received(&self, type_id: &SchemaHash) -> Option<Schema> {
         self.received.lock().unwrap().get(type_id).cloned()
     }
 
@@ -1110,13 +1110,10 @@ pub fn extract_schemas(shape: &'static Shape) -> Result<ExtractedSchemas, Schema
 // r[impl schema.type-id.hash]
 // r[impl schema.hash.recursive]
 /// Resolve a MixedId to a TypeSchemaId for hashing purposes.
-fn resolve_mixed(
-    id: MixedId,
-    temp_to_final: &HashMap<CycleSchemaIndex, TypeSchemaId>,
-) -> TypeSchemaId {
+fn resolve_mixed(id: MixedId, temp_to_final: &HashMap<CycleSchemaIndex, SchemaHash>) -> SchemaHash {
     match id {
         MixedId::Final(tid) => tid,
-        MixedId::Temp(t) => temp_to_final.get(&t).copied().unwrap_or(TypeSchemaId(0)),
+        MixedId::Temp(t) => temp_to_final.get(&t).copied().unwrap_or(SchemaHash(0)),
     }
 }
 
@@ -1132,7 +1129,7 @@ fn resolve_mixed(
 // r[impl schema.hash.recursive]
 fn finalize_content_hashes(
     schemas: Vec<MixedSchema>,
-) -> Result<(Vec<Schema>, HashMap<CycleSchemaIndex, TypeSchemaId>), SchemaExtractError> {
+) -> Result<(Vec<Schema>, HashMap<CycleSchemaIndex, SchemaHash>), SchemaExtractError> {
     // Only Temp entries need hashing. Build index of temp IDs.
     let temp_to_idx: HashMap<CycleSchemaIndex, usize> = schemas
         .iter()
@@ -1169,7 +1166,7 @@ fn finalize_content_hashes(
     }
 
     // Map from temp ID -> final content hash.
-    let mut temp_to_final: HashMap<CycleSchemaIndex, TypeSchemaId> = HashMap::new();
+    let mut temp_to_final: HashMap<CycleSchemaIndex, SchemaHash> = HashMap::new();
 
     // Phase 1: Hash non-recursive temp types bottom-up.
     for (i, schema) in schemas.iter().enumerate() {
@@ -1208,16 +1205,16 @@ fn finalize_content_hashes(
             .collect();
 
         // Step 1: Preliminary hashes — intra-group refs become sentinel (0).
-        let mut prelim_hashes: Vec<TypeSchemaId> = Vec::new();
+        let mut prelim_hashes: Vec<SchemaHash> = Vec::new();
         for schema in &schemas[group_start..group_end] {
             let prelim =
                 compute_content_hash(&schema.kind, &schema.type_params, &|mid| match mid {
                     MixedId::Final(tid) => tid,
                     MixedId::Temp(t) => {
                         if group_temp_ids.contains(&t) {
-                            TypeSchemaId(0) // sentinel
+                            SchemaHash(0) // sentinel
                         } else {
-                            temp_to_final.get(&t).copied().unwrap_or(TypeSchemaId(0))
+                            temp_to_final.get(&t).copied().unwrap_or(SchemaHash(0))
                         }
                     }
                 });
@@ -1242,7 +1239,7 @@ fn finalize_content_hashes(
             fh.update(&(position as u64).to_le_bytes());
             let fo = fh.finalize();
             let final_hash =
-                TypeSchemaId(u64::from_le_bytes(fo.as_bytes()[0..8].try_into().unwrap()));
+                SchemaHash(u64::from_le_bytes(fo.as_bytes()[0..8].try_into().unwrap()));
 
             if let MixedId::Temp(t) = schemas[group_start + idx].id {
                 temp_to_final.insert(t, final_hash);
@@ -1251,7 +1248,7 @@ fn finalize_content_hashes(
     }
 
     // Phase 3: Convert MixedSchema -> Schema by resolving all MixedIds.
-    let resolve = |mid: MixedId| -> Result<TypeSchemaId, SchemaExtractError> {
+    let resolve = |mid: MixedId| -> Result<SchemaHash, SchemaExtractError> {
         match mid {
             MixedId::Final(tid) => Ok(tid),
             MixedId::Temp(t) => temp_to_final
@@ -1262,7 +1259,7 @@ fn finalize_content_hashes(
     };
 
     let mut resolve_type_ref =
-        |type_ref: TypeRef<MixedId>| -> Result<TypeRef<TypeSchemaId>, SchemaExtractError> {
+        |type_ref: TypeRef<MixedId>| -> Result<TypeRef<SchemaHash>, SchemaExtractError> {
             type_ref.try_map(&resolve)
         };
 
@@ -1287,7 +1284,7 @@ fn finalize_content_hashes(
 
 struct ExtractCtx<'a> {
     /// Already-finalized schemas from previous extraction passes.
-    emitted: &'a HashMap<DeclId, TypeSchemaId>,
+    emitted: &'a HashMap<DeclId, SchemaHash>,
     /// Counter for assigning temp IDs (shared with tracker).
     next_id: &'a mut CycleSchemaIndex,
     /// Schemas being built in this extraction pass, keyed by DeclId.
@@ -1758,10 +1755,10 @@ mod tests {
     // r[verify schema.type-id]
     #[test]
     fn type_ids_are_u64_content_hashes() {
-        let id = TypeSchemaId(42);
+        let id = SchemaHash(42);
         assert_eq!(id.0, 42);
-        assert_eq!(id, TypeSchemaId(42));
-        assert_ne!(id, TypeSchemaId(43));
+        assert_eq!(id, SchemaHash(42));
+        assert_ne!(id, SchemaHash(43));
     }
 
     // r[verify schema.principles.cbor]
@@ -1769,7 +1766,7 @@ mod tests {
     #[test]
     fn cbor_round_trip() {
         let schema = Schema {
-            id: TypeSchemaId(1),
+            id: SchemaHash(1),
             type_params: vec![],
             kind: SchemaKind::Primitive {
                 primitive_type: PrimitiveType::U32,
@@ -2176,13 +2173,13 @@ mod tests {
         ];
 
         // All primitive hashes must be unique.
-        let hashes: Vec<TypeSchemaId> = primitives
+        let hashes: Vec<SchemaHash> = primitives
             .iter()
             .map(|p| {
                 compute_content_hash(&SchemaKind::Primitive { primitive_type: *p }, &[], &|id| id)
             })
             .collect();
-        let unique: HashSet<TypeSchemaId> = hashes.iter().copied().collect();
+        let unique: HashSet<SchemaHash> = hashes.iter().copied().collect();
         assert_eq!(
             unique.len(),
             hashes.len(),
@@ -2278,12 +2275,12 @@ mod tests {
                 method_bindings: vec![
                     MethodSchemaBinding {
                         method_id: MethodId(42),
-                        root_type_ref: TypeRef::concrete(TypeSchemaId(100)),
+                        root_type_ref: TypeRef::concrete(SchemaHash(100)),
                         direction: BindingDirection::Args,
                     },
                     MethodSchemaBinding {
                         method_id: MethodId(42),
-                        root_type_ref: TypeRef::concrete(TypeSchemaId(200)),
+                        root_type_ref: TypeRef::concrete(SchemaHash(200)),
                         direction: BindingDirection::Response,
                     },
                 ],
@@ -2292,11 +2289,11 @@ mod tests {
 
         assert_eq!(
             recv_tracker.get_remote_args_root(MethodId(42)),
-            Some(TypeRef::concrete(TypeSchemaId(100)))
+            Some(TypeRef::concrete(SchemaHash(100)))
         );
         assert_eq!(
             recv_tracker.get_remote_response_root(MethodId(42)),
-            Some(TypeRef::concrete(TypeSchemaId(200)))
+            Some(TypeRef::concrete(SchemaHash(200)))
         );
     }
 
@@ -2545,8 +2542,8 @@ mod tests {
         let binding = MethodSchemaBinding {
             method_id: MethodId(42),
             root_type_ref: TypeRef::Concrete {
-                type_id: TypeSchemaId(123),
-                args: vec![TypeRef::concrete(TypeSchemaId(456))],
+                type_id: SchemaHash(123),
+                args: vec![TypeRef::concrete(SchemaHash(456))],
             },
             direction: BindingDirection::Args,
         };
@@ -2562,11 +2559,11 @@ mod tests {
         assert_eq!(b.direction, BindingDirection::Args);
         match &b.root_type_ref {
             TypeRef::Concrete { type_id, args } => {
-                assert_eq!(*type_id, TypeSchemaId(123));
+                assert_eq!(*type_id, SchemaHash(123));
                 assert_eq!(args.len(), 1);
                 match &args[0] {
                     TypeRef::Concrete { type_id, args } => {
-                        assert_eq!(*type_id, TypeSchemaId(456));
+                        assert_eq!(*type_id, SchemaHash(456));
                         assert!(args.is_empty());
                     }
                     other => panic!("expected concrete arg, got {other:?}"),

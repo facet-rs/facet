@@ -2501,23 +2501,23 @@ mod tests {
     #[test]
     fn translation_error_display_coverage() {
         use roam_types::{
-            FieldSchema, Schema, SchemaKind, TypeRef, TypeSchemaId, VariantPayload, VariantSchema,
+            FieldSchema, Schema, SchemaHash, SchemaKind, TypeRef, VariantPayload, VariantSchema,
         };
 
         let dummy_struct = Schema {
-            id: TypeSchemaId(1),
+            id: SchemaHash(1),
             type_params: vec![],
             kind: SchemaKind::Struct {
                 name: "Foo".into(),
                 fields: vec![FieldSchema {
                     name: "x".into(),
-                    type_ref: TypeRef::concrete(TypeSchemaId(2)),
+                    type_ref: TypeRef::concrete(SchemaHash(2)),
                     required: true,
                 }],
             },
         };
         let dummy_enum = Schema {
-            id: TypeSchemaId(3),
+            id: SchemaHash(3),
             type_params: vec![],
             kind: SchemaKind::Enum {
                 name: "Bar".into(),
@@ -2525,7 +2525,7 @@ mod tests {
             },
         };
         let dummy_prim = Schema {
-            id: TypeSchemaId(4),
+            id: SchemaHash(4),
             type_params: vec![],
             kind: SchemaKind::Primitive {
                 primitive_type: roam_types::PrimitiveType::U32,
@@ -2544,7 +2544,7 @@ mod tests {
             TranslationError::new(TranslationErrorKind::MissingRequiredField {
                 field: FieldSchema {
                     name: "missing".into(),
-                    type_ref: TypeRef::concrete(TypeSchemaId(5)),
+                    type_ref: TypeRef::concrete(SchemaHash(5)),
                     required: true,
                 },
                 remote_struct: dummy_struct.clone(),
@@ -2559,12 +2559,12 @@ mod tests {
                     name: "V".into(),
                     index: 0,
                     payload: VariantPayload::Newtype {
-                        type_ref: TypeRef::concrete(TypeSchemaId(6)),
+                        type_ref: TypeRef::concrete(SchemaHash(6)),
                     },
                 },
             }),
             TranslationError::new(TranslationErrorKind::SchemaNotFound {
-                type_id: TypeSchemaId(99),
+                type_id: SchemaHash(99),
                 side: error::SchemaSide::Remote,
             }),
             TranslationError::new(TranslationErrorKind::TupleLengthMismatch {
@@ -2589,7 +2589,7 @@ mod tests {
 
         // Also test with path prefix
         let with_path = TranslationError::new(TranslationErrorKind::SchemaNotFound {
-            type_id: TypeSchemaId(1),
+            type_id: SchemaHash(1),
             side: error::SchemaSide::Remote,
         })
         .with_path_prefix(error::PathSegment::Field("foo".into()));

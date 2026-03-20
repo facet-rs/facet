@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use facet_core::{Shape, Type, UserType};
 use roam_types::{
-    ExtractedSchemas, FieldSchema, Schema, SchemaKind, SchemaRegistry, TypeRef, TypeSchemaId,
+    ExtractedSchemas, FieldSchema, Schema, SchemaHash, SchemaKind, SchemaRegistry, TypeRef,
     VariantPayload, VariantSchema,
 };
 
@@ -376,8 +376,8 @@ fn build_struct_plan(
 }
 
 fn build_tuple_plan(
-    remote_elements: &[TypeRef<TypeSchemaId>],
-    local_elements: &[TypeRef<TypeSchemaId>],
+    remote_elements: &[TypeRef<SchemaHash>],
+    local_elements: &[TypeRef<SchemaHash>],
     remote_schema: &Schema,
     local_schema: &Schema,
     input: &PlanInput,
