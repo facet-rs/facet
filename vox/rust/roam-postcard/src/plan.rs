@@ -10,18 +10,56 @@ use crate::error::{PathSegment, SchemaSide, TranslationError, TranslationErrorKi
 
 /// A precomputed plan for deserializing postcard bytes into a local type.
 ///
-/// When remote and local types are identical, every op is `Read` in order —
-/// a no-op translation. When types differ, the plan has skips, reorders,
-/// and defaults. Same code path either way.
+/// This is a recursive enum that mirrors the shape of data. Each variant
+/// carries sub-plans for its children, so translation works through
+/// arbitrarily nested containers (Vec, Option, Map, etc.).
 #[derive(Debug)]
-pub struct TranslationPlan {
-    /// One op per remote field, in remote wire order.
-    pub field_ops: Vec<FieldOp>,
-    /// Nested plans for fields that are themselves structs/enums with different schemas.
-    /// Keyed by local field index.
-    pub nested: HashMap<usize, TranslationPlan>,
-    /// Enum translation plan, if this is for an enum type.
-    pub enum_plan: Option<EnumTranslationPlan>,
+pub enum TranslationPlan {
+    /// Identity — no translation needed. Used for leaves (scalars, etc.)
+    /// and for container elements when remote and local types match.
+    Identity,
+
+    /// Struct or tuple-struct: field reordering, skipping unknown, filling defaults.
+    Struct {
+        /// One op per remote field, in remote wire order.
+        field_ops: Vec<FieldOp>,
+        /// Nested plans for fields that need translation, keyed by local field index.
+        nested: HashMap<usize, TranslationPlan>,
+    },
+
+    /// Enum: variant remapping + per-variant field plans.
+    Enum {
+        /// For each remote variant index, the local variant index (or None if unknown).
+        variant_map: Vec<Option<usize>>,
+        /// Per-variant field plans, keyed by remote variant index.
+        variant_plans: HashMap<usize, TranslationPlan>,
+        /// Nested plans for newtype/tuple variant inner types, keyed by local variant index.
+        nested: HashMap<usize, TranslationPlan>,
+    },
+
+    /// Tuple: positional elements with nested plans.
+    Tuple {
+        field_ops: Vec<FieldOp>,
+        nested: HashMap<usize, TranslationPlan>,
+    },
+
+    /// List/Vec/Slice: element type needs translation.
+    List { element: Box<TranslationPlan> },
+
+    /// Option: inner type needs translation.
+    Option { inner: Box<TranslationPlan> },
+
+    /// Map: key and/or value types need translation.
+    Map {
+        key: Box<TranslationPlan>,
+        value: Box<TranslationPlan>,
+    },
+
+    /// Fixed-size array: element type needs translation.
+    Array { element: Box<TranslationPlan> },
+
+    /// Pointer (Box, Arc, etc.): pointee needs translation.
+    Pointer { pointee: Box<TranslationPlan> },
 }
 
 #[derive(Debug)]
@@ -30,14 +68,6 @@ pub enum FieldOp {
     Read { local_index: usize },
     /// Skip this remote field (not present in local type).
     Skip { type_ref: TypeRef },
-}
-
-#[derive(Debug)]
-pub struct EnumTranslationPlan {
-    /// For each remote variant index, the local variant index (or None if unknown).
-    pub variant_map: Vec<Option<usize>>,
-    /// Per-variant field plans, keyed by remote variant index.
-    pub variant_plans: HashMap<usize, TranslationPlan>,
 }
 
 /// A schema set: the root schema (with Vars resolved) + the registry.
@@ -93,10 +123,9 @@ pub fn build_identity_plan(shape: &'static Shape) -> TranslationPlan {
             let field_ops = (0..struct_type.fields.len())
                 .map(|i| FieldOp::Read { local_index: i })
                 .collect();
-            TranslationPlan {
+            TranslationPlan::Struct {
                 field_ops,
                 nested: HashMap::new(),
-                enum_plan: None,
             }
         }
         Type::User(UserType::Enum(enum_type)) => {
@@ -108,27 +137,19 @@ pub fn build_identity_plan(shape: &'static Shape) -> TranslationPlan {
                     .collect();
                 variant_plans.insert(
                     i,
-                    TranslationPlan {
+                    TranslationPlan::Struct {
                         field_ops,
                         nested: HashMap::new(),
-                        enum_plan: None,
                     },
                 );
             }
-            TranslationPlan {
-                field_ops: Vec::new(),
+            TranslationPlan::Enum {
+                variant_map,
+                variant_plans,
                 nested: HashMap::new(),
-                enum_plan: Some(EnumTranslationPlan {
-                    variant_map,
-                    variant_plans,
-                }),
             }
         }
-        _ => TranslationPlan {
-            field_ops: Vec::new(),
-            nested: HashMap::new(),
-            enum_plan: None,
-        },
+        _ => TranslationPlan::Identity,
     }
 }
 
@@ -186,16 +207,69 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
                 elements: local_elements,
             },
         ) => build_tuple_plan(remote_elements, local_elements, remote, local, input),
-        // Same kind, no field-level translation needed
-        (SchemaKind::Primitive { .. }, SchemaKind::Primitive { .. })
-        | (SchemaKind::List { .. }, SchemaKind::List { .. })
-        | (SchemaKind::Map { .. }, SchemaKind::Map { .. })
-        | (SchemaKind::Array { .. }, SchemaKind::Array { .. })
-        | (SchemaKind::Option { .. }, SchemaKind::Option { .. }) => Ok(TranslationPlan {
-            field_ops: Vec::new(),
-            nested: HashMap::new(),
-            enum_plan: None,
-        }),
+        // Container types — recurse into element/value types
+        (
+            SchemaKind::List {
+                element: remote_elem,
+            },
+            SchemaKind::List {
+                element: local_elem,
+            },
+        ) => {
+            let element_plan = nested_plan(remote_elem, local_elem, input)?;
+            Ok(TranslationPlan::List {
+                element: Box::new(element_plan.unwrap_or(TranslationPlan::Identity)),
+            })
+        }
+        (
+            SchemaKind::Option {
+                element: remote_elem,
+            },
+            SchemaKind::Option {
+                element: local_elem,
+            },
+        ) => {
+            let inner_plan = nested_plan(remote_elem, local_elem, input)?;
+            Ok(TranslationPlan::Option {
+                inner: Box::new(inner_plan.unwrap_or(TranslationPlan::Identity)),
+            })
+        }
+        (
+            SchemaKind::Map {
+                key: remote_key,
+                value: remote_val,
+            },
+            SchemaKind::Map {
+                key: local_key,
+                value: local_val,
+            },
+        ) => {
+            let key_plan = nested_plan(remote_key, local_key, input)?;
+            let val_plan = nested_plan(remote_val, local_val, input)?;
+            Ok(TranslationPlan::Map {
+                key: Box::new(key_plan.unwrap_or(TranslationPlan::Identity)),
+                value: Box::new(val_plan.unwrap_or(TranslationPlan::Identity)),
+            })
+        }
+        (
+            SchemaKind::Array {
+                element: remote_elem,
+                ..
+            },
+            SchemaKind::Array {
+                element: local_elem,
+                ..
+            },
+        ) => {
+            let element_plan = nested_plan(remote_elem, local_elem, input)?;
+            Ok(TranslationPlan::Array {
+                element: Box::new(element_plan.unwrap_or(TranslationPlan::Identity)),
+            })
+        }
+        // Primitives — no translation needed
+        (SchemaKind::Primitive { .. }, SchemaKind::Primitive { .. }) => {
+            Ok(TranslationPlan::Identity)
+        }
         // Kind mismatch
         _ => Err(TranslationError::new(TranslationErrorKind::KindMismatch {
             remote: remote.clone(),
@@ -298,11 +372,7 @@ fn build_struct_plan(
         }
     }
 
-    Ok(TranslationPlan {
-        field_ops,
-        nested,
-        enum_plan: None,
-    })
+    Ok(TranslationPlan::Struct { field_ops, nested })
 }
 
 fn build_tuple_plan(
@@ -340,11 +410,7 @@ fn build_tuple_plan(
         }
     }
 
-    Ok(TranslationPlan {
-        field_ops,
-        nested,
-        enum_plan: None,
-    })
+    Ok(TranslationPlan::Tuple { field_ops, nested })
 }
 
 // r[impl schema.translation.enum]
@@ -399,10 +465,9 @@ fn build_enum_plan(
                         .collect();
                     variant_plans.insert(
                         remote_idx,
-                        TranslationPlan {
+                        TranslationPlan::Struct {
                             field_ops: variant_field_ops,
                             nested: HashMap::new(),
-                            enum_plan: None,
                         },
                     );
                 }
@@ -430,29 +495,17 @@ fn build_enum_plan(
                     },
                     VariantPayload::Tuple { types: local_types },
                 ) => {
-                    if remote_types.len() != local_types.len() {
-                        return Err(TranslationError::new(
-                            TranslationErrorKind::IncompatibleVariantPayload {
-                                remote_variant: remote_variant.clone(),
-                                local_variant: local_variant.clone(),
-                            },
-                        )
-                        .with_path_prefix(PathSegment::Variant(remote_variant.name.clone())));
-                    }
-                    for (i, (remote_elem, local_elem)) in
-                        remote_types.iter().zip(local_types.iter()).enumerate()
-                    {
-                        let inner_plan =
-                            nested_plan(remote_elem, local_elem, input).map_err(|e| {
-                                e.with_path_prefix(PathSegment::Variant(
-                                    remote_variant.name.clone(),
-                                ))
-                            })?;
-                        if let Some(plan) = inner_plan {
-                            // Use a synthetic index for tuple element plans
-                            nested.insert(local_idx * 1000 + i, plan);
-                        }
-                    }
+                    let tuple_plan = build_tuple_plan(
+                        remote_types,
+                        local_types,
+                        _remote_schema,
+                        _local_schema,
+                        input,
+                    )
+                    .map_err(|e| {
+                        e.with_path_prefix(PathSegment::Variant(remote_variant.name.clone()))
+                    })?;
+                    variant_plans.insert(remote_idx, tuple_plan);
                 }
                 (VariantPayload::Unit, VariantPayload::Unit) => {}
                 // Payload kind mismatch within a variant
@@ -472,12 +525,9 @@ fn build_enum_plan(
         }
     }
 
-    Ok(TranslationPlan {
-        field_ops: Vec::new(),
+    Ok(TranslationPlan::Enum {
+        variant_map,
+        variant_plans,
         nested,
-        enum_plan: Some(EnumTranslationPlan {
-            variant_map,
-            variant_plans,
-        }),
     })
 }

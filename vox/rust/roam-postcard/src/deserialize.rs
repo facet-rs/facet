@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use facet::Facet;
 use facet_core::{Def, ScalarType, StructKind, Type, UserType};
 use facet_reflect::Partial;
@@ -181,7 +183,11 @@ fn deserialize_value<'de, 'facet, const BORROW: bool>(
     // Def-based types
     match shape.def {
         Def::Option(_) => {
-            return deserialize_option::<BORROW>(partial, cursor, plan, registry);
+            let inner_plan = match plan {
+                TranslationPlan::Option { inner } => inner.as_ref(),
+                _ => &TranslationPlan::Identity,
+            };
+            return deserialize_option::<BORROW>(partial, cursor, inner_plan, registry);
         }
         Def::Result(_) => {
             return deserialize_result::<BORROW>(partial, cursor, plan, registry);
@@ -190,16 +196,52 @@ fn deserialize_value<'de, 'facet, const BORROW: bool>(
             if list_def.t().is_type::<u8>() {
                 return deserialize_byte_list(partial, cursor);
             }
-            return deserialize_list::<BORROW>(partial, cursor, registry);
+            let element_plan = match plan {
+                TranslationPlan::List { element } => element.as_ref(),
+                _ => &TranslationPlan::Identity,
+            };
+            return deserialize_list::<BORROW>(partial, cursor, element_plan, registry);
         }
         Def::Array(array_def) => {
-            return deserialize_array::<BORROW>(partial, cursor, array_def.n, registry);
+            let element_plan = match plan {
+                TranslationPlan::Array { element } => element.as_ref(),
+                _ => &TranslationPlan::Identity,
+            };
+            return deserialize_array::<BORROW>(
+                partial,
+                cursor,
+                array_def.n,
+                element_plan,
+                registry,
+            );
         }
-        Def::Slice(_) => return deserialize_list::<BORROW>(partial, cursor, registry),
-        Def::Map(_) => return deserialize_map::<BORROW>(partial, cursor, registry),
-        Def::Set(_) => return deserialize_set::<BORROW>(partial, cursor, registry),
+        Def::Slice(_) => {
+            let element_plan = match plan {
+                TranslationPlan::List { element } => element.as_ref(),
+                _ => &TranslationPlan::Identity,
+            };
+            return deserialize_list::<BORROW>(partial, cursor, element_plan, registry);
+        }
+        Def::Map(_) => {
+            let (key_plan, value_plan) = match plan {
+                TranslationPlan::Map { key, value } => (key.as_ref(), value.as_ref()),
+                _ => (&TranslationPlan::Identity, &TranslationPlan::Identity),
+            };
+            return deserialize_map::<BORROW>(partial, cursor, key_plan, value_plan, registry);
+        }
+        Def::Set(_) => {
+            let element_plan = match plan {
+                TranslationPlan::List { element } => element.as_ref(),
+                _ => &TranslationPlan::Identity,
+            };
+            return deserialize_set::<BORROW>(partial, cursor, element_plan, registry);
+        }
         Def::Pointer(_) => {
-            return deserialize_pointer::<BORROW>(partial, cursor, plan, registry);
+            let pointee_plan = match plan {
+                TranslationPlan::Pointer { pointee } => pointee.as_ref(),
+                _ => &TranslationPlan::Identity,
+            };
+            return deserialize_pointer::<BORROW>(partial, cursor, pointee_plan, registry);
         }
         _ => {}
     }
@@ -227,13 +269,27 @@ fn deserialize_struct_planned<'de, 'facet, const BORROW: bool>(
 ) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
 
+    let (field_ops, nested) = match plan {
+        TranslationPlan::Struct { field_ops, nested }
+        | TranslationPlan::Tuple { field_ops, nested } => (field_ops.as_slice(), nested),
+        TranslationPlan::Identity => {
+            let identity_plan = build_identity_plan(partial.shape());
+            return deserialize_struct_planned::<BORROW>(partial, cursor, &identity_plan, registry);
+        }
+        _ => {
+            return Err(DeserializeError::Custom(format!(
+                "expected Struct/Tuple/Identity plan, got {plan:?}"
+            )));
+        }
+    };
+
     let mut partial = partial;
 
-    for op in &plan.field_ops {
+    for op in field_ops {
         match op {
             FieldOp::Read { local_index } => {
                 partial = partial.begin_nth_field(*local_index).map_err(re)?;
-                if let Some(nested_plan) = plan.nested.get(local_index) {
+                if let Some(nested_plan) = nested.get(local_index) {
                     partial = deserialize_value::<BORROW>(partial, cursor, nested_plan, registry)?;
                 } else {
                     let field_plan = build_identity_plan(partial.shape());
@@ -262,86 +318,83 @@ fn deserialize_enum_planned<'de, 'facet, const BORROW: bool>(
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
     let remote_disc = cursor.read_varint()? as usize;
 
-    if let Some(enum_plan) = &plan.enum_plan {
-        let local_idx = enum_plan
-            .variant_map
-            .get(remote_disc)
-            .copied()
-            .flatten()
-            // r[impl schema.errors.unknown-variant-runtime]
-            .ok_or(DeserializeError::UnknownVariant {
-                remote_index: remote_disc,
-            })?;
-        // Get variant field metadata BEFORE selecting the variant,
-        // because after select_nth_variant the shape is still the enum,
-        // not a struct.
-        let variant_fields = match partial.shape().ty {
-            Type::User(UserType::Enum(e)) => e
-                .variants
-                .get(local_idx)
-                .map(|v| v.data.fields)
-                .unwrap_or(&[]),
-            _ => &[],
-        };
+    match plan {
+        TranslationPlan::Enum {
+            variant_map,
+            variant_plans,
+            nested,
+        } => {
+            let local_idx = variant_map
+                .get(remote_disc)
+                .copied()
+                .flatten()
+                // r[impl schema.errors.unknown-variant-runtime]
+                .ok_or(DeserializeError::UnknownVariant {
+                    remote_index: remote_disc,
+                })?;
+            // Get variant field metadata BEFORE selecting the variant,
+            // because after select_nth_variant the shape is still the enum,
+            // not a struct.
+            let variant_fields = match partial.shape().ty {
+                Type::User(UserType::Enum(e)) => e
+                    .variants
+                    .get(local_idx)
+                    .map(|v| v.data.fields)
+                    .unwrap_or(&[]),
+                _ => &[],
+            };
 
-        let mut partial = partial.select_nth_variant(local_idx).map_err(re)?;
+            let mut partial = partial.select_nth_variant(local_idx).map_err(re)?;
 
-        if let Some(variant_plan) = enum_plan.variant_plans.get(&remote_disc) {
-            for op in &variant_plan.field_ops {
-                match op {
-                    FieldOp::Read { local_index } => {
-                        partial = partial.begin_nth_field(*local_index).map_err(re)?;
-                        let field_plan = build_identity_plan(partial.shape());
-                        partial =
-                            deserialize_value::<BORROW>(partial, cursor, &field_plan, registry)?;
-                        partial = partial.end().map_err(re)?;
-                    }
-                    FieldOp::Skip { type_ref } => {
-                        let kind = type_ref.resolve_kind(registry).ok_or_else(|| {
-                            DeserializeError::Custom(format!(
-                                "schema not found for skip: {type_ref:?}"
-                            ))
-                        })?;
-                        decode::skip_value(cursor, &kind, registry)?;
-                    }
+            if let Some(variant_plan) = variant_plans.get(&remote_disc) {
+                // Per-variant plan (struct variant or tuple variant with translation)
+                partial =
+                    deserialize_struct_planned::<BORROW>(partial, cursor, variant_plan, registry)?;
+            } else if let Some(inner_plan) = nested.get(&local_idx) {
+                // Newtype variant with nested translation
+                partial = partial.begin_nth_field(0).map_err(re)?;
+                partial = deserialize_value::<BORROW>(partial, cursor, inner_plan, registry)?;
+                partial = partial.end().map_err(re)?;
+            } else {
+                // Identity: read all fields in order
+                for (i, _variant_field) in variant_fields.iter().enumerate() {
+                    partial = partial.begin_nth_field(i).map_err(re)?;
+                    let field_plan = build_identity_plan(partial.shape());
+                    partial = deserialize_value::<BORROW>(partial, cursor, &field_plan, registry)?;
+                    partial = partial.end().map_err(re)?;
                 }
             }
-        } else {
-            for (i, _variant_field) in variant_fields.iter().enumerate() {
+
+            Ok(partial)
+        }
+        _ => {
+            // Identity path — no enum plan, use shape directly
+            let shape = partial.shape();
+            let enum_type = match shape.ty {
+                Type::User(UserType::Enum(e)) => e,
+                _ => return Err(DeserializeError::UnsupportedType("expected enum".into())),
+            };
+
+            if remote_disc >= enum_type.variants.len() {
+                return Err(DeserializeError::InvalidEnumDiscriminant {
+                    pos: cursor.pos(),
+                    index: remote_disc as u64,
+                    variant_count: enum_type.variants.len(),
+                });
+            }
+
+            let variant = &enum_type.variants[remote_disc];
+            let field_count = variant.data.fields.len();
+
+            let mut partial = partial.select_nth_variant(remote_disc).map_err(re)?;
+            for i in 0..field_count {
                 partial = partial.begin_nth_field(i).map_err(re)?;
                 let field_plan = build_identity_plan(partial.shape());
                 partial = deserialize_value::<BORROW>(partial, cursor, &field_plan, registry)?;
                 partial = partial.end().map_err(re)?;
             }
+            Ok(partial)
         }
-
-        Ok(partial)
-    } else {
-        let shape = partial.shape();
-        let enum_type = match shape.ty {
-            Type::User(UserType::Enum(e)) => e,
-            _ => return Err(DeserializeError::UnsupportedType("expected enum".into())),
-        };
-
-        if remote_disc >= enum_type.variants.len() {
-            return Err(DeserializeError::InvalidEnumDiscriminant {
-                pos: cursor.pos(),
-                index: remote_disc as u64,
-                variant_count: enum_type.variants.len(),
-            });
-        }
-
-        let variant = &enum_type.variants[remote_disc];
-        let field_count = variant.data.fields.len();
-
-        let mut partial = partial.select_nth_variant(remote_disc).map_err(re)?;
-        for i in 0..field_count {
-            partial = partial.begin_nth_field(i).map_err(re)?;
-            let field_plan = build_identity_plan(partial.shape());
-            partial = deserialize_value::<BORROW>(partial, cursor, &field_plan, registry)?;
-            partial = partial.end().map_err(re)?;
-        }
-        Ok(partial)
     }
 }
 
@@ -471,7 +524,7 @@ fn deserialize_scalar<'de, 'facet, const BORROW: bool>(
 fn deserialize_option<'de, 'facet, const BORROW: bool>(
     partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'de>,
-    _plan: &TranslationPlan,
+    inner_plan: &TranslationPlan,
     registry: &SchemaRegistry,
 ) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
@@ -480,8 +533,7 @@ fn deserialize_option<'de, 'facet, const BORROW: bool>(
         0x00 => Ok(partial),
         0x01 => {
             let partial = partial.begin_some().map_err(re)?;
-            let inner_plan = build_identity_plan(partial.shape());
-            let partial = deserialize_value::<BORROW>(partial, cursor, &inner_plan, registry)?;
+            let partial = deserialize_value::<BORROW>(partial, cursor, inner_plan, registry)?;
             partial.end().map_err(re)
         }
         other => Err(DeserializeError::InvalidOptionTag {
@@ -498,26 +550,26 @@ fn deserialize_result<'de, 'facet, const BORROW: bool>(
     registry: &SchemaRegistry,
 ) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
+
+    // Extract nested plans from Enum variant, or use Identity for both
+    let nested = match plan {
+        TranslationPlan::Enum { nested, .. } => nested,
+        _ => &HashMap::new(),
+    };
+    let identity = TranslationPlan::Identity;
+
     let variant_index = cursor.read_varint()? as usize;
     match variant_index {
         0 => {
             let partial = partial.begin_ok().map_err(re)?;
-            let inner_plan = plan.nested.get(&0).ok_or_else(|| {
-                DeserializeError::Custom(
-                    "Result::Ok nested plan missing — plan must include nested plans for Result variants".into(),
-                )
-            })?;
-            let partial = deserialize_value::<BORROW>(partial, cursor, inner_plan, registry)?;
+            let ok_plan = nested.get(&0).unwrap_or(&identity);
+            let partial = deserialize_value::<BORROW>(partial, cursor, ok_plan, registry)?;
             partial.end().map_err(re)
         }
         1 => {
             let partial = partial.begin_err().map_err(re)?;
-            let inner_plan = plan.nested.get(&1).ok_or_else(|| {
-                DeserializeError::Custom(
-                    "Result::Err nested plan missing — plan must include nested plans for Result variants".into(),
-                )
-            })?;
-            let partial = deserialize_value::<BORROW>(partial, cursor, inner_plan, registry)?;
+            let err_plan = nested.get(&1).unwrap_or(&identity);
+            let partial = deserialize_value::<BORROW>(partial, cursor, err_plan, registry)?;
             partial.end().map_err(re)
         }
         other => Err(DeserializeError::UnknownVariant {
@@ -538,6 +590,7 @@ fn deserialize_byte_list<'facet, const BORROW: bool>(
 fn deserialize_list<'de, 'facet, const BORROW: bool>(
     partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'de>,
+    element_plan: &TranslationPlan,
     registry: &SchemaRegistry,
 ) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
@@ -545,8 +598,7 @@ fn deserialize_list<'de, 'facet, const BORROW: bool>(
     let mut partial = partial.init_list_with_capacity(len).map_err(re)?;
     for _ in 0..len {
         partial = partial.begin_list_item().map_err(re)?;
-        let item_plan = build_identity_plan(partial.shape());
-        partial = deserialize_value::<BORROW>(partial, cursor, &item_plan, registry)?;
+        partial = deserialize_value::<BORROW>(partial, cursor, element_plan, registry)?;
         partial = partial.end().map_err(re)?;
     }
     Ok(partial)
@@ -556,14 +608,14 @@ fn deserialize_array<'de, 'facet, const BORROW: bool>(
     partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'de>,
     n: usize,
+    element_plan: &TranslationPlan,
     registry: &SchemaRegistry,
 ) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
     let mut partial = partial;
     for i in 0..n {
         partial = partial.begin_nth_field(i).map_err(re)?;
-        let item_plan = build_identity_plan(partial.shape());
-        partial = deserialize_value::<BORROW>(partial, cursor, &item_plan, registry)?;
+        partial = deserialize_value::<BORROW>(partial, cursor, element_plan, registry)?;
         partial = partial.end().map_err(re)?;
     }
     Ok(partial)
@@ -572,6 +624,8 @@ fn deserialize_array<'de, 'facet, const BORROW: bool>(
 fn deserialize_map<'de, 'facet, const BORROW: bool>(
     partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'de>,
+    key_plan: &TranslationPlan,
+    value_plan: &TranslationPlan,
     registry: &SchemaRegistry,
 ) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
@@ -579,13 +633,11 @@ fn deserialize_map<'de, 'facet, const BORROW: bool>(
     let mut partial = partial.init_map().map_err(re)?;
     for _ in 0..len {
         partial = partial.begin_key().map_err(re)?;
-        let key_plan = build_identity_plan(partial.shape());
-        partial = deserialize_value::<BORROW>(partial, cursor, &key_plan, registry)?;
+        partial = deserialize_value::<BORROW>(partial, cursor, key_plan, registry)?;
         partial = partial.end().map_err(re)?;
 
         partial = partial.begin_value().map_err(re)?;
-        let val_plan = build_identity_plan(partial.shape());
-        partial = deserialize_value::<BORROW>(partial, cursor, &val_plan, registry)?;
+        partial = deserialize_value::<BORROW>(partial, cursor, value_plan, registry)?;
         partial = partial.end().map_err(re)?;
     }
     Ok(partial)
@@ -594,6 +646,7 @@ fn deserialize_map<'de, 'facet, const BORROW: bool>(
 fn deserialize_set<'de, 'facet, const BORROW: bool>(
     partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'de>,
+    element_plan: &TranslationPlan,
     registry: &SchemaRegistry,
 ) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
@@ -601,8 +654,7 @@ fn deserialize_set<'de, 'facet, const BORROW: bool>(
     let mut partial = partial.init_set().map_err(re)?;
     for _ in 0..len {
         partial = partial.begin_set_item().map_err(re)?;
-        let item_plan = build_identity_plan(partial.shape());
-        partial = deserialize_value::<BORROW>(partial, cursor, &item_plan, registry)?;
+        partial = deserialize_value::<BORROW>(partial, cursor, element_plan, registry)?;
         partial = partial.end().map_err(re)?;
     }
     Ok(partial)
@@ -611,7 +663,7 @@ fn deserialize_set<'de, 'facet, const BORROW: bool>(
 fn deserialize_pointer<'de, 'facet, const BORROW: bool>(
     partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'de>,
-    _plan: &TranslationPlan,
+    pointee_plan: &TranslationPlan,
     registry: &SchemaRegistry,
 ) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
@@ -635,7 +687,6 @@ fn deserialize_pointer<'de, 'facet, const BORROW: bool>(
     }
 
     let partial = partial.begin_smart_ptr().map_err(re)?;
-    let inner_plan = build_identity_plan(partial.shape());
-    let partial = deserialize_value::<BORROW>(partial, cursor, &inner_plan, registry)?;
+    let partial = deserialize_value::<BORROW>(partial, cursor, pointee_plan, registry)?;
     partial.end().map_err(re)
 }

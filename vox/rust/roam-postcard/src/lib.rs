@@ -16,10 +16,7 @@ pub use deserialize::{
     from_slice_with_plan,
 };
 pub use error::{DeserializeError, SerializeError, TranslationError, TranslationErrorKind};
-pub use plan::{
-    EnumTranslationPlan, FieldOp, PlanInput, SchemaSet, TranslationPlan, build_identity_plan,
-    build_plan,
-};
+pub use plan::{FieldOp, PlanInput, SchemaSet, TranslationPlan, build_identity_plan, build_plan};
 pub use raw::opaque_encoded_borrowed;
 pub use scatter::{ScatterPlan, Segment, peek_to_scatter_plan};
 pub use serialize::to_vec;
