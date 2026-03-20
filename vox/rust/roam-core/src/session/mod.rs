@@ -1422,13 +1422,18 @@ impl SessionCore {
                         if !conn_state.method_tracker.contains(&key)
                             && let Payload::Outgoing { shape, .. } = &call.args
                         {
-                            let schemas = conn_state.send_tracker.prepare_send_for_method(
+                            match conn_state.send_tracker.prepare_send_for_method(
                                 call.method_id,
                                 shape,
                                 roam_types::BindingDirection::Args,
-                            );
-                            if !schemas.is_empty() {
-                                call.schemas = schemas;
+                            ) {
+                                Ok(schemas) if !schemas.is_empty() => {
+                                    call.schemas = schemas;
+                                }
+                                Err(e) => {
+                                    tracing::error!("schema extraction failed: {e}");
+                                }
+                                _ => {}
                             }
                             conn_state.method_tracker.insert(key);
                         }
@@ -1495,19 +1500,25 @@ impl SessionCore {
         if !conn_state.method_tracker.contains(&key)
             && let Payload::Outgoing { shape, .. } = &response.ret
         {
-            let schemas = conn_state.send_tracker.prepare_send_for_method(
+            match conn_state.send_tracker.prepare_send_for_method(
                 method_id,
                 shape,
                 roam_types::BindingDirection::Response,
-            );
-            roam_types::dlog!(
-                "[schema] prepared {} bytes of response schemas for method {:?} (req {:?})",
-                schemas.0.len(),
-                method_id,
-                _request_id
-            );
-            if !schemas.is_empty() {
-                response.schemas = schemas;
+            ) {
+                Ok(schemas) => {
+                    roam_types::dlog!(
+                        "[schema] prepared {} bytes of response schemas for method {:?} (req {:?})",
+                        schemas.0.len(),
+                        method_id,
+                        _request_id
+                    );
+                    if !schemas.is_empty() {
+                        response.schemas = schemas;
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("schema extraction failed: {e}");
+                }
             }
             conn_state.method_tracker.insert(key);
         }

@@ -370,7 +370,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         shape: &'static Shape,
         all_schemas: &mut Vec<Schema>,
     ) -> TypeSchemaId {
-        let schemas = tracker.extract_schemas(shape);
+        let schemas = tracker.extract_schemas(shape).expect("schema extraction");
         let root = schemas.last().map(|s| s.id).unwrap_or(TypeSchemaId(0));
         all_schemas.extend(schemas);
         root

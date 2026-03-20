@@ -241,11 +241,11 @@ fn deserialize_struct_planned<'de, 'facet, const BORROW: bool>(
                 }
                 partial = partial.end().map_err(re)?;
             }
-            FieldOp::Skip { type_id } => {
-                let kind = registry.get(type_id).map(|s| &s.kind).ok_or_else(|| {
-                    DeserializeError::Custom(format!("schema not found for skip: {type_id:?}"))
+            FieldOp::Skip { type_ref } => {
+                let kind = type_ref.resolve_kind(registry).ok_or_else(|| {
+                    DeserializeError::Custom(format!("schema not found for skip: {type_ref:?}"))
                 })?;
-                decode::skip_value(cursor, kind, registry)?;
+                decode::skip_value(cursor, &kind, registry)?;
             }
         }
     }
@@ -296,13 +296,13 @@ fn deserialize_enum_planned<'de, 'facet, const BORROW: bool>(
                             deserialize_value::<BORROW>(partial, cursor, &field_plan, registry)?;
                         partial = partial.end().map_err(re)?;
                     }
-                    FieldOp::Skip { type_id } => {
-                        let kind = registry.get(type_id).map(|s| &s.kind).ok_or_else(|| {
+                    FieldOp::Skip { type_ref } => {
+                        let kind = type_ref.resolve_kind(registry).ok_or_else(|| {
                             DeserializeError::Custom(format!(
-                                "schema not found for skip: {type_id:?}"
+                                "schema not found for skip: {type_ref:?}"
                             ))
                         })?;
-                        decode::skip_value(cursor, kind, registry)?;
+                        decode::skip_value(cursor, &kind, registry)?;
                     }
                 }
             }

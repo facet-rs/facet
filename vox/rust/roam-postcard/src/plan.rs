@@ -29,7 +29,7 @@ pub enum FieldOp {
     /// Read this remote field into local field at `local_index`.
     Read { local_index: usize },
     /// Skip this remote field (not present in local type).
-    Skip { type_id: TypeSchemaId },
+    Skip { type_ref: TypeRef },
 }
 
 #[derive(Debug)]
@@ -183,41 +183,57 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
     }
 }
 
-/// Build a nested plan for two type IDs looked up in their respective registries.
+/// Build a nested plan for two TypeRefs looked up in their respective registries.
+/// Handles generic types by resolving Var references using the TypeRef's args.
 fn nested_plan(
-    remote_type_id: &TypeSchemaId,
-    local_type_id: &TypeSchemaId,
+    remote_type_ref: &TypeRef,
+    local_type_ref: &TypeRef,
     input: &PlanInput,
 ) -> Result<Option<TranslationPlan>, TranslationError> {
-    let remote_schema = match input.remote.registry.get(remote_type_id) {
-        Some(s) => s,
-        None => {
-            return Err(TranslationError::new(
-                TranslationErrorKind::SchemaNotFound {
-                    type_id: *remote_type_id,
-                    side: SchemaSide::Remote,
+    let resolve_schema = |type_ref: &TypeRef, registry: &SchemaRegistry, side: SchemaSide| {
+        let kind = type_ref.resolve_kind(registry).ok_or_else(|| {
+            TranslationError::new(TranslationErrorKind::SchemaNotFound {
+                type_id: match type_ref {
+                    TypeRef::Concrete { type_id, .. } => *type_id,
+                    TypeRef::Var(_) => TypeSchemaId(0),
                 },
-            ));
-        }
+                side,
+            })
+        })?;
+        // Get the base schema for metadata (id, name, type_params)
+        let base = match type_ref {
+            TypeRef::Concrete { type_id, .. } => registry.get(type_id).cloned(),
+            _ => None,
+        };
+        let schema = match base {
+            Some(s) => Schema {
+                id: s.id,
+                type_params: vec![], // resolved — no more params
+                kind,
+            },
+            None => {
+                return Err(TranslationError::new(
+                    TranslationErrorKind::SchemaNotFound {
+                        type_id: TypeSchemaId(0),
+                        side,
+                    },
+                ));
+            }
+        };
+        Ok(schema)
     };
-    let local_schema = match input.local.registry.get(local_type_id) {
-        Some(s) => s,
-        None => {
-            return Err(TranslationError::new(
-                TranslationErrorKind::SchemaNotFound {
-                    type_id: *local_type_id,
-                    side: SchemaSide::Local,
-                },
-            ));
-        }
-    };
+
+    let remote_schema =
+        resolve_schema(remote_type_ref, &input.remote.registry, SchemaSide::Remote)?;
+    let local_schema = resolve_schema(local_type_ref, &input.local.registry, SchemaSide::Local)?;
+
     let sub_input = PlanInput {
         remote: &SchemaSet {
-            root: remote_schema.clone(),
+            root: remote_schema,
             registry: input.remote.registry.clone(),
         },
         local: &SchemaSet {
-            root: local_schema.clone(),
+            root: local_schema,
             registry: input.local.registry.clone(),
         },
     };
@@ -247,18 +263,14 @@ fn build_struct_plan(
             });
 
             // r[impl schema.translation.type-compat]
-            let nested_plan = nested_plan(
-                remote_field.type_ref.expect_concrete_id(),
-                local_field.type_ref.expect_concrete_id(),
-                input,
-            )
-            .map_err(|e| e.with_path_prefix(PathSegment::Field(remote_field.name.clone())))?;
+            let nested_plan = nested_plan(&remote_field.type_ref, &local_field.type_ref, input)
+                .map_err(|e| e.with_path_prefix(PathSegment::Field(remote_field.name.clone())))?;
             if let Some(plan) = nested_plan {
                 nested.insert(local_idx, plan);
             }
         } else {
             field_ops.push(FieldOp::Skip {
-                type_id: *remote_field.type_ref.expect_concrete_id(),
+                type_ref: remote_field.type_ref.clone(),
             });
         }
     }
@@ -310,12 +322,8 @@ fn build_tuple_plan(
     {
         field_ops.push(FieldOp::Read { local_index: i });
 
-        let nested_plan = nested_plan(
-            remote_elem.expect_concrete_id(),
-            local_elem.expect_concrete_id(),
-            input,
-        )
-        .map_err(|e| e.with_path_prefix(PathSegment::Index(i)))?;
+        let nested_plan = nested_plan(remote_elem, local_elem, input)
+            .map_err(|e| e.with_path_prefix(PathSegment::Index(i)))?;
         if let Some(plan) = nested_plan {
             nested.insert(i, plan);
         }
@@ -373,7 +381,7 @@ fn build_enum_plan(
                                 }
                             } else {
                                 FieldOp::Skip {
-                                    type_id: *rf.type_ref.expect_concrete_id(),
+                                    type_ref: rf.type_ref.clone(),
                                 }
                             }
                         })
@@ -396,14 +404,10 @@ fn build_enum_plan(
                         type_ref: local_inner_ref,
                     },
                 ) => {
-                    let inner_plan = nested_plan(
-                        remote_inner_ref.expect_concrete_id(),
-                        local_inner_ref.expect_concrete_id(),
-                        input,
-                    )
-                    .map_err(|e| {
-                        e.with_path_prefix(PathSegment::Variant(remote_variant.name.clone()))
-                    })?;
+                    let inner_plan = nested_plan(remote_inner_ref, local_inner_ref, input)
+                        .map_err(|e| {
+                            e.with_path_prefix(PathSegment::Variant(remote_variant.name.clone()))
+                        })?;
                     if let Some(plan) = inner_plan {
                         nested.insert(local_idx, plan);
                     }
@@ -427,14 +431,12 @@ fn build_enum_plan(
                     for (i, (remote_elem, local_elem)) in
                         remote_types.iter().zip(local_types.iter()).enumerate()
                     {
-                        let inner_plan = nested_plan(
-                            remote_elem.expect_concrete_id(),
-                            local_elem.expect_concrete_id(),
-                            input,
-                        )
-                        .map_err(|e| {
-                            e.with_path_prefix(PathSegment::Variant(remote_variant.name.clone()))
-                        })?;
+                        let inner_plan =
+                            nested_plan(remote_elem, local_elem, input).map_err(|e| {
+                                e.with_path_prefix(PathSegment::Variant(
+                                    remote_variant.name.clone(),
+                                ))
+                            })?;
                         if let Some(plan) = inner_plan {
                             // Use a synthetic index for tuple element plans
                             nested.insert(local_idx * 1000 + i, plan);

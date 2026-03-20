@@ -1221,7 +1221,8 @@ async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
 /// Verify that MessagePlan built from identical schemas can round-trip a message.
 #[test]
 fn message_plan_from_identical_schemas_round_trips() {
-    let schemas = roam_types::extract_schemas(<Message<'static> as Facet<'static>>::SHAPE);
+    let schemas = roam_types::extract_schemas(<Message<'static> as Facet<'static>>::SHAPE)
+        .expect("schema extraction");
     let handshake_result = HandshakeResult {
         role: SessionRole::Initiator,
         our_settings: ConnectionSettings {

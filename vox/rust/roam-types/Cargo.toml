@@ -24,6 +24,7 @@ facet.workspace = true
 facet-core.workspace = true
 facet-path.workspace = true
 heck.workspace = true
+indexmap.workspace = true
 smallvec.workspace = true
 structstruck.workspace = true
 facet-cbor = { path = "../facet-cbor" }

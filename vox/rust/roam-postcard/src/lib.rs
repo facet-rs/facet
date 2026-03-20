@@ -451,8 +451,12 @@ mod tests {
         remote_shape: &'static facet_core::Shape,
         local_shape: &'static facet_core::Shape,
     ) -> Result<PlanResult, error::TranslationError> {
-        let remote = SchemaSet::from_extracted(roam_types::extract_schemas(remote_shape));
-        let local = SchemaSet::from_extracted(roam_types::extract_schemas(local_shape));
+        let remote = SchemaSet::from_extracted(
+            roam_types::extract_schemas(remote_shape).expect("schema extraction"),
+        );
+        let local = SchemaSet::from_extracted(
+            roam_types::extract_schemas(local_shape).expect("schema extraction"),
+        );
         let plan = build_plan(&PlanInput {
             remote: &remote,
             local: &local,

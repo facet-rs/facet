@@ -132,7 +132,7 @@ pub fn generate_wire(config: &WireTypeGenConfig) -> Result<String, Box<dyn std::
     // wireMessageSchemasCbor: CBOR-encoded Vec<Schema> for the handshake
     // Derived from the first (root) type shape in config.
     if let Some(root) = config.types.first() {
-        let schemas = extract_schemas(root.shape);
+        let schemas = extract_schemas(root.shape)?;
         let cbor_bytes = facet_cbor::to_vec(&schemas)?;
         let body = cbor_bytes
             .iter()

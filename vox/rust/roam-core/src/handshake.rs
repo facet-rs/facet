@@ -33,6 +33,7 @@ impl std::error::Error for HandshakeError {}
 /// Extract the Message schema from the static shape.
 fn message_schema() -> Vec<Schema> {
     roam_types::extract_schemas(<roam_types::Message<'static> as facet::Facet<'static>>::SHAPE)
+        .expect("schema extraction")
 }
 
 /// Send a CBOR-encoded handshake message on a raw link.

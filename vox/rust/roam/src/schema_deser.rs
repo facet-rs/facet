@@ -78,7 +78,10 @@ fn resolve_plan<'facet, T: Facet<'facet>>(
         registry: tracker.received_registry(),
     };
 
-    let local = SchemaSet::from_extracted(extract_schemas(T::SHAPE));
+    let local = SchemaSet::from_extracted(
+        extract_schemas(T::SHAPE)
+            .map_err(|e| DeserializeError::protocol(&format!("schema extraction failed: {e}")))?,
+    );
 
     let plan = build_plan(&PlanInput {
         remote: &remote,

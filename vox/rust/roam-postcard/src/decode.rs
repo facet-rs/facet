@@ -1,5 +1,5 @@
 use crate::error::DeserializeError;
-use roam_types::{PrimitiveType, SchemaKind, SchemaRegistry, TypeSchemaId};
+use roam_types::{PrimitiveType, SchemaKind, SchemaRegistry};
 
 pub struct Cursor<'a> {
     input: &'a [u8],
@@ -121,8 +121,8 @@ pub fn skip_value(
         SchemaKind::Primitive { primitive_type } => skip_primitive(cursor, *primitive_type),
         SchemaKind::Struct { fields, .. } => {
             for field in fields {
-                let field_kind = lookup_kind(field.type_ref.expect_concrete_id(), registry)?;
-                skip_value(cursor, field_kind, registry)?;
+                let field_kind = resolve_kind(&field.type_ref, registry)?;
+                skip_value(cursor, &field_kind, registry)?;
             }
             Ok(())
         }
@@ -138,21 +138,20 @@ pub fn skip_value(
             match &variant.payload {
                 roam_types::VariantPayload::Unit => Ok(()),
                 roam_types::VariantPayload::Newtype { type_ref } => {
-                    let inner_kind = lookup_kind(type_ref.expect_concrete_id(), registry)?;
-                    skip_value(cursor, inner_kind, registry)
+                    let inner_kind = resolve_kind(type_ref, registry)?;
+                    skip_value(cursor, &inner_kind, registry)
                 }
                 roam_types::VariantPayload::Tuple { types } => {
                     for type_ref in types {
-                        let inner_kind = lookup_kind(type_ref.expect_concrete_id(), registry)?;
-                        skip_value(cursor, inner_kind, registry)?;
+                        let inner_kind = resolve_kind(type_ref, registry)?;
+                        skip_value(cursor, &inner_kind, registry)?;
                     }
                     Ok(())
                 }
                 roam_types::VariantPayload::Struct { fields } => {
                     for field in fields {
-                        let field_kind =
-                            lookup_kind(field.type_ref.expect_concrete_id(), registry)?;
-                        skip_value(cursor, field_kind, registry)?;
+                        let field_kind = resolve_kind(&field.type_ref, registry)?;
+                        skip_value(cursor, &field_kind, registry)?;
                     }
                     Ok(())
                 }
@@ -160,33 +159,33 @@ pub fn skip_value(
         }
         SchemaKind::Tuple { elements } => {
             for elem_ref in elements {
-                let elem_kind = lookup_kind(elem_ref.expect_concrete_id(), registry)?;
-                skip_value(cursor, elem_kind, registry)?;
+                let elem_kind = resolve_kind(elem_ref, registry)?;
+                skip_value(cursor, &elem_kind, registry)?;
             }
             Ok(())
         }
         SchemaKind::List { element } => {
             let count = cursor.read_varint()? as usize;
-            let elem_kind = lookup_kind(element.expect_concrete_id(), registry)?;
+            let elem_kind = resolve_kind(element, registry)?;
             for _ in 0..count {
-                skip_value(cursor, elem_kind, registry)?;
+                skip_value(cursor, &elem_kind, registry)?;
             }
             Ok(())
         }
         SchemaKind::Map { key, value } => {
             let count = cursor.read_varint()? as usize;
-            let key_kind = lookup_kind(key.expect_concrete_id(), registry)?;
-            let val_kind = lookup_kind(value.expect_concrete_id(), registry)?;
+            let key_kind = resolve_kind(key, registry)?;
+            let val_kind = resolve_kind(value, registry)?;
             for _ in 0..count {
-                skip_value(cursor, key_kind, registry)?;
-                skip_value(cursor, val_kind, registry)?;
+                skip_value(cursor, &key_kind, registry)?;
+                skip_value(cursor, &val_kind, registry)?;
             }
             Ok(())
         }
         SchemaKind::Array { element, length } => {
-            let elem_kind = lookup_kind(element.expect_concrete_id(), registry)?;
+            let elem_kind = resolve_kind(element, registry)?;
             for _ in 0..*length {
-                skip_value(cursor, elem_kind, registry)?;
+                skip_value(cursor, &elem_kind, registry)?;
             }
             Ok(())
         }
@@ -195,8 +194,8 @@ pub fn skip_value(
             match tag {
                 0x00 => Ok(()),
                 0x01 => {
-                    let inner_kind = lookup_kind(element.expect_concrete_id(), registry)?;
-                    skip_value(cursor, inner_kind, registry)
+                    let inner_kind = resolve_kind(element, registry)?;
+                    skip_value(cursor, &inner_kind, registry)
                 }
                 other => Err(DeserializeError::InvalidOptionTag {
                     pos: cursor.pos() - 1,
@@ -252,11 +251,11 @@ fn skip_primitive(cursor: &mut Cursor<'_>, prim: PrimitiveType) -> Result<(), De
     }
 }
 
-fn lookup_kind<'a>(
-    type_id: &TypeSchemaId,
-    registry: &'a SchemaRegistry,
-) -> Result<&'a SchemaKind, DeserializeError> {
-    registry.get(type_id).map(|s| &s.kind).ok_or_else(|| {
-        DeserializeError::Custom(format!("schema not found for type_id {type_id:?}"))
+fn resolve_kind(
+    type_ref: &roam_types::TypeRef,
+    registry: &SchemaRegistry,
+) -> Result<roam_types::SchemaKind, DeserializeError> {
+    type_ref.resolve_kind(registry).ok_or_else(|| {
+        DeserializeError::Custom(format!("schema not found for type_ref {type_ref:?}"))
     })
 }
