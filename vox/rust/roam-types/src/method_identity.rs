@@ -84,6 +84,7 @@ pub fn method_descriptor_with_retry<'a, 'r, A: Facet<'a>, R: Facet<'r>>(
         id,
         service_name,
         method_name,
+        args_shape: A::SHAPE,
         args,
         return_shape: R::SHAPE,
         retry,

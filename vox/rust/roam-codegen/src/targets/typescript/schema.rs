@@ -706,7 +706,7 @@ pub fn generate_descriptor(service: &ServiceDescriptor) -> String {
 // Rendering helpers: Rust Schema → TypeScript object literal strings
 // ============================================================================
 
-use roam_types::{ChannelDirection, FieldSchema, PrimitiveType, TypeParamName};
+use roam_types::{ChannelDirection, FieldSchema, PrimitiveType};
 
 fn render_schema(schema: &Schema) -> String {
     use crate::render::hex_u64;

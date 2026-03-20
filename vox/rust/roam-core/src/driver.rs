@@ -24,7 +24,7 @@ use crate::session::{
 };
 use crate::{InMemoryOperationStore, OperationStore};
 use moire::sync::mpsc;
-use roam_types::{OperationId, PostcardPayload, Schema, SchemaHash, TypeRef};
+use roam_types::{OperationId, PostcardPayload, SchemaHash, TypeRef};
 
 /// A pending response for one outbound request attempt.
 ///
@@ -215,10 +215,6 @@ struct DriverShared {
     /// Credit semaphores for outbound channels (Tx on our side).
     /// The driver's GrantCredit handler adds permits to these.
     channel_credits: SyncMutex<BTreeMap<ChannelId, Arc<Semaphore>>>,
-}
-
-fn payload_is_runtime_error(payload: &Payload<'_>) -> bool {
-    matches!(payload, Payload::Incoming(bytes) if bytes.len() >= 2 && bytes[0] == 1 && bytes[1] != 0)
 }
 
 struct CallerDropGuard {
@@ -425,13 +421,13 @@ impl Drop for DriverReplySink {
                 // were never admitted to the store in the first place.
 
                 // Release waiters from the live tracker.
-                if let Some(live_ops) = self.live_operations.take() {
-                    if let Some(live) = live_ops.lock().release(operation_id) {
-                        for waiter in live.waiters {
-                            sender.mark_failure(waiter, disposition);
-                        }
-                        return;
+                if let Some(live_ops) = self.live_operations.take()
+                    && let Some(live) = live_ops.lock().release(operation_id)
+                {
+                    for waiter in live.waiters {
+                        sender.mark_failure(waiter, disposition);
                     }
+                    return;
                 }
             }
 

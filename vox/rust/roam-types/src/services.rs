@@ -35,6 +35,9 @@ pub struct MethodDescriptor {
     /// Method name (e.g., "add").
     pub method_name: &'static str,
 
+    /// Args type shape
+    pub args_shape: &'static Shape,
+
     /// Arguments in declaration order.
     pub args: &'static [ArgDescriptor],
 

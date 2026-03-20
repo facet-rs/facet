@@ -318,10 +318,10 @@ pub fn format_doc(doc: &str, indent: &str) -> String {
 
 pub fn assert_no_channels_in_return_shape(shape: &'static Shape) {
     fn has_channel(shape: &'static Shape) -> bool {
-        match classify_shape(shape) {
-            ShapeKind::Tx { .. } | ShapeKind::Rx { .. } => true,
-            _ => false,
-        }
+        matches!(
+            classify_shape(shape),
+            ShapeKind::Tx { .. } | ShapeKind::Rx { .. }
+        )
     }
     assert!(
         !has_channel(shape),

@@ -13,7 +13,7 @@ use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
-use crate::{MethodId, is_rx, is_tx};
+use crate::{MethodDescriptor, MethodId, is_rx, is_tx};
 
 // ============================================================================
 // Schema data types
@@ -741,10 +741,13 @@ impl SchemaSource for SchemaRegistry {
 /// method. Sent once per method per direction.
 #[derive(Facet, Clone, Debug)]
 pub struct MethodSchemaBinding {
+    /// Unique identifier of the method we're binding for
     pub method_id: MethodId,
+
     /// The root TypeRef, including type arguments for generic types
     /// (e.g. `Result<T, E>` → `Concrete { id: result_id, args: [ok_ref, err_ref] }`).
     pub root_type_ref: TypeRef,
+
     /// Whether this binding is for args (caller → callee) or response (callee → caller).
     pub direction: BindingDirection,
 }
@@ -756,6 +759,7 @@ pub struct MethodSchemaBinding {
 pub enum BindingDirection {
     /// The sender will send data of this type as method arguments.
     Args,
+
     /// The sender will send data of this type as the method response.
     Response,
 }
@@ -764,29 +768,25 @@ pub enum BindingDirection {
 /// A struct so new fields can be added without breaking the wire format.
 #[derive(Facet, Clone, Debug)]
 pub struct SchemaPayload {
+    /// All schemas we're sending over. Sending the schema twice is a protocol error:
+    /// peers must bail out.
     pub schemas: Vec<Schema>,
+
+    /// Bindings between method identifiers and schemas.
     #[facet(default)]
     pub method_bindings: Vec<MethodSchemaBinding>,
 }
 
-/// Build a CBOR-encoded schema message.
-// r[impl schema.format.self-contained]
-// r[impl schema.principles.cbor]
-pub fn build_schema_message(
-    schemas: &[Schema],
-    method_bindings: &[MethodSchemaBinding],
-) -> Vec<u8> {
-    let payload = SchemaPayload {
-        schemas: schemas.to_vec(),
-        method_bindings: method_bindings.to_vec(),
-    };
-    facet_cbor::to_vec(&payload).expect("schema CBOR serialization should not fail")
-}
+impl SchemaPayload {
+    /// CBOR-encode this prepared message for embedding in RequestCall/RequestResponse.
+    pub fn to_cbor(&self) -> CborPayload {
+        CborPayload(facet_cbor::to_vec(self).expect("schema CBOR serialization should not fail"))
+    }
 
-/// Parse a CBOR-encoded schema message.
-// r[impl schema.principles.cbor]
-pub fn parse_schema_message(bytes: &[u8]) -> Result<SchemaPayload, facet_cbor::CborError> {
-    facet_cbor::from_slice(bytes)
+    /// Parse a CBOR-encoded schema message from bytes.
+    pub fn from_cbor(bytes: &[u8]) -> Result<SchemaPayload, facet_cbor::CborError> {
+        facet_cbor::from_slice(bytes)
+    }
 }
 
 // ============================================================================
@@ -832,20 +832,6 @@ impl std::fmt::Display for SchemaExtractError {
 }
 
 impl std::error::Error for SchemaExtractError {}
-
-/// What `prepare_send_for_method` returns when there's something to send.
-pub struct PreparedSchemaMessage {
-    pub schemas: Vec<Schema>,
-    pub method_bindings: Vec<MethodSchemaBinding>,
-}
-
-impl PreparedSchemaMessage {
-    /// CBOR-encode this prepared message for embedding in RequestCall/RequestResponse.
-    pub fn to_cbor(&self) -> CborPayload {
-        CborPayload(build_schema_message(&self.schemas, &self.method_bindings))
-    }
-}
-
 // ============================================================================
 // SchemaSendTracker — outbound dedup, owned by SessionCore (no Arc, no Mutex)
 // ============================================================================
@@ -859,12 +845,15 @@ impl PreparedSchemaMessage {
 pub struct SchemaSendTracker {
     /// Per-method, per-direction: the CborPayload that was sent. Keyed by
     /// (method_id, direction). If present, schemas were already sent.
-    sent_methods: HashMap<(MethodId, BindingDirection), CborPayload>,
+    sent_methods: HashSet<&'static Shape>,
+
+    /// SchemaHashes already sent on this connection.
+    sent_schemas: HashSet<SchemaHash>,
+
     /// DeclIds we've already finalized and sent — maps to their content hash.
     /// Persists across method calls for the lifetime of the connection.
     emitted: HashMap<DeclId, SchemaHash>,
-    /// SchemaHashes already sent on this connection.
-    sent_schemas: HashSet<SchemaHash>,
+
     /// All extracted schemas, kept for the operation store to pull from.
     registry: SchemaRegistry,
 }
@@ -873,7 +862,7 @@ impl SchemaSendTracker {
     pub fn new() -> Self {
         SchemaSendTracker {
             registry: HashMap::new(),
-            sent_methods: HashMap::new(),
+            sent_methods: HashSet::new(),
             sent_schemas: HashSet::new(),
             emitted: HashMap::new(),
         }
@@ -913,7 +902,7 @@ impl SchemaSendTracker {
         let key = (method_id, direction);
 
         // Fast path: already sent for this method+direction.
-        if self.sent_methods.contains_key(&key) {
+        if self.sent_methods.contains(&key) {
             return Ok(CborPayload::default());
         }
 
@@ -950,7 +939,7 @@ impl SchemaSendTracker {
             method_bindings: vec![method_binding],
         };
         let cbor = prepared.to_cbor();
-        self.sent_methods.insert(key, cbor.clone());
+        self.sent_methods.insert(key);
         Ok(cbor)
     }
 
@@ -967,6 +956,7 @@ impl SchemaSendTracker {
     pub fn prepare_send(
         &mut self,
         method_id: MethodId,
+        method: &MethodDescriptor,
         direction: BindingDirection,
         root_type: &TypeRef,
         source: &dyn SchemaSource,
@@ -974,7 +964,7 @@ impl SchemaSendTracker {
         let key = (method_id, direction);
 
         // Fast path: already sent for this method+direction.
-        if self.sent_methods.contains_key(&key) {
+        if self.sent_methods.contains(&key) {
             return CborPayload::default();
         }
 

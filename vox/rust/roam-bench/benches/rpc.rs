@@ -620,7 +620,6 @@ mod serialize_bench {
                 body: RequestBody::Call(RequestCall {
                     method_id: roam_types::MethodId(7),
                     args: Payload::outgoing(args),
-                    channels: vec![],
                     metadata: vec![
                         MetadataEntry {
                             key: "authorization",
@@ -737,7 +736,6 @@ mod serialize_bench {
                 body: RequestBody::Call(RequestCall {
                     method_id: roam_types::MethodId(1),
                     args: Payload::outgoing(args),
-                    channels: vec![],
                     metadata: vec![],
                     schemas: Default::default(),
                 }),
