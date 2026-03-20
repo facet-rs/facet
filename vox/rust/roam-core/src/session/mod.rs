@@ -769,20 +769,23 @@ impl Session {
         loop {
             tokio::select! {
                 msg = self.rx.recv_msg() => {
+                    roam_types::dlog!("[session {:?}] recv_msg returned", self.role);
                     match msg {
                         Ok(Some(msg)) => {
                             tracing::debug!(conn_id = msg.connection_id.0, "session received message");
                             self.handle_message(msg, &mut keepalive_runtime).await;
                         }
                         Ok(None) => {
-                            warn!("session recv loop ended: conduit returned EOF");
+                            roam_types::dlog!("[session {:?}] recv loop: conduit returned EOF", self.role);
                             if !self.handle_conduit_break(&mut keepalive_runtime).await {
+                                roam_types::dlog!("[session {:?}] recv loop: breaking (not resumable)", self.role);
                                 break;
                             }
                         }
                         Err(error) => {
-                            warn!(error = %error, "session recv loop ended: conduit recv error");
+                            roam_types::dlog!("[session {:?}] recv loop: conduit recv error: {}", self.role, error);
                             if !self.handle_conduit_break(&mut keepalive_runtime).await {
+                                roam_types::dlog!("[session {:?}] recv loop: breaking (not resumable)", self.role);
                                 break;
                             }
                         }
@@ -1358,8 +1361,14 @@ impl Session {
     }
 
     fn close_all_connections(&mut self) {
-        for slot in self.conns.values() {
+        roam_types::dlog!(
+            "[session {:?}] close_all_connections: {} slots",
+            self.role,
+            self.conns.len()
+        );
+        for (conn_id, slot) in self.conns.iter() {
             if let ConnectionSlot::Active(state) = slot {
+                roam_types::dlog!("[session {:?}] closing connection {:?}", self.role, conn_id);
                 let _ = state.closed_tx.send(true);
             }
         }
