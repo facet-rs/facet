@@ -204,6 +204,8 @@ pub fn skip_value(
                 }),
             }
         }
+        // Channels are serialized as () on the wire — nothing to skip.
+        SchemaKind::Channel { .. } => Ok(()),
     }
 }
 

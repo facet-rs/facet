@@ -255,6 +255,7 @@ fn schema_kind_str(kind: &SchemaKind) -> &'static str {
         SchemaKind::Array { .. } => "array",
         SchemaKind::Option { .. } => "option",
         SchemaKind::Primitive { .. } => "primitive",
+        SchemaKind::Channel { .. } => "channel",
     }
 }
 

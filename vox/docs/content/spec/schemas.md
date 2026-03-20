@@ -187,6 +187,17 @@ both hash as `u64`.
 >   1. The tag `"tuple"`
 >   2. Each element's `TypeRef`, in order
 
+## Channel hashes
+
+> r[schema.type-id.hash.channel]
+>
+> To hash a channel type, update the hasher with:
+>
+>   1. The tag `"channel"`
+>   2. The direction: `"send"` or `"recv"`
+>   3. The element `TypeRef`
+>   4. The initial credit as a `u32` (4 bytes, little-endian)
+
 Content hashes give type IDs a universal meaning. A peer that receives
 a schema tagged with a content hash it has already seen — from this
 connection, a previous connection, or even a persistent store — knows
@@ -424,6 +435,21 @@ enum SchemaKind {
 
     /// A value that may be absent (`Option<T>`).
     Option { element: TypeRef },
+
+    /// A channel endpoint. Channels are serialized as `()` on the wire;
+    /// the actual channel ID is passed out-of-band. The schema records
+    /// the direction, element type, and initial credit so that
+    /// translation plans can correctly map channel positions across
+    /// schema versions.
+    Channel { direction: ChannelDirection, element: TypeRef, initial_credit: u32 },
+}
+
+/// The direction of a channel endpoint.
+enum ChannelDirection {
+    /// A sending endpoint (`Tx<T>`).
+    Send,
+    /// A receiving endpoint (`Rx<T>`).
+    Recv,
 }
 
 /// A field in a struct or struct-variant.
@@ -501,7 +527,7 @@ The normative rules below define the CBOR encoding of these types.
 >   * `type_params` — a CBOR array of type parameter names (UTF-8 strings).
 >     Empty array for non-generic types. MAY be omitted if empty.
 >   * `kind` — one of: `"struct"`, `"enum"`, `"tuple"`, `"list"`, `"map"`,
->     `"array"`, `"option"`, `"primitive"`
+>     `"array"`, `"option"`, `"channel"`, `"primitive"`
 >   * Kind-specific fields as defined below
 
 > r[schema.format.type-id]
@@ -581,6 +607,21 @@ The normative rules below define the CBOR encoding of these types.
 >
 > The `elements` array MUST contain at least one element. A zero-element
 > tuple is not valid — use `PrimitiveType::Unit` instead.
+
+> r[schema.format.channel]
+>
+> A channel schema MUST contain:
+>
+>   * `kind`: `"channel"`
+>   * `direction`: `"send"` or `"recv"`
+>   * `element`: a `TypeRef` for the channel's element type
+>   * `initial_credit`: a `u32` — the initial flow-control credit
+>     (buffer size) for this channel
+>
+> Channels are serialized as `()` (unit) on the wire. The actual channel
+> ID is passed out-of-band in the message's `channels` field. The schema
+> records the direction, element type, and credit so that translation
+> plans can correctly map channel positions across schema versions.
 
 ## Recursive types on the wire
 

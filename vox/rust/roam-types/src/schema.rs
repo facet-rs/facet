@@ -199,9 +199,25 @@ pub enum SchemaKind<Id = TypeSchemaId> {
     Option {
         element: TypeRef<Id>,
     },
+    Channel {
+        direction: ChannelDirection,
+        element: TypeRef<Id>,
+        /// Initial credit (buffer size) for flow control.
+        initial_credit: u32,
+    },
     Primitive {
         primitive_type: PrimitiveType,
     },
+}
+
+/// The direction of a channel type.
+#[derive(Facet, Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum ChannelDirection {
+    /// A sending channel (`Tx<T>`).
+    Send,
+    /// A receiving channel (`Rx<T>`).
+    Recv,
 }
 
 /// Type aliases for schemas during extraction (mixed temp/final IDs).
@@ -415,6 +431,19 @@ impl<'a, Id: Copy> SchemaHasher<'a, Id> {
                 self.feed_string("option");
                 self.feed_type_ref(element);
             }
+            SchemaKind::Channel {
+                direction,
+                element,
+                initial_credit,
+            } => {
+                self.feed_string("channel");
+                self.feed_string(match direction {
+                    ChannelDirection::Send => "send",
+                    ChannelDirection::Recv => "recv",
+                });
+                self.feed_type_ref(element);
+                self.hasher.update(&initial_credit.to_le_bytes());
+            }
         }
     }
 
@@ -469,7 +498,9 @@ pub fn schema_child_ids(kind: &SchemaKind) -> Vec<TypeSchemaId> {
                 e.collect_ids(&mut refs);
             }
         }
-        SchemaKind::List { element } | SchemaKind::Option { element } => {
+        SchemaKind::List { element }
+        | SchemaKind::Option { element }
+        | SchemaKind::Channel { element, .. } => {
             element.collect_ids(&mut refs);
         }
         SchemaKind::Map { key, value } => {
@@ -899,7 +930,9 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
                     e.collect_ids(&mut refs);
                 }
             }
-            SchemaKind::List { element } | SchemaKind::Option { element } => {
+            SchemaKind::List { element }
+            | SchemaKind::Option { element }
+            | SchemaKind::Channel { element, .. } => {
                 element.collect_ids(&mut refs);
             }
             SchemaKind::Map { key, value } => {
@@ -1085,6 +1118,15 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
             SchemaKind::Option { element } => SchemaKind::Option {
                 element: rt(element),
             },
+            SchemaKind::Channel {
+                direction,
+                element,
+                initial_credit,
+            } => SchemaKind::Channel {
+                direction,
+                element: rt(element),
+                initial_credit,
+            },
         }
     }
 
@@ -1129,11 +1171,28 @@ impl<'a> ExtractCtx<'a> {
     /// Extract a schema for the given shape, returning its MixedId.
     /// Recursively extracts dependencies first.
     fn extract(&mut self, shape: &'static Shape) -> MixedId {
-        // Channel types: extract the element type, skip the channel wrapper.
-        if (is_tx(shape) || is_rx(shape))
-            && let Some(inner) = shape.type_params.first()
-        {
-            return self.extract(inner.shape);
+        // Channel types: emit a Channel schema with direction and element type.
+        if is_tx(shape) || is_rx(shape) {
+            let direction = if is_tx(shape) {
+                ChannelDirection::Send
+            } else {
+                ChannelDirection::Recv
+            };
+            if let Some(inner) = shape.type_params.first() {
+                let elem_id = self.extract(inner.shape);
+                let type_id = self.tracker.id_for_shape(shape);
+                let initial_credit = extract_channel_credit(shape);
+                self.push_schema(
+                    shape,
+                    type_id,
+                    SchemaKind::Channel {
+                        direction,
+                        element: TypeRef::concrete(elem_id),
+                        initial_credit,
+                    },
+                );
+                return type_id;
+            }
         }
 
         // Transparent wrappers: follow inner.
@@ -1405,6 +1464,16 @@ impl<'a> ExtractCtx<'a> {
 
         type_id
     }
+}
+
+/// Extract the initial credit `N` from a Tx/Rx shape's const params.
+fn extract_channel_credit(shape: &'static Shape) -> u32 {
+    shape
+        .const_params
+        .iter()
+        .find(|cp| cp.name == "N")
+        .map(|cp| cp.value as u32)
+        .unwrap_or(16)
 }
 
 fn scalar_to_primitive(scalar: ScalarType) -> PrimitiveType {
