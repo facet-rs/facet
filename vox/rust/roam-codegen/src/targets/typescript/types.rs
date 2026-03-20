@@ -355,7 +355,7 @@ pub fn ts_type_client_arg(shape: &'static Shape) -> String {
 /// Convert Shape to TypeScript type string for client returns.
 /// Schema is from server's perspective - no inversion needed.
 pub fn ts_type_client_return(shape: &'static Shape) -> String {
-    assert_no_channels_in_return_shape(shape);
+    crate::targets::swift::types::assert_no_channels_in_return_shape(shape);
     ts_type_base_named(shape)
 }
 
@@ -372,7 +372,7 @@ pub fn ts_type_server_arg(shape: &'static Shape) -> String {
 
 /// Schema is from server's perspective - no inversion needed.
 pub fn ts_type_server_return(shape: &'static Shape) -> String {
-    assert_no_channels_in_return_shape(shape);
+    crate::targets::swift::types::assert_no_channels_in_return_shape(shape);
     ts_type_base_named(shape)
 }
 

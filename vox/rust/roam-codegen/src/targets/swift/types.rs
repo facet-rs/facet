@@ -316,9 +316,16 @@ pub fn format_doc(doc: &str, indent: &str) -> String {
         .collect()
 }
 
-fn assert_no_channels_in_return_shape(shape: &'static Shape) {
+pub fn assert_no_channels_in_return_shape(shape: &'static Shape) {
+    use crate::classify::ShapeKind;
+    fn has_channel(shape: &'static Shape) -> bool {
+        match crate::classify::classify_shape(shape) {
+            ShapeKind::Tx { .. } | ShapeKind::Rx { .. } => true,
+            _ => false,
+        }
+    }
     assert!(
-        RpcPlan::for_shape(shape).channel_locations.is_empty(),
+        !has_channel(shape),
         "channels are not allowed in return types"
     );
 }

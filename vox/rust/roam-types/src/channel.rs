@@ -1,4 +1,3 @@
-use std::convert::Infallible;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -615,11 +614,29 @@ impl<T> Drop for Tx<T> {
     }
 }
 
-#[allow(clippy::infallible_try_from)]
 impl<T> TryFrom<&Tx<T>> for ChannelId {
-    type Error = Infallible;
+    type Error = String;
 
     fn try_from(value: &Tx<T>) -> Result<Self, Self::Error> {
+        // Case 1: Caller passes Tx in args (callee sends, caller receives).
+        // Allocate a channel ID and store the receiver binding in the shared
+        // core so the caller's paired Rx can pick it up.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let channel_id = CHANNEL_BINDER.with(|cell| {
+                let borrow = cell.borrow();
+                let Some(binder) = *borrow else {
+                    return Ok(value.channel_id);
+                };
+                let (channel_id, bound) = binder.create_rx();
+                if let Some(core) = &value.core.inner {
+                    core.set_binding(ChannelBinding::Receiver(bound));
+                }
+                Ok(channel_id)
+            });
+            return channel_id;
+        }
+        #[cfg(target_arch = "wasm32")]
         Ok(value.channel_id)
     }
 }
@@ -832,11 +849,30 @@ impl<T> Rx<T> {
     }
 }
 
-#[allow(clippy::infallible_try_from)]
 impl<T> TryFrom<&Rx<T>> for ChannelId {
-    type Error = Infallible;
+    type Error = String;
 
     fn try_from(value: &Rx<T>) -> Result<Self, Self::Error> {
+        // Case 2: Caller passes Rx in args (callee receives, caller sends).
+        // Allocate a channel ID and store the sink binding in the shared
+        // core so the caller's paired Tx can pick it up.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let channel_id = CHANNEL_BINDER.with(|cell| {
+                let borrow = cell.borrow();
+                let Some(binder) = *borrow else {
+                    return Ok(value.channel_id);
+                };
+                let (channel_id, sink) = binder.create_tx();
+                let liveness = binder.channel_liveness();
+                if let Some(core) = &value.core.inner {
+                    core.set_binding(ChannelBinding::Sink(BoundChannelSink { sink, liveness }));
+                }
+                Ok(channel_id)
+            });
+            return channel_id;
+        }
+        #[cfg(target_arch = "wasm32")]
         Ok(value.channel_id)
     }
 }
@@ -1133,5 +1169,218 @@ mod tests {
             .expect("expected item");
         assert_eq!(*value, 123_u32);
         assert_eq!(replenisher.calls.load(Ordering::Acquire), 1);
+    }
+
+    // ========================================================================
+    // Channel binding through ser/deser
+    // ========================================================================
+
+    /// A test binder that tracks allocations and bindings.
+    struct TestBinder {
+        next_id: std::sync::Mutex<u64>,
+    }
+
+    impl TestBinder {
+        fn new() -> Self {
+            Self {
+                next_id: std::sync::Mutex::new(100),
+            }
+        }
+
+        fn alloc_id(&self) -> ChannelId {
+            let mut guard = self.next_id.lock().unwrap();
+            let id = *guard;
+            *guard += 2;
+            ChannelId(id)
+        }
+    }
+
+    impl ChannelBinder for TestBinder {
+        fn create_tx(&self) -> (ChannelId, Arc<dyn ChannelSink>) {
+            (self.alloc_id(), Arc::new(CountingSink::new()))
+        }
+
+        fn create_rx(&self) -> (ChannelId, BoundChannelReceiver) {
+            let (tx, rx) = mpsc::channel(8);
+            // Keep the sender alive by leaking it — test only.
+            std::mem::forget(tx);
+            (
+                self.alloc_id(),
+                BoundChannelReceiver {
+                    receiver: rx,
+                    liveness: None,
+                    replenisher: None,
+                },
+            )
+        }
+
+        fn bind_tx(&self, _channel_id: ChannelId) -> Arc<dyn ChannelSink> {
+            Arc::new(CountingSink::new())
+        }
+
+        fn register_rx(&self, _channel_id: ChannelId) -> BoundChannelReceiver {
+            let (_tx, rx) = mpsc::channel(8);
+            BoundChannelReceiver {
+                receiver: rx,
+                liveness: None,
+                replenisher: None,
+            }
+        }
+    }
+
+    // Case 1: Caller passes Tx in args, keeps paired Rx.
+    // Serializing the Tx allocates a channel ID via create_rx() and stores
+    // the receiver in the shared core so the kept Rx can use it.
+    #[test]
+    fn case1_serialize_tx_allocates_and_binds_paired_rx() {
+        use facet::Facet;
+
+        #[derive(Facet)]
+        struct Args {
+            data: u32,
+            tx: Tx<u32>,
+        }
+
+        let (tx, rx) = channel::<u32>();
+        let args = Args { data: 42, tx };
+
+        let binder = TestBinder::new();
+        let bytes = with_channel_binder(&binder, || {
+            facet_postcard::to_vec(&args).expect("serialize")
+        });
+
+        // The channel ID should be in the serialized bytes (after the u32 data field).
+        assert!(!bytes.is_empty());
+
+        // The kept Rx should now have a receiver binding in the shared core.
+        assert!(
+            rx.core.inner.is_some(),
+            "paired Rx should have a shared core"
+        );
+        let core = rx.core.inner.as_ref().unwrap();
+        assert!(
+            core.take_receiver().is_some(),
+            "core should have a Receiver binding from create_rx()"
+        );
+    }
+
+    // Case 2: Caller passes Rx in args, keeps paired Tx.
+    // Serializing the Rx allocates a channel ID via create_tx() and stores
+    // the sink in the shared core so the kept Tx can use it.
+    #[test]
+    fn case2_serialize_rx_allocates_and_binds_paired_tx() {
+        use facet::Facet;
+
+        #[derive(Facet)]
+        struct Args {
+            data: u32,
+            rx: Rx<u32>,
+        }
+
+        let (tx, rx) = channel::<u32>();
+        let args = Args { data: 42, rx };
+
+        let binder = TestBinder::new();
+        let bytes = with_channel_binder(&binder, || {
+            facet_postcard::to_vec(&args).expect("serialize")
+        });
+
+        assert!(!bytes.is_empty());
+
+        // The kept Tx should now have a sink binding in the shared core.
+        assert!(tx.core.inner.is_some());
+        let core = tx.core.inner.as_ref().unwrap();
+        assert!(
+            core.get_sink().is_some(),
+            "core should have a Sink binding from create_tx()"
+        );
+    }
+
+    // Case 3: Callee deserializes Tx from args.
+    // The Tx is bound directly via bind_tx() during deserialization.
+    #[test]
+    fn case3_deserialize_tx_binds_via_binder() {
+        use facet::Facet;
+
+        #[derive(Facet)]
+        struct Args {
+            data: u32,
+            tx: Tx<u32>,
+        }
+
+        // Simulate wire bytes: a u32 (42) followed by a channel ID (varint 7).
+        let mut bytes = facet_postcard::to_vec(&42_u32).unwrap();
+        bytes.extend_from_slice(&facet_postcard::to_vec(&ChannelId(7)).unwrap());
+
+        let binder = TestBinder::new();
+        let args: Args = with_channel_binder(&binder, || {
+            facet_postcard::from_slice(&bytes).expect("deserialize")
+        });
+
+        assert_eq!(args.data, 42);
+        assert_eq!(args.tx.channel_id, ChannelId(7));
+        assert!(
+            args.tx.is_bound(),
+            "deserialized Tx should be bound via bind_tx()"
+        );
+    }
+
+    // Case 4: Callee deserializes Rx from args.
+    // The Rx is bound directly via register_rx() during deserialization.
+    #[test]
+    fn case4_deserialize_rx_binds_via_binder() {
+        use facet::Facet;
+
+        #[derive(Facet)]
+        struct Args {
+            data: u32,
+            rx: Rx<u32>,
+        }
+
+        // Simulate wire bytes: a u32 (42) followed by a channel ID (varint 7).
+        let mut bytes = facet_postcard::to_vec(&42_u32).unwrap();
+        bytes.extend_from_slice(&facet_postcard::to_vec(&ChannelId(7)).unwrap());
+
+        let binder = TestBinder::new();
+        let args: Args = with_channel_binder(&binder, || {
+            facet_postcard::from_slice(&bytes).expect("deserialize")
+        });
+
+        assert_eq!(args.data, 42);
+        assert_eq!(args.rx.channel_id, ChannelId(7));
+        assert!(
+            args.rx.is_bound(),
+            "deserialized Rx should be bound via register_rx()"
+        );
+    }
+
+    // Round-trip: serialize with caller binder, deserialize with callee binder.
+    // Verifies the channel ID allocated during serialization appears in the
+    // deserialized handle.
+    #[test]
+    fn channel_id_round_trips_through_ser_deser() {
+        use facet::Facet;
+
+        #[derive(Facet)]
+        struct Args {
+            tx: Tx<u32>,
+        }
+
+        let (tx, _rx) = channel::<u32>();
+        let args = Args { tx };
+
+        let caller_binder = TestBinder::new();
+        let bytes = with_channel_binder(&caller_binder, || {
+            facet_postcard::to_vec(&args).expect("serialize")
+        });
+
+        let callee_binder = TestBinder::new();
+        let deserialized: Args = with_channel_binder(&callee_binder, || {
+            facet_postcard::from_slice(&bytes).expect("deserialize")
+        });
+
+        // The caller binder starts at ID 100, so the deserialized Tx should have that ID.
+        assert_eq!(deserialized.tx.channel_id, ChannelId(100));
+        assert!(deserialized.tx.is_bound());
     }
 }
