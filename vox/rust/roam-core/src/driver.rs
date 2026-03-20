@@ -319,13 +319,9 @@ fn extract_root_type_ref(schemas_cbor: &roam_types::CborPayload) -> TypeRef {
     if schemas_cbor.is_empty() {
         return TypeRef::concrete(SchemaHash(0));
     }
-    let payload: roam_types::SchemaPayload =
-        schemas_cbor.parse().expect("schema CBOR must be valid");
-    payload
-        .method_bindings
-        .first()
-        .map(|b| b.root_type_ref.clone())
-        .unwrap_or_else(|| TypeRef::concrete(SchemaHash(0)))
+    let payload =
+        roam_types::SchemaPayload::from_cbor(&schemas_cbor.0).expect("schema CBOR must be valid");
+    payload.root
 }
 
 fn incoming_args_bytes<'a>(call: &'a RequestCall<'a>) -> &'a [u8] {

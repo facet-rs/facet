@@ -9,7 +9,7 @@ use roam_types::{
     BoxFut, ChannelMessage, Conduit, ConduitRx, ConduitTx, ConduitTxPermit, ConnectionAccept,
     ConnectionClose, ConnectionId, ConnectionOpen, ConnectionReject, ConnectionSettings,
     HandshakeResult, IdAllocator, MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload,
-    Metadata, Parity, Payload, RequestBody, RequestId, RequestMessage, RequestResponse, SelfRef,
+    Metadata, Parity, RequestBody, RequestId, RequestMessage, RequestResponse, SelfRef,
     SessionResumeKey, SessionRole,
 };
 use tokio::sync::watch;
@@ -977,6 +977,7 @@ impl Session {
             }
             MessagePayload::RequestMessage(r) => {
                 // Record any inlined schemas from the incoming request before routing
+                let response_had_schema_payload = matches!(&r.body, RequestBody::Response(resp) if !resp.schemas.is_empty());
                 {
                     let schemas_cbor = match &r.body {
                         RequestBody::Call(call) => Some(&call.schemas),
@@ -1001,11 +1002,29 @@ impl Session {
                     if let Some(schemas_cbor) = schemas_cbor
                         && !schemas_cbor.is_empty()
                     {
-                        let payload = schemas_cbor.parse()
+                        let payload = roam_types::SchemaPayload::from_cbor(&schemas_cbor.0)
                             .expect("inlined schemas must be valid CBOR");
-                        state.schema_recv_tracker.record_received(payload)
+                        let (method_id, direction) = match &r.body {
+                            RequestBody::Call(call) => {
+                                (call.method_id, roam_types::BindingDirection::Args)
+                            }
+                            RequestBody::Response(_) => {
+                                let method_id = self
+                                    .sess_core
+                                    .take_outgoing_call_method(conn_id, r.id)
+                                    .expect("response schemas require an inflight method binding");
+                                (method_id, roam_types::BindingDirection::Response)
+                            }
+                            RequestBody::Cancel(_) => unreachable!(),
+                        };
+                        state
+                            .schema_recv_tracker
+                            .record_received(method_id, direction, payload)
                             .expect("received schemas must not contain duplicate type IDs");
                     }
+                }
+                if matches!(&r.body, RequestBody::Response(_)) && !response_had_schema_payload {
+                    let _ = self.sess_core.take_outgoing_call_method(conn_id, r.id);
                 }
                 // Record incoming calls so SessionCore::send() can look up
                 // the method_id when sending the response.
@@ -1428,6 +1447,10 @@ struct SendConnState {
     /// Maps request_id → method_id for in-flight incoming calls, so we can
     /// look up the method_id when sending the response.
     inflight_incoming: HashMap<RequestId, roam_types::MethodId>,
+
+    /// Maps request_id → method_id for outbound calls awaiting a response, so
+    /// inbound response schema payloads can bind their root TypeRef.
+    inflight_outgoing: HashMap<RequestId, roam_types::MethodId>,
 }
 
 impl SendConnState {
@@ -1436,6 +1459,7 @@ impl SendConnState {
             method_tracker: HashSet::new(),
             send_tracker: roam_types::SchemaSendTracker::new(),
             inflight_incoming: HashMap::new(),
+            inflight_outgoing: HashMap::new(),
         }
     }
 }
@@ -1462,22 +1486,17 @@ impl SessionCore {
                     .or_insert_with(SendConnState::new);
                 match &mut req.body {
                     RequestBody::Call(call) => {
+                        conn_state.inflight_outgoing.insert(req.id, call.method_id);
                         let key = (roam_types::BindingDirection::Args, call.method_id);
-                        if !conn_state.method_tracker.contains(&key)
-                            && let Payload::Outgoing { shape, .. } = &call.args
-                        {
-                            match conn_state.send_tracker.prepare_send_for_method(
-                                call.method_id,
-                                shape,
-                                roam_types::BindingDirection::Args,
-                            ) {
-                                Ok(schemas) if !schemas.is_empty() => {
-                                    call.schemas = schemas;
-                                }
+                        if !conn_state.method_tracker.contains(&key) {
+                            match conn_state
+                                .send_tracker
+                                .attach_schemas_if_needed(call.method_id, call)
+                            {
+                                Ok(_) => {}
                                 Err(e) => {
                                     tracing::error!("schema extraction failed: {e}");
                                 }
-                                _ => {}
                             }
                             conn_state.method_tracker.insert(key);
                         }
@@ -1516,6 +1535,18 @@ impl SessionCore {
             method_id
         );
         conn_state.inflight_incoming.insert(request_id, method_id);
+    }
+
+    pub(crate) fn take_outgoing_call_method(
+        &self,
+        conn_id: ConnectionId,
+        request_id: RequestId,
+    ) -> Option<roam_types::MethodId> {
+        let mut inner = self.inner.lock().expect("session core mutex poisoned");
+        inner
+            .conns
+            .get_mut(&conn_id)
+            .and_then(|conn_state| conn_state.inflight_outgoing.remove(&request_id))
     }
 
     pub(crate) fn prepare_response_for_method(
@@ -1577,14 +1608,11 @@ impl SessionCore {
         response: &mut RequestResponse<'_>,
     ) {
         let key = (roam_types::BindingDirection::Response, method_id);
-        if !conn_state.method_tracker.contains(&key)
-            && let Payload::Outgoing { shape, .. } = &response.ret
-        {
-            match conn_state.send_tracker.prepare_send_for_method(
-                method_id,
-                shape,
-                roam_types::BindingDirection::Response,
-            ) {
+        if !conn_state.method_tracker.contains(&key) {
+            match conn_state
+                .send_tracker
+                .attach_schemas_if_needed(method_id, response)
+            {
                 Ok(schemas) => {
                     roam_types::dlog!(
                         "[schema] prepared {} bytes of response schemas for method {:?} (req {:?})",
@@ -1592,9 +1620,6 @@ impl SessionCore {
                         method_id,
                         _request_id
                     );
-                    if !schemas.is_empty() {
-                        response.schemas = schemas;
-                    }
                 }
                 Err(e) => {
                     tracing::error!("schema extraction failed: {e}");
