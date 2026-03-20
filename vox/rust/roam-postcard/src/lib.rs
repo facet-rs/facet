@@ -2475,4 +2475,152 @@ mod tests {
         let result: String = round_trip(&text);
         assert_eq!(result, text);
     }
+
+    // ========================================================================
+    // Error Display coverage
+    // ========================================================================
+
+    #[test]
+    fn deserialize_error_display_coverage() {
+        use error::DeserializeError;
+
+        // Exercise Display for each DeserializeError variant
+        let errors: Vec<DeserializeError> = vec![
+            DeserializeError::UnexpectedEof { pos: 42 },
+            DeserializeError::VarintOverflow { pos: 10 },
+            DeserializeError::InvalidBool { pos: 5, got: 0x02 },
+            DeserializeError::InvalidUtf8 { pos: 20 },
+            DeserializeError::InvalidOptionTag { pos: 3, got: 0xFF },
+            DeserializeError::InvalidEnumDiscriminant {
+                pos: 0,
+                index: 99,
+                variant_count: 3,
+            },
+            DeserializeError::UnsupportedType("SomeType".into()),
+            DeserializeError::ReflectError("something went wrong".into()),
+            DeserializeError::UnknownVariant { remote_index: 7 },
+            DeserializeError::TrailingBytes { pos: 10, len: 20 },
+            DeserializeError::Custom("custom error".into()),
+            DeserializeError::protocol("protocol violation"),
+        ];
+
+        for err in &errors {
+            let msg = format!("{err}");
+            assert!(!msg.is_empty(), "error display should not be empty");
+        }
+    }
+
+    #[test]
+    fn serialize_error_display_coverage() {
+        use error::SerializeError;
+
+        let errors: Vec<SerializeError> = vec![
+            SerializeError::UnsupportedType("BadType".into()),
+            SerializeError::ReflectError("reflect fail".into()),
+        ];
+
+        for err in &errors {
+            let msg = format!("{err}");
+            assert!(!msg.is_empty());
+        }
+    }
+
+    #[test]
+    fn translation_error_display_coverage() {
+        use roam_types::{
+            FieldSchema, Schema, SchemaKind, TypeRef, TypeSchemaId, VariantPayload, VariantSchema,
+        };
+
+        let dummy_struct = Schema {
+            id: TypeSchemaId(1),
+            type_params: vec![],
+            kind: SchemaKind::Struct {
+                name: "Foo".into(),
+                fields: vec![FieldSchema {
+                    name: "x".into(),
+                    type_ref: TypeRef::concrete(TypeSchemaId(2)),
+                    required: true,
+                }],
+            },
+        };
+        let dummy_enum = Schema {
+            id: TypeSchemaId(3),
+            type_params: vec![],
+            kind: SchemaKind::Enum {
+                name: "Bar".into(),
+                variants: vec![],
+            },
+        };
+        let dummy_prim = Schema {
+            id: TypeSchemaId(4),
+            type_params: vec![],
+            kind: SchemaKind::Primitive {
+                primitive_type: roam_types::PrimitiveType::U32,
+            },
+        };
+
+        let errors: Vec<TranslationError> = vec![
+            TranslationError::new(TranslationErrorKind::NameMismatch {
+                remote: dummy_struct.clone(),
+                local: dummy_enum.clone(),
+            }),
+            TranslationError::new(TranslationErrorKind::KindMismatch {
+                remote: dummy_struct.clone(),
+                local: dummy_prim.clone(),
+            }),
+            TranslationError::new(TranslationErrorKind::MissingRequiredField {
+                field: FieldSchema {
+                    name: "missing".into(),
+                    type_ref: TypeRef::concrete(TypeSchemaId(5)),
+                    required: true,
+                },
+                remote_struct: dummy_struct.clone(),
+            }),
+            TranslationError::new(TranslationErrorKind::IncompatibleVariantPayload {
+                remote_variant: VariantSchema {
+                    name: "V".into(),
+                    index: 0,
+                    payload: VariantPayload::Unit,
+                },
+                local_variant: VariantSchema {
+                    name: "V".into(),
+                    index: 0,
+                    payload: VariantPayload::Newtype {
+                        type_ref: TypeRef::concrete(TypeSchemaId(6)),
+                    },
+                },
+            }),
+            TranslationError::new(TranslationErrorKind::SchemaNotFound {
+                type_id: TypeSchemaId(99),
+                side: error::SchemaSide::Remote,
+            }),
+            TranslationError::new(TranslationErrorKind::TupleLengthMismatch {
+                remote: dummy_prim.clone(),
+                local: dummy_prim.clone(),
+                remote_len: 2,
+                local_len: 3,
+            }),
+            TranslationError::new(TranslationErrorKind::UnresolvedVar {
+                name: "T".into(),
+                side: error::SchemaSide::Local,
+            }),
+        ];
+
+        for err in &errors {
+            let msg = format!("{err}");
+            assert!(
+                !msg.is_empty(),
+                "translation error display should not be empty"
+            );
+        }
+
+        // Also test with path prefix
+        let with_path = TranslationError::new(TranslationErrorKind::SchemaNotFound {
+            type_id: TypeSchemaId(1),
+            side: error::SchemaSide::Remote,
+        })
+        .with_path_prefix(error::PathSegment::Field("foo".into()));
+        let msg = format!("{with_path}");
+        assert!(msg.contains(".foo"), "should contain path: {msg}");
+    }
 }
