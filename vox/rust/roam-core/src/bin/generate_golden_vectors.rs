@@ -243,6 +243,17 @@ fn main() {
                 Point { x: 5, y: 6 },
             ]
         );
+
+        // Maps — use BTreeMap for deterministic ordering
+        use std::collections::BTreeMap;
+        let mut map1 = BTreeMap::new();
+        map1.insert("alpha".to_string(), 1u32);
+        map1.insert("beta".to_string(), 2);
+        write_value!("composite/map_string_u32.bin", map1);
+
+        let mut map2 = BTreeMap::new();
+        map2.insert("key".to_string(), Point { x: 10, y: 20 });
+        write_value!("composite/map_string_point.bin", map2);
     }
 
     // -------------------------------------------------------------------------

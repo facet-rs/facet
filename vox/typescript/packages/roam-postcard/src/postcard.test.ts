@@ -532,3 +532,35 @@ describe("Result/RoamError golden vectors (Rust cross-language)", () => {
     });
   });
 });
+
+// ============================================================================
+// Map golden vectors
+// ============================================================================
+
+describe("Map golden vectors (Rust cross-language)", () => {
+  it("map string->u32", () => {
+    const schema: Schema = { kind: "map", key: { kind: "string" }, value: { kind: "u32" } };
+    // BTreeMap in Rust produces deterministic order: alpha < beta
+    assertSchemaRoundTrip(
+      new Map([
+        ["alpha", 1],
+        ["beta", 2],
+      ]),
+      schema,
+      "composite/map_string_u32.bin",
+    );
+  });
+
+  it("map string->Point", () => {
+    const schema: Schema = {
+      kind: "map",
+      key: { kind: "string" },
+      value: PointSchema,
+    };
+    assertSchemaRoundTrip(
+      new Map([["key", { x: 10, y: 20 }]]),
+      schema,
+      "composite/map_string_point.bin",
+    );
+  });
+});
