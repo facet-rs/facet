@@ -2550,4 +2550,40 @@ mod tests {
             _ => unreachable!(),
         }
     }
+
+    #[test]
+    fn method_schema_binding_cbor_round_trip() {
+        let binding = MethodSchemaBinding {
+            method_id: MethodId(42),
+            root_type_ref: TypeRef::Concrete {
+                type_id: TypeSchemaId(123),
+                args: vec![TypeRef::concrete(TypeSchemaId(456))],
+            },
+            direction: BindingDirection::Args,
+        };
+        let payload = SchemaPayload {
+            schemas: vec![],
+            method_bindings: vec![binding],
+        };
+        let bytes = build_schema_message(&payload.schemas, &payload.method_bindings);
+        let parsed = parse_schema_message(&bytes).expect("should parse CBOR");
+        assert_eq!(parsed.method_bindings.len(), 1);
+        let b = &parsed.method_bindings[0];
+        assert_eq!(b.method_id, MethodId(42));
+        assert_eq!(b.direction, BindingDirection::Args);
+        match &b.root_type_ref {
+            TypeRef::Concrete { type_id, args } => {
+                assert_eq!(*type_id, TypeSchemaId(123));
+                assert_eq!(args.len(), 1);
+                match &args[0] {
+                    TypeRef::Concrete { type_id, args } => {
+                        assert_eq!(*type_id, TypeSchemaId(456));
+                        assert!(args.is_empty());
+                    }
+                    other => panic!("expected concrete arg, got {other:?}"),
+                }
+            }
+            other => panic!("expected concrete root, got {other:?}"),
+        }
+    }
 }
