@@ -176,11 +176,153 @@ describe("Primitive encoding", () => {
 });
 
 // ============================================================================
-// Composite golden vector tests (cross-language conformance)
+// Primitive decode golden vectors (verify TS decodes what Rust encodes)
 // ============================================================================
 
-import { encodeWithSchema, decodeWithSchema } from "./schema_codec.ts";
+import { decodeWithSchema, encodeWithSchema } from "./schema_codec.ts";
 import type { Schema, StructSchema, EnumSchema, TupleSchema } from "./schema.ts";
+
+/** Decode a golden vector with a schema and assert the value matches. */
+function assertDecode(vectorPath: string, schema: Schema, expected: unknown) {
+  const bytes = loadGoldenVector(vectorPath);
+  const decoded = decodeWithSchema(bytes, 0, schema);
+  expect(decoded.value, `decode ${vectorPath}`).toEqual(expected);
+}
+
+describe("Primitive decode from Rust golden vectors", () => {
+  it("decodes bool", () => {
+    assertDecode("primitives/bool_false.bin", { kind: "bool" }, false);
+    assertDecode("primitives/bool_true.bin", { kind: "bool" }, true);
+  });
+
+  it("decodes u8", () => {
+    assertDecode("primitives/u8_0.bin", { kind: "u8" }, 0);
+    assertDecode("primitives/u8_127.bin", { kind: "u8" }, 127);
+    assertDecode("primitives/u8_255.bin", { kind: "u8" }, 255);
+  });
+
+  it("decodes i8", () => {
+    assertDecode("primitives/i8_0.bin", { kind: "i8" }, 0);
+    assertDecode("primitives/i8_neg1.bin", { kind: "i8" }, -1);
+    assertDecode("primitives/i8_127.bin", { kind: "i8" }, 127);
+    assertDecode("primitives/i8_neg128.bin", { kind: "i8" }, -128);
+  });
+
+  it("decodes u16", () => {
+    assertDecode("primitives/u16_0.bin", { kind: "u16" }, 0);
+    assertDecode("primitives/u16_127.bin", { kind: "u16" }, 127);
+    assertDecode("primitives/u16_128.bin", { kind: "u16" }, 128);
+    assertDecode("primitives/u16_255.bin", { kind: "u16" }, 255);
+    assertDecode("primitives/u16_256.bin", { kind: "u16" }, 256);
+    assertDecode("primitives/u16_max.bin", { kind: "u16" }, 65535);
+  });
+
+  it("decodes i16", () => {
+    assertDecode("primitives/i16_0.bin", { kind: "i16" }, 0);
+    assertDecode("primitives/i16_1.bin", { kind: "i16" }, 1);
+    assertDecode("primitives/i16_neg1.bin", { kind: "i16" }, -1);
+    assertDecode("primitives/i16_max.bin", { kind: "i16" }, 32767);
+    assertDecode("primitives/i16_min.bin", { kind: "i16" }, -32768);
+  });
+
+  it("decodes u32", () => {
+    assertDecode("primitives/u32_0.bin", { kind: "u32" }, 0);
+    assertDecode("primitives/u32_1.bin", { kind: "u32" }, 1);
+    assertDecode("primitives/u32_127.bin", { kind: "u32" }, 127);
+    assertDecode("primitives/u32_128.bin", { kind: "u32" }, 128);
+    assertDecode("primitives/u32_max.bin", { kind: "u32" }, 4294967295);
+  });
+
+  it("decodes i32", () => {
+    assertDecode("primitives/i32_0.bin", { kind: "i32" }, 0);
+    assertDecode("primitives/i32_1.bin", { kind: "i32" }, 1);
+    assertDecode("primitives/i32_neg1.bin", { kind: "i32" }, -1);
+    assertDecode("primitives/i32_max.bin", { kind: "i32" }, 2147483647);
+    assertDecode("primitives/i32_min.bin", { kind: "i32" }, -2147483648);
+  });
+
+  it("decodes u64", () => {
+    assertDecode("primitives/u64_0.bin", { kind: "u64" }, 0n);
+    assertDecode("primitives/u64_1.bin", { kind: "u64" }, 1n);
+    assertDecode("primitives/u64_127.bin", { kind: "u64" }, 127n);
+    assertDecode("primitives/u64_128.bin", { kind: "u64" }, 128n);
+    assertDecode("primitives/u64_max.bin", { kind: "u64" }, 18446744073709551615n);
+  });
+
+  it("decodes i64", () => {
+    assertDecode("primitives/i64_0.bin", { kind: "i64" }, 0n);
+    assertDecode("primitives/i64_1.bin", { kind: "i64" }, 1n);
+    assertDecode("primitives/i64_neg1.bin", { kind: "i64" }, -1n);
+    assertDecode("primitives/i64_42.bin", { kind: "i64" }, 42n);
+    assertDecode("primitives/i64_max.bin", { kind: "i64" }, 9223372036854775807n);
+    assertDecode("primitives/i64_min.bin", { kind: "i64" }, -9223372036854775808n);
+  });
+
+  it("decodes f32", () => {
+    assertDecode("primitives/f32_0.bin", { kind: "f32" }, 0.0);
+    assertDecode("primitives/f32_1.bin", { kind: "f32" }, 1.0);
+    assertDecode("primitives/f32_neg1.bin", { kind: "f32" }, -1.0);
+    assertDecode("primitives/f32_1_5.bin", { kind: "f32" }, 1.5);
+    assertDecode("primitives/f32_0_25.bin", { kind: "f32" }, 0.25);
+  });
+
+  it("decodes f64", () => {
+    assertDecode("primitives/f64_0.bin", { kind: "f64" }, 0.0);
+    assertDecode("primitives/f64_1.bin", { kind: "f64" }, 1.0);
+    assertDecode("primitives/f64_neg1.bin", { kind: "f64" }, -1.0);
+    assertDecode("primitives/f64_1_5.bin", { kind: "f64" }, 1.5);
+    assertDecode("primitives/f64_0_25.bin", { kind: "f64" }, 0.25);
+  });
+
+  it("decodes string", () => {
+    assertDecode("primitives/string_empty.bin", { kind: "string" }, "");
+    assertDecode("primitives/string_hello.bin", { kind: "string" }, "hello world");
+    assertDecode("primitives/string_unicode.bin", { kind: "string" }, "héllo 世界 🦀");
+  });
+
+  it("decodes bytes", () => {
+    assertDecode("primitives/bytes_empty.bin", { kind: "bytes" }, new Uint8Array([]));
+    assertDecode(
+      "primitives/bytes_deadbeef.bin",
+      { kind: "bytes" },
+      new Uint8Array([0xde, 0xad, 0xbe, 0xef]),
+    );
+  });
+
+  it("decodes option", () => {
+    assertDecode("primitives/option_none_u32.bin", { kind: "option", inner: { kind: "u32" } }, null);
+    assertDecode("primitives/option_some_u32_42.bin", { kind: "option", inner: { kind: "u32" } }, 42);
+    assertDecode(
+      "primitives/option_none_string.bin",
+      { kind: "option", inner: { kind: "string" } },
+      null,
+    );
+    assertDecode(
+      "primitives/option_some_string.bin",
+      { kind: "option", inner: { kind: "string" } },
+      "hello",
+    );
+  });
+
+  it("decodes vec", () => {
+    assertDecode("primitives/vec_empty_u32.bin", { kind: "vec", element: { kind: "u32" } }, []);
+    assertDecode("primitives/vec_u32_1_2_3.bin", { kind: "vec", element: { kind: "u32" } }, [1, 2, 3]);
+    assertDecode(
+      "primitives/vec_i32_neg1_0_1.bin",
+      { kind: "vec", element: { kind: "i32" } },
+      [-1, 0, 1],
+    );
+    assertDecode(
+      "primitives/vec_string.bin",
+      { kind: "vec", element: { kind: "string" } },
+      ["a", "b"],
+    );
+  });
+});
+
+// ============================================================================
+// Composite golden vector tests (cross-language conformance)
+// ============================================================================
 
 /** Assert that schema-encoded bytes match a golden vector, and decode back */
 function assertSchemaRoundTrip(value: unknown, schema: Schema, vectorPath: string) {
