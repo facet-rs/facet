@@ -781,7 +781,7 @@ impl<T> Rx<T> {
                                     "incoming channel item payload was not Incoming".into(),
                                 ));
                             };
-                            facet_postcard::from_slice_borrowed(bytes).map_err(RxError::Deserialize)
+                            panic!("BUG: Rx::recv must use roam_postcard, not facet_postcard — channel item deserialization needs translation plans")
                         })
                         .map(Some);
                     if value.is_ok()
