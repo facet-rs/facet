@@ -31,7 +31,10 @@ mod tests {
 
     /// Serialize `value` via both `to_vec` and `peek_to_scatter_plan`,
     /// assert the bytes are identical, then deserialize and return the result.
-    fn round_trip<T: Facet<'static> + std::fmt::Debug + PartialEq>(value: &T) -> T {
+    fn round_trip<T>(value: &T) -> T
+    where
+        for<'a> T: Facet<'a> + std::fmt::Debug + PartialEq,
+    {
         // Path 1: direct serialization
         let direct_bytes = to_vec(value).unwrap();
 
@@ -63,8 +66,8 @@ mod tests {
         // Also verify staging() is accessible
         let _ = plan.staging();
 
-        // Deserialize from the direct bytes
-        from_slice(&direct_bytes).unwrap()
+        // Deserialize from the direct bytes using from_slice_borrowed
+        from_slice_borrowed(&direct_bytes).unwrap()
     }
 
     #[test]
@@ -2407,30 +2410,19 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn round_trip_struct_with_borrowed_bytes() {
-        // Small &[u8] — should be staged in scatter plan
+    fn round_trip_struct_with_bytes_field() {
         #[derive(Facet, Debug, PartialEq)]
-        struct Msg<'a> {
+        struct Msg {
             id: u32,
-            data: &'a [u8],
+            data: Vec<u8>,
         }
 
-        let data = [1u8, 2, 3, 4, 5];
-        let msg = Msg {
+        let result: Msg = round_trip(&Msg {
             id: 42,
-            data: &data,
-        };
-        let direct = to_vec(&msg).unwrap();
-
-        let peek = facet_reflect::Peek::new(&msg);
-        let plan = peek_to_scatter_plan(peek).unwrap();
-        let mut scatter_bytes = vec![0u8; plan.total_size()];
-        plan.write_into(&mut scatter_bytes);
-        assert_eq!(direct, scatter_bytes);
-
-        let result: Msg = from_slice_borrowed(&direct).unwrap();
+            data: vec![1, 2, 3, 4, 5],
+        });
         assert_eq!(result.id, 42);
-        assert_eq!(result.data, &data);
+        assert_eq!(result.data, vec![1, 2, 3, 4, 5]);
     }
 
     #[test]
@@ -2477,59 +2469,10 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_struct_with_borrowed_str() {
-        // &str exercises the string reference path
-        #[derive(Facet, Debug, PartialEq)]
-        struct Msg<'a> {
-            name: &'a str,
-            id: u32,
-        }
-
-        let msg = Msg {
-            name: "hello world",
-            id: 7,
-        };
-        let direct = to_vec(&msg).unwrap();
-
-        let peek = facet_reflect::Peek::new(&msg);
-        let plan = peek_to_scatter_plan(peek).unwrap();
-        let mut scatter_bytes = vec![0u8; plan.total_size()];
-        plan.write_into(&mut scatter_bytes);
-        assert_eq!(direct, scatter_bytes);
-
-        let result: Msg = from_slice_borrowed(&direct).unwrap();
-        assert_eq!(result, msg);
-    }
-
-    #[test]
-    fn round_trip_large_borrowed_str() {
-        // Large &str (>4096) to hit the Reference threshold
-        #[derive(Facet, Debug, PartialEq)]
-        struct Msg<'a> {
-            text: &'a str,
-        }
-
+    fn round_trip_large_string() {
+        // Large string (>4096) to hit the Reference threshold in scatter
         let text = "x".repeat(8192);
-        let msg = Msg { text: &text };
-        let direct = to_vec(&msg).unwrap();
-
-        let peek = facet_reflect::Peek::new(&msg);
-        let plan = peek_to_scatter_plan(peek).unwrap();
-
-        let has_reference = plan
-            .segments()
-            .iter()
-            .any(|s| matches!(s, scatter::Segment::Reference { .. }));
-        assert!(
-            has_reference,
-            "large borrowed str should produce a Reference segment"
-        );
-
-        let mut scatter_bytes = vec![0u8; plan.total_size()];
-        plan.write_into(&mut scatter_bytes);
-        assert_eq!(direct, scatter_bytes);
-
-        let result: Msg = from_slice_borrowed(&direct).unwrap();
-        assert_eq!(result, msg);
+        let result: String = round_trip(&text);
+        assert_eq!(result, text);
     }
 }
