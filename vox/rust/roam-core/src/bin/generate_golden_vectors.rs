@@ -214,12 +214,19 @@ fn main() {
 
         #[derive(Facet)]
         #[repr(u8)]
+        #[allow(unused)]
         enum Shape {
             Circle(f64),
             Rect { w: f64, h: f64 },
             Empty,
         }
-        write_value!("composite/enum_circle.bin", Shape::Circle(3.14));
+        write_value!(
+            "composite/enum_circle.bin",
+            Shape::Circle(
+                #[allow(clippy::approx_constant)]
+                3.14
+            )
+        );
         write_value!("composite/enum_rect.bin", Shape::Rect { w: 10.0, h: 20.0 });
         write_value!("composite/enum_empty.bin", Shape::Empty);
 
