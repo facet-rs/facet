@@ -480,6 +480,11 @@ impl ConnectionSender {
     pub fn mark_failure(&self, request_id: RequestId, disposition: FailureDisposition) {
         let _ = self.failures.send((request_id, disposition));
     }
+
+    /// Get the schema registry for this connection's send tracker.
+    pub fn schema_registry(&self) -> roam_types::SchemaRegistry {
+        self.sess_core.schema_registry(self.connection_id)
+    }
 }
 
 pub struct ConnectionHandle {
@@ -1510,6 +1515,17 @@ impl SessionCore {
             .or_insert_with(SendConnState::new);
         conn_state.inflight_incoming.remove(&request_id);
         Self::prepare_response_schemas(conn_state, request_id, method_id, response);
+    }
+
+    /// Borrow the send tracker's schema registry for the given connection.
+    /// Used by the driver to pass to the operation store on seal.
+    pub(crate) fn schema_registry(&self, conn_id: ConnectionId) -> roam_types::SchemaRegistry {
+        let inner = self.inner.lock().expect("session core mutex poisoned");
+        inner
+            .conns
+            .get(&conn_id)
+            .map(|cs| cs.send_tracker.registry().clone())
+            .unwrap_or_default()
     }
 
     fn prepare_response_schemas(

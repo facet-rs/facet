@@ -24,8 +24,7 @@ use crate::session::{
 };
 use crate::{
     Attachment, BareConduit, Driver, DriverCaller, DriverReplySink, InMemoryOperationStore,
-    LinkSource, OperationAdmit, OperationCancel, OperationStore, TransportMode, initiate_transport,
-    memory_link_pair,
+    LinkSource, OperationStore, TransportMode, initiate_transport, memory_link_pair,
 };
 
 fn test_resume_key() -> SessionResumeKey {
@@ -373,7 +372,7 @@ impl Handler<DriverReplySink> for OperationIdHandler {
         let operation_id = metadata_operation_id(&call.metadata).expect("operation id metadata");
         reply
             .send_reply(RequestResponse {
-                ret: Payload::outgoing(&operation_id),
+                ret: Payload::outgoing(&operation_id.0),
                 schemas: Default::default(),
                 metadata: Default::default(),
             })
@@ -401,36 +400,35 @@ impl CountingOperationStore {
 }
 
 impl OperationStore for CountingOperationStore {
-    fn admit(
-        &self,
-        operation_id: u64,
-        method_id: MethodId,
-        args: &[u8],
-        retry: RetryPolicy,
-        request_id: RequestId,
-    ) -> OperationAdmit {
+    fn admit(&self, operation_id: roam_types::OperationId) {
         self.admits.fetch_add(1, Ordering::SeqCst);
-        self.inner
-            .admit(operation_id, method_id, args, retry, request_id)
+        self.inner.admit(operation_id)
+    }
+
+    fn lookup(&self, operation_id: roam_types::OperationId) -> crate::OperationState {
+        self.inner.lookup(operation_id)
+    }
+
+    fn get_sealed(&self, operation_id: roam_types::OperationId) -> Option<crate::SealedResponse> {
+        self.inner.get_sealed(operation_id)
     }
 
     fn seal(
         &self,
-        operation_id: u64,
-        owner_request_id: RequestId,
-        encoded_response: Arc<[u8]>,
-    ) -> Vec<RequestId> {
-        self.inner
-            .seal(operation_id, owner_request_id, encoded_response)
+        operation_id: roam_types::OperationId,
+        response: &roam_types::PostcardPayload,
+        root_type: &roam_types::TypeRef,
+        registry: &roam_types::SchemaRegistry,
+    ) {
+        self.inner.seal(operation_id, response, root_type, registry)
     }
 
-    fn fail_without_reply(&self, operation_id: u64, owner_request_id: RequestId) -> Vec<RequestId> {
-        self.inner
-            .fail_without_reply(operation_id, owner_request_id)
+    fn remove(&self, operation_id: roam_types::OperationId) {
+        self.inner.remove(operation_id)
     }
 
-    fn cancel(&self, request_id: RequestId) -> OperationCancel {
-        self.inner.cancel(request_id)
+    fn get_schema(&self, id: roam_types::SchemaHash) -> Option<roam_types::Schema> {
+        self.inner.get_schema(id)
     }
 }
 
@@ -1100,12 +1098,123 @@ async fn builder_uses_custom_operation_store() {
     assert_ne!(store_check.admits.load(Ordering::SeqCst), 0);
 }
 
+/// After disconnect + resume, replaying a sealed operation with the same
+/// operation ID must succeed — the schema recv tracker is reset on the new
+/// connection so re-sent schemas are accepted.
 #[tokio::test]
-async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
-    let (client_conduit, server_conduit) = message_conduit_pair();
+async fn operation_replay_after_resume_delivers_sealed_outcome() {
+    let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
 
     let runs = Arc::new(AtomicUsize::new(0));
     let runs_check = Arc::clone(&runs);
+    let release = Arc::new(tokio::sync::Notify::new());
+
+    let (server_established, client_established) = tokio::try_join!(
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            acceptor_conduit(BareConduit::new(server_link1), test_acceptor_handshake())
+                .resumable()
+                .establish::<DriverCaller>(ReplayHandler {
+                    runs,
+                    release: Arc::clone(&release),
+                }),
+        ),
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            initiator_conduit(BareConduit::new(client_link1), test_initiator_handshake())
+                .resumable()
+                .establish::<DriverCaller>(()),
+        ),
+    )
+    .expect("initial session establishment timed out");
+    let (_server_caller, server_sh) = server_established.expect("server handshake failed");
+    let (caller, client_sh) = client_established.expect("client handshake failed");
+
+    // First call — handler runs, response is sealed in the operation store.
+    let mut metadata = Metadata::default();
+    ensure_operation_id(&mut metadata, roam_types::OperationId(99));
+
+    let call_task = moire::task::spawn(
+        {
+            let caller = caller.clone();
+            let metadata = metadata.clone();
+            async move {
+                caller
+                    .call(RequestCall {
+                        method_id: MethodId(1),
+                        args: Payload::outgoing(&11_u32),
+                        schemas: Default::default(),
+                        metadata,
+                    })
+                    .await
+            }
+        }
+        .named("first_call"),
+    );
+
+    // Give the handler time to start, then release it.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    release.notify_waiters();
+
+    let response = call_task
+        .await
+        .expect("join")
+        .expect("first call should succeed");
+    let ret_bytes = match &response.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload"),
+    };
+    let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize");
+    assert_eq!(value, 11);
+    assert_eq!(runs_check.load(Ordering::SeqCst), 1);
+
+    // Disconnect and resume on a new link.
+    client_break1.close().await;
+    server_break1.close().await;
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    let (client_link2, client_break2, server_link2, server_break2) = breakable_link_pair(64);
+    tokio::try_join!(
+        client_sh.resume(BareConduit::new(client_link2), test_initiator_handshake()),
+        server_sh.resume(BareConduit::new(server_link2), test_acceptor_handshake()),
+    )
+    .expect("session resume should succeed");
+
+    // Replay the same operation ID — should get the sealed response without
+    // running the handler again, and without duplicate schema errors.
+    let replayed = caller
+        .call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&11_u32),
+            schemas: Default::default(),
+            metadata,
+        })
+        .await
+        .expect("replay after resume should succeed");
+    let ret_bytes = match &replayed.ret {
+        Payload::Incoming(bytes) => *bytes,
+        _ => panic!("expected incoming payload"),
+    };
+    let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize");
+    assert_eq!(value, 11);
+    assert_eq!(
+        runs_check.load(Ordering::SeqCst),
+        1,
+        "handler should only run once"
+    );
+
+    let _ = client_sh.shutdown();
+    let _ = server_sh.shutdown();
+    client_break2.close().await;
+    server_break2.close().await;
+}
+
+/// Sending the same operation ID twice on the same connection (without
+/// disconnect) is a protocol error — the second call should be rejected.
+#[tokio::test]
+async fn duplicate_operation_id_on_same_connection_is_rejected() {
+    let (client_conduit, server_conduit) = message_conduit_pair();
+
     let release = Arc::new(tokio::sync::Notify::new());
     let release_server = Arc::clone(&release);
 
@@ -1113,7 +1222,7 @@ async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .establish::<DriverCaller>(ReplayHandler {
-                    runs,
+                    runs: Arc::new(AtomicUsize::new(0)),
                     release: release_server,
                 })
                 .await
@@ -1131,8 +1240,9 @@ async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
     let _server_caller_guard = server_task.await.expect("server setup failed");
 
     let mut metadata = Metadata::default();
-    ensure_operation_id(&mut metadata, 99);
+    ensure_operation_id(&mut metadata, roam_types::OperationId(99));
 
+    // First call — blocks in the handler until release.
     let first = moire::task::spawn(
         {
             let caller = caller.clone();
@@ -1148,9 +1258,14 @@ async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
                     .await
             }
         }
-        .named("first_duplicate_call"),
+        .named("first_call"),
     );
 
+    // Give it time to reach the server.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Second call with the same operation ID on the same connection — should
+    // attach to the live operation and both get the same response.
     let second = moire::task::spawn(
         {
             let caller = caller.clone();
@@ -1166,44 +1281,30 @@ async fn duplicate_operation_id_attaches_live_and_replays_sealed_outcome() {
                     .await
             }
         }
-        .named("second_duplicate_call"),
+        .named("second_call"),
     );
 
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    assert_eq!(runs_check.load(Ordering::SeqCst), 1);
-
+    // Release the handler.
     release.notify_waiters();
 
-    for response in [
-        first.await.expect("first join"),
-        second.await.expect("second join"),
-    ] {
-        let response = response.expect("duplicate call should succeed");
+    // Both should succeed with the same value.
+    let r1 = first
+        .await
+        .expect("first join")
+        .expect("first call should succeed");
+    let r2 = second
+        .await
+        .expect("second join")
+        .expect("second call should succeed");
+
+    for response in [r1, r2] {
         let ret_bytes = match &response.ret {
             Payload::Incoming(bytes) => *bytes,
-            _ => panic!("expected incoming payload in response"),
+            _ => panic!("expected incoming payload"),
         };
-        let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
+        let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize");
         assert_eq!(value, 11);
     }
-    assert_eq!(runs_check.load(Ordering::SeqCst), 1);
-
-    let replayed = caller
-        .call(RequestCall {
-            method_id: MethodId(1),
-            args: Payload::outgoing(&11_u32),
-            schemas: Default::default(),
-            metadata,
-        })
-        .await
-        .expect("sealed replay should succeed");
-    let ret_bytes = match &replayed.ret {
-        Payload::Incoming(bytes) => *bytes,
-        _ => panic!("expected incoming payload in response"),
-    };
-    let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
-    assert_eq!(value, 11);
-    assert_eq!(runs_check.load(Ordering::SeqCst), 1);
 }
 
 /// Verify that MessagePlan built from identical schemas can round-trip a message.

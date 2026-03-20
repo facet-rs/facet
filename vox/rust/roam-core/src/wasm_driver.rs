@@ -60,8 +60,12 @@ fn send_encoded_response(
     encoded_response: Arc<[u8]>,
 ) -> impl std::future::Future<Output = Result<(), ()>> {
     async move {
-        let response: RequestResponse<'_> =
+        let mut response: RequestResponse<'_> =
             roam_postcard::from_slice_borrowed(encoded_response.as_ref()).map_err(|_| ())?;
+        // Clear schemas from sealed response — they were already sent on the
+        // original response. On reconnect, prepare_response_for_method will
+        // re-add them if needed.
+        response.schemas = Default::default();
         sender.send_response(request_id, response).await
     }
 }
@@ -99,15 +103,13 @@ impl Drop for DriverReplySink {
             if let (Some(operation_id), Some(operations)) =
                 (self.operation_id, self.operations.take())
             {
-                let waiters = operations.fail_without_reply(operation_id, self.request_id);
+                operations.remove(operation_id);
                 let disposition = if self.retry.persist {
                     FailureDisposition::Indeterminate
                 } else {
                     FailureDisposition::Cancelled
                 };
-                for waiter in waiters {
-                    sender.mark_failure(waiter, disposition);
-                }
+                sender.mark_failure(self.request_id, disposition);
             } else {
                 let disposition = if self.retry.persist {
                     FailureDisposition::Indeterminate

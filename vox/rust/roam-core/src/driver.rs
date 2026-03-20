@@ -22,8 +22,9 @@ use roam_types::{
 use crate::session::{
     ConnectionHandle, ConnectionMessage, ConnectionSender, DropControlRequest, FailureDisposition,
 };
-use crate::{InMemoryOperationStore, OperationAdmit, OperationCancel, OperationStore};
+use crate::{InMemoryOperationStore, OperationStore};
 use moire::sync::mpsc;
+use roam_types::{OperationId, PostcardPayload, Schema, SchemaHash, TypeRef};
 
 /// A pending response for one outbound request attempt.
 ///
@@ -41,8 +42,155 @@ struct InFlightHandler {
     handle: moire::task::JoinHandle<()>,
     retry: roam_types::RetryPolicy,
     has_channels: bool,
-    operation_id: Option<u64>,
+    operation_id: Option<OperationId>,
 }
+
+// ============================================================================
+// Live operation tracking (driver-local, not persisted)
+// ============================================================================
+
+/// Tracks in-flight operations within the current session.
+///
+/// This is session-scoped state that does NOT survive crashes. The
+/// `OperationStore` handles persistence; this handles the live
+/// attach/waiter/conflict logic.
+struct LiveOperationTracker {
+    /// Maps operation_id → live state. Removed when sealed or released.
+    live: HashMap<OperationId, LiveOperation>,
+    /// Maps request_id → operation_id for cancel routing.
+    request_to_operation: HashMap<RequestId, OperationId>,
+}
+
+struct LiveOperation {
+    method_id: roam_types::MethodId,
+    args_hash: u64,
+    owner_request_id: RequestId,
+    waiters: Vec<RequestId>,
+    retry: roam_types::RetryPolicy,
+}
+
+enum AdmitResult {
+    /// New operation — run the handler.
+    Start,
+    /// Same operation already in flight — wait for its result.
+    Attached,
+    /// Same operation ID but different method/args — protocol error.
+    Conflict,
+}
+
+impl LiveOperationTracker {
+    fn new() -> Self {
+        Self {
+            live: HashMap::new(),
+            request_to_operation: HashMap::new(),
+        }
+    }
+
+    fn admit(
+        &mut self,
+        operation_id: OperationId,
+        method_id: roam_types::MethodId,
+        args: &[u8],
+        retry: roam_types::RetryPolicy,
+        request_id: RequestId,
+    ) -> AdmitResult {
+        use std::hash::{Hash, Hasher};
+        let args_hash = {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            method_id.hash(&mut h);
+            args.hash(&mut h);
+            h.finish()
+        };
+
+        if let Some(live) = self.live.get_mut(&operation_id) {
+            if live.method_id != method_id || live.args_hash != args_hash {
+                return AdmitResult::Conflict;
+            }
+            live.waiters.push(request_id);
+            self.request_to_operation.insert(request_id, operation_id);
+            return AdmitResult::Attached;
+        }
+
+        self.live.insert(
+            operation_id,
+            LiveOperation {
+                method_id,
+                args_hash,
+                owner_request_id: request_id,
+                waiters: vec![request_id],
+                retry,
+            },
+        );
+        self.request_to_operation.insert(request_id, operation_id);
+        AdmitResult::Start
+    }
+
+    /// Seal a live operation, returning all waiter request IDs (including the owner).
+    fn seal(&mut self, operation_id: OperationId) -> Vec<RequestId> {
+        if let Some(live) = self.live.remove(&operation_id) {
+            for waiter in &live.waiters {
+                self.request_to_operation.remove(waiter);
+            }
+            live.waiters
+        } else {
+            vec![]
+        }
+    }
+
+    /// Release a live operation without sealing (handler failed).
+    fn release(&mut self, operation_id: OperationId) -> Option<LiveOperation> {
+        if let Some(live) = self.live.remove(&operation_id) {
+            for waiter in &live.waiters {
+                self.request_to_operation.remove(waiter);
+            }
+            Some(live)
+        } else {
+            None
+        }
+    }
+
+    /// Cancel a request. Returns what to do.
+    fn cancel(&mut self, request_id: RequestId) -> CancelResult {
+        let Some(&operation_id) = self.request_to_operation.get(&request_id) else {
+            return CancelResult::NotFound;
+        };
+        let Some(live) = self.live.get_mut(&operation_id) else {
+            self.request_to_operation.remove(&request_id);
+            return CancelResult::NotFound;
+        };
+
+        if live.retry.persist {
+            // Persistent operations: only detach non-owner waiters.
+            if live.owner_request_id == request_id {
+                return CancelResult::NotFound; // Can't cancel the owner of a persistent op
+            }
+            live.waiters.retain(|w| *w != request_id);
+            self.request_to_operation.remove(&request_id);
+            CancelResult::Detached
+        } else {
+            // Non-persistent: abort the whole operation.
+            let live = self.live.remove(&operation_id).unwrap();
+            for waiter in &live.waiters {
+                self.request_to_operation.remove(waiter);
+            }
+            CancelResult::Abort {
+                owner_request_id: live.owner_request_id,
+                waiters: live.waiters,
+            }
+        }
+    }
+}
+
+enum CancelResult {
+    NotFound,
+    Detached,
+    Abort {
+        owner_request_id: RequestId,
+        waiters: Vec<RequestId>,
+    },
+}
+
+use std::collections::HashMap;
 
 /// State shared between the driver loop and any `DriverCaller` / `DriverChannelSink` handles.
 ///
@@ -145,22 +293,84 @@ pub struct DriverReplySink {
     request_id: RequestId,
     method_id: roam_types::MethodId,
     retry: roam_types::RetryPolicy,
-    operation_id: Option<u64>,
+    operation_id: Option<OperationId>,
     operations: Option<Arc<dyn OperationStore>>,
+    live_operations: Option<Arc<SyncMutex<LiveOperationTracker>>>,
     binder: DriverChannelBinder,
 }
 
-async fn send_encoded_response(
+/// Replay a sealed response from the operation store.
+///
+/// The stored bytes do NOT contain schemas. Schemas are re-attached via
+/// `prepare_response_for_method` / the send tracker, which knows whether
+/// schemas have already been sent on the current connection.
+async fn replay_sealed_response(
     sender: ConnectionSender,
     request_id: RequestId,
     method_id: roam_types::MethodId,
-    encoded_response: Arc<[u8]>,
+    encoded_response: &[u8],
+    root_type_ref: roam_types::TypeRef,
+    operations: &dyn OperationStore,
 ) -> Result<(), ()> {
-    let response: RequestResponse<'_> =
-        roam_postcard::from_slice_borrowed(encoded_response.as_ref()).map_err(|_| ())?;
+    let mut response: RequestResponse<'_> =
+        roam_postcard::from_slice_borrowed(encoded_response).map_err(|_| ())?;
+    // Rebuild the schema payload from the operation store's schema table.
+    // prepare_response_for_method won't help here because the payload is
+    // Incoming bytes (no Shape). We reconstruct the CBOR schema payload
+    // by walking the type graph from the root.
+    let schemas = collect_schemas_from_store(&root_type_ref, operations);
+    if !schemas.is_empty() {
+        let binding = roam_types::MethodSchemaBinding {
+            method_id: roam_types::MethodId(method_id.0),
+            root_type_ref,
+            direction: roam_types::BindingDirection::Response,
+        };
+        let payload_bytes = roam_types::build_schema_message(&schemas, &[binding]);
+        response.schemas = roam_types::CborPayload(payload_bytes);
+    }
+    // send_response_for_method will check the method_tracker and strip
+    // schemas if they were already sent on this connection.
     sender
         .send_response_for_method(request_id, method_id, response)
         .await
+}
+
+/// Walk the schema graph from a root TypeRef, collecting all schemas from
+/// the operation store.
+fn collect_schemas_from_store(
+    root: &roam_types::TypeRef,
+    store: &dyn OperationStore,
+) -> Vec<Schema> {
+    let mut result = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    let mut queue = Vec::new();
+    root.collect_ids(&mut queue);
+    while let Some(id) = queue.pop() {
+        if !visited.insert(id) {
+            continue;
+        }
+        if let Some(schema) = store.get_schema(id) {
+            for child_id in roam_types::schema_child_ids(&schema.kind) {
+                queue.push(child_id);
+            }
+            result.push(schema);
+        }
+    }
+    result
+}
+
+/// Extract the root TypeRef from a response's schema CBOR payload.
+fn extract_root_type_ref(schemas_cbor: &roam_types::CborPayload) -> TypeRef {
+    if schemas_cbor.is_empty() {
+        return TypeRef::concrete(SchemaHash(0));
+    }
+    let payload: roam_types::SchemaPayload =
+        schemas_cbor.parse().expect("schema CBOR must be valid");
+    payload
+        .method_bindings
+        .first()
+        .map(|b| b.root_type_ref.clone())
+        .unwrap_or_else(|| TypeRef::concrete(SchemaHash(0)))
 }
 
 fn incoming_args_bytes<'a>(call: &'a RequestCall<'a>) -> &'a [u8] {
@@ -183,23 +393,43 @@ impl ReplySink for DriverReplySink {
         {
             let mut response = response;
             sender.prepare_response_for_method(self.request_id, self.method_id, &mut response);
-            let encoded_response: Arc<[u8]> = roam_postcard::to_vec(&response)
-                .expect("serialize operation response")
-                .into();
+
+            // Extract the root type ref before we strip schemas for storage.
+            let root_type = extract_root_type_ref(&response.schemas);
+
+            // Serialize the response WITHOUT schemas for the operation store.
+            let schemas_for_wire = std::mem::take(&mut response.schemas);
+            let encoded_for_store = PostcardPayload(
+                roam_postcard::to_vec(&response).expect("serialize operation response for store"),
+            );
+            response.schemas = schemas_for_wire;
+
+            // Send the full response (with schemas) on the wire.
             if let Err(_e) = sender.send_response(self.request_id, response).await {
                 sender.mark_failure(self.request_id, FailureDisposition::Cancelled);
             }
-            let waiters =
-                operations.seal(operation_id, self.request_id, Arc::clone(&encoded_response));
+
+            // Seal in the persistent store (payload without schemas).
+            let registry = sender.schema_registry();
+            operations.seal(operation_id, &encoded_for_store, &root_type, &registry);
+
+            // Get waiters from the live tracker and replay to them.
+            let waiters = self
+                .live_operations
+                .as_ref()
+                .map(|lo| lo.lock().seal(operation_id))
+                .unwrap_or_default();
             for waiter in waiters {
                 if waiter == self.request_id {
                     continue;
                 }
-                if send_encoded_response(
+                if replay_sealed_response(
                     sender.clone(),
                     waiter,
                     self.method_id,
-                    Arc::clone(&encoded_response),
+                    encoded_for_store.as_bytes(),
+                    root_type.clone(),
+                    operations.as_ref(),
                 )
                 .await
                 .is_err()
@@ -224,26 +454,29 @@ impl ReplySink for DriverReplySink {
 impl Drop for DriverReplySink {
     fn drop(&mut self) {
         if let Some(sender) = self.sender.take() {
-            if let (Some(operation_id), Some(operations)) =
-                (self.operation_id, self.operations.take())
-            {
-                let waiters = operations.fail_without_reply(operation_id, self.request_id);
-                let disposition = if self.retry.persist {
-                    FailureDisposition::Indeterminate
-                } else {
-                    FailureDisposition::Cancelled
-                };
-                for waiter in waiters {
-                    sender.mark_failure(waiter, disposition);
-                }
+            let disposition = if self.retry.persist {
+                FailureDisposition::Indeterminate
             } else {
-                let disposition = if self.retry.persist {
-                    FailureDisposition::Indeterminate
-                } else {
-                    FailureDisposition::Cancelled
-                };
-                sender.mark_failure(self.request_id, disposition);
+                FailureDisposition::Cancelled
+            };
+
+            if let Some(operation_id) = self.operation_id {
+                // Remove from persistent store (was admitted but never sealed).
+                if let Some(operations) = self.operations.take() {
+                    operations.remove(operation_id);
+                }
+                // Release waiters from the live tracker.
+                if let Some(live_ops) = self.live_operations.take() {
+                    if let Some(live) = live_ops.lock().release(operation_id) {
+                        for waiter in live.waiters {
+                            sender.mark_failure(waiter, disposition);
+                        }
+                        return;
+                    }
+                }
             }
+
+            sender.mark_failure(self.request_id, disposition);
         }
     }
 }
@@ -552,10 +785,11 @@ impl ChannelBinder for DriverCaller {
 impl Caller for DriverCaller {
     async fn call<'a>(&'a self, mut call: RequestCall<'a>) -> CallResult {
         if self.peer_supports_retry {
-            let operation_id = self
-                .shared
-                .next_operation_id
-                .fetch_add(1, Ordering::Relaxed);
+            let operation_id = OperationId(
+                self.shared
+                    .next_operation_id
+                    .fetch_add(1, Ordering::Relaxed),
+            );
             ensure_operation_id(&mut call.metadata, operation_id);
         }
 
@@ -707,6 +941,9 @@ pub struct Driver<H: Handler<DriverReplySink>> {
     /// In-flight server-side handler tasks, keyed by request ID.
     /// Used to abort handlers on cancel.
     in_flight_handlers: BTreeMap<RequestId, InFlightHandler>,
+    /// Tracks live operations for dedup/attach/conflict within this session.
+    /// Shared with DriverReplySink so seal can return waiters.
+    live_operations: Arc<SyncMutex<LiveOperationTracker>>,
     local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
     drop_control_seed: Option<mpsc::UnboundedSender<DropControlRequest>>,
     drop_control_request: DropControlRequest,
@@ -779,13 +1016,11 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
     }
 
     fn abort_channel_handlers(&mut self) {
-        for (req_id, in_flight) in &self.in_flight_handlers {
+        for (_req_id, in_flight) in &self.in_flight_handlers {
             if in_flight.has_channels {
                 if let Some(operation_id) = in_flight.operation_id {
-                    let _ = self
-                        .shared
-                        .operations
-                        .fail_without_reply(operation_id, *req_id);
+                    self.shared.operations.remove(operation_id);
+                    self.live_operations.lock().release(operation_id);
                 }
                 in_flight.handle.abort();
             }
@@ -836,6 +1071,10 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 channel_credits: SyncMutex::new("driver.channel_credits", BTreeMap::new()),
             }),
             in_flight_handlers: BTreeMap::new(),
+            live_operations: Arc::new(SyncMutex::new(
+                "driver.live_operations",
+                LiveOperationTracker::new(),
+            )),
             local_control_tx,
             drop_control_seed: control_tx,
             drop_control_request,
@@ -1060,7 +1299,8 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             let operation_id = metadata_operation_id(&call.metadata);
 
             if let Some(operation_id) = operation_id {
-                let admit = self.shared.operations.admit(
+                // 1. Check live tracker (in-flight operations in this session)
+                let admit = self.live_operations.lock().admit(
                     operation_id,
                     call.method_id,
                     incoming_args_bytes(&call),
@@ -1068,34 +1308,13 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     req_id,
                 );
                 match admit {
-                    OperationAdmit::Attached => return,
-                    OperationAdmit::Replay(encoded_response) => {
-                        let sender = self.sender.clone();
-                        let method_id = call.method_id;
-                        moire::task::spawn(
-                            async move {
-                                if send_encoded_response(
-                                    sender.clone(),
-                                    req_id,
-                                    method_id,
-                                    encoded_response,
-                                )
-                                .await
-                                .is_err()
-                                {
-                                    sender.mark_failure(req_id, FailureDisposition::Cancelled);
-                                }
-                            }
-                            .named("operation_replay"),
-                        );
-                        return;
-                    }
-                    OperationAdmit::Conflict => {
+                    AdmitResult::Attached => return,
+                    AdmitResult::Conflict => {
                         let sender = self.sender.clone();
                         moire::task::spawn(
                             async move {
                                 let error: Result<(), RoamError<core::convert::Infallible>> =
-                                    Err(RoamError::InvalidPayload("request ID conflict".into()));
+                                    Err(RoamError::InvalidPayload("operation ID conflict".into()));
                                 let _ = sender
                                     .send_response(
                                         req_id,
@@ -1111,7 +1330,43 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         );
                         return;
                     }
-                    OperationAdmit::Indeterminate => {
+                    AdmitResult::Start => {}
+                }
+
+                // 2. Check persistent store (sealed/admitted from previous sessions)
+                match self.shared.operations.lookup(operation_id) {
+                    crate::OperationState::Sealed => {
+                        // Replay the sealed response.
+                        if let Some(sealed) = self.shared.operations.get_sealed(operation_id) {
+                            let sender = self.sender.clone();
+                            let method_id = call.method_id;
+                            let operations = Arc::clone(&self.shared.operations);
+                            // Remove from live tracker — we're replaying, not running a handler.
+                            self.live_operations.lock().seal(operation_id);
+                            moire::task::spawn(
+                                async move {
+                                    if replay_sealed_response(
+                                        sender.clone(),
+                                        req_id,
+                                        method_id,
+                                        sealed.response.as_bytes(),
+                                        sealed.root_type,
+                                        operations.as_ref(),
+                                    )
+                                    .await
+                                    .is_err()
+                                    {
+                                        sender.mark_failure(req_id, FailureDisposition::Cancelled);
+                                    }
+                                }
+                                .named("operation_replay"),
+                            );
+                            return;
+                        }
+                    }
+                    crate::OperationState::Admitted => {
+                        // Previously admitted but never sealed — indeterminate.
+                        self.live_operations.lock().seal(operation_id);
                         let sender = self.sender.clone();
                         moire::task::spawn(
                             async move {
@@ -1132,7 +1387,10 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         );
                         return;
                     }
-                    OperationAdmit::Start => {}
+                    crate::OperationState::Unknown => {
+                        // New operation — admit in the persistent store and proceed.
+                        self.shared.operations.admit(operation_id);
+                    }
                 }
             }
             let reply = DriverReplySink {
@@ -1142,6 +1400,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 retry,
                 operation_id,
                 operations: operation_id.map(|_| Arc::clone(&self.shared.operations)),
+                live_operations: operation_id.map(|_| Arc::clone(&self.live_operations)),
                 binder: self.internal_binder(),
             };
             // TODO: detect channel presence from the deserialized payload
@@ -1175,26 +1434,29 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             // r[impl rpc.cancel]
             // r[impl rpc.cancel.channels]
             tracing::debug!(%req_id, in_flight = self.in_flight_handlers.contains_key(&req_id), "received cancel");
-            match self.shared.operations.cancel(req_id) {
-                OperationCancel::None => {
+            match self.live_operations.lock().cancel(req_id) {
+                CancelResult::NotFound => {
                     let should_abort = self
                         .in_flight_handlers
                         .get(&req_id)
                         .map(|in_flight| !in_flight.retry.persist)
                         .unwrap_or(false);
-                    tracing::debug!(%req_id, should_abort, "cancel OperationCancel::None");
+                    tracing::debug!(%req_id, should_abort, "cancel: not in live operations");
                     if should_abort && let Some(in_flight) = self.in_flight_handlers.remove(&req_id)
                     {
                         tracing::debug!(%req_id, "aborting handler");
                         in_flight.handle.abort();
                     }
                 }
-                OperationCancel::DetachOnly => {}
-                OperationCancel::Release {
+                CancelResult::Detached => {}
+                CancelResult::Abort {
                     owner_request_id,
                     waiters,
                 } => {
                     if let Some(in_flight) = self.in_flight_handlers.remove(&owner_request_id) {
+                        if let Some(op_id) = in_flight.operation_id {
+                            self.shared.operations.remove(op_id);
+                        }
                         in_flight.handle.abort();
                     }
                     for waiter in waiters {

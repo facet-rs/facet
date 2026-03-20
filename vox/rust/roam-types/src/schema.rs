@@ -850,22 +850,32 @@ pub struct SchemaSendTracker {
     emitted: HashMap<DeclId, SchemaHash>,
     /// Next index to assign during extraction.
     next_id: CycleSchemaIndex,
+    /// All extracted schemas, kept for the operation store to pull from.
+    registry: SchemaRegistry,
 }
 
 impl SchemaSendTracker {
     pub fn new() -> Self {
         SchemaSendTracker {
+            registry: HashMap::new(),
             sent_methods: HashMap::new(),
             emitted: HashMap::new(),
             next_id: CycleSchemaIndex::first(),
         }
     }
 
-    /// Reset all state — call on reconnection.
+    /// Reset connection-scoped state — call on reconnection.
+    /// The registry is preserved (schemas don't change across connections).
     pub fn reset(&mut self) {
         self.sent_methods.clear();
         self.emitted.clear();
         self.next_id = CycleSchemaIndex::first();
+    }
+
+    /// Borrow the schema registry. Used by the operation store to pull
+    /// schemas it hasn't stored yet.
+    pub fn registry(&self) -> &SchemaRegistry {
+        &self.registry
     }
 
     /// Prepare schemas for a method call/response, returning a CBOR payload
@@ -896,7 +906,13 @@ impl SchemaSendTracker {
         // Snapshot already-sent TypeSchemaIds before extraction adds new ones.
         let already_sent: HashSet<SchemaHash> = self.emitted.values().copied().collect();
         let extracted = self.extract_schemas(shape)?;
-        // Filter to only schemas not already sent.
+        // Add all schemas to the persistent registry (for the operation store).
+        for schema in &extracted.schemas {
+            self.registry
+                .entry(schema.id)
+                .or_insert_with(|| schema.clone());
+        }
+        // Filter to only schemas not already sent on the wire.
         let unsent: Vec<Schema> = extracted
             .schemas
             .into_iter()

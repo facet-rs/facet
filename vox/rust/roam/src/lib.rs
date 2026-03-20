@@ -100,9 +100,6 @@ pub use roam_types::{
 #[cfg(feature = "runtime")]
 pub use roam_core::*;
 
-#[cfg(feature = "runtime")]
-pub use roam_core::{InMemoryOperationStore, OperationAdmit, OperationCancel, OperationStore};
-
 // Channel binding via thread-local binder during deserialization
 #[cfg(not(target_arch = "wasm32"))]
 pub use roam_types::channel::with_channel_binder;

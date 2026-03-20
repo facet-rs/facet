@@ -1,295 +1,86 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::collections::{BTreeMap, HashMap};
 
 use moire::sync::SyncMutex;
-use roam_types::{MaybeSend, MaybeSync, MethodId, RequestId, RetryPolicy};
+use roam_types::{
+    MaybeSend, MaybeSync, MethodId, OperationId, PostcardPayload, RequestId, Schema, SchemaHash,
+    SchemaRegistry, TypeRef,
+};
 
-#[derive(Clone, PartialEq, Eq)]
-struct OperationSignature {
-    method_id: MethodId,
-    args: Arc<[u8]>,
+/// A sealed response stored in the operation store.
+pub struct SealedResponse {
+    /// Postcard-encoded response payload (without schemas).
+    pub response: PostcardPayload,
+    /// Root type ref for rebuilding the schema payload on replay.
+    pub root_type: TypeRef,
 }
 
-impl OperationSignature {
-    fn from_args(method_id: MethodId, args: &[u8]) -> Self {
-        Self {
-            method_id,
-            args: Arc::<[u8]>::from(args.to_vec()),
-        }
-    }
-
-    fn matches_call(&self, method_id: MethodId, args: &[u8]) -> bool {
-        self.method_id == method_id && self.args.as_ref() == args
-    }
+/// State of an operation in the store.
+pub enum OperationState {
+    /// Never seen this operation ID.
+    Unknown,
+    /// Operation was admitted but never sealed (crash/disconnect before completion).
+    Admitted,
+    /// Operation completed and response is available.
+    Sealed,
 }
 
-struct StoredOperation {
-    signature: OperationSignature,
-    retry: RetryPolicy,
-}
-
-struct LiveOperation {
-    stored: StoredOperation,
-    owner_request_id: RequestId,
-    waiters: Vec<RequestId>,
-}
-
-struct SealedOperation {
-    stored: StoredOperation,
-    encoded_response: Arc<[u8]>,
-}
-
-enum OperationState {
-    Live(LiveOperation),
-    Released(StoredOperation),
-    Sealed(SealedOperation),
-    Indeterminate(StoredOperation),
-}
-
-/// Result of admitting an operation ID against the current store state.
-pub enum OperationAdmit {
-    Start,
-    Attached,
-    Replay(Arc<[u8]>),
-    Conflict,
-    Indeterminate,
-}
-
-/// Effect of cancelling one waiter or owner request.
-pub enum OperationCancel {
-    None,
-    DetachOnly,
-    Release {
-        owner_request_id: RequestId,
-        waiters: Vec<RequestId>,
-    },
-}
-
-/// Connection-scoped operation state backing for retry/session recovery.
+/// Operation state backing for exactly-once delivery across session resumption.
 ///
-/// The default implementation is in-memory. Applications that want stronger
-/// retention or durability can provide their own implementation.
+/// The default implementation is in-memory. Applications that want durability
+/// can implement this trait backed by a database.
+///
+/// Schemas are stored separately from payloads, deduplicated by SchemaHash.
 pub trait OperationStore: MaybeSend + MaybeSync + 'static {
-    fn admit(
-        &self,
-        operation_id: u64,
-        method_id: MethodId,
-        args: &[u8],
-        retry: RetryPolicy,
-        request_id: RequestId,
-    ) -> OperationAdmit;
+    /// Record that we've started processing this operation.
+    /// Called before the handler runs.
+    fn admit(&self, operation_id: OperationId);
 
+    /// Check the state of an operation.
+    fn lookup(&self, operation_id: OperationId) -> OperationState;
+
+    /// Retrieve a sealed response.
+    fn get_sealed(&self, operation_id: OperationId) -> Option<SealedResponse>;
+
+    /// Store the sealed response for an operation.
+    ///
+    /// `response` is the postcard-encoded payload WITHOUT schemas.
+    /// The store pulls needed schemas from `registry`, deduplicated by SchemaHash.
     fn seal(
         &self,
-        operation_id: u64,
-        owner_request_id: RequestId,
-        encoded_response: Arc<[u8]>,
-    ) -> Vec<RequestId>;
+        operation_id: OperationId,
+        response: &PostcardPayload,
+        root_type: &TypeRef,
+        registry: &SchemaRegistry,
+    );
 
-    fn fail_without_reply(&self, operation_id: u64, owner_request_id: RequestId) -> Vec<RequestId>;
+    /// Remove an admitted (but not sealed) operation, e.g. after handler failure.
+    fn remove(&self, operation_id: OperationId);
 
-    fn cancel(&self, request_id: RequestId) -> OperationCancel;
+    /// Retrieve a schema by its content hash.
+    fn get_schema(&self, id: SchemaHash) -> Option<Schema>;
 }
 
-#[derive(Default)]
-struct OperationRegistry {
-    states: BTreeMap<u64, OperationState>,
-    request_to_operation: BTreeMap<RequestId, u64>,
-}
+// ============================================================================
+// In-memory implementation
+// ============================================================================
 
-impl OperationRegistry {
-    fn admit(
-        &mut self,
-        operation_id: u64,
-        method_id: MethodId,
-        args: &[u8],
-        retry: RetryPolicy,
-        request_id: RequestId,
-    ) -> OperationAdmit {
-        let signature = OperationSignature::from_args(method_id, args);
-        let Some(existing) = self.states.remove(&operation_id) else {
-            self.request_to_operation.insert(request_id, operation_id);
-            self.states.insert(
-                operation_id,
-                OperationState::Live(LiveOperation {
-                    stored: StoredOperation { signature, retry },
-                    owner_request_id: request_id,
-                    waiters: vec![request_id],
-                }),
-            );
-            return OperationAdmit::Start;
-        };
-
-        match existing {
-            OperationState::Live(mut live) => {
-                if !live.stored.signature.matches_call(method_id, args) {
-                    self.states.insert(operation_id, OperationState::Live(live));
-                    return OperationAdmit::Conflict;
-                }
-                live.waiters.push(request_id);
-                self.request_to_operation.insert(request_id, operation_id);
-                self.states.insert(operation_id, OperationState::Live(live));
-                OperationAdmit::Attached
-            }
-            OperationState::Sealed(sealed) => {
-                let replay = if sealed.stored.signature.matches_call(method_id, args) {
-                    OperationAdmit::Replay(Arc::clone(&sealed.encoded_response))
-                } else {
-                    OperationAdmit::Conflict
-                };
-                self.states
-                    .insert(operation_id, OperationState::Sealed(sealed));
-                replay
-            }
-            OperationState::Released(stored) => {
-                if !stored.signature.matches_call(method_id, args) || !stored.retry.idem {
-                    let admit = if stored.signature.matches_call(method_id, args) {
-                        OperationAdmit::Indeterminate
-                    } else {
-                        OperationAdmit::Conflict
-                    };
-                    self.states
-                        .insert(operation_id, OperationState::Released(stored));
-                    return admit;
-                }
-                self.request_to_operation.insert(request_id, operation_id);
-                self.states.insert(
-                    operation_id,
-                    OperationState::Live(LiveOperation {
-                        stored: StoredOperation {
-                            signature,
-                            retry: stored.retry,
-                        },
-                        owner_request_id: request_id,
-                        waiters: vec![request_id],
-                    }),
-                );
-                OperationAdmit::Start
-            }
-            OperationState::Indeterminate(stored) => {
-                if !stored.signature.matches_call(method_id, args) || !stored.retry.idem {
-                    let admit = if stored.signature.matches_call(method_id, args) {
-                        OperationAdmit::Indeterminate
-                    } else {
-                        OperationAdmit::Conflict
-                    };
-                    self.states
-                        .insert(operation_id, OperationState::Indeterminate(stored));
-                    return admit;
-                }
-                self.request_to_operation.insert(request_id, operation_id);
-                self.states.insert(
-                    operation_id,
-                    OperationState::Live(LiveOperation {
-                        stored: StoredOperation {
-                            signature,
-                            retry: stored.retry,
-                        },
-                        owner_request_id: request_id,
-                        waiters: vec![request_id],
-                    }),
-                );
-                OperationAdmit::Start
-            }
-        }
-    }
-
-    fn seal(
-        &mut self,
-        operation_id: u64,
-        owner_request_id: RequestId,
-        encoded_response: Arc<[u8]>,
-    ) -> Vec<RequestId> {
-        let Some(existing) = self.states.remove(&operation_id) else {
-            return vec![];
-        };
-        let OperationState::Live(live) = existing else {
-            self.states.insert(operation_id, existing);
-            return vec![];
-        };
-        if live.owner_request_id != owner_request_id {
-            self.states.insert(operation_id, OperationState::Live(live));
-            return vec![];
-        }
-        for waiter in &live.waiters {
-            self.request_to_operation.remove(waiter);
-        }
-        let waiters = live.waiters.clone();
-        self.states.insert(
-            operation_id,
-            OperationState::Sealed(SealedOperation {
-                stored: live.stored,
-                encoded_response,
-            }),
-        );
-        waiters
-    }
-
-    fn fail_without_reply(
-        &mut self,
-        operation_id: u64,
-        owner_request_id: RequestId,
-    ) -> Vec<RequestId> {
-        let Some(existing) = self.states.remove(&operation_id) else {
-            return vec![];
-        };
-        let OperationState::Live(live) = existing else {
-            self.states.insert(operation_id, existing);
-            return vec![];
-        };
-        if live.owner_request_id != owner_request_id {
-            self.states.insert(operation_id, OperationState::Live(live));
-            return vec![];
-        }
-        for waiter in &live.waiters {
-            self.request_to_operation.remove(waiter);
-        }
-        let waiters = live.waiters.clone();
-        let next = if live.stored.retry.persist {
-            OperationState::Indeterminate(live.stored)
-        } else {
-            OperationState::Released(live.stored)
-        };
-        self.states.insert(operation_id, next);
-        waiters
-    }
-
-    fn cancel(&mut self, request_id: RequestId) -> OperationCancel {
-        let Some(operation_id) = self.request_to_operation.get(&request_id).copied() else {
-            return OperationCancel::None;
-        };
-        let Some(OperationState::Live(live)) = self.states.get_mut(&operation_id) else {
-            self.request_to_operation.remove(&request_id);
-            return OperationCancel::None;
-        };
-
-        if live.stored.retry.persist {
-            if live.owner_request_id == request_id {
-                return OperationCancel::None;
-            }
-            live.waiters.retain(|candidate| *candidate != request_id);
-            self.request_to_operation.remove(&request_id);
-            return OperationCancel::DetachOnly;
-        }
-
-        let Some(OperationState::Live(live)) = self.states.remove(&operation_id) else {
-            return OperationCancel::None;
-        };
-        for waiter in &live.waiters {
-            self.request_to_operation.remove(waiter);
-        }
-        let waiters = live.waiters.clone();
-        self.states
-            .insert(operation_id, OperationState::Released(live.stored));
-        OperationCancel::Release {
-            owner_request_id: live.owner_request_id,
-            waiters,
-        }
-    }
+enum InMemoryState {
+    Admitted,
+    Sealed {
+        response: PostcardPayload,
+        root_type: TypeRef,
+    },
 }
 
 /// Default in-memory operation store.
 pub struct InMemoryOperationStore {
-    inner: SyncMutex<OperationRegistry>,
+    inner: SyncMutex<InMemoryRegistry>,
+}
+
+#[derive(Default)]
+struct InMemoryRegistry {
+    operations: BTreeMap<OperationId, InMemoryState>,
+    schemas: HashMap<SchemaHash, Schema>,
 }
 
 impl InMemoryOperationStore {
@@ -301,43 +92,89 @@ impl InMemoryOperationStore {
 impl Default for InMemoryOperationStore {
     fn default() -> Self {
         Self {
-            inner: SyncMutex::new("driver.operations", OperationRegistry::default()),
+            inner: SyncMutex::new("driver.operations", InMemoryRegistry::default()),
         }
     }
 }
 
 impl OperationStore for InMemoryOperationStore {
-    fn admit(
-        &self,
-        operation_id: u64,
-        method_id: MethodId,
-        args: &[u8],
-        retry: RetryPolicy,
-        request_id: RequestId,
-    ) -> OperationAdmit {
-        self.inner
-            .lock()
-            .admit(operation_id, method_id, args, retry, request_id)
+    fn admit(&self, operation_id: OperationId) {
+        let mut inner = self.inner.lock();
+        inner
+            .operations
+            .entry(operation_id)
+            .or_insert(InMemoryState::Admitted);
+    }
+
+    fn lookup(&self, operation_id: OperationId) -> OperationState {
+        let inner = self.inner.lock();
+        match inner.operations.get(&operation_id) {
+            None => OperationState::Unknown,
+            Some(InMemoryState::Admitted) => OperationState::Admitted,
+            Some(InMemoryState::Sealed { .. }) => OperationState::Sealed,
+        }
+    }
+
+    fn get_sealed(&self, operation_id: OperationId) -> Option<SealedResponse> {
+        let inner = self.inner.lock();
+        match inner.operations.get(&operation_id) {
+            Some(InMemoryState::Sealed {
+                response,
+                root_type,
+            }) => Some(SealedResponse {
+                response: response.clone(),
+                root_type: root_type.clone(),
+            }),
+            _ => None,
+        }
     }
 
     fn seal(
         &self,
-        operation_id: u64,
-        owner_request_id: RequestId,
-        encoded_response: Arc<[u8]>,
-    ) -> Vec<RequestId> {
-        self.inner
-            .lock()
-            .seal(operation_id, owner_request_id, encoded_response)
+        operation_id: OperationId,
+        response: &PostcardPayload,
+        root_type: &TypeRef,
+        registry: &SchemaRegistry,
+    ) {
+        let mut inner = self.inner.lock();
+        // Store schemas the store doesn't have yet.
+        let mut queue = Vec::new();
+        root_type.collect_ids(&mut queue);
+        let mut visited = std::collections::HashSet::new();
+        while let Some(id) = queue.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            if inner.schemas.contains_key(&id) {
+                continue;
+            }
+            if let Some(schema) = registry.get(&id) {
+                for child_id in roam_types::schema_child_ids(&schema.kind) {
+                    queue.push(child_id);
+                }
+                inner.schemas.insert(id, schema.clone());
+            }
+        }
+        inner.operations.insert(
+            operation_id,
+            InMemoryState::Sealed {
+                response: response.clone(),
+                root_type: root_type.clone(),
+            },
+        );
     }
 
-    fn fail_without_reply(&self, operation_id: u64, owner_request_id: RequestId) -> Vec<RequestId> {
-        self.inner
-            .lock()
-            .fail_without_reply(operation_id, owner_request_id)
+    fn remove(&self, operation_id: OperationId) {
+        let mut inner = self.inner.lock();
+        if matches!(
+            inner.operations.get(&operation_id),
+            Some(InMemoryState::Admitted)
+        ) {
+            inner.operations.remove(&operation_id);
+        }
     }
 
-    fn cancel(&self, request_id: RequestId) -> OperationCancel {
-        self.inner.lock().cancel(request_id)
+    fn get_schema(&self, id: SchemaHash) -> Option<Schema> {
+        self.inner.lock().schemas.get(&id).cloned()
     }
 }
