@@ -1182,4 +1182,541 @@ mod tests {
             "double round-trip should preserve content"
         );
     }
+
+    // ========================================================================
+    // skip_value tests — exercise decode::skip_value for every SchemaKind
+    // ========================================================================
+
+    #[test]
+    fn skip_struct_field() {
+        // Remote: { id: u32, extra: Point, name: String }
+        // Local:  { id: u32, name: String }
+        // The Point struct must be skipped entirely.
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Msg {
+                pub id: u32,
+                pub extra: Point,
+                pub name: String,
+            }
+            #[derive(Facet, Debug)]
+            pub struct Point {
+                pub x: f64,
+                pub y: f64,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Msg {
+                pub id: u32,
+                pub name: String,
+            }
+        }
+
+        let r = plan_for(remote::Msg::SHAPE, local::Msg::SHAPE).unwrap();
+        let bytes = to_vec(&remote::Msg {
+            id: 1,
+            extra: remote::Point { x: 3.14, y: 2.72 },
+            name: "hi".into(),
+        })
+        .unwrap();
+        let result: local::Msg = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::Msg {
+                id: 1,
+                name: "hi".into()
+            }
+        );
+    }
+
+    #[test]
+    fn skip_enum_field() {
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Msg {
+                pub id: u32,
+                pub status: Status,
+                pub name: String,
+            }
+            #[derive(Facet, Debug)]
+            #[repr(u8)]
+            pub enum Status {
+                Active = 0,
+                Inactive = 1,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Msg {
+                pub id: u32,
+                pub name: String,
+            }
+        }
+
+        let r = plan_for(remote::Msg::SHAPE, local::Msg::SHAPE).unwrap();
+        let bytes = to_vec(&remote::Msg {
+            id: 5,
+            status: remote::Status::Inactive,
+            name: "test".into(),
+        })
+        .unwrap();
+        let result: local::Msg = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::Msg {
+                id: 5,
+                name: "test".into()
+            }
+        );
+    }
+
+    #[test]
+    fn skip_option_field() {
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Msg {
+                pub id: u32,
+                pub maybe: Option<String>,
+                pub name: String,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Msg {
+                pub id: u32,
+                pub name: String,
+            }
+        }
+
+        // Test with Some
+        let r = plan_for(remote::Msg::SHAPE, local::Msg::SHAPE).unwrap();
+        let bytes = to_vec(&remote::Msg {
+            id: 1,
+            maybe: Some("present".into()),
+            name: "hi".into(),
+        })
+        .unwrap();
+        let result: local::Msg = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::Msg {
+                id: 1,
+                name: "hi".into()
+            }
+        );
+
+        // Test with None
+        let bytes = to_vec(&remote::Msg {
+            id: 2,
+            maybe: None,
+            name: "bye".into(),
+        })
+        .unwrap();
+        let result: local::Msg = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::Msg {
+                id: 2,
+                name: "bye".into()
+            }
+        );
+    }
+
+    #[test]
+    fn skip_map_field() {
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Msg {
+                pub id: u32,
+                pub meta: std::collections::HashMap<String, u32>,
+                pub name: String,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Msg {
+                pub id: u32,
+                pub name: String,
+            }
+        }
+
+        let r = plan_for(remote::Msg::SHAPE, local::Msg::SHAPE).unwrap();
+        let mut meta = std::collections::HashMap::new();
+        meta.insert("a".into(), 1);
+        meta.insert("b".into(), 2);
+        let bytes = to_vec(&remote::Msg {
+            id: 10,
+            meta,
+            name: "x".into(),
+        })
+        .unwrap();
+        let result: local::Msg = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::Msg {
+                id: 10,
+                name: "x".into()
+            }
+        );
+    }
+
+    #[test]
+    fn skip_array_field() {
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Msg {
+                pub id: u32,
+                pub coords: [f64; 3],
+                pub name: String,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Msg {
+                pub id: u32,
+                pub name: String,
+            }
+        }
+
+        let r = plan_for(remote::Msg::SHAPE, local::Msg::SHAPE).unwrap();
+        let bytes = to_vec(&remote::Msg {
+            id: 7,
+            coords: [1.0, 2.0, 3.0],
+            name: "y".into(),
+        })
+        .unwrap();
+        let result: local::Msg = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::Msg {
+                id: 7,
+                name: "y".into()
+            }
+        );
+    }
+
+    #[test]
+    fn skip_tuple_field() {
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Msg {
+                pub id: u32,
+                pub pair: (String, u64),
+                pub name: String,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Msg {
+                pub id: u32,
+                pub name: String,
+            }
+        }
+
+        let r = plan_for(remote::Msg::SHAPE, local::Msg::SHAPE).unwrap();
+        let bytes = to_vec(&remote::Msg {
+            id: 3,
+            pair: ("hello".into(), 999),
+            name: "z".into(),
+        })
+        .unwrap();
+        let result: local::Msg = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::Msg {
+                id: 3,
+                name: "z".into()
+            }
+        );
+    }
+
+    #[test]
+    fn skip_enum_with_newtype_payload() {
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Msg {
+                pub id: u32,
+                pub shape: Shape,
+                pub name: String,
+            }
+            #[derive(Facet, Debug)]
+            #[repr(u8)]
+            pub enum Shape {
+                Circle(f64) = 0,
+                Rect { w: f64, h: f64 } = 1,
+                Empty = 2,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Msg {
+                pub id: u32,
+                pub name: String,
+            }
+        }
+
+        let r = plan_for(remote::Msg::SHAPE, local::Msg::SHAPE).unwrap();
+
+        // Skip a newtype variant
+        let bytes = to_vec(&remote::Msg {
+            id: 1,
+            shape: remote::Shape::Circle(5.0),
+            name: "a".into(),
+        })
+        .unwrap();
+        let result: local::Msg = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::Msg {
+                id: 1,
+                name: "a".into()
+            }
+        );
+
+        // Skip a struct variant
+        let bytes = to_vec(&remote::Msg {
+            id: 2,
+            shape: remote::Shape::Rect { w: 3.0, h: 4.0 },
+            name: "b".into(),
+        })
+        .unwrap();
+        let result: local::Msg = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::Msg {
+                id: 2,
+                name: "b".into()
+            }
+        );
+
+        // Skip a unit variant
+        let bytes = to_vec(&remote::Msg {
+            id: 3,
+            shape: remote::Shape::Empty,
+            name: "c".into(),
+        })
+        .unwrap();
+        let result: local::Msg = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(
+            result,
+            local::Msg {
+                id: 3,
+                name: "c".into()
+            }
+        );
+    }
+
+    // ========================================================================
+    // Tuple plan tests
+    // ========================================================================
+
+    #[test]
+    fn translation_tuple_identity() {
+        let r = plan_for(
+            <(u32, String) as Facet>::SHAPE,
+            <(u32, String) as Facet>::SHAPE,
+        )
+        .unwrap();
+        let bytes = to_vec(&(42u32, "hello".to_string())).unwrap();
+        let result: (u32, String) =
+            from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(result, (42, "hello".to_string()));
+    }
+
+    #[test]
+    fn translation_tuple_length_mismatch_errors() {
+        let result = plan_for(
+            <(u32, String) as Facet>::SHAPE,
+            <(u32, String, bool) as Facet>::SHAPE,
+        );
+        assert!(result.is_err(), "tuple length mismatch should error");
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err}").contains("tuple length"),
+            "error should mention tuple length: {err}"
+        );
+    }
+
+    // ========================================================================
+    // Name mismatch test
+    // ========================================================================
+
+    #[test]
+    fn translation_struct_name_mismatch_errors() {
+        mod a {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Foo {
+                pub x: u32,
+            }
+        }
+        mod b {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Bar {
+                pub x: u32,
+            }
+        }
+
+        let result = plan_for(a::Foo::SHAPE, b::Bar::SHAPE);
+        assert!(result.is_err(), "name mismatch should error");
+        let err = result.unwrap_err();
+        assert!(
+            format!("{err}").contains("name mismatch") || format!("{err}").contains("NameMismatch"),
+            "error should mention name mismatch: {err}"
+        );
+    }
+
+    // ========================================================================
+    // from_schemas constructor test
+    // ========================================================================
+
+    #[test]
+    fn schema_set_from_schemas_works() {
+        let schemas = roam_types::extract_schemas(<Vec<u32> as Facet>::SHAPE)
+            .expect("schema extraction")
+            .schemas;
+        let set = SchemaSet::from_schemas(schemas);
+        assert!(
+            matches!(set.root.kind, roam_types::SchemaKind::List { .. }),
+            "root should be List"
+        );
+    }
+
+    // ========================================================================
+    // Decode error path tests
+    // ========================================================================
+
+    #[test]
+    fn decode_eof_on_empty_input() {
+        let result: Result<u32, _> = from_slice(&[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_invalid_option_tag() {
+        // Option is encoded as 0x00 (None) or 0x01 (Some). 0x02 is invalid.
+        // Encode: struct with one Option<u32> field
+        // Manually craft bytes: option tag = 0x02
+        let result: Result<Option<u32>, _> = from_slice(&[0x02]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_invalid_bool() {
+        // Bool is 0x00 or 0x01. 0x02 is invalid.
+        let result: Result<bool, _> = from_slice(&[0x02]);
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // deserialize_into with planned deserialization
+    // ========================================================================
+
+    #[test]
+    fn deserialize_into_with_plan() {
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            pub struct Point {
+                pub y: f64,
+                pub x: f64,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            pub struct Point {
+                pub x: f64,
+                pub y: f64,
+            }
+        }
+
+        let r = plan_for(remote::Point::SHAPE, local::Point::SHAPE).unwrap();
+        let bytes = to_vec(&remote::Point { y: 2.0, x: 1.0 }).unwrap();
+
+        // Use the deserialize_into entry point directly with a Partial
+        let partial = facet_reflect::Partial::alloc_owned::<local::Point>().unwrap();
+        let partial =
+            deserialize_into::<false>(partial, &bytes, &r.plan, &r.remote.registry).unwrap();
+        let heap = partial.build().unwrap();
+        let value: local::Point = heap.materialize().unwrap();
+        assert_eq!(value, local::Point { x: 1.0, y: 2.0 });
+    }
+
+    // ========================================================================
+    // Enum variant mapping deserialization
+    // ========================================================================
+
+    #[test]
+    fn translation_enum_struct_variant_with_plan() {
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            #[repr(u8)]
+            pub enum Shape {
+                Circle { radius: f64 } = 0,
+                Rect { w: f64, h: f64 } = 1,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            #[repr(u8)]
+            pub enum Shape {
+                Circle { radius: f64 } = 0,
+                Rect { w: f64, h: f64 } = 1,
+                Triangle { base: f64, height: f64 } = 2,
+            }
+        }
+
+        let r = plan_for(remote::Shape::SHAPE, local::Shape::SHAPE).unwrap();
+
+        let bytes = to_vec(&remote::Shape::Rect { w: 3.0, h: 4.0 }).unwrap();
+        let result: local::Shape =
+            from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(result, local::Shape::Rect { w: 3.0, h: 4.0 });
+    }
+
+    #[test]
+    fn translation_enum_tuple_variant() {
+        mod remote {
+            use facet::Facet;
+            #[derive(Facet, Debug)]
+            #[repr(u8)]
+            pub enum Msg {
+                Pair(u32, String) = 0,
+                Single(u32) = 1,
+            }
+        }
+        mod local {
+            use facet::Facet;
+            #[derive(Facet, Debug, PartialEq)]
+            #[repr(u8)]
+            pub enum Msg {
+                Pair(u32, String) = 0,
+                Single(u32) = 1,
+            }
+        }
+
+        let r = plan_for(remote::Msg::SHAPE, local::Msg::SHAPE).unwrap();
+        let bytes = to_vec(&remote::Msg::Pair(42, "hi".into())).unwrap();
+        let result: local::Msg = from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(result, local::Msg::Pair(42, "hi".into()));
+    }
 }
