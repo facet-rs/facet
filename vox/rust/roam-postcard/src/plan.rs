@@ -127,13 +127,13 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
     let local = &input.local.root;
 
     // Validate type names match for nominal types (struct/enum).
-    if let (Some(remote_name), Some(local_name)) = (remote.name(), local.name()) {
-        if remote_name != local_name {
-            return Err(TranslationError::new(TranslationErrorKind::NameMismatch {
-                remote: remote.clone(),
-                local: local.clone(),
-            }));
-        }
+    if let (Some(remote_name), Some(local_name)) = (remote.name(), local.name())
+        && remote_name != local_name
+    {
+        return Err(TranslationError::new(TranslationErrorKind::NameMismatch {
+            remote: remote.clone(),
+            local: local.clone(),
+        }));
     }
 
     match (&remote.kind, &local.kind) {

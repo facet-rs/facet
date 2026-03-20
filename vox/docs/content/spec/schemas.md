@@ -74,8 +74,8 @@ translation plan is built — not mid-stream when a field has the wrong value.
 >     produce the same byte sequence.
 >   * **`u64` values** (array lengths) are fed as 8 bytes in
 >     little-endian order.
->   * **`u32` values** (variant indices, type variable indices) are fed
->     as 4 bytes in little-endian order.
+>   * **`u32` values** (variant indices) are fed as 4 bytes in
+>     little-endian order.
 >   * **TypeRef values** are fed according to `r[schema.type-id.hash.typeref]`.
 >
 > Implementations MUST produce identical hashes for structurally
@@ -92,8 +92,8 @@ translation plan is built — not mid-stream when a field has the wrong value.
 >   * **`Concrete` with args:** the tag `"concrete"` then the type's
 >     content hash (8 bytes, little-endian), then the tag `"args"`,
 >     then each argument's `TypeRef` encoding in order (recursive)
->   * **`Var`:** the tag `"var"` then the index as a `u32`
->     (4 bytes, little-endian)
+>   * **`Var`:** the tag `"var"` then the parameter name
+>     (length-prefixed UTF-8 string)
 
 ## Primitive type hashes
 
@@ -357,11 +357,10 @@ enum TypeRef {
         /// For example, `Vec<String>` is `Concrete { type_id: <Vec>, args: [<String>] }`.
         args: Vec<TypeRef>,
     },
-    /// A reference to a type parameter of the enclosing generic type.
-    /// The index refers to the `type_params` list on the `Schema`.
-    /// For example, in `Result<T, E>`, the `Ok` variant's payload
-    /// references `Var(0)` for `T`.
-    Var(u32),
+    /// A reference to a type parameter of the enclosing generic type,
+    /// by name. For example, in `Result<T, E>`, the `Ok` variant's
+    /// payload references `Var("T")`.
+    Var(String),
 }
 
 /// The primitive types of the postcard encoding.
@@ -471,10 +470,10 @@ struct Schema {
     /// The content hash that identifies this type declaration.
     /// For generic types, this identifies the generic declaration
     /// (e.g. `Result`), not a specific instantiation.
-    type_id: TypeSchemaId,
+    id: TypeSchemaId,
     /// Type parameter names for generic types. Empty for non-generic
     /// types. For `Result<T, E>`, this would be `["T", "E"]`.
-    /// The schema body uses `TypeRef::Var(index)` to reference these.
+    /// The schema body uses `TypeRef::Var(name)` to reference these.
     type_params: Vec<String>,
     /// The structural description of this type.
     kind: SchemaKind,
@@ -498,7 +497,7 @@ The normative rules below define the CBOR encoding of these types.
 >
 > A schema MUST be a CBOR map containing:
 >
->   * `type_id` — a CBOR unsigned integer (the type declaration's content hash)
+>   * `id` — a CBOR unsigned integer (the type declaration's content hash)
 >   * `type_params` — a CBOR array of type parameter names (UTF-8 strings).
 >     Empty array for non-generic types. MAY be omitted if empty.
 >   * `kind` — one of: `"struct"`, `"enum"`, `"tuple"`, `"list"`, `"map"`,
@@ -516,8 +515,8 @@ The normative rules below define the CBOR encoding of these types.
 >   * A CBOR map `{"concrete": type_id}` — a non-generic concrete type
 >   * A CBOR map `{"concrete": type_id, "args": [type_ref, ...]}` — a
 >     generic type with type arguments (each argument is itself a `TypeRef`)
->   * A CBOR map `{"var": index}` — a reference to the `index`th type
->     parameter of the enclosing schema's `type_params` list
+>   * A CBOR map `{"var": name}` — a reference to a type parameter of
+>     the enclosing schema's `type_params` list, by name (UTF-8 string)
 
 > r[schema.format.primitive]
 >

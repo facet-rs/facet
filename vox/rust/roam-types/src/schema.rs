@@ -316,17 +316,19 @@ impl<'a, Id: Copy> SchemaHasher<'a, Id> {
     fn feed_type_ref(&mut self, tr: &TypeRef<Id>) {
         match tr {
             TypeRef::Concrete { type_id, args } => {
-                self.hasher.update(&[0x00]);
+                self.feed_string("concrete");
                 let resolved = (self.resolve)(*type_id);
                 self.hasher.update(&resolved.0.to_le_bytes());
-                self.hasher.update(&(args.len() as u32).to_le_bytes());
-                for arg in args {
-                    self.feed_type_ref(arg);
+                if !args.is_empty() {
+                    self.feed_string("args");
+                    for arg in args {
+                        self.feed_type_ref(arg);
+                    }
                 }
             }
-            TypeRef::Var(idx) => {
-                self.hasher.update(&[0x01]);
-                self.hasher.update(&idx.to_le_bytes());
+            TypeRef::Var(name) => {
+                self.feed_string("var");
+                self.feed_string(&name.0);
             }
         }
     }
@@ -336,20 +338,32 @@ impl<'a, Id: Copy> SchemaHasher<'a, Id> {
     // r[impl schema.type-id.hash.enum]
     // r[impl schema.type-id.hash.container]
     // r[impl schema.type-id.hash.tuple]
-    fn feed_kind(&mut self, kind: &SchemaKind<Id>) {
+    fn feed_schema(&mut self, kind: &SchemaKind<Id>, type_params: &[TypeParamName]) {
         match kind {
             SchemaKind::Primitive { primitive_type } => {
                 self.feed_string(primitive_type.hash_tag());
             }
-            SchemaKind::Struct { fields, .. } => {
+            SchemaKind::Struct { name, fields } => {
                 self.feed_string("struct");
+                self.feed_string(name);
+                self.hasher
+                    .update(&(type_params.len() as u32).to_le_bytes());
+                for tp in type_params {
+                    self.feed_string(&tp.0);
+                }
                 for field in fields {
                     self.feed_string(&field.name);
                     self.feed_type_ref(&field.type_ref);
                 }
             }
-            SchemaKind::Enum { variants, .. } => {
+            SchemaKind::Enum { name, variants } => {
                 self.feed_string("enum");
+                self.feed_string(name);
+                self.hasher
+                    .update(&(type_params.len() as u32).to_le_bytes());
+                for tp in type_params {
+                    self.feed_string(&tp.0);
+                }
                 for variant in variants {
                     self.feed_string(&variant.name);
                     self.hasher.update(&variant.index.to_le_bytes());
@@ -411,13 +425,14 @@ impl<'a, Id: Copy> SchemaHasher<'a, Id> {
     }
 }
 
-/// Compute the content hash of a SchemaKind, given a resolver for child type IDs.
+/// Compute the content hash of a schema, given a resolver for child type IDs.
 pub fn compute_content_hash<Id: Copy>(
     kind: &SchemaKind<Id>,
+    type_params: &[TypeParamName],
     resolve: &dyn Fn(Id) -> TypeSchemaId,
 ) -> TypeSchemaId {
     let mut hasher = SchemaHasher::new(resolve);
-    hasher.feed_kind(kind);
+    hasher.feed_schema(kind, type_params);
     hasher.finalize()
 }
 
@@ -526,7 +541,6 @@ pub struct SchemaPayload {
 
 /// Build a CBOR-encoded schema message.
 // r[impl schema.format.self-contained]
-// r[impl schema.format.batch]
 // r[impl schema.principles.cbor]
 pub fn build_schema_message(
     schemas: &[Schema],
@@ -540,7 +554,6 @@ pub fn build_schema_message(
 }
 
 /// Parse a CBOR-encoded schema message.
-// r[impl schema.format.batch]
 // r[impl schema.principles.cbor]
 pub fn parse_schema_message(bytes: &[u8]) -> Result<SchemaPayload, facet_cbor::CborError> {
     facet_cbor::from_slice(bytes)
@@ -907,13 +920,12 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
             continue; // Already finalized, skip.
         }
         for r in collect_refs(&schema.kind) {
-            if let MixedId::Temp(t) = r {
-                if let Some(&ref_idx) = temp_to_idx.get(&t) {
-                    if ref_idx >= i {
-                        in_recursive_group[i] = true;
-                        in_recursive_group[ref_idx] = true;
-                    }
-                }
+            if let MixedId::Temp(t) = r
+                && let Some(&ref_idx) = temp_to_idx.get(&t)
+                && ref_idx >= i
+            {
+                in_recursive_group[i] = true;
+                in_recursive_group[ref_idx] = true;
             }
         }
     }
@@ -927,8 +939,9 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
             continue;
         }
         if let MixedId::Temp(temp) = schema.id {
-            let final_id =
-                compute_content_hash(&schema.kind, &|mid| resolve_mixed(mid, &temp_to_final));
+            let final_id = compute_content_hash(&schema.kind, &schema.type_params, &|mid| {
+                resolve_mixed(mid, &temp_to_final)
+            });
             temp_to_final.insert(temp, final_id);
         }
     }
@@ -959,16 +972,17 @@ fn finalize_content_hashes(schemas: Vec<MixedSchema>) -> Vec<Schema> {
         // Step 1: Preliminary hashes — intra-group refs become sentinel (0).
         let mut prelim_hashes: Vec<TypeSchemaId> = Vec::new();
         for schema in &schemas[group_start..group_end] {
-            let prelim = compute_content_hash(&schema.kind, &|mid| match mid {
-                MixedId::Final(tid) => tid,
-                MixedId::Temp(t) => {
-                    if group_temp_ids.contains(&t) {
-                        TypeSchemaId(0) // sentinel
-                    } else {
-                        temp_to_final.get(&t).copied().unwrap_or(TypeSchemaId(0))
+            let prelim =
+                compute_content_hash(&schema.kind, &schema.type_params, &|mid| match mid {
+                    MixedId::Final(tid) => tid,
+                    MixedId::Temp(t) => {
+                        if group_temp_ids.contains(&t) {
+                            TypeSchemaId(0) // sentinel
+                        } else {
+                            temp_to_final.get(&t).copied().unwrap_or(TypeSchemaId(0))
+                        }
                     }
-                }
-            });
+                });
             prelim_hashes.push(prelim);
         }
 
@@ -1434,7 +1448,6 @@ mod tests {
 
     // r[verify schema.principles.cbor]
     // r[verify schema.format.self-contained]
-    // r[verify schema.format.batch]
     #[test]
     fn cbor_round_trip() {
         let schema = Schema {
@@ -1827,7 +1840,9 @@ mod tests {
         // All primitive hashes must be unique.
         let hashes: Vec<TypeSchemaId> = primitives
             .iter()
-            .map(|p| compute_content_hash(&SchemaKind::Primitive { primitive_type: *p }, &|id| id))
+            .map(|p| {
+                compute_content_hash(&SchemaKind::Primitive { primitive_type: *p }, &[], &|id| id)
+            })
             .collect();
         let unique: HashSet<TypeSchemaId> = hashes.iter().copied().collect();
         assert_eq!(
@@ -1839,7 +1854,7 @@ mod tests {
         // Verify they're deterministic (same computation, same result).
         for (i, p) in primitives.iter().enumerate() {
             let hash2 =
-                compute_content_hash(&SchemaKind::Primitive { primitive_type: *p }, &|id| id);
+                compute_content_hash(&SchemaKind::Primitive { primitive_type: *p }, &[], &|id| id);
             assert_eq!(hashes[i], hash2, "hash for {:?} must be deterministic", p);
         }
     }

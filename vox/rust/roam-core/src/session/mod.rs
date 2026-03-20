@@ -1405,7 +1405,6 @@ struct SessionCoreInner {
 }
 
 impl SessionCore {
-    // r[impl schema.exchange.ordering]
     // r[impl schema.principles.sender-driven]
     pub(crate) async fn send<'a>(&self, mut msg: Message<'a>) -> Result<(), ()> {
         let tx = {

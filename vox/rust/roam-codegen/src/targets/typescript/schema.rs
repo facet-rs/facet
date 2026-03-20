@@ -407,7 +407,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
             let kind = SchemaKind::Tuple {
                 elements: arg_root_ids,
             };
-            let type_id = compute_content_hash(&kind, &|id| id);
+            let type_id = compute_content_hash(&kind, &[], &|id| id);
             all_schemas.push(Schema {
                 id: type_id,
                 type_params: vec![],
@@ -475,7 +475,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
                 },
             ],
         };
-        let roam_error_id = compute_content_hash(&roam_error_kind, &|id| id);
+        let roam_error_id = compute_content_hash(&roam_error_kind, &[], &|id| id);
         all_schemas.push(Schema {
             id: roam_error_id,
             type_params: vec![],
@@ -502,7 +502,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
                 },
             ],
         };
-        let result_id = compute_content_hash(&result_kind, &|id| id);
+        let result_id = compute_content_hash(&result_kind, &[], &|id| id);
         all_schemas.push(Schema {
             id: result_id,
             type_params: vec![],
@@ -511,7 +511,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
 
         method_schema_infos.push(MethodSchemaInfo {
             method_id,
-            args_root: args_root,
+            args_root,
             response_root: result_id,
         });
     }
