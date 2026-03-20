@@ -2401,4 +2401,135 @@ mod tests {
         let result: Msg = from_slice(&bytes).unwrap();
         assert_eq!(result, msg);
     }
+
+    // ========================================================================
+    // Borrowed slice round-trips (exercises scatter Reference segments)
+    // ========================================================================
+
+    #[test]
+    fn round_trip_struct_with_borrowed_bytes() {
+        // Small &[u8] — should be staged in scatter plan
+        #[derive(Facet, Debug, PartialEq)]
+        struct Msg<'a> {
+            id: u32,
+            data: &'a [u8],
+        }
+
+        let data = [1u8, 2, 3, 4, 5];
+        let msg = Msg {
+            id: 42,
+            data: &data,
+        };
+        let direct = to_vec(&msg).unwrap();
+
+        let peek = facet_reflect::Peek::new(&msg);
+        let plan = peek_to_scatter_plan(peek).unwrap();
+        let mut scatter_bytes = vec![0u8; plan.total_size()];
+        plan.write_into(&mut scatter_bytes);
+        assert_eq!(direct, scatter_bytes);
+
+        let result: Msg = from_slice_borrowed(&direct).unwrap();
+        assert_eq!(result.id, 42);
+        assert_eq!(result.data, &data);
+    }
+
+    #[test]
+    fn round_trip_struct_with_large_borrowed_bytes() {
+        // Large &[u8] (>4096) — should become a Reference segment in scatter
+        #[derive(Facet, Debug, PartialEq)]
+        struct Msg<'a> {
+            id: u32,
+            data: &'a [u8],
+        }
+
+        let data = vec![0xABu8; 8192];
+        let msg = Msg { id: 1, data: &data };
+        let direct = to_vec(&msg).unwrap();
+
+        let peek = facet_reflect::Peek::new(&msg);
+        let plan = peek_to_scatter_plan(peek).unwrap();
+
+        // With large data, we should have a Reference segment
+        let has_reference = plan
+            .segments()
+            .iter()
+            .any(|s| matches!(s, scatter::Segment::Reference { .. }));
+        assert!(
+            has_reference,
+            "large borrowed bytes should produce a Reference segment"
+        );
+
+        let mut scatter_bytes = vec![0u8; plan.total_size()];
+        plan.write_into(&mut scatter_bytes);
+        assert_eq!(direct, scatter_bytes);
+
+        // Also verify io_slices
+        let io_slices = plan.to_io_slices();
+        let mut io_bytes = Vec::new();
+        for slice in &io_slices {
+            io_bytes.extend_from_slice(slice);
+        }
+        assert_eq!(direct, io_bytes);
+
+        let result: Msg = from_slice_borrowed(&direct).unwrap();
+        assert_eq!(result.id, 1);
+        assert_eq!(result.data, &data[..]);
+    }
+
+    #[test]
+    fn round_trip_struct_with_borrowed_str() {
+        // &str exercises the string reference path
+        #[derive(Facet, Debug, PartialEq)]
+        struct Msg<'a> {
+            name: &'a str,
+            id: u32,
+        }
+
+        let msg = Msg {
+            name: "hello world",
+            id: 7,
+        };
+        let direct = to_vec(&msg).unwrap();
+
+        let peek = facet_reflect::Peek::new(&msg);
+        let plan = peek_to_scatter_plan(peek).unwrap();
+        let mut scatter_bytes = vec![0u8; plan.total_size()];
+        plan.write_into(&mut scatter_bytes);
+        assert_eq!(direct, scatter_bytes);
+
+        let result: Msg = from_slice_borrowed(&direct).unwrap();
+        assert_eq!(result, msg);
+    }
+
+    #[test]
+    fn round_trip_large_borrowed_str() {
+        // Large &str (>4096) to hit the Reference threshold
+        #[derive(Facet, Debug, PartialEq)]
+        struct Msg<'a> {
+            text: &'a str,
+        }
+
+        let text = "x".repeat(8192);
+        let msg = Msg { text: &text };
+        let direct = to_vec(&msg).unwrap();
+
+        let peek = facet_reflect::Peek::new(&msg);
+        let plan = peek_to_scatter_plan(peek).unwrap();
+
+        let has_reference = plan
+            .segments()
+            .iter()
+            .any(|s| matches!(s, scatter::Segment::Reference { .. }));
+        assert!(
+            has_reference,
+            "large borrowed str should produce a Reference segment"
+        );
+
+        let mut scatter_bytes = vec![0u8; plan.total_size()];
+        plan.write_into(&mut scatter_bytes);
+        assert_eq!(direct, scatter_bytes);
+
+        let result: Msg = from_slice_borrowed(&direct).unwrap();
+        assert_eq!(result, msg);
+    }
 }
