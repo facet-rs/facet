@@ -615,25 +615,25 @@ function parseSchemaKind(kindMap: CborMap): RemoteSchemaKind {
     }
     case "Tuple": {
       const elementsRaw = payload["elements"] as CborValue[];
-      const elements = elementsRaw.map(parseTypeIdHex);
+      const elements = elementsRaw.map(parseTypeRef);
       return { tag: "Tuple", elements };
     }
     case "List":
-      return { tag: "List", element: parseTypeIdHex(payload["element"]) };
+      return { tag: "List", element: parseTypeRef(payload["element"]) };
     case "Map":
       return {
         tag: "Map",
-        key: parseTypeIdHex(payload["key"]),
-        value: parseTypeIdHex(payload["value"]),
+        key: parseTypeRef(payload["key"]),
+        value: parseTypeRef(payload["value"]),
       };
     case "Array":
       return {
         tag: "Array",
-        element: parseTypeIdHex(payload["element"]),
+        element: parseTypeRef(payload["element"]),
         length: payload["length"] as number,
       };
     case "Option":
-      return { tag: "Option", element: parseTypeIdHex(payload["element"]) };
+      return { tag: "Option", element: parseTypeRef(payload["element"]) };
     default:
       throw new Error(`unknown SchemaKind variant: ${variant}`);
   }
@@ -649,11 +649,23 @@ function parseMethodBinding(raw: CborValue): RemoteMethodBinding {
   };
 }
 
+function parseTypeRef(raw: CborValue): string {
+  // TypeRef is an enum: {"Concrete": {"type_id": <bytes>, "args": [...]}} or {"Var": <u32>}
+  const map = raw as CborMap;
+  const keys = Object.keys(map);
+  const variant = keys[0];
+  if (variant === "Concrete") {
+    const inner = map["Concrete"] as CborMap;
+    return parseTypeIdHex(inner["type_id"]);
+  }
+  throw new Error(`unsupported TypeRef variant: ${variant}`);
+}
+
 function parseFieldSchema(raw: CborValue): RemoteFieldSchema {
   const map = raw as CborMap;
   return {
     name: map["name"] as string,
-    typeIdHex: parseTypeIdHex(map["type_id"]),
+    typeIdHex: parseTypeRef(map["type_ref"]),
     required: map["required"] as boolean,
   };
 }
@@ -680,12 +692,12 @@ function parseVariantPayload(raw: CborValue): RemoteVariantPayload {
       return { tag: "Unit" };
     case "Newtype": {
       const inner = map["Newtype"] as CborMap;
-      return { tag: "Newtype", typeIdHex: parseTypeIdHex(inner["type_id"]) };
+      return { tag: "Newtype", typeIdHex: parseTypeRef(inner["type_ref"]) };
     }
     case "Tuple": {
       const inner = map["Tuple"] as CborMap;
       const typesRaw = inner["types"] as CborValue[];
-      return { tag: "Tuple", elements: typesRaw.map(parseTypeIdHex) };
+      return { tag: "Tuple", elements: typesRaw.map(parseTypeRef) };
     }
     case "Struct": {
       const inner = map["Struct"] as CborMap;

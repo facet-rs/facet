@@ -1208,7 +1208,7 @@ impl<'a> ExtractCtx<'a> {
                     shape,
                     type_id,
                     SchemaKind::Enum {
-                        name: format!("{shape}"),
+                        name: shape.type_identifier.to_string(),
                         variants: vec![
                             VariantSchema {
                                 name: "Ok".to_string(),
@@ -1266,7 +1266,7 @@ impl<'a> ExtractCtx<'a> {
                         })
                         .collect();
                     SchemaKind::Struct {
-                        name: format!("{shape}"),
+                        name: shape.type_identifier.to_string(),
                         fields,
                     }
                 }
@@ -1319,7 +1319,7 @@ impl<'a> ExtractCtx<'a> {
                     })
                     .collect();
                 SchemaKind::Enum {
-                    name: format!("{shape}"),
+                    name: shape.type_identifier.to_string(),
                     variants,
                 }
             }
