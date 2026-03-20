@@ -890,14 +890,15 @@ impl SchemaSendTracker {
         // Slow path: extract, deduplicate, encode.
         // Snapshot already-sent TypeSchemaIds before extraction adds new ones.
         let already_sent: HashSet<TypeSchemaId> = self.emitted.values().copied().collect();
-        let all_schemas = self.extract_schemas(shape)?;
-        let root_type_schema_id = match all_schemas.last() {
-            Some(s) => s.id,
-            None => return Ok(CborPayload::default()),
+        let extracted = self.extract_schemas(shape)?;
+        let root_type_schema_id = match &extracted.root_type_ref {
+            TypeRef::Concrete { type_id, .. } => *type_id,
+            TypeRef::Var(_) => unreachable!("root type ref is never a Var"),
         };
 
         // Filter to only schemas not already sent.
-        let unsent: Vec<Schema> = all_schemas
+        let unsent: Vec<Schema> = extracted
+            .schemas
             .into_iter()
             .filter(|s| !already_sent.contains(&s.id))
             .collect();
@@ -925,7 +926,7 @@ impl SchemaSendTracker {
     pub fn extract_schemas(
         &mut self,
         shape: &'static Shape,
-    ) -> Result<Vec<Schema>, SchemaExtractError> {
+    ) -> Result<ExtractedSchemas, SchemaExtractError> {
         let mut ctx = ExtractCtx {
             emitted: &self.emitted,
             next_id: &mut self.next_id,
@@ -933,7 +934,7 @@ impl SchemaSendTracker {
             assigned: HashMap::new(),
             seen: HashSet::new(),
         };
-        ctx.extract(shape)?;
+        let root_mixed_ref = ctx.extract(shape)?;
         let assigned = ctx.assigned;
         let schemas: Vec<MixedSchema> = ctx.schemas.into_values().collect();
         let (finalized, temp_to_final) = finalize_content_hashes(schemas)?;
@@ -950,7 +951,19 @@ impl SchemaSendTracker {
             self.emitted.insert(*decl_id, final_id);
         }
 
-        Ok(finalized)
+        // Resolve the root TypeRef from MixedId to TypeSchemaId.
+        let resolve = |mid: MixedId| -> TypeSchemaId {
+            match mid {
+                MixedId::Final(tid) => tid,
+                MixedId::Temp(t) => temp_to_final.get(&t).copied().unwrap_or(TypeSchemaId(0)),
+            }
+        };
+        let root_type_ref = root_mixed_ref.map(resolve);
+
+        Ok(ExtractedSchemas {
+            schemas: finalized,
+            root_type_ref,
+        })
     }
 }
 
@@ -1080,9 +1093,17 @@ impl std::fmt::Debug for SchemaRecvTracker {
     }
 }
 
+/// Result of schema extraction: the schemas and the root TypeRef.
+pub struct ExtractedSchemas {
+    /// All schemas in dependency order (dependencies before dependents).
+    pub schemas: Vec<Schema>,
+    /// The root TypeRef — may be generic (e.g. `Concrete { id: result_id, args: [i64, MathError] }`).
+    pub root_type_ref: TypeRef,
+}
+
 /// Extract schemas without a tracker (uses a temporary counter).
 /// Useful for tests and one-off schema extraction.
-pub fn extract_schemas(shape: &'static Shape) -> Result<Vec<Schema>, SchemaExtractError> {
+pub fn extract_schemas(shape: &'static Shape) -> Result<ExtractedSchemas, SchemaExtractError> {
     let mut tracker = SchemaSendTracker::new();
     tracker.extract_schemas(shape)
 }

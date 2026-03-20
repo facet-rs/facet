@@ -83,8 +83,8 @@ impl MessagePlan {
             });
         }
 
-        let remote = SchemaSet::from_extracted(result.peer_schema.clone());
-        let local = SchemaSet::from_extracted(result.our_schema.clone());
+        let remote = SchemaSet::from_schemas(result.peer_schema.clone());
+        let local = SchemaSet::from_schemas(result.our_schema.clone());
 
         let plan = build_plan(&PlanInput {
             remote: &remote,

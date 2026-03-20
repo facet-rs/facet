@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use facet_core::{Shape, Type, UserType};
 use roam_types::{
-    FieldSchema, Schema, SchemaKind, SchemaRegistry, TypeRef, TypeSchemaId, VariantPayload,
-    VariantSchema,
+    ExtractedSchemas, FieldSchema, Schema, SchemaKind, SchemaRegistry, TypeRef, TypeSchemaId,
+    VariantPayload, VariantSchema,
 };
 
 use crate::error::{PathSegment, SchemaSide, TranslationError, TranslationErrorKind};
@@ -40,7 +40,7 @@ pub struct EnumTranslationPlan {
     pub variant_plans: HashMap<usize, TranslationPlan>,
 }
 
-/// A schema set: the root schema + the registry of all referenced types.
+/// A schema set: the root schema (with Vars resolved) + the registry.
 #[derive(Debug)]
 pub struct SchemaSet {
     pub root: Schema,
@@ -48,11 +48,32 @@ pub struct SchemaSet {
 }
 
 impl SchemaSet {
-    /// Build a SchemaSet from extracted schemas. The root is the last schema
-    /// (extraction produces dependencies before dependents).
-    pub fn from_extracted(schemas: Vec<Schema>) -> Self {
+    /// Build a SchemaSet from a raw list of schemas (e.g. received from the wire).
+    /// The root is the last schema. Its kind is used as-is (no Var resolution).
+    pub fn from_schemas(schemas: Vec<Schema>) -> Self {
         let root = schemas.last().cloned().expect("empty schema list");
         let registry = roam_types::build_registry(&schemas);
+        SchemaSet { root, registry }
+    }
+
+    /// Build a SchemaSet from extracted schemas.
+    /// The root TypeRef is used to resolve any Var references in the root schema.
+    pub fn from_extracted(extracted: ExtractedSchemas) -> Self {
+        let registry = roam_types::build_registry(&extracted.schemas);
+        // Resolve the root schema's kind using the root TypeRef's args.
+        let root_kind = extracted
+            .root_type_ref
+            .resolve_kind(&registry)
+            .expect("root schema must be in registry");
+        let root_id = match &extracted.root_type_ref {
+            TypeRef::Concrete { type_id, .. } => *type_id,
+            TypeRef::Var(_) => unreachable!("root type ref is never a Var"),
+        };
+        let root = Schema {
+            id: root_id,
+            type_params: vec![],
+            kind: root_kind,
+        };
         SchemaSet { root, registry }
     }
 }

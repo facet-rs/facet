@@ -34,6 +34,7 @@ impl std::error::Error for HandshakeError {}
 fn message_schema() -> Vec<Schema> {
     roam_types::extract_schemas(<roam_types::Message<'static> as facet::Facet<'static>>::SHAPE)
         .expect("schema extraction")
+        .schemas
 }
 
 /// Send a CBOR-encoded handshake message on a raw link.

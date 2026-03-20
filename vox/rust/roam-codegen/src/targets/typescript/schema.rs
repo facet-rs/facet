@@ -364,23 +364,23 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
     // We'll finalize content hashes and CBOR-encode at the end.
     let mut all_schemas: Vec<Schema> = Vec::new();
 
-    /// Extract schemas for a shape, append to all_schemas, return root TypeSchemaId.
+    /// Extract schemas for a shape, append to all_schemas, return root TypeRef.
     fn extract_into(
         tracker: &mut SchemaSendTracker,
         shape: &'static Shape,
         all_schemas: &mut Vec<Schema>,
-    ) -> TypeSchemaId {
-        let schemas = tracker.extract_schemas(shape).expect("schema extraction");
-        let root = schemas.last().map(|s| s.id).unwrap_or(TypeSchemaId(0));
-        all_schemas.extend(schemas);
+    ) -> TypeRef<TypeSchemaId> {
+        let extracted = tracker.extract_schemas(shape).expect("schema extraction");
+        let root = extracted.root_type_ref.clone();
+        all_schemas.extend(extracted.schemas);
         root
     }
 
-    // Track per-method info using TypeSchemaId (content hashes from extraction).
+    // Track per-method info with full TypeRefs (preserving generic args).
     struct MethodSchemaInfo {
         method_id: u64,
-        args_root: TypeSchemaId,
-        response_root: TypeSchemaId,
+        args_root: TypeRef<TypeSchemaId>,
+        response_root: TypeRef<TypeSchemaId>,
     }
 
     let mut method_schema_infos: Vec<MethodSchemaInfo> = Vec::new();
@@ -397,34 +397,30 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
                 &mut all_schemas,
             )
         } else {
-            let arg_root_ids: Vec<TypeRef<TypeSchemaId>> = method
+            let arg_refs: Vec<TypeRef<TypeSchemaId>> = method
                 .args
                 .iter()
-                .map(|arg| {
-                    TypeRef::concrete(extract_into(&mut tracker, arg.shape, &mut all_schemas))
-                })
+                .map(|arg| extract_into(&mut tracker, arg.shape, &mut all_schemas))
                 .collect();
-            let kind = SchemaKind::Tuple {
-                elements: arg_root_ids,
-            };
+            let kind = SchemaKind::Tuple { elements: arg_refs };
             let type_id = compute_content_hash(&kind, &[], &|id| id);
             all_schemas.push(Schema {
                 id: type_id,
                 type_params: vec![],
                 kind,
             });
-            type_id
+            TypeRef::concrete(type_id)
         };
 
         // --- Response ---
         // The wire encoding is ALWAYS Result<T, RoamError<E>>.
-        let string_id = extract_into(
+        let string_ref = extract_into(
             &mut tracker,
             <String as Facet<'static>>::SHAPE,
             &mut all_schemas,
         );
 
-        let (ok_root_id, err_root_id) = match classify_shape(method.return_shape) {
+        let (ok_ref, err_ref) = match classify_shape(method.return_shape) {
             ShapeKind::Result { ok, err } => (
                 extract_into(&mut tracker, ok, &mut all_schemas),
                 extract_into(&mut tracker, err, &mut all_schemas),
@@ -447,9 +443,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
                 VariantSchema {
                     name: "User".into(),
                     index: 0,
-                    payload: VariantPayload::Newtype {
-                        type_ref: TypeRef::concrete(err_root_id),
-                    },
+                    payload: VariantPayload::Newtype { type_ref: err_ref },
                 },
                 VariantSchema {
                     name: "UnknownMethod".into(),
@@ -460,7 +454,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
                     name: "InvalidPayload".into(),
                     index: 2,
                     payload: VariantPayload::Newtype {
-                        type_ref: TypeRef::concrete(string_id),
+                        type_ref: string_ref,
                     },
                 },
                 VariantSchema {
@@ -489,9 +483,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
                 VariantSchema {
                     name: "Ok".into(),
                     index: 0,
-                    payload: VariantPayload::Newtype {
-                        type_ref: TypeRef::concrete(ok_root_id),
-                    },
+                    payload: VariantPayload::Newtype { type_ref: ok_ref },
                 },
                 VariantSchema {
                     name: "Err".into(),
@@ -511,8 +503,8 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
 
         method_schema_infos.push(MethodSchemaInfo {
             method_id,
-            args_root,
-            response_root: result_id,
+            args_root: args_root,
+            response_root: TypeRef::concrete(result_id),
         });
     }
 
@@ -531,11 +523,13 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
 
     // Build method infos with final content-hashed IDs.
     for info in &method_schema_infos {
-        // Collect all dep IDs reachable from a root by walking the schema graph.
-        let collect_deps = |root: TypeSchemaId| -> Vec<u64> {
+        // Collect all dep IDs reachable from a root TypeRef by walking the schema graph.
+        let collect_deps = |root: &TypeRef<TypeSchemaId>| -> Vec<u64> {
             let mut deps = Vec::new();
             let mut visited = std::collections::HashSet::new();
-            let mut queue = vec![root];
+            // Seed the queue with all concrete IDs from the root TypeRef.
+            let mut queue = Vec::new();
+            root.collect_ids(&mut queue);
             while let Some(id) = queue.pop() {
                 if !visited.insert(id) {
                     continue;
@@ -554,15 +548,25 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
             deps
         };
 
-        let args_dep_ids = collect_deps(info.args_root);
-        let response_dep_ids = collect_deps(info.response_root);
+        let args_dep_ids = collect_deps(&info.args_root);
+        let response_dep_ids = collect_deps(&info.response_root);
+
+        // Extract root IDs for the method info.
+        let args_root_id = match &info.args_root {
+            TypeRef::Concrete { type_id, .. } => type_id.0,
+            _ => 0,
+        };
+        let response_root_id = match &info.response_root {
+            TypeRef::Concrete { type_id, .. } => type_id.0,
+            _ => 0,
+        };
 
         method_infos.push(MethodInfo {
             method_id: info.method_id,
             args_dep_ids,
-            args_root_id: info.args_root.0,
+            args_root_id,
             response_dep_ids,
-            response_root_id: info.response_root.0,
+            response_root_id,
         });
     }
 
