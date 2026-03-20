@@ -865,8 +865,6 @@ pub struct SchemaSendTracker {
     emitted: HashMap<DeclId, SchemaHash>,
     /// SchemaHashes already sent on this connection.
     sent_schemas: HashSet<SchemaHash>,
-    /// Next index to assign during extraction.
-    next_id: CycleSchemaIndex,
     /// All extracted schemas, kept for the operation store to pull from.
     registry: SchemaRegistry,
 }
@@ -878,7 +876,6 @@ impl SchemaSendTracker {
             sent_methods: HashMap::new(),
             sent_schemas: HashSet::new(),
             emitted: HashMap::new(),
-            next_id: CycleSchemaIndex::first(),
         }
     }
 
@@ -888,7 +885,6 @@ impl SchemaSendTracker {
         self.sent_methods.clear();
         self.sent_schemas.clear();
         self.emitted.clear();
-        self.next_id = CycleSchemaIndex::first();
     }
 
     /// Borrow the schema registry. Used by the operation store to pull
@@ -1044,7 +1040,7 @@ impl SchemaSendTracker {
     ) -> Result<ExtractedSchemas, SchemaExtractError> {
         let mut ctx = ExtractCtx {
             emitted: &self.emitted,
-            next_id: &mut self.next_id,
+            next_id: CycleSchemaIndex::first(),
             schemas: IndexMap::new(),
             assigned: HashMap::new(),
             seen: HashSet::new(),
@@ -1415,8 +1411,8 @@ fn finalize_content_hashes(
 struct ExtractCtx<'a> {
     /// Already-finalized schemas from previous extraction passes.
     emitted: &'a HashMap<DeclId, SchemaHash>,
-    /// Counter for assigning temp IDs (shared with tracker).
-    next_id: &'a mut CycleSchemaIndex,
+    /// Counter for assigning temp IDs
+    next_id: CycleSchemaIndex,
     /// Schemas being built in this extraction pass, keyed by DeclId.
     /// Insertion order is dependency order.
     schemas: IndexMap<DeclId, MixedSchema>,
