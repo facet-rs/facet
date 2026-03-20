@@ -1882,6 +1882,36 @@ mod tests {
     use super::*;
     use facet::Facet;
 
+    struct TestSchematic {
+        direction: BindingDirection,
+        shape: &'static Shape,
+        attached: CborPayload,
+    }
+
+    impl TestSchematic {
+        fn new(direction: BindingDirection, shape: &'static Shape) -> Self {
+            Self {
+                direction,
+                shape,
+                attached: CborPayload::default(),
+            }
+        }
+    }
+
+    impl Schematic for TestSchematic {
+        fn direction(&self) -> BindingDirection {
+            self.direction
+        }
+
+        fn shape(&self) -> &'static Shape {
+            self.shape
+        }
+
+        fn attach_schemas(&mut self, schemas: CborPayload) {
+            self.attached = schemas;
+        }
+    }
+
     // r[verify schema.type-id]
     #[test]
     fn type_ids_are_u64_content_hashes() {
@@ -1902,10 +1932,15 @@ mod tests {
                 primitive_type: PrimitiveType::U32,
             },
         };
-        let bytes = build_schema_message(std::slice::from_ref(&schema), &[]);
-        let payload = parse_schema_message(&bytes).expect("should parse CBOR");
+        let bytes = SchemaPayload {
+            schemas: vec![schema.clone()],
+            root: TypeRef::concrete(schema.id),
+        }
+        .to_cbor();
+        let payload = SchemaPayload::from_cbor(&bytes.0).expect("should parse CBOR");
         assert_eq!(payload.schemas.len(), 1);
         assert_eq!(payload.schemas[0].id, schema.id);
+        assert_eq!(payload.root, TypeRef::concrete(schema.id));
     }
 
     // r[verify schema.format.primitive]
@@ -2175,20 +2210,23 @@ mod tests {
     fn tracker_prepare_send_returns_payload_then_empty() {
         let mut tracker = SchemaSendTracker::new();
         let method = MethodId(1);
+        let mut schematic = TestSchematic::new(BindingDirection::Args, <u32 as Facet>::SHAPE);
         let first = tracker
-            .attach_schemas_if_needed(method, <u32 as Facet>::SHAPE, BindingDirection::Args)
+            .attach_schemas_if_needed(method, &mut schematic)
             .unwrap();
         assert!(
             !first.is_empty(),
             "first prepare_send should return payload"
         );
+        assert_eq!(schematic.attached.0, first.0);
         let second = tracker
-            .attach_schemas_if_needed(method, <u32 as Facet>::SHAPE, BindingDirection::Args)
+            .attach_schemas_if_needed(method, &mut schematic)
             .unwrap();
         assert!(
             second.is_empty(),
             "second prepare_send for same method should return empty"
         );
+        assert!(schematic.attached.is_empty());
     }
 
     // r[verify schema.tracking.transitive]
@@ -2203,11 +2241,12 @@ mod tests {
 
         let mut tracker = SchemaSendTracker::new();
         let method = MethodId(1);
+        let mut schematic = TestSchematic::new(BindingDirection::Args, Outer::SHAPE);
         let first = tracker
-            .attach_schemas_if_needed(method, Outer::SHAPE, BindingDirection::Args)
+            .attach_schemas_if_needed(method, &mut schematic)
             .unwrap();
         assert!(!first.is_empty(), "should return schemas");
-        let parsed = first.parse().expect("should parse CBOR");
+        let parsed = SchemaPayload::from_cbor(&first.0).expect("should parse CBOR");
         assert!(
             parsed.schemas.len() >= 3,
             "should include transitive deps, got {}",
@@ -2215,8 +2254,9 @@ mod tests {
         );
 
         // Same method again — nothing to send
+        schematic.shape = <u32 as Facet>::SHAPE;
         let again = tracker
-            .attach_schemas_if_needed(method, <u32 as Facet>::SHAPE, BindingDirection::Args)
+            .attach_schemas_if_needed(method, &mut schematic)
             .unwrap();
         assert!(
             again.is_empty(),
@@ -2232,12 +2272,20 @@ mod tests {
         let id = schemas[0].id;
         assert!(tracker.get_received(&id).is_none());
         tracker
-            .record_received(SchemaPayload {
-                schemas,
-                method_bindings: vec![],
-            })
+            .record_received(
+                MethodId(7),
+                BindingDirection::Args,
+                SchemaPayload {
+                    schemas,
+                    root: TypeRef::concrete(id),
+                },
+            )
             .expect("first record should succeed");
         assert!(tracker.get_received(&id).is_some());
+        assert_eq!(
+            tracker.get_remote_args_root(MethodId(7)),
+            Some(TypeRef::concrete(id))
+        );
     }
 
     // r[verify schema.type-id]
@@ -2374,47 +2422,44 @@ mod tests {
         let method = MethodId(1);
 
         // Send args binding
+        let mut args_schematic = TestSchematic::new(BindingDirection::Args, <u32 as Facet>::SHAPE);
         let args = tracker
-            .attach_schemas_if_needed(method, <u32 as Facet>::SHAPE, BindingDirection::Args)
+            .attach_schemas_if_needed(method, &mut args_schematic)
             .unwrap();
         assert!(!args.is_empty(), "should send args");
-        let args_parsed = args.parse().expect("parse args CBOR");
-        assert_eq!(args_parsed.method_bindings.len(), 1);
-        assert_eq!(
-            args_parsed.method_bindings[0].direction,
-            BindingDirection::Args
-        );
+        let args_parsed = SchemaPayload::from_cbor(&args.0).expect("parse args CBOR");
 
         // Send response binding for the same method — should NOT be deduplicated
+        let mut response_schematic =
+            TestSchematic::new(BindingDirection::Response, <String as Facet>::SHAPE);
         let response = tracker
-            .attach_schemas_if_needed(method, <String as Facet>::SHAPE, BindingDirection::Response)
+            .attach_schemas_if_needed(method, &mut response_schematic)
             .unwrap();
         assert!(!response.is_empty(), "should send response");
-        let response_parsed = response.parse().expect("parse response CBOR");
-        assert_eq!(response_parsed.method_bindings.len(), 1);
-        assert_eq!(
-            response_parsed.method_bindings[0].direction,
-            BindingDirection::Response
-        );
+        let response_parsed = SchemaPayload::from_cbor(&response.0).expect("parse response CBOR");
+        assert_ne!(args_parsed.root, response_parsed.root);
 
         // Record received bindings and verify they go to separate maps
         let recv_tracker = SchemaRecvTracker::new();
         recv_tracker
-            .record_received(SchemaPayload {
-                schemas: extract_schemas(<u64 as Facet>::SHAPE).unwrap().schemas,
-                method_bindings: vec![
-                    MethodSchemaBinding {
-                        method_id: MethodId(42),
-                        root_type_ref: TypeRef::concrete(SchemaHash(100)),
-                        direction: BindingDirection::Args,
-                    },
-                    MethodSchemaBinding {
-                        method_id: MethodId(42),
-                        root_type_ref: TypeRef::concrete(SchemaHash(200)),
-                        direction: BindingDirection::Response,
-                    },
-                ],
-            })
+            .record_received(
+                MethodId(42),
+                BindingDirection::Args,
+                SchemaPayload {
+                    schemas: extract_schemas(<u64 as Facet>::SHAPE).unwrap().schemas,
+                    root: TypeRef::concrete(SchemaHash(100)),
+                },
+            )
+            .expect("record should succeed");
+        recv_tracker
+            .record_received(
+                MethodId(42),
+                BindingDirection::Response,
+                SchemaPayload {
+                    schemas: vec![],
+                    root: TypeRef::concrete(SchemaHash(200)),
+                },
+            )
             .expect("record should succeed");
 
         assert_eq!(
@@ -2432,16 +2477,24 @@ mod tests {
         let tracker = SchemaRecvTracker::new();
         let schemas = extract_schemas(<u32 as Facet>::SHAPE).unwrap().schemas;
         tracker
-            .record_received(SchemaPayload {
-                schemas: schemas.clone(),
-                method_bindings: vec![],
-            })
+            .record_received(
+                MethodId(9),
+                BindingDirection::Args,
+                SchemaPayload {
+                    schemas: schemas.clone(),
+                    root: TypeRef::concrete(schemas[0].id),
+                },
+            )
             .expect("first record should succeed");
         let err = tracker
-            .record_received(SchemaPayload {
-                schemas: schemas.clone(),
-                method_bindings: vec![],
-            })
+            .record_received(
+                MethodId(9),
+                BindingDirection::Args,
+                SchemaPayload {
+                    schemas: schemas.clone(),
+                    root: TypeRef::concrete(schemas[0].id),
+                },
+            )
             .expect_err("duplicate should fail");
         assert_eq!(err.type_id, schemas[0].id);
     }
@@ -2450,15 +2503,16 @@ mod tests {
     fn send_tracker_reset_clears_all_state() {
         let mut tracker = SchemaSendTracker::new();
         let method = MethodId(1);
+        let mut schematic = TestSchematic::new(BindingDirection::Args, <u32 as Facet>::SHAPE);
         let first = tracker
-            .attach_schemas_if_needed(method, <u32 as Facet>::SHAPE, BindingDirection::Args)
+            .attach_schemas_if_needed(method, &mut schematic)
             .unwrap();
         assert!(!first.is_empty(), "first should return payload");
 
         tracker.reset();
 
         let after_reset = tracker
-            .attach_schemas_if_needed(method, <u32 as Facet>::SHAPE, BindingDirection::Args)
+            .attach_schemas_if_needed(method, &mut schematic)
             .unwrap();
         assert!(
             !after_reset.is_empty(),
@@ -2671,26 +2725,17 @@ mod tests {
     }
 
     #[test]
-    fn method_schema_binding_cbor_round_trip() {
-        let binding = MethodSchemaBinding {
-            method_id: MethodId(42),
-            root_type_ref: TypeRef::Concrete {
+    fn schema_payload_cbor_round_trip() {
+        let payload = SchemaPayload {
+            schemas: vec![],
+            root: TypeRef::Concrete {
                 type_id: SchemaHash(123),
                 args: vec![TypeRef::concrete(SchemaHash(456))],
             },
-            direction: BindingDirection::Args,
         };
-        let payload = SchemaPayload {
-            schemas: vec![],
-            method_bindings: vec![binding],
-        };
-        let bytes = build_schema_message(&payload.schemas, &payload.method_bindings);
-        let parsed = parse_schema_message(&bytes).expect("should parse CBOR");
-        assert_eq!(parsed.method_bindings.len(), 1);
-        let b = &parsed.method_bindings[0];
-        assert_eq!(b.method_id, MethodId(42));
-        assert_eq!(b.direction, BindingDirection::Args);
-        match &b.root_type_ref {
+        let bytes = payload.to_cbor();
+        let parsed = SchemaPayload::from_cbor(&bytes.0).expect("should parse CBOR");
+        match &parsed.root {
             TypeRef::Concrete { type_id, args } => {
                 assert_eq!(*type_id, SchemaHash(123));
                 assert_eq!(args.len(), 1);
