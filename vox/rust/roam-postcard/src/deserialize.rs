@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use facet::Facet;
 use facet_core::{Def, ScalarType, StructKind, Type, UserType};
 use facet_reflect::Partial;
-use roam_types::SchemaRegistry;
+use roam_schema::SchemaRegistry;
 
 use crate::decode::{self, Cursor};
 use crate::error::DeserializeError;

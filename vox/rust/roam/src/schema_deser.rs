@@ -101,7 +101,7 @@ fn resolve_plan<'facet, T: Facet<'facet>>(
     let local_extracted = extract_schemas(T::SHAPE)
         .map_err(|e| DeserializeError::protocol(&format!("schema extraction failed: {e}")))?;
     let local_root_ref = local_extracted.root.clone();
-    let local = SchemaSet::from_extracted(local_extracted);
+    let local = SchemaSet::from_root_and_schemas(local_extracted.root, local_extracted.schemas);
     ::std::eprintln!(
         "[schema-deser] resolve_plan local: method={:?} direction={:?} shape={} root_ref={:?} root_kind={:?}",
         method_id,

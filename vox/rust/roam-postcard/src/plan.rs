@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use facet_core::{Shape, Type, UserType};
-use roam_types::{
-    ExtractedSchemas, FieldSchema, PrimitiveType, Schema, SchemaHash, SchemaKind, SchemaRegistry,
-    TypeRef, VariantPayload, VariantSchema,
+use roam_schema::{
+    FieldSchema, PrimitiveType, Schema, SchemaHash, SchemaKind, SchemaRegistry, TypeRef,
+    VariantPayload, VariantSchema,
 };
 
 use crate::error::{PathSegment, SchemaSide, TranslationError, TranslationErrorKind};
@@ -82,20 +82,18 @@ impl SchemaSet {
     /// The root is the last schema. Its kind is used as-is (no Var resolution).
     pub fn from_schemas(schemas: Vec<Schema>) -> Self {
         let root = schemas.last().cloned().expect("empty schema list");
-        let registry = roam_types::build_registry(&schemas);
+        let registry = roam_schema::build_registry(&schemas);
         SchemaSet { root, registry }
     }
 
-    /// Build a SchemaSet from extracted schemas.
+    /// Build a SchemaSet from extracted root/schemas data.
     /// The root TypeRef is used to resolve any Var references in the root schema.
-    pub fn from_extracted(extracted: ExtractedSchemas) -> Self {
-        let registry = roam_types::build_registry(&extracted.schemas);
-        // Resolve the root schema's kind using the root TypeRef's args.
-        let root_kind = extracted
-            .root
+    pub fn from_root_and_schemas(root: TypeRef, schemas: Vec<Schema>) -> Self {
+        let registry = roam_schema::build_registry(&schemas);
+        let root_kind = root
             .resolve_kind(&registry)
             .expect("root schema must be in registry");
-        let root_id = match &extracted.root {
+        let root_id = match &root {
             TypeRef::Concrete { type_id, .. } => *type_id,
             TypeRef::Var { .. } => unreachable!("root type ref is never a Var"),
         };

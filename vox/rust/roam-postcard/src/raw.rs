@@ -2,23 +2,23 @@
 //!
 //! When a type uses `#[facet(opaque = Adapter)]`, the serializer calls the adapter's
 //! `serialize_map` to get an `OpaqueSerialize { ptr, shape }`. If the shape matches
-//! the sentinel shape defined in roam-types (`RawPostcardBorrowed`), we write the
+//! the sentinel shape defined in roam-schema (`RawPostcardBorrowed`), we write the
 //! bytes directly (passthrough) instead of recursively serializing.
 
 use facet_core::PtrConst;
 
-pub use roam_types::{RAW_POSTCARD_BORROWED_SHAPE, RawPostcardBorrowed};
+pub use roam_schema::{RAW_POSTCARD_BORROWED_SHAPE, RawPostcardBorrowed};
 
 /// Create an `OpaqueSerialize` that tells the serializer to write these
 /// already-encoded postcard bytes directly.
 pub fn opaque_encoded_borrowed(bytes: &&[u8]) -> facet::OpaqueSerialize {
-    roam_types::opaque_encoded_borrowed(bytes)
+    roam_schema::opaque_encoded_borrowed(bytes)
 }
 
 /// Try to extract passthrough bytes from an `OpaqueSerialize` result.
 /// Returns `Some(bytes)` if this is already-encoded postcard data.
 ///
-/// Checks against the sentinel shape defined in roam-types using value equality.
+/// Checks against the sentinel shape defined in roam-schema using value equality.
 ///
 /// # Safety
 /// The caller must ensure `ptr` points to valid memory matching `shape`.

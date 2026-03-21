@@ -2506,7 +2506,19 @@ dependencies = [
  "facet-core",
  "facet-postcard",
  "facet-reflect",
+ "roam-schema",
  "roam-types",
+]
+
+[[package]]
+name = "roam-schema"
+version = "7.3.0"
+dependencies = [
+ "blake3",
+ "facet",
+ "facet-cbor",
+ "facet-core",
+ "indexmap",
 ]
 
 [[package]]
@@ -2563,11 +2575,12 @@ dependencies = [
  "facet-cbor",
  "facet-core",
  "facet-path",
- "facet-postcard",
  "futures-channel",
  "heck 0.5.0",
  "indexmap",
  "moire",
+ "roam-postcard",
+ "roam-schema",
  "smallvec 1.15.1",
  "structstruck",
  "tokio",
@@ -2834,12 +2847,12 @@ dependencies = [
 name = "spec-tests"
 version = "7.3.0"
 dependencies = [
- "facet-postcard",
  "libc",
  "moire",
  "roam",
  "roam-core",
  "roam-local",
+ "roam-postcard",
  "roam-shm",
  "roam-stream",
  "roam-types",

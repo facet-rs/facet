@@ -28,9 +28,9 @@ fn main() {
         .expect("usage: protocol_decode_repro <crash-file>");
     let data = fs::read(path).expect("read input file");
 
-    let message = roam::facet_postcard::from_slice_borrowed::<roam_types::Message<'_>>(&data)
+    let message = roam::roam_postcard::from_slice_borrowed::<roam_types::Message<'_>>(&data)
         .expect("decode should succeed for crashing input");
     if can_serialize_after_decode(&message) {
-        let _encoded = roam::facet_postcard::to_vec(&message).expect("re-encode should succeed");
+        let _encoded = roam::roam_postcard::to_vec(&message).expect("re-encode should succeed");
     }
 }

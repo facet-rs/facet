@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use facet_postcard::{from_slice_borrowed, to_vec};
+use roam_postcard::{from_slice_borrowed, to_vec};
 use roam_shm::HostHub;
 use roam_shm::framing::{MmapRef, OwnedFrame, read_frame, write_inline, write_mmap_ref};
 use roam_shm::segment::{Segment, SegmentConfig};

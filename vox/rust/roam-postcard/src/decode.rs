@@ -1,5 +1,5 @@
 use crate::error::DeserializeError;
-use roam_types::{PrimitiveType, SchemaKind, SchemaRegistry};
+use roam_schema::{PrimitiveType, SchemaKind, SchemaRegistry};
 
 pub struct Cursor<'a> {
     input: &'a [u8],
@@ -136,19 +136,19 @@ pub fn skip_value(
                     variant_count: variants.len(),
                 })?;
             match &variant.payload {
-                roam_types::VariantPayload::Unit => Ok(()),
-                roam_types::VariantPayload::Newtype { type_ref } => {
+                roam_schema::VariantPayload::Unit => Ok(()),
+                roam_schema::VariantPayload::Newtype { type_ref } => {
                     let inner_kind = resolve_kind(type_ref, registry)?;
                     skip_value(cursor, &inner_kind, registry)
                 }
-                roam_types::VariantPayload::Tuple { types } => {
+                roam_schema::VariantPayload::Tuple { types } => {
                     for type_ref in types {
                         let inner_kind = resolve_kind(type_ref, registry)?;
                         skip_value(cursor, &inner_kind, registry)?;
                     }
                     Ok(())
                 }
-                roam_types::VariantPayload::Struct { fields } => {
+                roam_schema::VariantPayload::Struct { fields } => {
                     for field in fields {
                         let field_kind = resolve_kind(&field.type_ref, registry)?;
                         skip_value(cursor, &field_kind, registry)?;
@@ -255,9 +255,9 @@ fn skip_primitive(cursor: &mut Cursor<'_>, prim: PrimitiveType) -> Result<(), De
 }
 
 fn resolve_kind(
-    type_ref: &roam_types::TypeRef,
+    type_ref: &roam_schema::TypeRef,
     registry: &SchemaRegistry,
-) -> Result<roam_types::SchemaKind, DeserializeError> {
+) -> Result<roam_schema::SchemaKind, DeserializeError> {
     type_ref.resolve_kind(registry).ok_or_else(|| {
         DeserializeError::Custom(format!("schema not found for type_ref {type_ref:?}"))
     })

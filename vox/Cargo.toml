@@ -6,6 +6,7 @@ members = [
   "spec/spec-proto",
   "spec/spec-tests",
   "rust/roam-types",
+  "rust/roam-schema",
   "rust/roam-core",
   "rust/roam-stream",
   "rust/roam-websocket",
@@ -48,6 +49,7 @@ categories = ["network-programming", "asynchronous"]
 # Internal crates
 roam = { path = "rust/roam", version = "7.3.0" }
 roam-types = { path = "rust/roam-types", version = "7.3.0" }
+roam-schema = { path = "rust/roam-schema", version = "7.3.0" }
 roam-macros-parse = { path = "rust/roam-macros-parse", version = "7.3.0" }
 roam-macros-core = { path = "rust/roam-macros-core", version = "7.3.0" }
 roam-service-macros = { path = "rust/roam-macros", version = "7.3.0" }

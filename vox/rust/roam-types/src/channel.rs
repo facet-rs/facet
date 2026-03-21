@@ -738,7 +738,7 @@ impl<T> Rx<T> {
                                         "incoming channel item payload was not Incoming".into(),
                                     ));
                                 };
-                                facet_postcard::from_slice_borrowed(bytes)
+                                roam_postcard::from_slice_borrowed(bytes)
                                     .map_err(RxError::Deserialize)
                             })
                             .map(Some);
@@ -773,7 +773,7 @@ impl<T> Rx<T> {
                                         "incoming channel item payload was not Incoming".into(),
                                     ));
                                 };
-                                facet_postcard::from_slice_borrowed(bytes)
+                                roam_postcard::from_slice_borrowed(bytes)
                                     .map_err(RxError::Deserialize)
                             })
                             .map(Some);
@@ -861,7 +861,7 @@ impl<T> TryFrom<ChannelId> for Rx<T> {
 pub enum RxError {
     Unbound,
     Reset,
-    Deserialize(facet_postcard::DeserializeError),
+    Deserialize(roam_postcard::error::DeserializeError),
     Protocol(String),
 }
 
@@ -1109,7 +1109,7 @@ mod tests {
         rx.bind(rx_inner);
         rx.replenisher.inner = Some(replenisher.clone());
 
-        let encoded = facet_postcard::to_vec(&123_u32).expect("serialize test item");
+        let encoded = roam_postcard::to_vec(&123_u32).expect("serialize test item");
         let item = SelfRef::owning(
             Backing::Boxed(Box::<[u8]>::default()),
             ChannelItem {
@@ -1142,7 +1142,7 @@ mod tests {
 
         let mut rx = Rx::<u32>::paired(core);
 
-        let encoded = facet_postcard::to_vec(&321_u32).expect("serialize test item");
+        let encoded = roam_postcard::to_vec(&321_u32).expect("serialize test item");
         let item = SelfRef::owning(
             Backing::Boxed(Box::<[u8]>::default()),
             ChannelItem {
@@ -1236,9 +1236,8 @@ mod tests {
         let args = Args { data: 42, tx };
 
         let binder = TestBinder::new();
-        let bytes = with_channel_binder(&binder, || {
-            facet_postcard::to_vec(&args).expect("serialize")
-        });
+        let bytes =
+            with_channel_binder(&binder, || roam_postcard::to_vec(&args).expect("serialize"));
 
         // The channel ID should be in the serialized bytes (after the u32 data field).
         assert!(!bytes.is_empty());
@@ -1272,9 +1271,8 @@ mod tests {
         let args = Args { data: 42, rx };
 
         let binder = TestBinder::new();
-        let bytes = with_channel_binder(&binder, || {
-            facet_postcard::to_vec(&args).expect("serialize")
-        });
+        let bytes =
+            with_channel_binder(&binder, || roam_postcard::to_vec(&args).expect("serialize"));
 
         assert!(!bytes.is_empty());
 
@@ -1300,12 +1298,12 @@ mod tests {
         }
 
         // Simulate wire bytes: a u32 (42) followed by a channel ID (varint 7).
-        let mut bytes = facet_postcard::to_vec(&42_u32).unwrap();
-        bytes.extend_from_slice(&facet_postcard::to_vec(&ChannelId(7)).unwrap());
+        let mut bytes = roam_postcard::to_vec(&42_u32).unwrap();
+        bytes.extend_from_slice(&roam_postcard::to_vec(&ChannelId(7)).unwrap());
 
         let binder = TestBinder::new();
         let args: Args = with_channel_binder(&binder, || {
-            facet_postcard::from_slice(&bytes).expect("deserialize")
+            roam_postcard::from_slice(&bytes).expect("deserialize")
         });
 
         assert_eq!(args.data, 42);
@@ -1329,12 +1327,12 @@ mod tests {
         }
 
         // Simulate wire bytes: a u32 (42) followed by a channel ID (varint 7).
-        let mut bytes = facet_postcard::to_vec(&42_u32).unwrap();
-        bytes.extend_from_slice(&facet_postcard::to_vec(&ChannelId(7)).unwrap());
+        let mut bytes = roam_postcard::to_vec(&42_u32).unwrap();
+        bytes.extend_from_slice(&roam_postcard::to_vec(&ChannelId(7)).unwrap());
 
         let binder = TestBinder::new();
         let args: Args = with_channel_binder(&binder, || {
-            facet_postcard::from_slice(&bytes).expect("deserialize")
+            roam_postcard::from_slice(&bytes).expect("deserialize")
         });
 
         assert_eq!(args.data, 42);
@@ -1362,12 +1360,12 @@ mod tests {
 
         let caller_binder = TestBinder::new();
         let bytes = with_channel_binder(&caller_binder, || {
-            facet_postcard::to_vec(&args).expect("serialize")
+            roam_postcard::to_vec(&args).expect("serialize")
         });
 
         let callee_binder = TestBinder::new();
         let deserialized: Args = with_channel_binder(&callee_binder, || {
-            facet_postcard::from_slice(&bytes).expect("deserialize")
+            roam_postcard::from_slice(&bytes).expect("deserialize")
         });
 
         // The caller binder starts at ID 100, so the deserialized Tx should have that ID.

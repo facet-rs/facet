@@ -1,6 +1,6 @@
 use std::fmt;
 
-use roam_types::{
+use roam_schema::{
     ChannelDirection, FieldSchema, PrimitiveType, Schema, SchemaHash, SchemaKind, SchemaRegistry,
     TypeRef, VariantSchema,
 };
@@ -451,12 +451,12 @@ impl fmt::Display for TranslationError {
     }
 }
 
-fn variant_payload_str(payload: &roam_types::VariantPayload) -> &'static str {
+fn variant_payload_str(payload: &roam_schema::VariantPayload) -> &'static str {
     match payload {
-        roam_types::VariantPayload::Unit => "unit",
-        roam_types::VariantPayload::Newtype { .. } => "newtype",
-        roam_types::VariantPayload::Tuple { .. } => "tuple",
-        roam_types::VariantPayload::Struct { .. } => "struct",
+        roam_schema::VariantPayload::Unit => "unit",
+        roam_schema::VariantPayload::Newtype { .. } => "newtype",
+        roam_schema::VariantPayload::Tuple { .. } => "tuple",
+        roam_schema::VariantPayload::Struct { .. } => "struct",
     }
 }
 

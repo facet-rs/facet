@@ -15,9 +15,8 @@ pub use server_logging::{ServerLogging, ServerLoggingOptions};
 // Re-export facet (generated code uses `roam::facet::Facet`)
 pub use facet;
 
-// Re-export roam-postcard as facet_postcard for backwards compatibility with generated code.
-// Generated code uses `roam::facet_postcard::from_slice_borrowed`.
-pub use roam_postcard as facet_postcard;
+// Re-export roam-postcard for generated code and downstream helpers.
+pub use roam_postcard;
 
 // Re-export method identity functions (generated code uses `roam::hash::method_descriptor`)
 // TODO: generated code should be updated to use roam::method_descriptor directly

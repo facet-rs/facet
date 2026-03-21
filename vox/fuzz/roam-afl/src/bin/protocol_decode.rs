@@ -20,14 +20,13 @@ fn can_serialize_after_decode(message: &Message<'_>) -> bool {
 
 fn main() {
     fuzz!(|data: &[u8]| {
-        let Ok(message) =
-            roam::facet_postcard::from_slice_borrowed::<roam_types::Message<'_>>(data)
+        let Ok(message) = roam::roam_postcard::from_slice_borrowed::<roam_types::Message<'_>>(data)
         else {
             return;
         };
 
         if can_serialize_after_decode(&message) {
-            let _ = roam::facet_postcard::to_vec(&message);
+            let _ = roam::roam_postcard::to_vec(&message);
         }
     });
 }
