@@ -441,7 +441,7 @@ public final class ShmGuestRuntime: @unchecked Sendable {
     private var slotPool: ShmVarSlotPool
     private let doorbell: ShmDoorbell?
     private let mmapAttachments: ShmMmapAttachments?
-    private let mmapControlFd: Int32
+    private var mmapControlFd: Int32
     private let maxVarSlotPayload: UInt32
     private var nextMmapId: UInt32 = 1
     private var outboundMmapRegion: OutboundMmapRegion?
@@ -744,24 +744,16 @@ public final class ShmGuestRuntime: @unchecked Sendable {
     }
 
     public func checkRemap() throws -> Bool {
-        let currentSizeOffset = header.version == 7 ? 72 : 88
-        let currentSizePtr = try region.pointer(at: currentSizeOffset)
-        let currentSize = Int(atomicLoadU64Acquire(UnsafeRawPointer(currentSizePtr)))
-        if currentSize <= region.length {
-            return false
+        try checkShmRemap(region: region, header: &header) { view in
+            let peerEntry = try view.peerEntry(peerId: peerId)
+            let ringOffset = Int(peerEntry.ringOffset)
+            guestToHost = try ShmBipBuffer.attach(region: region, headerOffset: ringOffset)
+            hostToGuest = try ShmBipBuffer.attach(
+                region: region,
+                headerOffset: ringOffset + shmBipbufHeaderSize + Int(guestToHost.capacity)
+            )
+            slotPool.updateRegion(region)
         }
-
-        try region.resize(newSize: currentSize)
-        let view = try ShmSegmentView(region: region)
-        header = view.header
-
-        let peerEntry = try view.peerEntry(peerId: peerId)
-        let ringOffset = Int(peerEntry.ringOffset)
-        guestToHost = try ShmBipBuffer.attach(region: region, headerOffset: ringOffset)
-        hostToGuest = try ShmBipBuffer.attach(region: region, headerOffset: ringOffset + shmBipbufHeaderSize + Int(guestToHost.capacity))
-        slotPool.updateRegion(region)
-
-        return true
     }
 
     // r[impl shm.guest.detach]
@@ -782,14 +774,9 @@ public final class ShmGuestRuntime: @unchecked Sendable {
     }
 
     public func waitForDoorbell(timeoutMs: Int32? = nil) throws -> ShmDoorbellWaitResult? {
-        guard let doorbell else {
-            return nil
-        }
-        let result = try doorbell.wait(timeoutMs: timeoutMs)
-        if result == .signaled {
+        try waitForShmDoorbell(doorbell: doorbell, timeoutMs: timeoutMs) {
             _ = try checkRemap()
         }
-        return result
     }
 
     public func peerState() throws -> ShmPeerState {
@@ -799,18 +786,11 @@ public final class ShmGuestRuntime: @unchecked Sendable {
     }
 
     private func closeMmapControlFd() {
-        guard mmapControlFd >= 0 else {
-            return
-        }
-        close(mmapControlFd)
+        closeShmMmapControlFd(&mmapControlFd)
     }
 
     private func hostGoodbyeFlag() -> Bool {
-        let hostGoodbyeOffset = header.version == 7 ? 64 : 68
-        guard let ptr = try? region.pointer(at: hostGoodbyeOffset) else {
-            return true
-        }
-        return atomicLoadU32Acquire(UnsafeRawPointer(ptr)) != 0
+        shmHostGoodbyeFlag(region: region, header: header)
     }
 
     private func peerStatePointer() throws -> UnsafeMutableRawPointer {

@@ -580,32 +580,18 @@ public final class ShmHostRuntime: @unchecked Sendable {
     }
 
     public func waitForDoorbell(timeoutMs: Int32? = nil) throws -> ShmDoorbellWaitResult? {
-        guard let doorbell else {
-            return nil
-        }
-        let result = try doorbell.wait(timeoutMs: timeoutMs)
-        if result == .signaled {
+        try waitForShmDoorbell(doorbell: doorbell, timeoutMs: timeoutMs) {
             _ = try checkRemap()
         }
-        return result
     }
 
     public func checkRemap() throws -> Bool {
-        let currentSizePtr = try region.pointer(at: 72)
-        let currentSize = Int(atomicLoadU64Acquire(UnsafeRawPointer(currentSizePtr)))
-        if currentSize <= region.length {
-            return false
+        try checkShmRemap(region: region, header: &header) { _ in
+            let buffers = try segment.bipBuffers(peerId: peerId)
+            guestToHost = buffers.guestToHost
+            hostToGuest = buffers.hostToGuest
+            slotPool.updateRegion(region)
         }
-
-        try region.resize(newSize: currentSize)
-        let view = try ShmSegmentView(region: region)
-        header = view.header
-
-        let buffers = try segment.bipBuffers(peerId: peerId)
-        guestToHost = buffers.guestToHost
-        hostToGuest = buffers.hostToGuest
-        slotPool.updateRegion(region)
-        return true
     }
 
     private func allocateMmapId() -> UInt32 {
@@ -618,10 +604,7 @@ public final class ShmHostRuntime: @unchecked Sendable {
     }
 
     private func hostGoodbyeFlag() -> Bool {
-        guard let ptr = try? region.pointer(at: 64) else {
-            return true
-        }
-        return atomicLoadU32Acquire(UnsafeRawPointer(ptr)) != 0
+        shmHostGoodbyeFlag(region: region, header: header)
     }
 
     private func peerGoodbyeFlag() -> Bool {
@@ -632,10 +615,7 @@ public final class ShmHostRuntime: @unchecked Sendable {
     }
 
     private func closeMmapControlFd() {
-        if mmapControlFd >= 0 {
-            close(mmapControlFd)
-            mmapControlFd = -1
-        }
+        closeShmMmapControlFd(&mmapControlFd)
     }
 }
 
@@ -663,39 +643,34 @@ public final class ShmHostTransport: Link, @unchecked Sendable {
     }
 
     public func sendRawPrologue(_ bytes: [UInt8]) async throws {
-        let frame = ShmGuestFrame(payload: bytes)
-        do {
-            try withHostLock(lock) {
-                if closed {
-                    throw TransportError.connectionClosed
+        try sendShmTransportFrame(
+            bytes: bytes,
+            negotiated: negotiated,
+            maxFrameSize: maxFrameSize,
+            sendErrorPrefix: "shm host send failed",
+            mapSendError: { (err: ShmHostSendError) in
+                if ProcessInfo.processInfo.environment["ROAM_SHM_DEBUG"] == "1" {
+                    fputs("[shm-host-transport] send error: \(err)\n", stderr)
                 }
-                if frame.payload.count > Int(negotiated.maxPayloadSize) {
-                    throw TransportError.protocolViolation("payload exceeds negotiated maxPayloadSize")
+                switch err {
+                case .ringFull, .slotExhausted:
+                    return .wouldBlock
+                case .peerClosed:
+                    return .connectionClosed
+                case .payloadTooLarge, .slotError, .mmapAllocationFailed, .mmapUnavailable, .mmapControlError:
+                    return .transportIO("shm host send failed: \(err)")
                 }
-                if frame.payload.count + 64 > maxFrameSize {
-                    throw TransportError.frameEncoding("frame exceeds max frame size")
+            },
+            performLockedSend: { frame in
+                try lock.withShmLock {
+                    if closed {
+                        throw TransportError.connectionClosed
+                    }
+                    _ = try runtime.checkRemap()
+                    try runtime.send(frame: frame)
                 }
-
-                _ = try runtime.checkRemap()
-                try runtime.send(frame: frame)
             }
-        } catch let err as TransportError {
-            throw err
-        } catch let err as ShmHostSendError {
-            if ProcessInfo.processInfo.environment["ROAM_SHM_DEBUG"] == "1" {
-                fputs("[shm-host-transport] send error: \(err)\n", stderr)
-            }
-            switch err {
-            case .ringFull, .slotExhausted:
-                throw TransportError.wouldBlock
-            case .peerClosed:
-                throw TransportError.connectionClosed
-            case .payloadTooLarge, .slotError, .mmapAllocationFailed, .mmapUnavailable, .mmapControlError:
-                throw TransportError.transportIO("shm host send failed: \(err)")
-            }
-        } catch {
-            throw TransportError.transportIO("shm host send failed: \(error)")
-        }
+        )
     }
 
     public func recvFrame() async throws -> [UInt8]? {
@@ -703,79 +678,43 @@ public final class ShmHostTransport: Link, @unchecked Sendable {
     }
 
     public func recvRawPrologue() async throws -> [UInt8]? {
-        while true {
-            var frameToDecode: ShmGuestFrame?
-            var sawGoodbye = false
-            var isClosed = false
-
-            do {
-                try withHostLock(lock) {
-                    isClosed = closed
-                    if isClosed {
-                        return
+        try await recvShmTransportFrame(
+            receiveErrorPrefix: "shm host receive failed",
+            pollLockedReceive: {
+                try lock.withShmLock {
+                    if closed {
+                        return ShmTransportReceivePoll(isClosed: true, frame: nil, sawGoodbye: false)
                     }
                     _ = try runtime.checkRemap()
-                    frameToDecode = try runtime.receive()
-                    sawGoodbye = runtime.isHostGoodbye() || runtime.isPeerGoodbye()
+                    return ShmTransportReceivePoll(
+                        isClosed: false,
+                        frame: try runtime.receive(),
+                        sawGoodbye: runtime.isHostGoodbye() || runtime.isPeerGoodbye()
+                    )
                 }
-            } catch let err as TransportError {
-                throw err
-            } catch {
-                if ProcessInfo.processInfo.environment["ROAM_SHM_DEBUG"] == "1" {
-                    fputs("[shm-host-transport] recv error: \(error)\n", stderr)
+            },
+            signalDoorbell: {
+                try lock.withShmLock {
+                    try runtime.signalDoorbell()
                 }
-                throw TransportError.transportIO("shm host receive failed: \(error)")
+            },
+            waitForDoorbell: { timeoutMs in
+                try runtime.waitForDoorbell(timeoutMs: timeoutMs)
+            },
+            shouldTreatPeerDeadAsGoodbye: {
+                runtime.isHostGoodbye() || runtime.isPeerGoodbye()
             }
-
-            if isClosed {
-                return nil
-            }
-
-            if let frame = frameToDecode {
-                do {
-                    try withHostLock(lock) {
-                        try runtime.signalDoorbell()
-                    }
-                } catch {
-                    throw TransportError.transportIO("doorbell signal failed: \(error)")
-                }
-                return frame.payload
-            }
-
-            if sawGoodbye {
-                return nil
-            }
-
-            do {
-                let wait = try runtime.waitForDoorbell(timeoutMs: 100)
-
-                if let wait {
-                    if wait == .peerDead {
-                        if runtime.isHostGoodbye() || runtime.isPeerGoodbye() {
-                            return nil
-                        }
-                        throw TransportError.connectionClosed
-                    }
-                    continue
-                }
-            } catch let err as TransportError {
-                throw err
-            } catch {
-                throw TransportError.transportIO("doorbell wait failed: \(error)")
-            }
-
-            try await Task.sleep(nanoseconds: 1_000_000)
-        }
+        )
     }
 
     public func setMaxFrameSize(_ size: Int) async throws {
-        withHostLock(lock) {
+        lock.withShmLock {
             maxFrameSize = size
         }
     }
 
     public func close() async throws {
-        withHostLock(lock) {
+        lock.withShmLock {
             if closed {
                 return
             }
@@ -865,13 +804,6 @@ private func closeIfValid(_ fd: inout Int32) {
         close(fd)
         fd = -1
     }
-}
-
-@inline(__always)
-private func withHostLock<T>(_ lock: NSLock, _ body: () throws -> T) rethrows -> T {
-    lock.lock()
-    defer { lock.unlock() }
-    return try body()
 }
 
 #else
