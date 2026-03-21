@@ -862,10 +862,6 @@ pub struct SchemaSendTracker {
     /// SchemaHashes already sent on this connection.
     sent_schemas: HashSet<SchemaHash>,
 
-    /// DeclIds we've already finalized and sent — maps to their content hash.
-    /// Persists across method calls for the lifetime of the connection.
-    emitted: HashMap<DeclId, SchemaHash>,
-
     /// All extracted schemas, kept for the operation store to pull from.
     registry: SchemaRegistry,
 }
@@ -876,7 +872,6 @@ impl SchemaSendTracker {
             registry: HashMap::new(),
             sent_bindings: HashSet::new(),
             sent_schemas: HashSet::new(),
-            emitted: HashMap::new(),
         }
     }
 
@@ -885,7 +880,6 @@ impl SchemaSendTracker {
     pub fn reset(&mut self) {
         self.sent_bindings.clear();
         self.sent_schemas.clear();
-        self.emitted.clear();
     }
 
     /// Borrow the schema registry. Used by the operation store to pull
@@ -921,8 +915,9 @@ impl SchemaSendTracker {
         // Slow path: extract, deduplicate, encode.
         let already_sent = self.sent_schemas.clone();
 
-        // Use a fresh extraction pass here. Reusing `self.emitted` across
-        // unrelated method shapes can alias structural roots like unary tuples.
+        // Extraction is intentionally fresh and pure here. Wire dedup happens
+        // on content hashes, not DeclId caching, to avoid aliasing structural
+        // roots like unary tuples across unrelated method shapes.
         let extracted = extract_schemas(shape)?;
 
         // Add all schemas to the persistent registry (for the operation store).
@@ -1026,52 +1021,13 @@ impl SchemaSendTracker {
         cbor
     }
 
-    /// Extract all schemas for a type and its transitive dependencies.
-    ///
-    /// Returns schemas in dependency order: dependencies appear before dependents.
-    /// The root type's schema is last.
-    // r[impl schema.format]
+    /// Compatibility shim: schema extraction is now independent from
+    /// connection-scoped send tracking.
     pub fn extract_schemas(
         &mut self,
         shape: &'static Shape,
     ) -> Result<ExtractedSchemas, SchemaExtractError> {
-        let mut ctx = ExtractCtx {
-            emitted: &self.emitted,
-            next_id: CycleSchemaIndex::first(),
-            schemas: IndexMap::new(),
-            assigned: HashMap::new(),
-            seen: HashSet::new(),
-        };
-        let root_mixed_ref = ctx.extract(shape)?;
-        let assigned = ctx.assigned;
-        let schemas: Vec<MixedSchema> = ctx.schemas.into_values().collect();
-        let (finalized, temp_to_final) = finalize_content_hashes(schemas)?;
-
-        // Record newly finalized schemas in the tracker's emitted map.
-        for (decl_id, mixed_id) in &assigned {
-            let final_id = match mixed_id {
-                MixedId::Final(tid) => *tid,
-                MixedId::Temp(t) => match temp_to_final.get(t) {
-                    Some(&tid) => tid,
-                    None => continue,
-                },
-            };
-            self.emitted.insert(*decl_id, final_id);
-        }
-
-        // Resolve the root TypeRef from MixedId to TypeSchemaId.
-        let resolve = |mid: MixedId| -> SchemaHash {
-            match mid {
-                MixedId::Final(tid) => tid,
-                MixedId::Temp(t) => temp_to_final.get(&t).copied().unwrap_or(SchemaHash(0)),
-            }
-        };
-        let root_type_ref = root_mixed_ref.map(resolve);
-
-        Ok(ExtractedSchemas {
-            schemas: finalized,
-            root: root_type_ref,
-        })
+        self::extract_schemas(shape)
     }
 }
 
@@ -1235,8 +1191,28 @@ pub struct ExtractedSchemas {
 /// Extract schemas without a tracker (uses a temporary counter).
 /// Useful for tests and one-off schema extraction.
 pub fn extract_schemas(shape: &'static Shape) -> Result<ExtractedSchemas, SchemaExtractError> {
-    let mut tracker = SchemaSendTracker::new();
-    tracker.extract_schemas(shape)
+    let mut ctx = ExtractCtx {
+        next_id: CycleSchemaIndex::first(),
+        schemas: IndexMap::new(),
+        assigned: HashMap::new(),
+        seen: HashSet::new(),
+    };
+    let root_mixed_ref = ctx.extract(shape)?;
+    let schemas: Vec<MixedSchema> = ctx.schemas.into_values().collect();
+    let (finalized, temp_to_final) = finalize_content_hashes(schemas)?;
+
+    let resolve = |mid: MixedId| -> SchemaHash {
+        match mid {
+            MixedId::Final(tid) => tid,
+            MixedId::Temp(t) => temp_to_final.get(&t).copied().unwrap_or(SchemaHash(0)),
+        }
+    };
+    let root_type_ref = root_mixed_ref.map(resolve);
+
+    Ok(ExtractedSchemas {
+        schemas: finalized,
+        root: root_type_ref,
+    })
 }
 
 /// Replace temporary incrementing IDs with blake3 content hashes.
@@ -1419,9 +1395,7 @@ fn finalize_content_hashes(
     Ok((finalized, temp_to_final))
 }
 
-struct ExtractCtx<'a> {
-    /// Already-finalized schemas from previous extraction passes.
-    emitted: &'a HashMap<DeclId, SchemaHash>,
+struct ExtractCtx {
     /// Counter for assigning temp IDs
     next_id: CycleSchemaIndex,
     /// Schemas being built in this extraction pass, keyed by DeclId.
@@ -1435,12 +1409,9 @@ struct ExtractCtx<'a> {
     seen: HashSet<&'static Shape>,
 }
 
-impl<'a> ExtractCtx<'a> {
+impl ExtractCtx {
     /// Get or assign a MixedId for a DeclId.
     fn id_for_decl(&mut self, decl_id: DeclId) -> MixedId {
-        if let Some(&final_id) = self.emitted.get(&decl_id) {
-            return MixedId::Final(final_id);
-        }
         if let Some(&id) = self.assigned.get(&decl_id) {
             return id;
         }
