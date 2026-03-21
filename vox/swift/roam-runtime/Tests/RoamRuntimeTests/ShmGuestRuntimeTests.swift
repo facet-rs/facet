@@ -1047,8 +1047,8 @@ struct ShmDriverRaceTests {
 
         let fixture = try makeSegmentFixture(
             path: path,
-            bipbufCapacity: 2048,
-            inlineThreshold: 1024,
+            bipbufCapacity: 16_384,
+            inlineThreshold: 16_384,
             maxPayloadSize: 1_000_000,
             classes: [ShmVarSlotClass(slotSize: 4096, count: 8)],
             reservedPeer: 1
@@ -1121,8 +1121,8 @@ struct ShmDriverRaceTests {
 
         let fixture = try makeSegmentFixture(
             path: path,
-            bipbufCapacity: 2048,
-            inlineThreshold: 1024,
+            bipbufCapacity: 16_384,
+            inlineThreshold: 16_384,
             maxPayloadSize: 1_000_000,
             classes: [ShmVarSlotClass(slotSize: 4096, count: 16)],
             reservedPeer: 1

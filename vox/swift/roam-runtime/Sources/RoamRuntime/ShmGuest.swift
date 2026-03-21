@@ -611,113 +611,41 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         if fatalError || hostGoodbyeFlag() {
             throw ShmGuestSendError.hostGoodbye
         }
-
-        let payloadLen = UInt32(frame.payload.count)
-        if payloadLen > header.maxPayloadSize {
-            throw ShmGuestSendError.payloadTooLarge
-        }
-
-        let threshold = header.inlineThreshold == 0 ? shmDefaultInlineThreshold : header.inlineThreshold
-
-        if shmShouldInline(payloadLen: payloadLen, threshold: threshold) {
-            let bytes = encodeShmInlineFrame(payload: frame.payload)
-
-            if let grant = try guestToHost.tryGrant(UInt32(bytes.count)) {
-                grant.copyBytes(from: bytes)
-                try guestToHost.commit(UInt32(bytes.count))
-                try doorbell?.signal()
-                return
-            }
-
-            throw ShmGuestSendError.ringFull
-        }
-
-        let slotPayloadLen = payloadLen &+ 4
-        guard slotPayloadLen >= payloadLen else {
-            throw ShmGuestSendError.payloadTooLarge
-        }
-        if payloadLen <= maxVarSlotPayload {
-            try sendViaSlot(frame, payloadLen: payloadLen, slotPayloadLen: slotPayloadLen)
-            return
-        }
-
-        try sendViaMmap(frame, payloadLen: payloadLen)
-    }
-
-    private func sendViaSlot(_ frame: ShmGuestFrame, payloadLen: UInt32, slotPayloadLen: UInt32) throws {
-        guard let handle = slotPool.alloc(size: slotPayloadLen, owner: peerId) else {
-            throw ShmGuestSendError.slotExhausted
-        }
-
-        guard let payloadPtr = slotPool.payloadPointer(handle) else {
-            try? slotPool.freeAllocated(handle)
-            throw ShmGuestSendError.slotError
-        }
-
-        frame.payload.withUnsafeBytes { raw in
-            if let base = raw.baseAddress {
-                payloadPtr.storeBytes(of: payloadLen.littleEndian, as: UInt32.self)
-                memcpy(payloadPtr.advanced(by: 4), base, raw.count)
-            }
-        }
-
-        do {
-            try slotPool.markInFlight(handle)
-        } catch {
-            try? slotPool.freeAllocated(handle)
-            throw ShmGuestSendError.slotError
-        }
-
-        let slotFrame = encodeShmSlotRefFrame(
-            slotRef: ShmSlotRef(
-                classIdx: handle.classIdx,
-                extentIdx: handle.extentIdx,
-                slotIdx: handle.slotIdx,
-                slotGeneration: handle.generation
+        try sendShmFrame(
+            role: "guest",
+            frame: frame,
+            header: header,
+            outbox: guestToHost,
+            slotPool: slotPool,
+            slotOwner: peerId,
+            doorbell: doorbell,
+            maxVarSlotPayload: maxVarSlotPayload,
+            mmapControlFd: mmapControlFd,
+            errors: ShmSendErrors<ShmGuestSendError>(
+                payloadTooLarge: .payloadTooLarge,
+                ringFull: .ringFull,
+                slotExhausted: .slotExhausted,
+                slotError: .slotError,
+                mmapUnavailable: .mmapUnavailable
             )
-        )
-
-        if let grant = try guestToHost.tryGrant(UInt32(slotFrame.count)) {
-            grant.copyBytes(from: slotFrame)
-            try guestToHost.commit(UInt32(slotFrame.count))
-            try doorbell?.signal()
-            return
-        }
-
-        try? slotPool.free(handle)
-        throw ShmGuestSendError.ringFull
-    }
-
-    private func sendViaMmap(_ frame: ShmGuestFrame, payloadLen: UInt32) throws {
-        guard mmapControlFd >= 0 else {
-            throw ShmGuestSendError.mmapUnavailable
-        }
-
-        let frameSize = UInt32(shmFrameHeaderSize + shmMmapRefSize)
-        guard let grant = try guestToHost.tryGrant(frameSize) else {
-            throw ShmGuestSendError.ringFull
-        }
-
-        let payloadCount = Int(payloadLen)
-        let allocation = try allocateOutboundMmapSlice(payloadCount: payloadCount)
-
-        frame.payload.withUnsafeBytes { raw in
-            if let base = raw.baseAddress {
-                memcpy(allocation.region.basePointer().advanced(by: allocation.mapOffset), base, raw.count)
+        ) { payload, payloadLen in
+            let allocation = try self.allocateOutboundMmapSlice(payloadCount: Int(payloadLen))
+            payload.withUnsafeBytes { raw in
+                if let base = raw.baseAddress {
+                    memcpy(
+                        allocation.region.basePointer().advanced(by: allocation.mapOffset),
+                        base,
+                        raw.count
+                    )
+                }
             }
-        }
-
-        let mmapFrame = encodeShmMmapRefFrame(
-            mmapRef: ShmMmapRef(
+            return ShmMmapRef(
                 mapId: allocation.mapId,
                 mapGeneration: allocation.mapGeneration,
                 mapOffset: UInt64(allocation.mapOffset),
                 payloadLen: payloadLen
             )
-        )
-        grant.copyBytes(from: mmapFrame)
-        try guestToHost.commit(UInt32(mmapFrame.count))
-        try doorbell?.signal()
+        }
     }
 
     private func allocateMmapId() -> UInt32 {
