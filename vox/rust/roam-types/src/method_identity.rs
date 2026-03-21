@@ -92,7 +92,7 @@ pub fn method_descriptor_with_retry<'a, 'r, A: Facet<'a>, R: Facet<'r>>(
     }))
 }
 
-fn shape_contains_channel(shape: &'static Shape) -> bool {
+pub fn shape_contains_channel(shape: &'static Shape) -> bool {
     fn visit(shape: &'static Shape, seen: &mut HashSet<&'static Shape>) -> bool {
         if is_tx(shape) || is_rx(shape) {
             return true;

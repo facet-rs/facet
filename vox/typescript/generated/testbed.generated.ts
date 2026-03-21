@@ -1339,33 +1339,42 @@ export class TestbedDispatcher implements Dispatcher {
 // Generated from Rust Facet shapes — do not modify.
 export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSchemas = {
   schemas: new Map<bigint, import("@bearcove/roam-postcard").WireSchema>([
+    [0x178367a87f66fb46n, {
+      id: 0x178367a87f66fb46n,
+      type_params: [],
+      kind: { tag: "primitive", primitive_type: "bool" },
+    }],
+    [0x281c5be4f2ee63b4n, {
+      id: 0x281c5be4f2ee63b4n,
+      type_params: [],
+      kind: { tag: "primitive", primitive_type: "u32" },
+    }],
+    [0x42046de663beeef0n, {
+      id: 0x42046de663beeef0n,
+      type_params: ["T", "E"],
+      kind: {
+        tag: "enum",
+        name: "Result",
+        variants: [{ name: "Ok", index: 0, payload: { tag: "newtype", type_ref: { tag: "var", name: "T" } } }, {
+          name: "Err",
+          index: 1,
+          payload: { tag: "newtype", type_ref: { tag: "var", name: "E" } },
+        }],
+      },
+    }],
     [0x6d7dce914ee150e8n, {
       id: 0x6d7dce914ee150e8n,
       type_params: [],
       kind: { tag: "primitive", primitive_type: "string" },
     }],
-    [0x8f4461eb06ae1d0an, {
-      id: 0x8f4461eb06ae1d0an,
-      type_params: [],
-      kind: { tag: "tuple", elements: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }] },
-    }],
-    [0xbc5c33249a2dc720n, {
-      id: 0xbc5c33249a2dc720n,
-      type_params: [],
-      kind: { tag: "primitive", primitive_type: "unit" },
-    }],
-    [0xeb41a85ae6648f0cn, {
-      id: 0xeb41a85ae6648f0cn,
-      type_params: [],
+    [0xae570b7750005a79n, {
+      id: 0xae570b7750005a79n,
+      type_params: ["E"],
       kind: {
         tag: "enum",
         name: "RoamError",
         variants: [
-          {
-            name: "User",
-            index: 0,
-            payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] } },
-          },
+          { name: "User", index: 0, payload: { tag: "newtype", type_ref: { tag: "var", name: "E" } } },
           { name: "UnknownMethod", index: 1, payload: { tag: "unit" } },
           {
             name: "InvalidPayload",
@@ -1373,43 +1382,32 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
             payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] } },
           },
           { name: "Cancelled", index: 3, payload: { tag: "unit" } },
-          { name: "Indeterminate", index: 4, payload: { tag: "unit" } },
+          { name: "ConnectionClosed", index: 4, payload: { tag: "unit" } },
+          { name: "SessionShutdown", index: 5, payload: { tag: "unit" } },
+          { name: "SendFailed", index: 6, payload: { tag: "unit" } },
+          { name: "Indeterminate", index: 7, payload: { tag: "unit" } },
         ],
       },
     }],
-    [0x6d6cda2a6f13088an, {
-      id: 0x6d6cda2a6f13088an,
+    [0x6847ab90feda71c1n, {
+      id: 0x6847ab90feda71c1n,
+      type_params: ["T0"],
+      kind: { tag: "tuple", elements: [{ tag: "var", name: "T0" }] },
+    }],
+    [0xbc5c33249a2dc720n, {
+      id: 0xbc5c33249a2dc720n,
       type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
+      kind: { tag: "primitive", primitive_type: "unit" },
     }],
     [0xc6eb8c46f1e17fban, {
       id: 0xc6eb8c46f1e17fban,
       type_params: [],
       kind: { tag: "primitive", primitive_type: "i64" },
     }],
-    [0x1aca2a3c757ba2e5n, {
-      id: 0x1aca2a3c757ba2e5n,
-      type_params: [],
-      kind: {
-        tag: "tuple",
-        elements: [{ tag: "concrete", type_id: 0xc6eb8c46f1e17fban, args: [] }, {
-          tag: "concrete",
-          type_id: 0xc6eb8c46f1e17fban,
-          args: [],
-        }],
-      },
+    [0xba0496aa8cee7a4cn, {
+      id: 0xba0496aa8cee7a4cn,
+      type_params: ["T0", "T1"],
+      kind: { tag: "tuple", elements: [{ tag: "var", name: "T0" }, { tag: "var", name: "T1" }] },
     }],
     [0xd9d78670738e6064n, {
       id: 0xd9d78670738e6064n,
@@ -1423,56 +1421,6 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
           payload: { tag: "unit" },
         }],
       },
-    }],
-    [0x0f10a0e9726dc1a8n, {
-      id: 0x0f10a0e9726dc1a8n,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "RoamError",
-        variants: [
-          {
-            name: "User",
-            index: 0,
-            payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xd9d78670738e6064n, args: [] } },
-          },
-          { name: "UnknownMethod", index: 1, payload: { tag: "unit" } },
-          {
-            name: "InvalidPayload",
-            index: 2,
-            payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] } },
-          },
-          { name: "Cancelled", index: 3, payload: { tag: "unit" } },
-          { name: "Indeterminate", index: 4, payload: { tag: "unit" } },
-        ],
-      },
-    }],
-    [0xf06d6789cf98ffb5n, {
-      id: 0xf06d6789cf98ffb5n,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xc6eb8c46f1e17fban, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x0f10a0e9726dc1a8n, args: [] } },
-        }],
-      },
-    }],
-    [0x281c5be4f2ee63b4n, {
-      id: 0x281c5be4f2ee63b4n,
-      type_params: [],
-      kind: { tag: "primitive", primitive_type: "u32" },
-    }],
-    [0xdbefcb75f8046566n, {
-      id: 0xdbefcb75f8046566n,
-      type_params: [],
-      kind: { tag: "tuple", elements: [{ tag: "concrete", type_id: 0x281c5be4f2ee63b4n, args: [] }] },
     }],
     [0x2c8d54f2314d0f20n, {
       id: 0x2c8d54f2314d0f20n,
@@ -1518,46 +1466,6 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         }],
       },
     }],
-    [0xbb9aa03e516b920an, {
-      id: 0xbb9aa03e516b920an,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "RoamError",
-        variants: [
-          {
-            name: "User",
-            index: 0,
-            payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x16d92ac9e3bd73ban, args: [] } },
-          },
-          { name: "UnknownMethod", index: 1, payload: { tag: "unit" } },
-          {
-            name: "InvalidPayload",
-            index: 2,
-            payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] } },
-          },
-          { name: "Cancelled", index: 3, payload: { tag: "unit" } },
-          { name: "Indeterminate", index: 4, payload: { tag: "unit" } },
-        ],
-      },
-    }],
-    [0xeac6ec2254371fb4n, {
-      id: 0xeac6ec2254371fb4n,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xc841530b759b8ed0n, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xbb9aa03e516b920an, args: [] } },
-        }],
-      },
-    }],
     [0x361f4536eee9f991n, {
       id: 0x361f4536eee9f991n,
       type_params: [],
@@ -1568,84 +1476,10 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
       type_params: ["T"],
       kind: { tag: "channel", direction: "rx", element: { tag: "var", name: "T" } },
     }],
-    [0xa506b69142f11cban, {
-      id: 0xa506b69142f11cban,
-      type_params: [],
-      kind: {
-        tag: "tuple",
-        elements: [{
-          tag: "concrete",
-          type_id: 0x967a48ac345e2f5en,
-          args: [{ tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] }],
-        }],
-      },
-    }],
-    [0x4771d97c161367dan, {
-      id: 0x4771d97c161367dan,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xc6eb8c46f1e17fban, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
-    }],
     [0xc886545a493d06ebn, {
       id: 0xc886545a493d06ebn,
       type_params: ["T"],
       kind: { tag: "channel", direction: "tx", element: { tag: "var", name: "T" } },
-    }],
-    [0x7c7d729bddf50068n, {
-      id: 0x7c7d729bddf50068n,
-      type_params: [],
-      kind: {
-        tag: "tuple",
-        elements: [{ tag: "concrete", type_id: 0x281c5be4f2ee63b4n, args: [] }, {
-          tag: "concrete",
-          type_id: 0xc886545a493d06ebn,
-          args: [{ tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] }],
-        }],
-      },
-    }],
-    [0x1cca4e83a7b72854n, {
-      id: 0x1cca4e83a7b72854n,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
-    }],
-    [0x52833e77a47f1724n, {
-      id: 0x52833e77a47f1724n,
-      type_params: [],
-      kind: {
-        tag: "tuple",
-        elements: [{
-          tag: "concrete",
-          type_id: 0x967a48ac345e2f5en,
-          args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
-        }, {
-          tag: "concrete",
-          type_id: 0xc886545a493d06ebn,
-          args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
-        }],
-      },
     }],
     [0xb92332c67187108fn, {
       id: 0xb92332c67187108fn,
@@ -1660,59 +1494,12 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         }],
       },
     }],
-    [0x3b727953544cb3dcn, {
-      id: 0x3b727953544cb3dcn,
-      type_params: [],
-      kind: { tag: "tuple", elements: [{ tag: "concrete", type_id: 0xb92332c67187108fn, args: [] }] },
-    }],
-    [0xcf092ed716b44edfn, {
-      id: 0xcf092ed716b44edfn,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xb92332c67187108fn, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
-    }],
-    [0x0a8770bc9e55f940n, {
-      id: 0x0a8770bc9e55f940n,
-      type_params: [],
+    [0xaa510ab07d34f141n, {
+      id: 0xaa510ab07d34f141n,
+      type_params: ["T0", "T1", "T2"],
       kind: {
         tag: "tuple",
-        elements: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, {
-          tag: "concrete",
-          type_id: 0x2c8d54f2314d0f20n,
-          args: [],
-        }, {
-          tag: "concrete",
-          type_id: 0xdcafd4de6b7969bbn,
-          args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
-        }],
-      },
-    }],
-    [0x74adf32372d3c85fn, {
-      id: 0x74adf32372d3c85fn,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xc841530b759b8ed0n, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
+        elements: [{ tag: "var", name: "T0" }, { tag: "var", name: "T1" }, { tag: "var", name: "T2" }],
       },
     }],
     [0x6ecf4fe376e23113n, {
@@ -1740,32 +1527,10 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         }],
       },
     }],
-    [0x1a54592760d047b7n, {
-      id: 0x1a54592760d047b7n,
-      type_params: [],
-      kind: { tag: "tuple", elements: [{ tag: "concrete", type_id: 0x6ecf4fe376e23113n, args: [] }] },
-    }],
     [0x3f2e589db81e95bfn, {
       id: 0x3f2e589db81e95bfn,
       type_params: [],
       kind: { tag: "primitive", primitive_type: "f64" },
-    }],
-    [0xf84aebfb8418c494n, {
-      id: 0xf84aebfb8418c494n,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x3f2e589db81e95bfn, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
     }],
     [0x1b57cc7742fabeb0n, {
       id: 0x1b57cc7742fabeb0n,
@@ -1778,30 +1543,6 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
           index: 1,
           payload: { tag: "unit" },
         }, { name: "Blue", index: 2, payload: { tag: "unit" } }],
-      },
-    }],
-    [0x65fbc69efc40b165n, {
-      id: 0x65fbc69efc40b165n,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: {
-            tag: "newtype",
-            type_ref: {
-              tag: "concrete",
-              type_id: 0xdcafd4de6b7969bbn,
-              args: [{ tag: "concrete", type_id: 0x1b57cc7742fabeb0n, args: [] }],
-            },
-          },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
       },
     }],
     [0xe407302c560da502n, {
@@ -1839,27 +1580,10 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         }, { name: "Point", index: 2, payload: { tag: "unit" } }],
       },
     }],
-    [0x4ccd9cc3218c6925n, {
-      id: 0x4ccd9cc3218c6925n,
-      type_params: [],
-      kind: { tag: "tuple", elements: [{ tag: "concrete", type_id: 0xe407302c560da502n, args: [] }] },
-    }],
     [0x0a96b404b4d79d67n, {
       id: 0x0a96b404b4d79d67n,
       type_params: ["T"],
       kind: { tag: "list", element: { tag: "var", name: "T" } },
-    }],
-    [0xa023a112d67af423n, {
-      id: 0xa023a112d67af423n,
-      type_params: [],
-      kind: {
-        tag: "tuple",
-        elements: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, {
-          tag: "concrete",
-          type_id: 0x0a96b404b4d79d67n,
-          args: [{ tag: "concrete", type_id: 0xe407302c560da502n, args: [] }],
-        }, { tag: "concrete", type_id: 0x1b57cc7742fabeb0n, args: [] }],
-      },
     }],
     [0x221855c965fb31e1n, {
       id: 0x221855c965fb31e1n,
@@ -1883,23 +1607,6 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
           name: "background",
           type_ref: { tag: "concrete", type_id: 0x1b57cc7742fabeb0n, args: [] },
           required: true,
-        }],
-      },
-    }],
-    [0xa33f88e03ecfa7a1n, {
-      id: 0xa33f88e03ecfa7a1n,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x221855c965fb31e1n, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
         }],
       },
     }],
@@ -1929,245 +1636,20 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         }],
       },
     }],
-    [0xec4783339c49cc58n, {
-      id: 0xec4783339c49cc58n,
-      type_params: [],
-      kind: { tag: "tuple", elements: [{ tag: "concrete", type_id: 0xbda77ebf97f345a9n, args: [] }] },
-    }],
-    [0xf49452cacbb7190fn, {
-      id: 0xf49452cacbb7190fn,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xbda77ebf97f345a9n, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
-    }],
-    [0x2104bcb814d007d4n, {
-      id: 0x2104bcb814d007d4n,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: {
-            tag: "newtype",
-            type_ref: {
-              tag: "concrete",
-              type_id: 0x0a96b404b4d79d67n,
-              args: [{ tag: "concrete", type_id: 0xb92332c67187108fn, args: [] }],
-            },
-          },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
-    }],
-    [0x552eb11103d7a727n, {
-      id: 0x552eb11103d7a727n,
-      type_params: [],
-      kind: {
-        tag: "tuple",
-        elements: [{ tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] }, {
-          tag: "concrete",
-          type_id: 0x6d7dce914ee150e8n,
-          args: [],
-        }],
-      },
-    }],
-    [0x870a5c8b930e7decn, {
-      id: 0x870a5c8b930e7decn,
-      type_params: [],
-      kind: { tag: "tuple", elements: [{ tag: "concrete", type_id: 0x552eb11103d7a727n, args: [] }] },
-    }],
-    [0x6619b1dab4801f55n, {
-      id: 0x6619b1dab4801f55n,
-      type_params: [],
-      kind: {
-        tag: "tuple",
-        elements: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, {
-          tag: "concrete",
-          type_id: 0x361f4536eee9f991n,
-          args: [],
-        }],
-      },
-    }],
-    [0x9afe2166c5df7820n, {
-      id: 0x9afe2166c5df7820n,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x6619b1dab4801f55n, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
-    }],
-    [0x9bff6dcaea022307n, {
-      id: 0x9bff6dcaea022307n,
-      type_params: [],
-      kind: { tag: "tuple", elements: [{ tag: "concrete", type_id: 0xba8125876d6388b4n, args: [] }] },
-    }],
-    [0x40452cfcea600e3dn, {
-      id: 0x40452cfcea600e3dn,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xba8125876d6388b4n, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
-    }],
-    [0x178367a87f66fb46n, {
-      id: 0x178367a87f66fb46n,
-      type_params: [],
-      kind: { tag: "primitive", primitive_type: "bool" },
-    }],
-    [0xedb0bbaf12b02aben, {
-      id: 0xedb0bbaf12b02aben,
-      type_params: [],
-      kind: { tag: "tuple", elements: [{ tag: "concrete", type_id: 0x178367a87f66fb46n, args: [] }] },
-    }],
-    [0x0b3d516ce8faee0fn, {
-      id: 0x0b3d516ce8faee0fn,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x178367a87f66fb46n, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
-    }],
     [0xd9356298b81639acn, {
       id: 0xd9356298b81639acn,
       type_params: [],
       kind: { tag: "primitive", primitive_type: "u64" },
     }],
-    [0xde69b13dbe16811bn, {
-      id: 0xde69b13dbe16811bn,
-      type_params: [],
-      kind: { tag: "tuple", elements: [{ tag: "concrete", type_id: 0xd9356298b81639acn, args: [] }] },
-    }],
-    [0xaf531e1b7b4e7702n, {
-      id: 0xaf531e1b7b4e7702n,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xd9356298b81639acn, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
-    }],
-    [0xe87a3366f6884804n, {
-      id: 0xe87a3366f6884804n,
-      type_params: [],
+    [0x915c6fb5b64f270bn, {
+      id: 0x915c6fb5b64f270bn,
+      type_params: ["T0", "T1", "T2", "T3"],
       kind: {
         tag: "tuple",
-        elements: [{
-          tag: "concrete",
-          type_id: 0xdcafd4de6b7969bbn,
-          args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
+        elements: [{ tag: "var", name: "T0" }, { tag: "var", name: "T1" }, { tag: "var", name: "T2" }, {
+          tag: "var",
+          name: "T3",
         }],
-      },
-    }],
-    [0xd72f7ffab6fe8863n, {
-      id: 0xd72f7ffab6fe8863n,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: {
-            tag: "newtype",
-            type_ref: {
-              tag: "concrete",
-              type_id: 0xdcafd4de6b7969bbn,
-              args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
-            },
-          },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
-    }],
-    [0xbb1e89250869c60fn, {
-      id: 0xbb1e89250869c60fn,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: {
-            tag: "newtype",
-            type_ref: {
-              tag: "concrete",
-              type_id: 0x0a96b404b4d79d67n,
-              args: [{ tag: "concrete", type_id: 0x1b57cc7742fabeb0n, args: [] }],
-            },
-          },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
-    }],
-    [0x4f5fc6e9cd8a5ec6n, {
-      id: 0x4f5fc6e9cd8a5ec6n,
-      type_params: [],
-      kind: {
-        tag: "tuple",
-        elements: [
-          { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] },
-          { tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] },
-          { tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] },
-          { tag: "concrete", type_id: 0x178367a87f66fb46n, args: [] },
-        ],
       },
     }],
     [0x7f145c7b0ededd20n, {
@@ -2184,40 +1666,6 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         ],
       },
     }],
-    [0x4f6c4e790c87a85dn, {
-      id: 0x4f6c4e790c87a85dn,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x7f145c7b0ededd20n, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
-    }],
-    [0xe1b5895c125213c5n, {
-      id: 0xe1b5895c125213c5n,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xe407302c560da502n, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
-    }],
     [0x01542aaa833a2511n, {
       id: 0x01542aaa833a2511n,
       type_params: [],
@@ -2228,28 +1676,6 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
           name: "Inactive",
           index: 1,
           payload: { tag: "unit" },
-        }],
-      },
-    }],
-    [0x5be417f3dfbb396bn, {
-      id: 0x5be417f3dfbb396bn,
-      type_params: [],
-      kind: { tag: "tuple", elements: [{ tag: "concrete", type_id: 0x01542aaa833a2511n, args: [] }] },
-    }],
-    [0x4234b53d39273c04n, {
-      id: 0x4234b53d39273c04n,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x01542aaa833a2511n, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
         }],
       },
     }],
@@ -2266,28 +1692,6 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         ],
       },
     }],
-    [0xbedf1c1e8dfe21edn, {
-      id: 0xbedf1c1e8dfe21edn,
-      type_params: [],
-      kind: { tag: "tuple", elements: [{ tag: "concrete", type_id: 0x4620db6c5c627787n, args: [] }] },
-    }],
-    [0x3b712a361468b38an, {
-      id: 0x3b712a361468b38an,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x4620db6c5c627787n, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
-    }],
     [0xbc2cd703968e7d0dn, {
       id: 0xbc2cd703968e7d0dn,
       type_params: [],
@@ -2299,28 +1703,6 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
           type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] },
           required: true,
         }, { name: "bio", type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, required: true }],
-      },
-    }],
-    [0x5b1fdb36590f8fb8n, {
-      id: 0x5b1fdb36590f8fb8n,
-      type_params: [],
-      kind: { tag: "tuple", elements: [{ tag: "concrete", type_id: 0xbc2cd703968e7d0dn, args: [] }] },
-    }],
-    [0x45f04cda9e3fe26an, {
-      id: 0x45f04cda9e3fe26an,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xbc2cd703968e7d0dn, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
       },
     }],
     [0x2ef93123176c696cn, {
@@ -2336,28 +1718,6 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         ],
       },
     }],
-    [0x98198a69b2919165n, {
-      id: 0x98198a69b2919165n,
-      type_params: [],
-      kind: { tag: "tuple", elements: [{ tag: "concrete", type_id: 0x2ef93123176c696cn, args: [] }] },
-    }],
-    [0x4fad963c6e610e86n, {
-      id: 0x4fad963c6e610e86n,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x2ef93123176c696cn, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
-    }],
     [0x0930935d500f9629n, {
       id: 0x0930935d500f9629n,
       type_params: [],
@@ -2369,28 +1729,6 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
           type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] },
           required: true,
         }, { name: "value", type_ref: { tag: "concrete", type_id: 0x3f2e589db81e95bfn, args: [] }, required: true }],
-      },
-    }],
-    [0x2bb48e4457302225n, {
-      id: 0x2bb48e4457302225n,
-      type_params: [],
-      kind: { tag: "tuple", elements: [{ tag: "concrete", type_id: 0x0930935d500f9629n, args: [] }] },
-    }],
-    [0x1e41d279e470999cn, {
-      id: 0x1e41d279e470999cn,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x0930935d500f9629n, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
       },
     }],
     [0xec2764b25ae6ef1en, {
@@ -2405,457 +1743,940 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         ],
       },
     }],
-    [0xa8935df102e570bfn, {
-      id: 0xa8935df102e570bfn,
-      type_params: [],
-      kind: { tag: "tuple", elements: [{ tag: "concrete", type_id: 0xec2764b25ae6ef1en, args: [] }] },
-    }],
-    [0xc46d22d438597a1en, {
-      id: 0xc46d22d438597a1en,
-      type_params: [],
-      kind: {
-        tag: "enum",
-        name: "Result",
-        variants: [{
-          name: "Ok",
-          index: 0,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xec2764b25ae6ef1en, args: [] } },
-        }, {
-          name: "Err",
-          index: 1,
-          payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xeb41a85ae6648f0cn, args: [] } },
-        }],
-      },
-    }],
   ]),
   methods: new Map<bigint, import("@bearcove/roam-core").MethodSendSchemas>([
     [0x880bc4eee23574ben, {
-      argsDepIds: [0x8f4461eb06ae1d0an, 0x6d7dce914ee150e8n],
-      argsRootRef: { tag: "concrete", type_id: 0x8f4461eb06ae1d0an, args: [] },
-      responseDepIds: [0x6d6cda2a6f13088an, 0xeb41a85ae6648f0cn, 0x6d7dce914ee150e8n, 0xbc5c33249a2dc720n],
-      responseRootRef: { tag: "concrete", type_id: 0x6d6cda2a6f13088an, args: [] },
+      argsDepIds: [0x6d7dce914ee150e8n, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
+      },
+      responseDepIds: [0xbc5c33249a2dc720n, 0xae570b7750005a79n, 0x6d7dce914ee150e8n, 0x42046de663beeef0n],
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x1c223f30e180392an, {
-      argsDepIds: [0x8f4461eb06ae1d0an, 0x6d7dce914ee150e8n],
-      argsRootRef: { tag: "concrete", type_id: 0x8f4461eb06ae1d0an, args: [] },
-      responseDepIds: [0x6d6cda2a6f13088an, 0xeb41a85ae6648f0cn, 0x6d7dce914ee150e8n, 0xbc5c33249a2dc720n],
-      responseRootRef: { tag: "concrete", type_id: 0x6d6cda2a6f13088an, args: [] },
+      argsDepIds: [0x6d7dce914ee150e8n, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
+      },
+      responseDepIds: [0xbc5c33249a2dc720n, 0xae570b7750005a79n, 0x6d7dce914ee150e8n, 0x42046de663beeef0n],
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0xfb68d9318f830875n, {
-      argsDepIds: [0x1aca2a3c757ba2e5n, 0xc6eb8c46f1e17fban],
-      argsRootRef: { tag: "concrete", type_id: 0x1aca2a3c757ba2e5n, args: [] },
+      argsDepIds: [0xc6eb8c46f1e17fban, 0xba0496aa8cee7a4cn],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0xba0496aa8cee7a4cn,
+        args: [{ tag: "concrete", type_id: 0xc6eb8c46f1e17fban, args: [] }, {
+          tag: "concrete",
+          type_id: 0xc6eb8c46f1e17fban,
+          args: [],
+        }],
+      },
       responseDepIds: [
-        0xf06d6789cf98ffb5n,
-        0x0f10a0e9726dc1a8n,
-        0x6d7dce914ee150e8n,
         0xd9d78670738e6064n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0xc6eb8c46f1e17fban,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0xf06d6789cf98ffb5n, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xc6eb8c46f1e17fban, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xd9d78670738e6064n, args: [] }],
+        }],
+      },
     }],
     [0xa15ff52094712a3bn, {
-      argsDepIds: [0xdbefcb75f8046566n, 0x281c5be4f2ee63b4n],
-      argsRootRef: { tag: "concrete", type_id: 0xdbefcb75f8046566n, args: [] },
+      argsDepIds: [0x281c5be4f2ee63b4n, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0x281c5be4f2ee63b4n, args: [] }],
+      },
       responseDepIds: [
-        0xeac6ec2254371fb4n,
-        0xbb9aa03e516b920an,
-        0x6d7dce914ee150e8n,
         0x16d92ac9e3bd73ban,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0xc841530b759b8ed0n,
         0xdcafd4de6b7969bbn,
         0x2c8d54f2314d0f20n,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0xeac6ec2254371fb4n, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xc841530b759b8ed0n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0x16d92ac9e3bd73ban, args: [] }],
+        }],
+      },
     }],
     [0x51f9cfd8e86577c9n, {
-      argsDepIds: [0xa506b69142f11cban, 0x361f4536eee9f991n, 0x967a48ac345e2f5en],
-      argsRootRef: { tag: "concrete", type_id: 0xa506b69142f11cban, args: [] },
+      argsDepIds: [0x361f4536eee9f991n, 0x967a48ac345e2f5en, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{
+          tag: "concrete",
+          type_id: 0x967a48ac345e2f5en,
+          args: [{ tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] }],
+        }],
+      },
       responseDepIds: [
-        0x4771d97c161367dan,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0xc6eb8c46f1e17fban,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0x4771d97c161367dan, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xc6eb8c46f1e17fban, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x239e5b99b1f8207an, {
-      argsDepIds: [0x7c7d729bddf50068n, 0x361f4536eee9f991n, 0xc886545a493d06ebn, 0x281c5be4f2ee63b4n],
-      argsRootRef: { tag: "concrete", type_id: 0x7c7d729bddf50068n, args: [] },
-      responseDepIds: [0x1cca4e83a7b72854n, 0xeb41a85ae6648f0cn, 0x6d7dce914ee150e8n, 0xbc5c33249a2dc720n],
-      responseRootRef: { tag: "concrete", type_id: 0x1cca4e83a7b72854n, args: [] },
+      argsDepIds: [0x361f4536eee9f991n, 0xc886545a493d06ebn, 0x281c5be4f2ee63b4n, 0xba0496aa8cee7a4cn],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0xba0496aa8cee7a4cn,
+        args: [{ tag: "concrete", type_id: 0x281c5be4f2ee63b4n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xc886545a493d06ebn,
+          args: [{ tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] }],
+        }],
+      },
+      responseDepIds: [0xbc5c33249a2dc720n, 0xae570b7750005a79n, 0x6d7dce914ee150e8n, 0x42046de663beeef0n],
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x34419529478cc7b8n, {
-      argsDepIds: [0x7c7d729bddf50068n, 0x361f4536eee9f991n, 0xc886545a493d06ebn, 0x281c5be4f2ee63b4n],
-      argsRootRef: { tag: "concrete", type_id: 0x7c7d729bddf50068n, args: [] },
-      responseDepIds: [0x1cca4e83a7b72854n, 0xeb41a85ae6648f0cn, 0x6d7dce914ee150e8n, 0xbc5c33249a2dc720n],
-      responseRootRef: { tag: "concrete", type_id: 0x1cca4e83a7b72854n, args: [] },
+      argsDepIds: [0x361f4536eee9f991n, 0xc886545a493d06ebn, 0x281c5be4f2ee63b4n, 0xba0496aa8cee7a4cn],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0xba0496aa8cee7a4cn,
+        args: [{ tag: "concrete", type_id: 0x281c5be4f2ee63b4n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xc886545a493d06ebn,
+          args: [{ tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] }],
+        }],
+      },
+      responseDepIds: [0xbc5c33249a2dc720n, 0xae570b7750005a79n, 0x6d7dce914ee150e8n, 0x42046de663beeef0n],
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0xe2d27fd9098c6ea2n, {
-      argsDepIds: [0x7c7d729bddf50068n, 0x361f4536eee9f991n, 0xc886545a493d06ebn, 0x281c5be4f2ee63b4n],
-      argsRootRef: { tag: "concrete", type_id: 0x7c7d729bddf50068n, args: [] },
-      responseDepIds: [0x1cca4e83a7b72854n, 0xeb41a85ae6648f0cn, 0x6d7dce914ee150e8n, 0xbc5c33249a2dc720n],
-      responseRootRef: { tag: "concrete", type_id: 0x1cca4e83a7b72854n, args: [] },
+      argsDepIds: [0x361f4536eee9f991n, 0xc886545a493d06ebn, 0x281c5be4f2ee63b4n, 0xba0496aa8cee7a4cn],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0xba0496aa8cee7a4cn,
+        args: [{ tag: "concrete", type_id: 0x281c5be4f2ee63b4n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xc886545a493d06ebn,
+          args: [{ tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] }],
+        }],
+      },
+      responseDepIds: [0xbc5c33249a2dc720n, 0xae570b7750005a79n, 0x6d7dce914ee150e8n, 0x42046de663beeef0n],
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0xcb469cff8d798febn, {
-      argsDepIds: [0x52833e77a47f1724n, 0x6d7dce914ee150e8n, 0xc886545a493d06ebn, 0x967a48ac345e2f5en],
-      argsRootRef: { tag: "concrete", type_id: 0x52833e77a47f1724n, args: [] },
-      responseDepIds: [0x1cca4e83a7b72854n, 0xeb41a85ae6648f0cn, 0x6d7dce914ee150e8n, 0xbc5c33249a2dc720n],
-      responseRootRef: { tag: "concrete", type_id: 0x1cca4e83a7b72854n, args: [] },
+      argsDepIds: [0x6d7dce914ee150e8n, 0xc886545a493d06ebn, 0x967a48ac345e2f5en, 0xba0496aa8cee7a4cn],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0xba0496aa8cee7a4cn,
+        args: [{
+          tag: "concrete",
+          type_id: 0x967a48ac345e2f5en,
+          args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
+        }, {
+          tag: "concrete",
+          type_id: 0xc886545a493d06ebn,
+          args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
+        }],
+      },
+      responseDepIds: [0xbc5c33249a2dc720n, 0xae570b7750005a79n, 0x6d7dce914ee150e8n, 0x42046de663beeef0n],
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x81f5386d589dfbe4n, {
-      argsDepIds: [0x3b727953544cb3dcn, 0xb92332c67187108fn, 0x361f4536eee9f991n],
-      argsRootRef: { tag: "concrete", type_id: 0x3b727953544cb3dcn, args: [] },
+      argsDepIds: [0xb92332c67187108fn, 0x361f4536eee9f991n, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0xb92332c67187108fn, args: [] }],
+      },
       responseDepIds: [
-        0xcf092ed716b44edfn,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0xb92332c67187108fn,
         0x361f4536eee9f991n,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0xcf092ed716b44edfn, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xb92332c67187108fn, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x68ffa90b7728bde7n, {
-      argsDepIds: [0x0a8770bc9e55f940n, 0x6d7dce914ee150e8n, 0xdcafd4de6b7969bbn, 0x2c8d54f2314d0f20n],
-      argsRootRef: { tag: "concrete", type_id: 0x0a8770bc9e55f940n, args: [] },
+      argsDepIds: [0x6d7dce914ee150e8n, 0xdcafd4de6b7969bbn, 0x2c8d54f2314d0f20n, 0xaa510ab07d34f141n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0xaa510ab07d34f141n,
+        args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, {
+          tag: "concrete",
+          type_id: 0x2c8d54f2314d0f20n,
+          args: [],
+        }, {
+          tag: "concrete",
+          type_id: 0xdcafd4de6b7969bbn,
+          args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
+        }],
+      },
       responseDepIds: [
-        0x74adf32372d3c85fn,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0xc841530b759b8ed0n,
         0xdcafd4de6b7969bbn,
         0x2c8d54f2314d0f20n,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0x74adf32372d3c85fn, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xc841530b759b8ed0n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x223fe0282d263107n, {
       argsDepIds: [
-        0x1a54592760d047b7n,
         0x6ecf4fe376e23113n,
         0x6d7dce914ee150e8n,
         0xdcafd4de6b7969bbn,
         0xb92332c67187108fn,
         0x361f4536eee9f991n,
+        0x6847ab90feda71c1n,
       ],
-      argsRootRef: { tag: "concrete", type_id: 0x1a54592760d047b7n, args: [] },
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0x6ecf4fe376e23113n, args: [] }],
+      },
       responseDepIds: [
-        0xf84aebfb8418c494n,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0x3f2e589db81e95bfn,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0xf84aebfb8418c494n, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0x3f2e589db81e95bfn, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0xd4f16ea9eca132e6n, {
-      argsDepIds: [0x8f4461eb06ae1d0an, 0x6d7dce914ee150e8n],
-      argsRootRef: { tag: "concrete", type_id: 0x8f4461eb06ae1d0an, args: [] },
+      argsDepIds: [0x6d7dce914ee150e8n, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
+      },
       responseDepIds: [
-        0x65fbc69efc40b165n,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0x1b57cc7742fabeb0n,
         0xdcafd4de6b7969bbn,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0x65fbc69efc40b165n, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{
+          tag: "concrete",
+          type_id: 0xdcafd4de6b7969bbn,
+          args: [{ tag: "concrete", type_id: 0x1b57cc7742fabeb0n, args: [] }],
+        }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x04385a4be2a882f5n, {
-      argsDepIds: [0x4ccd9cc3218c6925n, 0xe407302c560da502n, 0x3f2e589db81e95bfn],
-      argsRootRef: { tag: "concrete", type_id: 0x4ccd9cc3218c6925n, args: [] },
+      argsDepIds: [0xe407302c560da502n, 0x3f2e589db81e95bfn, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0xe407302c560da502n, args: [] }],
+      },
       responseDepIds: [
-        0xf84aebfb8418c494n,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0x3f2e589db81e95bfn,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0xf84aebfb8418c494n, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0x3f2e589db81e95bfn, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0xef421eb5b08c973an, {
       argsDepIds: [
-        0xa023a112d67af423n,
         0x1b57cc7742fabeb0n,
         0xe407302c560da502n,
         0x3f2e589db81e95bfn,
         0x0a96b404b4d79d67n,
         0x6d7dce914ee150e8n,
+        0xaa510ab07d34f141n,
       ],
-      argsRootRef: { tag: "concrete", type_id: 0xa023a112d67af423n, args: [] },
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0xaa510ab07d34f141n,
+        args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, {
+          tag: "concrete",
+          type_id: 0x0a96b404b4d79d67n,
+          args: [{ tag: "concrete", type_id: 0xe407302c560da502n, args: [] }],
+        }, { tag: "concrete", type_id: 0x1b57cc7742fabeb0n, args: [] }],
+      },
       responseDepIds: [
-        0xa33f88e03ecfa7a1n,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0x221855c965fb31e1n,
         0x1b57cc7742fabeb0n,
         0xe407302c560da502n,
         0x3f2e589db81e95bfn,
         0x0a96b404b4d79d67n,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0xa33f88e03ecfa7a1n, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0x221855c965fb31e1n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0xe08f0f5254e7a997n, {
       argsDepIds: [
-        0xec4783339c49cc58n,
         0xbda77ebf97f345a9n,
         0xba8125876d6388b4n,
         0xc6eb8c46f1e17fban,
         0x6d7dce914ee150e8n,
+        0x6847ab90feda71c1n,
       ],
-      argsRootRef: { tag: "concrete", type_id: 0xec4783339c49cc58n, args: [] },
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0xbda77ebf97f345a9n, args: [] }],
+      },
       responseDepIds: [
-        0xf49452cacbb7190fn,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0xbda77ebf97f345a9n,
         0xba8125876d6388b4n,
         0xc6eb8c46f1e17fban,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0xf49452cacbb7190fn, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xbda77ebf97f345a9n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x598518523a6266bfn, {
-      argsDepIds: [0xdbefcb75f8046566n, 0x281c5be4f2ee63b4n],
-      argsRootRef: { tag: "concrete", type_id: 0xdbefcb75f8046566n, args: [] },
+      argsDepIds: [0x281c5be4f2ee63b4n, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0x281c5be4f2ee63b4n, args: [] }],
+      },
       responseDepIds: [
-        0x2104bcb814d007d4n,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0xb92332c67187108fn,
         0x361f4536eee9f991n,
         0x0a96b404b4d79d67n,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0x2104bcb814d007d4n, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{
+          tag: "concrete",
+          type_id: 0x0a96b404b4d79d67n,
+          args: [{ tag: "concrete", type_id: 0xb92332c67187108fn, args: [] }],
+        }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x7d55a713ad612bf2n, {
-      argsDepIds: [0x870a5c8b930e7decn, 0x552eb11103d7a727n, 0x6d7dce914ee150e8n, 0x361f4536eee9f991n],
-      argsRootRef: { tag: "concrete", type_id: 0x870a5c8b930e7decn, args: [] },
+      argsDepIds: [0x6d7dce914ee150e8n, 0x361f4536eee9f991n, 0xba0496aa8cee7a4cn, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{
+          tag: "concrete",
+          type_id: 0xba0496aa8cee7a4cn,
+          args: [{ tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] }, {
+            tag: "concrete",
+            type_id: 0x6d7dce914ee150e8n,
+            args: [],
+          }],
+        }],
+      },
       responseDepIds: [
-        0x9afe2166c5df7820n,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
-        0x6619b1dab4801f55n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0x361f4536eee9f991n,
+        0xba0496aa8cee7a4cn,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0x9afe2166c5df7820n, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{
+          tag: "concrete",
+          type_id: 0xba0496aa8cee7a4cn,
+          args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, {
+            tag: "concrete",
+            type_id: 0x361f4536eee9f991n,
+            args: [],
+          }],
+        }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x44056c7842fa336cn, {
-      argsDepIds: [0x9bff6dcaea022307n, 0xba8125876d6388b4n],
-      argsRootRef: { tag: "concrete", type_id: 0x9bff6dcaea022307n, args: [] },
+      argsDepIds: [0xba8125876d6388b4n, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0xba8125876d6388b4n, args: [] }],
+      },
       responseDepIds: [
-        0x40452cfcea600e3dn,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0xba8125876d6388b4n,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0x40452cfcea600e3dn, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xba8125876d6388b4n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x5136d8f01a5f496cn, {
-      argsDepIds: [0xedb0bbaf12b02aben, 0x178367a87f66fb46n],
-      argsRootRef: { tag: "concrete", type_id: 0xedb0bbaf12b02aben, args: [] },
+      argsDepIds: [0x178367a87f66fb46n, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0x178367a87f66fb46n, args: [] }],
+      },
       responseDepIds: [
-        0x0b3d516ce8faee0fn,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0x178367a87f66fb46n,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0x0b3d516ce8faee0fn, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0x178367a87f66fb46n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x85e2380dbf7ffe65n, {
-      argsDepIds: [0xde69b13dbe16811bn, 0xd9356298b81639acn],
-      argsRootRef: { tag: "concrete", type_id: 0xde69b13dbe16811bn, args: [] },
+      argsDepIds: [0xd9356298b81639acn, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0xd9356298b81639acn, args: [] }],
+      },
       responseDepIds: [
-        0xaf531e1b7b4e7702n,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0xd9356298b81639acn,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0xaf531e1b7b4e7702n, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xd9356298b81639acn, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0xb1a5bfd205b3fbfcn, {
-      argsDepIds: [0xe87a3366f6884804n, 0x6d7dce914ee150e8n, 0xdcafd4de6b7969bbn],
-      argsRootRef: { tag: "concrete", type_id: 0xe87a3366f6884804n, args: [] },
+      argsDepIds: [0x6d7dce914ee150e8n, 0xdcafd4de6b7969bbn, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{
+          tag: "concrete",
+          type_id: 0xdcafd4de6b7969bbn,
+          args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
+        }],
+      },
       responseDepIds: [
-        0xd72f7ffab6fe8863n,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0xdcafd4de6b7969bbn,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0xd72f7ffab6fe8863n, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{
+          tag: "concrete",
+          type_id: 0xdcafd4de6b7969bbn,
+          args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
+        }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x9a7bed545e088054n, {
-      argsDepIds: [0xa506b69142f11cban, 0x361f4536eee9f991n, 0x967a48ac345e2f5en],
-      argsRootRef: { tag: "concrete", type_id: 0xa506b69142f11cban, args: [] },
+      argsDepIds: [0x361f4536eee9f991n, 0x967a48ac345e2f5en, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{
+          tag: "concrete",
+          type_id: 0x967a48ac345e2f5en,
+          args: [{ tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] }],
+        }],
+      },
       responseDepIds: [
-        0x4771d97c161367dan,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0xc6eb8c46f1e17fban,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0x4771d97c161367dan, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xc6eb8c46f1e17fban, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x8edfbd65d162f685n, {
-      argsDepIds: [0x7c7d729bddf50068n, 0x361f4536eee9f991n, 0xc886545a493d06ebn, 0x281c5be4f2ee63b4n],
-      argsRootRef: { tag: "concrete", type_id: 0x7c7d729bddf50068n, args: [] },
-      responseDepIds: [0x1cca4e83a7b72854n, 0xeb41a85ae6648f0cn, 0x6d7dce914ee150e8n, 0xbc5c33249a2dc720n],
-      responseRootRef: { tag: "concrete", type_id: 0x1cca4e83a7b72854n, args: [] },
+      argsDepIds: [0x361f4536eee9f991n, 0xc886545a493d06ebn, 0x281c5be4f2ee63b4n, 0xba0496aa8cee7a4cn],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0xba0496aa8cee7a4cn,
+        args: [{ tag: "concrete", type_id: 0x281c5be4f2ee63b4n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xc886545a493d06ebn,
+          args: [{ tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] }],
+        }],
+      },
+      responseDepIds: [0xbc5c33249a2dc720n, 0xae570b7750005a79n, 0x6d7dce914ee150e8n, 0x42046de663beeef0n],
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0xfbfb05bbcaade4a0n, {
       argsDepIds: [0xbc5c33249a2dc720n],
       argsRootRef: { tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] },
       responseDepIds: [
-        0xbb1e89250869c60fn,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0x1b57cc7742fabeb0n,
         0x0a96b404b4d79d67n,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0xbb1e89250869c60fn, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{
+          tag: "concrete",
+          type_id: 0x0a96b404b4d79d67n,
+          args: [{ tag: "concrete", type_id: 0x1b57cc7742fabeb0n, args: [] }],
+        }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x62feb14a8fcf9b6dn, {
-      argsDepIds: [0x4f5fc6e9cd8a5ec6n, 0x178367a87f66fb46n, 0x361f4536eee9f991n, 0x6d7dce914ee150e8n],
-      argsRootRef: { tag: "concrete", type_id: 0x4f5fc6e9cd8a5ec6n, args: [] },
+      argsDepIds: [0x178367a87f66fb46n, 0x361f4536eee9f991n, 0x6d7dce914ee150e8n, 0x915c6fb5b64f270bn],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x915c6fb5b64f270bn,
+        args: [
+          { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] },
+          { tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] },
+          { tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] },
+          { tag: "concrete", type_id: 0x178367a87f66fb46n, args: [] },
+        ],
+      },
       responseDepIds: [
-        0x4f6c4e790c87a85dn,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0x7f145c7b0ededd20n,
         0x178367a87f66fb46n,
         0x361f4536eee9f991n,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0x4f6c4e790c87a85dn, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0x7f145c7b0ededd20n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x4125b5e678b7b4a5n, {
-      argsDepIds: [0x4ccd9cc3218c6925n, 0xe407302c560da502n, 0x3f2e589db81e95bfn],
-      argsRootRef: { tag: "concrete", type_id: 0x4ccd9cc3218c6925n, args: [] },
+      argsDepIds: [0xe407302c560da502n, 0x3f2e589db81e95bfn, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0xe407302c560da502n, args: [] }],
+      },
       responseDepIds: [
-        0xe1b5895c125213c5n,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0xe407302c560da502n,
         0x3f2e589db81e95bfn,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0xe1b5895c125213c5n, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xe407302c560da502n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0xc7c5aa845cfb8bf6n, {
-      argsDepIds: [0x5be417f3dfbb396bn, 0x01542aaa833a2511n],
-      argsRootRef: { tag: "concrete", type_id: 0x5be417f3dfbb396bn, args: [] },
+      argsDepIds: [0x01542aaa833a2511n, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0x01542aaa833a2511n, args: [] }],
+      },
       responseDepIds: [
-        0x4234b53d39273c04n,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0x01542aaa833a2511n,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0x4234b53d39273c04n, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0x01542aaa833a2511n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x6619071be5d5c259n, {
-      argsDepIds: [0xbedf1c1e8dfe21edn, 0x4620db6c5c627787n, 0x6d7dce914ee150e8n, 0x281c5be4f2ee63b4n],
-      argsRootRef: { tag: "concrete", type_id: 0xbedf1c1e8dfe21edn, args: [] },
+      argsDepIds: [0x4620db6c5c627787n, 0x6d7dce914ee150e8n, 0x281c5be4f2ee63b4n, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0x4620db6c5c627787n, args: [] }],
+      },
       responseDepIds: [
-        0x3b712a361468b38an,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0x4620db6c5c627787n,
         0x281c5be4f2ee63b4n,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0x3b712a361468b38an, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0x4620db6c5c627787n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0xbd9bcabddeebeb04n, {
-      argsDepIds: [0x5b1fdb36590f8fb8n, 0xbc2cd703968e7d0dn, 0x6d7dce914ee150e8n],
-      argsRootRef: { tag: "concrete", type_id: 0x5b1fdb36590f8fb8n, args: [] },
+      argsDepIds: [0xbc2cd703968e7d0dn, 0x6d7dce914ee150e8n, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0xbc2cd703968e7d0dn, args: [] }],
+      },
       responseDepIds: [
-        0x45f04cda9e3fe26an,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0xbc2cd703968e7d0dn,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0x45f04cda9e3fe26an, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xbc2cd703968e7d0dn, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x100b0e08da4b8f1an, {
       argsDepIds: [
-        0x98198a69b2919165n,
         0x2ef93123176c696cn,
         0x3f2e589db81e95bfn,
         0x6d7dce914ee150e8n,
         0x361f4536eee9f991n,
+        0x6847ab90feda71c1n,
       ],
-      argsRootRef: { tag: "concrete", type_id: 0x98198a69b2919165n, args: [] },
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0x2ef93123176c696cn, args: [] }],
+      },
       responseDepIds: [
-        0x4fad963c6e610e86n,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0x2ef93123176c696cn,
         0x3f2e589db81e95bfn,
         0x361f4536eee9f991n,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0x4fad963c6e610e86n, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0x2ef93123176c696cn, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x697590d3ffc36703n, {
-      argsDepIds: [0x5be417f3dfbb396bn, 0x01542aaa833a2511n],
-      argsRootRef: { tag: "concrete", type_id: 0x5be417f3dfbb396bn, args: [] },
+      argsDepIds: [0x01542aaa833a2511n, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0x01542aaa833a2511n, args: [] }],
+      },
       responseDepIds: [
-        0x4234b53d39273c04n,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0x01542aaa833a2511n,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0x4234b53d39273c04n, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0x01542aaa833a2511n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x2bd1b3149d73ce97n, {
-      argsDepIds: [0xbedf1c1e8dfe21edn, 0x4620db6c5c627787n, 0x6d7dce914ee150e8n, 0x281c5be4f2ee63b4n],
-      argsRootRef: { tag: "concrete", type_id: 0xbedf1c1e8dfe21edn, args: [] },
+      argsDepIds: [0x4620db6c5c627787n, 0x6d7dce914ee150e8n, 0x281c5be4f2ee63b4n, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0x4620db6c5c627787n, args: [] }],
+      },
       responseDepIds: [
-        0x3b712a361468b38an,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0x4620db6c5c627787n,
         0x281c5be4f2ee63b4n,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0x3b712a361468b38an, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0x4620db6c5c627787n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0x3b3d22b015fa1a3fn, {
-      argsDepIds: [0x2bb48e4457302225n, 0x0930935d500f9629n, 0x3f2e589db81e95bfn, 0x6d7dce914ee150e8n],
-      argsRootRef: { tag: "concrete", type_id: 0x2bb48e4457302225n, args: [] },
+      argsDepIds: [0x0930935d500f9629n, 0x3f2e589db81e95bfn, 0x6d7dce914ee150e8n, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0x0930935d500f9629n, args: [] }],
+      },
       responseDepIds: [
-        0x1e41d279e470999cn,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0x0930935d500f9629n,
         0x3f2e589db81e95bfn,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0x1e41d279e470999cn, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0x0930935d500f9629n, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
     [0xe13a477fb964ce28n, {
-      argsDepIds: [0xa8935df102e570bfn, 0xec2764b25ae6ef1en, 0x6d7dce914ee150e8n],
-      argsRootRef: { tag: "concrete", type_id: 0xa8935df102e570bfn, args: [] },
+      argsDepIds: [0xec2764b25ae6ef1en, 0x6d7dce914ee150e8n, 0x6847ab90feda71c1n],
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0xec2764b25ae6ef1en, args: [] }],
+      },
       responseDepIds: [
-        0xc46d22d438597a1en,
-        0xeb41a85ae6648f0cn,
-        0x6d7dce914ee150e8n,
         0xbc5c33249a2dc720n,
+        0xae570b7750005a79n,
+        0x6d7dce914ee150e8n,
         0xec2764b25ae6ef1en,
+        0x42046de663beeef0n,
       ],
-      responseRootRef: { tag: "concrete", type_id: 0xc46d22d438597a1en, args: [] },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xec2764b25ae6ef1en, args: [] }, {
+          tag: "concrete",
+          type_id: 0xae570b7750005a79n,
+          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+        }],
+      },
     }],
   ]),
 };
@@ -3553,7 +3374,7 @@ export const testbed_descriptor: ServiceDescriptor = {
       name: "allColors",
       id: 0xfbfb05bbcaade4a0n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [] },
+      args: { kind: "struct", fields: {} },
       result: {
         kind: "enum",
         variants: [{ name: "Ok", fields: { kind: "vec", element: { kind: "ref", name: "Color" } } }, {

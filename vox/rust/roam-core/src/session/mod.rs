@@ -529,6 +529,25 @@ impl ConnectionSender {
         );
     }
 
+    /// Shape a response using an explicit canonical root type and schema source.
+    pub(crate) fn prepare_response_from_source(
+        &self,
+        request_id: RequestId,
+        method_id: roam_types::MethodId,
+        root_type: &roam_types::TypeRef,
+        source: &dyn roam_types::SchemaSource,
+        response: &mut RequestResponse<'_>,
+    ) {
+        self.sess_core.prepare_response_from_source(
+            self.connection_id,
+            request_id,
+            method_id,
+            root_type,
+            source,
+            response,
+        );
+    }
+
     /// Mark a request as failed by removing any pending response slot.
     /// Called when a send error occurs or no reply was sent.
     pub fn mark_failure(&self, request_id: RequestId, disposition: FailureDisposition) {
@@ -543,16 +562,17 @@ impl ConnectionSender {
     /// Prepare schemas for a replay response using the operation store as schema source.
     pub fn prepare_replay_schemas(
         &self,
+        request_id: RequestId,
         method_id: roam_types::MethodId,
         root_type: &roam_types::TypeRef,
         store: &dyn crate::OperationStore,
         response: &mut RequestResponse<'_>,
     ) {
-        self.sess_core.prepare_replay_schemas(
-            self.connection_id,
+        self.prepare_response_from_source(
+            request_id,
             method_id,
             root_type,
-            store,
+            store.schema_source(),
             response,
         );
     }
@@ -1770,13 +1790,14 @@ impl SessionCore {
             .unwrap_or_default()
     }
 
-    /// Prepare schemas for a replay response, sourcing from the operation store.
-    pub(crate) fn prepare_replay_schemas(
+    /// Prepare response schemas from an explicit canonical root type and schema source.
+    pub(crate) fn prepare_response_from_source(
         &self,
         conn_id: ConnectionId,
+        request_id: RequestId,
         method_id: roam_types::MethodId,
         root_type: &roam_types::TypeRef,
-        store: &dyn crate::OperationStore,
+        source: &dyn roam_types::SchemaSource,
         response: &mut RequestResponse<'_>,
     ) {
         let mut inner = self.inner.lock().expect("session core mutex poisoned");
@@ -1784,15 +1805,21 @@ impl SessionCore {
             .conns
             .entry(conn_id)
             .or_insert_with(SendConnState::new);
+        conn_state.inflight_incoming.remove(&request_id);
+        let key = (roam_types::BindingDirection::Response, method_id);
+        if conn_state.method_tracker.contains(&key) {
+            return;
+        }
         let cbor = conn_state.send_tracker.prepare_send(
             method_id,
             roam_types::BindingDirection::Response,
             root_type,
-            store.schema_source(),
+            source,
         );
         if !cbor.is_empty() {
             response.schemas = cbor;
         }
+        conn_state.method_tracker.insert(key);
     }
 
     fn prepare_response_schemas(

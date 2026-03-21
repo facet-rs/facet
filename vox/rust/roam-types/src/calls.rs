@@ -374,6 +374,19 @@ pub trait Handler<R: ReplySink>: MaybeSend + MaybeSync + 'static {
         crate::RetryPolicy::VOLATILE
     }
 
+    /// Return whether the method's argument shape contains any channels.
+    fn args_have_channels(&self, _method_id: crate::MethodId) -> bool {
+        false
+    }
+
+    /// Return the canonical wire response shape for a method, if known.
+    ///
+    /// This is the full wire type `Result<T, RoamError<E>>`, not the
+    /// user-facing return type `T` or `Result<T, E>`.
+    fn response_wire_shape(&self, _method_id: crate::MethodId) -> Option<&'static facet::Shape> {
+        None
+    }
+
     /// Dispatch an incoming call to the appropriate method implementation.
     fn handle(
         &self,

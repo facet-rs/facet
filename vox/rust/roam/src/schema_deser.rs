@@ -73,6 +73,14 @@ fn resolve_plan<'facet, T: Facet<'facet>>(
             "remote root type ref {remote_root_ref:?} not found in received schemas"
         ))
     })?;
+    ::std::eprintln!(
+        "[schema-deser] resolve_plan remote: method={:?} direction={:?} t={} root_ref={:?} root_kind={:?}",
+        method_id,
+        direction,
+        ::std::any::type_name::<T>(),
+        remote_root_ref,
+        root_kind
+    );
     let root_id = match &remote_root_ref {
         TypeRef::Concrete { type_id, .. } => *type_id,
         TypeRef::Var { .. } => {
@@ -90,9 +98,17 @@ fn resolve_plan<'facet, T: Facet<'facet>>(
         registry,
     };
 
-    let local = SchemaSet::from_extracted(
-        extract_schemas(T::SHAPE)
-            .map_err(|e| DeserializeError::protocol(&format!("schema extraction failed: {e}")))?,
+    let local_extracted = extract_schemas(T::SHAPE)
+        .map_err(|e| DeserializeError::protocol(&format!("schema extraction failed: {e}")))?;
+    let local_root_ref = local_extracted.root.clone();
+    let local = SchemaSet::from_extracted(local_extracted);
+    ::std::eprintln!(
+        "[schema-deser] resolve_plan local: method={:?} direction={:?} shape={} root_ref={:?} root_kind={:?}",
+        method_id,
+        direction,
+        T::SHAPE,
+        local_root_ref,
+        local.root.kind
     );
 
     let plan = build_plan(&PlanInput {
@@ -102,4 +118,36 @@ fn resolve_plan<'facet, T: Facet<'facet>>(
     .map_err(|e| DeserializeError::protocol(&format!("translation plan failed: {e}")))?;
 
     Ok(ResolvedPlan { plan, remote })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roam_types::SchemaPayload;
+
+    #[test]
+    fn schema_deserialize_args_handles_nested_unary_tuple() {
+        let method_id = MethodId(1);
+        let extracted =
+            extract_schemas(<((i32, String),) as Facet>::SHAPE).expect("schema extraction");
+        let tracker = SchemaRecvTracker::new();
+        tracker
+            .record_received(
+                method_id,
+                BindingDirection::Args,
+                SchemaPayload {
+                    schemas: extracted.schemas.clone(),
+                    root: extracted.root.clone(),
+                },
+            )
+            .expect("record received schemas");
+
+        let bytes =
+            roam_postcard::to_vec(&((42i32, "hello".to_string()),)).expect("serialize tuple args");
+        let decoded: ((i32, String),) =
+            schema_deserialize_args_borrowed(&bytes, method_id, &tracker)
+                .expect("schema deserialize args");
+
+        assert_eq!(decoded, ((42, "hello".to_string()),));
+    }
 }

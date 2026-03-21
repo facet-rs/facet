@@ -19,8 +19,8 @@ use std::collections::HashSet;
 use facet_core::{Facet, Field, ScalarType, Shape};
 use heck::ToLowerCamelCase;
 use roam_types::{
-    EnumInfo, Schema, SchemaHash, SchemaKind, ServiceDescriptor, ShapeKind, StructInfo, TypeRef,
-    VariantKind, VariantPayload, VariantSchema, classify_shape, classify_variant,
+    EnumInfo, RoamError, Schema, SchemaHash, SchemaKind, ServiceDescriptor, ShapeKind, StructInfo,
+    TypeRef, VariantKind, VariantPayload, VariantSchema, classify_shape, classify_variant,
     compute_content_hash, is_bytes, schema_child_ids,
 };
 
@@ -358,6 +358,13 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         root
     }
 
+    fn type_id_of(type_ref: &TypeRef<SchemaHash>) -> SchemaHash {
+        match type_ref {
+            TypeRef::Concrete { type_id, .. } => *type_id,
+            TypeRef::Var { .. } => panic!("schema root cannot be a type variable"),
+        }
+    }
+
     // Track per-method info with full TypeRefs (preserving generic args).
     struct MethodSchemaInfo {
         method_id: u64,
@@ -367,33 +374,72 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
 
     let mut method_schema_infos: Vec<MethodSchemaInfo> = Vec::new();
 
+    let result_template_root = extract_into(
+        <Result<bool, u32> as Facet<'static>>::SHAPE,
+        &mut all_schemas,
+    );
+    let result_type_id = type_id_of(&result_template_root);
+    let roam_error_param = all_schemas
+        .iter()
+        .find(|schema| schema.id == result_type_id)
+        .and_then(|schema| schema.type_params.get(1))
+        .cloned()
+        .expect("generic Result<T, E> template must expose E");
+    let roam_error_type_params = vec![roam_error_param.clone()];
+    let roam_error_kind = {
+        let roam_error_shape = <RoamError<std::convert::Infallible> as Facet<'static>>::SHAPE;
+        let ShapeKind::Enum(EnumInfo { variants, .. }) = classify_shape(roam_error_shape) else {
+            panic!("RoamError must be an enum");
+        };
+        SchemaKind::Enum {
+            name: "RoamError".to_string(),
+            variants: variants
+                .iter()
+                .enumerate()
+                .map(|(index, variant)| {
+                    let payload = match classify_variant(variant) {
+                        VariantKind::Unit => VariantPayload::Unit,
+                        VariantKind::Newtype { inner } if variant.name == "User" => {
+                            let _ = inner;
+                            VariantPayload::Newtype {
+                                type_ref: TypeRef::Var {
+                                    name: roam_error_param.clone(),
+                                },
+                            }
+                        }
+                        VariantKind::Newtype { inner } => VariantPayload::Newtype {
+                            type_ref: extract_into(inner, &mut all_schemas),
+                        },
+                        VariantKind::Tuple { .. } | VariantKind::Struct { .. } => {
+                            panic!("unexpected RoamError payload shape: {}", variant.name)
+                        }
+                    };
+                    VariantSchema {
+                        name: variant.name.to_string(),
+                        index: index as u32,
+                        payload,
+                    }
+                })
+                .collect(),
+        }
+    };
+    let roam_error_type_id =
+        compute_content_hash(&roam_error_kind, &roam_error_type_params, &|id| id);
+    all_schemas.push(Schema {
+        id: roam_error_type_id,
+        type_params: roam_error_type_params,
+        kind: roam_error_kind,
+    });
+
     for method in service.methods {
         let method_id = crate::method_id(method);
 
         // --- Args ---
-        // Extract each arg's schemas, then wrap in a Tuple (or Unit for 0 args).
-        let args_root = if method.args.is_empty() {
-            extract_into(<() as Facet<'static>>::SHAPE, &mut all_schemas)
-        } else {
-            let arg_refs: Vec<TypeRef<SchemaHash>> = method
-                .args
-                .iter()
-                .map(|arg| extract_into(arg.shape, &mut all_schemas))
-                .collect();
-            let kind = SchemaKind::Tuple { elements: arg_refs };
-            let type_id = compute_content_hash(&kind, &[], &|id| id);
-            all_schemas.push(Schema {
-                id: type_id,
-                type_params: vec![],
-                kind,
-            });
-            TypeRef::concrete(type_id)
-        };
+        // Use the macro-provided canonical args tuple shape directly.
+        let args_root = extract_into(method.args_shape, &mut all_schemas);
 
         // --- Response ---
         // The wire encoding is ALWAYS Result<T, RoamError<E>>.
-        let string_ref = extract_into(<String as Facet<'static>>::SHAPE, &mut all_schemas);
-
         let (ok_ref, err_ref) = match classify_shape(method.return_shape) {
             ShapeKind::Result { ok, err } => (
                 extract_into(ok, &mut all_schemas),
@@ -409,75 +455,12 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
             }
         };
 
-        // Construct RoamError<E> schema.
-        let roam_error_kind = SchemaKind::Enum {
-            name: "RoamError".to_string(),
-            variants: vec![
-                VariantSchema {
-                    name: "User".into(),
-                    index: 0,
-                    payload: VariantPayload::Newtype { type_ref: err_ref },
-                },
-                VariantSchema {
-                    name: "UnknownMethod".into(),
-                    index: 1,
-                    payload: VariantPayload::Unit,
-                },
-                VariantSchema {
-                    name: "InvalidPayload".into(),
-                    index: 2,
-                    payload: VariantPayload::Newtype {
-                        type_ref: string_ref,
-                    },
-                },
-                VariantSchema {
-                    name: "Cancelled".into(),
-                    index: 3,
-                    payload: VariantPayload::Unit,
-                },
-                VariantSchema {
-                    name: "Indeterminate".into(),
-                    index: 4,
-                    payload: VariantPayload::Unit,
-                },
-            ],
-        };
-        let roam_error_id = compute_content_hash(&roam_error_kind, &[], &|id| id);
-        all_schemas.push(Schema {
-            id: roam_error_id,
-            type_params: vec![],
-            kind: roam_error_kind,
-        });
-
-        // Construct Result<T, RoamError<E>> schema.
-        let result_kind = SchemaKind::Enum {
-            name: "Result".to_string(),
-            variants: vec![
-                VariantSchema {
-                    name: "Ok".into(),
-                    index: 0,
-                    payload: VariantPayload::Newtype { type_ref: ok_ref },
-                },
-                VariantSchema {
-                    name: "Err".into(),
-                    index: 1,
-                    payload: VariantPayload::Newtype {
-                        type_ref: TypeRef::concrete(roam_error_id),
-                    },
-                },
-            ],
-        };
-        let result_id = compute_content_hash(&result_kind, &[], &|id| id);
-        all_schemas.push(Schema {
-            id: result_id,
-            type_params: vec![],
-            kind: result_kind,
-        });
+        let roam_error_ref = TypeRef::generic(roam_error_type_id, vec![err_ref]);
 
         method_schema_infos.push(MethodSchemaInfo {
             method_id,
             args_root,
-            response_root: TypeRef::concrete(result_id),
+            response_root: TypeRef::generic(result_type_id, vec![ok_ref, roam_error_ref]),
         });
     }
 
@@ -625,21 +608,13 @@ pub fn generate_descriptor(service: &ServiceDescriptor) -> String {
         let method_name = method.method_name.to_lower_camel_case();
         let id = crate::method_id(method);
 
-        // Args as a tuple schema
+        // Args as the macro-provided tuple shape
         let mut args_state = SchemaGenState {
             use_named_refs: true,
             root_name: None,
             active: HashSet::new(),
         };
-        let arg_schemas: Vec<_> = method
-            .args
-            .iter()
-            .map(|a| generate_schema_with_field(a.shape, None, &mut args_state))
-            .collect();
-        let args_schema = format!(
-            "{{ kind: 'tuple', elements: [{}] }}",
-            arg_schemas.join(", ")
-        );
+        let args_schema = generate_schema_with_field(method.args_shape, None, &mut args_state);
 
         // Result schema: Result<T, RoamError<E>>
         let result_schema = match classify_shape(method.return_shape) {

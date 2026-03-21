@@ -1230,6 +1230,12 @@ fn resolve_mixed(id: MixedId, temp_to_final: &HashMap<CycleSchemaIndex, SchemaHa
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum ExtractKey {
+    Decl(DeclId),
+    AnonymousTupleArity(usize),
+}
+
 /// Convert a Vec<MixedSchema> (from extraction) into Vec<Schema> with
 /// content-hashed TypeSchemaIds.
 ///
@@ -1398,31 +1404,38 @@ fn finalize_content_hashes(
 struct ExtractCtx {
     /// Counter for assigning temp IDs
     next_id: CycleSchemaIndex,
-    /// Schemas being built in this extraction pass, keyed by DeclId.
+    /// Schemas being built in this extraction pass, keyed by extraction identity.
     /// Insertion order is dependency order.
-    schemas: IndexMap<DeclId, MixedSchema>,
-    /// DeclId → MixedId for types we've started extracting (may not be
+    schemas: IndexMap<ExtractKey, MixedSchema>,
+    /// ExtractKey → MixedId for types we've started extracting (may not be
     /// fully built yet — needed for cycle references).
-    assigned: HashMap<DeclId, MixedId>,
+    assigned: HashMap<ExtractKey, MixedId>,
     /// Shapes we've started walking. If we encounter a shape already in
     /// this set, we're in a cycle.
     seen: HashSet<&'static Shape>,
 }
 
 impl ExtractCtx {
-    /// Get or assign a MixedId for a DeclId.
-    fn id_for_decl(&mut self, decl_id: DeclId) -> MixedId {
-        if let Some(&id) = self.assigned.get(&decl_id) {
+    /// Get or assign a MixedId for an extraction key.
+    fn id_for_key(&mut self, key: ExtractKey) -> MixedId {
+        if let Some(&id) = self.assigned.get(&key) {
             return id;
         }
         let id = MixedId::Temp(self.next_id.next());
-        self.assigned.insert(decl_id, id);
+        self.assigned.insert(key, id);
         id
     }
 
-    /// Emit a schema for a DeclId (if not already emitted in this pass).
-    fn emit_schema(&mut self, decl_id: DeclId, schema: MixedSchema) {
-        self.schemas.entry(decl_id).or_insert(schema);
+    /// Emit a schema for an extraction key (if not already emitted in this pass).
+    fn emit_schema(&mut self, key: ExtractKey, schema: MixedSchema) {
+        self.schemas.entry(key).or_insert(schema);
+    }
+
+    fn key_for_shape(&self, shape: &'static Shape) -> ExtractKey {
+        match anonymous_tuple_arity(shape) {
+            Some(arity) => ExtractKey::AnonymousTupleArity(arity),
+            None => ExtractKey::Decl(shape.decl_id),
+        }
     }
 
     /// Build a TypeRef for a field/element shape, substituting Var references
@@ -1455,13 +1468,13 @@ impl ExtractCtx {
             };
             if let Some(inner) = shape.type_params.first() {
                 let elem_ref = self.extract(inner.shape)?;
-                let decl_id = shape.decl_id;
-                let id = self.id_for_decl(decl_id);
+                let key = self.key_for_shape(shape);
+                let id = self.id_for_key(key);
                 // For channels, the element in the schema body uses Var("T")
                 // since channels are generic over their element type.
                 let type_params = vec![TypeParamName("T".to_string())];
                 self.emit_schema(
-                    decl_id,
+                    key,
                     MixedSchema {
                         id,
                         type_params,
@@ -1496,8 +1509,8 @@ impl ExtractCtx {
             return self.extract(pointee);
         }
 
-        let decl_id = shape.decl_id;
-        let id = self.id_for_decl(decl_id);
+        let key = self.key_for_shape(shape);
+        let id = self.id_for_key(key);
 
         // r[impl schema.format.recursive]
         // Cycle detection: if we've already started walking this shape,
@@ -1505,7 +1518,7 @@ impl ExtractCtx {
         if !self.seen.insert(shape) {
             // Already seen — either fully processed or a cycle.
             // Extract type args if generic (they may contain new types).
-            let args = self.extract_type_args(shape)?;
+            let args = self.extract_instantiation_args(shape)?;
             return Ok(if args.is_empty() {
                 TypeRef::concrete(id)
             } else {
@@ -1513,11 +1526,11 @@ impl ExtractCtx {
             });
         }
 
-        // If we've already emitted a schema for this DeclId (in this pass),
+        // If we've already emitted a schema for this extraction key (in this pass),
         // we still need to extract type args for this particular instantiation.
-        let already_emitted = self.schemas.contains_key(&decl_id);
+        let already_emitted = self.schemas.contains_key(&key);
         if already_emitted {
-            let args = self.extract_type_args(shape)?;
+            let args = self.extract_instantiation_args(shape)?;
             return Ok(if args.is_empty() {
                 TypeRef::concrete(id)
             } else {
@@ -1542,7 +1555,7 @@ impl ExtractCtx {
         // Scalars
         if let Some(scalar) = shape.scalar_type() {
             self.emit_schema(
-                decl_id,
+                key,
                 MixedSchema {
                     id,
                     type_params: vec![],
@@ -1560,7 +1573,7 @@ impl ExtractCtx {
             Def::List(list_def) => {
                 if let Some(ScalarType::U8) = list_def.t().scalar_type() {
                     self.emit_schema(
-                        decl_id,
+                        key,
                         MixedSchema {
                             id,
                             type_params: vec![],
@@ -1574,7 +1587,7 @@ impl ExtractCtx {
                 let elem_ref = self.type_ref_for_shape(list_def.t(), &param_map)?;
                 let args = self.extract_type_args(shape)?;
                 self.emit_schema(
-                    decl_id,
+                    key,
                     MixedSchema {
                         id,
                         type_params: type_param_names,
@@ -1591,7 +1604,7 @@ impl ExtractCtx {
                 let elem_ref = self.type_ref_for_shape(array_def.t(), &param_map)?;
                 let args = self.extract_type_args(shape)?;
                 self.emit_schema(
-                    decl_id,
+                    key,
                     MixedSchema {
                         id,
                         type_params: type_param_names,
@@ -1610,7 +1623,7 @@ impl ExtractCtx {
             Def::Slice(slice_def) => {
                 if let Some(ScalarType::U8) = slice_def.t().scalar_type() {
                     self.emit_schema(
-                        decl_id,
+                        key,
                         MixedSchema {
                             id,
                             type_params: vec![],
@@ -1624,7 +1637,7 @@ impl ExtractCtx {
                 let elem_ref = self.type_ref_for_shape(slice_def.t(), &param_map)?;
                 let args = self.extract_type_args(shape)?;
                 self.emit_schema(
-                    decl_id,
+                    key,
                     MixedSchema {
                         id,
                         type_params: type_param_names,
@@ -1642,7 +1655,7 @@ impl ExtractCtx {
                 let val_ref = self.type_ref_for_shape(map_def.v(), &param_map)?;
                 let args = self.extract_type_args(shape)?;
                 self.emit_schema(
-                    decl_id,
+                    key,
                     MixedSchema {
                         id,
                         type_params: type_param_names,
@@ -1662,7 +1675,7 @@ impl ExtractCtx {
                 let elem_ref = self.type_ref_for_shape(set_def.t(), &param_map)?;
                 let args = self.extract_type_args(shape)?;
                 self.emit_schema(
-                    decl_id,
+                    key,
                     MixedSchema {
                         id,
                         type_params: type_param_names,
@@ -1679,7 +1692,7 @@ impl ExtractCtx {
                 let elem_ref = self.type_ref_for_shape(opt_def.t(), &param_map)?;
                 let args = self.extract_type_args(shape)?;
                 self.emit_schema(
-                    decl_id,
+                    key,
                     MixedSchema {
                         id,
                         type_params: type_param_names,
@@ -1697,7 +1710,7 @@ impl ExtractCtx {
                 let err_ref = self.type_ref_for_shape(result_def.e(), &param_map)?;
                 let args = self.extract_type_args(shape)?;
                 self.emit_schema(
-                    decl_id,
+                    key,
                     MixedSchema {
                         id,
                         type_params: type_param_names,
@@ -1736,6 +1749,24 @@ impl ExtractCtx {
                     primitive_type: PrimitiveType::Unit,
                 },
                 StructKind::TupleStruct | StructKind::Tuple => {
+                    if let Some(arity) = anonymous_tuple_arity(shape) {
+                        let args = self.extract_instantiation_args(shape)?;
+                        let type_params = tuple_type_params(arity);
+                        let elements = type_params
+                            .iter()
+                            .cloned()
+                            .map(|name| TypeRef::Var { name })
+                            .collect();
+                        self.emit_schema(
+                            key,
+                            MixedSchema {
+                                id,
+                                type_params,
+                                kind: SchemaKind::Tuple { elements },
+                            },
+                        );
+                        return Ok(TypeRef::generic(id, args));
+                    }
                     let mut elements = Vec::with_capacity(struct_type.fields.len());
                     for f in struct_type.fields {
                         elements.push(self.type_ref_for_shape(f.shape(), &param_map)?);
@@ -1812,7 +1843,7 @@ impl ExtractCtx {
 
         let args = self.extract_type_args(shape)?;
         self.emit_schema(
-            decl_id,
+            key,
             MixedSchema {
                 id,
                 type_params: type_param_names,
@@ -1843,6 +1874,44 @@ impl ExtractCtx {
         }
         Ok(args)
     }
+
+    /// Extract the concrete instantiation arguments for a shape.
+    ///
+    /// Most generic shapes get their args from facet `type_params`.
+    /// Anonymous tuples are synthesized as generic families per arity,
+    /// so their "type args" come from their element shapes.
+    fn extract_instantiation_args(
+        &mut self,
+        shape: &'static Shape,
+    ) -> Result<Vec<TypeRef<MixedId>>, SchemaExtractError> {
+        if anonymous_tuple_arity(shape).is_some()
+            && let Type::User(UserType::Struct(struct_type)) = shape.ty
+        {
+            let mut args = Vec::with_capacity(struct_type.fields.len());
+            for field in struct_type.fields {
+                args.push(self.extract(field.shape())?);
+            }
+            return Ok(args);
+        }
+        self.extract_type_args(shape)
+    }
+}
+
+fn anonymous_tuple_arity(shape: &'static Shape) -> Option<usize> {
+    match shape.ty {
+        Type::User(UserType::Struct(struct_type))
+            if struct_type.kind == StructKind::Tuple && shape.type_identifier.starts_with('(') =>
+        {
+            Some(struct_type.fields.len())
+        }
+        _ => None,
+    }
+}
+
+fn tuple_type_params(arity: usize) -> Vec<TypeParamName> {
+    (0..arity)
+        .map(|index| TypeParamName(format!("T{index}")))
+        .collect()
 }
 
 fn scalar_to_primitive(scalar: ScalarType) -> PrimitiveType {
@@ -2605,6 +2674,30 @@ mod tests {
     }
 
     #[test]
+    fn generic_tuple_uses_vars_in_body() {
+        let schemas = extract_schemas(<(u32, String) as Facet>::SHAPE)
+            .unwrap()
+            .schemas;
+        let tuple_schema = schemas
+            .iter()
+            .find(|s| matches!(s.kind, SchemaKind::Tuple { .. }))
+            .unwrap();
+        assert_eq!(
+            tuple_schema.type_params.len(),
+            2,
+            "tuple arity 2 should have 2 type params"
+        );
+        match &tuple_schema.kind {
+            SchemaKind::Tuple { elements } => {
+                assert_eq!(elements.len(), 2);
+                assert!(matches!(elements[0], TypeRef::Var { .. }));
+                assert!(matches!(elements[1], TypeRef::Var { .. }));
+            }
+            other => panic!("expected Tuple, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn vec_of_option_of_u32_deduplicates() {
         // Vec<Option<u32>> should produce: u32, Option<T>, Vec<T>
         // NOT: u32, Option<u32>, Vec<Option<u32>>
@@ -2713,6 +2806,70 @@ mod tests {
             }
             other => panic!("expected Ok payload to be tuple, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn result_ok_tuple_uses_generic_tuple_schema() {
+        use crate::RoamError;
+
+        let result_shape =
+            <Result<(String, i32), RoamError<::core::convert::Infallible>> as Facet>::SHAPE;
+        let ok_shape = result_shape.type_params[0].shape;
+        let extracted = extract_schemas(
+            <Result<(String, i32), RoamError<::core::convert::Infallible>> as Facet>::SHAPE,
+        )
+        .unwrap();
+        let TypeRef::Concrete { args, .. } = &extracted.root else {
+            panic!("Result root should be concrete");
+        };
+        assert_eq!(
+            args.len(),
+            2,
+            "Result root should have Ok and Err type args"
+        );
+        let TypeRef::Concrete { args: ok_args, .. } = &args[0] else {
+            panic!("Ok type arg should be concrete tuple ref");
+        };
+        assert_eq!(
+            ok_args.len(),
+            2,
+            "Ok tuple ref should carry concrete tuple element args; root={:?}; ok_shape={}; ok_shape_ty={:?}",
+            extracted.root,
+            ok_shape.type_identifier,
+            ok_shape.ty
+        );
+    }
+
+    #[test]
+    fn unary_tuple_root_preserves_nested_tuple() {
+        let extracted = extract_schemas(<((i32, String),) as Facet>::SHAPE).unwrap();
+        let registry = build_registry(&extracted.schemas);
+
+        let root = extracted
+            .root
+            .resolve_kind(&registry)
+            .expect("root should resolve");
+        let SchemaKind::Tuple { elements } = root else {
+            panic!("expected unary tuple root");
+        };
+        assert_eq!(elements.len(), 1, "outer tuple should remain unary");
+
+        let inner = elements[0]
+            .resolve_kind(&registry)
+            .expect("inner tuple should resolve");
+        match inner {
+            SchemaKind::Tuple { elements } => {
+                assert_eq!(elements.len(), 2, "inner tuple should remain binary");
+            }
+            other => panic!("expected inner tuple, got {other:?}"),
+        }
+
+        let tuple_count = extracted
+            .schemas
+            .iter()
+            .filter(|schema| matches!(schema.kind, SchemaKind::Tuple { .. }))
+            .count();
+        assert_eq!(tuple_count, 2, "should emit one tuple schema per arity");
     }
 
     #[test]

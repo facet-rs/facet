@@ -1563,6 +1563,19 @@ mod tests {
     }
 
     #[test]
+    fn translation_nested_unary_tuple_identity() {
+        let r = plan_for(
+            <((i32, String),) as Facet>::SHAPE,
+            <((i32, String),) as Facet>::SHAPE,
+        )
+        .unwrap();
+        let bytes = to_vec(&((42i32, "hello".to_string()),)).unwrap();
+        let result: ((i32, String),) =
+            from_slice_with_plan(&bytes, &r.plan, &r.remote.registry).unwrap();
+        assert_eq!(result, ((42, "hello".to_string()),));
+    }
+
+    #[test]
     fn translation_tuple_length_mismatch_errors() {
         let result = plan_for(
             <(u32, String) as Facet>::SHAPE,

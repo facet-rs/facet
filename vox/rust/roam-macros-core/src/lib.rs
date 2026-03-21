@@ -104,6 +104,15 @@ fn to_static_type_tokens(ty: &Type) -> TokenStream2 {
     }
 }
 
+fn type_is_tx(ty: &Type) -> bool {
+    match ty {
+        Type::Reference(TypeRef { inner, .. }) => type_is_tx(inner),
+        Type::PathWithGenerics(PathWithGenerics { path, .. }) => path.last_segment() == "Tx",
+        Type::Path(path) => path.last_segment() == "Tx",
+        Type::Tuple(_) => false,
+    }
+}
+
 // r[service-macro.is-source-of-truth]
 // r[impl rpc]
 // r[impl rpc.service]
@@ -358,6 +367,38 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
             }
         })
         .collect();
+    let args_have_channels_arms: Vec<TokenStream2> = parsed
+        .methods()
+        .enumerate()
+        .map(|(i, _m)| {
+            quote! {
+                if method_id == #descriptor_fn_name().methods[#i].id {
+                    return #roam::hash::shape_contains_channel(
+                        #descriptor_fn_name().methods[#i].args_shape,
+                    );
+                }
+            }
+        })
+        .collect();
+    let response_wire_shape_arms: Vec<TokenStream2> = parsed
+        .methods()
+        .enumerate()
+        .map(|(i, m)| {
+            let return_type = m.return_type();
+            let (ok_ty_ref, err_ty_ref) = method_ok_and_err_types(&return_type);
+            let ok_ty = to_static_type_tokens(ok_ty_ref);
+            let err_ty = err_ty_ref
+                .map(to_static_type_tokens)
+                .unwrap_or_else(|| quote! { ::core::convert::Infallible });
+            quote! {
+                if method_id == #descriptor_fn_name().methods[#i].id {
+                    return Some(
+                        <Result<#ok_ty, #roam::RoamError<#err_ty>> as #roam::facet::Facet<'static>>::SHAPE,
+                    );
+                }
+            }
+        })
+        .collect();
 
     let no_methods = dispatch_arms.is_empty();
 
@@ -435,6 +476,19 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
             fn retry_policy(&self, method_id: #roam::MethodId) -> #roam::RetryPolicy {
                 #(#retry_policy_arms)*
                 #roam::RetryPolicy::VOLATILE
+            }
+
+            fn args_have_channels(&self, method_id: #roam::MethodId) -> bool {
+                #(#args_have_channels_arms)*
+                false
+            }
+
+            fn response_wire_shape(
+                &self,
+                method_id: #roam::MethodId,
+            ) -> Option<&'static #roam::facet::Shape> {
+                #(#response_wire_shape_arms)*
+                None
             }
 
             async fn handle(&self, call: #roam::SelfRef<#roam::RequestCall<'static>>, reply: R, schemas: ::std::sync::Arc<#roam::SchemaRecvTracker>) {
@@ -563,14 +617,14 @@ fn generate_dispatch_arm(
             // Channel binding happens during deserialization via thread-local binder.
             let deser_result = if let Some(binder) = reply.channel_binder() {
                 #roam::with_channel_binder(binder, || {
-                    #roam::schema_deser::schema_deserialize_args_borrowed(
+                    #roam::schema_deser::schema_deserialize_args_borrowed::<#args_tuple_type>(
                         args_bytes,
                         method_id,
                         &schemas,
                     )
                 })
             } else {
-                #roam::schema_deser::schema_deserialize_args_borrowed(
+                #roam::schema_deser::schema_deserialize_args_borrowed::<#args_tuple_type>(
                     args_bytes,
                     method_id,
                     &schemas,
@@ -693,6 +747,12 @@ fn generate_client_method(
         .args()
         .map(|arg| format_ident!("{}", arg.name().to_snake_case()))
         .collect();
+    let tx_arg_indices: Vec<proc_macro2::Literal> = method
+        .args()
+        .enumerate()
+        .filter(|(_index, arg)| type_is_tx(&arg.ty))
+        .map(|(index, _arg)| proc_macro2::Literal::usize_unsuffixed(index))
+        .collect();
 
     // Args tuple value (for serialization)
     let args_tuple = match arg_names.len() {
@@ -745,6 +805,11 @@ fn generate_client_method(
     };
 
     let args_binding = quote! { let args = #args_tuple; };
+    let finish_retry_bindings = if tx_arg_indices.is_empty() {
+        quote! {}
+    } else {
+        quote! { #( args.#tx_arg_indices.finish_retry_binding(); )* }
+    };
 
     if ok_uses_roam_lifetime {
         quote! {
@@ -758,16 +823,22 @@ fn generate_client_method(
                     metadata: Default::default(),
                     schemas: Default::default(),
                 };
-                let with_tracker = #roam::Caller::call(&self.caller, req).await.map_err(|e| match e {
-                    #roam::RoamError::UnknownMethod => #roam::RoamError::<#err_ty>::UnknownMethod,
-                    #roam::RoamError::InvalidPayload(msg) => #roam::RoamError::<#err_ty>::InvalidPayload(msg),
-                    #roam::RoamError::Cancelled => #roam::RoamError::<#err_ty>::Cancelled,
-                    #roam::RoamError::ConnectionClosed => #roam::RoamError::<#err_ty>::ConnectionClosed,
-                    #roam::RoamError::SessionShutdown => #roam::RoamError::<#err_ty>::SessionShutdown,
-                    #roam::RoamError::SendFailed => #roam::RoamError::<#err_ty>::SendFailed,
-                    #roam::RoamError::Indeterminate => #roam::RoamError::<#err_ty>::Indeterminate,
-                    #roam::RoamError::User(never) => match never {},
-                })?;
+                let with_tracker = match #roam::Caller::call(&self.caller, req).await {
+                    Ok(with_tracker) => with_tracker,
+                    Err(e) => {
+                        #finish_retry_bindings
+                        return Err(match e {
+                            #roam::RoamError::UnknownMethod => #roam::RoamError::<#err_ty>::UnknownMethod,
+                            #roam::RoamError::InvalidPayload(msg) => #roam::RoamError::<#err_ty>::InvalidPayload(msg),
+                            #roam::RoamError::Cancelled => #roam::RoamError::<#err_ty>::Cancelled,
+                            #roam::RoamError::ConnectionClosed => #roam::RoamError::<#err_ty>::ConnectionClosed,
+                            #roam::RoamError::SessionShutdown => #roam::RoamError::<#err_ty>::SessionShutdown,
+                            #roam::RoamError::SendFailed => #roam::RoamError::<#err_ty>::SendFailed,
+                            #roam::RoamError::Indeterminate => #roam::RoamError::<#err_ty>::Indeterminate,
+                            #roam::RoamError::User(never) => match never {},
+                        });
+                    }
+                };
                 let #roam::WithTracker { value: response, tracker: schema_tracker } = with_tracker;
                 response.try_repack(|resp, _bytes| {
                     let ret_bytes = match &resp.ret {
@@ -775,10 +846,18 @@ fn generate_client_method(
                         _ => return Err(#roam::RoamError::<#err_ty>::InvalidPayload("response not PostcardBytes".into())),
                     };
                     let result: Result<#ok_ty_decode, #roam::RoamError<#err_ty>> =
-                        #roam::schema_deser::schema_deserialize_response_borrowed(ret_bytes, method_id, &schema_tracker)
-                            .map_err(|e| #roam::RoamError::<#err_ty>::InvalidPayload(e.to_string()))?;
-                    let ret = result?;
-                    Ok(ret)
+                        #roam::schema_deser::schema_deserialize_response_borrowed::<Result<#ok_ty_decode, #roam::RoamError<#err_ty>>>(ret_bytes, method_id, &schema_tracker)
+                            .map_err(|e| {
+                                #finish_retry_bindings
+                                #roam::RoamError::<#err_ty>::InvalidPayload(e.to_string())
+                            })?;
+                    match result {
+                        Ok(ret) => Ok(ret),
+                        Err(err) => {
+                            #finish_retry_bindings
+                            Err(err)
+                        }
+                    }
                 })
             }
         }
@@ -794,29 +873,44 @@ fn generate_client_method(
                     metadata: Default::default(),
                     schemas: Default::default(),
                 };
-                let with_tracker = #roam::Caller::call(&self.caller, req).await.map_err(|e| match e {
-                    #roam::RoamError::UnknownMethod => #roam::RoamError::<#err_ty>::UnknownMethod,
-                    #roam::RoamError::InvalidPayload(msg) => #roam::RoamError::<#err_ty>::InvalidPayload(msg),
-                    #roam::RoamError::Cancelled => #roam::RoamError::<#err_ty>::Cancelled,
-                    #roam::RoamError::ConnectionClosed => #roam::RoamError::<#err_ty>::ConnectionClosed,
-                    #roam::RoamError::SessionShutdown => #roam::RoamError::<#err_ty>::SessionShutdown,
-                    #roam::RoamError::SendFailed => #roam::RoamError::<#err_ty>::SendFailed,
-                    #roam::RoamError::Indeterminate => #roam::RoamError::<#err_ty>::Indeterminate,
-                    #roam::RoamError::User(never) => match never {},
-                })?;
+                let with_tracker = match #roam::Caller::call(&self.caller, req).await {
+                    Ok(with_tracker) => with_tracker,
+                    Err(e) => {
+                        #finish_retry_bindings
+                        return Err(match e {
+                            #roam::RoamError::UnknownMethod => #roam::RoamError::<#err_ty>::UnknownMethod,
+                            #roam::RoamError::InvalidPayload(msg) => #roam::RoamError::<#err_ty>::InvalidPayload(msg),
+                            #roam::RoamError::Cancelled => #roam::RoamError::<#err_ty>::Cancelled,
+                            #roam::RoamError::ConnectionClosed => #roam::RoamError::<#err_ty>::ConnectionClosed,
+                            #roam::RoamError::SessionShutdown => #roam::RoamError::<#err_ty>::SessionShutdown,
+                            #roam::RoamError::SendFailed => #roam::RoamError::<#err_ty>::SendFailed,
+                            #roam::RoamError::Indeterminate => #roam::RoamError::<#err_ty>::Indeterminate,
+                            #roam::RoamError::User(never) => match never {},
+                        });
+                    }
+                };
                 let #roam::WithTracker { value: response, tracker: schema_tracker } = with_tracker;
                 let ret_bytes = match &response.ret {
                     #roam::Payload::PostcardBytes(bytes) => bytes,
                     _ => return Err(#roam::RoamError::<#err_ty>::InvalidPayload("response not PostcardBytes".into())),
                 };
                 let result: Result<#ok_ty_decode, #roam::RoamError<#err_ty>> =
-                    #roam::schema_deser::schema_deserialize_response(
+                    #roam::schema_deser::schema_deserialize_response::<Result<#ok_ty_decode, #roam::RoamError<#err_ty>>>(
                         ret_bytes,
                         method_id,
                         &schema_tracker,
                     )
-                    .map_err(|e| #roam::RoamError::<#err_ty>::InvalidPayload(e.to_string()))?;
-                result
+                    .map_err(|e| {
+                        #finish_retry_bindings
+                        #roam::RoamError::<#err_ty>::InvalidPayload(e.to_string())
+                    })?;
+                match result {
+                    Ok(ret) => Ok(ret),
+                    Err(err) => {
+                        #finish_retry_bindings
+                        Err(err)
+                    }
+                }
             }
         }
     }

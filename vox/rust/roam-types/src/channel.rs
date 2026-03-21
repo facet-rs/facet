@@ -144,6 +144,11 @@ impl ChannelCore {
     }
 
     pub fn bind_retryable_receiver(self: &Arc<Self>, bound: BoundChannelReceiver) {
+        if tokio::runtime::Handle::try_current().is_err() {
+            self.set_binding(ChannelBinding::Receiver(bound));
+            return;
+        }
+
         let mut guard = self
             .logical_receiver
             .lock()
@@ -588,6 +593,14 @@ impl<T> Tx<T> {
         self.sink.inner = Some(sink);
         self.liveness.inner = liveness;
     }
+
+    #[doc(hidden)]
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn finish_retry_binding(&self) {
+        if let Some(core) = &self.core.inner {
+            core.finish_retry_binding();
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -630,7 +643,7 @@ impl<T> TryFrom<&Tx<T>> for ChannelId {
                 };
                 let (channel_id, bound) = binder.create_rx();
                 if let Some(core) = &value.core.inner {
-                    core.set_binding(ChannelBinding::Receiver(bound));
+                    core.bind_retryable_receiver(bound);
                 }
                 Ok(channel_id)
             });
@@ -778,12 +791,12 @@ impl<T> Rx<T> {
                 }) => {
                     let value = msg
                         .try_repack(|item, _backing_bytes| {
-                            let Payload::PostcardBytes(_) = item.item else {
+                            let Payload::PostcardBytes(bytes) = item.item else {
                                 return Err(RxError::Protocol(
                                     "incoming channel item payload was not Incoming".into(),
                                 ));
                             };
-                            panic!("BUG: Rx::recv must use roam_postcard, not facet_postcard — channel item deserialization needs translation plans")
+                            facet_postcard::from_slice_borrowed(bytes).map_err(RxError::Deserialize)
                         })
                         .map(Some);
                     if value.is_ok()
@@ -1175,6 +1188,39 @@ mod tests {
         assert_eq!(replenisher.calls.load(Ordering::Acquire), 1);
     }
 
+    #[tokio::test]
+    async fn rx_recv_logical_receiver_decodes_items_and_notifies_replenisher() {
+        let (tx, rx_inner) = mpsc::channel(1);
+        let replenisher = Arc::new(CountingReplenisher::new());
+        let core = Arc::new(ChannelCore::new());
+        core.bind_retryable_receiver(BoundChannelReceiver {
+            receiver: rx_inner,
+            liveness: None,
+            replenisher: Some(replenisher.clone()),
+        });
+
+        let mut rx = Rx::<u32>::paired(core);
+
+        let encoded = facet_postcard::to_vec(&321_u32).expect("serialize test item");
+        let item = SelfRef::owning(
+            Backing::Boxed(Box::<[u8]>::default()),
+            ChannelItem {
+                item: Payload::PostcardBytes(Box::leak(encoded.into_boxed_slice())),
+            },
+        );
+        tx.send(IncomingChannelMessage::Item(item))
+            .await
+            .expect("send item");
+
+        let value = rx
+            .recv()
+            .await
+            .expect("recv should succeed")
+            .expect("expected item");
+        assert_eq!(*value, 321_u32);
+        assert_eq!(replenisher.calls.load(Ordering::Acquire), 1);
+    }
+
     // ========================================================================
     // Channel binding through ser/deser
     // ========================================================================
@@ -1234,9 +1280,9 @@ mod tests {
 
     // Case 1: Caller passes Tx in args, keeps paired Rx.
     // Serializing the Tx allocates a channel ID via create_rx() and stores
-    // the receiver in the shared core so the kept Rx can use it.
-    #[test]
-    fn case1_serialize_tx_allocates_and_binds_paired_rx() {
+    // the receiver in the shared logical core so the kept Rx can survive retries.
+    #[tokio::test]
+    async fn case1_serialize_tx_allocates_and_binds_paired_rx() {
         use facet::Facet;
 
         #[derive(Facet)]
@@ -1263,8 +1309,8 @@ mod tests {
         );
         let core = rx.core.inner.as_ref().unwrap();
         assert!(
-            core.take_receiver().is_some(),
-            "core should have a Receiver binding from create_rx()"
+            core.take_logical_receiver().is_some(),
+            "core should have a logical receiver binding from create_rx()"
         );
     }
 

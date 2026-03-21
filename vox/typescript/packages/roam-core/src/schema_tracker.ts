@@ -25,6 +25,10 @@ import { buildPlan, resolveWireTypeRef } from "@bearcove/roam-postcard";
 import { encodeSchemaPayload, decodeSchemaPayload } from "./schema_cbor.ts";
 import { roamLogger } from "./logger.ts";
 
+function debugJson(value: unknown): string {
+  return JSON.stringify(value, (_key, item) => typeof item === "bigint" ? item.toString() : item);
+}
+
 /**
  * Tracks schemas received from the remote peer and provides
  * TranslationPlans for decoding with schema evolution.
@@ -47,6 +51,10 @@ export class SchemaTracker {
     cborBytes: Uint8Array,
   ): void {
     const payload = decodeSchemaPayload(cborBytes);
+    const resolvedRootKind = resolveWireTypeRef(payload.root, new Map([
+      ...this.schemas,
+      ...payload.schemas.map((schema) => [schema.id, schema] as const),
+    ]));
 
     for (const schema of payload.schemas) {
       this.schemas.set(schema.id, schema);
@@ -56,7 +64,7 @@ export class SchemaTracker {
     });
 
     roamLogger()?.debug(
-      `[roam:schema] recorded ${payload.schemas.length} schemas for method=${methodId} direction=${direction}`,
+      `[roam:schema] recorded ${payload.schemas.length} schemas for method=${methodId} direction=${direction} root=${debugJson(payload.root)} resolved=${resolvedRootKind?.tag ?? "missing"}`,
     );
   }
 
@@ -77,6 +85,10 @@ export class SchemaTracker {
 
     const rootKind = resolveWireTypeRef(binding.rootRef, this.schemas);
     if (!rootKind) return null;
+
+    roamLogger()?.debug(
+      `[roam:schema] buildTranslation method=${methodId} direction=${direction} remote=${rootKind.tag} local=${localSchemaSet.root.kind.tag} root=${debugJson(binding.rootRef)}`,
+    );
 
     const rootId = binding.rootRef.tag === "concrete" ? binding.rootRef.type_id : 0n;
     const remoteSchemaSet: SchemaSet = {

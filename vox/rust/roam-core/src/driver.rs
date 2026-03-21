@@ -40,6 +40,7 @@ type ResponseSlot = moire::sync::oneshot::Sender<PendingResponse>;
 
 struct InFlightHandler {
     handle: moire::task::JoinHandle<()>,
+    method_id: roam_types::MethodId,
     retry: roam_types::RetryPolicy,
     has_channels: bool,
     operation_id: Option<OperationId>,
@@ -310,7 +311,7 @@ async fn replay_sealed_response(
 ) -> Result<(), ()> {
     let mut response: RequestResponse<'_> =
         roam_postcard::from_slice_borrowed(encoded_response).map_err(|_| ())?;
-    sender.prepare_replay_schemas(method_id, &root_type, operations, &mut response);
+    sender.prepare_replay_schemas(request_id, method_id, &root_type, operations, &mut response);
     sender.send_response(request_id, response).await
 }
 
@@ -1166,6 +1167,8 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 Some((req_id, disposition)) = self.failures_rx.recv() => {
                     tracing::debug!(%req_id, ?disposition, "failures_rx fired");
                     let in_flight_found = self.in_flight_handlers.contains_key(&req_id);
+                    let in_flight_method_id =
+                        self.in_flight_handlers.get(&req_id).map(|in_flight| in_flight.method_id);
                     let reply_disposition = self
                         .in_flight_handlers
                         .get(&req_id)
@@ -1194,13 +1197,37 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                             FailureDisposition::Cancelled => RoamError::Cancelled,
                             FailureDisposition::Indeterminate => RoamError::Indeterminate,
                         };
-                        let error: Result<(), RoamError<core::convert::Infallible>> =
-                            Err(roam_error);
-                        let _ = self.sender.send_response(req_id, RequestResponse {
-                            ret: Payload::outgoing(&error),
-                            metadata: Default::default(),
-                            schemas: Default::default(),
-                        }).await;
+                        if let Some(method_id) = in_flight_method_id
+                            && let Some(response_shape) = self.handler.response_wire_shape(method_id)
+                            && let Ok(extracted) = roam_types::extract_schemas(response_shape)
+                        {
+                            let registry = roam_types::build_registry(&extracted.schemas);
+                            let error: Result<(), RoamError<core::convert::Infallible>> =
+                                Err(roam_error);
+                            let encoded = roam_postcard::to_vec(&error)
+                                .expect("serialize runtime-generated error response");
+                            let mut response = RequestResponse {
+                                ret: Payload::PostcardBytes(Box::leak(encoded.into_boxed_slice())),
+                                metadata: Default::default(),
+                                schemas: Default::default(),
+                            };
+                            self.sender.prepare_response_from_source(
+                                req_id,
+                                method_id,
+                                &extracted.root,
+                                &registry,
+                                &mut response,
+                            );
+                            let _ = self.sender.send_response(req_id, response).await;
+                        } else {
+                            let error: Result<(), RoamError<core::convert::Infallible>> =
+                                Err(roam_error);
+                            let _ = self.sender.send_response(req_id, RequestResponse {
+                                ret: Payload::outgoing(&error),
+                                metadata: Default::default(),
+                                schemas: Default::default(),
+                            }).await;
+                        }
                         tracing::debug!(%req_id, "failures_rx: error response sent");
                     }
                 }
@@ -1427,9 +1454,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 live_operations: operation_id.map(|_| Arc::clone(&self.live_operations)),
                 binder: self.internal_binder(),
             };
-            // TODO: detect channel presence from the deserialized payload
-            // instead of the removed sidecar. For now, assume no channels.
-            let has_channels = false;
+            let has_channels = handler.args_have_channels(call.method_id);
             let join_handle = moire::task::spawn(
                 async move {
                     roam_types::dlog!(
@@ -1450,6 +1475,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 req_id,
                 InFlightHandler {
                     handle: join_handle,
+                    method_id,
                     retry,
                     has_channels,
                     operation_id,
