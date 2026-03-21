@@ -297,10 +297,12 @@ impl BillingClient {
     pub async fn get_balance(&self, account: String) -> Result<u64, ::roam::RoamError> {
         let method_id = billing_service_descriptor().methods[0usize].id;
         let args = (account,);
+        let mut metadata = Default::default();
+        ::roam::ensure_channel_retry_mode(&mut metadata, ::roam::ChannelRetryMode::None);
         let req = ::roam::RequestCall {
             method_id,
             args: ::roam::Payload::outgoing(&args),
-            metadata: Default::default(),
+            metadata,
             schemas: Default::default(),
         };
         let with_tracker = match ::roam::Caller::call(&self.caller, req).await {
@@ -365,10 +367,12 @@ impl BillingClient {
     ) -> Result<u64, ::roam::RoamError<TransferError>> {
         let method_id = billing_service_descriptor().methods[1usize].id;
         let args = (from, to);
+        let mut metadata = Default::default();
+        ::roam::ensure_channel_retry_mode(&mut metadata, ::roam::ChannelRetryMode::None);
         let req = ::roam::RequestCall {
             method_id,
             args: ::roam::Payload::outgoing(&args),
-            metadata: Default::default(),
+            metadata,
             schemas: Default::default(),
         };
         let with_tracker = match ::roam::Caller::call(&self.caller, req).await {

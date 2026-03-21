@@ -14,9 +14,10 @@ use moire::task::FutureExt as _;
 use roam_types::{
     BoxFut, CallResult, Caller, ChannelBinder, ChannelBody, ChannelClose, ChannelCreditReplenisher,
     ChannelCreditReplenisherHandle, ChannelId, ChannelItem, ChannelLivenessHandle, ChannelMessage,
-    ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage, Payload, ReplySink,
-    RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse, RoamError, SelfRef,
-    TxError, ensure_operation_id, metadata_operation_id,
+    ChannelRetryMode, ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage,
+    Payload, ReplySink, RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse,
+    RoamError, SelfRef, TxError, ensure_operation_id, metadata_channel_retry_mode,
+    metadata_operation_id,
 };
 
 use crate::session::{
@@ -849,6 +850,13 @@ impl Caller for DriverCaller {
                             self.shared.pending_responses.lock().remove(&req_id);
                             return Err(RoamError::SessionShutdown);
                         }
+                    }
+                    match metadata_channel_retry_mode(&call.metadata) {
+                        ChannelRetryMode::NonIdem => {
+                            self.shared.pending_responses.lock().remove(&req_id);
+                            return Err(RoamError::Indeterminate);
+                        }
+                        ChannelRetryMode::Idem | ChannelRetryMode::None => {}
                     }
                     // Re-send the request after resume.
                     // Channel binding is embedded in the serialized payload,

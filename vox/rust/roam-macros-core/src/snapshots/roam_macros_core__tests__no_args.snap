@@ -210,10 +210,12 @@ impl PingClient {
     pub async fn ping(&self) -> Result<u64, ::roam::RoamError> {
         let method_id = ping_service_descriptor().methods[0usize].id;
         let args = ();
+        let mut metadata = Default::default();
+        ::roam::ensure_channel_retry_mode(&mut metadata, ::roam::ChannelRetryMode::None);
         let req = ::roam::RequestCall {
             method_id,
             args: ::roam::Payload::outgoing(&args),
-            metadata: Default::default(),
+            metadata,
             schemas: Default::default(),
         };
         let with_tracker = match ::roam::Caller::call(&self.caller, req).await {

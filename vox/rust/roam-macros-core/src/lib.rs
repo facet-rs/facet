@@ -753,6 +753,15 @@ fn generate_client_method(
         .filter(|(_index, arg)| type_is_tx(&arg.ty))
         .map(|(index, _arg)| proc_macro2::Literal::usize_unsuffixed(index))
         .collect();
+    let channel_retry_mode = if method.args().any(|arg| arg.ty.contains_channel()) {
+        if method.is_idem() {
+            quote! { #roam::ChannelRetryMode::Idem }
+        } else {
+            quote! { #roam::ChannelRetryMode::NonIdem }
+        }
+    } else {
+        quote! { #roam::ChannelRetryMode::None }
+    };
 
     // Args tuple value (for serialization)
     let args_tuple = match arg_names.len() {
@@ -817,10 +826,12 @@ fn generate_client_method(
             pub async fn #method_name(&self, #(#params),*) -> #client_return {
                 let method_id = #descriptor_fn_name().methods[#idx].id;
                 #args_binding
+                let mut metadata = Default::default();
+                #roam::ensure_channel_retry_mode(&mut metadata, #channel_retry_mode);
                 let req = #roam::RequestCall {
                     method_id,
                     args: #roam::Payload::outgoing(&args),
-                    metadata: Default::default(),
+                    metadata,
                     schemas: Default::default(),
                 };
                 let with_tracker = match #roam::Caller::call(&self.caller, req).await {
@@ -867,10 +878,12 @@ fn generate_client_method(
             pub async fn #method_name(&self, #(#params),*) -> #client_return {
                 let method_id = #descriptor_fn_name().methods[#idx].id;
                 #args_binding
+                let mut metadata = Default::default();
+                #roam::ensure_channel_retry_mode(&mut metadata, #channel_retry_mode);
                 let req = #roam::RequestCall {
                     method_id,
                     args: #roam::Payload::outgoing(&args),
-                    metadata: Default::default(),
+                    metadata,
                     schemas: Default::default(),
                 };
                 let with_tracker = match #roam::Caller::call(&self.caller, req).await {

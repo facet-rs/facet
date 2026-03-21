@@ -337,10 +337,12 @@ impl WordLabClient {
     pub async fn is_short(&self, word: &str) -> Result<bool, ::roam::RoamError> {
         let method_id = word_lab_service_descriptor().methods[0usize].id;
         let args = (word,);
+        let mut metadata = Default::default();
+        ::roam::ensure_channel_retry_mode(&mut metadata, ::roam::ChannelRetryMode::None);
         let req = ::roam::RequestCall {
             method_id,
             args: ::roam::Payload::outgoing(&args),
-            metadata: Default::default(),
+            metadata,
             schemas: Default::default(),
         };
         let with_tracker = match ::roam::Caller::call(&self.caller, req).await {
@@ -404,10 +406,12 @@ impl WordLabClient {
     ) -> Result<::roam::SelfRef<&'static str>, ::roam::RoamError> {
         let method_id = word_lab_service_descriptor().methods[1usize].id;
         let args = (word,);
+        let mut metadata = Default::default();
+        ::roam::ensure_channel_retry_mode(&mut metadata, ::roam::ChannelRetryMode::None);
         let req = ::roam::RequestCall {
             method_id,
             args: ::roam::Payload::outgoing(&args),
-            metadata: Default::default(),
+            metadata,
             schemas: Default::default(),
         };
         let with_tracker = match ::roam::Caller::call(&self.caller, req).await {
@@ -475,10 +479,12 @@ impl WordLabClient {
     ) -> Result<u32, ::roam::RoamError> {
         let method_id = word_lab_service_descriptor().methods[2usize].id;
         let args = (prefix, input, output);
+        let mut metadata = Default::default();
+        ::roam::ensure_channel_retry_mode(&mut metadata, ::roam::ChannelRetryMode::NonIdem);
         let req = ::roam::RequestCall {
             method_id,
             args: ::roam::Payload::outgoing(&args),
-            metadata: Default::default(),
+            metadata,
             schemas: Default::default(),
         };
         let with_tracker = match ::roam::Caller::call(&self.caller, req).await {

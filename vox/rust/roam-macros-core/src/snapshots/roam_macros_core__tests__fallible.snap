@@ -219,10 +219,12 @@ impl CalcClient {
     pub async fn div(&self, a: f64, b: f64) -> Result<f64, ::roam::RoamError<DivError>> {
         let method_id = calc_service_descriptor().methods[0usize].id;
         let args = (a, b);
+        let mut metadata = Default::default();
+        ::roam::ensure_channel_retry_mode(&mut metadata, ::roam::ChannelRetryMode::None);
         let req = ::roam::RequestCall {
             method_id,
             args: ::roam::Payload::outgoing(&args),
-            metadata: Default::default(),
+            metadata,
             schemas: Default::default(),
         };
         let with_tracker = match ::roam::Caller::call(&self.caller, req).await {

@@ -37,6 +37,7 @@ pub use roam_types::{
     Caller,
     // Descriptors
     ChannelId,
+    ChannelRetryMode,
     ClientCallOutcome,
     ClientContext,
     ClientMiddleware,
@@ -97,6 +98,7 @@ pub use roam_types::{
     WriteSlot,
     // Channels
     channel,
+    ensure_channel_retry_mode,
     observe_reply,
 };
 

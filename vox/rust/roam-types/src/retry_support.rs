@@ -2,7 +2,15 @@ use crate::{Metadata, MetadataEntry, MetadataFlags, MetadataValue};
 
 pub const RETRY_SUPPORT_METADATA_KEY: &str = "roam-retry-support";
 pub const OPERATION_ID_METADATA_KEY: &str = "roam-operation-id";
+pub const CHANNEL_RETRY_MODE_METADATA_KEY: &str = "roam-channel-retry-mode";
 pub const RETRY_SUPPORT_VERSION: u64 = 1;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ChannelRetryMode {
+    None = 0,
+    NonIdem = 1,
+    Idem = 2,
+}
 
 /// A unique operation identifier for exactly-once delivery.
 ///
@@ -68,6 +76,39 @@ pub fn ensure_operation_id(metadata: &mut Metadata<'_>, operation_id: OperationI
     metadata.push(MetadataEntry {
         key: OPERATION_ID_METADATA_KEY,
         value: MetadataValue::U64(operation_id.0),
+        flags: MetadataFlags::NONE,
+    });
+}
+
+pub fn metadata_channel_retry_mode(metadata: &[MetadataEntry<'_>]) -> ChannelRetryMode {
+    metadata
+        .iter()
+        .find_map(|entry| {
+            if entry.key != CHANNEL_RETRY_MODE_METADATA_KEY {
+                return None;
+            }
+            match entry.value {
+                MetadataValue::U64(1) => Some(ChannelRetryMode::NonIdem),
+                MetadataValue::U64(2) => Some(ChannelRetryMode::Idem),
+                _ => Some(ChannelRetryMode::None),
+            }
+        })
+        .unwrap_or(ChannelRetryMode::None)
+}
+
+pub fn ensure_channel_retry_mode(metadata: &mut Metadata<'_>, mode: ChannelRetryMode) {
+    if matches!(mode, ChannelRetryMode::None) {
+        return;
+    }
+    if metadata
+        .iter()
+        .any(|entry| entry.key == CHANNEL_RETRY_MODE_METADATA_KEY)
+    {
+        return;
+    }
+    metadata.push(MetadataEntry {
+        key: CHANNEL_RETRY_MODE_METADATA_KEY,
+        value: MetadataValue::U64(mode as u64),
         flags: MetadataFlags::NONE,
     });
 }

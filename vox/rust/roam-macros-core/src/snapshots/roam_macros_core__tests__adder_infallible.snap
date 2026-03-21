@@ -211,10 +211,12 @@ impl AdderClient {
     pub async fn add(&self, a: i32, b: i32) -> Result<i32, ::roam::RoamError> {
         let method_id = adder_service_descriptor().methods[0usize].id;
         let args = (a, b);
+        let mut metadata = Default::default();
+        ::roam::ensure_channel_retry_mode(&mut metadata, ::roam::ChannelRetryMode::None);
         let req = ::roam::RequestCall {
             method_id,
             args: ::roam::Payload::outgoing(&args),
-            metadata: Default::default(),
+            metadata,
             schemas: Default::default(),
         };
         let with_tracker = match ::roam::Caller::call(&self.caller, req).await {
