@@ -121,9 +121,10 @@ private final class LoopbackConnection: RoamConnection, @unchecked Sendable {
         methodId: UInt64,
         metadata _: [MetadataEntryV7],
         payload: Data,
-        channels: [UInt64],
         retry _: RetryPolicy,
-        timeout _: TimeInterval?
+        timeout _: TimeInterval?,
+        prepareRetry _: (@Sendable () async -> PreparedRetryRequest)?,
+        finalizeChannels: (@Sendable () -> Void)?
     ) async throws -> Data {
         let requestId: UInt64 = lock.withLock {
             let id = nextRequestId
@@ -136,14 +137,12 @@ private final class LoopbackConnection: RoamConnection, @unchecked Sendable {
         await adapter.preregister(
             methodId: methodId,
             payload: Array(payload),
-            channels: channels,
             registry: serverRegistry
         )
 
         await adapter.dispatch(
             methodId: methodId,
             payload: Array(payload),
-            channels: channels,
             requestId: requestId,
             registry: serverRegistry,
             taskTx: { [weak self] message in
@@ -155,6 +154,7 @@ private final class LoopbackConnection: RoamConnection, @unchecked Sendable {
         let responsePayload = try await withTimeout(milliseconds: 500) {
             await inbox.nextResponse(for: requestId)
         }
+        finalizeChannels?()
         return Data(responsePayload)
     }
 
@@ -315,7 +315,6 @@ struct TestbedDispatcherCoverageTests {
         await adapter.dispatch(
             methodId: 0xFFFF_FFFF_FFFF_FFFF,
             payload: [],
-            channels: [],
             requestId: 11,
             registry: registry,
             taskTx: { message in Task { await inbox.push(message) } }
@@ -333,7 +332,6 @@ struct TestbedDispatcherCoverageTests {
         await adapter.dispatch(
             methodId: TestbedMethodId.parseColor,
             payload: [0x80],
-            channels: [],
             requestId: 12,
             registry: registry,
             taskTx: { message in Task { await inbox.push(message) } }
@@ -390,17 +388,137 @@ struct TestbedSerializersCoverageTests {
     }
 }
 
-struct ClientScenarioCoverageTests {
-    @Test func runClientScenarioCoversScenarios() async throws {
+struct GeneratedClientUnitCoverageTests {
+    @Test func generatedClientUnaryAndCompositeMethodsRoundTripOverLoopbackDispatcher() async throws {
         let client = TestbedClient(connection: LoopbackConnection())
 
-        try await runClientScenario(client: client, scenario: "echo")
-        try await runClientScenario(client: client, scenario: "sum")
-        try await runClientScenario(client: client, scenario: "generate")
-        try await runClientScenario(client: client, scenario: "divide_error")
-        try await runClientScenario(client: client, scenario: "shape_area")
-        try await runClientScenario(client: client, scenario: "create_canvas")
-        try await runClientScenario(client: client, scenario: "process_message")
+        #expect(try await client.echo(message: "hello from swift") == "hello from swift")
+        #expect(try await client.reverse(message: "hello") == "olleh")
+
+        #expect(try await client.divide(dividend: 10, divisor: 3) == .success(3))
+        #expect(try await client.divide(dividend: 10, divisor: 0) == .failure(.divisionByZero))
+        #expect(try await client.divide(dividend: .min, divisor: -1) == .failure(.overflow))
+
+        let found = try await client.lookup(id: 1)
+        if case .success(let person) = found {
+            #expect(person.name == "Alice")
+        } else {
+            Issue.record("lookup(id: 1) should succeed")
+        }
+
+        let foundNoEmail = try await client.lookup(id: 2)
+        if case .success(let person) = foundNoEmail {
+            #expect(person.name == "Bob")
+            #expect(person.email == nil)
+        } else {
+            Issue.record("lookup(id: 2) should succeed")
+        }
+
+        let notFound = try await client.lookup(id: 999)
+        if case .failure(let error) = notFound {
+            #expect(error == .notFound)
+        } else {
+            Issue.record("lookup(id: 999) should fail with notFound")
+        }
+
+        let accessDenied = try await client.lookup(id: 100)
+        if case .failure(let error) = accessDenied {
+            #expect(error == .accessDenied)
+        } else {
+            Issue.record("lookup(id: 100) should fail with accessDenied")
+        }
+
+        let echoedPoint = try await client.echoPoint(point: Point(x: 42, y: -7))
+        #expect(echoedPoint.x == 42)
+        #expect(echoedPoint.y == -7)
+
+        let dave = try await client.createPerson(name: "Dave", age: 40, email: "dave@example.com")
+        #expect(dave.name == "Dave")
+        #expect(dave.age == 40)
+        #expect(dave.email == "dave@example.com")
+
+        let eve = try await client.createPerson(name: "Eve", age: 25, email: nil)
+        #expect(eve.name == "Eve")
+        #expect(eve.email == nil)
+
+        let area = try await client.rectangleArea(
+            rect: Rectangle(
+                topLeft: Point(x: 0, y: 10),
+                bottomRight: Point(x: 5, y: 0),
+                label: nil
+            )
+        )
+        #expect(abs(area - 50.0) < 1e-9)
+
+        #expect(try await client.parseColor(name: "red") == .red)
+        #expect(try await client.parseColor(name: "green") == .green)
+        #expect(try await client.parseColor(name: "blue") == .blue)
+        #expect(try await client.parseColor(name: "purple") == nil)
+
+        let points = try await client.getPoints(count: 5)
+        #expect(points.count == 5)
+        #expect(points.first?.x == 0)
+        #expect(points.last?.x == 4)
+
+        let swapped = try await client.swapPair(pair: (99, "hello"))
+        #expect(swapped.0 == "hello")
+        #expect(swapped.1 == 99)
+
+        let bytes = Data([1, 2, 3, 255, 0, 128])
+        #expect(try await client.echoBytes(data: bytes) == bytes)
+        #expect(try await client.echoBool(b: true) == true)
+        #expect(try await client.echoBool(b: false) == false)
+
+        for n: UInt64 in [0, 1, 1_000_000_000_000, .max] {
+            #expect(try await client.echoU64(n: n) == n)
+        }
+
+        #expect(try await client.echoOptionString(s: "hello") == "hello")
+        #expect(try await client.echoOptionString(s: nil) == nil)
+
+        let taggedPoint = try await client.describePoint(label: "origin", x: 0, y: 0, active: true)
+        #expect(taggedPoint.label == "origin")
+        #expect(taggedPoint.active)
+
+        #expect(try await client.allColors() == [.red, .green, .blue])
+        #expect(try await client.shapeArea(shape: .rectangle(width: 3.0, height: 4.0)) == 12.0)
+
+        let pointShape = try await client.echoShape(shape: .point)
+        if case .point = pointShape {
+        } else {
+            Issue.record("echoShape(.point) should round-trip")
+        }
+
+        let circleShape = try await client.echoShape(shape: .circle(radius: 3.14))
+        if case .circle(let radius) = circleShape {
+            #expect(radius == 3.14)
+        } else {
+            Issue.record("echoShape(.circle) should round-trip")
+        }
+
+        let rectShape = try await client.echoShape(shape: .rectangle(width: 2.0, height: 5.0))
+        if case .rectangle(let width, let height) = rectShape {
+            #expect(width == 2.0)
+            #expect(height == 5.0)
+        } else {
+            Issue.record("echoShape(.rectangle) should round-trip")
+        }
+
+        let canvas = try await client.createCanvas(
+            name: "enum-canvas",
+            shapes: [.point, .circle(radius: 2.5)],
+            background: .green
+        )
+        #expect(canvas.name == "enum-canvas")
+        #expect(canvas.background == .green)
+        #expect(canvas.shapes.count == 2)
+
+        let processed = try await client.processMessage(msg: .data(Data([1, 2, 3, 4])))
+        if case .data(let payload) = processed {
+            #expect(payload == Data([4, 3, 2, 1]))
+        } else {
+            Issue.record("processMessage(.data) should return reversed data")
+        }
     }
 
     @Test func runClientScenarioRejectsUnknownScenario() async {
@@ -416,6 +534,21 @@ struct ClientScenarioCoverageTests {
             }
         } catch {
             Issue.record("expected SubjectError.unknownScenario, got \(error)")
+        }
+    }
+
+    @Test func generatedClientPipeliningRoundTripsOverLoopbackDispatcher() async throws {
+        let client = TestbedClient(connection: LoopbackConnection())
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for i in 0..<10 {
+                group.addTask {
+                    let expected = "msg\(i)"
+                    let result = try await client.echo(message: expected)
+                    #expect(result == expected)
+                }
+            }
+            try await group.waitForAll()
         }
     }
 

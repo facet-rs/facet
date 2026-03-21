@@ -14,6 +14,11 @@ let package = Package(
             name: "subject-swift",
             dependencies: [
                 .product(name: "RoamRuntime", package: "roam-runtime")
+            ],
+            sources: [
+                "Server.swift",
+                "Subject.swift",
+                "Testbed.swift",
             ]
         ),
         .testTarget(

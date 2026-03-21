@@ -5,7 +5,10 @@ import RoamRuntime
 public struct Server {
     public init() {}
 
-    /// Run as a subject (connects to PEER_ADDR, acts as acceptor).
+    /// Run as a subject.
+    ///
+    /// The subject connects out to the harness named by `PEER_ADDR`, so the
+    /// transport is client-side even though the subject is serving RPC methods.
     public func runSubject(dispatcher: any ServiceDispatcher) async throws {
         guard let peerAddr = ProcessInfo.processInfo.environment["PEER_ADDR"] else {
             throw ServerError.missingPeerAddr
@@ -30,10 +33,11 @@ public struct Server {
         // r[impl core.conn.accept-required] - Check if we should accept incoming virtual connections.
         let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] == "1"
 
-        let session = try await Session.acceptor(
+        let session = try await Session.initiator(
             connector,
             dispatcher: dispatcher,
-            acceptConnections: acceptConnections
+            acceptConnections: acceptConnections,
+            resumable: false
         )
 
         try await session.run()

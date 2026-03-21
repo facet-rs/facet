@@ -182,14 +182,12 @@ private struct NoopDispatcher: ServiceDispatcher {
     func preregister(
         methodId _: UInt64,
         payload _: [UInt8],
-        channels _: [UInt64],
         registry _: ChannelRegistry
     ) async {}
 
     func dispatch(
         methodId _: UInt64,
         payload _: [UInt8],
-        channels _: [UInt64],
         requestId _: UInt64,
         registry _: ChannelRegistry,
         taskTx _: @escaping @Sendable (TaskMessage) -> Void
@@ -492,14 +490,14 @@ struct SubjectEntrypointCoverageTests {
         await SubjectEnvGate.shared.withEnvironment([("PEER_ADDR", nil)]) {
             do {
                 try await runServer()
-                Issue.record("expected missingEnv")
-            } catch let error as SubjectError {
-                guard case .missingEnv = error else {
-                    Issue.record("expected missingEnv, got \(error)")
+                Issue.record("expected missingPeerAddr")
+            } catch let error as ServerError {
+                guard case .missingPeerAddr = error else {
+                    Issue.record("expected missingPeerAddr, got \(error)")
                     return
                 }
             } catch {
-                Issue.record("expected SubjectError.missingEnv, got \(error)")
+                Issue.record("expected ServerError.missingPeerAddr, got \(error)")
             }
         }
     }
@@ -508,14 +506,15 @@ struct SubjectEntrypointCoverageTests {
         await SubjectEnvGate.shared.withEnvironment([("PEER_ADDR", "127.0.0.1")]) {
             do {
                 try await runServer()
-                Issue.record("expected invalidAddr")
-            } catch let error as SubjectError {
-                guard case .invalidAddr = error else {
-                    Issue.record("expected invalidAddr, got \(error)")
+                Issue.record("expected invalidPeerAddr")
+            } catch let error as ServerError {
+                guard case .invalidPeerAddr(let value) = error else {
+                    Issue.record("expected invalidPeerAddr, got \(error)")
                     return
                 }
+                #expect(value == "127.0.0.1")
             } catch {
-                Issue.record("expected SubjectError.invalidAddr, got \(error)")
+                Issue.record("expected ServerError.invalidPeerAddr, got \(error)")
             }
         }
     }
@@ -558,7 +557,8 @@ struct SubjectEntrypointCoverageTests {
             let link = await harness.waitForTransport()
             let dispatcher = TestbedDispatcherAdapter(handler: TestbedService())
             let (_, driver, _, _) = try await establishAcceptor(
-                conduit: BareConduit(link: link),
+                attachment: .init(link: link),
+                transport: .bare,
                 dispatcher: dispatcher
             )
             try await driver.run()

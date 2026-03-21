@@ -291,14 +291,18 @@ extension ConnectionSettingsV7 {
 }
 
 func sendHandshake(_ link: any Link, _ message: HandshakeMessage) async throws {
+    traceLog(.handshake, "send \(message)")
     try await link.sendRawPrologue(message.encodeCbor())
 }
 
 func recvHandshake(_ link: any Link) async throws -> HandshakeMessage {
+    traceLog(.handshake, "recv waiting")
     guard let bytes = try await link.recvRawPrologue() else {
         throw ConnectionError.connectionClosed
     }
-    return try HandshakeMessage.decodeCbor(bytes)
+    let message = try HandshakeMessage.decodeCbor(bytes)
+    traceLog(.handshake, "recv got \(message)")
+    return message
 }
 
 func handshakeMessageSchemasMatch(_ peerSchemasCbor: [UInt8]) -> Bool {

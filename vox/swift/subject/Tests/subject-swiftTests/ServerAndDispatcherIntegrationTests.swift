@@ -7,11 +7,35 @@ import Testing
 
 private actor SubjectEnvGate {
     static let shared = SubjectEnvGate()
+    private var busy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    private func acquire() async {
+        if !busy {
+            busy = true
+            return
+        }
+        await withCheckedContinuation { cont in
+            waiters.append(cont)
+        }
+    }
+
+    private func release() {
+        if waiters.isEmpty {
+            busy = false
+            return
+        }
+        let waiter = waiters.removeFirst()
+        waiter.resume()
+    }
 
     func withEnvironment<T>(
         _ pairs: [(String, String?)],
         body: () async throws -> T
     ) async rethrows -> T {
+        await acquire()
+        defer { release() }
+
         var previous: [(String, String?)] = []
         previous.reserveCapacity(pairs.count)
         for (key, value) in pairs {
@@ -68,12 +92,34 @@ private enum IntegrationTestError: Error {
     case shortRead(expected: Int, actual: Int)
 }
 
-private struct HelloHarness {
+private final class AcceptedSocketState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var connFd: Int32 = -1
+
+    func set(_ fd: Int32) {
+        lock.lock()
+        defer { lock.unlock() }
+        connFd = fd
+    }
+
+    func closeAcceptedIfOpen() {
+        lock.lock()
+        let fd = connFd
+        connFd = -1
+        lock.unlock()
+        if fd >= 0 {
+            close(fd)
+        }
+    }
+}
+
+private struct HandshakeHarness {
     let port: Int
     private let listenerFd: Int32
-    private let task: Task<MessageV7?, Error>
+    private let acceptedSocket: AcceptedSocketState
+    private let task: Task<(HandshakeMessage, HandshakeMessage?)?, Error>
 
-    static func start() throws -> HelloHarness {
+    static func start() throws -> HandshakeHarness {
         let listenerFd = socket(AF_INET, SOCK_STREAM, 0)
         guard listenerFd >= 0 else {
             throw POSIXError(.EIO)
@@ -126,8 +172,9 @@ private struct HelloHarness {
             throw POSIXError(.EIO)
         }
         let port = Int(UInt16(bigEndian: localAddr.sin_port))
+        let acceptedSocket = AcceptedSocketState()
 
-        let task = Task.detached(priority: .userInitiated) { () throws -> MessageV7? in
+        let task = Task.detached(priority: .userInitiated) { () throws -> (HandshakeMessage, HandshakeMessage?)? in
             var peerStorage = sockaddr()
             var peerLen = socklen_t(MemoryLayout<sockaddr>.size)
             let connFd = withUnsafeMutablePointer(to: &peerStorage) { ptr in
@@ -136,6 +183,7 @@ private struct HelloHarness {
             guard connFd >= 0 else {
                 throw POSIXError(.EIO)
             }
+            acceptedSocket.set(connFd)
             defer { close(connFd) }
 
             let transportHello = try readRawFrame(connFd)
@@ -145,22 +193,34 @@ private struct HelloHarness {
             let requested = try decodeTransportHello(transportHello)
             try writeRawFrame(connFd, bytes: encodeTransportAccept(requested))
 
-            let hello = MessageV7.hello(
-                HelloV7(
-                    version: 7,
-                    connectionSettings: ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: 64),
-                    metadata: []
+            guard let helloBytes = try readRawFrame(connFd) else {
+                return nil
+            }
+            let peerHello = try HandshakeMessage.decodeCbor(helloBytes)
+
+            let helloYourself = HandshakeMessage.helloYourself(
+                HandshakeHelloYourself(
+                    connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
+                    messagePayloadSchemaCbor: wireMessageSchemasCbor,
+                    supportsRetry: true,
+                    resumeKey: nil
                 )
             )
-            try writeFrame(connFd, message: hello)
-            let response = try readFrame(connFd)
-            return response
+            try writeRawFrame(connFd, bytes: helloYourself.encodeCbor())
+
+            let letsGo = try readRawFrame(connFd).map(HandshakeMessage.decodeCbor)
+            return (peerHello, letsGo)
         }
 
-        return HelloHarness(port: port, listenerFd: listenerFd, task: task)
+        return HandshakeHarness(
+            port: port,
+            listenerFd: listenerFd,
+            acceptedSocket: acceptedSocket,
+            task: task
+        )
     }
 
-    func waitForPeerMessage(timeoutMs: UInt64 = 2_000) async throws -> MessageV7? {
+    func waitForPeerHandshake(timeoutMs: UInt64 = 2_000) async throws -> (HandshakeMessage, HandshakeMessage?)? {
         try await withTimeout(milliseconds: timeoutMs) {
             try await task.value
         }
@@ -168,6 +228,7 @@ private struct HelloHarness {
 
     func shutdown() {
         close(listenerFd)
+        acceptedSocket.closeAcceptedIfOpen()
         task.cancel()
     }
 }
@@ -312,8 +373,8 @@ struct ServerAndDispatcherIntegrationTests {
     }
 
     // r[verify core.conn.accept-required]
-    @Test func serverRunSubjectHandshakePathExchangesHello() async throws {
-        let harness = try HelloHarness.start()
+    @Test func serverRunSubjectHandshakePathExchangesHandshakeMessages() async throws {
+        let harness = try HandshakeHarness.start()
         defer { harness.shutdown() }
 
         let runResult: Result<Void, Error> = await SubjectEnvGate.shared.withEnvironment([
@@ -332,13 +393,21 @@ struct ServerAndDispatcherIntegrationTests {
             }
         }
 
-        let peerMsg = try await harness.waitForPeerMessage()
-        guard let peerMsg else {
-            Issue.record("expected HelloYourself from subject")
+        let peerHandshake = try await harness.waitForPeerHandshake()
+        guard let (hello, letsGo) = peerHandshake else {
+            Issue.record("expected handshake messages from subject")
             return
         }
-        guard case .helloYourself = peerMsg.payload else {
-            Issue.record("expected helloYourself payload, got \(peerMsg.payload)")
+
+        guard case .hello(let helloPayload) = hello else {
+            Issue.record("expected Hello, got \(hello)")
+            return
+        }
+        #expect(helloPayload.connectionSettings.parity == .odd)
+        #expect(helloPayload.messagePayloadSchemaCbor == wireMessageSchemasCbor)
+
+        guard case .letsGo = letsGo else {
+            Issue.record("expected LetsGo, got \(String(describing: letsGo))")
             return
         }
 
@@ -357,7 +426,6 @@ struct ServerAndDispatcherIntegrationTests {
         await adapter.dispatch(
             methodId: TestbedMethodId.echo,
             payload: encodeString("swift-subject"),
-            channels: [],
             requestId: requestId,
             registry: registry,
             taskTx: { msg in
@@ -389,16 +457,14 @@ struct ServerAndDispatcherIntegrationTests {
 
         await adapter.preregister(
             methodId: TestbedMethodId.sum,
-            payload: [],
-            channels: [1001],
+            payload: encodeVarint(1001),
             registry: registry
         )
         #expect(await registry.isKnown(1001))
 
         await adapter.preregister(
             methodId: TestbedMethodId.transform,
-            payload: [],
-            channels: [2001, 2002],
+            payload: encodeVarint(2001) + encodeVarint(2002),
             registry: registry
         )
         #expect(await registry.isKnown(2001))

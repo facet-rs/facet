@@ -45,7 +45,11 @@ pub fn generate_wire_types(types: &[WireType]) -> String {
     // Generate factory methods extension on MessageV7
     out.push_str(&generate_factory_methods(types));
 
-    if let Some(root) = types.first() {
+    if let Some(root) = types
+        .iter()
+        .find(|wt| wt.swift_name == "MessageV7")
+        .or_else(|| types.last())
+    {
         let extracted = extract_schemas(root.shape).expect("wire schema extraction should succeed");
         let cbor_bytes = facet_cbor::to_vec(&extracted.schemas)
             .expect("wire schema CBOR serialization should succeed");

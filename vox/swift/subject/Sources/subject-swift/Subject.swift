@@ -4,6 +4,7 @@
 /// is compliant with the roam protocol spec.
 
 import Foundation
+import Darwin
 import RoamRuntime
 
 // MARK: - Testbed Service Implementation
@@ -32,6 +33,9 @@ struct TestbedService: TestbedHandler {
         if divisor == 0 {
             return .failure(.divisionByZero)
         }
+        if dividend == .min && divisor == -1 {
+            return .failure(.overflow)
+        }
         return .success(dividend / divisor)
     }
 
@@ -44,6 +48,8 @@ struct TestbedService: TestbedHandler {
             return .success(Person(name: "Bob", age: 25, email: nil))
         case 3:
             return .success(Person(name: "Charlie", age: 35, email: "charlie@example.com"))
+        case 100...199:
+            return .failure(.accessDenied)
         default:
             return .failure(.notFound)
         }
@@ -143,6 +149,74 @@ struct TestbedService: TestbedHandler {
     func swapPair(pair: (Int32, String)) async throws -> (String, Int32) {
         return (pair.1, pair.0)
     }
+
+    func echoBytes(data: Data) async throws -> Data {
+        data
+    }
+
+    func echoBool(b: Bool) async throws -> Bool {
+        b
+    }
+
+    func echoU64(n: UInt64) async throws -> UInt64 {
+        n
+    }
+
+    func echoOptionString(s: String?) async throws -> String? {
+        s
+    }
+
+    func sumLarge(numbers: Rx<Int32>) async throws -> Int64 {
+        try await sum(numbers: numbers)
+    }
+
+    func generateLarge(count: UInt32, output: Tx<Int32>) async throws {
+        try await generate(count: count, output: output)
+    }
+
+    func allColors() async throws -> [Color] {
+        [.red, .green, .blue]
+    }
+
+    func describePoint(label: String, x: Int32, y: Int32, active: Bool) async throws -> TaggedPoint {
+        TaggedPoint(label: label, x: x, y: y, active: active)
+    }
+
+    func echoShape(shape: Shape) async throws -> Shape {
+        shape
+    }
+
+    func echoStatusV1(status: Status) async throws -> Status {
+        status
+    }
+
+    func echoTagV1(tag: Tag) async throws -> Tag {
+        tag
+    }
+
+    func echoProfile(profile: Profile) async throws -> Profile {
+        profile
+    }
+
+    func echoRecord(record: Record) async throws -> Record {
+        record
+    }
+
+    func echoStatus(status: Status) async throws -> Status {
+        status
+    }
+
+    func echoTag(tag: Tag) async throws -> Tag {
+        tag
+    }
+
+    func echoMeasurement(m: Measurement) async throws -> Measurement {
+        m
+    }
+
+    func echoConfig(c: Config) async throws -> Config {
+        c
+    }
 }
 
 // MARK: - Channeling Dispatcher Adapter
@@ -162,14 +236,11 @@ final class TestbedDispatcherAdapter: ServiceDispatcher, @unchecked Sendable {
     func preregister(
         methodId: UInt64,
         payload: [UInt8],
-        channels: [UInt64],
         registry: ChannelRegistry
     ) async {
-        // Pre-register channels before the handler task is spawned.
-        // This ensures channels are known before any Data messages arrive.
         await TestbedChannelingDispatcher.preregisterChannels(
             methodId: methodId,
-            channels: channels,
+            payload: Data(payload),
             registry: registry
         )
     }
@@ -177,7 +248,6 @@ final class TestbedDispatcherAdapter: ServiceDispatcher, @unchecked Sendable {
     func dispatch(
         methodId: UInt64,
         payload: [UInt8],
-        channels: [UInt64],
         requestId: UInt64,
         registry: ChannelRegistry,
         taskTx: @escaping @Sendable (TaskMessage) -> Void
@@ -192,7 +262,6 @@ final class TestbedDispatcherAdapter: ServiceDispatcher, @unchecked Sendable {
         await dispatcher.dispatch(
             methodId: methodId,
             requestId: requestId,
-            channels: channels,
             payload: Data(payload)
         )
     }
@@ -211,49 +280,27 @@ func subjectConduit() -> TransportConduitKind {
 
 let retryProbeItemCount: UInt32 = 40
 
+func sameShape(_ lhs: Shape, _ rhs: Shape) -> Bool {
+    switch (lhs, rhs) {
+    case (.point, .point):
+        true
+    case let (.circle(lRadius), .circle(rRadius)):
+        lRadius == rRadius
+    case let (.rectangle(lWidth, lHeight), .rectangle(rWidth, rHeight)):
+        lWidth == rWidth && lHeight == rHeight
+    default:
+        false
+    }
+}
+
 // MARK: - Server Mode
 
 /// In "server" mode, the subject acts as the RPC server (handler).
 /// But it CONNECTS TO the test harness (specified by PEER_ADDR).
 func runServer() async throws {
-    guard let addr = ProcessInfo.processInfo.environment["PEER_ADDR"] else {
-        log("PEER_ADDR not set")
-        throw SubjectError.missingEnv
-    }
-
-    log("connecting to \(addr)")
-
-    // Parse host:port
-    let parts = addr.split(separator: ":")
-    guard parts.count == 2, let port = Int(parts[1]) else {
-        log("invalid PEER_ADDR format")
-        throw SubjectError.invalidAddr
-    }
-    let host = String(parts[0])
-
-    let connector = TcpConnector(host: host, port: port, transport: subjectConduit())
-    log("connecting via \(connector.transport)")
-
-    // r[impl core.conn.accept-required] - Check if we should accept incoming virtual connections.
-    let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"]
-        .map { $0 == "1" }
-        ?? true
-
     let handler = TestbedService()
     let dispatcher = TestbedDispatcherAdapter(handler: handler)
-
-    let session = try await Session.initiator(
-        connector,
-        dispatcher: dispatcher,
-        acceptConnections: acceptConnections
-    )
-
-    log("handshake complete, running driver")
-
-    // Run driver
-    try await session.run()
-
-    log("driver finished")
+    try await Server().runSubject(dispatcher: dispatcher)
 }
 
 // MARK: - Client Mode
@@ -265,6 +312,34 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
     case "echo":
         let result = try await client.echo(message: "hello from swift")
         log("echo result: \(result)")
+    case "reverse":
+        let result = try await client.reverse(message: "hello")
+        guard result == "olleh" else {
+            log("reverse expected olleh, got \(result)")
+            throw SubjectError.invalidResponse
+        }
+        log("reverse OK")
+    case "divide_success":
+        let result = try await client.divide(dividend: 10, divisor: 3)
+        guard case .success(3) = result else {
+            log("divide_success expected success(3), got \(result)")
+            throw SubjectError.invalidResponse
+        }
+        log("divide_success OK")
+    case "divide_zero":
+        let result = try await client.divide(dividend: 10, divisor: 0)
+        guard case .failure(.divisionByZero) = result else {
+            log("divide_zero expected divisionByZero, got \(result)")
+            throw SubjectError.invalidResponse
+        }
+        log("divide_zero OK")
+    case "divide_overflow":
+        let result = try await client.divide(dividend: .min, divisor: -1)
+        guard case .failure(.overflow) = result else {
+            log("divide_overflow expected overflow, got \(result)")
+            throw SubjectError.invalidResponse
+        }
+        log("divide_overflow OK")
     case "sum":
         let (tx, rx) = channel(
             serialize: { encodeI32($0) },
@@ -291,6 +366,52 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
             throw SubjectError.invalidResponse
         }
         log("sum result: \(result)")
+    case "sum_client_to_server":
+        let (tx, rx) = channel(
+            serialize: { encodeI32($0) },
+            deserialize: { bytes in
+                var offset = 0
+                return try decodeI32(from: Data(bytes), offset: &offset)
+            }
+        )
+
+        let callTask = Task {
+            try await client.sum(numbers: rx)
+        }
+        for n in [1, 2, 3, 4, 5] {
+            try await tx.send(Int32(n))
+        }
+        tx.close()
+        let result = try await callTask.value
+        guard result == 15 else {
+            log("sum_client_to_server expected 15, got \(result)")
+            throw SubjectError.invalidResponse
+        }
+        log("sum_client_to_server OK")
+    case "sum_large":
+        let (tx, rx) = channel(
+            serialize: { encodeI32($0) },
+            deserialize: { bytes in
+                var offset = 0
+                return try decodeI32(from: Data(bytes), offset: &offset)
+            }
+        )
+
+        let n = 100
+        let callTask = Task {
+            try await client.sumLarge(numbers: rx)
+        }
+        for i in 0..<n {
+            try await tx.send(Int32(i))
+        }
+        tx.close()
+        let result = try await callTask.value
+        let expected = Int64(n * (n - 1) / 2)
+        guard result == expected else {
+            log("sum_large expected \(expected), got \(result)")
+            throw SubjectError.invalidResponse
+        }
+        log("sum_large OK")
     case "generate":
         let (tx, rx) = channel(
             serialize: { encodeI32($0) },
@@ -311,6 +432,31 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
             throw SubjectError.invalidResponse
         }
         log("generate result OK: \(received)")
+    case "generate_large":
+        let (tx, rx) = channel(
+            serialize: { encodeI32($0) },
+            deserialize: { bytes in
+                var offset = 0
+                return try decodeI32(from: Data(bytes), offset: &offset)
+            }
+        )
+
+        let count: UInt32 = 100
+        async let call: Void = client.generateLarge(count: count, output: tx)
+        async let received: [Int32] = {
+            var values: [Int32] = []
+            for try await n in rx {
+                values.append(n)
+            }
+            return values
+        }()
+        let (_, receivedValues) = try await (call, received)
+        let expected = (0..<Int32(count)).map { $0 }
+        guard receivedValues == expected else {
+            log("generate_large expected \(expected.count) ordered items, got \(receivedValues)")
+            throw SubjectError.invalidResponse
+        }
+        log("generate_large OK")
     case "channel_retry_non_idem":
         let (tx, rx) = channel(
             serialize: { encodeI32($0) },
@@ -390,6 +536,156 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
             throw SubjectError.invalidResponse
         }
         log("divide_error result OK")
+    case "lookup_found":
+        let result = try await client.lookup(id: 1)
+        guard case .success(let person) = result, person.name == "Alice" else {
+            log("lookup_found expected Alice, got \(result)")
+            throw SubjectError.invalidResponse
+        }
+        log("lookup_found OK")
+    case "lookup_found_no_email":
+        let result = try await client.lookup(id: 2)
+        guard case .success(let person) = result, person.name == "Bob", person.email == nil else {
+            log("lookup_found_no_email expected Bob with nil email, got \(result)")
+            throw SubjectError.invalidResponse
+        }
+        log("lookup_found_no_email OK")
+    case "lookup_not_found":
+        let result = try await client.lookup(id: 999)
+        guard case .failure(.notFound) = result else {
+            log("lookup_not_found expected notFound, got \(result)")
+            throw SubjectError.invalidResponse
+        }
+        log("lookup_not_found OK")
+    case "lookup_access_denied":
+        let result = try await client.lookup(id: 100)
+        guard case .failure(.accessDenied) = result else {
+            log("lookup_access_denied expected accessDenied, got \(result)")
+            throw SubjectError.invalidResponse
+        }
+        log("lookup_access_denied OK")
+    case "echo_point":
+        let point = Point(x: 42, y: -7)
+        let result = try await client.echoPoint(point: point)
+        guard result.x == point.x, result.y == point.y else {
+            log("echo_point expected \(point), got \(result)")
+            throw SubjectError.invalidResponse
+        }
+        log("echo_point OK")
+    case "create_person":
+        let dave = try await client.createPerson(name: "Dave", age: 40, email: "dave@example.com")
+        guard dave.name == "Dave", dave.age == 40, dave.email == "dave@example.com" else {
+            log("create_person expected Dave, got \(dave)")
+            throw SubjectError.invalidResponse
+        }
+        let eve = try await client.createPerson(name: "Eve", age: 25, email: nil)
+        guard eve.name == "Eve", eve.age == 25, eve.email == nil else {
+            log("create_person expected Eve with nil email, got \(eve)")
+            throw SubjectError.invalidResponse
+        }
+        log("create_person OK")
+    case "rectangle_area":
+        let rect = Rectangle(
+            topLeft: Point(x: 0, y: 10),
+            bottomRight: Point(x: 5, y: 0),
+            label: nil
+        )
+        let result = try await client.rectangleArea(rect: rect)
+        guard abs(result - 50.0) < 1e-9 else {
+            log("rectangle_area expected 50.0, got \(result)")
+            throw SubjectError.invalidResponse
+        }
+        log("rectangle_area OK")
+    case "parse_color":
+        guard try await client.parseColor(name: "red") == .red else {
+            log("parse_color red failed")
+            throw SubjectError.invalidResponse
+        }
+        guard try await client.parseColor(name: "green") == .green else {
+            log("parse_color green failed")
+            throw SubjectError.invalidResponse
+        }
+        guard try await client.parseColor(name: "blue") == .blue else {
+            log("parse_color blue failed")
+            throw SubjectError.invalidResponse
+        }
+        guard try await client.parseColor(name: "purple") == nil else {
+            log("parse_color purple expected nil")
+            throw SubjectError.invalidResponse
+        }
+        log("parse_color OK")
+    case "get_points":
+        let result = try await client.getPoints(count: 5)
+        guard result.count == 5, result.first?.x == 0, result.last?.x == 4 else {
+            log("get_points expected 5 points from 0..4, got \(result)")
+            throw SubjectError.invalidResponse
+        }
+        log("get_points OK")
+    case "swap_pair":
+        let result = try await client.swapPair(pair: (99, "hello"))
+        guard result.0 == "hello", result.1 == 99 else {
+            log("swap_pair expected (hello, 99), got \(result)")
+            throw SubjectError.invalidResponse
+        }
+        log("swap_pair OK")
+    case "echo_bytes":
+        let data = Data([1, 2, 3, 255, 0, 128])
+        let result = try await client.echoBytes(data: data)
+        guard result == data else {
+            log("echo_bytes mismatch")
+            throw SubjectError.invalidResponse
+        }
+        log("echo_bytes OK")
+    case "echo_bool":
+        guard try await client.echoBool(b: true) == true else {
+            log("echo_bool true failed")
+            throw SubjectError.invalidResponse
+        }
+        guard try await client.echoBool(b: false) == false else {
+            log("echo_bool false failed")
+            throw SubjectError.invalidResponse
+        }
+        log("echo_bool OK")
+    case "echo_u64":
+        for n: UInt64 in [0, 1, 1_000_000_000_000, .max] {
+            let result = try await client.echoU64(n: n)
+            guard result == n else {
+                log("echo_u64 expected \(n), got \(result)")
+                throw SubjectError.invalidResponse
+            }
+        }
+        log("echo_u64 OK")
+    case "echo_option_string":
+        let stringResult = try await client.echoOptionString(s: "hello")
+        guard stringResult == "hello" else {
+            log("echo_option_string Some failed: \(String(describing: stringResult))")
+            throw SubjectError.invalidResponse
+        }
+        let nilResult = try await client.echoOptionString(s: nil)
+        guard nilResult == nil else {
+            log("echo_option_string None failed: \(String(describing: nilResult))")
+            throw SubjectError.invalidResponse
+        }
+        log("echo_option_string OK")
+    case "describe_point":
+        let first = try await client.describePoint(label: "origin", x: 0, y: 0, active: true)
+        guard first.label == "origin", first.x == 0, first.y == 0, first.active else {
+            log("describe_point origin failed: \(first)")
+            throw SubjectError.invalidResponse
+        }
+        let second = try await client.describePoint(label: "far", x: -100, y: 200, active: false)
+        guard second.label == "far", second.x == -100, second.y == 200, second.active == false else {
+            log("describe_point far failed: \(second)")
+            throw SubjectError.invalidResponse
+        }
+        log("describe_point OK")
+    case "all_colors":
+        let result = try await client.allColors()
+        guard result == [.red, .green, .blue] else {
+            log("all_colors expected [.red, .green, .blue], got \(result)")
+            throw SubjectError.invalidResponse
+        }
+        log("all_colors OK")
     case "shape_area":
         let result = try await client.shapeArea(shape: .rectangle(width: 3.0, height: 4.0))
         guard result == 12.0 else {
@@ -397,6 +693,20 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
             throw SubjectError.invalidResponse
         }
         log("shape_area result: \(result)")
+    case "echo_shape":
+        let shapes: [Shape] = [
+            .point,
+            .circle(radius: 3.14),
+            .rectangle(width: 2.0, height: 5.0),
+        ]
+        for shape in shapes {
+            let result = try await client.echoShape(shape: shape)
+            guard sameShape(result, shape) else {
+                log("echo_shape expected \(shape), got \(result)")
+                throw SubjectError.invalidResponse
+            }
+        }
+        log("echo_shape OK")
     case "create_canvas":
         let result = try await client.createCanvas(
             name: "enum-canvas",
@@ -424,6 +734,20 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
             throw SubjectError.invalidResponse
         }
         log("create_canvas result OK")
+    case "pipelining":
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for i in 0..<10 {
+                group.addTask {
+                    let expected = "msg\(i)"
+                    let result = try await client.echo(message: expected)
+                    guard result == expected else {
+                        throw SubjectError.invalidResponse
+                    }
+                }
+            }
+            try await group.waitForAll()
+        }
+        log("pipelining OK")
     case "process_message":
         let result = try await client.processMessage(msg: .data(Data([1, 2, 3, 4])))
         guard case .data(let payload) = result, payload == Data([4, 3, 2, 1]) else {
@@ -431,6 +755,41 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
             throw SubjectError.invalidResponse
         }
         log("process_message result OK")
+    case "transform_bidi":
+        let (inputTx, inputRx) = channel(
+            serialize: { encodeString($0) },
+            deserialize: { bytes in
+                var offset = 0
+                return try decodeString(from: Data(bytes), offset: &offset)
+            }
+        )
+        let (outputTx, outputRx) = channel(
+            serialize: { encodeString($0) },
+            deserialize: { bytes in
+                var offset = 0
+                return try decodeString(from: Data(bytes), offset: &offset)
+            }
+        )
+        let messages = ["alpha", "beta", "gamma"]
+        async let call: Void = client.transform(input: inputRx, output: outputTx)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        async let received: [String] = {
+            var values: [String] = []
+            for try await s in outputRx {
+                values.append(s)
+            }
+            return values
+        }()
+        for message in messages {
+            try await inputTx.send(message)
+        }
+        inputTx.close()
+        let (_, receivedValues) = try await (call, received)
+        guard receivedValues == messages else {
+            log("transform_bidi expected \(messages), got \(receivedValues)")
+            throw SubjectError.invalidResponse
+        }
+        log("transform_bidi OK")
 
     default:
         log("unknown CLIENT_SCENARIO: \(scenario)")
@@ -462,7 +821,8 @@ func runClient() async throws {
 
     let session = try await Session.initiator(
         connector,
-        dispatcher: dispatcher
+        dispatcher: dispatcher,
+        resumable: false
     )
 
     log("handshake complete")
@@ -480,6 +840,223 @@ func runClient() async throws {
     let client = TestbedClient(connection: session.connection)
     let scenario = ProcessInfo.processInfo.environment["CLIENT_SCENARIO"] ?? "echo"
     try await runClientScenario(client: client, scenario: scenario)
+}
+
+final class SocketLink: Link, @unchecked Sendable {
+    private let fd: Int32
+    private let readQueue = DispatchQueue(label: "bearcove.roam.subject-swift.socket-link.read")
+    private let writeQueue = DispatchQueue(label: "bearcove.roam.subject-swift.socket-link.write")
+    private let stateQueue = DispatchQueue(label: "bearcove.roam.subject-swift.socket-link.state")
+    private var maxFrameSize = 1024 * 1024
+    private var closed = false
+
+    init(fd: Int32) {
+        self.fd = fd
+    }
+
+    func sendFrame(_ bytes: [UInt8]) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            self.writeQueue.async {
+                do {
+                    try self.ensureOpen()
+                    guard let len = UInt32(exactly: bytes.count) else {
+                        throw SubjectError.socketSetupFailed
+                    }
+                    var header = withUnsafeBytes(of: len.littleEndian) { Array($0) }
+                    try writeAll(self.fd, bytes: header)
+                    header.removeAll(keepingCapacity: false)
+                    try writeAll(self.fd, bytes: bytes)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    func recvFrame() async throws -> [UInt8]? {
+        try await withCheckedThrowingContinuation { continuation in
+            self.readQueue.async {
+                do {
+                    try self.ensureOpen()
+                    let header = try readFrameHeader(self.fd)
+                    guard let header else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    let frameLength = Int(UInt32(littleEndian: header))
+                    let maxFrameSize = self.currentMaxFrameSize()
+                    guard frameLength <= maxFrameSize else {
+                        throw TransportError.frameDecoding("Frame exceeds \(maxFrameSize) bytes")
+                    }
+                    let bytes = try readExactly(fd: self.fd, count: frameLength)
+                    continuation.resume(returning: bytes)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    func setMaxFrameSize(_ size: Int) async throws {
+        stateQueue.sync {
+            maxFrameSize = size
+        }
+    }
+
+    func close() async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            self.writeQueue.async {
+                let wasClosed = self.stateQueue.sync { () -> Bool in
+                    let wasClosed = self.closed
+                    if !wasClosed {
+                        self.closed = true
+                    }
+                    return wasClosed
+                }
+                if !wasClosed {
+                    _ = Darwin.shutdown(self.fd, SHUT_RDWR)
+                    Darwin.close(self.fd)
+                }
+                continuation.resume()
+            }
+        }
+    }
+
+    private func ensureOpen() throws {
+        let isClosed = stateQueue.sync { closed }
+        if isClosed {
+            throw ConnectionError.connectionClosed
+        }
+    }
+
+    private func currentMaxFrameSize() -> Int {
+        stateQueue.sync { maxFrameSize }
+    }
+}
+
+private func readFrameHeader(_ fd: Int32) throws -> UInt32? {
+    let headerBytes = try readExactlyAllowingEof(fd: fd, count: 4)
+    guard let headerBytes else {
+        return nil
+    }
+    return headerBytes.withUnsafeBytes { raw in
+        raw.load(as: UInt32.self)
+    }
+}
+
+private func readExactlyAllowingEof(fd: Int32, count: Int) throws -> [UInt8]? {
+    if count == 0 {
+        return []
+    }
+
+    var out = [UInt8](repeating: 0, count: count)
+    var offset = 0
+    while offset < count {
+        let n = out.withUnsafeMutableBytes { raw -> Int in
+            guard let base = raw.baseAddress else { return -1 }
+            return Darwin.recv(fd, base.advanced(by: offset), count - offset, 0)
+        }
+        if n == 0 {
+            if offset == 0 {
+                return nil
+            }
+            throw SubjectError.socketSetupFailed
+        }
+        if n < 0 {
+            if errno == EINTR {
+                continue
+            }
+            throw SubjectError.socketSetupFailed
+        }
+        offset += n
+    }
+    return out
+}
+
+private func makeTcpListener(port: Int) throws -> (fd: Int32, boundPort: Int) {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    guard fd >= 0 else {
+        throw SubjectError.socketSetupFailed
+    }
+
+    var yes: Int32 = 1
+    guard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size)) == 0 else {
+        close(fd)
+        throw SubjectError.socketSetupFailed
+    }
+
+    var addr = sockaddr_in()
+    addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    addr.sin_family = sa_family_t(AF_INET)
+    addr.sin_port = in_port_t(UInt16(port).bigEndian)
+    addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+
+    let bindResult = withUnsafePointer(to: &addr) { ptr in
+        ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+            Darwin.bind(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+        }
+    }
+    guard bindResult == 0, listen(fd, 1) == 0 else {
+        close(fd)
+        throw SubjectError.socketSetupFailed
+    }
+
+    var localAddr = sockaddr_in()
+    var localLen = socklen_t(MemoryLayout<sockaddr_in>.size)
+    let nameResult = withUnsafeMutablePointer(to: &localAddr) { ptr in
+        ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+            getsockname(fd, sockPtr, &localLen)
+        }
+    }
+    guard nameResult == 0 else {
+        close(fd)
+        throw SubjectError.socketSetupFailed
+    }
+
+    let boundPort = Int(UInt16(bigEndian: localAddr.sin_port))
+    return (fd, boundPort)
+}
+
+private func acceptTcpConnection(listenerFd: Int32) async throws -> Int32 {
+    try await withCheckedThrowingContinuation { continuation in
+        DispatchQueue.global().async {
+            let clientFd = Darwin.accept(listenerFd, nil, nil)
+            if clientFd >= 0 {
+                continuation.resume(returning: clientFd)
+            } else {
+                continuation.resume(throwing: SubjectError.socketSetupFailed)
+            }
+        }
+    }
+}
+
+func runServerListen() async throws {
+    let listenPort = ProcessInfo.processInfo.environment["LISTEN_PORT"].flatMap(Int.init) ?? 0
+    let (listenerFd, boundPort) = try makeTcpListener(port: listenPort)
+    defer { Darwin.close(listenerFd) }
+
+    FileHandle.standardOutput.write(Data("LISTEN_ADDR=127.0.0.1:\(boundPort)\n".utf8))
+    log("server-listen mode: bound to 127.0.0.1:\(boundPort)")
+
+    let clientFd = try await acceptTcpConnection(listenerFd: listenerFd)
+    let link = SocketLink(fd: clientFd)
+    _ = try await performAcceptorTransportPrologue(
+        transport: link,
+        supportedConduit: subjectConduit()
+    )
+
+    let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] == "1"
+    let handler = TestbedService()
+    let dispatcher = TestbedDispatcherAdapter(handler: handler)
+    let session = try await Session.acceptorOn(
+        link,
+        transport: subjectConduit(),
+        dispatcher: dispatcher,
+        acceptConnections: acceptConnections,
+        resumable: true
+    )
+    try await session.run()
 }
 
 func runShmClient() async throws {
@@ -613,17 +1190,35 @@ func runShmHostServer() async throws {
         transport: transport,
         supportedConduit: .bare
     )
-    let conduit = BareConduit(link: transport)
     let handler = TestbedService()
     let dispatcher = TestbedDispatcherAdapter(handler: handler)
 
     let (_, driver, _, _) = try await establishAcceptor(
-        conduit: conduit,
+        link: transport,
+        transport: .bare,
         dispatcher: dispatcher,
         acceptConnections: acceptConnections
     )
     prepared.closeGuestEndpoints()
     try await driver.run()
+}
+
+private func writeAll(_ fd: Int32, bytes: [UInt8]) throws {
+    var sent = 0
+    while sent < bytes.count {
+        let n = bytes.withUnsafeBytes { raw -> Int in
+            guard let base = raw.baseAddress else { return -1 }
+            return Darwin.send(fd, base.advanced(by: sent), bytes.count - sent, 0)
+        }
+        if n > 0 {
+            sent += n
+            continue
+        }
+        if n < 0, errno == EINTR {
+            continue
+        }
+        throw SubjectError.socketSetupFailed
+    }
 }
 
 private func makeUnixListener(path: String) throws -> Int32 {
@@ -714,6 +1309,8 @@ struct SubjectMain {
             switch mode {
             case "server":
                 try await runServer()
+            case "server-listen":
+                try await runServerListen()
             case "client":
                 try await runClient()
             case "shm-client":
