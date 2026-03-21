@@ -487,6 +487,20 @@ mod tests {
         assert_eq!(result, vec![1, 2, 3, 4]);
     }
 
+    #[test]
+    fn translation_never_and_unit_are_incompatible() {
+        let error = plan_for(
+            <std::convert::Infallible as Facet>::SHAPE,
+            <() as Facet>::SHAPE,
+        )
+        .expect_err("never and unit should not be translation-compatible");
+
+        assert!(matches!(
+            *error.kind,
+            error::TranslationErrorKind::KindMismatch { .. }
+        ));
+    }
+
     // r[verify schema.translation.skip-unknown]
     #[test]
     fn translation_remote_has_extra_field() {

@@ -136,8 +136,10 @@ pub fn generate_dispatcher_class(service: &ServiceDescriptor) -> String {
             out.push_str("        call.reply(result);\n");
         }
 
-        out.push_str("      } catch {\n");
-        out.push_str("        call.replyInternalError();\n");
+        out.push_str("      } catch (error) {\n");
+        out.push_str(
+            "        call.replyInternalError(error instanceof Error ? error.message : String(error));\n",
+        );
         out.push_str("      }\n");
     }
 

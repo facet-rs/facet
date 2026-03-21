@@ -3,8 +3,8 @@
 //! Generates client interface and implementation for making caller-visible RPC
 //! calls. Each generated method issues one logical call, which may map to one
 //! or more request attempts at runtime if retry/session recovery is involved.
-//! The client uses the service descriptor for schema-driven encode/decode —
-//! no serialization code is generated here.
+//! The client uses the canonical service schema table for request/response
+//! encode/decode. No method-specific serialization code is generated here.
 
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use roam_types::{ServiceDescriptor, ShapeKind, classify_shape, is_rx, is_tx};
@@ -76,10 +76,10 @@ pub fn generate_caller_interface(service: &ServiceDescriptor) -> String {
 ///
 /// Each generated client method represents one logical RPC call:
 /// 1. Looks up its `MethodDescriptor` from the service descriptor by index
-/// 2. Binds any channel args (via `bindChannels` if streaming)
+/// 2. Binds any channel args (via canonical arg refs if streaming)
 /// 3. Calls `caller.call({ method, args, descriptor, ... })` to start a
 ///    request attempt for that logical call
-/// 4. The runtime encodes/decodes using the descriptor's schemas
+/// 4. The runtime encodes/decodes using the canonical service schema table
 pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
     let service_name = service.service_name.to_upper_camel_case();
@@ -141,30 +141,27 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
         out.push_str(&format!(
             "    const descriptor = {service_name_lower}_descriptor.methods[{method_idx}];\n"
         ));
+        out.push_str(&format!(
+            "    const sendSchemas = {service_name_lower}_descriptor.send_schemas;\n"
+        ));
 
         // Bind channel args if streaming
         if has_streaming_args {
+            out.push_str(
+                "    const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);\n",
+            );
             out.push_str("    const prepareRetry = () => {\n");
-            out.push_str("      const channels = bindChannels(\n");
-            out.push_str("        descriptor.args.elements,\n");
+            out.push_str("      const channels = bindChannelsForTypeRefs(\n");
+            out.push_str("        argTypeRefs,\n");
             out.push_str(&format!("        [{}],\n", arg_names.join(", ")));
             out.push_str("        this.caller.getChannelAllocator(),\n");
             out.push_str("        this.caller.getChannelRegistry(),\n");
-            out.push_str(&format!(
-                "        {service_name_lower}_descriptor.schema_registry,\n"
-            ));
+            out.push_str("        sendSchemas.schemas,\n");
             out.push_str("      );\n");
-            out.push_str("      const values = Object.values({");
-            out.push_str(&arg_names.join(", "));
-            out.push_str("});\n");
-            out.push_str(
-                &format!(
-                    "      const payload = values.length === 0\n        ? new Uint8Array(0)\n        : encodeWithSchema(values, descriptor.args, {service_name_lower}_descriptor.schema_registry);\n"
-                ),
-            );
+            out.push_str("      const payload = new Uint8Array(0);\n");
             out.push_str("      return { payload, channels };\n");
             out.push_str("    };\n");
-            out.push_str("    const { payload, channels } = prepareRetry();\n");
+            out.push_str("    const { channels } = prepareRetry();\n");
         }
 
         let is_fallible = matches!(
@@ -181,17 +178,12 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             ));
             out.push_str(&format!("          args: {},\n", args_record));
             out.push_str("          descriptor,\n");
-            out.push_str(&format!(
-                "          schemaRegistry: {service_name_lower}_descriptor.schema_registry,\n"
-            ));
-            out.push_str(&format!(
-                "          sendSchemas: {service_name_lower}_descriptor.send_schemas,\n"
-            ));
+            out.push_str("          sendSchemas,\n");
             if has_streaming_args {
                 out.push_str("          channels,\n");
                 out.push_str("          prepareRetry,\n");
                 out.push_str(&format!(
-                    "          finalizeChannels: () => finalizeBoundChannels(descriptor.args.elements, [{}], {service_name_lower}_descriptor.schema_registry),\n",
+                    "          finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [{}], sendSchemas.schemas),\n",
                     arg_names.join(", ")
                 ));
             }
@@ -215,17 +207,12 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             ));
             out.push_str(&format!("        args: {},\n", args_record));
             out.push_str("        descriptor,\n");
-            out.push_str(&format!(
-                "        schemaRegistry: {service_name_lower}_descriptor.schema_registry,\n"
-            ));
-            out.push_str(&format!(
-                "        sendSchemas: {service_name_lower}_descriptor.send_schemas,\n"
-            ));
+            out.push_str("        sendSchemas,\n");
             if has_streaming_args {
                 out.push_str("        channels,\n");
                 out.push_str("        prepareRetry,\n");
                 out.push_str(&format!(
-                    "        finalizeChannels: () => finalizeBoundChannels(descriptor.args.elements, [{}], {service_name_lower}_descriptor.schema_registry),\n",
+                    "        finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [{}], sendSchemas.schemas),\n",
                     arg_names.join(", ")
                 ));
             }

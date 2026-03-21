@@ -369,6 +369,8 @@ function encodePrimitive(value: unknown, primitiveType: string, writer: BufWrite
     }
     case "unit":
       return;
+    case "never":
+      throw new Error("encodePrimitive: cannot encode never");
     case "bytes": {
       const bytes = coerceUint8Array(value, "bytes");
       writer.writeVarint(bytes.length);
@@ -489,6 +491,8 @@ function skipPrimitive(buf: Uint8Array, offset: number, pt: string): number {
     }
     case "unit":
       return offset;
+    case "never":
+      throw new Error("skipPrimitive: received bytes for never primitive");
     case "bytes": {
       const { value: len, next } = decodeVarintNumber(buf, offset);
       return next + len;
@@ -1046,6 +1050,8 @@ function decodePrimitive(
       return decodeBytes(buf, offset);
     case "unit":
       return { value: undefined, next: offset };
+    case "never":
+      throw new Error("decodePrimitive: received bytes for never primitive");
     case "payload": {
       // 4-byte LE u32 length prefix
       const len =

@@ -211,6 +211,9 @@ pub fn skip_value(
 fn skip_primitive(cursor: &mut Cursor<'_>, prim: PrimitiveType) -> Result<(), DeserializeError> {
     match prim {
         PrimitiveType::Unit => Ok(()),
+        PrimitiveType::Never => Err(DeserializeError::protocol(
+            "received bytes for never primitive",
+        )),
         PrimitiveType::Bool | PrimitiveType::U8 | PrimitiveType::I8 => {
             cursor.read_byte()?;
             Ok(())

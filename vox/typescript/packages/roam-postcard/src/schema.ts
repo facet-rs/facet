@@ -404,6 +404,7 @@ export type WirePrimitiveType =
   | "char"
   | "string"
   | "unit"
+  | "never"
   | "bytes"
   | "payload";
 

@@ -21,7 +21,7 @@ use heck::ToLowerCamelCase;
 use roam_types::{
     EnumInfo, RoamError, Schema, SchemaHash, SchemaKind, ServiceDescriptor, ShapeKind, StructInfo,
     TypeRef, VariantKind, VariantPayload, VariantSchema, classify_shape, classify_variant,
-    compute_content_hash, is_bytes, schema_child_ids,
+    is_bytes, schema_child_ids,
 };
 
 /// Generate a TypeScript Schema object literal for a type.
@@ -263,63 +263,6 @@ fn generate_scalar_schema(scalar: ScalarType) -> String {
     }
 }
 
-/// Generate the `RoamError<E>` enum schema using Rust reflection.
-///
-/// Instead of hardcoding variants, uses `classify_shape` on `RoamError<Infallible>` to
-/// get the exact variant list (names, indices, payloads) matching Rust's `#[repr(u8)]`.
-/// Only the `User` variant's inner type is replaced with `err_schema`.
-fn generate_roam_error_schema(err_schema: &str) -> String {
-    use roam_types::VariantKind;
-
-    let roam_error_shape =
-        <roam_types::RoamError<std::convert::Infallible> as Facet<'static>>::SHAPE;
-    let ShapeKind::Enum(EnumInfo { variants, .. }) = classify_shape(roam_error_shape) else {
-        panic!("RoamError must be an enum");
-    };
-
-    let mut state = SchemaGenState::default();
-    let variant_schemas: Vec<String> = variants
-        .iter()
-        .map(|variant| match classify_variant(variant) {
-            VariantKind::Unit => {
-                format!("{{ name: '{}', fields: null }}", variant.name)
-            }
-            VariantKind::Newtype { inner } => {
-                if variant.name == "User" {
-                    // Replace Infallible with the actual user error schema.
-                    format!("{{ name: 'User', fields: {} }}", err_schema)
-                } else {
-                    let inner_schema = generate_schema_with_field(inner, None, &mut state);
-                    format!("{{ name: '{}', fields: {} }}", variant.name, inner_schema)
-                }
-            }
-            VariantKind::Struct { .. } | VariantKind::Tuple { .. } => {
-                // RoamError has no struct/tuple variants; panic if Rust ever adds one.
-                panic!(
-                    "unexpected struct/tuple variant in RoamError: {}",
-                    variant.name
-                )
-            }
-        })
-        .collect();
-
-    format!(
-        "{{ kind: 'enum', variants: [{}] }}",
-        variant_schemas.join(", ")
-    )
-}
-
-/// Generate the full `Result<T, RoamError<E>>` enum schema for a method.
-///
-/// - Ok (index 0): T
-/// - Err (index 1): RoamError<E>
-fn generate_result_schema(ok_schema: &str, err_schema: &str) -> String {
-    let roam_error = generate_roam_error_schema(err_schema);
-    format!(
-        "{{ kind: 'enum', variants: [{{ name: 'Ok', fields: {ok_schema} }}, {{ name: 'Err', fields: {roam_error} }}] }}"
-    )
-}
-
 /// Generate TypeScript constants for pre-computed CBOR schemas.
 ///
 /// Produces the `{service}_send_schemas` export with a `schemas` map
@@ -328,7 +271,8 @@ fn generate_result_schema(ok_schema: &str, err_schema: &str) -> String {
 /// so they are guaranteed to match what Rust expects on the wire.
 ///
 /// The response schema is ALWAYS wrapped as `Result<T, RoamError<E>>` to match
-/// the actual wire encoding. For infallible methods, E = Infallible (empty enum).
+/// the actual wire encoding. For infallible methods, E = Infallible, which
+/// extracts to the canonical `never` primitive.
 pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
     use crate::render::hex_u64;
 
@@ -379,57 +323,11 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         &mut all_schemas,
     );
     let result_type_id = type_id_of(&result_template_root);
-    let roam_error_param = all_schemas
-        .iter()
-        .find(|schema| schema.id == result_type_id)
-        .and_then(|schema| schema.type_params.get(1))
-        .cloned()
-        .expect("generic Result<T, E> template must expose E");
-    let roam_error_type_params = vec![roam_error_param.clone()];
-    let roam_error_kind = {
-        let roam_error_shape = <RoamError<std::convert::Infallible> as Facet<'static>>::SHAPE;
-        let ShapeKind::Enum(EnumInfo { variants, .. }) = classify_shape(roam_error_shape) else {
-            panic!("RoamError must be an enum");
-        };
-        SchemaKind::Enum {
-            name: "RoamError".to_string(),
-            variants: variants
-                .iter()
-                .enumerate()
-                .map(|(index, variant)| {
-                    let payload = match classify_variant(variant) {
-                        VariantKind::Unit => VariantPayload::Unit,
-                        VariantKind::Newtype { inner } if variant.name == "User" => {
-                            let _ = inner;
-                            VariantPayload::Newtype {
-                                type_ref: TypeRef::Var {
-                                    name: roam_error_param.clone(),
-                                },
-                            }
-                        }
-                        VariantKind::Newtype { inner } => VariantPayload::Newtype {
-                            type_ref: extract_into(inner, &mut all_schemas),
-                        },
-                        VariantKind::Tuple { .. } | VariantKind::Struct { .. } => {
-                            panic!("unexpected RoamError payload shape: {}", variant.name)
-                        }
-                    };
-                    VariantSchema {
-                        name: variant.name.to_string(),
-                        index: index as u32,
-                        payload,
-                    }
-                })
-                .collect(),
-        }
-    };
-    let roam_error_type_id =
-        compute_content_hash(&roam_error_kind, &roam_error_type_params, &|id| id);
-    all_schemas.push(Schema {
-        id: roam_error_type_id,
-        type_params: roam_error_type_params,
-        kind: roam_error_kind,
-    });
+    let roam_error_template_root = extract_into(
+        <RoamError<std::convert::Infallible> as Facet<'static>>::SHAPE,
+        &mut all_schemas,
+    );
+    let roam_error_type_id = type_id_of(&roam_error_template_root);
 
     for method in service.methods {
         let method_id = crate::method_id(method);
@@ -566,39 +464,18 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
 
 /// Generate the service descriptor constant.
 ///
-/// The descriptor contains all method descriptors with their args tuple schemas
-/// and full result schemas. The runtime uses this for schema-driven dispatch.
+/// The descriptor carries method metadata plus the canonical service schema
+/// table. Legacy TS-only args/result schemas are no longer emitted here.
 pub fn generate_descriptor(service: &ServiceDescriptor) -> String {
-    use super::types::collect_named_types;
     use crate::render::hex_u64;
 
     let mut out = String::new();
     let service_name_lower = service.service_name.to_lower_camel_case();
-    let named_types = collect_named_types(service);
-
-    out.push_str("// Named schema registry (for recursive / shared named types)\n");
-    out.push_str(&format!(
-        "const {service_name_lower}_schema_registry: SchemaRegistry = new Map<string, Schema>([\n"
-    ));
-    for (name, shape) in &named_types {
-        let mut state = SchemaGenState {
-            use_named_refs: true,
-            root_name: Some(name.clone()),
-            active: HashSet::new(),
-        };
-        let schema = generate_schema_with_field(shape, None, &mut state);
-        out.push_str(&format!("  [\"{name}\", {schema}],\n"));
-    }
-    out.push_str("]);\n\n");
-
-    out.push_str("// Service descriptor for runtime schema-driven dispatch\n");
+    out.push_str("// Service descriptor for runtime dispatch metadata\n");
     out.push_str(&format!(
         "export const {service_name_lower}_descriptor: ServiceDescriptor = {{\n"
     ));
     out.push_str(&format!("  service_name: '{}',\n", service.service_name));
-    out.push_str(&format!(
-        "  schema_registry: {service_name_lower}_schema_registry,\n"
-    ));
     out.push_str(&format!(
         "  send_schemas: {service_name_lower}_send_schemas,\n"
     ));
@@ -608,44 +485,6 @@ pub fn generate_descriptor(service: &ServiceDescriptor) -> String {
         let method_name = method.method_name.to_lower_camel_case();
         let id = crate::method_id(method);
 
-        // Args as the macro-provided tuple shape
-        let mut args_state = SchemaGenState {
-            use_named_refs: true,
-            root_name: None,
-            active: HashSet::new(),
-        };
-        let args_schema = generate_schema_with_field(method.args_shape, None, &mut args_state);
-
-        // Result schema: Result<T, RoamError<E>>
-        let result_schema = match classify_shape(method.return_shape) {
-            ShapeKind::Result { ok, err } => {
-                let mut ok_state = SchemaGenState {
-                    use_named_refs: true,
-                    root_name: None,
-                    active: HashSet::new(),
-                };
-                let mut err_state = SchemaGenState {
-                    use_named_refs: true,
-                    root_name: None,
-                    active: HashSet::new(),
-                };
-                let ok_schema = generate_schema_with_field(ok, None, &mut ok_state);
-                let err_schema = generate_schema_with_field(err, None, &mut err_state);
-                generate_result_schema(&ok_schema, &err_schema)
-            }
-            _ => {
-                // Infallible: ok = return type, err = null (User variant never sent)
-                let mut ok_state = SchemaGenState {
-                    use_named_refs: true,
-                    root_name: None,
-                    active: HashSet::new(),
-                };
-                let ok_schema =
-                    generate_schema_with_field(method.return_shape, None, &mut ok_state);
-                generate_result_schema(&ok_schema, "null")
-            }
-        };
-
         out.push_str("    {\n");
         out.push_str(&format!("      name: '{method_name}',\n"));
         out.push_str(&format!("      id: {}n,\n", hex_u64(id)));
@@ -653,8 +492,6 @@ pub fn generate_descriptor(service: &ServiceDescriptor) -> String {
             "      retry: {{ persist: {}, idem: {} }},\n",
             method.retry.persist, method.retry.idem
         ));
-        out.push_str(&format!("      args: {args_schema},\n"));
-        out.push_str(&format!("      result: {result_schema},\n"));
         out.push_str("    },\n");
     }
 
@@ -823,6 +660,7 @@ fn render_primitive_type(pt: &PrimitiveType) -> &'static str {
         PrimitiveType::Char => "char",
         PrimitiveType::String => "string",
         PrimitiveType::Unit => "unit",
+        PrimitiveType::Never => "never",
         PrimitiveType::Bytes => "bytes",
         PrimitiveType::Payload => "payload",
     }

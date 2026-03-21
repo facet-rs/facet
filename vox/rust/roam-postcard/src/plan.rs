@@ -284,10 +284,14 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
                 ..
             },
         ) if remote_direction == local_direction => Ok(TranslationPlan::Identity),
-        // Primitives — no translation needed
-        (SchemaKind::Primitive { .. }, SchemaKind::Primitive { .. }) => {
-            Ok(TranslationPlan::Identity)
-        }
+        (
+            SchemaKind::Primitive {
+                primitive_type: remote_primitive,
+            },
+            SchemaKind::Primitive {
+                primitive_type: local_primitive,
+            },
+        ) if remote_primitive == local_primitive => Ok(TranslationPlan::Identity),
         // Kind mismatch
         _ => Err(TranslationError::new(TranslationErrorKind::KindMismatch {
             remote: remote.clone(),

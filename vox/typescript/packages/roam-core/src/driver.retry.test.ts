@@ -84,31 +84,6 @@ const METHOD: MethodDescriptor = {
   name: "echo",
   id: 1n,
   retry: { persist: true, idem: false },
-  args: { kind: "tuple", elements: [{ kind: "u32" }] },
-  result: {
-    kind: "enum",
-    variants: [
-      { name: "Ok", fields: { kind: "u32" } },
-      {
-        name: "Err",
-        fields: {
-          kind: "enum",
-          variants: [
-            { name: "User", fields: null },
-            { name: "UnknownMethod", fields: null },
-            { name: "InvalidPayload", fields: null },
-            { name: "Cancelled", fields: null },
-            { name: "Indeterminate", fields: null },
-          ],
-        },
-      },
-    ],
-  },
-};
-
-const DESCRIPTOR: ServiceDescriptor = {
-  service_name: "Test",
-  methods: [METHOD],
 };
 
 const UNIT_ID = 10n;
@@ -116,34 +91,104 @@ const U32_ID = 11n;
 const STRING_ID = 12n;
 const RESULT_ID = 13n;
 const ROAM_ERROR_ID = 14n;
+const U32_ARGS_ID = 15n;
+
+const ECHO_SEND_SCHEMAS: ServiceSendSchemas = {
+  schemas: new Map([
+    [UNIT_ID, { id: UNIT_ID, type_params: [], kind: { tag: "primitive", primitive_type: "unit" } }],
+    [U32_ID, { id: U32_ID, type_params: [], kind: { tag: "primitive", primitive_type: "u32" } }],
+    [
+      U32_ARGS_ID,
+      {
+        id: U32_ARGS_ID,
+        type_params: [],
+        kind: {
+          tag: "tuple",
+          elements: [{ tag: "concrete", type_id: U32_ID, args: [] }],
+        },
+      },
+    ],
+    [
+      RESULT_ID,
+      {
+        id: RESULT_ID,
+        type_params: ["T", "E"],
+        kind: {
+          tag: "enum",
+          name: "Result",
+          variants: [
+            {
+              name: "Ok",
+              index: 0,
+              payload: { tag: "newtype", type_ref: { tag: "var", name: "T" } },
+            },
+            {
+              name: "Err",
+              index: 1,
+              payload: { tag: "newtype", type_ref: { tag: "var", name: "E" } },
+            },
+          ],
+        },
+      },
+    ],
+    [
+      ROAM_ERROR_ID,
+      {
+        id: ROAM_ERROR_ID,
+        type_params: ["E"],
+        kind: {
+          tag: "enum",
+          name: "RoamError",
+          variants: [
+            {
+              name: "User",
+              index: 0,
+              payload: { tag: "newtype", type_ref: { tag: "var", name: "E" } },
+            },
+            { name: "UnknownMethod", index: 1, payload: { tag: "unit" } },
+            { name: "InvalidPayload", index: 2, payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: STRING_ID, args: [] } } },
+            { name: "Cancelled", index: 3, payload: { tag: "unit" } },
+            { name: "Indeterminate", index: 4, payload: { tag: "unit" } },
+          ],
+        },
+      },
+    ],
+    [STRING_ID, { id: STRING_ID, type_params: [], kind: { tag: "primitive", primitive_type: "string" } }],
+  ]),
+  methods: new Map([
+    [
+      METHOD.id,
+      {
+        argsDepIds: [U32_ID, U32_ARGS_ID],
+        argsRootRef: { tag: "concrete", type_id: U32_ARGS_ID, args: [] },
+        responseDepIds: [U32_ID, STRING_ID, UNIT_ID, ROAM_ERROR_ID, RESULT_ID],
+        responseRootRef: {
+          tag: "concrete",
+          type_id: RESULT_ID,
+          args: [
+            { tag: "concrete", type_id: U32_ID, args: [] },
+            {
+              tag: "concrete",
+              type_id: ROAM_ERROR_ID,
+              args: [{ tag: "concrete", type_id: UNIT_ID, args: [] }],
+            },
+          ],
+        },
+      },
+    ],
+  ]),
+};
+
+const DESCRIPTOR: ServiceDescriptor = {
+  service_name: "Test",
+  send_schemas: ECHO_SEND_SCHEMAS,
+  methods: [METHOD],
+};
 
 const CANONICAL_ZERO_ARG_METHOD: MethodDescriptor = {
   name: "ping",
   id: 2n,
   retry: { persist: false, idem: false },
-  args: { kind: "tuple", elements: [] },
-  result: {
-    kind: "enum",
-    variants: [
-      { name: "Ok", fields: { kind: "u32" } },
-      {
-        name: "Err",
-        fields: {
-          kind: "enum",
-          variants: [
-            { name: "User", fields: null },
-            { name: "UnknownMethod", fields: null },
-            { name: "InvalidPayload", fields: { kind: "string" } },
-            { name: "Cancelled", fields: null },
-            { name: "ConnectionClosed", fields: null },
-            { name: "SessionShutdown", fields: null },
-            { name: "SendFailed", fields: null },
-            { name: "Indeterminate", fields: null },
-          ],
-        },
-      },
-    ],
-  },
 };
 
 const CANONICAL_ZERO_ARG_SEND_SCHEMAS: ServiceSendSchemas = {
@@ -271,6 +316,7 @@ describe("retry operation identity", () => {
       method: "Test.ping",
       args: {},
       descriptor: CANONICAL_ZERO_ARG_METHOD,
+      sendSchemas: CANONICAL_ZERO_ARG_SEND_SCHEMAS,
     });
 
     await expect(seen.promise).resolves.toBe(0);
@@ -318,6 +364,7 @@ describe("retry operation identity", () => {
       args: { value: 7 },
       descriptor: METHOD,
       metadata: new ClientMetadata(),
+      sendSchemas: ECHO_SEND_SCHEMAS,
     });
 
     await expect(seen.promise).resolves.toBeTypeOf("bigint");
@@ -373,12 +420,14 @@ describe("retry operation identity", () => {
       args: { value: 11 },
       descriptor: METHOD,
       metadata: new ClientMetadata(),
+      sendSchemas: ECHO_SEND_SCHEMAS,
     });
     const second = caller.call({
       method: "Test.echo",
       args: { value: 11 },
       descriptor: METHOD,
       metadata: new ClientMetadata(),
+      sendSchemas: ECHO_SEND_SCHEMAS,
     });
 
     await new Promise((resolve) => setTimeout(resolve, 25));
@@ -395,6 +444,7 @@ describe("retry operation identity", () => {
       args: { value: 11 },
       descriptor: METHOD,
       metadata: new ClientMetadata(),
+      sendSchemas: ECHO_SEND_SCHEMAS,
     });
     expect(replayed).toBe(11);
     expect(runs).toBe(1);

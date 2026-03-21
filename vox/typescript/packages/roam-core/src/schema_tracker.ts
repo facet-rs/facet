@@ -29,6 +29,13 @@ function debugJson(value: unknown): string {
   return JSON.stringify(value, (_key, item) => typeof item === "bigint" ? item.toString() : item);
 }
 
+export class DuplicateReceivedSchemaError extends Error {
+  constructor(readonly typeId: SchemaHash) {
+    super(`duplicate schema ${typeId.toString(16)} received on same connection`);
+    this.name = "DuplicateReceivedSchemaError";
+  }
+}
+
 /**
  * Tracks schemas received from the remote peer and provides
  * TranslationPlans for decoding with schema evolution.
@@ -57,6 +64,10 @@ export class SchemaTracker {
     ]));
 
     for (const schema of payload.schemas) {
+      const existing = this.schemas.get(schema.id);
+      if (existing) {
+        throw new DuplicateReceivedSchemaError(schema.id);
+      }
       this.schemas.set(schema.id, schema);
     }
     this.methodBindings.set(this.bindingKey(methodId, direction), {
@@ -160,6 +171,23 @@ export function localSchemaSetForMethod(
     root: { id: rootId, type_params: [], kind: rootKind },
     registry: schemaTable.schemas,
   };
+}
+
+export function argElementRefsForMethod(
+  methodId: bigint,
+  schemaTable: ServiceSendSchemas,
+): WireTypeRef[] {
+  const schemaSet = localSchemaSetForMethod(methodId, "args", schemaTable);
+  if (!schemaSet) {
+    throw new Error(`missing canonical args schema for method ${methodId}`);
+  }
+  if (schemaSet.root.kind.tag === "tuple") {
+    return schemaSet.root.kind.elements;
+  }
+  if (schemaSet.root.kind.tag === "primitive" && schemaSet.root.kind.primitive_type === "unit") {
+    return [];
+  }
+  throw new Error(`expected tuple or unit args root for method ${methodId}`);
 }
 
 /**

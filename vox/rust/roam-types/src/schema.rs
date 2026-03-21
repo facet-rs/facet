@@ -496,6 +496,7 @@ pub enum PrimitiveType {
     Char,
     String,
     Unit,
+    Never,
     Bytes,
     /// An opaque payload — a length-prefixed byte sequence whose
     /// length prefix is a little-endian u32 (not a varint like other
@@ -527,6 +528,7 @@ impl PrimitiveType {
             PrimitiveType::Char => "char",
             PrimitiveType::String => "string",
             PrimitiveType::Unit => "unit",
+            PrimitiveType::Never => "never",
             PrimitiveType::Bytes => "bytes",
             PrimitiveType::Payload => "payload",
         }
@@ -1745,9 +1747,14 @@ impl ExtractCtx {
             // r[impl schema.format.struct]
             // r[impl schema.format.tuple]
             Type::User(UserType::Struct(struct_type)) => match struct_type.kind {
-                StructKind::Unit => SchemaKind::Primitive {
-                    primitive_type: PrimitiveType::Unit,
-                },
+                StructKind::Unit => {
+                    let primitive_type = if is_infallible_shape(shape) {
+                        PrimitiveType::Never
+                    } else {
+                        PrimitiveType::Unit
+                    };
+                    SchemaKind::Primitive { primitive_type }
+                }
                 StructKind::TupleStruct | StructKind::Tuple => {
                     if let Some(arity) = anonymous_tuple_arity(shape) {
                         let args = self.extract_instantiation_args(shape)?;
@@ -1912,6 +1919,10 @@ fn tuple_type_params(arity: usize) -> Vec<TypeParamName> {
     (0..arity)
         .map(|index| TypeParamName(format!("T{index}")))
         .collect()
+}
+
+fn is_infallible_shape(shape: &'static Shape) -> bool {
+    shape.is_shape(<std::convert::Infallible as Facet<'static>>::SHAPE)
 }
 
 fn scalar_to_primitive(scalar: ScalarType) -> PrimitiveType {
@@ -2225,6 +2236,20 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn infallible_is_never_primitive() {
+        let schemas = extract_schemas(<std::convert::Infallible as Facet>::SHAPE)
+            .unwrap()
+            .schemas;
+        assert_eq!(schemas.len(), 1);
+        assert!(matches!(
+            schemas[0].kind,
+            SchemaKind::Primitive {
+                primitive_type: PrimitiveType::Never
+            }
+        ));
+    }
+
     // r[verify schema.principles.once-per-type]
     #[test]
     fn deduplication_two_u32_fields() {
@@ -2443,6 +2468,7 @@ mod tests {
             PrimitiveType::Char,
             PrimitiveType::String,
             PrimitiveType::Unit,
+            PrimitiveType::Never,
             PrimitiveType::Bytes,
             PrimitiveType::Payload,
         ];

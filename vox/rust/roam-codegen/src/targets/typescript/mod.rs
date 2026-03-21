@@ -110,7 +110,7 @@ fn generate_imports(service: &ServiceDescriptor, w: &mut CodeWriter<&mut String>
     // Core runtime: descriptor types + Caller + session/conduit helpers
     cw_writeln!(
         w,
-        "import type {{ Caller, MethodDescriptor, ServiceDescriptor, RoamCall, Dispatcher, RequestContext, Schema, SchemaRegistry, SessionTransportOptions }} from \"@bearcove/roam-core\";"
+        "import type {{ Caller, MethodDescriptor, ServiceDescriptor, RoamCall, Dispatcher, RequestContext, SessionTransportOptions }} from \"@bearcove/roam-core\";"
     )
     .unwrap();
     cw_writeln!(w, "import {{ session }} from \"@bearcove/roam-core\";").unwrap();
@@ -127,12 +127,7 @@ fn generate_imports(service: &ServiceDescriptor, w: &mut CodeWriter<&mut String>
     if has_streaming {
         cw_writeln!(
             w,
-            "import {{ Tx, Rx, bindChannels, finalizeBoundChannels }} from \"@bearcove/roam-core\";"
-        )
-        .unwrap();
-        cw_writeln!(
-            w,
-            "import {{ encodeWithSchema }} from \"@bearcove/roam-postcard\";"
+            "import {{ Tx, Rx, argElementRefsForMethod, bindChannelsForTypeRefs, finalizeBoundChannelsForTypeRefs }} from \"@bearcove/roam-core\";"
         )
         .unwrap();
     }
@@ -323,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn generated_typescript_uses_refs_for_recursive_named_types() {
+    fn generated_typescript_uses_canonical_service_schemas() {
         let recurse = method_descriptor::<(RecursiveNode,), RecursiveNode>(
             "RecursiveSvc",
             "recurse",
@@ -339,12 +334,12 @@ mod tests {
 
         let generated = generate_service(&service);
         assert!(
-            generated.contains("schema_registry"),
-            "generated TypeScript must include a schema registry:\n{generated}"
+            generated.contains("send_schemas"),
+            "generated TypeScript must include canonical service schemas:\n{generated}"
         );
         assert!(
-            generated.contains("{ kind: 'ref', name: 'RecursiveNode' }"),
-            "recursive references must emit ref schemas:\n{generated}"
+            !generated.contains("schema_registry"),
+            "generated TypeScript must not include the legacy schema registry:\n{generated}"
         );
     }
 
@@ -391,12 +386,12 @@ mod tests {
 
         let generated = generate_service(&service);
         assert!(
-            generated.contains("{ kind: 'tx', element: { kind: 'u32' } }"),
-            "Tx<T> must be emitted into the descriptor:\n{generated}"
+            generated.contains("kind: { tag: 'channel', direction: 'tx'"),
+            "Tx<T> must be emitted into canonical service schemas:\n{generated}"
         );
         assert!(
-            generated.contains("{ kind: 'rx', element: { kind: 'u32' } }"),
-            "Rx<T> must be emitted into the descriptor:\n{generated}"
+            generated.contains("kind: { tag: 'channel', direction: 'rx'"),
+            "Rx<T> must be emitted into canonical service schemas:\n{generated}"
         );
     }
 
@@ -448,21 +443,25 @@ mod tests {
         let generated = generate_service(&service);
         assert!(
             generated.contains(
-                "name: 'ToolCall', fields: { 'id': { kind: 'string' }, 'title': { kind: 'string' }, 'kind': { kind: 'option', inner: { kind: 'ref', name: 'ToolCallKind' } }, 'status': { kind: 'ref', name: 'ToolCallStatus' } }"
+                "name: 'ToolCall', index: 1, payload: { tag: 'struct', fields: [{ name: 'id'"
             ),
-            "struct variants with a field named `kind` must stay named-field variants:\n{generated}"
+            "struct variants with a field named `kind` must stay struct variants in canonical schemas:\n{generated}"
         );
         assert!(
             generated.contains(
-                "name: 'Permission', fields: { 'id': { kind: 'string' }, 'title': { kind: 'string' }, 'kind': { kind: 'option', inner: { kind: 'ref', name: 'ToolCallKind' } }, 'resolution': { kind: 'option', inner: { kind: 'ref', name: 'PermissionResolution' } } }"
+                "name: 'Permission', index: 2, payload: { tag: 'struct', fields: [{ name: 'id'"
             ),
-            "similar struct variants must keep their named `kind` field:\n{generated}"
+            "similar struct variants must keep their named `kind` field in canonical schemas:\n{generated}"
         );
         assert!(
             generated.contains(
-                "name: 'ToolCallUpdate', fields: { 'id': { kind: 'string' }, 'kind': { kind: 'option', inner: { kind: 'ref', name: 'ToolCallKind' } }, 'status': { kind: 'ref', name: 'ToolCallStatus' } }"
+                "name: 'ToolCallUpdate', index: 1, payload: { tag: 'struct', fields: [{ name: 'id'"
             ),
-            "patch variants with a field named `kind` must also stay named-field variants:\n{generated}"
+            "patch variants with a field named `kind` must also stay struct variants in canonical schemas:\n{generated}"
+        );
+        assert!(
+            generated.contains("{ name: 'kind', type_ref:"),
+            "canonical struct variants must preserve the literal field name `kind`:\n{generated}"
         );
     }
 }

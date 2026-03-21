@@ -7,7 +7,6 @@ import type {
   ChannelIdAllocator,
   ChannelRegistry,
   MethodDescriptor,
-  SchemaRegistry,
 } from "./channeling/index.ts";
 import type {
   ClientMiddleware,
@@ -36,21 +35,16 @@ export interface CallerRequest {
   args: Record<string, unknown>;
 
   /**
-   * Method descriptor for encoding args (descriptor.args) and decoding
-   * the full Result<T, RoamError<E>> response (descriptor.result).
-   * The method ID is descriptor.id.
+   * Method descriptor metadata. The method ID is descriptor.id; canonical
+   * args/response schemas come from `sendSchemas`.
    */
   descriptor: MethodDescriptor;
-  /**
-   * Optional schema registry for resolving `ref` nodes in descriptor schemas.
-   */
-  schemaRegistry?: SchemaRegistry;
 
   /**
-   * Pre-computed CBOR send schema data (from roam-codegen). Used to send
-   * args schemas with outbound calls so the remote peer can decode them.
+   * Canonical service schema table (from roam-codegen). Used for local
+   * encode/decode and for sending args schemas to the remote peer.
    */
-  sendSchemas?: import("./schema_tracker.ts").ServiceSendSchemas;
+  sendSchemas: import("./schema_tracker.ts").ServiceSendSchemas;
 
   /**
    * Channel IDs for streaming arguments.

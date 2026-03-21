@@ -10,6 +10,8 @@ export {
   channel,
   bindChannels,
   finalizeBoundChannels,
+  bindChannelsForTypeRefs,
+  finalizeBoundChannelsForTypeRefs,
   type Schema,
   type SchemaRegistry,
   type MethodDescriptor,
@@ -18,6 +20,7 @@ export {
 } from "./channeling/index.ts";
 
 export {
+  argElementRefsForMethod,
   type MethodSendSchemas,
   type ServiceSendSchemas,
 } from "./schema_tracker.ts";

@@ -7,15 +7,18 @@ import type {
   MethodDescriptor,
   RequestContext,
   RoamCall,
-  Schema,
-  SchemaRegistry,
   ServiceDescriptor,
   SessionTransportOptions,
 } from "@bearcove/roam-core";
 import { session } from "@bearcove/roam-core";
 import { RpcError } from "@bearcove/roam-core";
-import { bindChannels, finalizeBoundChannels, Rx, Tx } from "@bearcove/roam-core";
-import { encodeWithSchema } from "@bearcove/roam-postcard";
+import {
+  argElementRefsForMethod,
+  bindChannelsForTypeRefs,
+  finalizeBoundChannelsForTypeRefs,
+  Rx,
+  Tx,
+} from "@bearcove/roam-core";
 import { wsConnector } from "@bearcove/roam-ws";
 
 // Named type definitions
@@ -362,12 +365,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echoes the message back. */
   async echo(message: string): Promise<string> {
     const descriptor = testbed_descriptor.methods[0];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echo",
       args: { message },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as string;
   }
@@ -375,12 +378,12 @@ export class TestbedClient implements TestbedCaller {
   /** Returns the message reversed. */
   async reverse(message: string): Promise<string> {
     const descriptor = testbed_descriptor.methods[1];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.reverse",
       args: { message },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as string;
   }
@@ -391,13 +394,13 @@ export class TestbedClient implements TestbedCaller {
     divisor: bigint,
   ): Promise<{ ok: true; value: bigint } | { ok: false; error: MathError }> {
     const descriptor = testbed_descriptor.methods[2];
+    const sendSchemas = testbed_descriptor.send_schemas;
     try {
       const value = await this.caller.call({
         method: "Testbed.divide",
         args: { dividend, divisor },
         descriptor,
-        schemaRegistry: testbed_descriptor.schema_registry,
-        sendSchemas: testbed_descriptor.send_schemas,
+        sendSchemas,
       });
       return { ok: true, value } as { ok: true; value: bigint } | { ok: false; error: MathError };
     } catch (e) {
@@ -417,13 +420,13 @@ export class TestbedClient implements TestbedCaller {
    */
   async lookup(id: number): Promise<{ ok: true; value: Person } | { ok: false; error: LookupError }> {
     const descriptor = testbed_descriptor.methods[3];
+    const sendSchemas = testbed_descriptor.send_schemas;
     try {
       const value = await this.caller.call({
         method: "Testbed.lookup",
         args: { id },
         descriptor,
-        schemaRegistry: testbed_descriptor.schema_registry,
-        sendSchemas: testbed_descriptor.send_schemas,
+        sendSchemas,
       });
       return { ok: true, value } as { ok: true; value: Person } | { ok: false; error: LookupError };
     } catch (e) {
@@ -441,31 +444,28 @@ export class TestbedClient implements TestbedCaller {
    */
   async sum(numbers: Rx<number>): Promise<bigint> {
     const descriptor = testbed_descriptor.methods[4];
+    const sendSchemas = testbed_descriptor.send_schemas;
+    const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);
     const prepareRetry = () => {
-      const channels = bindChannels(
-        descriptor.args.elements,
+      const channels = bindChannelsForTypeRefs(
+        argTypeRefs,
         [numbers],
         this.caller.getChannelAllocator(),
         this.caller.getChannelRegistry(),
-        testbed_descriptor.schema_registry,
+        sendSchemas.schemas,
       );
-      const values = Object.values({ numbers });
-      const payload = values.length === 0
-        ? new Uint8Array(0)
-        : encodeWithSchema(values, descriptor.args, testbed_descriptor.schema_registry);
+      const payload = new Uint8Array(0);
       return { payload, channels };
     };
-    const { payload, channels } = prepareRetry();
+    const { channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.sum",
       args: { numbers },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
       channels,
       prepareRetry,
-      finalizeChannels: () =>
-        finalizeBoundChannels(descriptor.args.elements, [numbers], testbed_descriptor.schema_registry),
+      finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [numbers], sendSchemas.schemas),
     });
     return value as bigint;
   }
@@ -477,31 +477,28 @@ export class TestbedClient implements TestbedCaller {
    */
   async generate(count: number, output: Tx<number>): Promise<void> {
     const descriptor = testbed_descriptor.methods[5];
+    const sendSchemas = testbed_descriptor.send_schemas;
+    const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);
     const prepareRetry = () => {
-      const channels = bindChannels(
-        descriptor.args.elements,
+      const channels = bindChannelsForTypeRefs(
+        argTypeRefs,
         [count, output],
         this.caller.getChannelAllocator(),
         this.caller.getChannelRegistry(),
-        testbed_descriptor.schema_registry,
+        sendSchemas.schemas,
       );
-      const values = Object.values({ count, output });
-      const payload = values.length === 0
-        ? new Uint8Array(0)
-        : encodeWithSchema(values, descriptor.args, testbed_descriptor.schema_registry);
+      const payload = new Uint8Array(0);
       return { payload, channels };
     };
-    const { payload, channels } = prepareRetry();
+    const { channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.generate",
       args: { count, output },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
       channels,
       prepareRetry,
-      finalizeChannels: () =>
-        finalizeBoundChannels(descriptor.args.elements, [count, output], testbed_descriptor.schema_registry),
+      finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [count, output], sendSchemas.schemas),
     });
     return value as void;
   }
@@ -513,31 +510,28 @@ export class TestbedClient implements TestbedCaller {
    */
   async generateRetryNonIdem(count: number, output: Tx<number>): Promise<void> {
     const descriptor = testbed_descriptor.methods[6];
+    const sendSchemas = testbed_descriptor.send_schemas;
+    const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);
     const prepareRetry = () => {
-      const channels = bindChannels(
-        descriptor.args.elements,
+      const channels = bindChannelsForTypeRefs(
+        argTypeRefs,
         [count, output],
         this.caller.getChannelAllocator(),
         this.caller.getChannelRegistry(),
-        testbed_descriptor.schema_registry,
+        sendSchemas.schemas,
       );
-      const values = Object.values({ count, output });
-      const payload = values.length === 0
-        ? new Uint8Array(0)
-        : encodeWithSchema(values, descriptor.args, testbed_descriptor.schema_registry);
+      const payload = new Uint8Array(0);
       return { payload, channels };
     };
-    const { payload, channels } = prepareRetry();
+    const { channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.generateRetryNonIdem",
       args: { count, output },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
       channels,
       prepareRetry,
-      finalizeChannels: () =>
-        finalizeBoundChannels(descriptor.args.elements, [count, output], testbed_descriptor.schema_registry),
+      finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [count, output], sendSchemas.schemas),
     });
     return value as void;
   }
@@ -549,31 +543,28 @@ export class TestbedClient implements TestbedCaller {
    */
   async generateRetryIdem(count: number, output: Tx<number>): Promise<void> {
     const descriptor = testbed_descriptor.methods[7];
+    const sendSchemas = testbed_descriptor.send_schemas;
+    const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);
     const prepareRetry = () => {
-      const channels = bindChannels(
-        descriptor.args.elements,
+      const channels = bindChannelsForTypeRefs(
+        argTypeRefs,
         [count, output],
         this.caller.getChannelAllocator(),
         this.caller.getChannelRegistry(),
-        testbed_descriptor.schema_registry,
+        sendSchemas.schemas,
       );
-      const values = Object.values({ count, output });
-      const payload = values.length === 0
-        ? new Uint8Array(0)
-        : encodeWithSchema(values, descriptor.args, testbed_descriptor.schema_registry);
+      const payload = new Uint8Array(0);
       return { payload, channels };
     };
-    const { payload, channels } = prepareRetry();
+    const { channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.generateRetryIdem",
       args: { count, output },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
       channels,
       prepareRetry,
-      finalizeChannels: () =>
-        finalizeBoundChannels(descriptor.args.elements, [count, output], testbed_descriptor.schema_registry),
+      finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [count, output], sendSchemas.schemas),
     });
     return value as void;
   }
@@ -585,31 +576,28 @@ export class TestbedClient implements TestbedCaller {
    */
   async transform(input: Rx<string>, output: Tx<string>): Promise<void> {
     const descriptor = testbed_descriptor.methods[8];
+    const sendSchemas = testbed_descriptor.send_schemas;
+    const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);
     const prepareRetry = () => {
-      const channels = bindChannels(
-        descriptor.args.elements,
+      const channels = bindChannelsForTypeRefs(
+        argTypeRefs,
         [input, output],
         this.caller.getChannelAllocator(),
         this.caller.getChannelRegistry(),
-        testbed_descriptor.schema_registry,
+        sendSchemas.schemas,
       );
-      const values = Object.values({ input, output });
-      const payload = values.length === 0
-        ? new Uint8Array(0)
-        : encodeWithSchema(values, descriptor.args, testbed_descriptor.schema_registry);
+      const payload = new Uint8Array(0);
       return { payload, channels };
     };
-    const { payload, channels } = prepareRetry();
+    const { channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.transform",
       args: { input, output },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
       channels,
       prepareRetry,
-      finalizeChannels: () =>
-        finalizeBoundChannels(descriptor.args.elements, [input, output], testbed_descriptor.schema_registry),
+      finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [input, output], sendSchemas.schemas),
     });
     return value as void;
   }
@@ -617,12 +605,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a point back. */
   async echoPoint(point: Point): Promise<Point> {
     const descriptor = testbed_descriptor.methods[9];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoPoint",
       args: { point },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Point;
   }
@@ -630,12 +618,12 @@ export class TestbedClient implements TestbedCaller {
   /** Create a person and return it. */
   async createPerson(name: string, age: number, email: string | null): Promise<Person> {
     const descriptor = testbed_descriptor.methods[10];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.createPerson",
       args: { name, age, email },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Person;
   }
@@ -643,12 +631,12 @@ export class TestbedClient implements TestbedCaller {
   /** Calculate the area of a rectangle. */
   async rectangleArea(rect: Rectangle): Promise<number> {
     const descriptor = testbed_descriptor.methods[11];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.rectangleArea",
       args: { rect },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as number;
   }
@@ -656,12 +644,12 @@ export class TestbedClient implements TestbedCaller {
   /** Get a color by name. */
   async parseColor(name: string): Promise<Color | null> {
     const descriptor = testbed_descriptor.methods[12];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.parseColor",
       args: { name },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Color | null;
   }
@@ -669,12 +657,12 @@ export class TestbedClient implements TestbedCaller {
   /** Calculate the area of a shape. */
   async shapeArea(shape: Shape): Promise<number> {
     const descriptor = testbed_descriptor.methods[13];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.shapeArea",
       args: { shape },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as number;
   }
@@ -682,12 +670,12 @@ export class TestbedClient implements TestbedCaller {
   /** Create a canvas with given shapes. */
   async createCanvas(name: string, shapes: Shape[], background: Color): Promise<Canvas> {
     const descriptor = testbed_descriptor.methods[14];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.createCanvas",
       args: { name, shapes, background },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Canvas;
   }
@@ -695,12 +683,12 @@ export class TestbedClient implements TestbedCaller {
   /** Process a message and return a response. */
   async processMessage(msg: Message): Promise<Message> {
     const descriptor = testbed_descriptor.methods[15];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.processMessage",
       args: { msg },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Message;
   }
@@ -708,12 +696,12 @@ export class TestbedClient implements TestbedCaller {
   /** Return multiple points. */
   async getPoints(count: number): Promise<Point[]> {
     const descriptor = testbed_descriptor.methods[16];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.getPoints",
       args: { count },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Point[];
   }
@@ -721,12 +709,12 @@ export class TestbedClient implements TestbedCaller {
   /** Test tuple types. */
   async swapPair(pair: [number, string]): Promise<[string, number]> {
     const descriptor = testbed_descriptor.methods[17];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.swapPair",
       args: { pair },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as [string, number];
   }
@@ -734,12 +722,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo raw bytes back. Tests Vec<u8> as a first-class arg/return type. */
   async echoBytes(data: Uint8Array): Promise<Uint8Array> {
     const descriptor = testbed_descriptor.methods[18];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoBytes",
       args: { data },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Uint8Array;
   }
@@ -747,12 +735,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a bool. Tests the bool primitive type. */
   async echoBool(b: boolean): Promise<boolean> {
     const descriptor = testbed_descriptor.methods[19];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoBool",
       args: { b },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as boolean;
   }
@@ -760,12 +748,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a u64. Tests the u64 primitive type. */
   async echoU64(n: bigint): Promise<bigint> {
     const descriptor = testbed_descriptor.methods[20];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoU64",
       args: { n },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as bigint;
   }
@@ -773,12 +761,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo an optional string. Tests Option<String> directly. */
   async echoOptionString(s: string | null): Promise<string | null> {
     const descriptor = testbed_descriptor.methods[21];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoOptionString",
       args: { s },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as string | null;
   }
@@ -790,31 +778,28 @@ export class TestbedClient implements TestbedCaller {
    */
   async sumLarge(numbers: Rx<number>): Promise<bigint> {
     const descriptor = testbed_descriptor.methods[22];
+    const sendSchemas = testbed_descriptor.send_schemas;
+    const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);
     const prepareRetry = () => {
-      const channels = bindChannels(
-        descriptor.args.elements,
+      const channels = bindChannelsForTypeRefs(
+        argTypeRefs,
         [numbers],
         this.caller.getChannelAllocator(),
         this.caller.getChannelRegistry(),
-        testbed_descriptor.schema_registry,
+        sendSchemas.schemas,
       );
-      const values = Object.values({ numbers });
-      const payload = values.length === 0
-        ? new Uint8Array(0)
-        : encodeWithSchema(values, descriptor.args, testbed_descriptor.schema_registry);
+      const payload = new Uint8Array(0);
       return { payload, channels };
     };
-    const { payload, channels } = prepareRetry();
+    const { channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.sumLarge",
       args: { numbers },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
       channels,
       prepareRetry,
-      finalizeChannels: () =>
-        finalizeBoundChannels(descriptor.args.elements, [numbers], testbed_descriptor.schema_registry),
+      finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [numbers], sendSchemas.schemas),
     });
     return value as bigint;
   }
@@ -826,31 +811,28 @@ export class TestbedClient implements TestbedCaller {
    */
   async generateLarge(count: number, output: Tx<number>): Promise<void> {
     const descriptor = testbed_descriptor.methods[23];
+    const sendSchemas = testbed_descriptor.send_schemas;
+    const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);
     const prepareRetry = () => {
-      const channels = bindChannels(
-        descriptor.args.elements,
+      const channels = bindChannelsForTypeRefs(
+        argTypeRefs,
         [count, output],
         this.caller.getChannelAllocator(),
         this.caller.getChannelRegistry(),
-        testbed_descriptor.schema_registry,
+        sendSchemas.schemas,
       );
-      const values = Object.values({ count, output });
-      const payload = values.length === 0
-        ? new Uint8Array(0)
-        : encodeWithSchema(values, descriptor.args, testbed_descriptor.schema_registry);
+      const payload = new Uint8Array(0);
       return { payload, channels };
     };
-    const { payload, channels } = prepareRetry();
+    const { channels } = prepareRetry();
     const value = await this.caller.call({
       method: "Testbed.generateLarge",
       args: { count, output },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
       channels,
       prepareRetry,
-      finalizeChannels: () =>
-        finalizeBoundChannels(descriptor.args.elements, [count, output], testbed_descriptor.schema_registry),
+      finalizeChannels: () => finalizeBoundChannelsForTypeRefs(argTypeRefs, [count, output], sendSchemas.schemas),
     });
     return value as void;
   }
@@ -858,12 +840,12 @@ export class TestbedClient implements TestbedCaller {
   /** Return all three Color variants in a Vec, testing enum + vec round-trip. */
   async allColors(): Promise<Color[]> {
     const descriptor = testbed_descriptor.methods[24];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.allColors",
       args: {},
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Color[];
   }
@@ -874,12 +856,12 @@ export class TestbedClient implements TestbedCaller {
    */
   async describePoint(label: string, x: number, y: number, active: boolean): Promise<TaggedPoint> {
     const descriptor = testbed_descriptor.methods[25];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.describePoint",
       args: { label, x, y, active },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as TaggedPoint;
   }
@@ -887,12 +869,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a nested enum back unchanged. Tests deep enum encoding. */
   async echoShape(shape: Shape): Promise<Shape> {
     const descriptor = testbed_descriptor.methods[26];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoShape",
       args: { shape },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Shape;
   }
@@ -900,12 +882,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a status back. Tests simple enum with unit variants. */
   async echoStatusV1(status: Status): Promise<Status> {
     const descriptor = testbed_descriptor.methods[27];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoStatusV1",
       args: { status },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Status;
   }
@@ -913,12 +895,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a tag back. Tests struct with String + u32 + String fields. */
   async echoTagV1(tag: Tag): Promise<Tag> {
     const descriptor = testbed_descriptor.methods[28];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoTagV1",
       args: { tag },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Tag;
   }
@@ -926,12 +908,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a profile back. Tests added optional field. */
   async echoProfile(profile: Profile): Promise<Profile> {
     const descriptor = testbed_descriptor.methods[29];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoProfile",
       args: { profile },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Profile;
   }
@@ -939,12 +921,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a record back. Tests field reordering. */
   async echoRecord(record: Record): Promise<Record> {
     const descriptor = testbed_descriptor.methods[30];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoRecord",
       args: { record },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Record;
   }
@@ -952,12 +934,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a status back. Tests added enum variant. */
   async echoStatus(status: Status): Promise<Status> {
     const descriptor = testbed_descriptor.methods[31];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoStatus",
       args: { status },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Status;
   }
@@ -965,12 +947,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a tag back. Tests removed field (v2 drops a field v1 has). */
   async echoTag(tag: Tag): Promise<Tag> {
     const descriptor = testbed_descriptor.methods[32];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoTag",
       args: { tag },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Tag;
   }
@@ -978,12 +960,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a measurement back. Tests incompatible type change. */
   async echoMeasurement(m: Measurement): Promise<Measurement> {
     const descriptor = testbed_descriptor.methods[33];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoMeasurement",
       args: { m },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Measurement;
   }
@@ -991,12 +973,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a config back. Tests missing required field. */
   async echoConfig(c: Config): Promise<Config> {
     const descriptor = testbed_descriptor.methods[34];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoConfig",
       args: { c },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Config;
   }
@@ -1078,183 +1060,183 @@ export class TestbedDispatcher implements Dispatcher {
       try {
         const result = await this.handler.echo(args[0] as string);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x1c223f30e180392an) {
       try {
         const result = await this.handler.reverse(args[0] as string);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0xfb68d9318f830875n) {
       try {
         const result = await this.handler.divide(args[0] as bigint, args[1] as bigint);
         if (result.ok) call.reply(result.value);
         else call.replyErr(result.error);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0xa15ff52094712a3bn) {
       try {
         const result = await this.handler.lookup(args[0] as number);
         if (result.ok) call.reply(result.value);
         else call.replyErr(result.error);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x51f9cfd8e86577c9n) {
       try {
         const result = await this.handler.sum(args[0] as Rx<number>);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x239e5b99b1f8207an) {
       try {
         const result = await this.handler.generate(args[0] as number, args[1] as Tx<number>);
         (args[1] as { close(): void }).close(); // close output before reply
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x34419529478cc7b8n) {
       try {
         const result = await this.handler.generateRetryNonIdem(args[0] as number, args[1] as Tx<number>);
         (args[1] as { close(): void }).close(); // close output before reply
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0xe2d27fd9098c6ea2n) {
       try {
         const result = await this.handler.generateRetryIdem(args[0] as number, args[1] as Tx<number>);
         (args[1] as { close(): void }).close(); // close output before reply
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0xcb469cff8d798febn) {
       try {
         const result = await this.handler.transform(args[0] as Rx<string>, args[1] as Tx<string>);
         (args[1] as { close(): void }).close(); // close output before reply
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x81f5386d589dfbe4n) {
       try {
         const result = await this.handler.echoPoint(args[0] as Point);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x68ffa90b7728bde7n) {
       try {
         const result = await this.handler.createPerson(args[0] as string, args[1] as number, args[2] as string | null);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x223fe0282d263107n) {
       try {
         const result = await this.handler.rectangleArea(args[0] as Rectangle);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0xd4f16ea9eca132e6n) {
       try {
         const result = await this.handler.parseColor(args[0] as string);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x04385a4be2a882f5n) {
       try {
         const result = await this.handler.shapeArea(args[0] as Shape);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0xef421eb5b08c973an) {
       try {
         const result = await this.handler.createCanvas(args[0] as string, args[1] as Shape[], args[2] as Color);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0xe08f0f5254e7a997n) {
       try {
         const result = await this.handler.processMessage(args[0] as Message);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x598518523a6266bfn) {
       try {
         const result = await this.handler.getPoints(args[0] as number);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x7d55a713ad612bf2n) {
       try {
         const result = await this.handler.swapPair(args[0] as [number, string]);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x44056c7842fa336cn) {
       try {
         const result = await this.handler.echoBytes(args[0] as Uint8Array);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x5136d8f01a5f496cn) {
       try {
         const result = await this.handler.echoBool(args[0] as boolean);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x85e2380dbf7ffe65n) {
       try {
         const result = await this.handler.echoU64(args[0] as bigint);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0xb1a5bfd205b3fbfcn) {
       try {
         const result = await this.handler.echoOptionString(args[0] as string | null);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x9a7bed545e088054n) {
       try {
         const result = await this.handler.sumLarge(args[0] as Rx<number>);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x8edfbd65d162f685n) {
       try {
         const result = await this.handler.generateLarge(args[0] as number, args[1] as Tx<number>);
         (args[1] as { close(): void }).close(); // close output before reply
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0xfbfb05bbcaade4a0n) {
       try {
         const result = await this.handler.allColors();
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x62feb14a8fcf9b6dn) {
       try {
@@ -1265,71 +1247,71 @@ export class TestbedDispatcher implements Dispatcher {
           args[3] as boolean,
         );
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x4125b5e678b7b4a5n) {
       try {
         const result = await this.handler.echoShape(args[0] as Shape);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0xc7c5aa845cfb8bf6n) {
       try {
         const result = await this.handler.echoStatusV1(args[0] as Status);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x6619071be5d5c259n) {
       try {
         const result = await this.handler.echoTagV1(args[0] as Tag);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0xbd9bcabddeebeb04n) {
       try {
         const result = await this.handler.echoProfile(args[0] as Profile);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x100b0e08da4b8f1an) {
       try {
         const result = await this.handler.echoRecord(args[0] as Record);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x697590d3ffc36703n) {
       try {
         const result = await this.handler.echoStatus(args[0] as Status);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x2bd1b3149d73ce97n) {
       try {
         const result = await this.handler.echoTag(args[0] as Tag);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x3b3d22b015fa1a3fn) {
       try {
         const result = await this.handler.echoMeasurement(args[0] as Measurement);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0xe13a477fb964ce28n) {
       try {
         const result = await this.handler.echoConfig(args[0] as Config);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     }
   }
@@ -1362,19 +1344,28 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         }],
       },
     }],
+    [0x5db70a394660f3e6n, {
+      id: 0x5db70a394660f3e6n,
+      type_params: [],
+      kind: { tag: "primitive", primitive_type: "never" },
+    }],
     [0x6d7dce914ee150e8n, {
       id: 0x6d7dce914ee150e8n,
       type_params: [],
       kind: { tag: "primitive", primitive_type: "string" },
     }],
-    [0xae570b7750005a79n, {
-      id: 0xae570b7750005a79n,
+    [0x75e4adf2187cc79dn, {
+      id: 0x75e4adf2187cc79dn,
       type_params: ["E"],
       kind: {
         tag: "enum",
         name: "RoamError",
         variants: [
-          { name: "User", index: 0, payload: { tag: "newtype", type_ref: { tag: "var", name: "E" } } },
+          {
+            name: "User",
+            index: 0,
+            payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] } },
+          },
           { name: "UnknownMethod", index: 1, payload: { tag: "unit" } },
           {
             name: "InvalidPayload",
@@ -1393,11 +1384,6 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
       id: 0x6847ab90feda71c1n,
       type_params: ["T0"],
       kind: { tag: "tuple", elements: [{ tag: "var", name: "T0" }] },
-    }],
-    [0xbc5c33249a2dc720n, {
-      id: 0xbc5c33249a2dc720n,
-      type_params: [],
-      kind: { tag: "primitive", primitive_type: "unit" },
     }],
     [0xc6eb8c46f1e17fban, {
       id: 0xc6eb8c46f1e17fban,
@@ -1480,6 +1466,11 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
       id: 0xc886545a493d06ebn,
       type_params: ["T"],
       kind: { tag: "channel", direction: "tx", element: { tag: "var", name: "T" } },
+    }],
+    [0xbc5c33249a2dc720n, {
+      id: 0xbc5c33249a2dc720n,
+      type_params: [],
+      kind: { tag: "primitive", primitive_type: "unit" },
     }],
     [0xb92332c67187108fn, {
       id: 0xb92332c67187108fn,
@@ -1752,14 +1743,14 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x6847ab90feda71c1n,
         args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
       },
-      responseDepIds: [0xbc5c33249a2dc720n, 0xae570b7750005a79n, 0x6d7dce914ee150e8n, 0x42046de663beeef0n],
+      responseDepIds: [0x5db70a394660f3e6n, 0x75e4adf2187cc79dn, 0x6d7dce914ee150e8n, 0x42046de663beeef0n],
       responseRootRef: {
         tag: "concrete",
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -1770,14 +1761,14 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x6847ab90feda71c1n,
         args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
       },
-      responseDepIds: [0xbc5c33249a2dc720n, 0xae570b7750005a79n, 0x6d7dce914ee150e8n, 0x42046de663beeef0n],
+      responseDepIds: [0x5db70a394660f3e6n, 0x75e4adf2187cc79dn, 0x6d7dce914ee150e8n, 0x42046de663beeef0n],
       responseRootRef: {
         tag: "concrete",
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -1794,8 +1785,9 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
       },
       responseDepIds: [
         0xd9d78670738e6064n,
-        0xae570b7750005a79n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
+        0x5db70a394660f3e6n,
         0xc6eb8c46f1e17fban,
         0x42046de663beeef0n,
       ],
@@ -1804,7 +1796,7 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xc6eb8c46f1e17fban, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
+          type_id: 0x75e4adf2187cc79dn,
           args: [{ tag: "concrete", type_id: 0xd9d78670738e6064n, args: [] }],
         }],
       },
@@ -1818,8 +1810,9 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
       },
       responseDepIds: [
         0x16d92ac9e3bd73ban,
-        0xae570b7750005a79n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
+        0x5db70a394660f3e6n,
         0xc841530b759b8ed0n,
         0xdcafd4de6b7969bbn,
         0x2c8d54f2314d0f20n,
@@ -1830,7 +1823,7 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xc841530b759b8ed0n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
+          type_id: 0x75e4adf2187cc79dn,
           args: [{ tag: "concrete", type_id: 0x16d92ac9e3bd73ban, args: [] }],
         }],
       },
@@ -1847,8 +1840,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0xc6eb8c46f1e17fban,
         0x42046de663beeef0n,
@@ -1858,8 +1851,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xc6eb8c46f1e17fban, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -1874,14 +1867,20 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
           args: [{ tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] }],
         }],
       },
-      responseDepIds: [0xbc5c33249a2dc720n, 0xae570b7750005a79n, 0x6d7dce914ee150e8n, 0x42046de663beeef0n],
+      responseDepIds: [
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
+        0x6d7dce914ee150e8n,
+        0xbc5c33249a2dc720n,
+        0x42046de663beeef0n,
+      ],
       responseRootRef: {
         tag: "concrete",
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -1896,14 +1895,20 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
           args: [{ tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] }],
         }],
       },
-      responseDepIds: [0xbc5c33249a2dc720n, 0xae570b7750005a79n, 0x6d7dce914ee150e8n, 0x42046de663beeef0n],
+      responseDepIds: [
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
+        0x6d7dce914ee150e8n,
+        0xbc5c33249a2dc720n,
+        0x42046de663beeef0n,
+      ],
       responseRootRef: {
         tag: "concrete",
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -1918,14 +1923,20 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
           args: [{ tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] }],
         }],
       },
-      responseDepIds: [0xbc5c33249a2dc720n, 0xae570b7750005a79n, 0x6d7dce914ee150e8n, 0x42046de663beeef0n],
+      responseDepIds: [
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
+        0x6d7dce914ee150e8n,
+        0xbc5c33249a2dc720n,
+        0x42046de663beeef0n,
+      ],
       responseRootRef: {
         tag: "concrete",
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -1944,14 +1955,20 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
           args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
         }],
       },
-      responseDepIds: [0xbc5c33249a2dc720n, 0xae570b7750005a79n, 0x6d7dce914ee150e8n, 0x42046de663beeef0n],
+      responseDepIds: [
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
+        0x6d7dce914ee150e8n,
+        0xbc5c33249a2dc720n,
+        0x42046de663beeef0n,
+      ],
       responseRootRef: {
         tag: "concrete",
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -1963,8 +1980,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0xb92332c67187108fn, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0xb92332c67187108fn,
         0x361f4536eee9f991n,
@@ -1975,8 +1992,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xb92332c67187108fn, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -1996,8 +2013,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0xc841530b759b8ed0n,
         0xdcafd4de6b7969bbn,
@@ -2009,8 +2026,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xc841530b759b8ed0n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2029,8 +2046,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0x6ecf4fe376e23113n, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x3f2e589db81e95bfn,
         0x42046de663beeef0n,
@@ -2040,8 +2057,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x3f2e589db81e95bfn, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2053,8 +2070,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x1b57cc7742fabeb0n,
         0xdcafd4de6b7969bbn,
@@ -2069,8 +2086,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
           args: [{ tag: "concrete", type_id: 0x1b57cc7742fabeb0n, args: [] }],
         }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2082,8 +2099,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0xe407302c560da502n, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x3f2e589db81e95bfn,
         0x42046de663beeef0n,
@@ -2093,8 +2110,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x3f2e589db81e95bfn, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2117,8 +2134,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         }, { tag: "concrete", type_id: 0x1b57cc7742fabeb0n, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x221855c965fb31e1n,
         0x1b57cc7742fabeb0n,
@@ -2132,8 +2149,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x221855c965fb31e1n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2151,8 +2168,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0xbda77ebf97f345a9n, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0xbda77ebf97f345a9n,
         0xba8125876d6388b4n,
@@ -2164,8 +2181,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xbda77ebf97f345a9n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2177,8 +2194,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0x281c5be4f2ee63b4n, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0xb92332c67187108fn,
         0x361f4536eee9f991n,
@@ -2194,8 +2211,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
           args: [{ tag: "concrete", type_id: 0xb92332c67187108fn, args: [] }],
         }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2215,8 +2232,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x361f4536eee9f991n,
         0xba0496aa8cee7a4cn,
@@ -2235,8 +2252,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
           }],
         }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2248,8 +2265,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0xba8125876d6388b4n, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0xba8125876d6388b4n,
         0x42046de663beeef0n,
@@ -2259,8 +2276,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xba8125876d6388b4n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2272,8 +2289,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0x178367a87f66fb46n, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x178367a87f66fb46n,
         0x42046de663beeef0n,
@@ -2283,8 +2300,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x178367a87f66fb46n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2296,8 +2313,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0xd9356298b81639acn, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0xd9356298b81639acn,
         0x42046de663beeef0n,
@@ -2307,8 +2324,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xd9356298b81639acn, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2324,8 +2341,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0xdcafd4de6b7969bbn,
         0x42046de663beeef0n,
@@ -2339,8 +2356,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
           args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
         }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2356,8 +2373,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0xc6eb8c46f1e17fban,
         0x42046de663beeef0n,
@@ -2367,8 +2384,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xc6eb8c46f1e17fban, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2383,14 +2400,20 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
           args: [{ tag: "concrete", type_id: 0x361f4536eee9f991n, args: [] }],
         }],
       },
-      responseDepIds: [0xbc5c33249a2dc720n, 0xae570b7750005a79n, 0x6d7dce914ee150e8n, 0x42046de663beeef0n],
+      responseDepIds: [
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
+        0x6d7dce914ee150e8n,
+        0xbc5c33249a2dc720n,
+        0x42046de663beeef0n,
+      ],
       responseRootRef: {
         tag: "concrete",
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2398,8 +2421,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
       argsDepIds: [0xbc5c33249a2dc720n],
       argsRootRef: { tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x1b57cc7742fabeb0n,
         0x0a96b404b4d79d67n,
@@ -2414,8 +2437,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
           args: [{ tag: "concrete", type_id: 0x1b57cc7742fabeb0n, args: [] }],
         }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2432,8 +2455,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         ],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x7f145c7b0ededd20n,
         0x178367a87f66fb46n,
@@ -2445,8 +2468,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x7f145c7b0ededd20n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2458,8 +2481,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0xe407302c560da502n, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0xe407302c560da502n,
         0x3f2e589db81e95bfn,
@@ -2470,8 +2493,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xe407302c560da502n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2483,8 +2506,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0x01542aaa833a2511n, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x01542aaa833a2511n,
         0x42046de663beeef0n,
@@ -2494,8 +2517,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x01542aaa833a2511n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2507,8 +2530,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0x4620db6c5c627787n, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x4620db6c5c627787n,
         0x281c5be4f2ee63b4n,
@@ -2519,8 +2542,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x4620db6c5c627787n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2532,8 +2555,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0xbc2cd703968e7d0dn, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0xbc2cd703968e7d0dn,
         0x42046de663beeef0n,
@@ -2543,8 +2566,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xbc2cd703968e7d0dn, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2562,8 +2585,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0x2ef93123176c696cn, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x2ef93123176c696cn,
         0x3f2e589db81e95bfn,
@@ -2575,8 +2598,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x2ef93123176c696cn, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2588,8 +2611,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0x01542aaa833a2511n, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x01542aaa833a2511n,
         0x42046de663beeef0n,
@@ -2599,8 +2622,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x01542aaa833a2511n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2612,8 +2635,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0x4620db6c5c627787n, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x4620db6c5c627787n,
         0x281c5be4f2ee63b4n,
@@ -2624,8 +2647,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x4620db6c5c627787n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2637,8 +2660,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0x0930935d500f9629n, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x0930935d500f9629n,
         0x3f2e589db81e95bfn,
@@ -2649,8 +2672,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x0930935d500f9629n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -2662,8 +2685,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0xec2764b25ae6ef1en, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0xec2764b25ae6ef1en,
         0x42046de663beeef0n,
@@ -2673,977 +2696,193 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xec2764b25ae6ef1en, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
   ]),
 };
 
-// Named schema registry (for recursive / shared named types)
-const testbed_schema_registry: SchemaRegistry = new Map<string, Schema>([
-  ["MathError", {
-    kind: "enum",
-    variants: [{ name: "DivisionByZero", fields: null }, { name: "Overflow", fields: null }],
-  }],
-  ["Person", {
-    kind: "struct",
-    fields: {
-      "name": { kind: "string" },
-      "age": { kind: "u8" },
-      "email": { kind: "option", inner: { kind: "string" } },
-    },
-  }],
-  ["LookupError", {
-    kind: "enum",
-    variants: [{ name: "NotFound", fields: null }, { name: "AccessDenied", fields: null }],
-  }],
-  ["Point", { kind: "struct", fields: { "x": { kind: "i32" }, "y": { kind: "i32" } } }],
-  ["Rectangle", {
-    kind: "struct",
-    fields: {
-      "top_left": { kind: "ref", name: "Point" },
-      "bottom_right": { kind: "ref", name: "Point" },
-      "label": { kind: "option", inner: { kind: "string" } },
-    },
-  }],
-  ["Color", {
-    kind: "enum",
-    variants: [{ name: "Red", fields: null }, { name: "Green", fields: null }, { name: "Blue", fields: null }],
-  }],
-  ["Shape", {
-    kind: "enum",
-    variants: [{ name: "Circle", fields: { "radius": { kind: "f64" } } }, {
-      name: "Rectangle",
-      fields: { "width": { kind: "f64" }, "height": { kind: "f64" } },
-    }, { name: "Point", fields: null }],
-  }],
-  ["Canvas", {
-    kind: "struct",
-    fields: {
-      "name": { kind: "string" },
-      "shapes": { kind: "vec", element: { kind: "ref", name: "Shape" } },
-      "background": { kind: "ref", name: "Color" },
-    },
-  }],
-  ["Message", {
-    kind: "enum",
-    variants: [{ name: "Text", fields: { kind: "string" } }, { name: "Number", fields: { kind: "i64" } }, {
-      name: "Data",
-      fields: { kind: "bytes" },
-    }],
-  }],
-  ["TaggedPoint", {
-    kind: "struct",
-    fields: { "label": { kind: "string" }, "x": { kind: "i32" }, "y": { kind: "i32" }, "active": { kind: "bool" } },
-  }],
-  ["Status", { kind: "enum", variants: [{ name: "Active", fields: null }, { name: "Inactive", fields: null }] }],
-  ["Tag", {
-    kind: "struct",
-    fields: { "label": { kind: "string" }, "priority": { kind: "u32" }, "note": { kind: "string" } },
-  }],
-  ["Profile", { kind: "struct", fields: { "name": { kind: "string" }, "bio": { kind: "string" } } }],
-  ["Record", {
-    kind: "struct",
-    fields: { "alpha": { kind: "i32" }, "beta": { kind: "string" }, "gamma": { kind: "f64" } },
-  }],
-  ["Measurement", { kind: "struct", fields: { "unit": { kind: "string" }, "value": { kind: "f64" } } }],
-  ["Config", { kind: "struct", fields: { "key": { kind: "string" }, "value": { kind: "string" } } }],
-]);
-
-// Service descriptor for runtime schema-driven dispatch
+// Service descriptor for runtime dispatch metadata
 export const testbed_descriptor: ServiceDescriptor = {
   service_name: "Testbed",
-  schema_registry: testbed_schema_registry,
   send_schemas: testbed_send_schemas,
   methods: [
     {
       name: "echo",
       id: 0x880bc4eee23574ben,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "string" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "string" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "reverse",
       id: 0x1c223f30e180392an,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "string" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "string" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "divide",
       id: 0xfb68d9318f830875n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "i64" }, { kind: "i64" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "i64" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: { kind: "ref", name: "MathError" } },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "lookup",
       id: 0xa15ff52094712a3bn,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "u32" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Person" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: { kind: "ref", name: "LookupError" } },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "sum",
       id: 0x51f9cfd8e86577c9n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "rx", element: { kind: "i32" } }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "i64" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "generate",
       id: 0x239e5b99b1f8207an,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "u32" }, { kind: "tx", element: { kind: "i32" } }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "struct", fields: {} } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "generateRetryNonIdem",
       id: 0x34419529478cc7b8n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "u32" }, { kind: "tx", element: { kind: "i32" } }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "struct", fields: {} } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "generateRetryIdem",
       id: 0xe2d27fd9098c6ea2n,
       retry: { persist: false, idem: true },
-      args: { kind: "tuple", elements: [{ kind: "u32" }, { kind: "tx", element: { kind: "i32" } }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "struct", fields: {} } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "transform",
       id: 0xcb469cff8d798febn,
       retry: { persist: false, idem: false },
-      args: {
-        kind: "tuple",
-        elements: [{ kind: "rx", element: { kind: "string" } }, { kind: "tx", element: { kind: "string" } }],
-      },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "struct", fields: {} } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoPoint",
       id: 0x81f5386d589dfbe4n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Point" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Point" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "createPerson",
       id: 0x68ffa90b7728bde7n,
       retry: { persist: false, idem: false },
-      args: {
-        kind: "tuple",
-        elements: [{ kind: "string" }, { kind: "u8" }, { kind: "option", inner: { kind: "string" } }],
-      },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Person" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "rectangleArea",
       id: 0x223fe0282d263107n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Rectangle" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "f64" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "parseColor",
       id: 0xd4f16ea9eca132e6n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "string" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "option", inner: { kind: "ref", name: "Color" } } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "shapeArea",
       id: 0x04385a4be2a882f5n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Shape" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "f64" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "createCanvas",
       id: 0xef421eb5b08c973an,
       retry: { persist: false, idem: false },
-      args: {
-        kind: "tuple",
-        elements: [{ kind: "string" }, { kind: "vec", element: { kind: "ref", name: "Shape" } }, {
-          kind: "ref",
-          name: "Color",
-        }],
-      },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Canvas" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "processMessage",
       id: 0xe08f0f5254e7a997n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Message" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Message" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "getPoints",
       id: 0x598518523a6266bfn,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "u32" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "vec", element: { kind: "ref", name: "Point" } } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "swapPair",
       id: 0x7d55a713ad612bf2n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "tuple", elements: [{ kind: "i32" }, { kind: "string" }] }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "tuple", elements: [{ kind: "string" }, { kind: "i32" }] } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoBytes",
       id: 0x44056c7842fa336cn,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "bytes" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "bytes" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoBool",
       id: 0x5136d8f01a5f496cn,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "bool" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "bool" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoU64",
       id: 0x85e2380dbf7ffe65n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "u64" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "u64" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoOptionString",
       id: 0xb1a5bfd205b3fbfcn,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "option", inner: { kind: "string" } }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "option", inner: { kind: "string" } } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "sumLarge",
       id: 0x9a7bed545e088054n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "rx", element: { kind: "i32" } }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "i64" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "generateLarge",
       id: 0x8edfbd65d162f685n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "u32" }, { kind: "tx", element: { kind: "i32" } }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "struct", fields: {} } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "allColors",
       id: 0xfbfb05bbcaade4a0n,
       retry: { persist: false, idem: false },
-      args: { kind: "struct", fields: {} },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "vec", element: { kind: "ref", name: "Color" } } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "describePoint",
       id: 0x62feb14a8fcf9b6dn,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "string" }, { kind: "i32" }, { kind: "i32" }, { kind: "bool" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "TaggedPoint" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoShape",
       id: 0x4125b5e678b7b4a5n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Shape" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Shape" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoStatusV1",
       id: 0xc7c5aa845cfb8bf6n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Status" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Status" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoTagV1",
       id: 0x6619071be5d5c259n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Tag" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Tag" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoProfile",
       id: 0xbd9bcabddeebeb04n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Profile" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Profile" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoRecord",
       id: 0x100b0e08da4b8f1an,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Record" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Record" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoStatus",
       id: 0x697590d3ffc36703n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Status" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Status" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoTag",
       id: 0x2bd1b3149d73ce97n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Tag" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Tag" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoMeasurement",
       id: 0x3b3d22b015fa1a3fn,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Measurement" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Measurement" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoConfig",
       id: 0xe13a477fb964ce28n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Config" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Config" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
   ],
 };

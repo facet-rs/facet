@@ -14,6 +14,7 @@ const FRAME_ID = 7n;
 const REMOTE_RECORD_ID = 8n;
 const LOCAL_RECORD_ID = 9n;
 const BYTES_ID = 10n;
+const NEVER_ID = 11n;
 
 const u8Ref: WireTypeRef = { tag: "concrete", type_id: U8_ID, args: [] };
 const stringRef: WireTypeRef = { tag: "concrete", type_id: STRING_ID, args: [] };
@@ -137,6 +138,19 @@ describe("wire codec translation plans", () => {
     expect(decoded.value).toEqual(new Uint8Array([3, 1, 4]));
   });
 
+  it("rejects primitive mismatches for never vs unit", () => {
+    const remote = schemaSetFromSchemas([
+      { id: NEVER_ID, type_params: [], kind: { tag: "primitive", primitive_type: "never" } },
+    ]);
+    const local = schemaSetFromSchemas([
+      { id: 12n, type_params: [], kind: { tag: "primitive", primitive_type: "unit" } },
+    ]);
+
+    expect(() => buildPlan(remote, local)).toThrow(
+      'primitive type mismatch: remote "never" vs local "unit"',
+    );
+  });
+
   it("reorders fields and preserves byte lists as Uint8Array", () => {
     const remote = schemaSetFromSchemas(remoteSchemas);
     const local = schemaSetFromSchemas(localSchemas);
@@ -168,5 +182,26 @@ describe("wire codec translation plans", () => {
       note: null,
     });
     expect((decoded.value as { payload: unknown }).payload).toBeInstanceOf(Uint8Array);
+  });
+});
+
+describe("wire codec never primitive", () => {
+  const neverKind: WireSchemaKind = { tag: "primitive", primitive_type: "never" };
+
+  it("refuses to encode never", () => {
+    expect(() => encodeWithKind(undefined, neverKind, registry)).toThrow(
+      "encodePrimitive: cannot encode never",
+    );
+  });
+
+  it("refuses to decode or skip never", () => {
+    const bytes = new Uint8Array([0]);
+
+    expect(() => decodeWithKind(bytes, 0, neverKind, registry)).toThrow(
+      "decodePrimitive: received bytes for never primitive",
+    );
+    expect(() => skipValue(bytes, 0, neverKind, registry)).toThrow(
+      "skipPrimitive: received bytes for never primitive",
+    );
   });
 });

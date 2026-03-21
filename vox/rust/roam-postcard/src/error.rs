@@ -341,6 +341,7 @@ fn format_schema_kind_rust(kind: &SchemaKind, registry: &SchemaRegistry) -> Stri
             PrimitiveType::Char => "char".to_string(),
             PrimitiveType::String => "String".to_string(),
             PrimitiveType::Unit => "()".to_string(),
+            PrimitiveType::Never => "never".to_string(),
             PrimitiveType::Bytes => "Vec<u8>".to_string(),
             PrimitiveType::Payload => "Payload".to_string(),
         },

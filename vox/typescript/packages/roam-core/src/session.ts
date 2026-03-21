@@ -1,9 +1,7 @@
 import {
   decodeWithKind,
   decodeWithPlan,
-  decodeWithSchema,
   encodeWithKind,
-  encodeWithSchema,
 } from "@bearcove/roam-postcard";
 import {
   type ConnectionSettings,
@@ -995,7 +993,9 @@ class SessionCore {
               "args",
               callSchemas,
             );
-          } catch {}
+          } catch (error) {
+            throw SessionError.protocol(error instanceof Error ? error.message : String(error));
+          }
         }
         connection.enqueueIncomingCall({
           requestId: request.id,
@@ -1017,7 +1017,9 @@ class SessionCore {
               "response",
               responseSchemas,
             );
-          } catch {}
+          } catch (error) {
+            throw SessionError.protocol(error instanceof Error ? error.message : String(error));
+          }
         }
         connection.resolveResponse(request.id, request.body.value.ret);
         return;
@@ -1158,19 +1160,20 @@ export class ConnectionHandle {
       throw SessionError.closed();
     }
 
-    const localArgsSchemaSet = request.sendSchemas
-      ? localSchemaSetForMethod(request.descriptor.id, "args", request.sendSchemas)
-      : null;
-    const localResponseSchemaSet = request.sendSchemas
-      ? localSchemaSetForMethod(request.descriptor.id, "response", request.sendSchemas)
-      : null;
+    const localArgsSchemaSet = localSchemaSetForMethod(request.descriptor.id, "args", request.sendSchemas);
+    const localResponseSchemaSet = localSchemaSetForMethod(
+      request.descriptor.id,
+      "response",
+      request.sendSchemas,
+    );
+    if (!localArgsSchemaSet || !localResponseSchemaSet) {
+      throw SessionError.protocol(`missing canonical schemas for method ${request.descriptor.id}`);
+    }
     const encodeCurrentArgs = (): Uint8Array => {
       const values = Object.values(request.args);
       return values.length === 0
         ? new Uint8Array(0)
-        : localArgsSchemaSet
-        ? encodeWithKind(values, localArgsSchemaSet.root.kind, localArgsSchemaSet.registry)
-        : encodeWithSchema(values, request.descriptor.args, request.schemaRegistry);
+        : encodeWithKind(values, localArgsSchemaSet.root.kind, localArgsSchemaSet.registry);
     };
     const prepareRetry = request.prepareRetry
       ? () => {
@@ -1204,7 +1207,7 @@ export class ConnectionHandle {
             this.getSchemaSendTracker().prepareSchemas(
               request.descriptor.id,
               "args",
-              request.sendSchemas!,
+              request.sendSchemas,
             )
         : undefined;
 
@@ -1234,13 +1237,11 @@ export class ConnectionHandle {
       void this.sendPendingRequest(state, requestId, true);
     });
 
-    const responseTranslation = localResponseSchemaSet
-      ? this.getSchemaTracker().buildTranslation(
-          request.descriptor.id,
-          "response",
-          localResponseSchemaSet,
-        )
-      : null;
+    const responseTranslation = this.getSchemaTracker().buildTranslation(
+      request.descriptor.id,
+      "response",
+      localResponseSchemaSet,
+    );
     const decodedResult = responseTranslation
       ? decodeWithPlan(
           responsePayload,
@@ -1253,18 +1254,11 @@ export class ConnectionHandle {
             ...responseTranslation.remoteSchemaSet.registry,
           ]),
         )
-      : localResponseSchemaSet
-      ? decodeWithKind(
+      : decodeWithKind(
           responsePayload,
           0,
           localResponseSchemaSet.root.kind,
           localResponseSchemaSet.registry,
-        )
-      : decodeWithSchema(
-          responsePayload,
-          0,
-          request.descriptor.result,
-          request.schemaRegistry,
         );
 
     if (decodedResult.next !== responsePayload.length) {

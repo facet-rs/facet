@@ -13,6 +13,7 @@ import {
   type SessionHandle,
 } from "./session.ts";
 import type { MethodDescriptor, ServiceDescriptor } from "./channeling/index.ts";
+import type { ServiceSendSchemas } from "./schema_tracker.ts";
 
 class MemoryLink {
   private readonly queue: Uint8Array[] = [];
@@ -144,31 +145,104 @@ async function establishPair(
   return [clientSession, serverSession];
 }
 
+const UNIT_ID = 10n;
+const U32_ID = 11n;
+const STRING_ID = 12n;
+const RESULT_ID = 13n;
+const ROAM_ERROR_ID = 14n;
+const U32_ARGS_ID = 15n;
+
+const ECHO_SEND_SCHEMAS: ServiceSendSchemas = {
+  schemas: new Map([
+    [UNIT_ID, { id: UNIT_ID, type_params: [], kind: { tag: "primitive", primitive_type: "unit" } }],
+    [U32_ID, { id: U32_ID, type_params: [], kind: { tag: "primitive", primitive_type: "u32" } }],
+    [STRING_ID, { id: STRING_ID, type_params: [], kind: { tag: "primitive", primitive_type: "string" } }],
+    [
+      U32_ARGS_ID,
+      {
+        id: U32_ARGS_ID,
+        type_params: [],
+        kind: {
+          tag: "tuple",
+          elements: [{ tag: "concrete", type_id: U32_ID, args: [] }],
+        },
+      },
+    ],
+    [
+      RESULT_ID,
+      {
+        id: RESULT_ID,
+        type_params: ["T", "E"],
+        kind: {
+          tag: "enum",
+          name: "Result",
+          variants: [
+            {
+              name: "Ok",
+              index: 0,
+              payload: { tag: "newtype", type_ref: { tag: "var", name: "T" } },
+            },
+            {
+              name: "Err",
+              index: 1,
+              payload: { tag: "newtype", type_ref: { tag: "var", name: "E" } },
+            },
+          ],
+        },
+      },
+    ],
+    [
+      ROAM_ERROR_ID,
+      {
+        id: ROAM_ERROR_ID,
+        type_params: ["E"],
+        kind: {
+          tag: "enum",
+          name: "RoamError",
+          variants: [
+            {
+              name: "User",
+              index: 0,
+              payload: { tag: "newtype", type_ref: { tag: "var", name: "E" } },
+            },
+            { name: "UnknownMethod", index: 1, payload: { tag: "unit" } },
+            { name: "InvalidPayload", index: 2, payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: STRING_ID, args: [] } } },
+            { name: "Cancelled", index: 3, payload: { tag: "unit" } },
+            { name: "Indeterminate", index: 4, payload: { tag: "unit" } },
+          ],
+        },
+      },
+    ],
+  ]),
+  methods: new Map([
+    [
+      1n,
+      {
+        argsDepIds: [U32_ID, U32_ARGS_ID],
+        argsRootRef: { tag: "concrete", type_id: U32_ARGS_ID, args: [] },
+        responseDepIds: [U32_ID, STRING_ID, UNIT_ID, ROAM_ERROR_ID, RESULT_ID],
+        responseRootRef: {
+          tag: "concrete",
+          type_id: RESULT_ID,
+          args: [
+            { tag: "concrete", type_id: U32_ID, args: [] },
+            {
+              tag: "concrete",
+              type_id: ROAM_ERROR_ID,
+              args: [{ tag: "concrete", type_id: UNIT_ID, args: [] }],
+            },
+          ],
+        },
+      },
+    ],
+  ]),
+};
+
 function makeMethod(retry: MethodDescriptor["retry"]): MethodDescriptor {
   return {
     name: "echo",
     id: 1n,
     retry,
-    args: { kind: "tuple", elements: [{ kind: "u32" }] },
-    result: {
-      kind: "enum",
-      variants: [
-        { name: "Ok", fields: { kind: "u32" } },
-        {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: null },
-              { name: "Cancelled", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        },
-      ],
-    },
   };
 }
 
@@ -179,6 +253,7 @@ const VOLATILE_METHOD = makeMethod({ persist: false, idem: false });
 function descriptorFor(method: MethodDescriptor): ServiceDescriptor {
   return {
     service_name: "Test",
+    send_schemas: ECHO_SEND_SCHEMAS,
     methods: [method],
   };
 }
@@ -211,6 +286,7 @@ describe("session resumption", () => {
       method: "Test.echo",
       args: { value: 55 },
       descriptor: PERSIST_METHOD,
+      sendSchemas: ECHO_SEND_SCHEMAS,
     });
 
     await withTimeout(started.promise, "handler start");
@@ -272,6 +348,7 @@ describe("session resumption", () => {
       method: "Test.echo",
       args: { value: 77 },
       descriptor: IDEM_METHOD,
+      sendSchemas: ECHO_SEND_SCHEMAS,
     });
 
     await withTimeout(firstStarted.promise, "first handler start");
@@ -328,6 +405,7 @@ describe("session resumption", () => {
       method: "Test.echo",
       args: { value: 88 },
       descriptor: VOLATILE_METHOD,
+      sendSchemas: ECHO_SEND_SCHEMAS,
     });
 
     await withTimeout(firstStarted.promise, "first handler start");
@@ -394,6 +472,7 @@ describe("session resumption", () => {
       method: "Test.echo",
       args: { value: 66 },
       descriptor: PERSIST_METHOD,
+      sendSchemas: ECHO_SEND_SCHEMAS,
     });
 
     await withTimeout(started.promise, "handler start");

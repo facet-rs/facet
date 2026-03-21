@@ -1,9 +1,10 @@
 import {
   decodeWithKind,
   decodeWithPlan,
-  decodeWithSchema,
   encodeWithKind,
-  encodeWithSchema,
+  decodeWithTypeRef,
+  encodeWithTypeRef,
+  resolveWireTypeRef,
 } from "@bearcove/roam-postcard";
 import {
   RpcError,
@@ -257,9 +258,8 @@ class RoamCallImpl implements RoamCall {
     private readonly taskSender: TaskSender,
     private readonly operations: OperationStore,
     private readonly operationId: bigint | undefined,
-    private readonly schemaRegistry?: ServiceDescriptor["schema_registry"],
-    private readonly schemaSendTracker?: import("./schema_tracker.ts").SchemaSendTracker,
-    private readonly sendSchemas?: import("./schema_tracker.ts").ServiceSendSchemas,
+    private readonly schemaSendTracker: import("./schema_tracker.ts").SchemaSendTracker,
+    private readonly sendSchemas: import("./schema_tracker.ts").ServiceSendSchemas,
   ) {}
 
   didReply(): boolean {
@@ -271,20 +271,15 @@ class RoamCallImpl implements RoamCall {
       return;
     }
     this.replied = true;
-    const localSchemaSet = this.sendSchemas
-      ? localSchemaSetForMethod(this.method.id, "response", this.sendSchemas)
-      : null;
-    const payload = localSchemaSet
-      ? encodeWithKind(
-          { tag: "Ok", value },
-          localSchemaSet.root.kind,
-          localSchemaSet.registry,
-        )
-      : encodeWithSchema(
-          { tag: "Ok", value },
-          this.method.result,
-          this.schemaRegistry,
-        );
+    const localSchemaSet = localSchemaSetForMethod(this.method.id, "response", this.sendSchemas);
+    if (!localSchemaSet) {
+      throw new Error(`missing canonical response schema for method ${this.method.id}`);
+    }
+    const payload = encodeWithKind(
+      { tag: "Ok", value },
+      localSchemaSet.root.kind,
+      localSchemaSet.registry,
+    );
     this.sendPayload(payload);
   }
 
@@ -293,20 +288,15 @@ class RoamCallImpl implements RoamCall {
       return;
     }
     this.replied = true;
-    const localSchemaSet = this.sendSchemas
-      ? localSchemaSetForMethod(this.method.id, "response", this.sendSchemas)
-      : null;
-    const payload = localSchemaSet
-      ? encodeWithKind(
-          { tag: "Err", value: { tag: "User", value: error } },
-          localSchemaSet.root.kind,
-          localSchemaSet.registry,
-        )
-      : encodeWithSchema(
-          { tag: "Err", value: { tag: "User", value: error } },
-          this.method.result,
-          this.schemaRegistry,
-        );
+    const localSchemaSet = localSchemaSetForMethod(this.method.id, "response", this.sendSchemas);
+    if (!localSchemaSet) {
+      throw new Error(`missing canonical response schema for method ${this.method.id}`);
+    }
+    const payload = encodeWithKind(
+      { tag: "Err", value: { tag: "User", value: error } },
+      localSchemaSet.root.kind,
+      localSchemaSet.registry,
+    );
     this.sendPayload(payload);
   }
 
@@ -315,38 +305,35 @@ class RoamCallImpl implements RoamCall {
       return;
     }
     this.replied = true;
-    const localSchemaSet = this.sendSchemas
-      ? localSchemaSetForMethod(this.method.id, "response", this.sendSchemas)
-      : null;
-    const payload = localSchemaSet
-      ? encodeWithKind(
-          { tag: "Err", value: { tag: "InvalidPayload", value: message } },
-          localSchemaSet.root.kind,
-          localSchemaSet.registry,
-        )
-      : encodeWithSchema(
-          { tag: "Err", value: { tag: "InvalidPayload", value: message } },
-          this.method.result,
-          this.schemaRegistry,
-        );
+    const localSchemaSet = localSchemaSetForMethod(this.method.id, "response", this.sendSchemas);
+    if (!localSchemaSet) {
+      throw new Error(`missing canonical response schema for method ${this.method.id}`);
+    }
+    const payload = encodeWithKind(
+      { tag: "Err", value: { tag: "InvalidPayload", value: message } },
+      localSchemaSet.root.kind,
+      localSchemaSet.registry,
+    );
     this.sendPayload(payload);
   }
 
   private sendPayload(payload: Uint8Array): void {
-    const schemas =
-      this.schemaSendTracker && this.sendSchemas
-        ? this.schemaSendTracker.prepareSchemas(
-            this.method.id,
-            "response",
-            this.sendSchemas,
-          )
-        : undefined;
     if (this.operationId === undefined) {
+      const schemas = this.schemaSendTracker.prepareSchemas(
+        this.method.id,
+        "response",
+        this.sendSchemas,
+      );
       this.taskSender({ kind: "response", requestId: this.requestId, payload, schemas });
       return;
     }
     const waiters = this.operations.seal(this.operationId, this.requestId, payload);
     for (const waiter of waiters) {
+      const schemas = this.schemaSendTracker.prepareSchemas(
+        this.method.id,
+        "response",
+        this.sendSchemas,
+      );
       this.taskSender({ kind: "response", requestId: waiter, payload: payload.slice(), schemas });
     }
   }
@@ -536,7 +523,6 @@ export class Driver {
       taskSender,
       this.operations,
       operationId,
-      descriptor.schema_registry,
       this.connection.getSchemaSendTracker(),
       descriptor.send_schemas,
     );
@@ -617,9 +603,10 @@ export class Driver {
     // r[impl rpc.channel.binding.callee-args.tx]
 
     // r[impl schema.translation.field-matching]
-    const localSchemaSet = descriptor.send_schemas
-      ? localSchemaSetForMethod(method.id, "args", descriptor.send_schemas)
-      : null;
+    const localSchemaSet = localSchemaSetForMethod(method.id, "args", descriptor.send_schemas);
+    if (!localSchemaSet) {
+      throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
+    }
     const translation = localSchemaSet
       ? this.connection.getSchemaTracker().buildTranslation(
           method.id,
@@ -640,25 +627,18 @@ export class Driver {
             ...translation.remoteSchemaSet.registry,
           ]),
         )
-      : localSchemaSet
-      ? decodeWithKind(
+      : decodeWithKind(
           incoming.args,
           0,
           localSchemaSet.root.kind,
           localSchemaSet.registry,
-        )
-      : decodeWithSchema(
-          incoming.args,
-          0,
-          method.args,
-          descriptor.schema_registry,
         );
     if (decoded.next !== incoming.args.length) {
       throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
     }
 
-    const argElements = Array.isArray((method.args as { elements?: unknown[] }).elements)
-      ? method.args.elements
+    const argElements = localSchemaSet.root.kind.tag === "tuple"
+      ? localSchemaSet.root.kind.elements
       : [];
     const rawArgs =
       argElements.length === 0
@@ -668,21 +648,30 @@ export class Driver {
       throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
     }
 
-    let channelIndex = 0;
     return rawArgs.map((raw, argIndex) => {
-      const argSchema = argElements[argIndex];
-      if (argSchema.kind === "tx") {
-        const channelId = incoming.channels[channelIndex++];
+      const argRef = argElements[argIndex];
+      const argKind = resolveWireTypeRef(argRef, localSchemaSet.registry);
+      const channelId = typeof raw === "bigint"
+        ? raw
+        : typeof raw === "number" && Number.isInteger(raw) && raw >= 0
+        ? BigInt(raw)
+        : null;
+      if (argKind?.tag === "channel" && argKind.direction === "tx") {
+        if (channelId === null) {
+          throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
+        }
         return createServerTx(
           channelId,
           taskSender,
           this.connection.getChannelRegistry(),
           DEFAULT_INITIAL_CREDIT,
-          (value: unknown) => encodeWithSchema(value, argSchema.element, descriptor.schema_registry),
+          (value: unknown) => encodeWithTypeRef(value, argKind.element, localSchemaSet.registry),
         );
       }
-      if (argSchema.kind === "rx") {
-        const channelId = incoming.channels[channelIndex++];
+      if (argKind?.tag === "channel" && argKind.direction === "rx") {
+        if (channelId === null) {
+          throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
+        }
         const receiver = this.connection.getChannelRegistry().registerIncoming(
           channelId,
           DEFAULT_INITIAL_CREDIT,
@@ -691,7 +680,7 @@ export class Driver {
           },
         );
         return createServerRx(channelId, receiver, (bytes: Uint8Array) =>
-          decodeWithSchema(bytes, 0, argSchema.element, descriptor.schema_registry).value,
+          decodeWithTypeRef(bytes, 0, argKind.element, localSchemaSet.registry).value,
         );
       }
       return raw;

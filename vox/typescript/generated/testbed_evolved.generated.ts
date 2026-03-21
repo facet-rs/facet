@@ -7,8 +7,6 @@ import type {
   MethodDescriptor,
   RequestContext,
   RoamCall,
-  Schema,
-  SchemaRegistry,
   ServiceDescriptor,
   SessionTransportOptions,
 } from "@bearcove/roam-core";
@@ -95,12 +93,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a profile back. Tests added optional field. */
   async echoProfile(profile: Profile): Promise<Profile> {
     const descriptor = testbed_descriptor.methods[0];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoProfile",
       args: { profile },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Profile;
   }
@@ -108,12 +106,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a record back. Tests field reordering. */
   async echoRecord(record: Record): Promise<Record> {
     const descriptor = testbed_descriptor.methods[1];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoRecord",
       args: { record },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Record;
   }
@@ -121,12 +119,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a status back. Tests added enum variant. */
   async echoStatus(status: Status): Promise<Status> {
     const descriptor = testbed_descriptor.methods[2];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoStatus",
       args: { status },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Status;
   }
@@ -134,12 +132,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a tag back. Tests removed field. */
   async echoTag(tag: Tag): Promise<Tag> {
     const descriptor = testbed_descriptor.methods[3];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoTag",
       args: { tag },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Tag;
   }
@@ -147,12 +145,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a measurement back. Tests incompatible type change. */
   async echoMeasurement(m: Measurement): Promise<Measurement> {
     const descriptor = testbed_descriptor.methods[4];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoMeasurement",
       args: { m },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Measurement;
   }
@@ -160,12 +158,12 @@ export class TestbedClient implements TestbedCaller {
   /** Echo a config back. Tests missing required field. */
   async echoConfig(c: Config): Promise<Config> {
     const descriptor = testbed_descriptor.methods[5];
+    const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoConfig",
       args: { c },
       descriptor,
-      schemaRegistry: testbed_descriptor.schema_registry,
-      sendSchemas: testbed_descriptor.send_schemas,
+      sendSchemas,
     });
     return value as Config;
   }
@@ -207,43 +205,43 @@ export class TestbedDispatcher implements Dispatcher {
       try {
         const result = await this.handler.echoProfile(args[0] as Profile);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x100b0e08da4b8f1an) {
       try {
         const result = await this.handler.echoRecord(args[0] as Record);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x697590d3ffc36703n) {
       try {
         const result = await this.handler.echoStatus(args[0] as Status);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x2bd1b3149d73ce97n) {
       try {
         const result = await this.handler.echoTag(args[0] as Tag);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0x3b3d22b015fa1a3fn) {
       try {
         const result = await this.handler.echoMeasurement(args[0] as Measurement);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     } else if (method.id === 0xe13a477fb964ce28n) {
       try {
         const result = await this.handler.echoConfig(args[0] as Config);
         call.reply(result);
-      } catch {
-        call.replyInternalError();
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
     }
   }
@@ -276,19 +274,28 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         }],
       },
     }],
+    [0x5db70a394660f3e6n, {
+      id: 0x5db70a394660f3e6n,
+      type_params: [],
+      kind: { tag: "primitive", primitive_type: "never" },
+    }],
     [0x6d7dce914ee150e8n, {
       id: 0x6d7dce914ee150e8n,
       type_params: [],
       kind: { tag: "primitive", primitive_type: "string" },
     }],
-    [0xae570b7750005a79n, {
-      id: 0xae570b7750005a79n,
+    [0x75e4adf2187cc79dn, {
+      id: 0x75e4adf2187cc79dn,
       type_params: ["E"],
       kind: {
         tag: "enum",
         name: "RoamError",
         variants: [
-          { name: "User", index: 0, payload: { tag: "newtype", type_ref: { tag: "var", name: "E" } } },
+          {
+            name: "User",
+            index: 0,
+            payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] } },
+          },
           { name: "UnknownMethod", index: 1, payload: { tag: "unit" } },
           {
             name: "InvalidPayload",
@@ -333,11 +340,6 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
       id: 0x6847ab90feda71c1n,
       type_params: ["T0"],
       kind: { tag: "tuple", elements: [{ tag: "var", name: "T0" }] },
-    }],
-    [0xbc5c33249a2dc720n, {
-      id: 0xbc5c33249a2dc720n,
-      type_params: [],
-      kind: { tag: "primitive", primitive_type: "unit" },
     }],
     [0x3f2e589db81e95bfn, {
       id: 0x3f2e589db81e95bfn,
@@ -424,8 +426,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0xa44004e457ac50dcn, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0xa44004e457ac50dcn,
         0xdcafd4de6b7969bbn,
@@ -436,8 +438,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0xa44004e457ac50dcn, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -455,8 +457,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0x192310b3d2edcbbbn, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x192310b3d2edcbbbn,
         0x361f4536eee9f991n,
@@ -468,8 +470,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x192310b3d2edcbbbn, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -481,8 +483,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0x2f0ff266dde23386n, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x2f0ff266dde23386n,
         0x42046de663beeef0n,
@@ -492,8 +494,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x2f0ff266dde23386n, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -505,8 +507,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0x0eefcca6337b755dn, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x0eefcca6337b755dn,
         0x281c5be4f2ee63b4n,
@@ -517,8 +519,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x0eefcca6337b755dn, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -530,8 +532,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0x4f3c1dd93ca2d25fn, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x4f3c1dd93ca2d25fn,
         0x42046de663beeef0n,
@@ -541,8 +543,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x4f3c1dd93ca2d25fn, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
@@ -554,8 +556,8 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         args: [{ tag: "concrete", type_id: 0x4d9687f8912787een, args: [] }],
       },
       responseDepIds: [
-        0xbc5c33249a2dc720n,
-        0xae570b7750005a79n,
+        0x5db70a394660f3e6n,
+        0x75e4adf2187cc79dn,
         0x6d7dce914ee150e8n,
         0x4d9687f8912787een,
         0x42046de663beeef0n,
@@ -565,198 +567,48 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x4d9687f8912787een, args: [] }, {
           tag: "concrete",
-          type_id: 0xae570b7750005a79n,
-          args: [{ tag: "concrete", type_id: 0xbc5c33249a2dc720n, args: [] }],
+          type_id: 0x75e4adf2187cc79dn,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
         }],
       },
     }],
   ]),
 };
 
-// Named schema registry (for recursive / shared named types)
-const testbed_schema_registry: SchemaRegistry = new Map<string, Schema>([
-  ["Profile", {
-    kind: "struct",
-    fields: {
-      "name": { kind: "string" },
-      "bio": { kind: "string" },
-      "avatar": { kind: "option", inner: { kind: "string" } },
-    },
-  }],
-  ["Record", {
-    kind: "struct",
-    fields: { "gamma": { kind: "f64" }, "alpha": { kind: "i32" }, "beta": { kind: "string" } },
-  }],
-  ["Status", {
-    kind: "enum",
-    variants: [{ name: "Active", fields: null }, { name: "Inactive", fields: null }, {
-      name: "Suspended",
-      fields: null,
-    }],
-  }],
-  ["Tag", { kind: "struct", fields: { "label": { kind: "string" }, "priority": { kind: "u32" } } }],
-  ["Measurement", { kind: "struct", fields: { "unit": { kind: "string" }, "value": { kind: "string" } } }],
-  ["Config", {
-    kind: "struct",
-    fields: { "key": { kind: "string" }, "value": { kind: "string" }, "owner": { kind: "string" } },
-  }],
-]);
-
-// Service descriptor for runtime schema-driven dispatch
+// Service descriptor for runtime dispatch metadata
 export const testbed_descriptor: ServiceDescriptor = {
   service_name: "Testbed",
-  schema_registry: testbed_schema_registry,
   send_schemas: testbed_send_schemas,
   methods: [
     {
       name: "echoProfile",
       id: 0xbd9bcabddeebeb04n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Profile" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Profile" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoRecord",
       id: 0x100b0e08da4b8f1an,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Record" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Record" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoStatus",
       id: 0x697590d3ffc36703n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Status" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Status" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoTag",
       id: 0x2bd1b3149d73ce97n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Tag" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Tag" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoMeasurement",
       id: 0x3b3d22b015fa1a3fn,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Measurement" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Measurement" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
     {
       name: "echoConfig",
       id: 0xe13a477fb964ce28n,
       retry: { persist: false, idem: false },
-      args: { kind: "tuple", elements: [{ kind: "ref", name: "Config" }] },
-      result: {
-        kind: "enum",
-        variants: [{ name: "Ok", fields: { kind: "ref", name: "Config" } }, {
-          name: "Err",
-          fields: {
-            kind: "enum",
-            variants: [
-              { name: "User", fields: null },
-              { name: "UnknownMethod", fields: null },
-              { name: "InvalidPayload", fields: { kind: "string" } },
-              { name: "Cancelled", fields: null },
-              { name: "ConnectionClosed", fields: null },
-              { name: "SessionShutdown", fields: null },
-              { name: "SendFailed", fields: null },
-              { name: "Indeterminate", fields: null },
-            ],
-          },
-        }],
-      },
     },
   ],
 };
