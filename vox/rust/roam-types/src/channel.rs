@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use facet::Facet;
 use facet_core::PtrConst;
 #[cfg(not(target_arch = "wasm32"))]
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::{Notify, Semaphore, mpsc};
 
 use crate::ChannelId;
 #[cfg(not(target_arch = "wasm32"))]
@@ -102,6 +102,7 @@ struct LogicalReceiverState {
 pub struct ChannelCore {
     binding: Mutex<Option<ChannelBinding>>,
     logical_receiver: Mutex<Option<LogicalReceiverState>>,
+    binding_changed: Notify,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -110,6 +111,7 @@ impl ChannelCore {
         Self {
             binding: Mutex::new(None),
             logical_receiver: Mutex::new(None),
+            binding_changed: Notify::new(),
         }
     }
 
@@ -117,6 +119,7 @@ impl ChannelCore {
     pub fn set_binding(&self, binding: ChannelBinding) {
         let mut guard = self.binding.lock().expect("channel core mutex poisoned");
         *guard = Some(binding);
+        self.binding_changed.notify_waiters();
     }
 
     /// Clone the sink from the core (for Tx reading the sink).
@@ -169,6 +172,8 @@ impl ChannelCore {
         let Some(sender) = state.sender.clone() else {
             return;
         };
+
+        self.binding_changed.notify_waiters();
 
         drop(guard);
         let core = Arc::clone(self);
@@ -242,6 +247,7 @@ impl ChannelCore {
         *guard = None;
         let mut guard = self.binding.lock().expect("channel core mutex poisoned");
         *guard = None;
+        self.binding_changed.notify_waiters();
     }
 }
 
@@ -540,18 +546,18 @@ impl<T> Tx<T> {
 
     // r[impl rpc.channel.pair.tx-read]
     #[cfg(not(target_arch = "wasm32"))]
-    fn resolve_sink(&self) -> Result<Arc<dyn ChannelSink>, TxError> {
+    fn resolve_sink_now(&self) -> Option<Arc<dyn ChannelSink>> {
         // Fast path: local slot (standalone/callee-side handle)
         if let Some(sink) = &self.sink.inner {
-            return Ok(sink.clone());
+            return Some(sink.clone());
         }
         // Slow path: read from shared core (paired handle)
         if let Some(core) = &self.core.inner
             && let Some(sink) = core.get_sink()
         {
-            return Ok(sink);
+            return Some(sink);
         }
-        Err(TxError::Unbound)
+        None
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -559,7 +565,19 @@ impl<T> Tx<T> {
     where
         T: Facet<'value>,
     {
-        let sink = self.resolve_sink()?;
+        let sink = if let Some(sink) = self.resolve_sink_now() {
+            sink
+        } else if let Some(core) = &self.core.inner {
+            loop {
+                let notified = core.binding_changed.notified();
+                if let Some(sink) = self.resolve_sink_now() {
+                    break sink;
+                }
+                notified.await;
+            }
+        } else {
+            return Err(TxError::Unbound);
+        };
         let ptr = PtrConst::new((&value as *const T).cast::<u8>());
         // SAFETY: `value` is explicitly dropped only after `await`, so the pointer
         // remains valid for the whole send operation.
@@ -573,7 +591,19 @@ impl<T> Tx<T> {
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn close<'value>(&self, metadata: Metadata<'value>) -> Result<(), TxError> {
         self.closed.store(true, Ordering::Release);
-        let sink = self.resolve_sink()?;
+        let sink = if let Some(sink) = self.resolve_sink_now() {
+            sink
+        } else if let Some(core) = &self.core.inner {
+            loop {
+                let notified = core.binding_changed.notified();
+                if let Some(sink) = self.resolve_sink_now() {
+                    break sink;
+                }
+                notified.await;
+            }
+        } else {
+            return Err(TxError::Unbound);
+        };
         sink.close_channel(metadata).await
     }
 
@@ -766,81 +796,90 @@ impl<T> Rx<T> {
     where
         T: Facet<'static>,
     {
-        if self.logical_receiver.inner.is_none()
-            && let Some(core) = &self.core.inner
-            && let Some((receiver, liveness)) = core.take_logical_receiver()
-        {
-            self.logical_receiver.inner = Some(receiver);
-            self.liveness.inner = liveness;
-        }
-
-        if let Some(receiver) = self.logical_receiver.inner.as_mut() {
-            match receiver.recv().await {
-                Some(LogicalIncomingChannelMessage {
-                    msg: IncomingChannelMessage::Close(_),
-                    ..
-                })
-                | None => return Ok(None),
-                Some(LogicalIncomingChannelMessage {
-                    msg: IncomingChannelMessage::Reset(_),
-                    ..
-                }) => return Err(RxError::Reset),
-                Some(LogicalIncomingChannelMessage {
-                    msg: IncomingChannelMessage::Item(msg),
-                    replenisher,
-                }) => {
-                    let value = msg
-                        .try_repack(|item, _backing_bytes| {
-                            let Payload::PostcardBytes(bytes) = item.item else {
-                                return Err(RxError::Protocol(
-                                    "incoming channel item payload was not Incoming".into(),
-                                ));
-                            };
-                            facet_postcard::from_slice_borrowed(bytes).map_err(RxError::Deserialize)
-                        })
-                        .map(Some);
-                    if value.is_ok()
-                        && let Some(replenisher) = replenisher.as_ref()
-                    {
-                        replenisher.on_item_consumed();
-                    }
-                    return value;
-                }
+        loop {
+            if self.logical_receiver.inner.is_none()
+                && let Some(core) = &self.core.inner
+                && let Some((receiver, liveness)) = core.take_logical_receiver()
+            {
+                self.logical_receiver.inner = Some(receiver);
+                self.liveness.inner = liveness;
             }
-        }
 
-        // On first call, take receiver from shared core into local slot
-        if self.receiver.inner.is_none()
-            && let Some(core) = &self.core.inner
-            && let Some(bound) = core.take_receiver()
-        {
-            self.receiver.inner = Some(bound.receiver);
-            self.liveness.inner = bound.liveness;
-            self.replenisher.inner = bound.replenisher;
-        }
-
-        let receiver = self.receiver.inner.as_mut().ok_or(RxError::Unbound)?;
-        match receiver.recv().await {
-            Some(IncomingChannelMessage::Close(_)) | None => Ok(None),
-            Some(IncomingChannelMessage::Reset(_)) => Err(RxError::Reset),
-            Some(IncomingChannelMessage::Item(msg)) => {
-                let value = msg
-                    .try_repack(|item, _backing_bytes| {
-                        let Payload::PostcardBytes(bytes) = item.item else {
-                            return Err(RxError::Protocol(
-                                "incoming channel item payload was not Incoming".into(),
-                            ));
-                        };
-                        facet_postcard::from_slice_borrowed(bytes).map_err(RxError::Deserialize)
+            if let Some(receiver) = self.logical_receiver.inner.as_mut() {
+                match receiver.recv().await {
+                    Some(LogicalIncomingChannelMessage {
+                        msg: IncomingChannelMessage::Close(_),
+                        ..
                     })
-                    .map(Some);
-                if value.is_ok()
-                    && let Some(replenisher) = &self.replenisher.inner
-                {
-                    replenisher.on_item_consumed();
+                    | None => return Ok(None),
+                    Some(LogicalIncomingChannelMessage {
+                        msg: IncomingChannelMessage::Reset(_),
+                        ..
+                    }) => return Err(RxError::Reset),
+                    Some(LogicalIncomingChannelMessage {
+                        msg: IncomingChannelMessage::Item(msg),
+                        replenisher,
+                    }) => {
+                        let value = msg
+                            .try_repack(|item, _backing_bytes| {
+                                let Payload::PostcardBytes(bytes) = item.item else {
+                                    return Err(RxError::Protocol(
+                                        "incoming channel item payload was not Incoming".into(),
+                                    ));
+                                };
+                                facet_postcard::from_slice_borrowed(bytes)
+                                    .map_err(RxError::Deserialize)
+                            })
+                            .map(Some);
+                        if value.is_ok()
+                            && let Some(replenisher) = replenisher.as_ref()
+                        {
+                            replenisher.on_item_consumed();
+                        }
+                        return value;
+                    }
                 }
-                value
             }
+
+            if self.receiver.inner.is_none()
+                && let Some(core) = &self.core.inner
+                && let Some(bound) = core.take_receiver()
+            {
+                self.receiver.inner = Some(bound.receiver);
+                self.liveness.inner = bound.liveness;
+                self.replenisher.inner = bound.replenisher;
+            }
+
+            if let Some(receiver) = self.receiver.inner.as_mut() {
+                return match receiver.recv().await {
+                    Some(IncomingChannelMessage::Close(_)) | None => Ok(None),
+                    Some(IncomingChannelMessage::Reset(_)) => Err(RxError::Reset),
+                    Some(IncomingChannelMessage::Item(msg)) => {
+                        let value = msg
+                            .try_repack(|item, _backing_bytes| {
+                                let Payload::PostcardBytes(bytes) = item.item else {
+                                    return Err(RxError::Protocol(
+                                        "incoming channel item payload was not Incoming".into(),
+                                    ));
+                                };
+                                facet_postcard::from_slice_borrowed(bytes)
+                                    .map_err(RxError::Deserialize)
+                            })
+                            .map(Some);
+                        if value.is_ok()
+                            && let Some(replenisher) = &self.replenisher.inner
+                        {
+                            replenisher.on_item_consumed();
+                        }
+                        value
+                    }
+                };
+            }
+
+            let Some(core) = &self.core.inner else {
+                return Err(RxError::Unbound);
+            };
+            core.binding_changed.notified().await;
         }
     }
 
