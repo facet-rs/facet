@@ -501,13 +501,13 @@ fn generate_spec_matrix(
             mod_name: "lang_typescript_transport_tcp",
             spec_const: "SUBJECT_TYPESCRIPT_TCP",
             shm: false,
-            ignore: true,
+            ignore: false,
         },
         Combo {
             mod_name: "lang_typescript_transport_ws",
             spec_const: "SUBJECT_TYPESCRIPT_WS",
             shm: false,
-            ignore: true,
+            ignore: false,
         },
         Combo {
             mod_name: "lang_swift_transport_tcp",
@@ -804,6 +804,7 @@ fn generate_spec_matrix(
         mod_name: &'static str,
         server_const: &'static str,
         client_const: &'static str,
+        ignore: bool,
     }
 
     let cross_lang_combos = [
@@ -812,42 +813,49 @@ fn generate_spec_matrix(
             mod_name: "lang_rust_server_typescript_client_tcp",
             server_const: "SUBJECT_RUST_TCP",
             client_const: "SUBJECT_TYPESCRIPT_TCP",
+            ignore: false,
         },
         // TypeScript server ↔ Rust client
         CrossLangCombo {
             mod_name: "lang_typescript_server_rust_client_tcp",
             server_const: "SUBJECT_TYPESCRIPT_TCP",
             client_const: "SUBJECT_RUST_TCP",
+            ignore: false,
         },
         // TypeScript server ↔ TypeScript client
         CrossLangCombo {
             mod_name: "lang_typescript_server_typescript_client_tcp",
             server_const: "SUBJECT_TYPESCRIPT_TCP",
             client_const: "SUBJECT_TYPESCRIPT_TCP",
+            ignore: false,
         },
         // Rust server ↔ Swift client
         CrossLangCombo {
             mod_name: "lang_rust_server_swift_client_tcp",
             server_const: "SUBJECT_RUST_TCP",
             client_const: "SUBJECT_SWIFT_TCP",
+            ignore: true,
         },
         // Swift server ↔ Rust client
         CrossLangCombo {
             mod_name: "lang_swift_server_rust_client_tcp",
             server_const: "SUBJECT_SWIFT_TCP",
             client_const: "SUBJECT_RUST_TCP",
+            ignore: true,
         },
         // TypeScript server ↔ Swift client
         CrossLangCombo {
             mod_name: "lang_typescript_server_swift_client_tcp",
             server_const: "SUBJECT_TYPESCRIPT_TCP",
             client_const: "SUBJECT_SWIFT_TCP",
+            ignore: false,
         },
         // Swift server ↔ TypeScript client
         CrossLangCombo {
             mod_name: "lang_swift_server_typescript_client_tcp",
             server_const: "SUBJECT_SWIFT_TCP",
             client_const: "SUBJECT_TYPESCRIPT_TCP",
+            ignore: false,
         },
     ];
 
@@ -909,6 +917,11 @@ fn generate_spec_matrix(
             let mod_ident = Ident::new(c.mod_name, Span::call_site());
             let server: TokenStream = c.server_const.parse().unwrap();
             let client: TokenStream = c.client_const.parse().unwrap();
+            let ignore_attr = if c.ignore {
+                quote! { #[ignore] }
+            } else {
+                quote! {}
+            };
             // Inline the call directly — no wrapper functions needed.
             let fns: Vec<TokenStream> = cross_lang_scenarios
                 .iter()
@@ -916,7 +929,7 @@ fn generate_spec_matrix(
                     let fn_ident = Ident::new(scenario, Span::call_site());
                     let scenario_lit = scenario;
                     quote! {
-                        #[ignore]
+                        #ignore_attr
                         #[test]
                         fn #fn_ident() {
                             spec_tests::harness::run_cross_language_scenario(
@@ -1038,32 +1051,26 @@ fn generate_spec_matrix(
         // These use a special evolved subject command and are TypeScript-only.
         mod lang_typescript_evolved_schema_compat {
             use super::schema_compat;
-            #[ignore]
             #[test]
             fn added_optional_field() {
                 schema_compat::run_schema_compat_added_optional_field();
             }
-            #[ignore]
             #[test]
             fn reordered_fields() {
                 schema_compat::run_schema_compat_reordered_fields();
             }
-            #[ignore]
             #[test]
             fn added_enum_variant() {
                 schema_compat::run_schema_compat_added_enum_variant();
             }
-            #[ignore]
             #[test]
             fn removed_field() {
                 schema_compat::run_schema_compat_removed_field();
             }
-            #[ignore]
             #[test]
             fn incompatible_type_change() {
                 schema_compat::run_schema_compat_incompatible_type_change();
             }
-            #[ignore]
             #[test]
             fn missing_required_field() {
                 schema_compat::run_schema_compat_missing_required_field();

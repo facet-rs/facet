@@ -99,12 +99,12 @@ where
     ) {
         let method_id = call.method_id;
         let args_bytes = match &call.args {
-            ::roam::Payload::Incoming(bytes) => bytes,
+            ::roam::Payload::PostcardBytes(bytes) => bytes,
             _ => {
                 reply
                     .send_error(
                         ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
-                            "args not Incoming".into(),
+                            "args not PostcardBytes".into(),
                         ),
                     )
                     .await;
@@ -126,16 +126,22 @@ where
             let args: (&'static str,) = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
+                    ::std::eprintln!(
+                        "[rpc] dispatch args decode failed: method={:?} error={}",
+                        method_id,
+                        e
+                    );
                     reply
-                        .send_error(
-                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
-                                e.to_string(),
-                            ),
-                        )
+                        .send_typed_error::<bool, ::core::convert::Infallible>(::roam::RoamError::<
+                            ::core::convert::Infallible,
+                        >::InvalidPayload(
+                            e.to_string()
+                        ))
                         .await;
                     return;
                 }
             };
+            ::std::eprintln!("[rpc] dispatch invoking method={:?}", method_id);
             let (word,) = args;
             let extensions = ::roam::Extensions::new();
             let context = ::roam::RequestContext::with_extensions(
@@ -171,8 +177,13 @@ where
             let args: (String,) = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
+                    ::std::eprintln!(
+                        "[rpc] dispatch args decode failed: method={:?} error={}",
+                        method_id,
+                        e
+                    );
                     reply
-                        .send_error(
+                        .send_typed_error::<&'roam str, ::core::convert::Infallible>(
                             ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
                                 e.to_string(),
                             ),
@@ -181,6 +192,7 @@ where
                     return;
                 }
             };
+            ::std::eprintln!("[rpc] dispatch invoking method={:?}", method_id);
             let (word,) = args;
             let extensions = ::roam::Extensions::new();
             let context = ::roam::RequestContext::with_extensions(
@@ -215,16 +227,22 @@ where
             let args: (&'static str, Rx<String>, Tx<String>) = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
+                    ::std::eprintln!(
+                        "[rpc] dispatch args decode failed: method={:?} error={}",
+                        method_id,
+                        e
+                    );
                     reply
-                        .send_error(
-                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
-                                e.to_string(),
-                            ),
-                        )
+                        .send_typed_error::<u32, ::core::convert::Infallible>(::roam::RoamError::<
+                            ::core::convert::Infallible,
+                        >::InvalidPayload(
+                            e.to_string()
+                        ))
                         .await;
                     return;
                 }
             };
+            ::std::eprintln!("[rpc] dispatch invoking method={:?}", method_id);
             let (prefix, input, output) = args;
             let extensions = ::roam::Extensions::new();
             let context = ::roam::RequestContext::with_extensions(
@@ -319,11 +337,11 @@ impl WordLabClient {
             tracker: schema_tracker,
         } = with_tracker;
         let ret_bytes = match &response.ret {
-            ::roam::Payload::Incoming(bytes) => bytes,
+            ::roam::Payload::PostcardBytes(bytes) => bytes,
             _ => {
                 return Err(
                     ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
-                        "response not Incoming".into(),
+                        "response not PostcardBytes".into(),
                     ),
                 );
             }
@@ -383,11 +401,11 @@ impl WordLabClient {
         } = with_tracker;
         response.try_repack(|resp, _bytes| {
             let ret_bytes = match &resp.ret {
-                ::roam::Payload::Incoming(bytes) => bytes,
+                ::roam::Payload::PostcardBytes(bytes) => bytes,
                 _ => {
                     return Err(
                         ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
-                            "response not Incoming".into(),
+                            "response not PostcardBytes".into(),
                         ),
                     );
                 }
@@ -450,11 +468,11 @@ impl WordLabClient {
             tracker: schema_tracker,
         } = with_tracker;
         let ret_bytes = match &response.ret {
-            ::roam::Payload::Incoming(bytes) => bytes,
+            ::roam::Payload::PostcardBytes(bytes) => bytes,
             _ => {
                 return Err(
                     ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
-                        "response not Incoming".into(),
+                        "response not PostcardBytes".into(),
                     ),
                 );
             }

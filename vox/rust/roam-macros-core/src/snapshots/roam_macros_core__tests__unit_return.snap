@@ -93,12 +93,12 @@ where
     ) {
         let method_id = call.method_id;
         let args_bytes = match &call.args {
-            ::roam::Payload::Incoming(bytes) => bytes,
+            ::roam::Payload::PostcardBytes(bytes) => bytes,
             _ => {
                 reply
                     .send_error(
                         ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
-                            "args not Incoming".into(),
+                            "args not PostcardBytes".into(),
                         ),
                     )
                     .await;
@@ -120,16 +120,22 @@ where
             let args: (String,) = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
+                    ::std::eprintln!(
+                        "[rpc] dispatch args decode failed: method={:?} error={}",
+                        method_id,
+                        e
+                    );
                     reply
-                        .send_error(
-                            ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
-                                e.to_string(),
-                            ),
-                        )
+                        .send_typed_error::<(), ::core::convert::Infallible>(::roam::RoamError::<
+                            ::core::convert::Infallible,
+                        >::InvalidPayload(
+                            e.to_string()
+                        ))
                         .await;
                     return;
                 }
             };
+            ::std::eprintln!("[rpc] dispatch invoking method={:?}", method_id);
             let (msg,) = args;
             let extensions = ::roam::Extensions::new();
             let context = ::roam::RequestContext::with_extensions(
@@ -224,11 +230,11 @@ impl NotifierClient {
             tracker: schema_tracker,
         } = with_tracker;
         let ret_bytes = match &response.ret {
-            ::roam::Payload::Incoming(bytes) => bytes,
+            ::roam::Payload::PostcardBytes(bytes) => bytes,
             _ => {
                 return Err(
                     ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
-                        "response not Incoming".into(),
+                        "response not PostcardBytes".into(),
                     ),
                 );
             }
