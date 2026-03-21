@@ -436,6 +436,61 @@ describe("session resumption", () => {
     await Promise.allSettled([serverRun, serverSession.closed(), clientSession.closed()]);
   });
 
+  it("fails closed on resume for channel-bearing non-idempotent calls", async () => {
+    const [clientLink, serverLink] = memoryLinkPair();
+    const [clientSession, serverSession] = await withTimeout(
+      establishPair(clientLink, serverLink, { resumable: true }),
+      "initial session establishment",
+    );
+
+    const connection = clientSession.rootConnection() as unknown as {
+      pendingResponses: Map<bigint, {
+        settled: boolean;
+        timer: ReturnType<typeof setTimeout>;
+        methodId: bigint;
+        payload: Uint8Array;
+        metadata: [];
+        channels: bigint[];
+        persist: boolean;
+        idem: boolean;
+        requestIds: Set<bigint>;
+        resolve: (value: Uint8Array) => void;
+        reject: (reason: unknown) => void;
+        finalizeChannels?: () => void;
+      }>;
+      onSessionResumed(): void;
+    };
+
+    let rejected: unknown;
+    connection.pendingResponses.set(1n, {
+      settled: false,
+      timer: setTimeout(() => {}, 1_000),
+      methodId: 1n,
+      payload: new Uint8Array(0),
+      metadata: [],
+      channels: [7n],
+      persist: false,
+      idem: false,
+      requestIds: new Set([1n]),
+      resolve: () => {},
+      reject: (reason) => {
+        rejected = reason;
+      },
+    });
+
+    connection.onSessionResumed();
+
+    expect(rejected).toMatchObject({ code: RpcErrorCode.INDETERMINATE });
+    expect(connection.pendingResponses.size).toBe(0);
+
+    clientLink.close();
+    serverLink.close();
+    clientSession.handle().shutdown();
+    serverSession.handle().shutdown();
+
+    await Promise.allSettled([serverSession.closed(), clientSession.closed()]);
+  });
+
   it("keeps a pending call alive across registry-driven acceptor resume", async () => {
     const registry = new SessionRegistry();
     const [clientLink1, serverLink1] = memoryLinkPair();

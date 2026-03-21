@@ -1410,6 +1410,12 @@ export class ConnectionHandle {
       if (state.settled) {
         continue;
       }
+      const failClosedOnResume = state.channels.length > 0 && !state.idem;
+      if (failClosedOnResume) {
+        this.clearPendingState(state);
+        state.reject(new RpcError(RpcErrorCode.INDETERMINATE));
+        continue;
+      }
       for (const requestId of state.requestIds) {
         this.pendingResponses.delete(requestId);
       }

@@ -1445,10 +1445,12 @@ impl ExtractCtx {
     fn type_ref_for_shape(
         &mut self,
         shape: &'static Shape,
-        param_map: &HashMap<*const Shape, TypeParamName>,
+        param_map: &[(&'static Shape, TypeParamName)],
     ) -> Result<TypeRef<MixedId>, SchemaExtractError> {
-        let ptr = shape as *const Shape;
-        if let Some(name) = param_map.get(&ptr) {
+        if let Some((_, name)) = param_map
+            .iter()
+            .find(|(param_shape, _)| shape.is_shape(param_shape))
+        {
             // This shape is a type parameter — emit Var reference.
             // But we still need to extract the concrete type's schema.
             self.extract(shape)?;
@@ -1542,10 +1544,10 @@ impl ExtractCtx {
 
         // Build a map from shape pointer → type param name for this type.
         // Used to emit Var references in the schema body.
-        let param_map: HashMap<*const Shape, TypeParamName> = shape
+        let param_map: Vec<(&'static Shape, TypeParamName)> = shape
             .type_params
             .iter()
-            .map(|tp| (tp.shape as *const Shape, TypeParamName(tp.name.to_string())))
+            .map(|tp| (tp.shape, TypeParamName(tp.name.to_string())))
             .collect();
         let type_param_names: Vec<TypeParamName> = shape
             .type_params
@@ -2720,6 +2722,35 @@ mod tests {
                 assert!(matches!(elements[1], TypeRef::Var { .. }));
             }
             other => panic!("expected Tuple, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn generic_roam_error_uses_var_in_user_payload() {
+        use crate::RoamError;
+
+        let schemas = extract_schemas(<RoamError<::core::convert::Infallible> as Facet>::SHAPE)
+            .unwrap()
+            .schemas;
+        let roam_error_schema = schemas
+            .iter()
+            .find(|s| matches!(&s.kind, SchemaKind::Enum { name, .. } if name == "RoamError"))
+            .expect("RoamError schema should be present");
+        match &roam_error_schema.kind {
+            SchemaKind::Enum { variants, .. } => {
+                let user = variants
+                    .iter()
+                    .find(|variant| variant.name == "User")
+                    .expect("RoamError should have User variant");
+                let VariantPayload::Newtype { type_ref } = &user.payload else {
+                    panic!("User variant should be newtype");
+                };
+                assert!(
+                    matches!(type_ref, TypeRef::Var { .. }),
+                    "User payload should be a type variable, got {type_ref:?}"
+                );
+            }
+            other => panic!("expected enum, got {other:?}"),
         }
     }
 
