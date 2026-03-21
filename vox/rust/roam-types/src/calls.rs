@@ -169,6 +169,33 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
         }
     }
 
+    /// Send an error response using the full wire shape `Result<T, RoamError<E>>`.
+    ///
+    /// This preserves the method's real `Ok` type for schema extraction.
+    fn send_typed_error<'wire, T, E>(
+        self,
+        error: RoamError<E>,
+    ) -> impl std::future::Future<Output = ()> + MaybeSend
+    where
+        Self: Sized,
+        T: facet::Facet<'wire> + MaybeSend,
+        E: facet::Facet<'wire> + MaybeSend,
+    {
+        use crate::{Payload, RequestResponse};
+        async move {
+            let wire: Result<T, RoamError<E>> = Err(error);
+            let ptr = facet::PtrConst::new((&wire as *const Result<T, RoamError<E>>).cast::<u8>());
+            let shape = <Result<T, RoamError<E>> as facet::Facet<'wire>>::SHAPE;
+            let ret = unsafe { Payload::outgoing_unchecked(ptr, shape) };
+            self.send_reply(RequestResponse {
+                ret,
+                metadata: Default::default(),
+                schemas: Default::default(),
+            })
+            .await;
+        }
+    }
+
     /// Return a channel binder for binding Tx/Rx handles in deserialized args.
     ///
     /// Returns `None` by default. The driver's `ReplySink` implementation
@@ -521,6 +548,67 @@ mod tests {
                 .lock()
                 .expect("payload-kind mutex poisoned")
         );
+    }
+
+    #[tokio::test]
+    async fn reply_sink_send_typed_error_preserves_ok_shape() {
+        use crate::{
+            RoamError, SchemaKind, TypeRef, VariantPayload, build_registry, extract_schemas,
+        };
+
+        struct ShapeReplySink {
+            observed_root: Arc<Mutex<Option<TypeRef>>>,
+        }
+
+        impl ReplySink for ShapeReplySink {
+            async fn send_reply(self, response: RequestResponse<'_>) {
+                let Payload::Value { shape, .. } = response.ret else {
+                    panic!("typed error should use outgoing payload");
+                };
+                let extracted = extract_schemas(shape).expect("response shape should extract");
+                *self
+                    .observed_root
+                    .lock()
+                    .expect("observed-root mutex poisoned") = Some(extracted.root);
+            }
+        }
+
+        let observed_root = Arc::new(Mutex::new(None));
+        ShapeReplySink {
+            observed_root: Arc::clone(&observed_root),
+        }
+        .send_typed_error::<(String, i32), String>(RoamError::Cancelled)
+        .await;
+
+        let root = observed_root
+            .lock()
+            .expect("observed-root mutex poisoned")
+            .clone()
+            .expect("typed error should record a root");
+        let extracted =
+            extract_schemas(<Result<(String, i32), RoamError<String>> as facet::Facet>::SHAPE)
+                .expect("expected result shape should extract");
+        let registry = build_registry(&extracted.schemas);
+        let root_kind = root.resolve_kind(&registry).expect("root should resolve");
+        let SchemaKind::Enum { variants, .. } = root_kind else {
+            panic!("expected result enum root");
+        };
+        let ok_variant = variants
+            .iter()
+            .find(|variant| variant.name == "Ok")
+            .expect("Result should have Ok variant");
+        let VariantPayload::Newtype { type_ref } = &ok_variant.payload else {
+            panic!("Ok variant should be newtype");
+        };
+        match type_ref
+            .resolve_kind(&registry)
+            .expect("Ok payload should resolve")
+        {
+            SchemaKind::Tuple { elements } => {
+                assert_eq!(elements.len(), 2, "Ok tuple should have two elements");
+            }
+            other => panic!("expected Ok payload to be tuple, got {other:?}"),
+        }
     }
 
     #[tokio::test]

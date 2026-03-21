@@ -370,9 +370,9 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
         quote! {
             let method_id = call.method_id;
             let args_bytes = match &call.args {
-                #roam::Payload::Incoming(bytes) => bytes,
+                #roam::Payload::PostcardBytes(bytes) => bytes,
                 _ => {
-                    reply.send_error(#roam::RoamError::<::core::convert::Infallible>::InvalidPayload("args not Incoming".into())).await;
+                    reply.send_error(#roam::RoamError::<::core::convert::Infallible>::InvalidPayload("args not PostcardBytes".into())).await;
                     return;
                 }
             };
@@ -579,10 +579,20 @@ fn generate_dispatch_arm(
             #args_let = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
-                    reply.send_error(#roam::RoamError::<::core::convert::Infallible>::InvalidPayload(e.to_string())).await;
+                    ::std::eprintln!(
+                        "[rpc] dispatch args decode failed: method={:?} error={}",
+                        method_id,
+                        e
+                    );
+                    reply
+                        .send_typed_error::<#ok_ty, ::core::convert::Infallible>(
+                            #roam::RoamError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
+                        )
+                        .await;
                     return;
                 }
             };
+            ::std::eprintln!("[rpc] dispatch invoking method={:?}", method_id);
             #destructure
             #context_setup
             #invoke_and_reply
@@ -761,8 +771,8 @@ fn generate_client_method(
                 let #roam::WithTracker { value: response, tracker: schema_tracker } = with_tracker;
                 response.try_repack(|resp, _bytes| {
                     let ret_bytes = match &resp.ret {
-                        #roam::Payload::Incoming(bytes) => bytes,
-                        _ => return Err(#roam::RoamError::<#err_ty>::InvalidPayload("response not Incoming".into())),
+                        #roam::Payload::PostcardBytes(bytes) => bytes,
+                        _ => return Err(#roam::RoamError::<#err_ty>::InvalidPayload("response not PostcardBytes".into())),
                     };
                     let result: Result<#ok_ty_decode, #roam::RoamError<#err_ty>> =
                         #roam::schema_deser::schema_deserialize_response_borrowed(ret_bytes, method_id, &schema_tracker)
@@ -796,8 +806,8 @@ fn generate_client_method(
                 })?;
                 let #roam::WithTracker { value: response, tracker: schema_tracker } = with_tracker;
                 let ret_bytes = match &response.ret {
-                    #roam::Payload::Incoming(bytes) => bytes,
-                    _ => return Err(#roam::RoamError::<#err_ty>::InvalidPayload("response not Incoming".into())),
+                    #roam::Payload::PostcardBytes(bytes) => bytes,
+                    _ => return Err(#roam::RoamError::<#err_ty>::InvalidPayload("response not PostcardBytes".into())),
                 };
                 let result: Result<#ok_ty_decode, #roam::RoamError<#err_ty>> =
                     #roam::schema_deser::schema_deserialize_response(

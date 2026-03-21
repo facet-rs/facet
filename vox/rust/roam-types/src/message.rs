@@ -278,7 +278,7 @@ pub enum Payload<'payload> {
     },
 
     // r[impl zerocopy.payload.bytes]
-    /// Incoming: raw bytes borrowed from the backing (zero-copy).
+    /// Raw bytes borrowed from the backing (zero-copy).
     PostcardBytes(&'payload [u8]),
 }
 

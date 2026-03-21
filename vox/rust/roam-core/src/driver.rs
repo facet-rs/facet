@@ -340,6 +340,16 @@ impl ReplySink for DriverReplySink {
             .take()
             .expect("unreachable: send_reply takes self by value");
 
+        if let Payload::Value { shape, .. } = &response.ret
+            && let Ok(extracted) = roam_types::extract_schemas(shape)
+        {
+            roam_types::dlog!(
+                "[schema] driver send_reply: method={:?} root={:?}",
+                self.method_id,
+                extracted.root
+            );
+        }
+
         if let (Some(operation_id), Some(operations)) = (self.operation_id, self.operations.take())
         {
             let mut response = response;
@@ -755,7 +765,7 @@ impl Caller for DriverCaller {
         // r[impl schema.exchange.caller]
         // r[impl schema.exchange.channels]
         // Schemas are attached by SessionCore::send() when it sees a Call
-        // with Payload::Outgoing — no separate prepare step needed.
+        // with Payload::Value — no separate prepare step needed.
         //
         // Channel binding happens during serialization via the thread-local
         // ChannelBinder — no post-hoc walk needed.

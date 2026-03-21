@@ -408,7 +408,10 @@ impl ConnectionSender {
             connection_id: self.connection_id,
             payload,
         };
-        self.sess_core.send(message, binder).await.map_err(|_| ())
+        self.sess_core
+            .send(message, binder, None)
+            .await
+            .map_err(|_| ())
     }
 
     /// Send an arbitrary connection message
@@ -429,12 +432,13 @@ impl ConnectionSender {
             payload,
         };
         #[cfg(target_arch = "wasm32")]
-        return self.sess_core.send(message).await.map_err(|_| ());
+        return self.sess_core.send(message, None).await.map_err(|_| ());
     }
 
     /// Send a received connection message without re-materializing payload values.
     pub(crate) async fn send_owned(
         &self,
+        schemas: Arc<roam_types::SchemaRecvTracker>,
         msg: SelfRef<ConnectionMessage<'static>>,
     ) -> Result<(), ()> {
         let payload = match &*msg {
@@ -457,6 +461,7 @@ impl ConnectionSender {
                         payload,
                     },
                     None,
+                    Some(&*schemas),
                 )
                 .await
                 .map_err(|_| ())
@@ -465,10 +470,13 @@ impl ConnectionSender {
         #[cfg(target_arch = "wasm32")]
         {
             self.sess_core
-                .send(Message {
-                    connection_id: self.connection_id,
-                    payload,
-                })
+                .send(
+                    Message {
+                        connection_id: self.connection_id,
+                        payload,
+                    },
+                    Some(&*schemas),
+                )
                 .await
                 .map_err(|_| ())
         }
@@ -643,7 +651,7 @@ pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) 
                 let Some(recv) = recv else {
                     break;
                 };
-                if right_sender.send_owned(recv.msg).await.is_err() {
+                if right_sender.send_owned(recv.schemas, recv.msg).await.is_err() {
                     break;
                 }
             }
@@ -651,7 +659,7 @@ pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) 
                 let Some(recv) = recv else {
                     break;
                 };
-                if left_sender.send_owned(recv.msg).await.is_err() {
+                if left_sender.send_owned(recv.schemas, recv.msg).await.is_err() {
                     break;
                 }
             }
@@ -1108,7 +1116,7 @@ impl Session {
                     .send(Message {
                         connection_id: conn_id,
                         payload: MessagePayload::Pong(roam_types::Pong { nonce: ping.nonce }),
-                    }, None)
+                    }, None, None)
                     .await;
             }
             MessagePayload::Pong(pong) => {
@@ -1182,6 +1190,7 @@ impl Session {
                     payload: MessagePayload::Ping(roam_types::Ping { nonce }),
                 },
                 None,
+                None,
             )
             .await
             .is_err()
@@ -1216,6 +1225,7 @@ impl Session {
                         }),
                     },
                     None,
+                    None,
                 )
                 .await;
             return;
@@ -1233,6 +1243,7 @@ impl Session {
                             metadata: vec![],
                         }),
                     },
+                    None,
                     None,
                 )
                 .await;
@@ -1253,6 +1264,7 @@ impl Session {
                                 roam_types::ConnectionReject { metadata: vec![] },
                             ),
                         },
+                        None,
                         None,
                     )
                     .await;
@@ -1283,6 +1295,7 @@ impl Session {
                             ),
                         },
                         None,
+                        None,
                     )
                     .await;
 
@@ -1301,6 +1314,7 @@ impl Session {
                                 },
                             ),
                         },
+                        None,
                         None,
                     )
                     .await;
@@ -1371,6 +1385,7 @@ impl Session {
                     }),
                 },
                 None,
+                None,
             )
             .await;
 
@@ -1421,6 +1436,7 @@ impl Session {
                     }),
                 },
                 None,
+                None,
             )
             .await;
 
@@ -1461,6 +1477,7 @@ impl Session {
                                     metadata: vec![],
                                 }),
                             },
+                            None,
                             None,
                         )
                         .await;
@@ -1552,6 +1569,7 @@ impl SessionCore {
         &self,
         mut msg: Message<'a>,
         binder: Option<&'a dyn roam_types::ChannelBinder>,
+        forwarded_schemas: Option<&roam_types::SchemaRecvTracker>,
     ) -> Result<(), ()> {
         let tx = {
             let mut inner = self.inner.lock().expect("session core mutex poisoned");
@@ -1564,24 +1582,23 @@ impl SessionCore {
                     .or_insert_with(SendConnState::new);
                 match &mut req.body {
                     RequestBody::Call(call) => {
-                        conn_state.inflight_outgoing.insert(req.id, call.method_id);
-                        let key = (roam_types::BindingDirection::Args, call.method_id);
-                        if !conn_state.method_tracker.contains(&key) {
-                            match conn_state
-                                .send_tracker
-                                .attach_schemas_if_needed(call.method_id, call)
-                            {
-                                Ok(_) => {}
-                                Err(e) => {
-                                    tracing::error!("schema extraction failed: {e}");
-                                }
-                            }
-                            conn_state.method_tracker.insert(key);
-                        }
+                        Self::prepare_call_schemas(
+                            conn_state,
+                            req.id,
+                            call.method_id,
+                            call,
+                            forwarded_schemas,
+                        );
                     }
                     RequestBody::Response(resp) => {
                         if let Some(method_id) = conn_state.inflight_incoming.remove(&req.id) {
-                            Self::prepare_response_schemas(conn_state, req.id, method_id, resp);
+                            Self::prepare_response_schemas(
+                                conn_state,
+                                req.id,
+                                method_id,
+                                resp,
+                                forwarded_schemas,
+                            );
                         }
                     }
                     RequestBody::Cancel(_) => {}
@@ -1594,7 +1611,11 @@ impl SessionCore {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub(crate) async fn send<'a>(&self, mut msg: Message<'a>) -> Result<(), ()> {
+    pub(crate) async fn send<'a>(
+        &self,
+        mut msg: Message<'a>,
+        forwarded_schemas: Option<&roam_types::SchemaRecvTracker>,
+    ) -> Result<(), ()> {
         let tx = {
             let mut inner = self.inner.lock().expect("session core mutex poisoned");
             let conn_id = msg.connection_id;
@@ -1606,24 +1627,23 @@ impl SessionCore {
                     .or_insert_with(SendConnState::new);
                 match &mut req.body {
                     RequestBody::Call(call) => {
-                        conn_state.inflight_outgoing.insert(req.id, call.method_id);
-                        let key = (roam_types::BindingDirection::Args, call.method_id);
-                        if !conn_state.method_tracker.contains(&key) {
-                            match conn_state
-                                .send_tracker
-                                .attach_schemas_if_needed(call.method_id, call)
-                            {
-                                Ok(_) => {}
-                                Err(e) => {
-                                    tracing::error!("schema extraction failed: {e}");
-                                }
-                            }
-                            conn_state.method_tracker.insert(key);
-                        }
+                        Self::prepare_call_schemas(
+                            conn_state,
+                            req.id,
+                            call.method_id,
+                            call,
+                            forwarded_schemas,
+                        );
                     }
                     RequestBody::Response(resp) => {
                         if let Some(method_id) = conn_state.inflight_incoming.remove(&req.id) {
-                            Self::prepare_response_schemas(conn_state, req.id, method_id, resp);
+                            Self::prepare_response_schemas(
+                                conn_state,
+                                req.id,
+                                method_id,
+                                resp,
+                                forwarded_schemas,
+                            );
                         }
                     }
                     RequestBody::Cancel(_) => {}
@@ -1682,7 +1702,7 @@ impl SessionCore {
             .entry(conn_id)
             .or_insert_with(SendConnState::new);
         conn_state.inflight_incoming.remove(&request_id);
-        Self::prepare_response_schemas(conn_state, request_id, method_id, response);
+        Self::prepare_response_schemas(conn_state, request_id, method_id, response, None);
     }
 
     /// Borrow the send tracker's schema registry for the given connection.
@@ -1723,28 +1743,126 @@ impl SessionCore {
 
     fn prepare_response_schemas(
         conn_state: &mut SendConnState,
-        _request_id: RequestId,
+        request_id: RequestId,
         method_id: roam_types::MethodId,
         response: &mut RequestResponse<'_>,
+        forwarded_schemas: Option<&roam_types::SchemaRecvTracker>,
     ) {
         let key = (roam_types::BindingDirection::Response, method_id);
-        if !conn_state.method_tracker.contains(&key) {
-            match conn_state
-                .send_tracker
-                .attach_schemas_if_needed(method_id, response)
-            {
-                Ok(schemas) => {
-                    roam_types::dlog!(
-                        "[schema] prepared {} bytes of response schemas for method {:?} (req {:?})",
-                        schemas.0.len(),
-                        method_id,
-                        _request_id
-                    );
-                }
-                Err(e) => {
-                    tracing::error!("schema extraction failed: {e}");
+        if conn_state.method_tracker.contains(&key) {
+            return;
+        }
+
+        let prepared = match &response.ret {
+            roam_types::Payload::Value { shape, .. } => {
+                match conn_state
+                    .send_tracker
+                    .attach_schemas_for_shape_if_needed(method_id, shape, response)
+                {
+                    Ok(schemas) => {
+                        roam_types::dlog!(
+                            "[schema] prepared {} bytes of response schemas for method {:?} (req {:?})",
+                            schemas.0.len(),
+                            method_id,
+                            request_id
+                        );
+                        true
+                    }
+                    Err(e) => {
+                        tracing::error!("schema extraction failed: {e}");
+                        false
+                    }
                 }
             }
+            roam_types::Payload::PostcardBytes(_) => {
+                let Some(source) = forwarded_schemas else {
+                    tracing::error!(
+                        "schema attachment failed: missing forwarded response schemas for method {:?}",
+                        method_id
+                    );
+                    return;
+                };
+                let Some(root) = source.get_remote_response_root(method_id) else {
+                    tracing::error!(
+                        "schema attachment failed: missing forwarded response root for method {:?}",
+                        method_id
+                    );
+                    return;
+                };
+                let schemas = conn_state.send_tracker.prepare_send(
+                    method_id,
+                    roam_types::BindingDirection::Response,
+                    &root,
+                    source,
+                );
+                response.schemas = schemas.clone();
+                roam_types::dlog!(
+                    "[schema] prepared {} bytes of forwarded response schemas for method {:?} (req {:?})",
+                    schemas.0.len(),
+                    method_id,
+                    request_id
+                );
+                true
+            }
+        };
+
+        if prepared {
+            conn_state.method_tracker.insert(key);
+        }
+    }
+
+    fn prepare_call_schemas(
+        conn_state: &mut SendConnState,
+        request_id: RequestId,
+        method_id: roam_types::MethodId,
+        call: &mut roam_types::RequestCall<'_>,
+        forwarded_schemas: Option<&roam_types::SchemaRecvTracker>,
+    ) {
+        conn_state.inflight_outgoing.insert(request_id, method_id);
+        let key = (roam_types::BindingDirection::Args, method_id);
+        if conn_state.method_tracker.contains(&key) {
+            return;
+        }
+
+        let prepared = match &call.args {
+            roam_types::Payload::Value { shape, .. } => {
+                match conn_state
+                    .send_tracker
+                    .attach_schemas_for_shape_if_needed(method_id, shape, call)
+                {
+                    Ok(_) => true,
+                    Err(e) => {
+                        tracing::error!("schema extraction failed: {e}");
+                        false
+                    }
+                }
+            }
+            roam_types::Payload::PostcardBytes(_) => {
+                let Some(source) = forwarded_schemas else {
+                    tracing::error!(
+                        "schema attachment failed: missing forwarded args schemas for method {:?}",
+                        method_id
+                    );
+                    return;
+                };
+                let Some(root) = source.get_remote_args_root(method_id) else {
+                    tracing::error!(
+                        "schema attachment failed: missing forwarded args root for method {:?}",
+                        method_id
+                    );
+                    return;
+                };
+                call.schemas = conn_state.send_tracker.prepare_send(
+                    method_id,
+                    roam_types::BindingDirection::Args,
+                    &root,
+                    source,
+                );
+                true
+            }
+        };
+
+        if prepared {
             conn_state.method_tracker.insert(key);
         }
     }

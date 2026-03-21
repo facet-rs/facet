@@ -819,22 +819,12 @@ impl std::fmt::Display for SchemaExtractError {
 /// A value for which a schema can be attached
 pub trait Schematic {
     fn direction(&self) -> BindingDirection;
-    fn shape(&self) -> &'static Shape;
     fn attach_schemas(&mut self, schemas: CborPayload);
 }
 
 impl<'payload> Schematic for RequestCall<'payload> {
     fn direction(&self) -> BindingDirection {
         BindingDirection::Args
-    }
-
-    fn shape(&self) -> &'static Shape {
-        match &self.args {
-            crate::Payload::Value { shape, .. } => *shape,
-            crate::Payload::PostcardBytes(_) => {
-                panic!("RequestCall schema attachment requires an outgoing args payload")
-            }
-        }
     }
 
     fn attach_schemas(&mut self, schemas: CborPayload) {
@@ -845,15 +835,6 @@ impl<'payload> Schematic for RequestCall<'payload> {
 impl<'payload> Schematic for RequestResponse<'payload> {
     fn direction(&self) -> BindingDirection {
         BindingDirection::Response
-    }
-
-    fn shape(&self) -> &'static Shape {
-        match &self.ret {
-            crate::Payload::Value { shape, .. } => *shape,
-            crate::Payload::PostcardBytes(_) => {
-                panic!("RequestResponse schema attachment requires an outgoing return payload")
-            }
-        }
     }
 
     fn attach_schemas(&mut self, schemas: CborPayload) {
@@ -922,9 +903,10 @@ impl SchemaSendTracker {
     // r[impl schema.principles.once-per-type]
     // r[impl schema.principles.sender-driven]
     // r[impl schema.principles.no-roundtrips]
-    pub fn attach_schemas_if_needed(
+    pub fn attach_schemas_for_shape_if_needed(
         &mut self,
         method_id: MethodId,
+        shape: &'static Shape,
         schematic: &mut impl Schematic,
     ) -> Result<CborPayload, SchemaExtractError> {
         let key = (method_id, schematic.direction());
@@ -941,7 +923,7 @@ impl SchemaSendTracker {
 
         // Use a fresh extraction pass here. Reusing `self.emitted` across
         // unrelated method shapes can alias structural roots like unary tuples.
-        let extracted = extract_schemas(schematic.shape())?;
+        let extracted = extract_schemas(shape)?;
 
         // Add all schemas to the persistent registry (for the operation store).
         for schema in &extracted.schemas {
@@ -966,6 +948,13 @@ impl SchemaSendTracker {
             schemas: unsent,
             root: extracted.root,
         };
+        dlog!(
+            "[schema] send binding: method={:?} direction={:?} root={:?} schema_count={}",
+            method_id,
+            schematic.direction(),
+            schema_payload.root,
+            schema_payload.schemas.len()
+        );
         let cbor = schema_payload.to_cbor();
         schematic.attach_schemas(cbor.clone());
         self.sent_bindings.insert(key);
@@ -1021,11 +1010,18 @@ impl SchemaSendTracker {
             self.sent_schemas.insert(schema.id);
         }
 
-        let cbor = SchemaPayload {
+        let schema_payload = SchemaPayload {
             schemas: unsent,
             root: root_type.clone(),
-        }
-        .to_cbor();
+        };
+        dlog!(
+            "[schema] resend binding: method={:?} direction={:?} root={:?} schema_count={}",
+            method_id,
+            direction,
+            schema_payload.root,
+            schema_payload.schemas.len()
+        );
+        let cbor = schema_payload.to_cbor();
         self.sent_bindings.insert(key);
         cbor
     }
@@ -1170,6 +1166,12 @@ impl SchemaRecvTracker {
             BindingDirection::Args => &self.received_args_bindings,
             BindingDirection::Response => &self.received_response_bindings,
         };
+        dlog!(
+            "[schema] record binding: method={:?} direction={:?} root={:?}",
+            method_id,
+            direction,
+            payload.root
+        );
         map.lock().unwrap().insert(method_id, payload.root);
         Ok(())
     }
@@ -1206,6 +1208,12 @@ impl SchemaRecvTracker {
 impl Default for SchemaRecvTracker {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl SchemaSource for SchemaRecvTracker {
+    fn get_schema(&self, id: SchemaHash) -> Option<Schema> {
+        self.get_received(&id)
     }
 }
 
@@ -1904,10 +1912,6 @@ mod tests {
             self.direction
         }
 
-        fn shape(&self) -> &'static Shape {
-            self.shape
-        }
-
         fn attach_schemas(&mut self, schemas: CborPayload) {
             self.attached = schemas;
         }
@@ -2213,7 +2217,7 @@ mod tests {
         let method = MethodId(1);
         let mut schematic = TestSchematic::new(BindingDirection::Args, <u32 as Facet>::SHAPE);
         let first = tracker
-            .attach_schemas_if_needed(method, &mut schematic)
+            .attach_schemas_for_shape_if_needed(method, schematic.shape, &mut schematic)
             .unwrap();
         assert!(
             !first.is_empty(),
@@ -2221,7 +2225,7 @@ mod tests {
         );
         assert_eq!(schematic.attached.0, first.0);
         let second = tracker
-            .attach_schemas_if_needed(method, &mut schematic)
+            .attach_schemas_for_shape_if_needed(method, schematic.shape, &mut schematic)
             .unwrap();
         assert!(
             second.is_empty(),
@@ -2244,7 +2248,7 @@ mod tests {
         let method = MethodId(1);
         let mut schematic = TestSchematic::new(BindingDirection::Args, Outer::SHAPE);
         let first = tracker
-            .attach_schemas_if_needed(method, &mut schematic)
+            .attach_schemas_for_shape_if_needed(method, schematic.shape, &mut schematic)
             .unwrap();
         assert!(!first.is_empty(), "should return schemas");
         let parsed = SchemaPayload::from_cbor(&first.0).expect("should parse CBOR");
@@ -2257,7 +2261,7 @@ mod tests {
         // Same method again — nothing to send
         schematic.shape = <u32 as Facet>::SHAPE;
         let again = tracker
-            .attach_schemas_if_needed(method, &mut schematic)
+            .attach_schemas_for_shape_if_needed(method, schematic.shape, &mut schematic)
             .unwrap();
         assert!(
             again.is_empty(),
@@ -2425,7 +2429,7 @@ mod tests {
         // Send args binding
         let mut args_schematic = TestSchematic::new(BindingDirection::Args, <u32 as Facet>::SHAPE);
         let args = tracker
-            .attach_schemas_if_needed(method, &mut args_schematic)
+            .attach_schemas_for_shape_if_needed(method, args_schematic.shape, &mut args_schematic)
             .unwrap();
         assert!(!args.is_empty(), "should send args");
         let args_parsed = SchemaPayload::from_cbor(&args.0).expect("parse args CBOR");
@@ -2434,7 +2438,11 @@ mod tests {
         let mut response_schematic =
             TestSchematic::new(BindingDirection::Response, <String as Facet>::SHAPE);
         let response = tracker
-            .attach_schemas_if_needed(method, &mut response_schematic)
+            .attach_schemas_for_shape_if_needed(
+                method,
+                response_schematic.shape,
+                &mut response_schematic,
+            )
             .unwrap();
         assert!(!response.is_empty(), "should send response");
         let response_parsed = SchemaPayload::from_cbor(&response.0).expect("parse response CBOR");
@@ -2506,14 +2514,14 @@ mod tests {
         let method = MethodId(1);
         let mut schematic = TestSchematic::new(BindingDirection::Args, <u32 as Facet>::SHAPE);
         let first = tracker
-            .attach_schemas_if_needed(method, &mut schematic)
+            .attach_schemas_for_shape_if_needed(method, schematic.shape, &mut schematic)
             .unwrap();
         assert!(!first.is_empty(), "first should return payload");
 
         tracker.reset();
 
         let after_reset = tracker
-            .attach_schemas_if_needed(method, &mut schematic)
+            .attach_schemas_for_shape_if_needed(method, schematic.shape, &mut schematic)
             .unwrap();
         assert!(
             !after_reset.is_empty(),
@@ -2646,6 +2654,41 @@ mod tests {
                 other => panic!("expected concrete after resolution, got {other:?}"),
             },
             other => panic!("expected List, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extract_result_tuple_root_preserves_ok_tuple() {
+        use crate::RoamError;
+
+        let extracted = extract_schemas(
+            <Result<(String, i32), RoamError<::core::convert::Infallible>> as Facet>::SHAPE,
+        )
+        .unwrap();
+        let registry = build_registry(&extracted.schemas);
+        let root = extracted
+            .root
+            .resolve_kind(&registry)
+            .expect("result root should resolve");
+
+        let SchemaKind::Enum { variants, .. } = root else {
+            panic!("expected Result enum root");
+        };
+        let ok_variant = variants
+            .iter()
+            .find(|variant| variant.name == "Ok")
+            .expect("Result should have Ok variant");
+        let VariantPayload::Newtype { type_ref } = &ok_variant.payload else {
+            panic!("Ok variant should be newtype");
+        };
+        let ok_kind = type_ref
+            .resolve_kind(&registry)
+            .expect("Ok payload should resolve");
+        match ok_kind {
+            SchemaKind::Tuple { elements } => {
+                assert_eq!(elements.len(), 2, "Ok tuple should have two elements");
+            }
+            other => panic!("expected Ok payload to be tuple, got {other:?}"),
         }
     }
 

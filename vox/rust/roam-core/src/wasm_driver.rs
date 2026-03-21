@@ -417,9 +417,9 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             let operation_id = metadata_operation_id(&call.metadata);
             if let Some(operation_id) = operation_id {
                 let args = match &call.args {
-                    Payload::Incoming(bytes) => *bytes,
-                    Payload::Outgoing { .. } => {
-                        panic!("incoming request payload should always be incoming bytes")
+                    Payload::PostcardBytes(bytes) => *bytes,
+                    Payload::Value { .. } => {
+                        panic!("incoming request payload should always be postcard bytes")
                     }
                 };
                 match self.shared.operations.admit(
