@@ -270,8 +270,8 @@ structstruck::strike! {
 #[facet(opaque = PayloadAdapter, traits(Debug))]
 pub enum Payload<'payload> {
     // r[impl zerocopy.payload.borrowed]
-    /// Outgoing: type-erased pointer to caller-owned memory + its Shape.
-    Outgoing {
+    /// Type-erased pointer to caller-owned memory + its Shape.
+    Value {
         ptr: PtrConst,
         shape: &'static Shape,
         _lt: PhantomData<&'payload ()>,
@@ -279,7 +279,7 @@ pub enum Payload<'payload> {
 
     // r[impl zerocopy.payload.bytes]
     /// Incoming: raw bytes borrowed from the backing (zero-copy).
-    Incoming(&'payload [u8]),
+    PostcardBytes(&'payload [u8]),
 }
 
 impl<'payload> Payload<'payload> {
@@ -296,7 +296,7 @@ impl<'payload> Payload<'payload> {
     ///
     /// The pointed value must remain alive until serialization has completed.
     pub unsafe fn outgoing_unchecked(ptr: PtrConst, shape: &'static Shape) -> Self {
-        Self::Outgoing {
+        Self::Value {
             ptr,
             shape,
             _lt: PhantomData,
@@ -309,12 +309,12 @@ impl<'payload> Payload<'payload> {
     /// For `Incoming`: reborrows the byte slice.
     pub fn reborrow(&self) -> Payload<'_> {
         match self {
-            Payload::Outgoing { ptr, shape, .. } => Payload::Outgoing {
+            Payload::Value { ptr, shape, .. } => Payload::Value {
                 ptr: *ptr,
                 shape,
                 _lt: PhantomData,
             },
-            Payload::Incoming(bytes) => Payload::Incoming(bytes),
+            Payload::PostcardBytes(bytes) => Payload::PostcardBytes(bytes),
         }
     }
 }
@@ -334,8 +334,8 @@ impl FacetOpaqueAdapter for PayloadAdapter {
 
     fn serialize_map(value: &Self::SendValue<'_>) -> OpaqueSerialize {
         match value {
-            Payload::Outgoing { ptr, shape, .. } => OpaqueSerialize { ptr: *ptr, shape },
-            Payload::Incoming(bytes) => opaque_encoded_borrowed(bytes),
+            Payload::Value { ptr, shape, .. } => OpaqueSerialize { ptr: *ptr, shape },
+            Payload::PostcardBytes(bytes) => opaque_encoded_borrowed(bytes),
         }
     }
 
@@ -343,7 +343,7 @@ impl FacetOpaqueAdapter for PayloadAdapter {
         input: OpaqueDeserialize<'de>,
     ) -> Result<Self::RecvValue<'de>, Self::Error> {
         match input {
-            OpaqueDeserialize::Borrowed(bytes) => Ok(Payload::Incoming(bytes)),
+            OpaqueDeserialize::Borrowed(bytes) => Ok(Payload::PostcardBytes(bytes)),
             OpaqueDeserialize::Owned(_) => {
                 Err("payload bytes must be borrowed from backing, not owned".into())
             }

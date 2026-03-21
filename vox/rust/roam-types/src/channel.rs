@@ -778,7 +778,7 @@ impl<T> Rx<T> {
                 }) => {
                     let value = msg
                         .try_repack(|item, _backing_bytes| {
-                            let Payload::Incoming(_) = item.item else {
+                            let Payload::PostcardBytes(_) = item.item else {
                                 return Err(RxError::Protocol(
                                     "incoming channel item payload was not Incoming".into(),
                                 ));
@@ -813,7 +813,7 @@ impl<T> Rx<T> {
             Some(IncomingChannelMessage::Item(msg)) => {
                 let value = msg
                     .try_repack(|item, _backing_bytes| {
-                        let Payload::Incoming(bytes) = item.item else {
+                        let Payload::PostcardBytes(bytes) = item.item else {
                             return Err(RxError::Protocol(
                                 "incoming channel item payload was not Incoming".into(),
                             ));
@@ -1159,7 +1159,7 @@ mod tests {
         let item = SelfRef::owning(
             Backing::Boxed(Box::<[u8]>::default()),
             ChannelItem {
-                item: Payload::Incoming(Box::leak(encoded.into_boxed_slice())),
+                item: Payload::PostcardBytes(Box::leak(encoded.into_boxed_slice())),
             },
         );
         tx.send(IncomingChannelMessage::Item(item))

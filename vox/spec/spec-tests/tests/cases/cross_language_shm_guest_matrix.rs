@@ -311,7 +311,7 @@ pub fn run_message_v7_case() {
             // Channel IDs are now inline in the serialized payload,
             // no longer in a separate sidecar field.
             let payload = match call.args {
-                Payload::Incoming(bytes) => bytes,
+                Payload::PostcardBytes(bytes) => bytes,
                 _ => panic!("expected incoming bytes payload"),
             };
             assert_eq!(payload, b"swift-request");

@@ -830,8 +830,8 @@ impl<'payload> Schematic for RequestCall<'payload> {
 
     fn shape(&self) -> &'static Shape {
         match &self.args {
-            crate::Payload::Outgoing { shape, .. } => *shape,
-            crate::Payload::Incoming(_) => {
+            crate::Payload::Value { shape, .. } => *shape,
+            crate::Payload::PostcardBytes(_) => {
                 panic!("RequestCall schema attachment requires an outgoing args payload")
             }
         }
@@ -849,8 +849,8 @@ impl<'payload> Schematic for RequestResponse<'payload> {
 
     fn shape(&self) -> &'static Shape {
         match &self.ret {
-            crate::Payload::Outgoing { shape, .. } => *shape,
-            crate::Payload::Incoming(_) => {
+            crate::Payload::Value { shape, .. } => *shape,
+            crate::Payload::PostcardBytes(_) => {
                 panic!("RequestResponse schema attachment requires an outgoing return payload")
             }
         }

@@ -64,7 +64,7 @@ async fn send_frame<LTx: LinkTx>(tx: &LTx, seq: u32, ack: Option<u32>, item: &st
         ack: ack.map(|n| PacketAck {
             max_delivered: PacketSeq(n),
         }),
-        item: Payload::Incoming(&item_bytes),
+        item: Payload::PostcardBytes(&item_bytes),
     };
     let peek = unsafe {
         Peek::unchecked_new(
@@ -84,7 +84,7 @@ async fn send_frame<LTx: LinkTx>(tx: &LTx, seq: u32, ack: Option<u32>, item: &st
 fn decode_frame(bytes: &[u8]) -> (u32, Option<u32>, String) {
     let frame: Frame<'_> = roam_postcard::from_slice_borrowed(bytes).unwrap();
     let item_bytes = match &frame.item {
-        Payload::Incoming(b) => b,
+        Payload::PostcardBytes(b) => b,
         _ => unreachable!("deserialized Payload should be Incoming"),
     };
     let item: String = roam_postcard::from_slice(item_bytes).unwrap();

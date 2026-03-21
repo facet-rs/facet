@@ -166,6 +166,7 @@ mod tests {
             id: base.id,
             service_name: base.service_name,
             method_name: base.method_name,
+            args_shape: base.args_shape,
             args: base.args,
             return_shape: base.return_shape,
             retry: RetryPolicy::PERSIST_IDEM,

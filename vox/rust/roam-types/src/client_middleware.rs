@@ -240,7 +240,7 @@ mod tests {
         let mut call = RequestCall {
             method_id: MethodId(1),
             metadata: vec![],
-            args: Payload::Incoming(&[]),
+            args: Payload::PostcardBytes(&[]),
             schemas: Default::default(),
         };
         let mut owned = OwnedMetadata::default();
@@ -292,7 +292,7 @@ mod tests {
                     Backing::Boxed(Box::<[u8]>::default()),
                     RequestResponse {
                         metadata: vec![],
-                        ret: Payload::Incoming(&[]),
+                        ret: Payload::PostcardBytes(&[]),
                         schemas: Default::default(),
                     },
                 ),
@@ -359,7 +359,7 @@ mod tests {
             .call(RequestCall {
                 method_id: MethodId(7),
                 metadata: vec![],
-                args: Payload::Incoming(&[]),
+                args: Payload::PostcardBytes(&[]),
                 schemas: Default::default(),
             })
             .await;

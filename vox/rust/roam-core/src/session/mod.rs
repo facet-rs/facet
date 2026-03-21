@@ -341,10 +341,10 @@ pub(crate) struct ConnectionSender {
 }
 
 fn forwarded_payload<'a>(payload: &'a roam_types::Payload<'static>) -> roam_types::Payload<'a> {
-    let roam_types::Payload::Incoming(bytes) = payload else {
+    let roam_types::Payload::PostcardBytes(bytes) = payload else {
         unreachable!("proxy forwarding expects decoded incoming payload bytes")
     };
-    roam_types::Payload::Incoming(bytes)
+    roam_types::Payload::PostcardBytes(bytes)
 }
 
 fn forwarded_request_body<'a>(body: &'a RequestBody<'static>) -> RequestBody<'a> {

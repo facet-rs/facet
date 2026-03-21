@@ -244,7 +244,7 @@ impl ChannelSink for TestSink {
         let send_count = self.send_count.clone();
         let saw_owned_payload = self.saw_owned_payload.clone();
         Box::pin(async move {
-            if matches!(payload, Payload::Outgoing { .. }) {
+            if matches!(payload, Payload::Value { .. }) {
                 saw_owned_payload.store(true, Ordering::SeqCst);
             }
             gate.notified().await;
@@ -363,7 +363,7 @@ async fn rx_recv_decodes_channel_items() {
     let backing = Backing::Boxed(payload_bytes.into_boxed_slice());
     let item_ref = SelfRef::try_new(backing, |bytes| {
         Ok::<_, std::convert::Infallible>(ChannelItem {
-            item: Payload::Incoming(bytes),
+            item: Payload::PostcardBytes(bytes),
         })
     })
     .unwrap();

@@ -200,6 +200,7 @@ mod tests {
             id: MethodId(7),
             service_name: "Audit",
             method_name: "record",
+            args_shape: <() as facet::Facet<'static>>::SHAPE,
             args: &[],
             return_shape: <() as facet::Facet<'static>>::SHAPE,
             retry: crate::RetryPolicy::VOLATILE,
@@ -230,7 +231,7 @@ mod tests {
                         flags: MetadataFlags::NONE,
                     },
                 ],
-                args: Payload::Incoming(&[]),
+                args: Payload::PostcardBytes(&[]),
                 schemas: Default::default(),
             })
             .await;

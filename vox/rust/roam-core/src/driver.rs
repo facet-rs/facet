@@ -326,8 +326,8 @@ fn extract_root_type_ref(schemas_cbor: &roam_types::CborPayload) -> TypeRef {
 
 fn incoming_args_bytes<'a>(call: &'a RequestCall<'a>) -> &'a [u8] {
     match &call.args {
-        Payload::Incoming(bytes) => bytes,
-        Payload::Outgoing { .. } => {
+        Payload::PostcardBytes(bytes) => bytes,
+        Payload::Value { .. } => {
             panic!("incoming request payload should always be decoded as incoming bytes")
         }
     }

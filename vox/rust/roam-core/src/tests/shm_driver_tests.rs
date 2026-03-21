@@ -90,7 +90,7 @@ impl Handler<DriverReplySink> for EchoHandler {
         _schemas: std::sync::Arc<roam_types::SchemaRecvTracker>,
     ) {
         let args_bytes = match &call.args {
-            Payload::Incoming(bytes) => *bytes,
+            Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
         };
 
@@ -139,7 +139,7 @@ async fn echo_call_across_shm_link() {
         .expect("call should succeed");
 
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let result: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
@@ -156,7 +156,7 @@ impl Handler<DriverReplySink> for BlobEchoHandler {
         _schemas: std::sync::Arc<roam_types::SchemaRecvTracker>,
     ) {
         let args_bytes = match &call.args {
-            Payload::Incoming(bytes) => *bytes,
+            Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
         };
 
@@ -220,7 +220,7 @@ async fn echo_blob_stress_over_shm_link() {
             .expect("blob echo call should succeed");
 
         let ret_bytes = match &response.ret {
-            Payload::Incoming(bytes) => *bytes,
+            Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload in response"),
         };
         let echoed: Vec<u8> = roam_postcard::from_slice(ret_bytes).unwrap_or_else(|e| {

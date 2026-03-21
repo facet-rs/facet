@@ -198,6 +198,7 @@ mod tests {
             id: crate::MethodId(7),
             service_name: "Audit",
             method_name: "record",
+            args_shape: <() as facet::Facet<'static>>::SHAPE,
             args: &[],
             return_shape: <() as facet::Facet<'static>>::SHAPE,
             retry: crate::RetryPolicy::VOLATILE,

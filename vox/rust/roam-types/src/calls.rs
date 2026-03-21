@@ -465,7 +465,7 @@ mod tests {
                 .saw_outgoing_payload
                 .lock()
                 .expect("payload-kind mutex poisoned");
-            *saw_outgoing = matches!(response.ret, Payload::Outgoing { .. });
+            *saw_outgoing = matches!(response.ret, Payload::Value { .. });
         }
     }
 
@@ -530,7 +530,7 @@ mod tests {
             RequestCall {
                 method_id: crate::MethodId(1),
                 metadata: Metadata::default(),
-                args: Payload::Incoming(&[]),
+                args: Payload::PostcardBytes(&[]),
                 schemas: Default::default(),
             },
         );

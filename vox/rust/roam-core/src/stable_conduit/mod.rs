@@ -844,7 +844,7 @@ where
             // Phase 4: deserialize the message from the payload bytes
             // using the message plan for schema-aware translation.
             let item_bytes = match &frame.item {
-                Payload::Incoming(bytes) => bytes,
+                Payload::PostcardBytes(bytes) => bytes,
                 _ => unreachable!("deserialized Payload should always be Incoming"),
             };
             let item_backing = roam_types::Backing::Boxed(item_bytes.to_vec().into());

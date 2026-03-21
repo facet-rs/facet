@@ -294,7 +294,7 @@ impl Handler<DriverReplySink> for EchoHandler {
         _schemas: std::sync::Arc<roam_types::SchemaRecvTracker>,
     ) {
         let args_bytes = match &call.args {
-            Payload::Incoming(bytes) => *bytes,
+            Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
         };
 
@@ -446,7 +446,7 @@ impl Handler<DriverReplySink> for ReplayHandler {
         self.runs.fetch_add(1, Ordering::SeqCst);
         self.release.notified().await;
         let args_bytes = match &call.args {
-            Payload::Incoming(bytes) => *bytes,
+            Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
         };
         let result: u32 = roam_postcard::from_slice(args_bytes).expect("deserialize args");
@@ -520,7 +520,7 @@ impl Handler<DriverReplySink> for ResumableReplyingHandler {
         self.release.notified().await;
 
         let args_bytes = match &call.args {
-            Payload::Incoming(bytes) => *bytes,
+            Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
         };
         let result: u32 = roam_postcard::from_slice(args_bytes).expect("deserialize args");
@@ -553,7 +553,7 @@ impl Handler<DriverReplySink> for RetryAfterResumeHandler {
         }
 
         let args_bytes = match &call.args {
-            Payload::Incoming(bytes) => *bytes,
+            Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
         };
         let result: u32 = roam_postcard::from_slice(args_bytes).expect("deserialize args");
@@ -623,7 +623,7 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
         .await
         .expect("call should still succeed while one root caller remains");
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let echoed: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
@@ -734,7 +734,7 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
         .await
         .expect("virtual connection should still be usable after root caller drop");
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let echoed: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
@@ -917,7 +917,7 @@ async fn cancel_aborts_in_flight_handler() {
     let result = call_task.await.expect("call task join");
     let response = result.expect("call should receive a response");
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let error: Result<(), RoamError> =
@@ -1013,7 +1013,7 @@ async fn cancel_does_not_abort_persist_handler() {
         .expect("call task join")
         .expect("persist call should still receive a response");
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
@@ -1053,7 +1053,7 @@ async fn caller_injects_operation_id_when_peer_supports_retry() {
         .expect("call should succeed");
 
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let operation_id: u64 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
@@ -1161,7 +1161,7 @@ async fn operation_replay_after_resume_delivers_sealed_outcome() {
         .expect("join")
         .expect("first call should succeed");
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
     };
     let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize");
@@ -1192,7 +1192,7 @@ async fn operation_replay_after_resume_delivers_sealed_outcome() {
         .await
         .expect("replay after resume should succeed");
     let ret_bytes = match &replayed.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
     };
     let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize");
@@ -1299,7 +1299,7 @@ async fn duplicate_operation_id_on_same_connection_is_rejected() {
 
     for response in [r1, r2] {
         let ret_bytes = match &response.ret {
-            Payload::Incoming(bytes) => *bytes,
+            Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
         };
         let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize");
@@ -1385,7 +1385,7 @@ async fn call_through_cbor_handshake_reaches_handler() {
     .expect("call should succeed");
 
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
@@ -1426,7 +1426,7 @@ async fn call_through_stable_conduit_reaches_handler() {
     .expect("call should succeed");
 
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
@@ -1468,7 +1468,7 @@ async fn multiple_calls_through_stable_conduit() {
         .expect("call should succeed");
 
         let ret_bytes = match &response.ret {
-            Payload::Incoming(bytes) => *bytes,
+            Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload in response"),
         };
         let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
@@ -1545,7 +1545,7 @@ async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
         .expect("call task join")
         .expect("call should succeed after session resume");
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
@@ -1662,7 +1662,7 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
         .expect("call task join")
         .expect("call should succeed after registry-driven session resume");
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
@@ -1760,7 +1760,7 @@ async fn resumable_source_initiator_keeps_pending_call_alive_across_auto_resume(
         .expect("call task join")
         .expect("call should succeed after source-driven auto-resume");
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
@@ -1843,7 +1843,7 @@ async fn resumable_session_reruns_released_idem_call_after_manual_resume() {
         .expect("call task join")
         .expect("idem call should succeed after retry");
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let value: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
@@ -1927,7 +1927,7 @@ async fn resumable_session_returns_indeterminate_for_released_non_idem_call_afte
         .expect("call task join")
         .expect("runtime should return a response envelope");
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let result: Result<u32, RoamError> =
@@ -2225,7 +2225,7 @@ async fn open_virtual_connection_and_call() {
         .expect("call should succeed");
 
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let result: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
@@ -2271,7 +2271,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
         .await
         .expect("root call should succeed");
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
     };
     let result: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize root response");
@@ -2307,7 +2307,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
         .await
         .expect("virtual connection call should succeed");
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
     };
     let result: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize vconn response");
@@ -2718,7 +2718,7 @@ async fn close_virtual_connection() {
         .expect("call should succeed before close");
 
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
     };
     let result: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize");
@@ -2842,7 +2842,7 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
         .await
         .expect("call should succeed before dropping virtual caller");
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let echoed: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
@@ -2961,7 +2961,7 @@ async fn echo_call_across_memory_link() {
 
     // The echo handler sends back the same bytes. Deserialize the response.
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
     };
     let result: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
@@ -3015,7 +3015,7 @@ async fn buffers_inbound_channel_items_until_rx_is_registered() {
         panic!("expected buffered item");
     };
     let bytes = match item.item {
-        Payload::Incoming(bytes) => bytes,
+        Payload::PostcardBytes(bytes) => bytes,
         _ => panic!("expected incoming payload"),
     };
     let decoded: u32 = roam_postcard::from_slice(bytes).expect("deserialize buffered item");
@@ -3195,7 +3195,7 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
         .expect("call should still succeed after unsolicited response");
 
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
     };
     let result: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize response");
@@ -3336,7 +3336,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
         .await
         .expect("proxied call should succeed");
     let ret_bytes = match &response.ret {
-        Payload::Incoming(bytes) => *bytes,
+        Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
     };
     let result: u32 = roam_postcard::from_slice(ret_bytes).expect("deserialize proxied response");
