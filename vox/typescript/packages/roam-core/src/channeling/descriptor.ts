@@ -32,7 +32,8 @@ export interface ServiceDescriptor {
   service_name: string;
   /** Canonical per-service schema table generated from Rust shapes. */
   send_schemas: ServiceSendSchemas;
-  methods: MethodDescriptor[];
+  /** Method metadata keyed by wire method ID. */
+  methods: Map<bigint, MethodDescriptor>;
 }
 
 /**

@@ -257,7 +257,7 @@ function descriptorFor(method: MethodDescriptor): ServiceDescriptor {
   return {
     service_name: "Test",
     send_schemas: ECHO_SEND_SCHEMAS,
-    methods: [method],
+    methods: new Map([[method.id, method]]),
   };
 }
 

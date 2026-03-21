@@ -180,7 +180,7 @@ const ECHO_SEND_SCHEMAS: ServiceSendSchemas = {
 const DESCRIPTOR: ServiceDescriptor = {
   service_name: "Test",
   send_schemas: ECHO_SEND_SCHEMAS,
-  methods: [METHOD],
+  methods: new Map([[METHOD.id, METHOD]]),
 };
 
 const CANONICAL_ZERO_ARG_METHOD: MethodDescriptor = {
@@ -271,7 +271,7 @@ const CANONICAL_ZERO_ARG_SEND_SCHEMAS: ServiceSendSchemas = {
 
 const CANONICAL_ZERO_ARG_DESCRIPTOR: ServiceDescriptor = {
   service_name: "Test",
-  methods: [CANONICAL_ZERO_ARG_METHOD],
+  methods: new Map([[CANONICAL_ZERO_ARG_METHOD.id, CANONICAL_ZERO_ARG_METHOD]]),
   send_schemas: CANONICAL_ZERO_ARG_SEND_SCHEMAS,
 };
 

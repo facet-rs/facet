@@ -75,7 +75,7 @@ pub fn generate_caller_interface(service: &ServiceDescriptor) -> String {
 /// Generate client implementation.
 ///
 /// Each generated client method represents one logical RPC call:
-/// 1. Looks up its `MethodDescriptor` from the service descriptor by index
+/// 1. Binds to its generated `MethodDescriptor` constant
 /// 2. Binds any channel args (via canonical arg refs if streaming)
 /// 3. Calls `caller.call({ method, args, descriptor, ... })` to start a
 ///    request attempt for that logical call
@@ -94,8 +94,9 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
     out.push_str("    this.caller = caller;\n");
     out.push_str("  }\n\n");
 
-    for (method_idx, method) in service.methods.iter().enumerate() {
+    for method in service.methods {
         let method_name = method.method_name.to_lower_camel_case();
+        let method_descriptor_name = format!("{service_name_lower}_{method_name}_method");
 
         let has_streaming_args = method.args.iter().any(|a| is_tx(a.shape) || is_rx(a.shape));
         let arg_names: Vec<_> = method
@@ -137,9 +138,8 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             "  async {method_name}({args}): Promise<{ret_ty}> {{\n"
         ));
 
-        // Get the method descriptor by index (known at codegen time)
         out.push_str(&format!(
-            "    const descriptor = {service_name_lower}_descriptor.methods[{method_idx}];\n"
+            "    const descriptor = {method_descriptor_name};\n"
         ));
         out.push_str(&format!(
             "    const sendSchemas = {service_name_lower}_descriptor.send_schemas;\n"

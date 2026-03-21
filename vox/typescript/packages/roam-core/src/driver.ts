@@ -470,7 +470,7 @@ export class Driver {
     // r[impl rpc.unknown-method]
     // r[impl rpc.response.one-per-request]
     const descriptor = this.dispatcher.getDescriptor();
-    const method = descriptor.methods.find((candidate) => candidate.id === incoming.methodId);
+    const method = descriptor.methods.get(incoming.methodId);
     roamLogger()?.debug(`[roam:driver] handleCall: methodId=${incoming.methodId} method=${method?.name ?? "UNKNOWN"}`);
     if (!method) {
       roamLogger()?.debug(`[roam:driver] unknown method, sending error response`);

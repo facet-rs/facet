@@ -152,6 +152,24 @@ pub fn generate_descriptor(service: &ServiceDescriptor) -> String {
 
     let mut out = String::new();
     let service_name_lower = service.service_name.to_lower_camel_case();
+
+    for method in service.methods {
+        let method_name = method.method_name.to_lower_camel_case();
+        let id = crate::method_id(method);
+        let method_descriptor_name = format!("{service_name_lower}_{method_name}_method");
+
+        out.push_str(&format!(
+            "export const {method_descriptor_name}: MethodDescriptor = {{\n"
+        ));
+        out.push_str(&format!("  name: '{method_name}',\n"));
+        out.push_str(&format!("  id: {}n,\n", hex_u64(id)));
+        out.push_str(&format!(
+            "  retry: {{ persist: {}, idem: {} }},\n",
+            method.retry.persist, method.retry.idem
+        ));
+        out.push_str("};\n\n");
+    }
+
     out.push_str("// Service descriptor for runtime dispatch metadata\n");
     out.push_str(&format!(
         "export const {service_name_lower}_descriptor: ServiceDescriptor = {{\n"
@@ -160,23 +178,17 @@ pub fn generate_descriptor(service: &ServiceDescriptor) -> String {
     out.push_str(&format!(
         "  send_schemas: {service_name_lower}_send_schemas,\n"
     ));
-    out.push_str("  methods: [\n");
+    out.push_str("  methods: new Map<bigint, MethodDescriptor>([\n");
 
     for method in service.methods {
         let method_name = method.method_name.to_lower_camel_case();
-        let id = crate::method_id(method);
-
-        out.push_str("    {\n");
-        out.push_str(&format!("      name: '{method_name}',\n"));
-        out.push_str(&format!("      id: {}n,\n", hex_u64(id)));
+        let method_descriptor_name = format!("{service_name_lower}_{method_name}_method");
         out.push_str(&format!(
-            "      retry: {{ persist: {}, idem: {} }},\n",
-            method.retry.persist, method.retry.idem
+            "    [{method_descriptor_name}.id, {method_descriptor_name}],\n"
         ));
-        out.push_str("    },\n");
     }
 
-    out.push_str("  ],\n");
+    out.push_str("  ]),\n");
     out.push_str("};\n\n");
     out
 }

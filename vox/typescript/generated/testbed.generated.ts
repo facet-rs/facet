@@ -364,7 +364,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echoes the message back. */
   async echo(message: string): Promise<string> {
-    const descriptor = testbed_descriptor.methods[0];
+    const descriptor = testbed_echo_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echo",
@@ -377,7 +377,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Returns the message reversed. */
   async reverse(message: string): Promise<string> {
-    const descriptor = testbed_descriptor.methods[1];
+    const descriptor = testbed_reverse_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.reverse",
@@ -393,7 +393,7 @@ export class TestbedClient implements TestbedCaller {
     dividend: bigint,
     divisor: bigint,
   ): Promise<{ ok: true; value: bigint } | { ok: false; error: MathError }> {
-    const descriptor = testbed_descriptor.methods[2];
+    const descriptor = testbed_divide_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     try {
       const value = await this.caller.call({
@@ -419,7 +419,7 @@ export class TestbedClient implements TestbedCaller {
    * - Anything else: return Err(NotFound)
    */
   async lookup(id: number): Promise<{ ok: true; value: Person } | { ok: false; error: LookupError }> {
-    const descriptor = testbed_descriptor.methods[3];
+    const descriptor = testbed_lookup_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     try {
       const value = await this.caller.call({
@@ -443,7 +443,7 @@ export class TestbedClient implements TestbedCaller {
    * Tests: client→server streaming. Server receives via `Rx<T>`, returns scalar.
    */
   async sum(numbers: Rx<number>): Promise<bigint> {
-    const descriptor = testbed_descriptor.methods[4];
+    const descriptor = testbed_sum_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);
     const prepareRetry = () => {
@@ -476,7 +476,7 @@ export class TestbedClient implements TestbedCaller {
    * Tests: server→client streaming. Server sends via `Tx<T>`.
    */
   async generate(count: number, output: Tx<number>): Promise<void> {
-    const descriptor = testbed_descriptor.methods[5];
+    const descriptor = testbed_generate_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);
     const prepareRetry = () => {
@@ -509,7 +509,7 @@ export class TestbedClient implements TestbedCaller {
    * Tests: channel retry fails closed when the session breaks mid-stream.
    */
   async generateRetryNonIdem(count: number, output: Tx<number>): Promise<void> {
-    const descriptor = testbed_descriptor.methods[6];
+    const descriptor = testbed_generateRetryNonIdem_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);
     const prepareRetry = () => {
@@ -542,7 +542,7 @@ export class TestbedClient implements TestbedCaller {
    * Tests: channel retry reruns the method with fresh channel bindings.
    */
   async generateRetryIdem(count: number, output: Tx<number>): Promise<void> {
-    const descriptor = testbed_descriptor.methods[7];
+    const descriptor = testbed_generateRetryIdem_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);
     const prepareRetry = () => {
@@ -575,7 +575,7 @@ export class TestbedClient implements TestbedCaller {
    * Tests: bidirectional streaming. Server receives via `Rx<T>`, sends via `Tx<T>`.
    */
   async transform(input: Rx<string>, output: Tx<string>): Promise<void> {
-    const descriptor = testbed_descriptor.methods[8];
+    const descriptor = testbed_transform_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);
     const prepareRetry = () => {
@@ -604,7 +604,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a point back. */
   async echoPoint(point: Point): Promise<Point> {
-    const descriptor = testbed_descriptor.methods[9];
+    const descriptor = testbed_echoPoint_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoPoint",
@@ -617,7 +617,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Create a person and return it. */
   async createPerson(name: string, age: number, email: string | null): Promise<Person> {
-    const descriptor = testbed_descriptor.methods[10];
+    const descriptor = testbed_createPerson_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.createPerson",
@@ -630,7 +630,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Calculate the area of a rectangle. */
   async rectangleArea(rect: Rectangle): Promise<number> {
-    const descriptor = testbed_descriptor.methods[11];
+    const descriptor = testbed_rectangleArea_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.rectangleArea",
@@ -643,7 +643,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Get a color by name. */
   async parseColor(name: string): Promise<Color | null> {
-    const descriptor = testbed_descriptor.methods[12];
+    const descriptor = testbed_parseColor_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.parseColor",
@@ -656,7 +656,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Calculate the area of a shape. */
   async shapeArea(shape: Shape): Promise<number> {
-    const descriptor = testbed_descriptor.methods[13];
+    const descriptor = testbed_shapeArea_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.shapeArea",
@@ -669,7 +669,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Create a canvas with given shapes. */
   async createCanvas(name: string, shapes: Shape[], background: Color): Promise<Canvas> {
-    const descriptor = testbed_descriptor.methods[14];
+    const descriptor = testbed_createCanvas_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.createCanvas",
@@ -682,7 +682,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Process a message and return a response. */
   async processMessage(msg: Message): Promise<Message> {
-    const descriptor = testbed_descriptor.methods[15];
+    const descriptor = testbed_processMessage_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.processMessage",
@@ -695,7 +695,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Return multiple points. */
   async getPoints(count: number): Promise<Point[]> {
-    const descriptor = testbed_descriptor.methods[16];
+    const descriptor = testbed_getPoints_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.getPoints",
@@ -708,7 +708,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Test tuple types. */
   async swapPair(pair: [number, string]): Promise<[string, number]> {
-    const descriptor = testbed_descriptor.methods[17];
+    const descriptor = testbed_swapPair_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.swapPair",
@@ -721,7 +721,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo raw bytes back. Tests Vec<u8> as a first-class arg/return type. */
   async echoBytes(data: Uint8Array): Promise<Uint8Array> {
-    const descriptor = testbed_descriptor.methods[18];
+    const descriptor = testbed_echoBytes_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoBytes",
@@ -734,7 +734,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a bool. Tests the bool primitive type. */
   async echoBool(b: boolean): Promise<boolean> {
-    const descriptor = testbed_descriptor.methods[19];
+    const descriptor = testbed_echoBool_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoBool",
@@ -747,7 +747,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a u64. Tests the u64 primitive type. */
   async echoU64(n: bigint): Promise<bigint> {
-    const descriptor = testbed_descriptor.methods[20];
+    const descriptor = testbed_echoU64_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoU64",
@@ -760,7 +760,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo an optional string. Tests Option<String> directly. */
   async echoOptionString(s: string | null): Promise<string | null> {
-    const descriptor = testbed_descriptor.methods[21];
+    const descriptor = testbed_echoOptionString_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoOptionString",
@@ -777,7 +777,7 @@ export class TestbedClient implements TestbedCaller {
    * Tests: channel flow control when sender must wait for credit grants.
    */
   async sumLarge(numbers: Rx<number>): Promise<bigint> {
-    const descriptor = testbed_descriptor.methods[22];
+    const descriptor = testbed_sumLarge_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);
     const prepareRetry = () => {
@@ -810,7 +810,7 @@ export class TestbedClient implements TestbedCaller {
    * Tests: server must wait for client to grant credit mid-stream.
    */
   async generateLarge(count: number, output: Tx<number>): Promise<void> {
-    const descriptor = testbed_descriptor.methods[23];
+    const descriptor = testbed_generateLarge_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const argTypeRefs = argElementRefsForMethod(descriptor.id, sendSchemas);
     const prepareRetry = () => {
@@ -839,7 +839,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Return all three Color variants in a Vec, testing enum + vec round-trip. */
   async allColors(): Promise<Color[]> {
-    const descriptor = testbed_descriptor.methods[24];
+    const descriptor = testbed_allColors_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.allColors",
@@ -855,7 +855,7 @@ export class TestbedClient implements TestbedCaller {
    * Tests multi-arg encoding and struct return.
    */
   async describePoint(label: string, x: number, y: number, active: boolean): Promise<TaggedPoint> {
-    const descriptor = testbed_descriptor.methods[25];
+    const descriptor = testbed_describePoint_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.describePoint",
@@ -868,7 +868,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a nested enum back unchanged. Tests deep enum encoding. */
   async echoShape(shape: Shape): Promise<Shape> {
-    const descriptor = testbed_descriptor.methods[26];
+    const descriptor = testbed_echoShape_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoShape",
@@ -881,7 +881,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a status back. Tests simple enum with unit variants. */
   async echoStatusV1(status: Status): Promise<Status> {
-    const descriptor = testbed_descriptor.methods[27];
+    const descriptor = testbed_echoStatusV1_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoStatusV1",
@@ -894,7 +894,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a tag back. Tests struct with String + u32 + String fields. */
   async echoTagV1(tag: Tag): Promise<Tag> {
-    const descriptor = testbed_descriptor.methods[28];
+    const descriptor = testbed_echoTagV1_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoTagV1",
@@ -907,7 +907,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a profile back. Tests added optional field. */
   async echoProfile(profile: Profile): Promise<Profile> {
-    const descriptor = testbed_descriptor.methods[29];
+    const descriptor = testbed_echoProfile_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoProfile",
@@ -920,7 +920,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a record back. Tests field reordering. */
   async echoRecord(record: Record): Promise<Record> {
-    const descriptor = testbed_descriptor.methods[30];
+    const descriptor = testbed_echoRecord_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoRecord",
@@ -933,7 +933,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a status back. Tests added enum variant. */
   async echoStatus(status: Status): Promise<Status> {
-    const descriptor = testbed_descriptor.methods[31];
+    const descriptor = testbed_echoStatus_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoStatus",
@@ -946,7 +946,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a tag back. Tests removed field (v2 drops a field v1 has). */
   async echoTag(tag: Tag): Promise<Tag> {
-    const descriptor = testbed_descriptor.methods[32];
+    const descriptor = testbed_echoTag_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoTag",
@@ -959,7 +959,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a measurement back. Tests incompatible type change. */
   async echoMeasurement(m: Measurement): Promise<Measurement> {
-    const descriptor = testbed_descriptor.methods[33];
+    const descriptor = testbed_echoMeasurement_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoMeasurement",
@@ -972,7 +972,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a config back. Tests missing required field. */
   async echoConfig(c: Config): Promise<Config> {
-    const descriptor = testbed_descriptor.methods[34];
+    const descriptor = testbed_echoConfig_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoConfig",
@@ -2380,185 +2380,255 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
   ]),
 };
 
+export const testbed_echo_method: MethodDescriptor = {
+  name: "echo",
+  id: 0x880bc4eee23574ben,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_reverse_method: MethodDescriptor = {
+  name: "reverse",
+  id: 0x1c223f30e180392an,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_divide_method: MethodDescriptor = {
+  name: "divide",
+  id: 0xfb68d9318f830875n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_lookup_method: MethodDescriptor = {
+  name: "lookup",
+  id: 0xa15ff52094712a3bn,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_sum_method: MethodDescriptor = {
+  name: "sum",
+  id: 0x51f9cfd8e86577c9n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_generate_method: MethodDescriptor = {
+  name: "generate",
+  id: 0x239e5b99b1f8207an,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_generateRetryNonIdem_method: MethodDescriptor = {
+  name: "generateRetryNonIdem",
+  id: 0x34419529478cc7b8n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_generateRetryIdem_method: MethodDescriptor = {
+  name: "generateRetryIdem",
+  id: 0xe2d27fd9098c6ea2n,
+  retry: { persist: false, idem: true },
+};
+
+export const testbed_transform_method: MethodDescriptor = {
+  name: "transform",
+  id: 0xcb469cff8d798febn,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoPoint_method: MethodDescriptor = {
+  name: "echoPoint",
+  id: 0x81f5386d589dfbe4n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_createPerson_method: MethodDescriptor = {
+  name: "createPerson",
+  id: 0x68ffa90b7728bde7n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_rectangleArea_method: MethodDescriptor = {
+  name: "rectangleArea",
+  id: 0x223fe0282d263107n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_parseColor_method: MethodDescriptor = {
+  name: "parseColor",
+  id: 0xd4f16ea9eca132e6n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_shapeArea_method: MethodDescriptor = {
+  name: "shapeArea",
+  id: 0x04385a4be2a882f5n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_createCanvas_method: MethodDescriptor = {
+  name: "createCanvas",
+  id: 0xef421eb5b08c973an,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_processMessage_method: MethodDescriptor = {
+  name: "processMessage",
+  id: 0xe08f0f5254e7a997n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_getPoints_method: MethodDescriptor = {
+  name: "getPoints",
+  id: 0x598518523a6266bfn,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_swapPair_method: MethodDescriptor = {
+  name: "swapPair",
+  id: 0x7d55a713ad612bf2n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoBytes_method: MethodDescriptor = {
+  name: "echoBytes",
+  id: 0x44056c7842fa336cn,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoBool_method: MethodDescriptor = {
+  name: "echoBool",
+  id: 0x5136d8f01a5f496cn,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoU64_method: MethodDescriptor = {
+  name: "echoU64",
+  id: 0x85e2380dbf7ffe65n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoOptionString_method: MethodDescriptor = {
+  name: "echoOptionString",
+  id: 0xb1a5bfd205b3fbfcn,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_sumLarge_method: MethodDescriptor = {
+  name: "sumLarge",
+  id: 0x9a7bed545e088054n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_generateLarge_method: MethodDescriptor = {
+  name: "generateLarge",
+  id: 0x8edfbd65d162f685n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_allColors_method: MethodDescriptor = {
+  name: "allColors",
+  id: 0xfbfb05bbcaade4a0n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_describePoint_method: MethodDescriptor = {
+  name: "describePoint",
+  id: 0x62feb14a8fcf9b6dn,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoShape_method: MethodDescriptor = {
+  name: "echoShape",
+  id: 0x4125b5e678b7b4a5n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoStatusV1_method: MethodDescriptor = {
+  name: "echoStatusV1",
+  id: 0xc7c5aa845cfb8bf6n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoTagV1_method: MethodDescriptor = {
+  name: "echoTagV1",
+  id: 0x6619071be5d5c259n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoProfile_method: MethodDescriptor = {
+  name: "echoProfile",
+  id: 0xbd9bcabddeebeb04n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoRecord_method: MethodDescriptor = {
+  name: "echoRecord",
+  id: 0x100b0e08da4b8f1an,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoStatus_method: MethodDescriptor = {
+  name: "echoStatus",
+  id: 0x697590d3ffc36703n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoTag_method: MethodDescriptor = {
+  name: "echoTag",
+  id: 0x2bd1b3149d73ce97n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoMeasurement_method: MethodDescriptor = {
+  name: "echoMeasurement",
+  id: 0x3b3d22b015fa1a3fn,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoConfig_method: MethodDescriptor = {
+  name: "echoConfig",
+  id: 0xe13a477fb964ce28n,
+  retry: { persist: false, idem: false },
+};
+
 // Service descriptor for runtime dispatch metadata
 export const testbed_descriptor: ServiceDescriptor = {
   service_name: "Testbed",
   send_schemas: testbed_send_schemas,
-  methods: [
-    {
-      name: "echo",
-      id: 0x880bc4eee23574ben,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "reverse",
-      id: 0x1c223f30e180392an,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "divide",
-      id: 0xfb68d9318f830875n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "lookup",
-      id: 0xa15ff52094712a3bn,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "sum",
-      id: 0x51f9cfd8e86577c9n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "generate",
-      id: 0x239e5b99b1f8207an,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "generateRetryNonIdem",
-      id: 0x34419529478cc7b8n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "generateRetryIdem",
-      id: 0xe2d27fd9098c6ea2n,
-      retry: { persist: false, idem: true },
-    },
-    {
-      name: "transform",
-      id: 0xcb469cff8d798febn,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoPoint",
-      id: 0x81f5386d589dfbe4n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "createPerson",
-      id: 0x68ffa90b7728bde7n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "rectangleArea",
-      id: 0x223fe0282d263107n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "parseColor",
-      id: 0xd4f16ea9eca132e6n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "shapeArea",
-      id: 0x04385a4be2a882f5n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "createCanvas",
-      id: 0xef421eb5b08c973an,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "processMessage",
-      id: 0xe08f0f5254e7a997n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "getPoints",
-      id: 0x598518523a6266bfn,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "swapPair",
-      id: 0x7d55a713ad612bf2n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoBytes",
-      id: 0x44056c7842fa336cn,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoBool",
-      id: 0x5136d8f01a5f496cn,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoU64",
-      id: 0x85e2380dbf7ffe65n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoOptionString",
-      id: 0xb1a5bfd205b3fbfcn,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "sumLarge",
-      id: 0x9a7bed545e088054n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "generateLarge",
-      id: 0x8edfbd65d162f685n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "allColors",
-      id: 0xfbfb05bbcaade4a0n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "describePoint",
-      id: 0x62feb14a8fcf9b6dn,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoShape",
-      id: 0x4125b5e678b7b4a5n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoStatusV1",
-      id: 0xc7c5aa845cfb8bf6n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoTagV1",
-      id: 0x6619071be5d5c259n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoProfile",
-      id: 0xbd9bcabddeebeb04n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoRecord",
-      id: 0x100b0e08da4b8f1an,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoStatus",
-      id: 0x697590d3ffc36703n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoTag",
-      id: 0x2bd1b3149d73ce97n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoMeasurement",
-      id: 0x3b3d22b015fa1a3fn,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoConfig",
-      id: 0xe13a477fb964ce28n,
-      retry: { persist: false, idem: false },
-    },
-  ],
+  methods: new Map<bigint, MethodDescriptor>([
+    [testbed_echo_method.id, testbed_echo_method],
+    [testbed_reverse_method.id, testbed_reverse_method],
+    [testbed_divide_method.id, testbed_divide_method],
+    [testbed_lookup_method.id, testbed_lookup_method],
+    [testbed_sum_method.id, testbed_sum_method],
+    [testbed_generate_method.id, testbed_generate_method],
+    [testbed_generateRetryNonIdem_method.id, testbed_generateRetryNonIdem_method],
+    [testbed_generateRetryIdem_method.id, testbed_generateRetryIdem_method],
+    [testbed_transform_method.id, testbed_transform_method],
+    [testbed_echoPoint_method.id, testbed_echoPoint_method],
+    [testbed_createPerson_method.id, testbed_createPerson_method],
+    [testbed_rectangleArea_method.id, testbed_rectangleArea_method],
+    [testbed_parseColor_method.id, testbed_parseColor_method],
+    [testbed_shapeArea_method.id, testbed_shapeArea_method],
+    [testbed_createCanvas_method.id, testbed_createCanvas_method],
+    [testbed_processMessage_method.id, testbed_processMessage_method],
+    [testbed_getPoints_method.id, testbed_getPoints_method],
+    [testbed_swapPair_method.id, testbed_swapPair_method],
+    [testbed_echoBytes_method.id, testbed_echoBytes_method],
+    [testbed_echoBool_method.id, testbed_echoBool_method],
+    [testbed_echoU64_method.id, testbed_echoU64_method],
+    [testbed_echoOptionString_method.id, testbed_echoOptionString_method],
+    [testbed_sumLarge_method.id, testbed_sumLarge_method],
+    [testbed_generateLarge_method.id, testbed_generateLarge_method],
+    [testbed_allColors_method.id, testbed_allColors_method],
+    [testbed_describePoint_method.id, testbed_describePoint_method],
+    [testbed_echoShape_method.id, testbed_echoShape_method],
+    [testbed_echoStatusV1_method.id, testbed_echoStatusV1_method],
+    [testbed_echoTagV1_method.id, testbed_echoTagV1_method],
+    [testbed_echoProfile_method.id, testbed_echoProfile_method],
+    [testbed_echoRecord_method.id, testbed_echoRecord_method],
+    [testbed_echoStatus_method.id, testbed_echoStatus_method],
+    [testbed_echoTag_method.id, testbed_echoTag_method],
+    [testbed_echoMeasurement_method.id, testbed_echoMeasurement_method],
+    [testbed_echoConfig_method.id, testbed_echoConfig_method],
+  ]),
 };

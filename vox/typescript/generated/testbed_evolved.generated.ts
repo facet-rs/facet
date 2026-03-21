@@ -92,7 +92,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a profile back. Tests added optional field. */
   async echoProfile(profile: Profile): Promise<Profile> {
-    const descriptor = testbed_descriptor.methods[0];
+    const descriptor = testbed_echoProfile_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoProfile",
@@ -105,7 +105,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a record back. Tests field reordering. */
   async echoRecord(record: Record): Promise<Record> {
-    const descriptor = testbed_descriptor.methods[1];
+    const descriptor = testbed_echoRecord_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoRecord",
@@ -118,7 +118,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a status back. Tests added enum variant. */
   async echoStatus(status: Status): Promise<Status> {
-    const descriptor = testbed_descriptor.methods[2];
+    const descriptor = testbed_echoStatus_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoStatus",
@@ -131,7 +131,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a tag back. Tests removed field. */
   async echoTag(tag: Tag): Promise<Tag> {
-    const descriptor = testbed_descriptor.methods[3];
+    const descriptor = testbed_echoTag_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoTag",
@@ -144,7 +144,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a measurement back. Tests incompatible type change. */
   async echoMeasurement(m: Measurement): Promise<Measurement> {
-    const descriptor = testbed_descriptor.methods[4];
+    const descriptor = testbed_echoMeasurement_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoMeasurement",
@@ -157,7 +157,7 @@ export class TestbedClient implements TestbedCaller {
 
   /** Echo a config back. Tests missing required field. */
   async echoConfig(c: Config): Promise<Config> {
-    const descriptor = testbed_descriptor.methods[5];
+    const descriptor = testbed_echoConfig_method;
     const sendSchemas = testbed_descriptor.send_schemas;
     const value = await this.caller.call({
       method: "Testbed.echoConfig",
@@ -513,40 +513,52 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
   ]),
 };
 
+export const testbed_echoProfile_method: MethodDescriptor = {
+  name: "echoProfile",
+  id: 0xbd9bcabddeebeb04n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoRecord_method: MethodDescriptor = {
+  name: "echoRecord",
+  id: 0x100b0e08da4b8f1an,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoStatus_method: MethodDescriptor = {
+  name: "echoStatus",
+  id: 0x697590d3ffc36703n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoTag_method: MethodDescriptor = {
+  name: "echoTag",
+  id: 0x2bd1b3149d73ce97n,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoMeasurement_method: MethodDescriptor = {
+  name: "echoMeasurement",
+  id: 0x3b3d22b015fa1a3fn,
+  retry: { persist: false, idem: false },
+};
+
+export const testbed_echoConfig_method: MethodDescriptor = {
+  name: "echoConfig",
+  id: 0xe13a477fb964ce28n,
+  retry: { persist: false, idem: false },
+};
+
 // Service descriptor for runtime dispatch metadata
 export const testbed_descriptor: ServiceDescriptor = {
   service_name: "Testbed",
   send_schemas: testbed_send_schemas,
-  methods: [
-    {
-      name: "echoProfile",
-      id: 0xbd9bcabddeebeb04n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoRecord",
-      id: 0x100b0e08da4b8f1an,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoStatus",
-      id: 0x697590d3ffc36703n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoTag",
-      id: 0x2bd1b3149d73ce97n,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoMeasurement",
-      id: 0x3b3d22b015fa1a3fn,
-      retry: { persist: false, idem: false },
-    },
-    {
-      name: "echoConfig",
-      id: 0xe13a477fb964ce28n,
-      retry: { persist: false, idem: false },
-    },
-  ],
+  methods: new Map<bigint, MethodDescriptor>([
+    [testbed_echoProfile_method.id, testbed_echoProfile_method],
+    [testbed_echoRecord_method.id, testbed_echoRecord_method],
+    [testbed_echoStatus_method.id, testbed_echoStatus_method],
+    [testbed_echoTag_method.id, testbed_echoTag_method],
+    [testbed_echoMeasurement_method.id, testbed_echoMeasurement_method],
+    [testbed_echoConfig_method.id, testbed_echoConfig_method],
+  ]),
 };
