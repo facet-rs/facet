@@ -1,17 +1,16 @@
 import {
-  decodeWithTypeRef,
-  encodeWithTypeRef,
-  type Schema,
-  type SchemaRegistry,
-  type TypeRef,
-} from "@bearcove/roam-postcard";
-import {
   decodeMessage,
   encodeMessage,
   type Message,
 } from "@bearcove/roam-wire";
 import type { Conduit } from "./conduit.ts";
 import type { Link, LinkSource } from "./link.ts";
+import {
+  decodeStableFrame,
+  encodeStableFrame,
+  type PacketAck,
+  type StableFrame,
+} from "./stable_frame_codec.ts";
 
 const CLIENT_HELLO_MAGIC = new Uint8Array([0x52, 0x4f, 0x43, 0x48]); // ROCH
 const SERVER_HELLO_MAGIC = new Uint8Array([0x52, 0x4f, 0x53, 0x48]); // ROSH
@@ -20,87 +19,6 @@ const CH_HAS_RESUME_KEY = 1 << 0;
 const CH_HAS_LAST_RECEIVED = 1 << 1;
 const SH_REJECTED = 1 << 0;
 const SH_HAS_LAST_RECEIVED = 1 << 1;
-
-interface PacketAck {
-  max_delivered: number;
-}
-
-interface StableFrame {
-  seq: number;
-  ack: PacketAck | null;
-  item: Uint8Array;
-}
-
-const STABLE_FRAME_U32_ID = 1n;
-const STABLE_FRAME_ACK_ID = 2n;
-const STABLE_FRAME_ACK_OPTION_ID = 3n;
-const STABLE_FRAME_PAYLOAD_ID = 4n;
-const STABLE_FRAME_ID = 5n;
-
-const STABLE_FRAME_SCHEMA_REGISTRY: SchemaRegistry = new Map<bigint, Schema>([
-  [STABLE_FRAME_U32_ID, {
-    id: STABLE_FRAME_U32_ID,
-    type_params: [],
-    kind: { tag: "primitive", primitive_type: "u32" },
-  }],
-  [STABLE_FRAME_ACK_ID, {
-    id: STABLE_FRAME_ACK_ID,
-    type_params: [],
-    kind: {
-      tag: "struct",
-      name: "StablePacketAck",
-      fields: [{
-        name: "max_delivered",
-        type_ref: { tag: "concrete", type_id: STABLE_FRAME_U32_ID, args: [] },
-        required: true,
-      }],
-    },
-  }],
-  [STABLE_FRAME_ACK_OPTION_ID, {
-    id: STABLE_FRAME_ACK_OPTION_ID,
-    type_params: [],
-    kind: {
-      tag: "option",
-      element: { tag: "concrete", type_id: STABLE_FRAME_ACK_ID, args: [] },
-    },
-  }],
-  [STABLE_FRAME_PAYLOAD_ID, {
-    id: STABLE_FRAME_PAYLOAD_ID,
-    type_params: [],
-    kind: { tag: "primitive", primitive_type: "payload" },
-  }],
-  [STABLE_FRAME_ID, {
-    id: STABLE_FRAME_ID,
-    type_params: [],
-    kind: {
-      tag: "struct",
-      name: "StableFrame",
-      fields: [
-        {
-          name: "seq",
-          type_ref: { tag: "concrete", type_id: STABLE_FRAME_U32_ID, args: [] },
-          required: true,
-        },
-        {
-          name: "ack",
-          type_ref: { tag: "concrete", type_id: STABLE_FRAME_ACK_OPTION_ID, args: [] },
-          required: true,
-        },
-        {
-          name: "item",
-          type_ref: { tag: "concrete", type_id: STABLE_FRAME_PAYLOAD_ID, args: [] },
-          required: true,
-        },
-      ],
-    },
-  }],
-]);
-
-const STABLE_FRAME_ROOT_REF: TypeRef = {
-  tag: "concrete",
-  type_id: STABLE_FRAME_ID,
-  args: [],
-};
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) {
@@ -260,9 +178,7 @@ export class StableConduit implements Conduit<Message> {
           item: itemBytes,
         };
         this.replay.push(seq, itemBytes);
-        await link.send(
-          encodeWithTypeRef(frame, STABLE_FRAME_ROOT_REF, STABLE_FRAME_SCHEMA_REGISTRY),
-        );
+        await link.send(encodeStableFrame(frame));
         return;
       } catch {
         await this.ensureReconnected();
@@ -330,9 +246,7 @@ export class StableConduit implements Conduit<Message> {
           ack: this.lastReceived === null ? null : { max_delivered: this.lastReceived },
           item: entry.item,
         };
-        await link.send(
-          encodeWithTypeRef(frame, STABLE_FRAME_ROOT_REF, STABLE_FRAME_SCHEMA_REGISTRY),
-        );
+        await link.send(encodeStableFrame(frame));
       }
       return;
     }
@@ -359,9 +273,7 @@ export class StableConduit implements Conduit<Message> {
         ack: this.lastReceived === null ? null : { max_delivered: this.lastReceived },
         item: entry.item,
       };
-      await link.send(
-        encodeWithTypeRef(frame, STABLE_FRAME_ROOT_REF, STABLE_FRAME_SCHEMA_REGISTRY),
-      );
+      await link.send(encodeStableFrame(frame));
     }
   }
 
@@ -394,13 +306,8 @@ export class StableConduit implements Conduit<Message> {
             continue;
           }
 
-          const decoded = decodeWithTypeRef(
-            payload,
-            0,
-            STABLE_FRAME_ROOT_REF,
-            STABLE_FRAME_SCHEMA_REGISTRY,
-          );
-          const frame = decoded.value as StableFrame;
+          const decoded = decodeStableFrame(payload, 0);
+          const frame = decoded.value;
           if (frame.ack) {
             this.replay.trim(frame.ack.max_delivered);
           }
