@@ -400,18 +400,18 @@ fn walk_node(node: &SyntaxNode, content: &str, tokens: &mut Vec<RawToken>, ctx: 
             }
         }
         SyntaxKind::HEREDOC => {
-            // Heredoc - highlight markers and content
+            // Heredoc - only highlight delimiters, not content.
+            // Leaving HEREDOC_CONTENT unhighlighted allows tree-sitter
+            // language injections to provide syntax highlighting for the
+            // embedded language (e.g., SQL, HTML).
             for child in node.children_with_tokens() {
-                if let Some(token) = child.as_token() {
-                    match token.kind() {
-                        SyntaxKind::HEREDOC_START | SyntaxKind::HEREDOC_END => {
-                            add_token_from_syntax(tokens, content, token, TokenType::Operator, 0);
-                        }
-                        SyntaxKind::HEREDOC_CONTENT => {
-                            add_token_from_syntax(tokens, content, token, TokenType::String, 0);
-                        }
-                        _ => {}
-                    }
+                if let Some(token) = child.as_token()
+                    && matches!(
+                        token.kind(),
+                        SyntaxKind::HEREDOC_START | SyntaxKind::HEREDOC_END
+                    )
+                {
+                    add_token_from_syntax(tokens, content, token, TokenType::Operator, 0);
                 }
             }
         }
@@ -852,8 +852,8 @@ mod tests {
         // HEREDOC_START and HEREDOC_END are operators
         assert_eq!(operators.len(), 2);
 
-        // Content is string
-        assert_eq!(strings.len(), 1);
+        // Content is NOT highlighted — left for tree-sitter injections
+        assert_eq!(strings.len(), 0);
     }
 
     #[test]
@@ -863,7 +863,7 @@ mod tests {
         let strings = filter_by_type(&tokens, TokenType::String);
 
         assert_eq!(operators.len(), 2); // Start and end markers
-        assert_eq!(strings.len(), 1); // Content
+        assert_eq!(strings.len(), 0); // Content left for tree-sitter
     }
 
     #[test]
@@ -879,8 +879,8 @@ mod tests {
         // HEREDOC_START and HEREDOC_END
         assert!(operators.len() >= 2);
 
-        // Heredoc content
-        assert!(!strings.is_empty());
+        // Heredoc content is NOT highlighted — left for tree-sitter
+        assert!(strings.is_empty());
     }
 
     // ========== SECTION 6: TAGS ==========
