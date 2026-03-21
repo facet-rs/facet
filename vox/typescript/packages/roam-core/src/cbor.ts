@@ -143,7 +143,10 @@ export function decodeCbor(buf: Uint8Array, offset = 0): DecodeResult {
       return decodeUint(buf, offset);
     case 1: { // negative integer
       const { value, next } = decodeUint(buf, offset);
-      return { value: -(value + 1), next };
+      return {
+        value: typeof value === "bigint" ? -(value + 1n) : -(value + 1),
+        next,
+      };
     }
     case 2: // byte string
       return decodeByteString(buf, offset);

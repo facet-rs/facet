@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Message } from "@bearcove/roam-wire";
+import type { ConnectionSettings, Message } from "@bearcove/roam-wire";
 import { BareConduit } from "./conduit.ts";
 import { Driver, type Dispatcher } from "./driver.ts";
 import { handshakeAsAcceptor, handshakeAsInitiator } from "./handshake.ts";
@@ -8,7 +8,7 @@ import { RequestContext } from "./request_context.ts";
 import { session } from "./session.ts";
 import { ClientMetadata } from "./metadata.ts";
 import { OPERATION_ID_METADATA_KEY } from "./retry.ts";
-import type { ConnectionSettings, MethodDescriptor, ServiceDescriptor } from "./channeling/index.ts";
+import type { MethodDescriptor, ServiceDescriptor } from "./channeling/index.ts";
 
 class MemoryLink {
   private readonly queue: Uint8Array[] = [];

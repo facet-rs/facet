@@ -6,7 +6,8 @@
 //! - narrowed per-variant type aliases for all named enums (auto-derived)
 //! - Schema constants for all named types (auto-derived)
 //! - wireMessageSchemasCbor: CBOR-encoded Vec<Schema> for the handshake
-//! - wireSchemaRegistry: Map of all named type schemas
+//! - wireMessageRootRef / wireMessageSchemaRegistry: canonical local message schema graph
+//! - wireSchemaRegistry: legacy named type schema registry
 
 use std::collections::HashSet;
 
@@ -16,7 +17,7 @@ use roam_types::{
     extract_schemas, is_bytes,
 };
 
-use crate::targets::typescript::schema::generate_schema;
+use crate::targets::typescript::schema::{generate_schema, render_schema, render_type_ref};
 
 /// A wire type to generate TypeScript definitions for.
 pub struct WireType {
@@ -129,10 +130,25 @@ pub fn generate_wire(config: &WireTypeGenConfig) -> Result<String, Box<dyn std::
     }
     out.push_str("]);\n\n");
 
-    // wireMessageSchemasCbor: CBOR-encoded Vec<Schema> for the handshake
+    // wireMessageSchemasCbor + local canonical message schema graph.
     // Derived from the first (root) type shape in config.
     if let Some(root) = config.types.first() {
         let extracted = extract_schemas(root.shape)?;
+        out.push_str(
+            "export const wireMessageSchemaRegistry: import(\"@bearcove/roam-postcard\").WireSchemaRegistry = new Map<bigint, import(\"@bearcove/roam-postcard\").WireSchema>([\n",
+        );
+        for schema in &extracted.schemas {
+            out.push_str(&format!(
+                "  [{}n, {}],\n",
+                schema.id.0,
+                render_schema(schema)
+            ));
+        }
+        out.push_str("]);\n\n");
+        out.push_str(&format!(
+            "export const wireMessageRootRef: import(\"@bearcove/roam-postcard\").WireTypeRef = {};\n\n",
+            render_type_ref(&extracted.root)
+        ));
         let cbor_bytes = facet_cbor::to_vec(&extracted.schemas)?;
         let body = cbor_bytes
             .iter()

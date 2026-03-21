@@ -1,4 +1,10 @@
-import { decodeWithPlan, decodeWithSchema, encodeWithSchema } from "@bearcove/roam-postcard";
+import {
+  decodeWithKind,
+  decodeWithPlan,
+  decodeWithSchema,
+  encodeWithKind,
+  encodeWithSchema,
+} from "@bearcove/roam-postcard";
 import {
   RpcError,
   RpcErrorCode,
@@ -265,11 +271,20 @@ class RoamCallImpl implements RoamCall {
       return;
     }
     this.replied = true;
-    const payload = encodeWithSchema(
-      { tag: "Ok", value },
-      this.method.result,
-      this.schemaRegistry,
-    );
+    const localSchemaSet = this.sendSchemas
+      ? localSchemaSetForMethod(this.method.id, "response", this.sendSchemas)
+      : null;
+    const payload = localSchemaSet
+      ? encodeWithKind(
+          { tag: "Ok", value },
+          localSchemaSet.root.kind,
+          localSchemaSet.registry,
+        )
+      : encodeWithSchema(
+          { tag: "Ok", value },
+          this.method.result,
+          this.schemaRegistry,
+        );
     this.sendPayload(payload);
   }
 
@@ -278,11 +293,20 @@ class RoamCallImpl implements RoamCall {
       return;
     }
     this.replied = true;
-    const payload = encodeWithSchema(
-      { tag: "Err", value: { tag: "User", value: error } },
-      this.method.result,
-      this.schemaRegistry,
-    );
+    const localSchemaSet = this.sendSchemas
+      ? localSchemaSetForMethod(this.method.id, "response", this.sendSchemas)
+      : null;
+    const payload = localSchemaSet
+      ? encodeWithKind(
+          { tag: "Err", value: { tag: "User", value: error } },
+          localSchemaSet.root.kind,
+          localSchemaSet.registry,
+        )
+      : encodeWithSchema(
+          { tag: "Err", value: { tag: "User", value: error } },
+          this.method.result,
+          this.schemaRegistry,
+        );
     this.sendPayload(payload);
   }
 
@@ -291,11 +315,20 @@ class RoamCallImpl implements RoamCall {
       return;
     }
     this.replied = true;
-    const payload = encodeWithSchema(
-      { tag: "Err", value: { tag: "InvalidPayload", value: message } },
-      this.method.result,
-      this.schemaRegistry,
-    );
+    const localSchemaSet = this.sendSchemas
+      ? localSchemaSetForMethod(this.method.id, "response", this.sendSchemas)
+      : null;
+    const payload = localSchemaSet
+      ? encodeWithKind(
+          { tag: "Err", value: { tag: "InvalidPayload", value: message } },
+          localSchemaSet.root.kind,
+          localSchemaSet.registry,
+        )
+      : encodeWithSchema(
+          { tag: "Err", value: { tag: "InvalidPayload", value: message } },
+          this.method.result,
+          this.schemaRegistry,
+        );
     this.sendPayload(payload);
   }
 
@@ -600,12 +633,19 @@ export class Driver {
           incoming.args,
           0,
           translation.plan,
-          localSchemaSet.root.kind,
+          localSchemaSet!.root.kind,
           translation.remoteSchemaSet.root.kind,
           new Map([
-            ...localSchemaSet.registry,
+            ...localSchemaSet!.registry,
             ...translation.remoteSchemaSet.registry,
           ]),
+        )
+      : localSchemaSet
+      ? decodeWithKind(
+          incoming.args,
+          0,
+          localSchemaSet.root.kind,
+          localSchemaSet.registry,
         )
       : decodeWithSchema(
           incoming.args,
@@ -626,7 +666,7 @@ export class Driver {
           channelId,
           taskSender,
           this.connection.getChannelRegistry(),
-          argSchema.initial_credit ?? DEFAULT_INITIAL_CREDIT,
+          DEFAULT_INITIAL_CREDIT,
           (value: unknown) => encodeWithSchema(value, argSchema.element, descriptor.schema_registry),
         );
       }
@@ -634,7 +674,7 @@ export class Driver {
         const channelId = incoming.channels[channelIndex++];
         const receiver = this.connection.getChannelRegistry().registerIncoming(
           channelId,
-          argSchema.initial_credit ?? DEFAULT_INITIAL_CREDIT,
+          DEFAULT_INITIAL_CREDIT,
           (additional) => {
             taskSender({ kind: "grantCredit", channelId, additional });
           },

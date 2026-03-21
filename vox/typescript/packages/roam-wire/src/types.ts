@@ -119,7 +119,7 @@ export function messageRequest(
   methodId: bigint,
   payload: Uint8Array,
   metadata: Metadata = [],
-  channels: bigint[] = [],
+  _channels: bigint[] = [],
   connId: bigint = 0n,
   schemas: Uint8Array = new Uint8Array(0),
 ): Message {
@@ -134,7 +134,6 @@ export function messageRequest(
           value: {
             method_id: methodId,
             args: payload,
-            channels,
             metadata,
             schemas,
           },
@@ -148,7 +147,7 @@ export function messageResponse(
   requestId: bigint,
   payload: Uint8Array,
   metadata: Metadata = [],
-  channels: bigint[] = [],
+  _channels: bigint[] = [],
   connId: bigint = 0n,
   schemas: Uint8Array = new Uint8Array(0),
 ): Message {
@@ -162,7 +161,6 @@ export function messageResponse(
           tag: "Response",
           value: {
             ret: payload,
-            channels,
             metadata,
             schemas,
           },

@@ -31,6 +31,336 @@ import type {
 import { resolveWireTypeRef } from "./schema.ts";
 import type { TranslationPlan, FieldOp } from "./plan.ts";
 
+class BufWriter {
+  private buf: Uint8Array;
+  private pos = 0;
+
+  constructor(initialCapacity = 128) {
+    this.buf = new Uint8Array(initialCapacity);
+  }
+
+  private reserve(additional: number): void {
+    const needed = this.pos + additional;
+    if (needed <= this.buf.length) {
+      return;
+    }
+    let capacity = this.buf.length;
+    while (capacity < needed) {
+      capacity *= 2;
+    }
+    const next = new Uint8Array(capacity);
+    next.set(this.buf.subarray(0, this.pos), 0);
+    this.buf = next;
+  }
+
+  writeByte(value: number): void {
+    this.reserve(1);
+    this.buf[this.pos++] = value & 0xff;
+  }
+
+  writeBytes(value: Uint8Array): void {
+    this.reserve(value.length);
+    this.buf.set(value, this.pos);
+    this.pos += value.length;
+  }
+
+  writeVarint(value: number | bigint): void {
+    let v: bigint;
+    if (typeof value === "number") {
+      if (!Number.isInteger(value) || value < 0) {
+        throw new Error(`varint: expected non-negative integer, got ${value}`);
+      }
+      v = BigInt(value);
+    } else {
+      if (value < 0n) {
+        throw new Error(`varint: expected non-negative integer, got ${value.toString()}`);
+      }
+      v = value;
+    }
+
+    while (v >= 0x80n) {
+      this.writeByte(Number((v & 0x7fn) | 0x80n));
+      v >>= 7n;
+    }
+    this.writeByte(Number(v));
+  }
+
+  writeF32(value: number): void {
+    this.reserve(4);
+    new DataView(this.buf.buffer, this.buf.byteOffset + this.pos, 4).setFloat32(0, value, true);
+    this.pos += 4;
+  }
+
+  writeF64(value: number): void {
+    this.reserve(8);
+    new DataView(this.buf.buffer, this.buf.byteOffset + this.pos, 8).setFloat64(0, value, true);
+    this.pos += 8;
+  }
+
+  finish(): Uint8Array {
+    return this.buf.subarray(0, this.pos);
+  }
+}
+
+const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
+
+function zigzagEncode(n: bigint): bigint {
+  return (n << 1n) ^ (n >> 63n);
+}
+
+function encodeChar(value: string, writer: BufWriter): void {
+  const bytes = TEXT_ENCODER.encode(value);
+  if (bytes.length === 0 || bytes.length > 4 || [...value].length !== 1) {
+    throw new Error(`expected single character, got ${JSON.stringify(value)}`);
+  }
+  writer.writeBytes(bytes);
+}
+
+function decodeChar(
+  buf: Uint8Array,
+  offset: number,
+): DecodeResult<string> {
+  const b = buf[offset];
+  if (b === undefined) {
+    throw new Error("unexpected end of buffer decoding char");
+  }
+  let len = 4;
+  if (b < 0x80) {
+    len = 1;
+  } else if ((b & 0xe0) === 0xc0) {
+    len = 2;
+  } else if ((b & 0xf0) === 0xe0) {
+    len = 3;
+  }
+  const end = offset + len;
+  if (end > buf.length) {
+    throw new Error("unexpected end of buffer decoding char");
+  }
+  return {
+    value: TEXT_DECODER.decode(buf.subarray(offset, end)),
+    next: end,
+  };
+}
+
+export function encodeWithTypeRef(
+  value: unknown,
+  ref_: WireTypeRef,
+  registry: WireSchemaRegistry,
+): Uint8Array {
+  return encodeWithKind(value, resolveTypeRefKind(ref_, registry), registry);
+}
+
+export function encodeWithKind(
+  value: unknown,
+  kind: WireSchemaKind,
+  registry: WireSchemaRegistry,
+): Uint8Array {
+  const writer = new BufWriter();
+  encodeByKind(value, kind, writer, registry);
+  return writer.finish();
+}
+
+export function decodeWithTypeRef(
+  buf: Uint8Array,
+  offset: number,
+  ref_: WireTypeRef,
+  registry: WireSchemaRegistry,
+): DecodeResult<unknown> {
+  return decodeByKind(buf, offset, resolveTypeRefKind(ref_, registry), registry);
+}
+
+export function decodeWithKind(
+  buf: Uint8Array,
+  offset: number,
+  kind: WireSchemaKind,
+  registry: WireSchemaRegistry,
+): DecodeResult<unknown> {
+  return decodeByKind(buf, offset, kind, registry);
+}
+
+function encodeByKind(
+  value: unknown,
+  kind: WireSchemaKind,
+  writer: BufWriter,
+  registry: WireSchemaRegistry,
+): void {
+  switch (kind.tag) {
+    case "primitive":
+      encodePrimitive(value, kind.primitive_type, writer);
+      return;
+    case "struct": {
+      const obj = value as Record<string, unknown>;
+      for (const field of kind.fields) {
+        encodeByKind(obj[field.name], resolveTypeRefKind(field.type_ref, registry), writer, registry);
+      }
+      return;
+    }
+    case "enum": {
+      const enumValue = value as { tag: string; value?: unknown; [key: string]: unknown };
+      const variant = kind.variants.find((candidate) => candidate.name === enumValue.tag);
+      if (!variant) {
+        throw new Error(`unknown variant: ${enumValue.tag}`);
+      }
+      writer.writeVarint(variant.index);
+      switch (variant.payload.tag) {
+        case "unit":
+          return;
+        case "newtype":
+          encodeByKind(
+            enumValue.value,
+            resolveTypeRefKind(variant.payload.type_ref, registry),
+            writer,
+            registry,
+          );
+          return;
+        case "tuple": {
+          const tupleValues = Array.isArray(enumValue.value)
+            ? enumValue.value
+            : variant.payload.types.map((_, index) => enumValue[index.toString()]);
+          if (tupleValues.length !== variant.payload.types.length) {
+            throw new Error(
+              `tuple variant length mismatch: got ${tupleValues.length}, expected ${variant.payload.types.length}`,
+            );
+          }
+          for (let i = 0; i < variant.payload.types.length; i++) {
+            encodeByKind(
+              tupleValues[i],
+              resolveTypeRefKind(variant.payload.types[i], registry),
+              writer,
+              registry,
+            );
+          }
+          return;
+        }
+        case "struct":
+          for (const field of variant.payload.fields) {
+            encodeByKind(
+              enumValue[field.name],
+              resolveTypeRefKind(field.type_ref, registry),
+              writer,
+              registry,
+            );
+          }
+          return;
+      }
+    }
+    case "tuple": {
+      const tupleValues = value as unknown[];
+      if (tupleValues.length !== kind.elements.length) {
+        throw new Error(
+          `tuple length mismatch: got ${tupleValues.length}, expected ${kind.elements.length}`,
+        );
+      }
+      for (let i = 0; i < kind.elements.length; i++) {
+        encodeByKind(tupleValues[i], resolveTypeRefKind(kind.elements[i], registry), writer, registry);
+      }
+      return;
+    }
+    case "list": {
+      const values = value as unknown[];
+      writer.writeVarint(values.length);
+      for (const item of values) {
+        encodeByKind(item, resolveTypeRefKind(kind.element, registry), writer, registry);
+      }
+      return;
+    }
+    case "option":
+      if (value === null || value === undefined) {
+        writer.writeByte(0);
+        return;
+      }
+      writer.writeByte(1);
+      encodeByKind(value, resolveTypeRefKind(kind.element, registry), writer, registry);
+      return;
+    case "map": {
+      const entries =
+        value instanceof Map ? [...value.entries()] : Array.isArray(value) ? value : [];
+      writer.writeVarint(entries.length);
+      for (const [key, entryValue] of entries) {
+        encodeByKind(key, resolveTypeRefKind(kind.key, registry), writer, registry);
+        encodeByKind(entryValue, resolveTypeRefKind(kind.value, registry), writer, registry);
+      }
+      return;
+    }
+    case "array": {
+      const values = value as unknown[];
+      if (values.length !== kind.length) {
+        throw new Error(`array length mismatch: got ${values.length}, expected ${kind.length}`);
+      }
+      for (const item of values) {
+        encodeByKind(item, resolveTypeRefKind(kind.element, registry), writer, registry);
+      }
+      return;
+    }
+    case "channel":
+      return;
+  }
+}
+
+function encodePrimitive(value: unknown, primitiveType: string, writer: BufWriter): void {
+  switch (primitiveType) {
+    case "bool":
+      writer.writeByte(value ? 1 : 0);
+      return;
+    case "u8":
+    case "i8":
+      writer.writeByte(value as number);
+      return;
+    case "u16":
+    case "u32":
+      writer.writeVarint(value as number);
+      return;
+    case "u64":
+    case "u128":
+      writer.writeVarint(value as bigint);
+      return;
+    case "i16":
+    case "i32":
+      writer.writeVarint(zigzagEncode(BigInt(value as number)));
+      return;
+    case "i64":
+    case "i128":
+      writer.writeVarint(zigzagEncode(value as bigint));
+      return;
+    case "f32":
+      writer.writeF32(value as number);
+      return;
+    case "f64":
+      writer.writeF64(value as number);
+      return;
+    case "char":
+      encodeChar(value as string, writer);
+      return;
+    case "string": {
+      const bytes = TEXT_ENCODER.encode(value as string);
+      writer.writeVarint(bytes.length);
+      writer.writeBytes(bytes);
+      return;
+    }
+    case "unit":
+      return;
+    case "bytes": {
+      const bytes = value as Uint8Array;
+      writer.writeVarint(bytes.length);
+      writer.writeBytes(bytes);
+      return;
+    }
+    case "payload": {
+      const bytes = value as Uint8Array;
+      const len = bytes.length;
+      writer.writeByte(len & 0xff);
+      writer.writeByte((len >> 8) & 0xff);
+      writer.writeByte((len >> 16) & 0xff);
+      writer.writeByte((len >> 24) & 0xff);
+      writer.writeBytes(bytes);
+      return;
+    }
+    default:
+      throw new Error(`encodePrimitive: unknown type "${primitiveType}"`);
+  }
+}
+
 // ============================================================================
 // skipValue — advance past a postcard value without decoding it
 // ============================================================================

@@ -1,4 +1,10 @@
-import { decodeWithSchema, encodeWithSchema } from "@bearcove/roam-postcard";
+import {
+  decodeWithKind,
+  decodeWithPlan,
+  decodeWithSchema,
+  encodeWithKind,
+  encodeWithSchema,
+} from "@bearcove/roam-postcard";
 import {
   type ConnectionSettings,
   type RequestMessage,
@@ -48,9 +54,13 @@ import {
   parityFromRole,
   roleFromParity,
 } from "./internal/parity.ts";
-import { BareConduit } from "./conduit.ts";
+import { BareConduit, buildMessageDecodePlan } from "./conduit.ts";
 import { roamLogger } from "./logger.ts";
-import { SchemaTracker, SchemaSendTracker } from "./schema_tracker.ts";
+import {
+  localSchemaSetForMethod,
+  SchemaTracker,
+  SchemaSendTracker,
+} from "./schema_tracker.ts";
 import type { Link, LinkSource } from "./link.ts";
 import { singleLinkSource } from "./link.ts";
 import { StableConduit } from "./stable_conduit.ts";
@@ -275,6 +285,7 @@ async function makeInitiatorEstablishedTransport(
     const attachment = await transport.nextLink();
     await requestTransportMode(attachment.link, conduitKind);
     const handshake = await handshakeAsInitiator(attachment.link, localSettings, true, null);
+    const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
 
     if (conduitKind === "stable") {
       const stableConduit = await StableConduit.connect(singleLinkSource(attachment.link));
@@ -318,7 +329,10 @@ async function makeInitiatorEstablishedTransport(
             options.onReconnected?.();
             options.onConnectivityChange?.("connected");
             roamLogger()?.debug(`[roam:session] reconnect succeeded on attempt ${attempt}`);
-            return new BareConduit(newAttachment.link);
+            return new BareConduit(
+              newAttachment.link,
+              buildMessageDecodePlan(newHandshake.peerMessageSchema),
+            );
           } catch (e) {
             lastError = e instanceof Error ? e : new Error(String(e));
             roamLogger()?.debug(
@@ -366,27 +380,28 @@ async function makeInitiatorEstablishedTransport(
       };
 
       return {
-        conduit: new BareConduit(attachment.link),
+        conduit: new BareConduit(attachment.link, messagePlan),
         handshake,
         recoverConduit,
       };
     }
 
     return {
-      conduit: new BareConduit(attachment.link),
+      conduit: new BareConduit(attachment.link, messagePlan),
       handshake,
     };
   }
 
   await requestTransportMode(transport, conduitKind);
   const handshake = await handshakeAsInitiator(transport, localSettings, true, null);
+  const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
   if (conduitKind === "stable") {
     const stableConduit = await StableConduit.connect(singleLinkSource(transport));
     return { conduit: stableConduit, handshake };
   }
 
   return {
-    conduit: new BareConduit(transport),
+    conduit: new BareConduit(transport, messagePlan),
     handshake,
   };
 }
@@ -412,6 +427,7 @@ async function makeAcceptorEstablishedTransport(
     options.resumable ?? false,
     null,
   );
+  const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
 
   if (requestedMode === "stable") {
     const clientHello = await attachment.link.recv();
@@ -425,7 +441,7 @@ async function makeAcceptorEstablishedTransport(
   }
 
   return {
-    conduit: new BareConduit(attachment.link),
+    conduit: new BareConduit(attachment.link, messagePlan),
     handshake,
   };
 }
@@ -982,7 +998,7 @@ class SessionCore {
           requestId: request.id,
           methodId: request.body.value.method_id,
           args: request.body.value.args,
-          channels: request.body.value.channels ?? [],
+          channels: [],
           metadata: request.body.value.metadata,
         });
         return;
@@ -1139,6 +1155,12 @@ export class ConnectionHandle {
       throw SessionError.closed();
     }
 
+    const localArgsSchemaSet = request.sendSchemas
+      ? localSchemaSetForMethod(request.descriptor.id, "args", request.sendSchemas)
+      : null;
+    const localResponseSchemaSet = request.sendSchemas
+      ? localSchemaSetForMethod(request.descriptor.id, "response", request.sendSchemas)
+      : null;
     const values = Object.values(request.args);
     const initial = request.prepareRetry
       ? request.prepareRetry()
@@ -1146,6 +1168,8 @@ export class ConnectionHandle {
           payload:
             values.length === 0
               ? new Uint8Array(0)
+              : localArgsSchemaSet
+              ? encodeWithKind(values, localArgsSchemaSet.root.kind, localArgsSchemaSet.registry)
               : encodeWithSchema(values, request.descriptor.args, request.schemaRegistry),
           channels: request.channels ?? [],
         };
@@ -1196,12 +1220,44 @@ export class ConnectionHandle {
       void this.sendPendingRequest(state, requestId, true);
     });
 
-    const decoded = decodeWithSchema(
-      responsePayload,
-      0,
-      request.descriptor.result,
-      request.schemaRegistry,
-    ).value as { tag: string; value?: unknown };
+    const responseTranslation = localResponseSchemaSet
+      ? this.getSchemaTracker().buildTranslation(
+          request.descriptor.id,
+          "response",
+          localResponseSchemaSet,
+        )
+      : null;
+    const decodedResult = responseTranslation
+      ? decodeWithPlan(
+          responsePayload,
+          0,
+          responseTranslation.plan,
+          localResponseSchemaSet!.root.kind,
+          responseTranslation.remoteSchemaSet.root.kind,
+          new Map([
+            ...localResponseSchemaSet!.registry,
+            ...responseTranslation.remoteSchemaSet.registry,
+          ]),
+        )
+      : localResponseSchemaSet
+      ? decodeWithKind(
+          responsePayload,
+          0,
+          localResponseSchemaSet.root.kind,
+          localResponseSchemaSet.registry,
+        )
+      : decodeWithSchema(
+          responsePayload,
+          0,
+          request.descriptor.result,
+          request.schemaRegistry,
+        );
+
+    if (decodedResult.next !== responsePayload.length) {
+      throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
+    }
+
+    const decoded = decodedResult.value as { tag: string; value?: unknown };
 
     if (decoded.tag === "Ok") {
       return decoded.value;
@@ -1603,7 +1659,11 @@ export const session = {
       max_concurrent_requests: options.maxConcurrentRequests ?? 64,
     };
     const handshake = await handshakeAsInitiator(link, localSettings);
-    return Session.initiatorConduit(new BareConduit(link), handshake, options);
+    return Session.initiatorConduit(
+      new BareConduit(link, buildMessageDecodePlan(handshake.peerMessageSchema)),
+      handshake,
+      options,
+    );
   },
 
   async acceptorOnLink(
@@ -1615,7 +1675,11 @@ export const session = {
       max_concurrent_requests: options.maxConcurrentRequests ?? 64,
     };
     const handshake = await handshakeAsAcceptor(link, localSettings);
-    return Session.initiatorConduit(new BareConduit(link), handshake, options);
+    return Session.initiatorConduit(
+      new BareConduit(link, buildMessageDecodePlan(handshake.peerMessageSchema)),
+      handshake,
+      options,
+    );
   },
 
   acceptorOrResume(

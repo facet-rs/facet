@@ -1,7 +1,9 @@
+import type { WireSchema } from "@bearcove/roam-postcard";
 import type { ConnectionSettings, Parity } from "@bearcove/roam-wire";
 import { wireMessageSchemasCbor } from "@bearcove/roam-wire";
 import { decodeCbor, type CborMap, type CborValue } from "./cbor.ts";
 import type { Link } from "./link.ts";
+import { normalizeSchemaList } from "./schema_cbor.ts";
 
 export interface HandshakeResult {
   localSettings: ConnectionSettings;
@@ -9,7 +11,7 @@ export interface HandshakeResult {
   peerSupportsRetry: boolean;
   sessionResumeKey: Uint8Array | null;
   peerResumeKey: Uint8Array | null;
-  peerMessageSchema: CborValue[];
+  peerMessageSchema: WireSchema[];
 }
 
 type HandshakeMessage =
@@ -389,7 +391,7 @@ export async function handshakeAsInitiator(
     peerSupportsRetry: response.value.supports_retry,
     sessionResumeKey: response.value.resume_key,
     peerResumeKey: null,
-    peerMessageSchema: response.value.message_payload_schema,
+    peerMessageSchema: normalizeSchemaList(response.value.message_payload_schema),
   };
 }
 
@@ -441,6 +443,6 @@ export async function handshakeAsAcceptor(
     peerSupportsRetry: first.value.supports_retry,
     sessionResumeKey,
     peerResumeKey: first.value.resume_key,
-    peerMessageSchema: first.value.message_payload_schema,
+    peerMessageSchema: normalizeSchemaList(first.value.message_payload_schema),
   };
 }

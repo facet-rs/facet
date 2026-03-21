@@ -76,11 +76,15 @@ export {
 export {
   encodeMessage,
   decodeMessage,
+  decodeMessageWithPlan,
 } from "./codec.ts";
 
 export {
   type Schema,
   type SchemaRegistry,
+  type TypeRef,
   wireMessageSchemasCbor,
+  wireMessageSchemaRegistry,
+  wireMessageRootRef,
   wireSchemaRegistry,
 } from "./schemas.ts";

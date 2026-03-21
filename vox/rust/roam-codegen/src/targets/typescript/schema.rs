@@ -19,9 +19,9 @@ use std::collections::HashSet;
 use facet_core::{Facet, Field, ScalarType, Shape};
 use heck::ToLowerCamelCase;
 use roam_types::{
-    EnumInfo, Schema, SchemaHash, SchemaKind, SchemaSendTracker, ServiceDescriptor, ShapeKind,
-    StructInfo, TypeRef, VariantKind, VariantPayload, VariantSchema, classify_shape,
-    classify_variant, compute_content_hash, is_bytes, schema_child_ids,
+    EnumInfo, Schema, SchemaHash, SchemaKind, ServiceDescriptor, ShapeKind, StructInfo, TypeRef,
+    VariantKind, VariantPayload, VariantSchema, classify_shape, classify_variant,
+    compute_content_hash, is_bytes, schema_child_ids,
 };
 
 /// Generate a TypeScript Schema object literal for a type.
@@ -332,7 +332,6 @@ fn generate_result_schema(ok_schema: &str, err_schema: &str) -> String {
 pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
     use crate::render::hex_u64;
 
-    let mut tracker = SchemaSendTracker::new();
     let service_name_lower = service.service_name.to_lower_camel_case();
 
     let mut schema_ids_seen: std::collections::HashSet<u64> = std::collections::HashSet::new();
@@ -352,12 +351,8 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
     let mut all_schemas: Vec<Schema> = Vec::new();
 
     /// Extract schemas for a shape, append to all_schemas, return root TypeRef.
-    fn extract_into(
-        tracker: &mut SchemaSendTracker,
-        shape: &'static Shape,
-        all_schemas: &mut Vec<Schema>,
-    ) -> TypeRef<SchemaHash> {
-        let extracted = tracker.extract_schemas(shape).expect("schema extraction");
+    fn extract_into(shape: &'static Shape, all_schemas: &mut Vec<Schema>) -> TypeRef<SchemaHash> {
+        let extracted = roam_types::extract_schemas(shape).expect("schema extraction");
         let root = extracted.root.clone();
         all_schemas.extend(extracted.schemas);
         root
@@ -378,16 +373,12 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         // --- Args ---
         // Extract each arg's schemas, then wrap in a Tuple (or Unit for 0 args).
         let args_root = if method.args.is_empty() {
-            extract_into(
-                &mut tracker,
-                <() as Facet<'static>>::SHAPE,
-                &mut all_schemas,
-            )
+            extract_into(<() as Facet<'static>>::SHAPE, &mut all_schemas)
         } else {
             let arg_refs: Vec<TypeRef<SchemaHash>> = method
                 .args
                 .iter()
-                .map(|arg| extract_into(&mut tracker, arg.shape, &mut all_schemas))
+                .map(|arg| extract_into(arg.shape, &mut all_schemas))
                 .collect();
             let kind = SchemaKind::Tuple { elements: arg_refs };
             let type_id = compute_content_hash(&kind, &[], &|id| id);
@@ -401,21 +392,16 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
 
         // --- Response ---
         // The wire encoding is ALWAYS Result<T, RoamError<E>>.
-        let string_ref = extract_into(
-            &mut tracker,
-            <String as Facet<'static>>::SHAPE,
-            &mut all_schemas,
-        );
+        let string_ref = extract_into(<String as Facet<'static>>::SHAPE, &mut all_schemas);
 
         let (ok_ref, err_ref) = match classify_shape(method.return_shape) {
             ShapeKind::Result { ok, err } => (
-                extract_into(&mut tracker, ok, &mut all_schemas),
-                extract_into(&mut tracker, err, &mut all_schemas),
+                extract_into(ok, &mut all_schemas),
+                extract_into(err, &mut all_schemas),
             ),
             _ => {
-                let ok = extract_into(&mut tracker, method.return_shape, &mut all_schemas);
+                let ok = extract_into(method.return_shape, &mut all_schemas);
                 let err = extract_into(
-                    &mut tracker,
                     <std::convert::Infallible as Facet<'static>>::SHAPE,
                     &mut all_schemas,
                 );
@@ -708,7 +694,7 @@ pub fn generate_descriptor(service: &ServiceDescriptor) -> String {
 
 use roam_types::{ChannelDirection, FieldSchema, PrimitiveType};
 
-fn render_schema(schema: &Schema) -> String {
+pub(crate) fn render_schema(schema: &Schema) -> String {
     use crate::render::hex_u64;
 
     let id_hex = hex_u64(schema.id.0);
@@ -788,7 +774,7 @@ fn render_schema_kind(kind: &SchemaKind) -> String {
     }
 }
 
-fn render_type_ref(type_ref: &TypeRef) -> String {
+pub(crate) fn render_type_ref(type_ref: &TypeRef) -> String {
     use crate::render::hex_u64;
 
     match type_ref {

@@ -414,6 +414,13 @@ export { buildPlan, schemaSetFromSchemas, TranslationError, IDENTITY } from "./p
 // Plan-driven wire codec
 // ============================================================================
 
-export { skipValue, decodeWithPlan } from "./wire_codec.ts";
+export {
+  encodeWithTypeRef,
+  encodeWithKind,
+  decodeWithTypeRef,
+  decodeWithKind,
+  skipValue,
+  decodeWithPlan,
+} from "./wire_codec.ts";
 
 export { type RoamErrorPayload } from "./result.ts";

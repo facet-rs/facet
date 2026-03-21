@@ -98,7 +98,7 @@ function bindValue(
       const tx = value as Tx<unknown>;
       const channelId = allocator.next();
       const elementSchema = resolved.element;
-      const initialCredit = resolved.initial_credit ?? DEFAULT_INITIAL_CREDIT;
+      const initialCredit = DEFAULT_INITIAL_CREDIT;
 
       // Just set the channel ID on Tx (for wire encoding)
       // Don't register as outgoing - client doesn't send on this channel
@@ -137,7 +137,7 @@ function bindValue(
       const rx = value as Rx<unknown>;
       const channelId = allocator.next();
       const elementSchema = resolved.element;
-      const initialCredit = resolved.initial_credit ?? DEFAULT_INITIAL_CREDIT;
+      const initialCredit = DEFAULT_INITIAL_CREDIT;
       if (rx.isBound) {
         rx.rebind(
           channelId,

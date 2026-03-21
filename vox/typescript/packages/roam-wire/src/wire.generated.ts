@@ -1361,6 +1361,496 @@ export const wireSchemaRegistry: SchemaRegistry = new Map<string, Schema>([
   ["Message", MessageSchema],
 ]);
 
+export const wireMessageSchemaRegistry: import("@bearcove/roam-postcard").WireSchemaRegistry = new Map<
+  bigint,
+  import("@bearcove/roam-postcard").WireSchema
+>([
+  [15651524488059042220n, {
+    id: 0xd9356298b81639acn,
+    type_params: [],
+    kind: { tag: "primitive", primitive_type: "u64" },
+  }],
+  [7889689245711945960n, {
+    id: 0x6d7dce914ee150e8n,
+    type_params: [],
+    kind: { tag: "primitive", primitive_type: "string" },
+  }],
+  [3673619088650892597n, {
+    id: 0x32fb5118f3217535n,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "ProtocolError",
+      fields: [{
+        name: "description",
+        type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] },
+        required: true,
+      }],
+    },
+  }],
+  [6562566395840718674n, {
+    id: 0x5b12eb5df7006752n,
+    type_params: [],
+    kind: {
+      tag: "enum",
+      name: "Parity",
+      variants: [{ name: "Odd", index: 0, payload: { tag: "unit" } }, {
+        name: "Even",
+        index: 1,
+        payload: { tag: "unit" },
+      }],
+    },
+  }],
+  [2890286099751396276n, {
+    id: 0x281c5be4f2ee63b4n,
+    type_params: [],
+    kind: { tag: "primitive", primitive_type: "u32" },
+  }],
+  [16572227981494624825n, {
+    id: 0xe5fc618bb5c6a239n,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "ConnectionSettings",
+      fields: [{
+        name: "parity",
+        type_ref: { tag: "concrete", type_id: 0x5b12eb5df7006752n, args: [] },
+        required: true,
+      }, {
+        name: "max_concurrent_requests",
+        type_ref: { tag: "concrete", type_id: 0x281c5be4f2ee63b4n, args: [] },
+        required: true,
+      }],
+    },
+  }],
+  [3210315508570984224n, {
+    id: 0x2c8d54f2314d0f20n,
+    type_params: [],
+    kind: { tag: "primitive", primitive_type: "u8" },
+  }],
+  [762995119192776039n, {
+    id: 0x0a96b404b4d79d67n,
+    type_params: ["T"],
+    kind: { tag: "list", element: { tag: "var", name: "T" } },
+  }],
+  [6809727737189350231n, {
+    id: 0x5e81034c284bbb57n,
+    type_params: [],
+    kind: {
+      tag: "enum",
+      name: "MetadataValue",
+      variants: [{
+        name: "String",
+        index: 0,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] } },
+      }, {
+        name: "Bytes",
+        index: 1,
+        payload: {
+          tag: "newtype",
+          type_ref: {
+            tag: "concrete",
+            type_id: 0x0a96b404b4d79d67n,
+            args: [{ tag: "concrete", type_id: 0x2c8d54f2314d0f20n, args: [] }],
+          },
+        },
+      }, {
+        name: "U64",
+        index: 2,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xd9356298b81639acn, args: [] } },
+      }],
+    },
+  }],
+  [8461071312833294534n, {
+    id: 0x756bc387c4ad30c6n,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "MetadataEntry",
+      fields: [{ name: "key", type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, required: true }, {
+        name: "value",
+        type_ref: { tag: "concrete", type_id: 0x5e81034c284bbb57n, args: [] },
+        required: true,
+      }, { name: "flags", type_ref: { tag: "concrete", type_id: 0xd9356298b81639acn, args: [] }, required: true }],
+    },
+  }],
+  [13858196934424174983n, {
+    id: 0xc05234b01fc2a187n,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "ConnectionOpen",
+      fields: [{
+        name: "connection_settings",
+        type_ref: { tag: "concrete", type_id: 0xe5fc618bb5c6a239n, args: [] },
+        required: true,
+      }, {
+        name: "metadata",
+        type_ref: {
+          tag: "concrete",
+          type_id: 0x0a96b404b4d79d67n,
+          args: [{ tag: "concrete", type_id: 0x756bc387c4ad30c6n, args: [] }],
+        },
+        required: true,
+      }],
+    },
+  }],
+  [4360168961217314798n, {
+    id: 0x3c826e91ae0abfeen,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "ConnectionAccept",
+      fields: [{
+        name: "connection_settings",
+        type_ref: { tag: "concrete", type_id: 0xe5fc618bb5c6a239n, args: [] },
+        required: true,
+      }, {
+        name: "metadata",
+        type_ref: {
+          tag: "concrete",
+          type_id: 0x0a96b404b4d79d67n,
+          args: [{ tag: "concrete", type_id: 0x756bc387c4ad30c6n, args: [] }],
+        },
+        required: true,
+      }],
+    },
+  }],
+  [4799265360926003098n, {
+    id: 0x429a6a6b0cd4cf9an,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "ConnectionReject",
+      fields: [{
+        name: "metadata",
+        type_ref: {
+          tag: "concrete",
+          type_id: 0x0a96b404b4d79d67n,
+          args: [{ tag: "concrete", type_id: 0x756bc387c4ad30c6n, args: [] }],
+        },
+        required: true,
+      }],
+    },
+  }],
+  [4996958804883642738n, {
+    id: 0x4558c38eda599972n,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "ConnectionClose",
+      fields: [{
+        name: "metadata",
+        type_ref: {
+          tag: "concrete",
+          type_id: 0x0a96b404b4d79d67n,
+          args: [{ tag: "concrete", type_id: 0x756bc387c4ad30c6n, args: [] }],
+        },
+        required: true,
+      }],
+    },
+  }],
+  [13439064026636322996n, {
+    id: 0xba8125876d6388b4n,
+    type_params: [],
+    kind: { tag: "primitive", primitive_type: "bytes" },
+  }],
+  [612799046610683009n, {
+    id: 0x0881197c73ed8481n,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "RequestCall",
+      fields: [
+        { name: "method_id", type_ref: { tag: "concrete", type_id: 0xd9356298b81639acn, args: [] }, required: true },
+        {
+          name: "metadata",
+          type_ref: {
+            tag: "concrete",
+            type_id: 0x0a96b404b4d79d67n,
+            args: [{ tag: "concrete", type_id: 0x756bc387c4ad30c6n, args: [] }],
+          },
+          required: true,
+        },
+        { name: "args", type_ref: { tag: "concrete", type_id: 0xba8125876d6388b4n, args: [] }, required: true },
+        {
+          name: "schemas",
+          type_ref: {
+            tag: "concrete",
+            type_id: 0x0a96b404b4d79d67n,
+            args: [{ tag: "concrete", type_id: 0x2c8d54f2314d0f20n, args: [] }],
+          },
+          required: true,
+        },
+      ],
+    },
+  }],
+  [1005411338590206861n, {
+    id: 0x0df3f04919d1bb8dn,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "RequestResponse",
+      fields: [
+        {
+          name: "metadata",
+          type_ref: {
+            tag: "concrete",
+            type_id: 0x0a96b404b4d79d67n,
+            args: [{ tag: "concrete", type_id: 0x756bc387c4ad30c6n, args: [] }],
+          },
+          required: true,
+        },
+        { name: "ret", type_ref: { tag: "concrete", type_id: 0xba8125876d6388b4n, args: [] }, required: true },
+        {
+          name: "schemas",
+          type_ref: {
+            tag: "concrete",
+            type_id: 0x0a96b404b4d79d67n,
+            args: [{ tag: "concrete", type_id: 0x2c8d54f2314d0f20n, args: [] }],
+          },
+          required: true,
+        },
+      ],
+    },
+  }],
+  [9192753086409751218n, {
+    id: 0x7f93383a0f543ab2n,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "RequestCancel",
+      fields: [{
+        name: "metadata",
+        type_ref: {
+          tag: "concrete",
+          type_id: 0x0a96b404b4d79d67n,
+          args: [{ tag: "concrete", type_id: 0x756bc387c4ad30c6n, args: [] }],
+        },
+        required: true,
+      }],
+    },
+  }],
+  [17092854588629484181n, {
+    id: 0xed3604afc0aa8295n,
+    type_params: [],
+    kind: {
+      tag: "enum",
+      name: "RequestBody",
+      variants: [{
+        name: "Call",
+        index: 0,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x0881197c73ed8481n, args: [] } },
+      }, {
+        name: "Response",
+        index: 1,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x0df3f04919d1bb8dn, args: [] } },
+      }, {
+        name: "Cancel",
+        index: 2,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x7f93383a0f543ab2n, args: [] } },
+      }],
+    },
+  }],
+  [14769264974380308928n, {
+    id: 0xccf6f83e478e99c0n,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "RequestMessage",
+      fields: [{ name: "id", type_ref: { tag: "concrete", type_id: 0xd9356298b81639acn, args: [] }, required: true }, {
+        name: "body",
+        type_ref: { tag: "concrete", type_id: 0xed3604afc0aa8295n, args: [] },
+        required: true,
+      }],
+    },
+  }],
+  [12953391881951808820n, {
+    id: 0xb3c3b149602a8d34n,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "ChannelItem",
+      fields: [{ name: "item", type_ref: { tag: "concrete", type_id: 0xba8125876d6388b4n, args: [] }, required: true }],
+    },
+  }],
+  [4259034109258262458n, {
+    id: 0x3b1b20f5009c67ban,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "ChannelClose",
+      fields: [{
+        name: "metadata",
+        type_ref: {
+          tag: "concrete",
+          type_id: 0x0a96b404b4d79d67n,
+          args: [{ tag: "concrete", type_id: 0x756bc387c4ad30c6n, args: [] }],
+        },
+        required: true,
+      }],
+    },
+  }],
+  [5297015742034461711n, {
+    id: 0x4982c7c0a99dc40fn,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "ChannelReset",
+      fields: [{
+        name: "metadata",
+        type_ref: {
+          tag: "concrete",
+          type_id: 0x0a96b404b4d79d67n,
+          args: [{ tag: "concrete", type_id: 0x756bc387c4ad30c6n, args: [] }],
+        },
+        required: true,
+      }],
+    },
+  }],
+  [11287018253931848275n, {
+    id: 0x9ca38b4cfef52253n,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "ChannelGrantCredit",
+      fields: [{
+        name: "additional",
+        type_ref: { tag: "concrete", type_id: 0x281c5be4f2ee63b4n, args: [] },
+        required: true,
+      }],
+    },
+  }],
+  [12904837675774777421n, {
+    id: 0xb317317e4ca2184dn,
+    type_params: [],
+    kind: {
+      tag: "enum",
+      name: "ChannelBody",
+      variants: [{
+        name: "Item",
+        index: 0,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xb3c3b149602a8d34n, args: [] } },
+      }, {
+        name: "Close",
+        index: 1,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x3b1b20f5009c67ban, args: [] } },
+      }, {
+        name: "Reset",
+        index: 2,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x4982c7c0a99dc40fn, args: [] } },
+      }, {
+        name: "GrantCredit",
+        index: 3,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x9ca38b4cfef52253n, args: [] } },
+      }],
+    },
+  }],
+  [13391435499672507566n, {
+    id: 0xb9d7efa2d68914aen,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "ChannelMessage",
+      fields: [{ name: "id", type_ref: { tag: "concrete", type_id: 0xd9356298b81639acn, args: [] }, required: true }, {
+        name: "body",
+        type_ref: { tag: "concrete", type_id: 0xb317317e4ca2184dn, args: [] },
+        required: true,
+      }],
+    },
+  }],
+  [7846509427421105468n, {
+    id: 0x6ce466c06c304d3cn,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "Ping",
+      fields: [{
+        name: "nonce",
+        type_ref: { tag: "concrete", type_id: 0xd9356298b81639acn, args: [] },
+        required: true,
+      }],
+    },
+  }],
+  [6013976564896838672n, {
+    id: 0x5375efd286333410n,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "Pong",
+      fields: [{
+        name: "nonce",
+        type_ref: { tag: "concrete", type_id: 0xd9356298b81639acn, args: [] },
+        required: true,
+      }],
+    },
+  }],
+  [8229497441972094777n, {
+    id: 0x72350c525cbb8739n,
+    type_params: [],
+    kind: {
+      tag: "enum",
+      name: "MessagePayload",
+      variants: [{
+        name: "ProtocolError",
+        index: 0,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x32fb5118f3217535n, args: [] } },
+      }, {
+        name: "ConnectionOpen",
+        index: 1,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xc05234b01fc2a187n, args: [] } },
+      }, {
+        name: "ConnectionAccept",
+        index: 2,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x3c826e91ae0abfeen, args: [] } },
+      }, {
+        name: "ConnectionReject",
+        index: 3,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x429a6a6b0cd4cf9an, args: [] } },
+      }, {
+        name: "ConnectionClose",
+        index: 4,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x4558c38eda599972n, args: [] } },
+      }, {
+        name: "RequestMessage",
+        index: 5,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xccf6f83e478e99c0n, args: [] } },
+      }, {
+        name: "ChannelMessage",
+        index: 6,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xb9d7efa2d68914aen, args: [] } },
+      }, {
+        name: "Ping",
+        index: 7,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x6ce466c06c304d3cn, args: [] } },
+      }, {
+        name: "Pong",
+        index: 8,
+        payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0x5375efd286333410n, args: [] } },
+      }],
+    },
+  }],
+  [5500347848178879681n, {
+    id: 0x4c552939cfc94cc1n,
+    type_params: [],
+    kind: {
+      tag: "struct",
+      name: "Message",
+      fields: [{
+        name: "connection_id",
+        type_ref: { tag: "concrete", type_id: 0xd9356298b81639acn, args: [] },
+        required: true,
+      }, { name: "payload", type_ref: { tag: "concrete", type_id: 0x72350c525cbb8739n, args: [] }, required: true }],
+    },
+  }],
+]);
+
+export const wireMessageRootRef: import("@bearcove/roam-postcard").WireTypeRef = {
+  tag: "concrete",
+  type_id: 0x4c552939cfc94cc1n,
+  args: [],
+};
+
 export const wireMessageSchemasCbor = new Uint8Array([
   152,
   30,
@@ -4200,7 +4690,7 @@ export const wireMessageSchemasCbor = new Uint8Array([
   114,
   101,
   100,
-  244,
+  245,
   163,
   98,
   105,
@@ -4553,7 +5043,7 @@ export const wireMessageSchemasCbor = new Uint8Array([
   114,
   101,
   100,
-  244,
+  245,
   163,
   98,
   105,

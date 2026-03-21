@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RpcErrorCode } from "@bearcove/roam-wire";
+import { RpcErrorCode, type ConnectionSettings } from "@bearcove/roam-wire";
 import { BareConduit } from "./conduit.ts";
 import { Driver, type Dispatcher } from "./driver.ts";
 import { handshakeAsAcceptor, handshakeAsInitiator, type HandshakeResult } from "./handshake.ts";
@@ -12,7 +12,7 @@ import {
   type SessionAcceptOutcome,
   type SessionHandle,
 } from "./session.ts";
-import type { ConnectionSettings, MethodDescriptor, ServiceDescriptor } from "./channeling/index.ts";
+import type { MethodDescriptor, ServiceDescriptor } from "./channeling/index.ts";
 
 class MemoryLink {
   private readonly queue: Uint8Array[] = [];

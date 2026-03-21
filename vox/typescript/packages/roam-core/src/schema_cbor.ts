@@ -37,21 +37,23 @@ export function decodeSchemaPayload(bytes: Uint8Array): WireSchemaPayload {
   const { value } = decodeCbor(bytes);
   const raw = value as Partial<WireSchemaPayload>;
   return {
-    schemas: Array.isArray(raw.schemas)
-      ? (raw.schemas as WireSchema[]).map(normalizeWireSchema)
-      : [],
+    schemas: normalizeSchemaList(raw.schemas),
     root: raw.root as WireTypeRef,
   };
 }
 
-function normalizeWireSchema(schema: WireSchema): WireSchema {
+export function normalizeSchemaList(value: unknown): WireSchema[] {
+  return Array.isArray(value) ? (value as WireSchema[]).map(normalizeSchema) : [];
+}
+
+export function normalizeSchema(schema: WireSchema): WireSchema {
   return {
     ...schema,
-    kind: normalizeWireSchemaKind(schema.kind),
+    kind: normalizeSchemaKind(schema.kind),
   };
 }
 
-function normalizeWireSchemaKind(kind: WireSchemaKind): WireSchemaKind {
+function normalizeSchemaKind(kind: WireSchemaKind): WireSchemaKind {
   switch (kind.tag) {
     case "enum":
       return {
