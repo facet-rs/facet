@@ -657,9 +657,20 @@ export class Driver {
       throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
     }
 
+    const argElements = Array.isArray((method.args as { elements?: unknown[] }).elements)
+      ? method.args.elements
+      : [];
+    const rawArgs =
+      argElements.length === 0
+        ? []
+        : decoded.value;
+    if (!Array.isArray(rawArgs)) {
+      throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
+    }
+
     let channelIndex = 0;
-    return (decoded.value as unknown[]).map((raw, argIndex) => {
-      const argSchema = method.args.elements[argIndex];
+    return rawArgs.map((raw, argIndex) => {
+      const argSchema = argElements[argIndex];
       if (argSchema.kind === "tx") {
         const channelId = incoming.channels[channelIndex++];
         return createServerTx(

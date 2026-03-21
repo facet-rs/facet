@@ -9,6 +9,7 @@ import { session } from "./session.ts";
 import { ClientMetadata } from "./metadata.ts";
 import { OPERATION_ID_METADATA_KEY } from "./retry.ts";
 import type { MethodDescriptor, ServiceDescriptor } from "./channeling/index.ts";
+import type { ServiceSendSchemas } from "./schema_tracker.ts";
 
 class MemoryLink {
   private readonly queue: Uint8Array[] = [];
@@ -110,7 +111,176 @@ const DESCRIPTOR: ServiceDescriptor = {
   methods: [METHOD],
 };
 
+const UNIT_ID = 10n;
+const U32_ID = 11n;
+const STRING_ID = 12n;
+const RESULT_ID = 13n;
+const ROAM_ERROR_ID = 14n;
+
+const CANONICAL_ZERO_ARG_METHOD: MethodDescriptor = {
+  name: "ping",
+  id: 2n,
+  retry: { persist: false, idem: false },
+  args: { kind: "tuple", elements: [] },
+  result: {
+    kind: "enum",
+    variants: [
+      { name: "Ok", fields: { kind: "u32" } },
+      {
+        name: "Err",
+        fields: {
+          kind: "enum",
+          variants: [
+            { name: "User", fields: null },
+            { name: "UnknownMethod", fields: null },
+            { name: "InvalidPayload", fields: { kind: "string" } },
+            { name: "Cancelled", fields: null },
+            { name: "ConnectionClosed", fields: null },
+            { name: "SessionShutdown", fields: null },
+            { name: "SendFailed", fields: null },
+            { name: "Indeterminate", fields: null },
+          ],
+        },
+      },
+    ],
+  },
+};
+
+const CANONICAL_ZERO_ARG_SEND_SCHEMAS: ServiceSendSchemas = {
+  schemas: new Map([
+    [UNIT_ID, { id: UNIT_ID, type_params: [], kind: { tag: "primitive", primitive_type: "unit" } }],
+    [U32_ID, { id: U32_ID, type_params: [], kind: { tag: "primitive", primitive_type: "u32" } }],
+    [STRING_ID, { id: STRING_ID, type_params: [], kind: { tag: "primitive", primitive_type: "string" } }],
+    [
+      RESULT_ID,
+      {
+        id: RESULT_ID,
+        type_params: ["T", "E"],
+        kind: {
+          tag: "enum",
+          name: "Result",
+          variants: [
+            {
+              name: "Ok",
+              index: 0,
+              payload: { tag: "newtype", type_ref: { tag: "var", name: "T" } },
+            },
+            {
+              name: "Err",
+              index: 1,
+              payload: { tag: "newtype", type_ref: { tag: "var", name: "E" } },
+            },
+          ],
+        },
+      },
+    ],
+    [
+      ROAM_ERROR_ID,
+      {
+        id: ROAM_ERROR_ID,
+        type_params: ["E"],
+        kind: {
+          tag: "enum",
+          name: "RoamError",
+          variants: [
+            {
+              name: "User",
+              index: 0,
+              payload: { tag: "newtype", type_ref: { tag: "var", name: "E" } },
+            },
+            { name: "UnknownMethod", index: 1, payload: { tag: "unit" } },
+            {
+              name: "InvalidPayload",
+              index: 2,
+              payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: STRING_ID, args: [] } },
+            },
+            { name: "Cancelled", index: 3, payload: { tag: "unit" } },
+            { name: "ConnectionClosed", index: 4, payload: { tag: "unit" } },
+            { name: "SessionShutdown", index: 5, payload: { tag: "unit" } },
+            { name: "SendFailed", index: 6, payload: { tag: "unit" } },
+            { name: "Indeterminate", index: 7, payload: { tag: "unit" } },
+          ],
+        },
+      },
+    ],
+  ]),
+  methods: new Map([
+    [
+      CANONICAL_ZERO_ARG_METHOD.id,
+      {
+        argsDepIds: [UNIT_ID],
+        argsRootRef: { tag: "concrete", type_id: UNIT_ID, args: [] },
+        responseDepIds: [U32_ID, UNIT_ID, STRING_ID, ROAM_ERROR_ID, RESULT_ID],
+        responseRootRef: {
+          tag: "concrete",
+          type_id: RESULT_ID,
+          args: [
+            { tag: "concrete", type_id: U32_ID, args: [] },
+            {
+              tag: "concrete",
+              type_id: ROAM_ERROR_ID,
+              args: [{ tag: "concrete", type_id: UNIT_ID, args: [] }],
+            },
+          ],
+        },
+      },
+    ],
+  ]),
+};
+
+const CANONICAL_ZERO_ARG_DESCRIPTOR: ServiceDescriptor = {
+  service_name: "Test",
+  methods: [CANONICAL_ZERO_ARG_METHOD],
+  send_schemas: CANONICAL_ZERO_ARG_SEND_SCHEMAS,
+};
+
 describe("retry operation identity", () => {
+  it("normalizes canonical zero-arg methods to an empty arg list", async () => {
+    const [clientLink, serverLink] = memoryLinkPair();
+    const clientConduit = new BareConduit(clientLink);
+    const serverConduit = new BareConduit(serverLink);
+    const seen = makeDeferred<number>();
+
+    const dispatcher: Dispatcher = {
+      getDescriptor() {
+        return CANONICAL_ZERO_ARG_DESCRIPTOR;
+      },
+      async dispatch(_context: RequestContext, _method, args, call) {
+        seen.resolve(args.length);
+        call.reply(7);
+      },
+    };
+
+    const clientSettings: ConnectionSettings = { parity: { tag: "Odd" }, max_concurrent_requests: 64 };
+    const serverSettings: ConnectionSettings = { parity: { tag: "Even" }, max_concurrent_requests: 64 };
+    const [clientHandshake, serverHandshake] = await Promise.all([
+      handshakeAsInitiator(clientLink, clientSettings),
+      handshakeAsAcceptor(serverLink, serverSettings),
+    ]);
+    const clientSession = session.initiatorConduit(clientConduit, clientHandshake);
+    const serverSession = session.acceptorConduit(serverConduit, serverHandshake);
+    const serverDriver = new Driver(serverSession.rootConnection(), dispatcher);
+    const clientDriver = new Driver(clientSession.rootConnection(), {
+      getDescriptor: () => CANONICAL_ZERO_ARG_DESCRIPTOR,
+      dispatch: async () => {},
+    });
+    const serverRun = serverDriver.run();
+    const clientRun = clientDriver.run();
+
+    const value = await clientSession.rootConnection().caller().call({
+      method: "Test.ping",
+      args: {},
+      descriptor: CANONICAL_ZERO_ARG_METHOD,
+    });
+
+    await expect(seen.promise).resolves.toBe(0);
+    expect(value).toBe(7);
+
+    clientLink.close();
+    serverLink.close();
+    await Promise.allSettled([serverRun, clientRun]);
+  });
+
   it("automatically injects an operation id when the peer supports retry", async () => {
     const [clientLink, serverLink] = memoryLinkPair();
     const clientConduit = new BareConduit(clientLink);
