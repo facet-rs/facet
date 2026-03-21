@@ -937,10 +937,11 @@ impl SchemaSendTracker {
         }
 
         // Slow path: extract, deduplicate, encode.
-        // Snapshot already-sent TypeSchemaIds before extraction adds new ones.
-        let already_sent: HashSet<SchemaHash> = self.emitted.values().copied().collect();
+        let already_sent = self.sent_schemas.clone();
 
-        let extracted = self.extract_schemas(schematic.shape())?;
+        // Use a fresh extraction pass here. Reusing `self.emitted` across
+        // unrelated method shapes can alias structural roots like unary tuples.
+        let extracted = extract_schemas(schematic.shape())?;
 
         // Add all schemas to the persistent registry (for the operation store).
         for schema in &extracted.schemas {

@@ -19,6 +19,7 @@ import type {
   SchemaHash,
   TranslationPlan,
   SchemaSet,
+  WireBindingDirection,
 } from "@bearcove/roam-postcard";
 import { buildPlan, resolveWireTypeRef } from "@bearcove/roam-postcard";
 import { encodeSchemaPayload, decodeSchemaPayload } from "./schema_cbor.ts";
@@ -30,26 +31,32 @@ import { roamLogger } from "./logger.ts";
  */
 export class SchemaTracker {
   private schemas = new Map<SchemaHash, WireSchema>();
-  private methodBindings = new Map<bigint, { rootRef: WireTypeRef }>();
+  private methodBindings = new Map<string, { rootRef: WireTypeRef }>();
+
+  reset(): void {
+    this.schemas.clear();
+    this.methodBindings.clear();
+  }
 
   /**
    * Record a CBOR-encoded SchemaPayload from the remote peer.
    */
-  recordReceived(cborBytes: Uint8Array): void {
+  recordReceived(
+    methodId: bigint,
+    direction: WireBindingDirection,
+    cborBytes: Uint8Array,
+  ): void {
     const payload = decodeSchemaPayload(cborBytes);
 
     for (const schema of payload.schemas) {
       this.schemas.set(schema.id, schema);
     }
-
-    for (const binding of payload.method_bindings) {
-      this.methodBindings.set(binding.method_id, {
-        rootRef: binding.root_type_ref,
-      });
-    }
+    this.methodBindings.set(this.bindingKey(methodId, direction), {
+      rootRef: payload.root,
+    });
 
     roamLogger()?.debug(
-      `[roam:schema] recorded ${payload.schemas.length} schemas, ${payload.method_bindings.length} bindings`,
+      `[roam:schema] recorded ${payload.schemas.length} schemas for method=${methodId} direction=${direction}`,
     );
   }
 
@@ -60,14 +67,14 @@ export class SchemaTracker {
    * @param localSchemaSet - The local schema set for this method's args
    * @returns TranslationPlan, or null if no remote schema available (identity)
    */
-  buildArgsTranslation(
+  buildTranslation(
     methodId: bigint,
+    direction: WireBindingDirection,
     localSchemaSet: SchemaSet,
-  ): TranslationPlan | null {
-    const binding = this.methodBindings.get(methodId);
+  ): { plan: TranslationPlan; remoteSchemaSet: SchemaSet } | null {
+    const binding = this.methodBindings.get(this.bindingKey(methodId, direction));
     if (!binding) return null;
 
-    // Resolve the root kind using the root type ref
     const rootKind = resolveWireTypeRef(binding.rootRef, this.schemas);
     if (!rootKind) return null;
 
@@ -77,12 +84,19 @@ export class SchemaTracker {
       registry: this.schemas,
     };
 
-    return buildPlan(remoteSchemaSet, localSchemaSet);
+    return {
+      plan: buildPlan(remoteSchemaSet, localSchemaSet),
+      remoteSchemaSet,
+    };
   }
 
   /** Get the registry of all received schemas. */
   getRegistry(): WireSchemaRegistry {
     return this.schemas;
+  }
+
+  private bindingKey(methodId: bigint, direction: WireBindingDirection): string {
+    return `${methodId}:${direction}`;
   }
 }
 
@@ -115,6 +129,25 @@ export interface ServiceSendSchemas {
   schemas: Map<bigint, import("@bearcove/roam-postcard").WireSchema>;
   /** Per-method schema info. method_id (bigint) → schema info. */
   methods: Map<bigint, MethodSendSchemas>;
+}
+
+export function localSchemaSetForMethod(
+  methodId: bigint,
+  direction: WireBindingDirection,
+  schemaTable: ServiceSendSchemas,
+): SchemaSet | null {
+  const methodInfo = schemaTable.methods.get(methodId);
+  if (!methodInfo) return null;
+
+  const rootRef = direction === "args" ? methodInfo.argsRootRef : methodInfo.responseRootRef;
+  const rootKind = resolveWireTypeRef(rootRef, schemaTable.schemas);
+  if (!rootKind) return null;
+
+  const rootId = rootRef.tag === "concrete" ? rootRef.type_id : 0n;
+  return {
+    root: { id: rootId, type_params: [], kind: rootKind },
+    registry: schemaTable.schemas,
+  };
 }
 
 /**
@@ -164,13 +197,7 @@ export class SchemaSendTracker {
     // CBOR-encode the payload using the new internally-tagged format.
     return encodeSchemaPayload({
       schemas,
-      method_bindings: [
-        {
-          method_id: methodId,
-          root_type_ref: rootRef,
-          direction,
-        },
-      ],
+      root: rootRef,
     });
   }
 }

@@ -439,18 +439,11 @@ export type WireSchemaRegistry = Map<SchemaHash, WireSchema>;
 /** CBOR-encoded payload inside a schema wire message. */
 export interface WireSchemaPayload {
   schemas: WireSchema[];
-  method_bindings: WireMethodSchemaBinding[];
+  root: WireTypeRef;
 }
 
 /** Binding direction for method schema bindings. Just a string (unit variant). */
 export type WireBindingDirection = "args" | "response";
-
-/** Associates a method ID with its root type ref for args or response. */
-export interface WireMethodSchemaBinding {
-  method_id: bigint;
-  root_type_ref: WireTypeRef;
-  direction: WireBindingDirection;
-}
 
 // --- Helper ---
 

@@ -10,6 +10,11 @@ slow-timeout = { period = "10s", terminate-after = 3 }
 [profile.patient]
 slow-timeout = { period = "30s", terminate-after = 4 }
 
+[profile.short]
+fail-fast = true
+status-level = "pass"
+slow-timeout = { period = "1s", terminate-after = 2 }
+
 [profile.eternal]
 slow-timeout = { period = "3600s", terminate-after = 3600 }
 

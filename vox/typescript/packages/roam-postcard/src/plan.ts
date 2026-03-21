@@ -217,7 +217,7 @@ function buildStructPlan(
 
   // Check for missing required fields
   for (let i = 0; i < localFields.length; i++) {
-    if (!matched[i] && localFields[i].required) {
+    if (!matched[i] && !fieldHasDefault(localFields[i], localReg)) {
       throw new TranslationError(
         `required field "${localFields[i].name}" missing from remote schema "${schemaName(remoteSchema.kind) ?? "?"}"`,
       );
@@ -225,6 +225,17 @@ function buildStructPlan(
   }
 
   return { tag: "struct", field_ops: fieldOps, nested };
+}
+
+function fieldHasDefault(
+  field: WireFieldSchema,
+  registry: WireSchemaRegistry,
+): boolean {
+  if (!field.required) {
+    return true;
+  }
+  const kind = resolveWireTypeRef(field.type_ref, registry);
+  return kind?.tag === "option";
 }
 
 function buildTuplePlan(

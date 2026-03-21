@@ -166,9 +166,8 @@ structstruck::strike! {
                                     /// Argument tuple
                                     pub args: Payload<'payload>,
 
-                                    /// CBOR-encoded schemas for this call's arg types.
+                                    /// CBOR-encoded schemas for this call's args tuple
                                     /// Non-empty on the first call for each method on a connection.
-                                    #[facet(default)]
                                     pub schemas: CborPayload,
                                 }),
 
@@ -182,7 +181,6 @@ structstruck::strike! {
 
                                     /// CBOR-encoded schemas for this response's return type.
                                     /// Non-empty on the first response for each method on a connection.
-                                    #[facet(default)]
                                     pub schemas: CborPayload,
                                 }),
 

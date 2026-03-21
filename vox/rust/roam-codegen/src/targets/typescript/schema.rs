@@ -358,7 +358,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         all_schemas: &mut Vec<Schema>,
     ) -> TypeRef<SchemaHash> {
         let extracted = tracker.extract_schemas(shape).expect("schema extraction");
-        let root = extracted.root_type_ref.clone();
+        let root = extracted.root.clone();
         all_schemas.extend(extracted.schemas);
         root
     }

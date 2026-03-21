@@ -66,5 +66,5 @@ export interface RoamCall {
   /** Reply with a user-defined error. Encoded using method.result Err/User variant. */
   replyErr(error: unknown): void;
   /** Reply with an internal/protocol error (InvalidPayload). */
-  replyInternalError(): void;
+  replyInternalError(message?: string): void;
 }

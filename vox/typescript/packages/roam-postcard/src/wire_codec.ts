@@ -318,10 +318,11 @@ function decodeStructWithPlan(
   const localStruct = localKind as Extract<WireSchemaKind, { tag: "struct" }>;
   const remoteStruct = remoteKind as Extract<WireSchemaKind, { tag: "struct" }>;
 
-  // Pre-fill result with null for optional fields
+  // Pre-fill result with null for fields that can be defaulted.
   const result: Record<string, unknown> = {};
   for (const f of localStruct.fields) {
-    if (!f.required) result[f.name] = null;
+    const fieldKind = resolveTypeRefKind(f.type_ref, registry);
+    if (!f.required || fieldKind.tag === "option") result[f.name] = null;
   }
 
   let off = offset;

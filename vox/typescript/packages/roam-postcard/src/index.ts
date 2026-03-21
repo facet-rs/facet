@@ -399,7 +399,6 @@ export type {
   WireSchemaRegistry,
   WireSchemaPayload,
   WireBindingDirection,
-  WireMethodSchemaBinding,
 } from "./schema.ts";
 
 export { resolveWireTypeRef } from "./schema.ts";

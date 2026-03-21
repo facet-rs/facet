@@ -468,8 +468,6 @@ class SessionCore {
   private peerSupportsRetry: boolean;
   private readonly resumable: boolean;
   private sessionResumeKey: Uint8Array | null;
-  private readonly schemaTracker: SchemaTracker;
-  private readonly schemaSendTracker = new SchemaSendTracker();
   private readonly recoverConduit?: () => Promise<Conduit<Message>>;
   private readonly onConnectivityChange?: (state: SessionConnectivity) => void;
   private readonly keepaliveIntervalMs: number;
@@ -504,7 +502,6 @@ class SessionCore {
     this.recoverConduit = recoverConduit;
     this.nextConnectionId = firstIdForParity(localRootSettings.parity);
     this.sessionHandle = new SessionHandle(this);
-    this.schemaTracker = new SchemaTracker();
     this.onConnectivityChange = onConnectivityChange;
     this.keepaliveIntervalMs = keepaliveIntervalMs;
     this.keepaliveTimeoutMs =
@@ -803,10 +800,9 @@ class SessionCore {
     // CBOR handshake (including resume key exchange) is performed by the
     // caller before the conduit is handed in. Just switch to the new conduit.
     this.conduit = conduit;
-    // Reset the schema send tracker so schemas are re-sent on the resumed
-    // connection. The Rust peer resets its receive tracker on resume, so we
-    // must re-announce all schemas that were previously sent.
-    this.schemaSendTracker.reset();
+    for (const connection of this.connections.values()) {
+      connection.resetSchemas();
+    }
   }
 
   private enqueueResume(request: { conduit: Conduit<Message>; result: Deferred<void> }): void {
@@ -974,22 +970,35 @@ class SessionCore {
       case "Call": {
         const callSchemas = request.body.value.schemas;
         if (callSchemas && callSchemas.length > 0) {
-          try { this.schemaTracker.recordReceived(callSchemas); } catch {}
+          try {
+            connection.getSchemaTracker().recordReceived(
+              request.body.value.method_id,
+              "args",
+              callSchemas,
+            );
+          } catch {}
         }
         connection.enqueueIncomingCall({
           requestId: request.id,
           methodId: request.body.value.method_id,
           args: request.body.value.args,
-          channels: request.body.value.channels,
+          channels: request.body.value.channels ?? [],
           metadata: request.body.value.metadata,
         });
         return;
       }
 
       case "Response": {
+        const methodId = connection.pendingResponseMethodId(request.id);
         const responseSchemas = request.body.value.schemas;
-        if (responseSchemas && responseSchemas.length > 0) {
-          try { this.schemaTracker.recordReceived(responseSchemas); } catch {}
+        if (methodId !== undefined && responseSchemas && responseSchemas.length > 0) {
+          try {
+            connection.getSchemaTracker().recordReceived(
+              methodId,
+              "response",
+              responseSchemas,
+            );
+          } catch {}
         }
         connection.resolveResponse(request.id, request.body.value.ret);
         return;
@@ -1026,13 +1035,6 @@ class SessionCore {
     }
   }
 
-  getSchemaTracker(): SchemaTracker {
-    return this.schemaTracker;
-  }
-
-  getSchemaSendTracker(): SchemaSendTracker {
-    return this.schemaSendTracker;
-  }
 }
 
 export class SessionHandle {
@@ -1077,6 +1079,8 @@ export class ConnectionHandle {
   private readonly incomingCalls = new AsyncQueue<IncomingCall>();
   private readonly incomingCancels = new AsyncQueue<bigint>();
   private readonly pendingResponses = new Map<bigint, PendingResponse>();
+  private readonly schemaTracker = new SchemaTracker();
+  private readonly schemaSendTracker = new SchemaSendTracker();
   private nextRequestId: bigint;
   private nextOperationId = 1n;
   private closed = false;
@@ -1114,11 +1118,16 @@ export class ConnectionHandle {
   }
 
   getSchemaTracker(): SchemaTracker {
-    return this.session.getSchemaTracker();
+    return this.schemaTracker;
   }
 
   getSchemaSendTracker(): import("./schema_tracker.ts").SchemaSendTracker {
-    return this.session.getSchemaSendTracker();
+    return this.schemaSendTracker;
+  }
+
+  resetSchemas(): void {
+    this.schemaTracker.reset();
+    this.schemaSendTracker.reset();
   }
 
   isClosed(): boolean {
@@ -1154,7 +1163,7 @@ export class ConnectionHandle {
       // on subsequent calls within the same connection it returns empty bytes.
       const computeSchemas: (() => Uint8Array) | undefined = request.sendSchemas
         ? () =>
-            this.session.getSchemaSendTracker().prepareSchemas(
+            this.getSchemaSendTracker().prepareSchemas(
               request.descriptor.id,
               "args",
               request.sendSchemas!,
@@ -1267,6 +1276,10 @@ export class ConnectionHandle {
     }
     this.clearPendingState(state);
     state.resolve(payload);
+  }
+
+  pendingResponseMethodId(requestId: bigint): bigint | undefined {
+    return this.pendingResponses.get(requestId)?.methodId;
   }
 
   routeChannelData(channelId: bigint, payload: Uint8Array): void {

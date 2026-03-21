@@ -684,20 +684,6 @@ fn generate_client_method(
         .map(|arg| format_ident!("{}", arg.name().to_snake_case()))
         .collect();
 
-    // Args tuple type (for RpcPlan::for_type)
-    let arg_types: Vec<TokenStream2> = method
-        .args()
-        .map(|a| to_static_type_tokens(&a.ty))
-        .collect();
-    let args_tuple_type = match arg_types.len() {
-        0 => quote! { () },
-        1 => {
-            let t = &arg_types[0];
-            quote! { (#t,) }
-        }
-        _ => quote! { (#(#arg_types),*) },
-    };
-
     // Args tuple value (for serialization)
     let args_tuple = match arg_names.len() {
         0 => quote! { () },

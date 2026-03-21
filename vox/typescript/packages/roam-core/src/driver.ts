@@ -1,4 +1,4 @@
-import { decodeWithSchema, encodeWithSchema } from "@bearcove/roam-postcard";
+import { decodeWithPlan, decodeWithSchema, encodeWithSchema } from "@bearcove/roam-postcard";
 import {
   RpcError,
   RpcErrorCode,
@@ -19,7 +19,7 @@ import { metadataOperationId } from "./retry.ts";
 import { type ServerCallOutcome, type ServerMiddleware } from "./server_middleware.ts";
 import type { ConnectionHandle, IncomingCall } from "./session.ts";
 import { roamLogger } from "./logger.ts";
-import { SchemaTranslationError } from "./schema_tracker.ts";
+import { localSchemaSetForMethod, SchemaTranslationError } from "./schema_tracker.ts";
 
 export interface Dispatcher {
   getDescriptor(): ServiceDescriptor;
@@ -286,13 +286,13 @@ class RoamCallImpl implements RoamCall {
     this.sendPayload(payload);
   }
 
-  replyInternalError(): void {
+  replyInternalError(message = "Invalid payload"): void {
     if (this.replied) {
       return;
     }
     this.replied = true;
     const payload = encodeWithSchema(
-      { tag: "Err", value: { tag: "InvalidPayload" } },
+      { tag: "Err", value: { tag: "InvalidPayload", value: message } },
       this.method.result,
       this.schemaRegistry,
     );
@@ -421,16 +421,26 @@ export class Driver {
       const message = this.taskQueue.shift()!;
       switch (message.kind) {
         case "data":
-          await this.connection.sendChannelData(message.channelId, message.payload).catch(() => {});
+          await this.connection.sendChannelData(message.channelId, message.payload).catch((error) => {
+            roamLogger()?.error("[roam:driver] failed to send channel data", error);
+          });
           break;
         case "close":
-          await this.connection.sendChannelClose(message.channelId).catch(() => {});
+          await this.connection.sendChannelClose(message.channelId).catch((error) => {
+            roamLogger()?.error("[roam:driver] failed to send channel close", error);
+          });
           break;
         case "grantCredit":
-          await this.connection.sendChannelCredit(message.channelId, message.additional).catch(() => {});
+          await this.connection.sendChannelCredit(message.channelId, message.additional).catch((error) => {
+            roamLogger()?.error("[roam:driver] failed to grant channel credit", error);
+          });
           break;
         case "response":
-          await this.connection.sendResponse(message.requestId, message.payload, [], [], message.schemas).catch(() => {});
+          await this.connection
+            .sendResponse(message.requestId, message.payload, [], [], message.schemas)
+            .catch((error) => {
+              roamLogger()?.error("[roam:driver] failed to send response", error);
+            });
           break;
       }
     }
@@ -535,24 +545,7 @@ export class Driver {
     } catch (error) {
       roamLogger()?.error(`[roam:driver] dispatch error for ${method.name}:`, error);
       if (!call.didReply()) {
-        if (operationId !== undefined) {
-          const waiters = this.operations.failWithoutReply(operationId, incoming.requestId);
-          for (const waiter of waiters) {
-            taskSender({
-              kind: "response",
-              requestId: waiter,
-              payload: method.retry.persist || failClosedOnDrop ? encodeIndeterminate() : encodeCancelled(),
-            });
-          }
-        } else if (method.retry.persist) {
-          this.taskQueue.push({
-            kind: "response",
-            requestId: incoming.requestId,
-            payload: encodeIndeterminate(),
-          });
-        } else {
-          call.replyInternalError();
-        }
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
       }
       outcome = { kind: "failed", error };
     }
@@ -591,15 +584,35 @@ export class Driver {
     // r[impl rpc.channel.binding.callee-args.tx]
 
     // r[impl schema.translation.field-matching]
-    // Decode args using schema. Translation plans are built from remote schemas
-    // if available, but for now we decode with the local schema (identity).
-    // TODO: wire up plan-driven decode with decodeWithPlan when remote schemas differ.
-    const decoded = decodeWithSchema(
-      incoming.args,
-      0,
-      method.args,
-      descriptor.schema_registry,
-    );
+    const localSchemaSet = descriptor.send_schemas
+      ? localSchemaSetForMethod(method.id, "args", descriptor.send_schemas)
+      : null;
+    const translation = localSchemaSet
+      ? this.connection.getSchemaTracker().buildTranslation(
+          method.id,
+          "args",
+          localSchemaSet,
+        )
+      : null;
+
+    const decoded = translation
+      ? decodeWithPlan(
+          incoming.args,
+          0,
+          translation.plan,
+          localSchemaSet.root.kind,
+          translation.remoteSchemaSet.root.kind,
+          new Map([
+            ...localSchemaSet.registry,
+            ...translation.remoteSchemaSet.registry,
+          ]),
+        )
+      : decodeWithSchema(
+          incoming.args,
+          0,
+          method.args,
+          descriptor.schema_registry,
+        );
     if (decoded.next !== incoming.args.length) {
       throw new RpcError(RpcErrorCode.INVALID_PAYLOAD);
     }

@@ -1,8 +1,9 @@
-// CBOR encode/decode for the new wire schema format.
+// CBOR encode/decode for the wire schema format.
 //
-// The Rust side uses #[facet(tag = "tag", rename_all = "snake_case")] on schema
-// enums, producing internally-tagged CBOR. decodeCbor() output maps directly to
-// our Wire* TypeScript types with no reshaping needed.
+// Decoding is intentionally minimal: CBOR is self-describing, so we parse into
+// ordinary JS values and then treat the result as the expected wire payload
+// shape. Encoding still needs structural knowledge so we can emit the exact
+// facet-cbor layout Rust expects.
 
 import type {
   WireSchemaPayload,
@@ -12,9 +13,6 @@ import type {
   WireVariantPayload,
   WireFieldSchema,
   WireVariantSchema,
-  WireMethodSchemaBinding,
-  SchemaHash,
-  WireBindingDirection,
   WirePrimitiveType,
   WireChannelDirection,
 } from "@bearcove/roam-postcard";
@@ -26,7 +24,6 @@ import {
   cborUint64,
   cborBool,
   cborUint,
-  type CborMap,
 } from "./cbor.ts";
 
 // ============================================================================
@@ -34,37 +31,46 @@ import {
 // ============================================================================
 
 /**
- * Decode a CBOR-encoded schema payload into typed Wire* objects.
- *
- * Because facet-cbor now uses internally-tagged enums, the decoded CBOR is
- * already the right shape — we just need to cast and validate bigints.
+ * Decode a CBOR-encoded schema payload into regular JS values.
  */
 export function decodeSchemaPayload(bytes: Uint8Array): WireSchemaPayload {
   const { value } = decodeCbor(bytes);
-  const raw = value as CborMap;
-
-  const schemas = (raw["schemas"] as CborMap[]).map(decodeSchema);
-  const method_bindings = (raw["method_bindings"] as CborMap[] | undefined ?? []).map(
-    decodeMethodBinding,
-  );
-
-  return { schemas, method_bindings };
-}
-
-function decodeSchema(raw: CborMap): WireSchema {
+  const raw = value as Partial<WireSchemaPayload>;
   return {
-    id: raw["id"] as SchemaHash,
-    type_params: (raw["type_params"] as string[] | undefined) ?? [],
-    kind: raw["kind"] as WireSchemaKind,
+    schemas: Array.isArray(raw.schemas)
+      ? (raw.schemas as WireSchema[]).map(normalizeWireSchema)
+      : [],
+    root: raw.root as WireTypeRef,
   };
 }
 
-function decodeMethodBinding(raw: CborMap): WireMethodSchemaBinding {
+function normalizeWireSchema(schema: WireSchema): WireSchema {
   return {
-    method_id: raw["method_id"] as bigint,
-    root_type_ref: raw["root_type_ref"] as WireTypeRef,
-    direction: raw["direction"] as WireBindingDirection,
+    ...schema,
+    kind: normalizeWireSchemaKind(schema.kind),
   };
+}
+
+function normalizeWireSchemaKind(kind: WireSchemaKind): WireSchemaKind {
+  switch (kind.tag) {
+    case "enum":
+      return {
+        ...kind,
+        variants: kind.variants.map((variant) => ({
+          ...variant,
+          payload: normalizeVariantPayload(variant.payload),
+        })),
+      };
+    default:
+      return kind;
+  }
+}
+
+function normalizeVariantPayload(payload: WireVariantPayload | "unit"): WireVariantPayload {
+  if (payload === "unit") {
+    return { tag: "unit" };
+  }
+  return payload;
 }
 
 // ============================================================================
@@ -77,10 +83,9 @@ function decodeMethodBinding(raw: CborMap): WireMethodSchemaBinding {
  */
 export function encodeSchemaPayload(payload: WireSchemaPayload): Uint8Array {
   const schemas = cborArray(payload.schemas.map(encodeSchema));
-  const bindings = cborArray(payload.method_bindings.map(encodeMethodBinding));
   return cborMap([
     ["schemas", schemas],
-    ["method_bindings", bindings],
+    ["root", encodeTypeRef(payload.root)],
   ]);
 }
 
@@ -214,12 +219,4 @@ function encodePrimitiveType(pt: WirePrimitiveType): Uint8Array {
 /** Unit variant → just the string name */
 function encodeChannelDirection(dir: WireChannelDirection): Uint8Array {
   return cborText(dir);
-}
-
-function encodeMethodBinding(binding: WireMethodSchemaBinding): Uint8Array {
-  return cborMap([
-    ["method_id", cborUint64(binding.method_id)],
-    ["root_type_ref", encodeTypeRef(binding.root_type_ref)],
-    ["direction", cborText(binding.direction)],
-  ]);
 }
