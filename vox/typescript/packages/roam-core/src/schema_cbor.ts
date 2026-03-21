@@ -6,15 +6,15 @@
 // facet-cbor layout Rust expects.
 
 import type {
-  WireSchemaPayload,
-  WireSchema,
-  WireSchemaKind,
-  WireTypeRef,
-  WireVariantPayload,
-  WireFieldSchema,
-  WireVariantSchema,
-  WirePrimitiveType,
-  WireChannelDirection,
+  SchemaPayload,
+  Schema,
+  SchemaKind,
+  TypeRef,
+  VariantPayload,
+  FieldSchema,
+  VariantSchema,
+  PrimitiveType,
+  ChannelDirection,
 } from "@bearcove/roam-postcard";
 import {
   decodeCbor,
@@ -27,33 +27,33 @@ import {
 } from "./cbor.ts";
 
 // ============================================================================
-// Decode: CBOR → WireSchemaPayload
+// Decode: CBOR → SchemaPayload
 // ============================================================================
 
 /**
  * Decode a CBOR-encoded schema payload into regular JS values.
  */
-export function decodeSchemaPayload(bytes: Uint8Array): WireSchemaPayload {
+export function decodeSchemaPayload(bytes: Uint8Array): SchemaPayload {
   const { value } = decodeCbor(bytes);
-  const raw = value as Partial<WireSchemaPayload>;
+  const raw = value as Partial<SchemaPayload>;
   return {
     schemas: normalizeSchemaList(raw.schemas),
-    root: raw.root as WireTypeRef,
+    root: raw.root as TypeRef,
   };
 }
 
-export function normalizeSchemaList(value: unknown): WireSchema[] {
-  return Array.isArray(value) ? (value as WireSchema[]).map(normalizeSchema) : [];
+export function normalizeSchemaList(value: unknown): Schema[] {
+  return Array.isArray(value) ? (value as Schema[]).map(normalizeSchema) : [];
 }
 
-export function normalizeSchema(schema: WireSchema): WireSchema {
+export function normalizeSchema(schema: Schema): Schema {
   return {
     ...schema,
     kind: normalizeSchemaKind(schema.kind),
   };
 }
 
-function normalizeSchemaKind(kind: WireSchemaKind): WireSchemaKind {
+function normalizeSchemaKind(kind: SchemaKind): SchemaKind {
   switch (kind.tag) {
     case "enum":
       return {
@@ -68,7 +68,7 @@ function normalizeSchemaKind(kind: WireSchemaKind): WireSchemaKind {
   }
 }
 
-function normalizeVariantPayload(payload: WireVariantPayload | "unit"): WireVariantPayload {
+function normalizeVariantPayload(payload: VariantPayload | "unit"): VariantPayload {
   if (payload === "unit") {
     return { tag: "unit" };
   }
@@ -76,14 +76,14 @@ function normalizeVariantPayload(payload: WireVariantPayload | "unit"): WireVari
 }
 
 // ============================================================================
-// Encode: WireSchemaPayload → CBOR
+// Encode: SchemaPayload → CBOR
 // ============================================================================
 
 /**
  * Encode a schema payload to CBOR, producing bytes that facet-cbor on the
  * Rust side can deserialize (internally-tagged enums).
  */
-export function encodeSchemaPayload(payload: WireSchemaPayload): Uint8Array {
+export function encodeSchemaPayload(payload: SchemaPayload): Uint8Array {
   const schemas = cborArray(payload.schemas.map(encodeSchema));
   return cborMap([
     ["schemas", schemas],
@@ -91,7 +91,7 @@ export function encodeSchemaPayload(payload: WireSchemaPayload): Uint8Array {
   ]);
 }
 
-function encodeSchema(schema: WireSchema): Uint8Array {
+function encodeSchema(schema: Schema): Uint8Array {
   const entries: [string, Uint8Array][] = [
     ["id", cborUint64(schema.id)],
   ];
@@ -102,7 +102,7 @@ function encodeSchema(schema: WireSchema): Uint8Array {
   return cborMap(entries);
 }
 
-function encodeSchemaKind(kind: WireSchemaKind): Uint8Array {
+function encodeSchemaKind(kind: SchemaKind): Uint8Array {
   // Internally-tagged: struct variants become { "tag": "variant_name", ...fields }
   switch (kind.tag) {
     case "struct":
@@ -158,7 +158,7 @@ function encodeSchemaKind(kind: WireSchemaKind): Uint8Array {
   }
 }
 
-function encodeTypeRef(ref_: WireTypeRef): Uint8Array {
+function encodeTypeRef(ref_: TypeRef): Uint8Array {
   switch (ref_.tag) {
     case "concrete":
       return cborMap([
@@ -174,7 +174,7 @@ function encodeTypeRef(ref_: WireTypeRef): Uint8Array {
   }
 }
 
-function encodeFieldSchema(field: WireFieldSchema): Uint8Array {
+function encodeFieldSchema(field: FieldSchema): Uint8Array {
   return cborMap([
     ["name", cborText(field.name)],
     ["type_ref", encodeTypeRef(field.type_ref)],
@@ -182,7 +182,7 @@ function encodeFieldSchema(field: WireFieldSchema): Uint8Array {
   ]);
 }
 
-function encodeVariantSchema(variant: WireVariantSchema): Uint8Array {
+function encodeVariantSchema(variant: VariantSchema): Uint8Array {
   return cborMap([
     ["name", cborText(variant.name)],
     ["index", cborUint(variant.index)],
@@ -190,7 +190,7 @@ function encodeVariantSchema(variant: WireVariantSchema): Uint8Array {
   ]);
 }
 
-function encodeVariantPayload(payload: WireVariantPayload): Uint8Array {
+function encodeVariantPayload(payload: VariantPayload): Uint8Array {
   // Internally-tagged enum
   switch (payload.tag) {
     case "unit":
@@ -214,11 +214,11 @@ function encodeVariantPayload(payload: WireVariantPayload): Uint8Array {
 }
 
 /** Unit variant → just the string name */
-function encodePrimitiveType(pt: WirePrimitiveType): Uint8Array {
+function encodePrimitiveType(pt: PrimitiveType): Uint8Array {
   return cborText(pt);
 }
 
 /** Unit variant → just the string name */
-function encodeChannelDirection(dir: WireChannelDirection): Uint8Array {
+function encodeChannelDirection(dir: ChannelDirection): Uint8Array {
   return cborText(dir);
 }

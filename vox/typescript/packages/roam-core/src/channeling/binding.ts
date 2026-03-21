@@ -10,11 +10,11 @@ import { DEFAULT_INITIAL_CREDIT } from "./types.ts";
 import {
   encodeWithTypeRef,
   decodeWithTypeRef,
-  resolveWireTypeRef,
-  type WireSchemaRegistry,
-  type WireTypeRef,
-  type WireSchemaKind,
-  type WireVariantPayload,
+  resolveTypeRef,
+  type SchemaRegistry,
+  type TypeRef,
+  type SchemaKind,
+  type VariantPayload,
 } from "@bearcove/roam-postcard";
 
 /**
@@ -24,38 +24,38 @@ import {
  * refs for the method args shape.
  */
 export function bindChannelsForTypeRefs(
-  schemas: WireTypeRef[],
+  schemas: TypeRef[],
   args: unknown[],
   allocator: ChannelIdAllocator,
   registry: ChannelRegistry,
-  schemaRegistry: WireSchemaRegistry,
+  schemaRegistry: SchemaRegistry,
 ): bigint[] {
   const channelIds: bigint[] = [];
   for (let i = 0; i < schemas.length; i++) {
-    bindWireValue(schemas[i], args[i], allocator, registry, channelIds, schemaRegistry);
+    bindChannelsInValue(schemas[i], args[i], allocator, registry, channelIds, schemaRegistry);
   }
   return channelIds;
 }
 
 export function finalizeBoundChannelsForTypeRefs(
-  schemas: WireTypeRef[],
+  schemas: TypeRef[],
   args: unknown[],
-  schemaRegistry: WireSchemaRegistry,
+  schemaRegistry: SchemaRegistry,
 ): void {
   for (let i = 0; i < schemas.length; i++) {
-    finalizeWireValue(schemas[i], args[i], schemaRegistry);
+    finalizeChannelsInValue(schemas[i], args[i], schemaRegistry);
   }
 }
 
-function bindWireValue(
-  schemaRef: WireTypeRef,
+function bindChannelsInValue(
+  schemaRef: TypeRef,
   value: unknown,
   allocator: ChannelIdAllocator,
   registry: ChannelRegistry,
   channelIds: bigint[],
-  schemaRegistry: WireSchemaRegistry,
+  schemaRegistry: SchemaRegistry,
 ): void {
-  const resolved = resolveWireTypeRef(schemaRef, schemaRegistry);
+  const resolved = resolveTypeRef(schemaRef, schemaRegistry);
   if (!resolved) {
     return;
   }
@@ -142,22 +142,22 @@ function bindWireValue(
     case "array": {
       const arr = value as Iterable<unknown>;
       for (const item of arr) {
-        bindWireValue(resolved.element, item, allocator, registry, channelIds, schemaRegistry);
+        bindChannelsInValue(resolved.element, item, allocator, registry, channelIds, schemaRegistry);
       }
       return;
     }
 
     case "option":
       if (value !== null && value !== undefined) {
-        bindWireValue(resolved.element, value, allocator, registry, channelIds, schemaRegistry);
+        bindChannelsInValue(resolved.element, value, allocator, registry, channelIds, schemaRegistry);
       }
       return;
 
     case "map": {
       const map = value as Map<unknown, unknown>;
       for (const [key, item] of map) {
-        bindWireValue(resolved.key, key, allocator, registry, channelIds, schemaRegistry);
-        bindWireValue(resolved.value, item, allocator, registry, channelIds, schemaRegistry);
+        bindChannelsInValue(resolved.key, key, allocator, registry, channelIds, schemaRegistry);
+        bindChannelsInValue(resolved.value, item, allocator, registry, channelIds, schemaRegistry);
       }
       return;
     }
@@ -166,7 +166,7 @@ function bindWireValue(
       const obj = value as Record<string, unknown>;
       for (const field of resolved.fields) {
         if (field.name in obj) {
-          bindWireValue(field.type_ref, obj[field.name], allocator, registry, channelIds, schemaRegistry);
+          bindChannelsInValue(field.type_ref, obj[field.name], allocator, registry, channelIds, schemaRegistry);
         }
       }
       return;
@@ -178,27 +178,27 @@ function bindWireValue(
       if (!variant) {
         return;
       }
-      bindWireVariantPayload(variant.payload, enumVal, allocator, registry, channelIds, schemaRegistry);
+      bindChannelsInVariantPayload(variant.payload, enumVal, allocator, registry, channelIds, schemaRegistry);
       return;
     }
 
     case "tuple": {
       const arr = value as unknown[];
       for (let i = 0; i < resolved.elements.length; i++) {
-        bindWireValue(resolved.elements[i], arr[i], allocator, registry, channelIds, schemaRegistry);
+        bindChannelsInValue(resolved.elements[i], arr[i], allocator, registry, channelIds, schemaRegistry);
       }
       return;
     }
   }
 }
 
-function bindWireVariantPayload(
-  payload: WireVariantPayload,
+function bindChannelsInVariantPayload(
+  payload: VariantPayload,
   enumVal: { tag: string; [key: string]: unknown },
   allocator: ChannelIdAllocator,
   registry: ChannelRegistry,
   channelIds: bigint[],
-  schemaRegistry: WireSchemaRegistry,
+  schemaRegistry: SchemaRegistry,
 ): void {
   switch (payload.tag) {
     case "unit":
@@ -206,7 +206,7 @@ function bindWireVariantPayload(
     case "newtype": {
       const fieldValue = enumVal[enumVal.tag.toLowerCase()] ?? enumVal.value;
       if (fieldValue !== undefined) {
-        bindWireValue(payload.type_ref, fieldValue, allocator, registry, channelIds, schemaRegistry);
+        bindChannelsInValue(payload.type_ref, fieldValue, allocator, registry, channelIds, schemaRegistry);
       }
       return;
     }
@@ -216,7 +216,7 @@ function bindWireVariantPayload(
         return;
       }
       for (let i = 0; i < payload.types.length; i++) {
-        bindWireValue(payload.types[i], tupleValues[i], allocator, registry, channelIds, schemaRegistry);
+        bindChannelsInValue(payload.types[i], tupleValues[i], allocator, registry, channelIds, schemaRegistry);
       }
       return;
     }
@@ -224,19 +224,19 @@ function bindWireVariantPayload(
       for (const field of payload.fields) {
         const fieldValue = enumVal[field.name];
         if (fieldValue !== undefined) {
-          bindWireValue(field.type_ref, fieldValue, allocator, registry, channelIds, schemaRegistry);
+          bindChannelsInValue(field.type_ref, fieldValue, allocator, registry, channelIds, schemaRegistry);
         }
       }
       return;
   }
 }
 
-function finalizeWireValue(
-  schemaRef: WireTypeRef,
+function finalizeChannelsInValue(
+  schemaRef: TypeRef,
   value: unknown,
-  schemaRegistry: WireSchemaRegistry,
+  schemaRegistry: SchemaRegistry,
 ): void {
-  const resolved = resolveWireTypeRef(schemaRef, schemaRegistry);
+  const resolved = resolveTypeRef(schemaRef, schemaRegistry);
   if (!resolved) {
     return;
   }
@@ -253,22 +253,22 @@ function finalizeWireValue(
     case "array": {
       const arr = value as Iterable<unknown>;
       for (const item of arr) {
-        finalizeWireValue(resolved.element, item, schemaRegistry);
+        finalizeChannelsInValue(resolved.element, item, schemaRegistry);
       }
       return;
     }
 
     case "option":
       if (value !== null && value !== undefined) {
-        finalizeWireValue(resolved.element, value, schemaRegistry);
+        finalizeChannelsInValue(resolved.element, value, schemaRegistry);
       }
       return;
 
     case "map": {
       const map = value as Map<unknown, unknown>;
       for (const [key, item] of map) {
-        finalizeWireValue(resolved.key, key, schemaRegistry);
-        finalizeWireValue(resolved.value, item, schemaRegistry);
+        finalizeChannelsInValue(resolved.key, key, schemaRegistry);
+        finalizeChannelsInValue(resolved.value, item, schemaRegistry);
       }
       return;
     }
@@ -277,7 +277,7 @@ function finalizeWireValue(
       const obj = value as Record<string, unknown>;
       for (const field of resolved.fields) {
         if (field.name in obj) {
-          finalizeWireValue(field.type_ref, obj[field.name], schemaRegistry);
+          finalizeChannelsInValue(field.type_ref, obj[field.name], schemaRegistry);
         }
       }
       return;
@@ -289,14 +289,14 @@ function finalizeWireValue(
       if (!variant) {
         return;
       }
-      finalizeWireVariantPayload(variant.payload, enumVal, schemaRegistry);
+      finalizeChannelsInVariantPayload(variant.payload, enumVal, schemaRegistry);
       return;
     }
 
     case "tuple": {
       const arr = value as unknown[];
       for (let i = 0; i < resolved.elements.length; i++) {
-        finalizeWireValue(resolved.elements[i], arr[i], schemaRegistry);
+        finalizeChannelsInValue(resolved.elements[i], arr[i], schemaRegistry);
       }
       return;
     }
@@ -306,10 +306,10 @@ function finalizeWireValue(
   }
 }
 
-function finalizeWireVariantPayload(
-  payload: WireVariantPayload,
+function finalizeChannelsInVariantPayload(
+  payload: VariantPayload,
   enumVal: { tag: string; [key: string]: unknown },
-  schemaRegistry: WireSchemaRegistry,
+  schemaRegistry: SchemaRegistry,
 ): void {
   switch (payload.tag) {
     case "unit":
@@ -317,7 +317,7 @@ function finalizeWireVariantPayload(
     case "newtype": {
       const fieldValue = enumVal[enumVal.tag.toLowerCase()] ?? enumVal.value;
       if (fieldValue !== undefined) {
-        finalizeWireValue(payload.type_ref, fieldValue, schemaRegistry);
+        finalizeChannelsInValue(payload.type_ref, fieldValue, schemaRegistry);
       }
       return;
     }
@@ -327,7 +327,7 @@ function finalizeWireVariantPayload(
         return;
       }
       for (let i = 0; i < payload.types.length; i++) {
-        finalizeWireValue(payload.types[i], tupleValues[i], schemaRegistry);
+        finalizeChannelsInValue(payload.types[i], tupleValues[i], schemaRegistry);
       }
       return;
     }
@@ -335,7 +335,7 @@ function finalizeWireVariantPayload(
       for (const field of payload.fields) {
         const fieldValue = enumVal[field.name];
         if (fieldValue !== undefined) {
-          finalizeWireValue(field.type_ref, fieldValue, schemaRegistry);
+          finalizeChannelsInValue(field.type_ref, fieldValue, schemaRegistry);
         }
       }
       return;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { WireSchema, WireSchemaKind, WireSchemaRegistry, WireTypeRef } from "./schema.ts";
+import type { Schema, SchemaKind, SchemaRegistry, TypeRef } from "./schema.ts";
 import { buildPlan, schemaSetFromSchemas } from "./plan.ts";
 import { decodeWithKind, decodeWithPlan, encodeWithKind, skipValue } from "./wire_codec.ts";
 
@@ -16,14 +16,14 @@ const LOCAL_RECORD_ID = 9n;
 const BYTES_ID = 10n;
 const NEVER_ID = 11n;
 
-const u8Ref: WireTypeRef = { tag: "concrete", type_id: U8_ID, args: [] };
-const stringRef: WireTypeRef = { tag: "concrete", type_id: STRING_ID, args: [] };
-const listU8Ref: WireTypeRef = { tag: "concrete", type_id: LIST_U8_ID, args: [] };
-const optionStringRef: WireTypeRef = { tag: "concrete", type_id: OPTION_STRING_ID, args: [] };
-const payloadRef: WireTypeRef = { tag: "concrete", type_id: PAYLOAD_ID, args: [] };
-const channelRef: WireTypeRef = { tag: "concrete", type_id: CHANNEL_ID, args: [] };
+const u8Ref: TypeRef = { tag: "concrete", type_id: U8_ID, args: [] };
+const stringRef: TypeRef = { tag: "concrete", type_id: STRING_ID, args: [] };
+const listU8Ref: TypeRef = { tag: "concrete", type_id: LIST_U8_ID, args: [] };
+const optionStringRef: TypeRef = { tag: "concrete", type_id: OPTION_STRING_ID, args: [] };
+const payloadRef: TypeRef = { tag: "concrete", type_id: PAYLOAD_ID, args: [] };
+const channelRef: TypeRef = { tag: "concrete", type_id: CHANNEL_ID, args: [] };
 
-const registry: WireSchemaRegistry = new Map<bigint, WireSchema>([
+const registry: SchemaRegistry = new Map<bigint, Schema>([
   [U8_ID, { id: U8_ID, type_params: [], kind: { tag: "primitive", primitive_type: "u8" } }],
   [STRING_ID, { id: STRING_ID, type_params: [], kind: { tag: "primitive", primitive_type: "string" } }],
   [LIST_U8_ID, { id: LIST_U8_ID, type_params: [], kind: { tag: "list", element: u8Ref } }],
@@ -41,7 +41,7 @@ const registry: WireSchemaRegistry = new Map<bigint, WireSchema>([
 
 const listU8Kind = registry.get(LIST_U8_ID)!.kind;
 
-const frameKind: WireSchemaKind = {
+const frameKind: SchemaKind = {
   tag: "struct",
   name: "Frame",
   fields: [
@@ -50,7 +50,7 @@ const frameKind: WireSchemaKind = {
   ],
 };
 
-const remoteSchemas: WireSchema[] = [
+const remoteSchemas: Schema[] = [
   ...registry.values(),
   {
     id: REMOTE_RECORD_ID,
@@ -66,7 +66,7 @@ const remoteSchemas: WireSchema[] = [
   },
 ];
 
-const localSchemas: WireSchema[] = [
+const localSchemas: Schema[] = [
   ...registry.values(),
   {
     id: LOCAL_RECORD_ID,
@@ -186,7 +186,7 @@ describe("wire codec translation plans", () => {
 });
 
 describe("wire codec never primitive", () => {
-  const neverKind: WireSchemaKind = { tag: "primitive", primitive_type: "never" };
+  const neverKind: SchemaKind = { tag: "primitive", primitive_type: "never" };
 
   it("refuses to encode never", () => {
     expect(() => encodeWithKind(undefined, neverKind, registry)).toThrow(

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveWireTypeRef } from "@bearcove/roam-postcard";
+import { resolveTypeRef } from "@bearcove/roam-postcard";
 
 import {
   MetadataFlagValues,
@@ -13,7 +13,7 @@ import {
   parityOdd,
 } from "./types.ts";
 import { decodeMessage, encodeMessage } from "./codec.ts";
-import { wireMessageRootRef, wireMessageSchemaRegistry } from "./schemas.ts";
+import { messageRootRef, messageSchemaRegistry } from "./schemas.ts";
 
 describe("wire helpers", () => {
   it("builds nested request and channel helpers with the expected tags", () => {
@@ -69,7 +69,7 @@ describe("wire codec", () => {
 
 describe("generated wire schemas", () => {
   it("marks opaque payload fields as canonical payload primitives", () => {
-    const messageKind = resolveWireTypeRef(wireMessageRootRef, wireMessageSchemaRegistry);
+    const messageKind = resolveTypeRef(messageRootRef, messageSchemaRegistry);
     expect(messageKind?.tag).toBe("struct");
     if (!messageKind || messageKind.tag !== "struct") {
       throw new Error("expected Message root to resolve to a struct");
@@ -81,7 +81,7 @@ describe("generated wire schemas", () => {
       throw new Error("expected Message.payload field");
     }
 
-    const payloadKind = resolveWireTypeRef(payloadField.type_ref, wireMessageSchemaRegistry);
+    const payloadKind = resolveTypeRef(payloadField.type_ref, messageSchemaRegistry);
     expect(payloadKind?.tag).toBe("enum");
     if (!payloadKind || payloadKind.tag !== "enum") {
       throw new Error("expected Message.payload to resolve to an enum");
@@ -98,9 +98,9 @@ describe("generated wire schemas", () => {
       throw new Error("expected Message.payload.ChannelMessage to be a newtype");
     }
 
-    const requestMessageKind = resolveWireTypeRef(
+    const requestMessageKind = resolveTypeRef(
       requestMessageVariant.payload.type_ref,
-      wireMessageSchemaRegistry,
+      messageSchemaRegistry,
     );
     expect(requestMessageKind?.tag).toBe("struct");
     if (!requestMessageKind || requestMessageKind.tag !== "struct") {
@@ -113,7 +113,7 @@ describe("generated wire schemas", () => {
       throw new Error("expected RequestMessage.body field");
     }
 
-    const requestBodyKind = resolveWireTypeRef(requestBodyField.type_ref, wireMessageSchemaRegistry);
+    const requestBodyKind = resolveTypeRef(requestBodyField.type_ref, messageSchemaRegistry);
     expect(requestBodyKind?.tag).toBe("enum");
     if (!requestBodyKind || requestBodyKind.tag !== "enum") {
       throw new Error("expected RequestBody to resolve to an enum");
@@ -125,7 +125,7 @@ describe("generated wire schemas", () => {
       throw new Error("expected RequestBody.Call to be a newtype");
     }
 
-    const requestCallKind = resolveWireTypeRef(callVariant.payload.type_ref, wireMessageSchemaRegistry);
+    const requestCallKind = resolveTypeRef(callVariant.payload.type_ref, messageSchemaRegistry);
     expect(requestCallKind?.tag).toBe("struct");
     if (!requestCallKind || requestCallKind.tag !== "struct") {
       throw new Error("expected RequestCall to resolve to a struct");
@@ -137,12 +137,12 @@ describe("generated wire schemas", () => {
       throw new Error("expected RequestCall.args field");
     }
 
-    const argsKind = resolveWireTypeRef(argsField.type_ref, wireMessageSchemaRegistry);
+    const argsKind = resolveTypeRef(argsField.type_ref, messageSchemaRegistry);
     expect(argsKind).toEqual({ tag: "primitive", primitive_type: "payload" });
 
-    const channelMessageKind = resolveWireTypeRef(
+    const channelMessageKind = resolveTypeRef(
       channelMessageVariant.payload.type_ref,
-      wireMessageSchemaRegistry,
+      messageSchemaRegistry,
     );
     expect(channelMessageKind?.tag).toBe("struct");
     if (!channelMessageKind || channelMessageKind.tag !== "struct") {
@@ -155,7 +155,7 @@ describe("generated wire schemas", () => {
       throw new Error("expected ChannelMessage.body field");
     }
 
-    const channelBodyKind = resolveWireTypeRef(channelBodyField.type_ref, wireMessageSchemaRegistry);
+    const channelBodyKind = resolveTypeRef(channelBodyField.type_ref, messageSchemaRegistry);
     expect(channelBodyKind?.tag).toBe("enum");
     if (!channelBodyKind || channelBodyKind.tag !== "enum") {
       throw new Error("expected ChannelBody to resolve to an enum");
@@ -167,7 +167,7 @@ describe("generated wire schemas", () => {
       throw new Error("expected ChannelBody.Item to be a newtype");
     }
 
-    const channelItemKind = resolveWireTypeRef(itemVariant.payload.type_ref, wireMessageSchemaRegistry);
+    const channelItemKind = resolveTypeRef(itemVariant.payload.type_ref, messageSchemaRegistry);
     expect(channelItemKind?.tag).toBe("struct");
     if (!channelItemKind || channelItemKind.tag !== "struct") {
       throw new Error("expected ChannelItem to resolve to a struct");
@@ -179,7 +179,7 @@ describe("generated wire schemas", () => {
       throw new Error("expected ChannelItem.item field");
     }
 
-    const itemKind = resolveWireTypeRef(itemField.type_ref, wireMessageSchemaRegistry);
+    const itemKind = resolveTypeRef(itemField.type_ref, messageSchemaRegistry);
     expect(itemKind).toEqual({ tag: "primitive", primitive_type: "payload" });
   });
 });

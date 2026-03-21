@@ -245,7 +245,7 @@ export class ChannelRegistry {
     initialCredit: number = DEFAULT_INITIAL_CREDIT,
     onConsumed?: (additional: number) => void,
   ): ChannelReceiver<Uint8Array> {
-    const channel = createChannel<Uint8Array>(initialCredit);
+    const channel = createChannel<Uint8Array>();
     const creditState = {
       consumedSinceGrant: 0,
       threshold: creditReplenishmentThreshold(initialCredit),
@@ -259,9 +259,7 @@ export class ChannelRegistry {
     if (pending) {
       this.pendingIncoming.delete(channelId);
       for (const payload of pending.items) {
-        if (!channel.send(payload)) {
-          throw ChannelError.overflow(channelId);
-        }
+        channel.send(payload);
       }
       if (pending.terminal) {
         channel.close();
@@ -343,9 +341,7 @@ export class ChannelRegistry {
       return;
     }
 
-    if (!channel.send(payload)) {
-      throw ChannelError.overflow(channelId);
-    }
+    channel.send(payload);
   }
 
   grantCredit(channelId: ChannelId, additional: number): void {

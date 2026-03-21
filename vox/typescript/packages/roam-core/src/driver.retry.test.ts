@@ -159,9 +159,7 @@ const ECHO_SEND_SCHEMAS: ServiceSendSchemas = {
     [
       METHOD.id,
       {
-        argsDepIds: [U32_ID, U32_ARGS_ID],
         argsRootRef: { tag: "concrete", type_id: U32_ARGS_ID, args: [] },
-        responseDepIds: [U32_ID, STRING_ID, UNIT_ID, ROAM_ERROR_ID, RESULT_ID],
         responseRootRef: {
           tag: "concrete",
           type_id: RESULT_ID,
@@ -253,9 +251,7 @@ const CANONICAL_ZERO_ARG_SEND_SCHEMAS: ServiceSendSchemas = {
     [
       CANONICAL_ZERO_ARG_METHOD.id,
       {
-        argsDepIds: [UNIT_ID],
         argsRootRef: { tag: "concrete", type_id: UNIT_ID, args: [] },
-        responseDepIds: [U32_ID, UNIT_ID, STRING_ID, ROAM_ERROR_ID, RESULT_ID],
         responseRootRef: {
           tag: "concrete",
           type_id: RESULT_ID,

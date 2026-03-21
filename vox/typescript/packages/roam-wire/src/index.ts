@@ -80,10 +80,10 @@ export {
 } from "./codec.ts";
 
 export {
-  type WireSchema,
-  type WireSchemaRegistry,
-  type WireTypeRef,
-  wireMessageSchemasCbor,
-  wireMessageSchemaRegistry,
-  wireMessageRootRef,
+  type Schema,
+  type SchemaRegistry,
+  type TypeRef,
+  messageSchemasCbor,
+  messageSchemaRegistry,
+  messageRootRef,
 } from "./schemas.ts";

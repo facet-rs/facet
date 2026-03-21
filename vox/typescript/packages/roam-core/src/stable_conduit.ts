@@ -1,9 +1,9 @@
 import {
   decodeWithTypeRef,
   encodeWithTypeRef,
-  type WireSchema,
-  type WireSchemaRegistry,
-  type WireTypeRef,
+  type Schema,
+  type SchemaRegistry,
+  type TypeRef,
 } from "@bearcove/roam-postcard";
 import {
   decodeMessage,
@@ -37,7 +37,7 @@ const STABLE_FRAME_ACK_OPTION_ID = 3n;
 const STABLE_FRAME_PAYLOAD_ID = 4n;
 const STABLE_FRAME_ID = 5n;
 
-const STABLE_FRAME_SCHEMA_REGISTRY: WireSchemaRegistry = new Map<bigint, WireSchema>([
+const STABLE_FRAME_SCHEMA_REGISTRY: SchemaRegistry = new Map<bigint, Schema>([
   [STABLE_FRAME_U32_ID, {
     id: STABLE_FRAME_U32_ID,
     type_params: [],
@@ -96,7 +96,7 @@ const STABLE_FRAME_SCHEMA_REGISTRY: WireSchemaRegistry = new Map<bigint, WireSch
   }],
 ]);
 
-const STABLE_FRAME_ROOT_REF: WireTypeRef = {
+const STABLE_FRAME_ROOT_REF: TypeRef = {
   tag: "concrete",
   type_id: STABLE_FRAME_ID,
   args: [],

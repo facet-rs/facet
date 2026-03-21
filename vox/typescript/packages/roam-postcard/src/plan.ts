@@ -5,16 +5,16 @@
 // field reordering, skipping, and default-filling.
 
 import type {
-  WireSchema,
-  WireSchemaKind,
-  WireSchemaRegistry,
-  WireTypeRef,
-  WireFieldSchema,
-  WireVariantSchema,
-  WireVariantPayload,
+  Schema,
+  SchemaKind,
+  SchemaRegistry,
+  TypeRef,
+  FieldSchema,
+  VariantSchema,
+  VariantPayload,
   SchemaHash,
 } from "./schema.ts";
-import { resolveWireTypeRef } from "./schema.ts";
+import { resolveTypeRef } from "./schema.ts";
 
 // ============================================================================
 // TranslationPlan
@@ -38,7 +38,7 @@ export type TranslationPlan =
 
 export type FieldOp =
   | { tag: "read"; local_index: number }
-  | { tag: "skip"; type_ref: WireTypeRef };
+  | { tag: "skip"; type_ref: TypeRef };
 
 export const IDENTITY: TranslationPlan = { tag: "identity" };
 
@@ -47,15 +47,15 @@ export const IDENTITY: TranslationPlan = { tag: "identity" };
 // ============================================================================
 
 export interface SchemaSet {
-  root: WireSchema;
-  registry: WireSchemaRegistry;
+  root: Schema;
+  registry: SchemaRegistry;
 }
 
 /** Build a SchemaSet from a list of schemas (e.g. received from the wire). */
-export function schemaSetFromSchemas(schemas: WireSchema[]): SchemaSet {
+export function schemaSetFromSchemas(schemas: Schema[]): SchemaSet {
   const root = schemas[schemas.length - 1];
   if (!root) throw new Error("empty schema list");
-  const registry: WireSchemaRegistry = new Map();
+  const registry: SchemaRegistry = new Map();
   for (const s of schemas) {
     registry.set(s.id, s);
   }
@@ -92,10 +92,10 @@ export function buildPlan(remote: SchemaSet, local: SchemaSet): TranslationPlan 
 }
 
 function buildPlanInner(
-  remote: WireSchema,
-  local: WireSchema,
-  remoteReg: WireSchemaRegistry,
-  localReg: WireSchemaRegistry,
+  remote: Schema,
+  local: Schema,
+  remoteReg: SchemaRegistry,
+  localReg: SchemaRegistry,
 ): TranslationPlan {
   // Validate type names match for nominal types
   const remoteName = schemaName(remote.kind);
@@ -121,41 +121,41 @@ function buildPlanInner(
 
   switch (rk.tag) {
     case "struct": {
-      const lkStruct = lk as Extract<WireSchemaKind, { tag: "struct" }>;
+      const lkStruct = lk as Extract<SchemaKind, { tag: "struct" }>;
       return buildStructPlan(rk.fields, lkStruct.fields, remote, remoteReg, localReg);
     }
     case "enum": {
-      const lkEnum = lk as Extract<WireSchemaKind, { tag: "enum" }>;
+      const lkEnum = lk as Extract<SchemaKind, { tag: "enum" }>;
       return buildEnumPlan(rk.variants, lkEnum.variants, remote, local, remoteReg, localReg);
     }
     case "tuple": {
-      const lkTuple = lk as Extract<WireSchemaKind, { tag: "tuple" }>;
+      const lkTuple = lk as Extract<SchemaKind, { tag: "tuple" }>;
       return buildTuplePlan(rk.elements, lkTuple.elements, remote, local, remoteReg, localReg);
     }
     case "list": {
-      const lkList = lk as Extract<WireSchemaKind, { tag: "list" }>;
+      const lkList = lk as Extract<SchemaKind, { tag: "list" }>;
       const element = nestedPlan(rk.element, lkList.element, remoteReg, localReg);
       return { tag: "list", element: element ?? IDENTITY };
     }
     case "option": {
-      const lkOpt = lk as Extract<WireSchemaKind, { tag: "option" }>;
+      const lkOpt = lk as Extract<SchemaKind, { tag: "option" }>;
       const inner = nestedPlan(rk.element, lkOpt.element, remoteReg, localReg);
       return { tag: "option", inner: inner ?? IDENTITY };
     }
     case "map": {
-      const lkMap = lk as Extract<WireSchemaKind, { tag: "map" }>;
+      const lkMap = lk as Extract<SchemaKind, { tag: "map" }>;
       const key = nestedPlan(rk.key, lkMap.key, remoteReg, localReg);
       const value = nestedPlan(rk.value, lkMap.value, remoteReg, localReg);
       return { tag: "map", key: key ?? IDENTITY, value: value ?? IDENTITY };
     }
     case "array": {
-      const lkArr = lk as Extract<WireSchemaKind, { tag: "array" }>;
+      const lkArr = lk as Extract<SchemaKind, { tag: "array" }>;
       const element = nestedPlan(rk.element, lkArr.element, remoteReg, localReg);
       return { tag: "array", element: element ?? IDENTITY };
     }
     case "primitive":
       {
-        const lkPrimitive = lk as Extract<WireSchemaKind, { tag: "primitive" }>;
+        const lkPrimitive = lk as Extract<SchemaKind, { tag: "primitive" }>;
         if (rk.primitive_type !== lkPrimitive.primitive_type) {
           throw new TranslationError(
             `primitive type mismatch: remote "${rk.primitive_type}" vs local "${lkPrimitive.primitive_type}"`,
@@ -169,20 +169,20 @@ function buildPlanInner(
 }
 
 function nestedPlan(
-  remoteRef: WireTypeRef,
-  localRef: WireTypeRef,
-  remoteReg: WireSchemaRegistry,
-  localReg: WireSchemaRegistry,
+  remoteRef: TypeRef,
+  localRef: TypeRef,
+  remoteReg: SchemaRegistry,
+  localReg: SchemaRegistry,
 ): TranslationPlan | null {
   const resolveSchema = (
-    ref_: WireTypeRef,
-    registry: WireSchemaRegistry,
+    ref_: TypeRef,
+    registry: SchemaRegistry,
     side: string,
-  ): WireSchema => {
+  ): Schema => {
     if (ref_.tag === "var") {
       throw new TranslationError(`unresolved type variable "${ref_.name}" on ${side} side`);
     }
-    const kind = resolveWireTypeRef(ref_, registry);
+    const kind = resolveTypeRef(ref_, registry);
     if (!kind) {
       throw new TranslationError(
         `schema not found for type_id ${ref_.type_id} on ${side} side`,
@@ -204,11 +204,11 @@ function nestedPlan(
 }
 
 function buildStructPlan(
-  remoteFields: WireFieldSchema[],
-  localFields: WireFieldSchema[],
-  remoteSchema: WireSchema,
-  remoteReg: WireSchemaRegistry,
-  localReg: WireSchemaRegistry,
+  remoteFields: FieldSchema[],
+  localFields: FieldSchema[],
+  remoteSchema: Schema,
+  remoteReg: SchemaRegistry,
+  localReg: SchemaRegistry,
 ): TranslationPlan {
   const fieldOps: FieldOp[] = [];
   const nested = new Map<number, TranslationPlan>();
@@ -240,23 +240,23 @@ function buildStructPlan(
 }
 
 function fieldHasDefault(
-  field: WireFieldSchema,
-  registry: WireSchemaRegistry,
+  field: FieldSchema,
+  registry: SchemaRegistry,
 ): boolean {
   if (!field.required) {
     return true;
   }
-  const kind = resolveWireTypeRef(field.type_ref, registry);
+  const kind = resolveTypeRef(field.type_ref, registry);
   return kind?.tag === "option";
 }
 
 function buildTuplePlan(
-  remoteElements: WireTypeRef[],
-  localElements: WireTypeRef[],
-  _remoteSchema: WireSchema,
-  _localSchema: WireSchema,
-  remoteReg: WireSchemaRegistry,
-  localReg: WireSchemaRegistry,
+  remoteElements: TypeRef[],
+  localElements: TypeRef[],
+  _remoteSchema: Schema,
+  _localSchema: Schema,
+  remoteReg: SchemaRegistry,
+  localReg: SchemaRegistry,
 ): TranslationPlan {
   if (remoteElements.length !== localElements.length) {
     throw new TranslationError(
@@ -277,12 +277,12 @@ function buildTuplePlan(
 }
 
 function buildEnumPlan(
-  remoteVariants: WireVariantSchema[],
-  localVariants: WireVariantSchema[],
-  remoteSchema: WireSchema,
-  localSchema: WireSchema,
-  remoteReg: WireSchemaRegistry,
-  localReg: WireSchemaRegistry,
+  remoteVariants: VariantSchema[],
+  localVariants: VariantSchema[],
+  remoteSchema: Schema,
+  localSchema: Schema,
+  remoteReg: SchemaRegistry,
+  localReg: SchemaRegistry,
 ): TranslationPlan {
   const variantMap: (number | null)[] = [];
   const variantPlans = new Map<number, TranslationPlan>();
@@ -309,7 +309,7 @@ function buildEnumPlan(
 
     switch (rv.payload.tag) {
       case "struct": {
-        const lvPayload = lv.payload as Extract<WireVariantPayload, { tag: "struct" }>;
+        const lvPayload = lv.payload as Extract<VariantPayload, { tag: "struct" }>;
         const varFieldOps: FieldOp[] = rv.payload.fields.map((rf) => {
           const idx = lvPayload.fields.findIndex((f) => f.name === rf.name);
           if (idx >= 0) {
@@ -326,13 +326,13 @@ function buildEnumPlan(
         break;
       }
       case "newtype": {
-        const lvPayload = lv.payload as Extract<WireVariantPayload, { tag: "newtype" }>;
+        const lvPayload = lv.payload as Extract<VariantPayload, { tag: "newtype" }>;
         const np = nestedPlan(rv.payload.type_ref, lvPayload.type_ref, remoteReg, localReg);
         if (np) nested.set(localIdx, np);
         break;
       }
       case "tuple": {
-        const lvPayload = lv.payload as Extract<WireVariantPayload, { tag: "tuple" }>;
+        const lvPayload = lv.payload as Extract<VariantPayload, { tag: "tuple" }>;
         const tuplePlan = buildTuplePlan(
           rv.payload.types,
           lvPayload.types,
@@ -352,14 +352,14 @@ function buildEnumPlan(
   return { tag: "enum", variant_map: variantMap, variant_plans: variantPlans, nested };
 }
 
-function schemaName(kind: WireSchemaKind): string | null {
+function schemaName(kind: SchemaKind): string | null {
   if (kind.tag === "struct" || kind.tag === "enum") return kind.name;
   return null;
 }
 
 function isByteBufferKind(
-  kind: WireSchemaKind,
-  registry: WireSchemaRegistry,
+  kind: SchemaKind,
+  registry: SchemaRegistry,
 ): boolean {
   if (kind.tag === "primitive") {
     return kind.primitive_type === "bytes";
@@ -367,6 +367,6 @@ function isByteBufferKind(
   if (kind.tag !== "list") {
     return false;
   }
-  const elementKind = resolveWireTypeRef(kind.element, registry);
+  const elementKind = resolveTypeRef(kind.element, registry);
   return elementKind?.tag === "primitive" && elementKind.primitive_type === "u8";
 }

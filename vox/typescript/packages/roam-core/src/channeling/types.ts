@@ -22,7 +22,6 @@ export class ChannelError extends Error {
       | "unknown"
       | "dataAfterClose"
       | "closed"
-      | "overflow"
       | "serialize"
       | "deserialize"
       | "notBound"
@@ -43,10 +42,6 @@ export class ChannelError extends Error {
 
   static closed(): ChannelError {
     return new ChannelError("closed", "channel closed");
-  }
-
-  static overflow(channelId: ChannelId): ChannelError {
-    return new ChannelError("overflow", `incoming channel buffer overflow on channel ${channelId}`);
   }
 
   static serialize(cause: unknown): ChannelError {

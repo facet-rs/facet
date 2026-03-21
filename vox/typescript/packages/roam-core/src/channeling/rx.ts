@@ -28,7 +28,6 @@ export class Rx<T> {
   private receiver: ChannelReceiver<Uint8Array> | undefined;
   private deserialize: ((bytes: Uint8Array) => T) | undefined;
   private logicalSender: ChannelSender<Uint8Array> | undefined;
-  private logicalCapacity: number | undefined;
   private bindingGeneration = 0;
 
   /** Reference to the paired Tx (set by channel<T>()). */
@@ -179,13 +178,12 @@ export class Rx<T> {
     }
 
     if (!this.logicalSender || !this.receiver) {
-      const logical = createChannel<Uint8Array>(this.logicalCapacity ?? initialCredit);
+      const logical = createChannel<Uint8Array>();
       this.logicalSender = new ChannelSender(logical);
       if (this.receiver) {
         this.startForwarding(this.receiver, this.logicalSender, this.bindingGeneration);
       }
       this.receiver = new ChannelReceiver(logical);
-      this.logicalCapacity = initialCredit;
     }
 
     this._channelId = channelId;

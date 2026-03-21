@@ -223,9 +223,7 @@ const ECHO_SEND_SCHEMAS: ServiceSendSchemas = {
     [
       1n,
       {
-        argsDepIds: [U32_ID, U32_ARGS_ID],
         argsRootRef: { tag: "concrete", type_id: U32_ARGS_ID, args: [] },
-        responseDepIds: [U32_ID, STRING_ID, UNIT_ID, ROAM_ERROR_ID, RESULT_ID],
         responseRootRef: {
           tag: "concrete",
           type_id: RESULT_ID,

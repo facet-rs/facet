@@ -5,7 +5,6 @@
 
 import type { ClientMetadata } from "./metadata.ts";
 
-// Re-export for backwards compatibility
 export type { ClientMetadataValue } from "./metadata.ts";
 
 /**

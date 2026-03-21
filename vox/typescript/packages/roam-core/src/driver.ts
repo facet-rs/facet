@@ -4,7 +4,7 @@ import {
   encodeWithKind,
   decodeWithTypeRef,
   encodeWithTypeRef,
-  resolveWireTypeRef,
+  resolveTypeRef,
 } from "@bearcove/roam-postcard";
 import {
   RpcError,
@@ -650,7 +650,7 @@ export class Driver {
 
     return rawArgs.map((raw, argIndex) => {
       const argRef = argElements[argIndex];
-      const argKind = resolveWireTypeRef(argRef, localSchemaSet.registry);
+      const argKind = resolveTypeRef(argRef, localSchemaSet.registry);
       const channelId = typeof raw === "bigint"
         ? raw
         : typeof raw === "number" && Number.isInteger(raw) && raw >= 0

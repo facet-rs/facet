@@ -1,6 +1,6 @@
-import type { WireSchema } from "@bearcove/roam-postcard";
+import type { Schema } from "@bearcove/roam-postcard";
 import type { ConnectionSettings, Parity } from "@bearcove/roam-wire";
-import { wireMessageSchemasCbor } from "@bearcove/roam-wire";
+import { messageSchemasCbor } from "@bearcove/roam-wire";
 import { decodeCbor, type CborMap, type CborValue } from "./cbor.ts";
 import type { Link } from "./link.ts";
 import { normalizeSchemaList } from "./schema_cbor.ts";
@@ -11,7 +11,7 @@ export interface HandshakeResult {
   peerSupportsRetry: boolean;
   sessionResumeKey: Uint8Array | null;
   peerResumeKey: Uint8Array | null;
-  peerMessageSchema: WireSchema[];
+  peerMessageSchema: Schema[];
 }
 
 type HandshakeMessage =
@@ -145,7 +145,7 @@ function encodeHelloMessage(
   return encodeMap([
     ["parity", encodeParity(settings.parity)],
     ["connection_settings", encodeConnectionSettings(settings)],
-    ["message_payload_schema", wireMessageSchemasCbor],
+    ["message_payload_schema", messageSchemasCbor],
     ["supports_retry", encodeBool(supportsRetry)],
     ["resume_key", encodeResumeKey(resumeKey)],
   ]);
@@ -158,7 +158,7 @@ function encodeHelloYourselfMessage(
 ): Uint8Array {
   return encodeMap([
     ["connection_settings", encodeConnectionSettings(settings)],
-    ["message_payload_schema", wireMessageSchemasCbor],
+    ["message_payload_schema", messageSchemasCbor],
     ["supports_retry", encodeBool(supportsRetry)],
     ["resume_key", encodeResumeKey(sessionResumeKey)],
   ]);

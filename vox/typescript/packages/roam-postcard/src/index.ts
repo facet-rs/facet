@@ -350,20 +350,20 @@ export { concat };
 
 export type {
   SchemaHash,
-  WireTypeRef,
-  WireSchema,
-  WireSchemaKind,
-  WirePrimitiveType,
-  WireChannelDirection,
-  WireFieldSchema,
-  WireVariantSchema,
-  WireVariantPayload,
-  WireSchemaRegistry,
-  WireSchemaPayload,
-  WireBindingDirection,
+  TypeRef,
+  Schema,
+  SchemaKind,
+  PrimitiveType,
+  ChannelDirection,
+  FieldSchema,
+  VariantSchema,
+  VariantPayload,
+  SchemaRegistry,
+  SchemaPayload,
+  BindingDirection,
 } from "./schema.ts";
 
-export { resolveWireTypeRef } from "./schema.ts";
+export { resolveTypeRef } from "./schema.ts";
 
 // ============================================================================
 // Translation plan

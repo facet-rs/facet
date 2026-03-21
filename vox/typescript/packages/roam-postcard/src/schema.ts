@@ -7,34 +7,34 @@ export type SchemaHash = bigint;
  * A reference to a type in a schema. Matches Rust's `TypeRef`.
  * Discriminated by `tag`.
  */
-export type WireTypeRef =
-  | { tag: "concrete"; type_id: SchemaHash; args: WireTypeRef[] }
+export type TypeRef =
+  | { tag: "concrete"; type_id: SchemaHash; args: TypeRef[] }
   | { tag: "var"; name: string };
 
 /** A complete schema for a single type. */
-export interface WireSchema {
+export interface Schema {
   id: SchemaHash;
   type_params: string[];
-  kind: WireSchemaKind;
+  kind: SchemaKind;
 }
 
 /**
  * The structural kind of a type. Matches Rust's `SchemaKind`.
  * Discriminated by `tag`.
  */
-export type WireSchemaKind =
-  | { tag: "struct"; name: string; fields: WireFieldSchema[] }
-  | { tag: "enum"; name: string; variants: WireVariantSchema[] }
-  | { tag: "tuple"; elements: WireTypeRef[] }
-  | { tag: "list"; element: WireTypeRef }
-  | { tag: "map"; key: WireTypeRef; value: WireTypeRef }
-  | { tag: "array"; element: WireTypeRef; length: number }
-  | { tag: "option"; element: WireTypeRef }
-  | { tag: "channel"; direction: WireChannelDirection; element: WireTypeRef }
-  | { tag: "primitive"; primitive_type: WirePrimitiveType };
+export type SchemaKind =
+  | { tag: "struct"; name: string; fields: FieldSchema[] }
+  | { tag: "enum"; name: string; variants: VariantSchema[] }
+  | { tag: "tuple"; elements: TypeRef[] }
+  | { tag: "list"; element: TypeRef }
+  | { tag: "map"; key: TypeRef; value: TypeRef }
+  | { tag: "array"; element: TypeRef; length: number }
+  | { tag: "option"; element: TypeRef }
+  | { tag: "channel"; direction: ChannelDirection; element: TypeRef }
+  | { tag: "primitive"; primitive_type: PrimitiveType };
 
 /** Primitive types supported by the wire format. */
-export type WirePrimitiveType =
+export type PrimitiveType =
   | "bool"
   | "u8"
   | "u16"
@@ -56,49 +56,49 @@ export type WirePrimitiveType =
   | "payload";
 
 /** Channel direction. */
-export type WireChannelDirection = "tx" | "rx";
+export type ChannelDirection = "tx" | "rx";
 
 /** Describes a single field in a struct or struct variant. */
-export interface WireFieldSchema {
+export interface FieldSchema {
   name: string;
-  type_ref: WireTypeRef;
+  type_ref: TypeRef;
   required: boolean;
 }
 
 /** Describes a single variant in an enum. */
-export interface WireVariantSchema {
+export interface VariantSchema {
   name: string;
   index: number;
-  payload: WireVariantPayload;
+  payload: VariantPayload;
 }
 
 /** The payload of an enum variant. Discriminated by `tag`. */
-export type WireVariantPayload =
+export type VariantPayload =
   | { tag: "unit" }
-  | { tag: "newtype"; type_ref: WireTypeRef }
-  | { tag: "tuple"; types: WireTypeRef[] }
-  | { tag: "struct"; fields: WireFieldSchema[] };
+  | { tag: "newtype"; type_ref: TypeRef }
+  | { tag: "tuple"; types: TypeRef[] }
+  | { tag: "struct"; fields: FieldSchema[] };
 
-/** Registry mapping `SchemaHash` to `WireSchema`. */
-export type WireSchemaRegistry = Map<SchemaHash, WireSchema>;
+/** Registry mapping `SchemaHash` to `Schema`. */
+export type SchemaRegistry = Map<SchemaHash, Schema>;
 
 /** Schema payload exchanged on the wire for method bindings. */
-export interface WireSchemaPayload {
-  schemas: WireSchema[];
-  root: WireTypeRef;
+export interface SchemaPayload {
+  schemas: Schema[];
+  root: TypeRef;
 }
 
 /** Binding direction for method schema bindings. */
-export type WireBindingDirection = "args" | "response";
+export type BindingDirection = "args" | "response";
 
 /**
- * Look up the schema for a `WireTypeRef` in the registry and return the
+ * Look up the schema for a `TypeRef` in the registry and return the
  * schema's kind with all type variables substituted.
  */
-export function resolveWireTypeRef(
-  ref_: WireTypeRef,
-  registry: WireSchemaRegistry,
-): WireSchemaKind | undefined {
+export function resolveTypeRef(
+  ref_: TypeRef,
+  registry: SchemaRegistry,
+): SchemaKind | undefined {
   if (ref_.tag === "var") {
     return undefined;
   }
@@ -111,7 +111,7 @@ export function resolveWireTypeRef(
     return schema.kind;
   }
 
-  const subst = new Map<string, WireTypeRef>();
+  const subst = new Map<string, TypeRef>();
   for (let i = 0; i < schema.type_params.length && i < ref_.args.length; i++) {
     subst.set(schema.type_params[i], ref_.args[i]);
   }
@@ -119,9 +119,9 @@ export function resolveWireTypeRef(
 }
 
 function substituteTypeRef(
-  ref_: WireTypeRef,
-  subst: Map<string, WireTypeRef>,
-): WireTypeRef {
+  ref_: TypeRef,
+  subst: Map<string, TypeRef>,
+): TypeRef {
   if (ref_.tag === "var") {
     return subst.get(ref_.name) ?? ref_;
   }
@@ -134,10 +134,10 @@ function substituteTypeRef(
 }
 
 function substituteTypeRefs(
-  kind: WireSchemaKind,
-  subst: Map<string, WireTypeRef>,
-): WireSchemaKind {
-  const sub = (ref_: WireTypeRef) => substituteTypeRef(ref_, subst);
+  kind: SchemaKind,
+  subst: Map<string, TypeRef>,
+): SchemaKind {
+  const sub = (ref_: TypeRef) => substituteTypeRef(ref_, subst);
 
   switch (kind.tag) {
     case "primitive":
@@ -171,10 +171,10 @@ function substituteTypeRefs(
 }
 
 function substitutePayload(
-  payload: WireVariantPayload,
-  subst: Map<string, WireTypeRef>,
-): WireVariantPayload {
-  const sub = (ref_: WireTypeRef) => substituteTypeRef(ref_, subst);
+  payload: VariantPayload,
+  subst: Map<string, TypeRef>,
+): VariantPayload {
+  const sub = (ref_: TypeRef) => substituteTypeRef(ref_, subst);
 
   switch (payload.tag) {
     case "unit":

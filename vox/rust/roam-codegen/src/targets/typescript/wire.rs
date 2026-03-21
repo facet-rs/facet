@@ -4,8 +4,8 @@
 //! - interfaces and tagged unions for all named types
 //! - discriminant constants for all named enums (auto-derived)
 //! - narrowed per-variant type aliases for all named enums (auto-derived)
-//! - wireMessageSchemasCbor: CBOR-encoded Vec<Schema> for the handshake
-//! - wireMessageRootRef / wireMessageSchemaRegistry: canonical local message schema graph
+//! - messageSchemasCbor: CBOR-encoded Vec<Schema> for the handshake
+//! - messageRootRef / messageSchemaRegistry: canonical local message schema graph
 
 use std::collections::HashSet;
 
@@ -112,12 +112,12 @@ pub fn generate_wire(config: &WireTypeGenConfig) -> Result<String, Box<dyn std::
         }
     }
 
-    // wireMessageSchemasCbor + local canonical message schema graph.
+    // messageSchemasCbor + local canonical message schema graph.
     // Derived from the first (root) type shape in config.
     if let Some(root) = config.types.first() {
         let extracted = extract_schemas(root.shape)?;
         out.push_str(
-            "export const wireMessageSchemaRegistry: import(\"@bearcove/roam-postcard\").WireSchemaRegistry = new Map<bigint, import(\"@bearcove/roam-postcard\").WireSchema>([\n",
+            "export const messageSchemaRegistry: import(\"@bearcove/roam-postcard\").SchemaRegistry = new Map<bigint, import(\"@bearcove/roam-postcard\").Schema>([\n",
         );
         for schema in &extracted.schemas {
             out.push_str(&format!(
@@ -128,7 +128,7 @@ pub fn generate_wire(config: &WireTypeGenConfig) -> Result<String, Box<dyn std::
         }
         out.push_str("]);\n\n");
         out.push_str(&format!(
-            "export const wireMessageRootRef: import(\"@bearcove/roam-postcard\").WireTypeRef = {};\n\n",
+            "export const messageRootRef: import(\"@bearcove/roam-postcard\").TypeRef = {};\n\n",
             render_type_ref(&extracted.root)
         ));
         let cbor_bytes = facet_cbor::to_vec(&extracted.schemas)?;
@@ -138,7 +138,7 @@ pub fn generate_wire(config: &WireTypeGenConfig) -> Result<String, Box<dyn std::
             .collect::<Vec<_>>()
             .join(", ");
         out.push_str(&format!(
-            "export const wireMessageSchemasCbor = new Uint8Array([{body}]);\n"
+            "export const messageSchemasCbor = new Uint8Array([{body}]);\n"
         ));
     }
 

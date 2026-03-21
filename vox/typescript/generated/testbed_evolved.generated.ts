@@ -250,7 +250,7 @@ export class TestbedDispatcher implements Dispatcher {
 // Schema objects for wire schema exchange (TypeScript → Rust)
 // Generated from Rust Facet shapes — do not modify.
 export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSchemas = {
-  schemas: new Map<bigint, import("@bearcove/roam-postcard").WireSchema>([
+  schemas: new Map<bigint, import("@bearcove/roam-postcard").Schema>([
     [0x178367a87f66fb46n, {
       id: 0x178367a87f66fb46n,
       type_params: [],
@@ -415,20 +415,11 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
   ]),
   methods: new Map<bigint, import("@bearcove/roam-core").MethodSendSchemas>([
     [0xbd9bcabddeebeb04n, {
-      argsDepIds: [0xa44004e457ac50dcn, 0x6d7dce914ee150e8n, 0xdcafd4de6b7969bbn, 0x6847ab90feda71c1n],
       argsRootRef: {
         tag: "concrete",
         type_id: 0x6847ab90feda71c1n,
         args: [{ tag: "concrete", type_id: 0xa44004e457ac50dcn, args: [] }],
       },
-      responseDepIds: [
-        0x5db70a394660f3e6n,
-        0xae570b7750005a79n,
-        0x6d7dce914ee150e8n,
-        0xa44004e457ac50dcn,
-        0xdcafd4de6b7969bbn,
-        0x42046de663beeef0n,
-      ],
       responseRootRef: {
         tag: "concrete",
         type_id: 0x42046de663beeef0n,
@@ -440,27 +431,11 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
       },
     }],
     [0x100b0e08da4b8f1an, {
-      argsDepIds: [
-        0x192310b3d2edcbbbn,
-        0x6d7dce914ee150e8n,
-        0x361f4536eee9f991n,
-        0x3f2e589db81e95bfn,
-        0x6847ab90feda71c1n,
-      ],
       argsRootRef: {
         tag: "concrete",
         type_id: 0x6847ab90feda71c1n,
         args: [{ tag: "concrete", type_id: 0x192310b3d2edcbbbn, args: [] }],
       },
-      responseDepIds: [
-        0x5db70a394660f3e6n,
-        0xae570b7750005a79n,
-        0x6d7dce914ee150e8n,
-        0x192310b3d2edcbbbn,
-        0x361f4536eee9f991n,
-        0x3f2e589db81e95bfn,
-        0x42046de663beeef0n,
-      ],
       responseRootRef: {
         tag: "concrete",
         type_id: 0x42046de663beeef0n,
@@ -472,19 +447,11 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
       },
     }],
     [0x697590d3ffc36703n, {
-      argsDepIds: [0x2f0ff266dde23386n, 0x6847ab90feda71c1n],
       argsRootRef: {
         tag: "concrete",
         type_id: 0x6847ab90feda71c1n,
         args: [{ tag: "concrete", type_id: 0x2f0ff266dde23386n, args: [] }],
       },
-      responseDepIds: [
-        0x5db70a394660f3e6n,
-        0xae570b7750005a79n,
-        0x6d7dce914ee150e8n,
-        0x2f0ff266dde23386n,
-        0x42046de663beeef0n,
-      ],
       responseRootRef: {
         tag: "concrete",
         type_id: 0x42046de663beeef0n,
@@ -496,20 +463,11 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
       },
     }],
     [0x2bd1b3149d73ce97n, {
-      argsDepIds: [0x0eefcca6337b755dn, 0x281c5be4f2ee63b4n, 0x6d7dce914ee150e8n, 0x6847ab90feda71c1n],
       argsRootRef: {
         tag: "concrete",
         type_id: 0x6847ab90feda71c1n,
         args: [{ tag: "concrete", type_id: 0x0eefcca6337b755dn, args: [] }],
       },
-      responseDepIds: [
-        0x5db70a394660f3e6n,
-        0xae570b7750005a79n,
-        0x6d7dce914ee150e8n,
-        0x0eefcca6337b755dn,
-        0x281c5be4f2ee63b4n,
-        0x42046de663beeef0n,
-      ],
       responseRootRef: {
         tag: "concrete",
         type_id: 0x42046de663beeef0n,
@@ -521,19 +479,11 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
       },
     }],
     [0x3b3d22b015fa1a3fn, {
-      argsDepIds: [0x4f3c1dd93ca2d25fn, 0x6d7dce914ee150e8n, 0x6847ab90feda71c1n],
       argsRootRef: {
         tag: "concrete",
         type_id: 0x6847ab90feda71c1n,
         args: [{ tag: "concrete", type_id: 0x4f3c1dd93ca2d25fn, args: [] }],
       },
-      responseDepIds: [
-        0x5db70a394660f3e6n,
-        0xae570b7750005a79n,
-        0x6d7dce914ee150e8n,
-        0x4f3c1dd93ca2d25fn,
-        0x42046de663beeef0n,
-      ],
       responseRootRef: {
         tag: "concrete",
         type_id: 0x42046de663beeef0n,
@@ -545,19 +495,11 @@ export const testbed_send_schemas: import("@bearcove/roam-core").ServiceSendSche
       },
     }],
     [0xe13a477fb964ce28n, {
-      argsDepIds: [0x4d9687f8912787een, 0x6d7dce914ee150e8n, 0x6847ab90feda71c1n],
       argsRootRef: {
         tag: "concrete",
         type_id: 0x6847ab90feda71c1n,
         args: [{ tag: "concrete", type_id: 0x4d9687f8912787een, args: [] }],
       },
-      responseDepIds: [
-        0x5db70a394660f3e6n,
-        0xae570b7750005a79n,
-        0x6d7dce914ee150e8n,
-        0x4d9687f8912787een,
-        0x42046de663beeef0n,
-      ],
       responseRootRef: {
         tag: "concrete",
         type_id: 0x42046de663beeef0n,

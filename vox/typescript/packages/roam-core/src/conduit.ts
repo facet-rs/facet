@@ -1,19 +1,19 @@
 import {
   buildPlan,
-  resolveWireTypeRef,
+  resolveTypeRef,
   schemaSetFromSchemas,
   type TranslationPlan,
-  type WireSchema,
-  type WireSchemaKind,
-  type WireSchemaRegistry,
+  type Schema,
+  type SchemaKind,
+  type SchemaRegistry,
 } from "@bearcove/roam-postcard";
 import {
   decodeMessage,
   decodeMessageWithPlan,
   encodeMessage,
   type Message,
-  wireMessageRootRef,
-  wireMessageSchemaRegistry,
+  messageRootRef,
+  messageSchemaRegistry,
 } from "@bearcove/roam-wire";
 import type { Link } from "./link.ts";
 import { roamLogger } from "./logger.ts";
@@ -27,26 +27,26 @@ export interface Conduit<T> {
 
 export interface MessageDecodePlan {
   plan: TranslationPlan;
-  remoteRootKind: WireSchemaKind;
-  remoteRegistry: WireSchemaRegistry;
+  remoteRootKind: SchemaKind;
+  remoteRegistry: SchemaRegistry;
 }
 
-export function buildMessageDecodePlan(peerSchemas: WireSchema[]): MessageDecodePlan | null {
+export function buildMessageDecodePlan(peerSchemas: Schema[]): MessageDecodePlan | null {
   if (peerSchemas.length === 0) {
     return null;
   }
-  const localRootKind = resolveWireTypeRef(wireMessageRootRef, wireMessageSchemaRegistry);
+  const localRootKind = resolveTypeRef(messageRootRef, messageSchemaRegistry);
   if (!localRootKind) {
     throw new Error("local message root schema not found");
   }
   const remoteSchemaSet = schemaSetFromSchemas(peerSchemas);
   const localSchemaSet = {
     root: {
-      id: wireMessageRootRef.tag === "concrete" ? wireMessageRootRef.type_id : 0n,
+      id: messageRootRef.tag === "concrete" ? messageRootRef.type_id : 0n,
       type_params: [],
       kind: localRootKind,
     },
-    registry: wireMessageSchemaRegistry,
+    registry: messageSchemaRegistry,
   };
   return {
     plan: buildPlan(remoteSchemaSet, localSchemaSet),

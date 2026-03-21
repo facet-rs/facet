@@ -1,274 +1,20 @@
-//! TypeScript schema generation for runtime service descriptors.
+//! TypeScript generation for canonical service schema tables and descriptors.
 //!
-//! Generates the `ServiceDescriptor` constant used by the runtime to perform
-//! schema-driven decode/encode for all methods. The generated code has zero
-//! serialization logic — everything is driven by the descriptor at runtime.
-//!
-//! Each method descriptor has:
-//! - `args`: a tuple schema covering all arguments (decoded once before dispatch)
-//! - `result`: the full `Result<T, RoamError<E>>` enum schema for encoding responses
-//!
-//! The `RoamError<E>` schema always has four variants at fixed indices:
-//! - 0: User(E)        — user-defined error (null fields for infallible methods)
-//! - 1: UnknownMethod  — unit
-//! - 2: InvalidPayload — unit
-//! - 3: Cancelled      — unit
+//! The generated descriptor carries method metadata plus a precomputed
+//! canonical schema table for method args and responses. Encoding and decoding
+//! are driven entirely by that canonical schema data at runtime.
 
-use std::collections::HashSet;
-
-use facet_core::{Facet, Field, ScalarType, Shape};
+use facet_core::{Facet, Shape};
 use heck::ToLowerCamelCase;
 use roam_types::{
-    EnumInfo, RoamError, Schema, SchemaHash, SchemaKind, ServiceDescriptor, ShapeKind, StructInfo,
-    TypeRef, VariantKind, VariantPayload, VariantSchema, classify_shape, classify_variant,
-    is_bytes, schema_child_ids,
+    RoamError, Schema, SchemaHash, SchemaKind, ServiceDescriptor, ShapeKind, TypeRef,
+    VariantPayload, VariantSchema, classify_shape,
 };
 
-/// Generate a TypeScript Schema object literal for a type.
-pub fn generate_schema(shape: &'static Shape) -> String {
-    let mut state = SchemaGenState::default();
-    generate_schema_with_field(shape, None, &mut state)
-}
-
-#[derive(Default)]
-struct SchemaGenState {
-    /// When true, named structs/enums are emitted as `{ kind: 'ref', name: 'T' }`
-    /// unless we're currently generating that type's registry entry (`root_name`).
-    use_named_refs: bool,
-    /// Name of the registry entry currently being generated, if any.
-    root_name: Option<String>,
-    /// Active shapes for recursion detection.
-    active: HashSet<&'static Shape>,
-}
-
-fn named_shape_name(shape: &'static Shape) -> Option<&'static str> {
-    match classify_shape(shape) {
-        ShapeKind::Struct(StructInfo {
-            name: Some(name), ..
-        })
-        | ShapeKind::Enum(EnumInfo {
-            name: Some(name), ..
-        }) => Some(name),
-        _ => None,
-    }
-}
-
-fn generate_schema_with_field(
-    shape: &'static Shape,
-    field: Option<&Field>,
-    state: &mut SchemaGenState,
-) -> String {
-    if state.use_named_refs
-        && let Some(name) = named_shape_name(shape)
-        && state.root_name.as_deref() != Some(name)
-    {
-        return format!("{{ kind: 'ref', name: '{name}' }}");
-    }
-
-    if !state.active.insert(shape) {
-        if let Some(name) = named_shape_name(shape) {
-            return format!("{{ kind: 'ref', name: '{name}' }}");
-        }
-        panic!(
-            "encountered recursive anonymous shape in TypeScript schema generation; \
-             recursive shapes must be named to generate refs"
-        );
-    }
-
-    let bytes_schema = if field.is_some_and(|f| f.has_builtin_attr("trailing")) {
-        "{ kind: 'bytes', trailing: true }"
-    } else {
-        "{ kind: 'bytes' }"
-    };
-
-    // Check for bytes first (Vec<u8>)
-    if is_bytes(shape) {
-        state.active.remove(shape);
-        return bytes_schema.into();
-    }
-
-    let rendered = match classify_shape(shape) {
-        ShapeKind::Scalar(scalar) => generate_scalar_schema(scalar),
-        ShapeKind::Tx { inner } => {
-            format!(
-                "{{ kind: 'tx', element: {} }}",
-                generate_schema_with_field(inner, None, state)
-            )
-        }
-        ShapeKind::Rx { inner } => {
-            format!(
-                "{{ kind: 'rx', element: {} }}",
-                generate_schema_with_field(inner, None, state)
-            )
-        }
-        ShapeKind::List { element } => {
-            format!(
-                "{{ kind: 'vec', element: {} }}",
-                generate_schema_with_field(element, None, state)
-            )
-        }
-        ShapeKind::Option { inner } => {
-            format!(
-                "{{ kind: 'option', inner: {} }}",
-                generate_schema_with_field(inner, None, state)
-            )
-        }
-        ShapeKind::Array { element, .. } | ShapeKind::Slice { element } => {
-            format!(
-                "{{ kind: 'vec', element: {} }}",
-                generate_schema_with_field(element, None, state)
-            )
-        }
-        ShapeKind::Map { key, value } => {
-            format!(
-                "{{ kind: 'map', key: {}, value: {} }}",
-                generate_schema_with_field(key, None, state),
-                generate_schema_with_field(value, None, state)
-            )
-        }
-        ShapeKind::Set { element } => {
-            format!(
-                "{{ kind: 'vec', element: {} }}",
-                generate_schema_with_field(element, None, state)
-            )
-        }
-        ShapeKind::Tuple { elements } => {
-            let element_schemas: Vec<_> = elements
-                .iter()
-                .map(|p| generate_schema_with_field(p.shape, None, state))
-                .collect();
-            format!(
-                "{{ kind: 'tuple', elements: [{}] }}",
-                element_schemas.join(", ")
-            )
-        }
-        ShapeKind::Struct(StructInfo { fields, .. }) => {
-            let field_schemas: Vec<_> = fields
-                .iter()
-                .map(|f| {
-                    format!(
-                        "'{}': {}",
-                        f.name,
-                        generate_schema_with_field(f.shape(), Some(f), state)
-                    )
-                })
-                .collect();
-            format!(
-                "{{ kind: 'struct', fields: {{ {} }} }}",
-                field_schemas.join(", ")
-            )
-        }
-        ShapeKind::Enum(EnumInfo { variants, .. }) => {
-            let variant_schemas: Vec<_> = variants
-                .iter()
-                .map(|variant| generate_enum_variant(variant, state))
-                .collect();
-            format!(
-                "{{ kind: 'enum', variants: [{}] }}",
-                variant_schemas.join(", ")
-            )
-        }
-        ShapeKind::Pointer { pointee } => generate_schema_with_field(pointee, None, state),
-        ShapeKind::Result { ok, err } => {
-            // Represent Result as enum with Ok/Err variants
-            format!(
-                "{{ kind: 'enum', variants: [{{ name: 'Ok', fields: {} }}, {{ name: 'Err', fields: {} }}] }}",
-                generate_schema_with_field(ok, None, state),
-                generate_schema_with_field(err, None, state)
-            )
-        }
-        ShapeKind::TupleStruct { fields } => {
-            let inner: Vec<String> = fields
-                .iter()
-                .map(|f| generate_schema_with_field(f.shape(), Some(f), state))
-                .collect();
-            format!("{{ kind: 'tuple', elements: [{}] }}", inner.join(", "))
-        }
-        ShapeKind::Opaque => "{ kind: 'bytes', opaque: true }".into(),
-    };
-
-    state.active.remove(shape);
-    rendered
-}
-
-/// Generate an EnumVariant object literal.
-fn generate_enum_variant(variant: &facet_core::Variant, state: &mut SchemaGenState) -> String {
-    match classify_variant(variant) {
-        VariantKind::Unit => {
-            format!("{{ name: '{}', fields: null }}", variant.name)
-        }
-        VariantKind::Newtype { inner } => {
-            let field = variant.data.fields.first();
-            format!(
-                "{{ name: '{}', fields: {} }}",
-                variant.name,
-                generate_schema_with_field(inner, field, state)
-            )
-        }
-        VariantKind::Tuple { fields } => {
-            let field_schemas: Vec<_> = fields
-                .iter()
-                .map(|f| generate_schema_with_field(f.shape(), Some(f), state))
-                .collect();
-            format!(
-                "{{ name: '{}', fields: [{}] }}",
-                variant.name,
-                field_schemas.join(", ")
-            )
-        }
-        VariantKind::Struct { fields } => {
-            let field_schemas: Vec<_> = fields
-                .iter()
-                .map(|f| {
-                    format!(
-                        "'{}': {}",
-                        f.name,
-                        generate_schema_with_field(f.shape(), Some(f), state)
-                    )
-                })
-                .collect();
-            format!(
-                "{{ name: '{}', fields: {{ {} }} }}",
-                variant.name,
-                field_schemas.join(", ")
-            )
-        }
-    }
-}
-
-/// Generate schema for scalar types.
-fn generate_scalar_schema(scalar: ScalarType) -> String {
-    match scalar {
-        ScalarType::Bool => "{ kind: 'bool' }".into(),
-        ScalarType::U8 => "{ kind: 'u8' }".into(),
-        ScalarType::U16 => "{ kind: 'u16' }".into(),
-        ScalarType::U32 => "{ kind: 'u32' }".into(),
-        ScalarType::U64 | ScalarType::USize => "{ kind: 'u64' }".into(),
-        ScalarType::I8 => "{ kind: 'i8' }".into(),
-        ScalarType::I16 => "{ kind: 'i16' }".into(),
-        ScalarType::I32 => "{ kind: 'i32' }".into(),
-        ScalarType::I64 | ScalarType::ISize => "{ kind: 'i64' }".into(),
-        ScalarType::U128 | ScalarType::I128 => {
-            panic!(
-                "u128/i128 types are not supported in TypeScript codegen - use smaller integer types or encode as bytes"
-            )
-        }
-        ScalarType::F32 => "{ kind: 'f32' }".into(),
-        ScalarType::F64 => "{ kind: 'f64' }".into(),
-        ScalarType::Char | ScalarType::Str | ScalarType::String | ScalarType::CowStr => {
-            "{ kind: 'string' }".into()
-        }
-        ScalarType::Unit => "{ kind: 'struct', fields: {} }".into(),
-        _ => "{ kind: 'bytes' }".into(),
-    }
-}
-
-/// Generate TypeScript constants for pre-computed CBOR schemas.
+/// Generate TypeScript constants for canonical service schemas.
 ///
 /// Produces the `{service}_send_schemas` export with a `schemas` map
-/// (typeId → pre-encoded CBOR bytes) and a `methods` map (methodId → schema info).
-/// The CBOR bytes are generated from Rust's own Facet shapes via `facet_cbor::to_vec`,
-/// so they are guaranteed to match what Rust expects on the wire.
+/// (typeId → Schema object) and a `methods` map (methodId → root refs).
 ///
 /// The response schema is ALWAYS wrapped as `Result<T, RoamError<E>>` to match
 /// the actual wire encoding. For infallible methods, E = Infallible, which
@@ -279,16 +25,6 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
     let service_name_lower = service.service_name.to_lower_camel_case();
 
     let mut schema_ids_seen: std::collections::HashSet<u64> = std::collections::HashSet::new();
-
-    struct MethodInfo {
-        method_id: u64,
-        args_dep_ids: Vec<u64>,
-        args_root_ref: TypeRef<SchemaHash>,
-        response_dep_ids: Vec<u64>,
-        response_root_ref: TypeRef<SchemaHash>,
-    }
-
-    let mut method_infos: Vec<MethodInfo> = Vec::new();
 
     // Collect all schemas (extracted + constructed) with temporary IDs.
     // We'll finalize content hashes and CBOR-encode at the end.
@@ -371,47 +107,6 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         }
     }
 
-    // Build the schema ID → index map for dep tracking.
-    let schema_id_set: std::collections::HashSet<u64> =
-        all_schemas.iter().map(|s| s.id.0).collect();
-
-    // Build method infos with final content-hashed IDs.
-    for info in &method_schema_infos {
-        // Collect all dep IDs reachable from a root TypeRef by walking the schema graph.
-        let collect_deps = |root: &TypeRef<SchemaHash>| -> Vec<u64> {
-            let mut deps = Vec::new();
-            let mut visited = std::collections::HashSet::new();
-            let mut queue = Vec::new();
-            root.collect_ids(&mut queue);
-            while let Some(id) = queue.pop() {
-                if !visited.insert(id) {
-                    continue;
-                }
-                if !schema_id_set.contains(&id.0) {
-                    continue;
-                }
-                deps.push(id.0);
-                if let Some(schema) = all_schemas.iter().find(|s| s.id == id) {
-                    for child in schema_child_ids(&schema.kind) {
-                        queue.push(child);
-                    }
-                }
-            }
-            deps
-        };
-
-        let args_dep_ids = collect_deps(&info.args_root);
-        let response_dep_ids = collect_deps(&info.response_root);
-
-        method_infos.push(MethodInfo {
-            method_id: info.method_id,
-            args_dep_ids,
-            args_root_ref: info.args_root.clone(),
-            response_dep_ids,
-            response_root_ref: info.response_root.clone(),
-        });
-    }
-
     // Generate TypeScript output — Schema objects as typed literals, not CBOR bytes.
     let mut out = String::new();
 
@@ -421,8 +116,8 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
         "export const {service_name_lower}_send_schemas: import(\"@bearcove/roam-core\").ServiceSendSchemas = {{\n"
     ));
 
-    // schemas: Map<bigint, WireSchema>
-    out.push_str("  schemas: new Map<bigint, import(\"@bearcove/roam-postcard\").WireSchema>([\n");
+    // schemas: Map<bigint, Schema>
+    out.push_str("  schemas: new Map<bigint, import(\"@bearcove/roam-postcard\").Schema>([\n");
     for schema in &deduped_schemas {
         let id_hex = hex_u64(schema.id.0);
         let schema_ts = render_schema(schema);
@@ -434,27 +129,13 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
     out.push_str(
         "  methods: new Map<bigint, import(\"@bearcove/roam-core\").MethodSendSchemas>([\n",
     );
-    for info in &method_infos {
+    for info in &method_schema_infos {
         let id_hex = hex_u64(info.method_id);
-        let args_dep_ids_str: Vec<String> = info
-            .args_dep_ids
-            .iter()
-            .map(|id| format!("0x{:016x}n", id))
-            .collect();
-        let response_dep_ids_str: Vec<String> = info
-            .response_dep_ids
-            .iter()
-            .map(|id| format!("0x{:016x}n", id))
-            .collect();
-        let args_root_ref_ts = render_type_ref(&info.args_root_ref);
-        let response_root_ref_ts = render_type_ref(&info.response_root_ref);
+        let args_root_ref_ts = render_type_ref(&info.args_root);
+        let response_root_ref_ts = render_type_ref(&info.response_root);
         out.push_str(&format!(
-            "    [{}n, {{ argsDepIds: [{}], argsRootRef: {}, responseDepIds: [{}], responseRootRef: {} }}],\n",
-            id_hex,
-            args_dep_ids_str.join(", "),
-            args_root_ref_ts,
-            response_dep_ids_str.join(", "),
-            response_root_ref_ts,
+            "    [{}n, {{ argsRootRef: {}, responseRootRef: {} }}],\n",
+            id_hex, args_root_ref_ts, response_root_ref_ts,
         ));
     }
     out.push_str("  ]),\n");

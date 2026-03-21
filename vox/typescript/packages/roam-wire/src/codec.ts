@@ -4,29 +4,29 @@ import {
   decodeWithPlan,
   decodeWithTypeRef,
   encodeWithTypeRef,
-  resolveWireTypeRef,
+  resolveTypeRef,
   type DecodeResult,
   type TranslationPlan,
-  type WireSchemaKind,
-  type WireSchemaRegistry,
+  type SchemaKind,
+  type SchemaRegistry,
 } from "@bearcove/roam-postcard";
 
 import type { Message } from "./types.ts";
 import {
-  wireMessageRootRef,
-  wireMessageSchemaRegistry,
+  messageRootRef,
+  messageSchemaRegistry,
 } from "./schemas.ts";
 
 export function encodeMessage(message: Message): Uint8Array {
-  return encodeWithTypeRef(message, wireMessageRootRef, wireMessageSchemaRegistry);
+  return encodeWithTypeRef(message, messageRootRef, messageSchemaRegistry);
 }
 
 export function decodeMessage(buf: Uint8Array, offset = 0): DecodeResult<Message> {
   return decodeWithTypeRef(
     buf,
     offset,
-    wireMessageRootRef,
-    wireMessageSchemaRegistry,
+    messageRootRef,
+    messageSchemaRegistry,
   ) as DecodeResult<Message>;
 }
 
@@ -34,10 +34,10 @@ export function decodeMessageWithPlan(
   buf: Uint8Array,
   offset: number,
   plan: TranslationPlan,
-  remoteRootKind: WireSchemaKind,
-  remoteRegistry: WireSchemaRegistry,
+  remoteRootKind: SchemaKind,
+  remoteRegistry: SchemaRegistry,
 ): DecodeResult<Message> {
-  const localRootKind = resolveWireTypeRef(wireMessageRootRef, wireMessageSchemaRegistry);
+  const localRootKind = resolveTypeRef(messageRootRef, messageSchemaRegistry);
   if (!localRootKind) {
     throw new Error("wire message root schema not found");
   }
@@ -48,7 +48,7 @@ export function decodeMessageWithPlan(
     localRootKind,
     remoteRootKind,
     new Map([
-      ...wireMessageSchemaRegistry,
+      ...messageSchemaRegistry,
       ...remoteRegistry,
     ]),
   ) as DecodeResult<Message>;

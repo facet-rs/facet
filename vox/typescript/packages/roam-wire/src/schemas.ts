@@ -3,12 +3,12 @@
 // Source of truth: generated from rust/roam-types facet shapes.
 
 export type {
-  WireSchema,
-  WireSchemaRegistry,
-  WireTypeRef,
+  Schema,
+  SchemaRegistry,
+  TypeRef,
 } from "@bearcove/roam-postcard";
 export {
-  wireMessageSchemasCbor,
-  wireMessageSchemaRegistry,
-  wireMessageRootRef,
+  messageSchemasCbor,
+  messageSchemaRegistry,
+  messageRootRef,
 } from "./wire.generated.ts";

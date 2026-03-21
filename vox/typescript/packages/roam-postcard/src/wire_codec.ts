@@ -22,13 +22,13 @@ import {
   decodeVarintNumber,
 } from "./index.ts";
 import type {
-  WireSchemaKind,
-  WireSchemaRegistry,
-  WireTypeRef,
-  WireFieldSchema,
-  WireVariantSchema,
+  SchemaKind,
+  SchemaRegistry,
+  TypeRef,
+  FieldSchema,
+  VariantSchema,
 } from "./schema.ts";
-import { resolveWireTypeRef } from "./schema.ts";
+import { resolveTypeRef } from "./schema.ts";
 import type { TranslationPlan, FieldOp } from "./plan.ts";
 
 class BufWriter {
@@ -145,16 +145,16 @@ function decodeChar(
 
 export function encodeWithTypeRef(
   value: unknown,
-  ref_: WireTypeRef,
-  registry: WireSchemaRegistry,
+  ref_: TypeRef,
+  registry: SchemaRegistry,
 ): Uint8Array {
   return encodeWithKind(value, resolveTypeRefKind(ref_, registry), registry);
 }
 
 export function encodeWithKind(
   value: unknown,
-  kind: WireSchemaKind,
-  registry: WireSchemaRegistry,
+  kind: SchemaKind,
+  registry: SchemaRegistry,
 ): Uint8Array {
   const writer = new BufWriter();
   encodeByKind(value, kind, writer, registry);
@@ -164,8 +164,8 @@ export function encodeWithKind(
 export function decodeWithTypeRef(
   buf: Uint8Array,
   offset: number,
-  ref_: WireTypeRef,
-  registry: WireSchemaRegistry,
+  ref_: TypeRef,
+  registry: SchemaRegistry,
 ): DecodeResult<unknown> {
   return decodeByKind(buf, offset, resolveTypeRefKind(ref_, registry), registry);
 }
@@ -173,17 +173,17 @@ export function decodeWithTypeRef(
 export function decodeWithKind(
   buf: Uint8Array,
   offset: number,
-  kind: WireSchemaKind,
-  registry: WireSchemaRegistry,
+  kind: SchemaKind,
+  registry: SchemaRegistry,
 ): DecodeResult<unknown> {
   return decodeByKind(buf, offset, kind, registry);
 }
 
 function encodeByKind(
   value: unknown,
-  kind: WireSchemaKind,
+  kind: SchemaKind,
   writer: BufWriter,
-  registry: WireSchemaRegistry,
+  registry: SchemaRegistry,
 ): void {
   switch (kind.tag) {
     case "primitive":
@@ -403,8 +403,8 @@ function encodePrimitive(value: unknown, primitiveType: string, writer: BufWrite
 export function skipValue(
   buf: Uint8Array,
   offset: number,
-  kind: WireSchemaKind,
-  registry: WireSchemaRegistry,
+  kind: SchemaKind,
+  registry: SchemaRegistry,
 ): number {
   switch (kind.tag) {
     case "primitive":
@@ -514,8 +514,8 @@ function skipPrimitive(buf: Uint8Array, offset: number, pt: string): number {
 function skipStruct(
   buf: Uint8Array,
   offset: number,
-  fields: WireFieldSchema[],
-  registry: WireSchemaRegistry,
+  fields: FieldSchema[],
+  registry: SchemaRegistry,
 ): number {
   let off = offset;
   for (const f of fields) {
@@ -528,8 +528,8 @@ function skipStruct(
 function skipEnum(
   buf: Uint8Array,
   offset: number,
-  variants: WireVariantSchema[],
-  registry: WireSchemaRegistry,
+  variants: VariantSchema[],
+  registry: SchemaRegistry,
 ): number {
   const { value: discriminant, next } = decodeVarintNumber(buf, offset);
   const variant = variants.find((v) => v.index === discriminant);
@@ -558,8 +558,8 @@ function skipEnum(
 function skipTuple(
   buf: Uint8Array,
   offset: number,
-  elements: WireTypeRef[],
-  registry: WireSchemaRegistry,
+  elements: TypeRef[],
+  registry: SchemaRegistry,
 ): number {
   let off = offset;
   for (const elem of elements) {
@@ -587,9 +587,9 @@ export function decodeWithPlan(
   buf: Uint8Array,
   offset: number,
   plan: TranslationPlan,
-  localKind: WireSchemaKind,
-  remoteKind: WireSchemaKind,
-  registry: WireSchemaRegistry,
+  localKind: SchemaKind,
+  remoteKind: SchemaKind,
+  registry: SchemaRegistry,
 ): DecodeResult<unknown> {
   switch (plan.tag) {
     case "identity":
@@ -606,8 +606,8 @@ export function decodeWithPlan(
 
     case "list": {
       const { value: len, next } = decodeVarintNumber(buf, offset);
-      const localList = localKind as Extract<WireSchemaKind, { tag: "list" }>;
-      const remoteList = remoteKind as Extract<WireSchemaKind, { tag: "list" }>;
+      const localList = localKind as Extract<SchemaKind, { tag: "list" }>;
+      const remoteList = remoteKind as Extract<SchemaKind, { tag: "list" }>;
       if (isByteListKind(localList, registry) && isByteListKind(remoteList, registry)) {
         return decodeBytes(buf, offset);
       }
@@ -626,8 +626,8 @@ export function decodeWithPlan(
     case "option": {
       const flag = buf[offset];
       if (flag === 0) return { value: null, next: offset + 1 };
-      const localOpt = localKind as Extract<WireSchemaKind, { tag: "option" }>;
-      const remoteOpt = remoteKind as Extract<WireSchemaKind, { tag: "option" }>;
+      const localOpt = localKind as Extract<SchemaKind, { tag: "option" }>;
+      const remoteOpt = remoteKind as Extract<SchemaKind, { tag: "option" }>;
       const localElemKind = resolveTypeRefKind(localOpt.element, registry);
       const remoteElemKind = resolveTypeRefKind(remoteOpt.element, registry);
       return decodeWithPlan(buf, offset + 1, plan.inner, localElemKind, remoteElemKind, registry);
@@ -636,8 +636,8 @@ export function decodeWithPlan(
     case "map": {
       const { value: len, next } = decodeVarintNumber(buf, offset);
       let off = next;
-      const localMap = localKind as Extract<WireSchemaKind, { tag: "map" }>;
-      const remoteMap = remoteKind as Extract<WireSchemaKind, { tag: "map" }>;
+      const localMap = localKind as Extract<SchemaKind, { tag: "map" }>;
+      const remoteMap = remoteKind as Extract<SchemaKind, { tag: "map" }>;
       const localKeyKind = resolveTypeRefKind(localMap.key, registry);
       const localValKind = resolveTypeRefKind(localMap.value, registry);
       const remoteKeyKind = resolveTypeRefKind(remoteMap.key, registry);
@@ -654,8 +654,8 @@ export function decodeWithPlan(
     }
 
     case "array": {
-      const localArr = localKind as Extract<WireSchemaKind, { tag: "array" }>;
-      const remoteArr = remoteKind as Extract<WireSchemaKind, { tag: "array" }>;
+      const localArr = localKind as Extract<SchemaKind, { tag: "array" }>;
+      const remoteArr = remoteKind as Extract<SchemaKind, { tag: "array" }>;
       const localElemKind = resolveTypeRefKind(localArr.element, registry);
       const remoteElemKind = resolveTypeRefKind(remoteArr.element, registry);
       let off = offset;
@@ -679,12 +679,12 @@ function decodeStructWithPlan(
   buf: Uint8Array,
   offset: number,
   plan: Extract<TranslationPlan, { tag: "struct" }>,
-  localKind: WireSchemaKind,
-  remoteKind: WireSchemaKind,
-  registry: WireSchemaRegistry,
+  localKind: SchemaKind,
+  remoteKind: SchemaKind,
+  registry: SchemaRegistry,
 ): DecodeResult<unknown> {
-  const localStruct = localKind as Extract<WireSchemaKind, { tag: "struct" }>;
-  const remoteStruct = remoteKind as Extract<WireSchemaKind, { tag: "struct" }>;
+  const localStruct = localKind as Extract<SchemaKind, { tag: "struct" }>;
+  const remoteStruct = remoteKind as Extract<SchemaKind, { tag: "struct" }>;
 
   // Pre-fill result with null for fields that can be defaulted.
   const result: Record<string, unknown> = {};
@@ -726,12 +726,12 @@ function decodeEnumWithPlan(
   buf: Uint8Array,
   offset: number,
   plan: Extract<TranslationPlan, { tag: "enum" }>,
-  localKind: WireSchemaKind,
-  remoteKind: WireSchemaKind,
-  registry: WireSchemaRegistry,
+  localKind: SchemaKind,
+  remoteKind: SchemaKind,
+  registry: SchemaRegistry,
 ): DecodeResult<unknown> {
-  const localEnum = localKind as Extract<WireSchemaKind, { tag: "enum" }>;
-  const remoteEnum = remoteKind as Extract<WireSchemaKind, { tag: "enum" }>;
+  const localEnum = localKind as Extract<SchemaKind, { tag: "enum" }>;
+  const remoteEnum = remoteKind as Extract<SchemaKind, { tag: "enum" }>;
 
   const { value: discriminant, next } = decodeVarintNumber(buf, offset);
   let off = next;
@@ -775,11 +775,11 @@ function decodeEnumWithPlan(
           typeof localVariant.payload,
           { tag: "tuple" }
         >;
-        const remoteKindT: WireSchemaKind = {
+        const remoteKindT: SchemaKind = {
           tag: "tuple",
           elements: remoteVariant.payload.types,
         };
-        const localKindT: WireSchemaKind = { tag: "tuple", elements: localTuple.types };
+        const localKindT: SchemaKind = { tag: "tuple", elements: localTuple.types };
         const decoded = decodeWithPlan(buf, off, variantPlan, localKindT, remoteKindT, registry);
         return {
           value: { tag: localVariant.name, value: decoded.value },
@@ -807,12 +807,12 @@ function decodeEnumWithPlan(
           typeof localVariant.payload,
           { tag: "struct" }
         >;
-        const remoteKindS: WireSchemaKind = {
+        const remoteKindS: SchemaKind = {
           tag: "struct",
           name: remoteVariant.name,
           fields: remoteVariant.payload.fields,
         };
-        const localKindS: WireSchemaKind = {
+        const localKindS: SchemaKind = {
           tag: "struct",
           name: localVariant.name,
           fields: localStructPayload.fields,
@@ -851,12 +851,12 @@ function decodeTupleWithPlan(
   buf: Uint8Array,
   offset: number,
   plan: Extract<TranslationPlan, { tag: "tuple" }>,
-  localKind: WireSchemaKind,
-  remoteKind: WireSchemaKind,
-  registry: WireSchemaRegistry,
+  localKind: SchemaKind,
+  remoteKind: SchemaKind,
+  registry: SchemaRegistry,
 ): DecodeResult<unknown> {
-  const localTuple = localKind as Extract<WireSchemaKind, { tag: "tuple" }>;
-  const remoteTuple = remoteKind as Extract<WireSchemaKind, { tag: "tuple" }>;
+  const localTuple = localKind as Extract<SchemaKind, { tag: "tuple" }>;
+  const remoteTuple = remoteKind as Extract<SchemaKind, { tag: "tuple" }>;
   const result: unknown[] = new Array(localTuple.elements.length);
 
   let off = offset;
@@ -891,8 +891,8 @@ function decodeTupleWithPlan(
 function decodeByKind(
   buf: Uint8Array,
   offset: number,
-  kind: WireSchemaKind,
-  registry: WireSchemaRegistry,
+  kind: SchemaKind,
+  registry: SchemaRegistry,
 ): DecodeResult<unknown> {
   switch (kind.tag) {
     case "primitive":
@@ -980,8 +980,8 @@ function decodeByKind(
 function decodeVariant(
   buf: Uint8Array,
   offset: number,
-  variant: WireVariantSchema,
-  registry: WireSchemaRegistry,
+  variant: VariantSchema,
+  registry: SchemaRegistry,
 ): DecodeResult<unknown> {
   switch (variant.payload.tag) {
     case "unit":
@@ -1074,8 +1074,8 @@ function decodePrimitive(
 // ============================================================================
 
 function isByteListKind(
-  kind: WireSchemaKind,
-  registry: WireSchemaRegistry,
+  kind: SchemaKind,
+  registry: SchemaRegistry,
 ): boolean {
   if (kind.tag !== "list") {
     return false;
@@ -1101,10 +1101,10 @@ function coerceUint8Array(value: unknown, context: string): Uint8Array {
 }
 
 function resolveTypeRefKind(
-  ref_: WireTypeRef,
-  registry: WireSchemaRegistry,
-): WireSchemaKind {
-  const kind = resolveWireTypeRef(ref_, registry);
+  ref_: TypeRef,
+  registry: SchemaRegistry,
+): SchemaKind {
+  const kind = resolveTypeRef(ref_, registry);
   if (!kind) {
     if (ref_.tag === "var") {
       throw new Error(`cannot resolve type variable "${ref_.name}"`);

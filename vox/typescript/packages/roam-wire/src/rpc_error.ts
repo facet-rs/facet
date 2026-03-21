@@ -28,9 +28,9 @@ export type RpcErrorCode = (typeof RpcErrorCode)[keyof typeof RpcErrorCode];
 export class RpcError extends Error {
   /** The error code discriminant */
   readonly code: RpcErrorCode;
-  /** Raw error payload bytes (for user errors, legacy). */
+  /** Raw user error payload bytes when the caller has not decoded them yet. */
   readonly payload: Uint8Array | null;
-  /** Decoded user error value (set by ConnectionCaller when using descriptors). */
+  /** Decoded user error value when the caller has already interpreted the payload. */
   readonly userError?: unknown;
 
   constructor(code: RpcErrorCode, payload: Uint8Array | null = null, userError?: unknown) {

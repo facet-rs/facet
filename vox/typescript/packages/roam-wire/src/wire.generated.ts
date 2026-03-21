@@ -195,9 +195,9 @@ export type MessagePayloadChannelMessage = Extract<MessagePayload, { tag: "Chann
 export type MessagePayloadPing = Extract<MessagePayload, { tag: "Ping" }>;
 export type MessagePayloadPong = Extract<MessagePayload, { tag: "Pong" }>;
 
-export const wireMessageSchemaRegistry: import("@bearcove/roam-postcard").WireSchemaRegistry = new Map<
+export const messageSchemaRegistry: import("@bearcove/roam-postcard").SchemaRegistry = new Map<
   bigint,
-  import("@bearcove/roam-postcard").WireSchema
+  import("@bearcove/roam-postcard").Schema
 >([
   [15651524488059042220n, {
     id: 0xd9356298b81639acn,
@@ -677,13 +677,13 @@ export const wireMessageSchemaRegistry: import("@bearcove/roam-postcard").WireSc
   }],
 ]);
 
-export const wireMessageRootRef: import("@bearcove/roam-postcard").WireTypeRef = {
+export const messageRootRef: import("@bearcove/roam-postcard").TypeRef = {
   tag: "concrete",
   type_id: 0xabdc0766fa9120bfn,
   args: [],
 };
 
-export const wireMessageSchemasCbor = new Uint8Array([
+export const messageSchemasCbor = new Uint8Array([
   152,
   31,
   163,

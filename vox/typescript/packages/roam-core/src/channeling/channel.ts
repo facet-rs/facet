@@ -19,9 +19,9 @@ interface ChannelState<T> {
 }
 
 /**
- * Create a new channel with the specified buffer capacity.
+ * Create a new unbounded channel.
  */
-export function createChannel<T>(capacity = 64): Channel<T> {
+export function createChannel<T>(): Channel<T> {
   const state: ChannelState<T> = {
     buffer: [],
     closed: false,
@@ -29,7 +29,6 @@ export function createChannel<T>(capacity = 64): Channel<T> {
   };
 
   return {
-    // FIXME: this should return a promise for backpressure reasons
     send(value: T): boolean {
       if (state.closed) {
         return false;
@@ -42,16 +41,8 @@ export function createChannel<T>(capacity = 64): Channel<T> {
         return true;
       }
 
-      // Buffer if under capacity
-      if (state.buffer.length < capacity) {
-        state.buffer.push(value);
-        return true;
-      }
-
-      // FIXME: send should never drop
-
-      // Buffer full - drop (like try_send)
-      return false;
+      state.buffer.push(value);
+      return true;
     },
 
     async recv(): Promise<T | null> {
