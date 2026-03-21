@@ -4,37 +4,66 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  decodeBool,
+  decodeBytes,
+  decodeEnumVariant,
+  decodeF32,
+  decodeF64,
+  decodeI8,
+  decodeI16,
+  decodeI32,
+  decodeI64,
+  decodeOption,
+  decodeString,
+  decodeTuple2,
+  decodeU8,
+  decodeU16,
+  decodeU32,
+  decodeU64,
+  decodeVec,
   encodeBool,
-  encodeU8,
-  encodeI8,
-  encodeU16,
-  encodeI16,
-  encodeU32,
-  encodeI32,
-  encodeU64,
-  encodeI64,
+  encodeBytes,
+  encodeEnumVariant,
   encodeF32,
   encodeF64,
-  encodeString,
-  encodeBytes,
+  encodeI8,
+  encodeI16,
+  encodeI32,
+  encodeI64,
   encodeOption,
-  encodeVec,
+  encodeString,
+  encodeTuple2,
+  encodeU8,
+  encodeU16,
+  encodeU32,
+  encodeU64,
   encodeVarint,
+  encodeVec,
+  type DecodeResult,
 } from "@bearcove/roam-postcard";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-/** Load a golden vector from the test-fixtures directory */
 function loadGoldenVector(path: string): Uint8Array {
   const projectRoot = join(__dirname, "..", "..", "..", "..");
   const vectorPath = join(projectRoot, "test-fixtures", "golden-vectors", path);
   return new Uint8Array(readFileSync(vectorPath));
 }
 
-/** Assert that encoded bytes match a golden vector */
 function assertEncoding(encoded: Uint8Array, vectorPath: string) {
   const expected = loadGoldenVector(vectorPath);
   expect(Array.from(encoded)).toEqual(Array.from(expected));
+}
+
+function assertDecode<T>(
+  vectorPath: string,
+  decode: (buf: Uint8Array, offset: number) => DecodeResult<T>,
+  expected: T,
+) {
+  const bytes = loadGoldenVector(vectorPath);
+  const decoded = decode(bytes, 0);
+  expect(decoded.value, `decode ${vectorPath}`).toEqual(expected);
+  expect(decoded.next, `decode length ${vectorPath}`).toBe(bytes.length);
 }
 
 describe("Varint encoding", () => {
@@ -175,392 +204,167 @@ describe("Primitive encoding", () => {
   });
 });
 
-// ============================================================================
-// Primitive decode golden vectors (verify TS decodes what Rust encodes)
-// ============================================================================
-
-import { decodeWithSchema, encodeWithSchema } from "./schema_codec.ts";
-import type { Schema, StructSchema, EnumSchema, TupleSchema } from "./schema.ts";
-
-/** Decode a golden vector with a schema and assert the value matches. */
-function assertDecode(vectorPath: string, schema: Schema, expected: unknown) {
-  const bytes = loadGoldenVector(vectorPath);
-  const decoded = decodeWithSchema(bytes, 0, schema);
-  expect(decoded.value, `decode ${vectorPath}`).toEqual(expected);
-}
-
 describe("Primitive decode from Rust golden vectors", () => {
   it("decodes bool", () => {
-    assertDecode("primitives/bool_false.bin", { kind: "bool" }, false);
-    assertDecode("primitives/bool_true.bin", { kind: "bool" }, true);
+    assertDecode("primitives/bool_false.bin", decodeBool, false);
+    assertDecode("primitives/bool_true.bin", decodeBool, true);
   });
 
   it("decodes u8", () => {
-    assertDecode("primitives/u8_0.bin", { kind: "u8" }, 0);
-    assertDecode("primitives/u8_127.bin", { kind: "u8" }, 127);
-    assertDecode("primitives/u8_255.bin", { kind: "u8" }, 255);
+    assertDecode("primitives/u8_0.bin", decodeU8, 0);
+    assertDecode("primitives/u8_127.bin", decodeU8, 127);
+    assertDecode("primitives/u8_255.bin", decodeU8, 255);
   });
 
   it("decodes i8", () => {
-    assertDecode("primitives/i8_0.bin", { kind: "i8" }, 0);
-    assertDecode("primitives/i8_neg1.bin", { kind: "i8" }, -1);
-    assertDecode("primitives/i8_127.bin", { kind: "i8" }, 127);
-    assertDecode("primitives/i8_neg128.bin", { kind: "i8" }, -128);
+    assertDecode("primitives/i8_0.bin", decodeI8, 0);
+    assertDecode("primitives/i8_neg1.bin", decodeI8, -1);
+    assertDecode("primitives/i8_127.bin", decodeI8, 127);
+    assertDecode("primitives/i8_neg128.bin", decodeI8, -128);
   });
 
   it("decodes u16", () => {
-    assertDecode("primitives/u16_0.bin", { kind: "u16" }, 0);
-    assertDecode("primitives/u16_127.bin", { kind: "u16" }, 127);
-    assertDecode("primitives/u16_128.bin", { kind: "u16" }, 128);
-    assertDecode("primitives/u16_255.bin", { kind: "u16" }, 255);
-    assertDecode("primitives/u16_256.bin", { kind: "u16" }, 256);
-    assertDecode("primitives/u16_max.bin", { kind: "u16" }, 65535);
+    assertDecode("primitives/u16_0.bin", decodeU16, 0);
+    assertDecode("primitives/u16_127.bin", decodeU16, 127);
+    assertDecode("primitives/u16_128.bin", decodeU16, 128);
+    assertDecode("primitives/u16_255.bin", decodeU16, 255);
+    assertDecode("primitives/u16_256.bin", decodeU16, 256);
+    assertDecode("primitives/u16_max.bin", decodeU16, 65535);
   });
 
   it("decodes i16", () => {
-    assertDecode("primitives/i16_0.bin", { kind: "i16" }, 0);
-    assertDecode("primitives/i16_1.bin", { kind: "i16" }, 1);
-    assertDecode("primitives/i16_neg1.bin", { kind: "i16" }, -1);
-    assertDecode("primitives/i16_max.bin", { kind: "i16" }, 32767);
-    assertDecode("primitives/i16_min.bin", { kind: "i16" }, -32768);
+    assertDecode("primitives/i16_0.bin", decodeI16, 0);
+    assertDecode("primitives/i16_1.bin", decodeI16, 1);
+    assertDecode("primitives/i16_neg1.bin", decodeI16, -1);
+    assertDecode("primitives/i16_max.bin", decodeI16, 32767);
+    assertDecode("primitives/i16_min.bin", decodeI16, -32768);
   });
 
   it("decodes u32", () => {
-    assertDecode("primitives/u32_0.bin", { kind: "u32" }, 0);
-    assertDecode("primitives/u32_1.bin", { kind: "u32" }, 1);
-    assertDecode("primitives/u32_127.bin", { kind: "u32" }, 127);
-    assertDecode("primitives/u32_128.bin", { kind: "u32" }, 128);
-    assertDecode("primitives/u32_max.bin", { kind: "u32" }, 4294967295);
+    assertDecode("primitives/u32_0.bin", decodeU32, 0);
+    assertDecode("primitives/u32_1.bin", decodeU32, 1);
+    assertDecode("primitives/u32_127.bin", decodeU32, 127);
+    assertDecode("primitives/u32_128.bin", decodeU32, 128);
+    assertDecode("primitives/u32_max.bin", decodeU32, 4294967295);
   });
 
   it("decodes i32", () => {
-    assertDecode("primitives/i32_0.bin", { kind: "i32" }, 0);
-    assertDecode("primitives/i32_1.bin", { kind: "i32" }, 1);
-    assertDecode("primitives/i32_neg1.bin", { kind: "i32" }, -1);
-    assertDecode("primitives/i32_max.bin", { kind: "i32" }, 2147483647);
-    assertDecode("primitives/i32_min.bin", { kind: "i32" }, -2147483648);
+    assertDecode("primitives/i32_0.bin", decodeI32, 0);
+    assertDecode("primitives/i32_1.bin", decodeI32, 1);
+    assertDecode("primitives/i32_neg1.bin", decodeI32, -1);
+    assertDecode("primitives/i32_max.bin", decodeI32, 2147483647);
+    assertDecode("primitives/i32_min.bin", decodeI32, -2147483648);
   });
 
   it("decodes u64", () => {
-    assertDecode("primitives/u64_0.bin", { kind: "u64" }, 0n);
-    assertDecode("primitives/u64_1.bin", { kind: "u64" }, 1n);
-    assertDecode("primitives/u64_127.bin", { kind: "u64" }, 127n);
-    assertDecode("primitives/u64_128.bin", { kind: "u64" }, 128n);
-    assertDecode("primitives/u64_max.bin", { kind: "u64" }, 18446744073709551615n);
+    assertDecode("primitives/u64_0.bin", decodeU64, 0n);
+    assertDecode("primitives/u64_1.bin", decodeU64, 1n);
+    assertDecode("primitives/u64_127.bin", decodeU64, 127n);
+    assertDecode("primitives/u64_128.bin", decodeU64, 128n);
+    assertDecode("primitives/u64_max.bin", decodeU64, 18446744073709551615n);
   });
 
   it("decodes i64", () => {
-    assertDecode("primitives/i64_0.bin", { kind: "i64" }, 0n);
-    assertDecode("primitives/i64_1.bin", { kind: "i64" }, 1n);
-    assertDecode("primitives/i64_neg1.bin", { kind: "i64" }, -1n);
-    assertDecode("primitives/i64_42.bin", { kind: "i64" }, 42n);
-    assertDecode("primitives/i64_max.bin", { kind: "i64" }, 9223372036854775807n);
-    assertDecode("primitives/i64_min.bin", { kind: "i64" }, -9223372036854775808n);
+    assertDecode("primitives/i64_0.bin", decodeI64, 0n);
+    assertDecode("primitives/i64_1.bin", decodeI64, 1n);
+    assertDecode("primitives/i64_neg1.bin", decodeI64, -1n);
+    assertDecode("primitives/i64_42.bin", decodeI64, 42n);
+    assertDecode("primitives/i64_max.bin", decodeI64, 9223372036854775807n);
+    assertDecode("primitives/i64_min.bin", decodeI64, -9223372036854775808n);
   });
 
   it("decodes f32", () => {
-    assertDecode("primitives/f32_0.bin", { kind: "f32" }, 0.0);
-    assertDecode("primitives/f32_1.bin", { kind: "f32" }, 1.0);
-    assertDecode("primitives/f32_neg1.bin", { kind: "f32" }, -1.0);
-    assertDecode("primitives/f32_1_5.bin", { kind: "f32" }, 1.5);
-    assertDecode("primitives/f32_0_25.bin", { kind: "f32" }, 0.25);
+    assertDecode("primitives/f32_0.bin", decodeF32, 0.0);
+    assertDecode("primitives/f32_1.bin", decodeF32, 1.0);
+    assertDecode("primitives/f32_neg1.bin", decodeF32, -1.0);
+    assertDecode("primitives/f32_1_5.bin", decodeF32, 1.5);
+    assertDecode("primitives/f32_0_25.bin", decodeF32, 0.25);
   });
 
   it("decodes f64", () => {
-    assertDecode("primitives/f64_0.bin", { kind: "f64" }, 0.0);
-    assertDecode("primitives/f64_1.bin", { kind: "f64" }, 1.0);
-    assertDecode("primitives/f64_neg1.bin", { kind: "f64" }, -1.0);
-    assertDecode("primitives/f64_1_5.bin", { kind: "f64" }, 1.5);
-    assertDecode("primitives/f64_0_25.bin", { kind: "f64" }, 0.25);
+    assertDecode("primitives/f64_0.bin", decodeF64, 0.0);
+    assertDecode("primitives/f64_1.bin", decodeF64, 1.0);
+    assertDecode("primitives/f64_neg1.bin", decodeF64, -1.0);
+    assertDecode("primitives/f64_1_5.bin", decodeF64, 1.5);
+    assertDecode("primitives/f64_0_25.bin", decodeF64, 0.25);
   });
 
   it("decodes string", () => {
-    assertDecode("primitives/string_empty.bin", { kind: "string" }, "");
-    assertDecode("primitives/string_hello.bin", { kind: "string" }, "hello world");
-    assertDecode("primitives/string_unicode.bin", { kind: "string" }, "héllo 世界 🦀");
+    assertDecode("primitives/string_empty.bin", decodeString, "");
+    assertDecode("primitives/string_hello.bin", decodeString, "hello world");
+    assertDecode("primitives/string_unicode.bin", decodeString, "héllo 世界 🦀");
   });
 
   it("decodes bytes", () => {
-    assertDecode("primitives/bytes_empty.bin", { kind: "bytes" }, new Uint8Array([]));
-    assertDecode(
-      "primitives/bytes_deadbeef.bin",
-      { kind: "bytes" },
-      new Uint8Array([0xde, 0xad, 0xbe, 0xef]),
-    );
+    assertDecode("primitives/bytes_empty.bin", decodeBytes, new Uint8Array([]));
+    assertDecode("primitives/bytes_deadbeef.bin", decodeBytes, new Uint8Array([0xde, 0xad, 0xbe, 0xef]));
   });
 
   it("decodes option", () => {
-    assertDecode("primitives/option_none_u32.bin", { kind: "option", inner: { kind: "u32" } }, null);
-    assertDecode("primitives/option_some_u32_42.bin", { kind: "option", inner: { kind: "u32" } }, 42);
+    assertDecode("primitives/option_none_u32.bin", (buf, offset) => decodeOption(buf, offset, decodeU32), null);
+    assertDecode("primitives/option_some_u32_42.bin", (buf, offset) => decodeOption(buf, offset, decodeU32), 42);
     assertDecode(
       "primitives/option_none_string.bin",
-      { kind: "option", inner: { kind: "string" } },
+      (buf, offset) => decodeOption(buf, offset, decodeString),
       null,
     );
     assertDecode(
       "primitives/option_some_string.bin",
-      { kind: "option", inner: { kind: "string" } },
+      (buf, offset) => decodeOption(buf, offset, decodeString),
       "hello",
     );
   });
 
   it("decodes vec", () => {
-    assertDecode("primitives/vec_empty_u32.bin", { kind: "vec", element: { kind: "u32" } }, []);
-    assertDecode("primitives/vec_u32_1_2_3.bin", { kind: "vec", element: { kind: "u32" } }, [1, 2, 3]);
+    assertDecode("primitives/vec_empty_u32.bin", (buf, offset) => decodeVec(buf, offset, decodeU32), []);
+    assertDecode("primitives/vec_u32_1_2_3.bin", (buf, offset) => decodeVec(buf, offset, decodeU32), [1, 2, 3]);
     assertDecode(
       "primitives/vec_i32_neg1_0_1.bin",
-      { kind: "vec", element: { kind: "i32" } },
+      (buf, offset) => decodeVec(buf, offset, decodeI32),
       [-1, 0, 1],
     );
     assertDecode(
       "primitives/vec_string.bin",
-      { kind: "vec", element: { kind: "string" } },
+      (buf, offset) => decodeVec(buf, offset, decodeString),
       ["a", "b"],
     );
   });
 });
 
-// ============================================================================
-// Composite golden vector tests (cross-language conformance)
-// ============================================================================
-
-/** Assert that schema-encoded bytes match a golden vector, and decode back */
-function assertSchemaRoundTrip(value: unknown, schema: Schema, vectorPath: string) {
-  const encoded = encodeWithSchema(value, schema);
-  const expected = loadGoldenVector(vectorPath);
-  expect(Array.from(encoded), `encode mismatch for ${vectorPath}`).toEqual(Array.from(expected));
-  const decoded = decodeWithSchema(expected, 0, schema);
-  expect(decoded.value, `decode mismatch for ${vectorPath}`).toEqual(value);
-}
-
-const PointSchema: StructSchema = {
-  kind: "struct",
-  fields: {
-    x: { kind: "i32" },
-    y: { kind: "i32" },
-  },
-};
-
-const NestedSchema: StructSchema = {
-  kind: "struct",
-  fields: {
-    name: { kind: "string" },
-    point: PointSchema,
-    tags: { kind: "vec", element: { kind: "string" } },
-  },
-};
-
-const ColorSchema: EnumSchema = {
-  kind: "enum",
-  variants: [
-    { name: "Red", fields: null },
-    { name: "Green", fields: null },
-    { name: "Blue", fields: null },
-  ],
-};
-
-const ShapeSchema: EnumSchema = {
-  kind: "enum",
-  variants: [
-    { name: "Circle", fields: { kind: "f64" } },
-    { name: "Rect", fields: { w: { kind: "f64" }, h: { kind: "f64" } } },
-    { name: "Empty", fields: null },
-  ],
-};
-
-describe("Composite golden vectors (Rust cross-language)", () => {
-  it("struct Point", () => {
-    assertSchemaRoundTrip({ x: 10, y: -20 }, PointSchema, "composite/struct_point.bin");
-  });
-
-  it("struct Nested", () => {
-    assertSchemaRoundTrip(
-      { name: "test", point: { x: 1, y: 2 }, tags: ["a", "bb"] },
-      NestedSchema,
-      "composite/struct_nested.bin",
+describe("Cross-language helper golden vectors", () => {
+  it("round-trips tuple (u32, string)", () => {
+    assertEncoding(
+      encodeTuple2(42, "hello", encodeU32, encodeString),
+      "composite/tuple_u32_string.bin",
+    );
+    assertDecode(
+      "composite/tuple_u32_string.bin",
+      (buf, offset) => decodeTuple2(buf, offset, decodeU32, decodeString),
+      [42, "hello"],
     );
   });
 
-  it("enum unit variants", () => {
-    assertSchemaRoundTrip({ tag: "Red" }, ColorSchema, "composite/enum_red.bin");
-    assertSchemaRoundTrip({ tag: "Green" }, ColorSchema, "composite/enum_green.bin");
-    assertSchemaRoundTrip({ tag: "Blue" }, ColorSchema, "composite/enum_blue.bin");
-  });
-
-  it("enum newtype variant", () => {
-    assertSchemaRoundTrip({ tag: "Circle", value: 3.14 }, ShapeSchema, "composite/enum_circle.bin");
-  });
-
-  it("enum struct variant", () => {
-    assertSchemaRoundTrip(
-      { tag: "Rect", w: 10.0, h: 20.0 },
-      ShapeSchema,
-      "composite/enum_rect.bin",
+  it("round-trips tuple (bool, i64)", () => {
+    assertEncoding(
+      encodeTuple2(true, -99n, encodeBool, encodeI64),
+      "composite/tuple_bool_i64.bin",
+    );
+    assertDecode(
+      "composite/tuple_bool_i64.bin",
+      (buf, offset) => decodeTuple2(buf, offset, decodeBool, decodeI64),
+      [true, -99n],
     );
   });
 
-  it("enum empty variant", () => {
-    assertSchemaRoundTrip({ tag: "Empty" }, ShapeSchema, "composite/enum_empty.bin");
+  it("encodes unit enum variant indices", () => {
+    assertEncoding(encodeEnumVariant(0), "composite/enum_red.bin");
+    assertEncoding(encodeEnumVariant(1), "composite/enum_green.bin");
+    assertEncoding(encodeEnumVariant(2), "composite/enum_blue.bin");
   });
 
-  it("tuple (u32, string)", () => {
-    const schema: TupleSchema = {
-      kind: "tuple",
-      elements: [{ kind: "u32" }, { kind: "string" }],
-    };
-    assertSchemaRoundTrip([42, "hello"], schema, "composite/tuple_u32_string.bin");
-  });
-
-  it("tuple (bool, i64)", () => {
-    const schema: TupleSchema = {
-      kind: "tuple",
-      elements: [{ kind: "bool" }, { kind: "i64" }],
-    };
-    assertSchemaRoundTrip([true, -99n], schema, "composite/tuple_bool_i64.bin");
-  });
-
-  it("option Some(Point)", () => {
-    const schema: Schema = { kind: "option", inner: PointSchema };
-    assertSchemaRoundTrip({ x: 5, y: 6 }, schema, "composite/option_some_point.bin");
-  });
-
-  it("option None (Point)", () => {
-    const schema: Schema = { kind: "option", inner: PointSchema };
-    assertSchemaRoundTrip(null, schema, "composite/option_none_point.bin");
-  });
-
-  it("vec of Points", () => {
-    const schema: Schema = { kind: "vec", element: PointSchema };
-    assertSchemaRoundTrip(
-      [
-        { x: 1, y: 2 },
-        { x: 3, y: 4 },
-        { x: 5, y: 6 },
-      ],
-      schema,
-      "composite/vec_points.bin",
-    );
-  });
-});
-
-// ============================================================================
-// Result / RoamError golden vectors
-// ============================================================================
-
-// Rust's Result<T, RoamError<E>> is encoded as an enum:
-//   Ok(T)  = variant 0, newtype
-//   Err(RoamError<E>) = variant 1, newtype
-// RoamError<E> is:
-//   User(E)           = variant 0, newtype
-//   UnknownMethod     = variant 1, unit
-//   InvalidPayload(S) = variant 2, newtype (string)
-//   Cancelled         = variant 3, unit
-//   Indeterminate     = variant 4, unit
-
-const RoamErrorInfallibleSchema: EnumSchema = {
-  kind: "enum",
-  variants: [
-    { name: "User", discriminant: 0, fields: null }, // Infallible has no encoding
-    { name: "UnknownMethod", discriminant: 1, fields: null },
-    { name: "InvalidPayload", discriminant: 2, fields: { kind: "string" } },
-    { name: "Cancelled", discriminant: 3, fields: null },
-    { name: "Indeterminate", discriminant: 4, fields: null },
-  ],
-};
-
-const RoamErrorStringSchema: EnumSchema = {
-  kind: "enum",
-  variants: [
-    { name: "User", discriminant: 0, fields: { kind: "string" } },
-    { name: "UnknownMethod", discriminant: 1, fields: null },
-    { name: "InvalidPayload", discriminant: 2, fields: { kind: "string" } },
-    { name: "Cancelled", discriminant: 3, fields: null },
-    { name: "Indeterminate", discriminant: 4, fields: null },
-  ],
-};
-
-function makeResultSchema(okSchema: Schema, errSchema: EnumSchema): EnumSchema {
-  return {
-    kind: "enum",
-    variants: [
-      { name: "Ok", discriminant: 0, fields: okSchema },
-      { name: "Err", discriminant: 1, fields: errSchema },
-    ],
-  };
-}
-
-describe("Result/RoamError golden vectors (Rust cross-language)", () => {
-  it("decodes Ok(string)", () => {
-    const schema = makeResultSchema({ kind: "string" }, RoamErrorInfallibleSchema);
-    assertDecode("result/ok_string.bin", schema, { tag: "Ok", value: "hello" });
-  });
-
-  it("decodes Ok(u32)", () => {
-    const schema = makeResultSchema({ kind: "u32" }, RoamErrorInfallibleSchema);
-    assertDecode("result/ok_u32.bin", schema, { tag: "Ok", value: 42 });
-  });
-
-  it("decodes Err(UnknownMethod)", () => {
-    const schema = makeResultSchema({ kind: "u32" }, RoamErrorInfallibleSchema);
-    assertDecode("result/err_unknown_method.bin", schema, {
-      tag: "Err",
-      value: { tag: "UnknownMethod" },
-    });
-  });
-
-  it("decodes Err(InvalidPayload)", () => {
-    const schema = makeResultSchema({ kind: "u32" }, RoamErrorInfallibleSchema);
-    assertDecode("result/err_invalid_payload.bin", schema, {
-      tag: "Err",
-      value: { tag: "InvalidPayload", value: "" },
-    });
-  });
-
-  it("decodes Err(Cancelled)", () => {
-    const schema = makeResultSchema({ kind: "u32" }, RoamErrorInfallibleSchema);
-    assertDecode("result/err_cancelled.bin", schema, {
-      tag: "Err",
-      value: { tag: "Cancelled" },
-    });
-  });
-
-  it("decodes Err(User(string))", () => {
-    const schema = makeResultSchema({ kind: "u32" }, RoamErrorStringSchema);
-    assertDecode("result/err_user_string.bin", schema, {
-      tag: "Err",
-      value: { tag: "User", value: "oops" },
-    });
-  });
-});
-
-// ============================================================================
-// Map golden vectors
-// ============================================================================
-
-describe("Map golden vectors (Rust cross-language)", () => {
-  it("map string->u32", () => {
-    const schema: Schema = { kind: "map", key: { kind: "string" }, value: { kind: "u32" } };
-    // BTreeMap in Rust produces deterministic order: alpha < beta
-    assertSchemaRoundTrip(
-      new Map([
-        ["alpha", 1],
-        ["beta", 2],
-      ]),
-      schema,
-      "composite/map_string_u32.bin",
-    );
-  });
-
-  it("map string->Point", () => {
-    const schema: Schema = {
-      kind: "map",
-      key: { kind: "string" },
-      value: PointSchema,
-    };
-    assertSchemaRoundTrip(
-      new Map([["key", { x: 10, y: 20 }]]),
-      schema,
-      "composite/map_string_point.bin",
-    );
+  it("decodes unit enum variant indices", () => {
+    assertDecode("composite/enum_red.bin", decodeEnumVariant, 0);
+    assertDecode("composite/enum_green.bin", decodeEnumVariant, 1);
+    assertDecode("composite/enum_blue.bin", decodeEnumVariant, 2);
   });
 });

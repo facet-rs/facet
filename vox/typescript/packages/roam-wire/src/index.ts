@@ -80,9 +80,9 @@ export {
 } from "./codec.ts";
 
 export {
-  type Schema,
-  type SchemaRegistry,
-  type TypeRef,
+  type WireSchema,
+  type WireSchemaRegistry,
+  type WireTypeRef,
   wireMessageSchemasCbor,
   wireMessageSchemaRegistry,
   wireMessageRootRef,
