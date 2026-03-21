@@ -21,38 +21,7 @@ export {
   type RoamCall,
 } from "./descriptor.ts";
 
-// Schema types and binding
 export {
-  type PrimitiveKind,
-  type TxSchema,
-  type RxSchema,
-  type VecSchema,
-  type OptionSchema,
-  type MapSchema,
-  type StructSchema,
-  type TupleSchema,
-  type EnumVariant,
-  type EnumSchema,
-  type RefSchema,
-  type Schema,
-  type SchemaRegistry,
-} from "./schema.ts";
-
-// Schema helper functions
-export {
-  resolveSchema,
-  findVariantByDiscriminant,
-  findVariantByName,
-  getVariantDiscriminant,
-  getVariantFieldSchemas,
-  getVariantFieldNames,
-  isNewtypeVariant,
-  isRefSchema,
-} from "./schema.ts";
-
-export {
-  bindChannels,
-  finalizeBoundChannels,
   bindChannelsForTypeRefs,
   finalizeBoundChannelsForTypeRefs,
 } from "./binding.ts";

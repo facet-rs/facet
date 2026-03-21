@@ -11,7 +11,4 @@ export {
   wireMessageSchemasCbor,
   wireMessageSchemaRegistry,
   wireMessageRootRef,
-  wireSchemaRegistry,
-  RequestBodySchema,
-  MessageSchema,
 } from "./wire.generated.ts";

@@ -345,45 +345,7 @@ export { encodeVarint, decodeVarint, decodeVarintNumber };
 export { concat };
 
 // ============================================================================
-// Schema types
-// ============================================================================
-
-export type {
-  PrimitiveKind,
-  VecSchema,
-  OptionSchema,
-  MapSchema,
-  StructSchema,
-  TupleSchema,
-  EnumVariant,
-  EnumSchema,
-  RefSchema,
-  TxSchema,
-  RxSchema,
-  Schema,
-  SchemaRegistry,
-  MethodSchema,
-} from "./schema.ts";
-
-export {
-  resolveSchema,
-  findVariantByDiscriminant,
-  findVariantByName,
-  getVariantDiscriminant,
-  getVariantFieldSchemas,
-  getVariantFieldNames,
-  isNewtypeVariant,
-  isRefSchema,
-} from "./schema.ts";
-
-// ============================================================================
-// Schema-driven encoding/decoding
-// ============================================================================
-
-export { encodeWithSchema, decodeWithSchema } from "./schema_codec.ts";
-
-// ============================================================================
-// Wire schema types (new, matches Rust CBOR wire format)
+// Canonical schema types
 // ============================================================================
 
 export type {

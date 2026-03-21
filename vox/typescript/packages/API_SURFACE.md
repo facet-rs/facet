@@ -8,7 +8,7 @@ This document defines the intended public entrypoints for TypeScript workspace p
 
 - Connection/handshake runtime (`Connection`, `ConnectionError`, `helloExchange*`, `defaultHello`)
 - Dispatcher and call plumbing (`ServiceDispatcher`, `ChannelingDispatcher`, `Caller`, `CallBuilder`, middleware types)
-- Generated-code channeling surface (`Tx`, `Rx`, `channel`, `bindChannels`, descriptor types)
+- Generated-code channeling surface (`Tx`, `Rx`, `channel`, descriptor types)
 - Metadata helpers (`ClientMetadata`, conversions)
 - RPC error helpers (`RpcError`, `RpcErrorCode`, `decodeUserError`)
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { resolveWireTypeRef } from "@bearcove/roam-postcard";
 
 import {
   MetadataFlagValues,
@@ -12,7 +13,7 @@ import {
   parityOdd,
 } from "./types.ts";
 import { decodeMessage, encodeMessage } from "./codec.ts";
-import { MessageSchema, RequestBodySchema } from "./schemas.ts";
+import { wireMessageRootRef, wireMessageSchemaRegistry } from "./schemas.ts";
 
 describe("wire helpers", () => {
   it("builds nested request and channel helpers with the expected tags", () => {
@@ -67,15 +68,118 @@ describe("wire codec", () => {
 });
 
 describe("generated wire schemas", () => {
-  it("marks opaque payload bytes with u32le framing", () => {
-    const requestBody = RequestBodySchema as any;
-    const call = requestBody.variants.find((v: any) => v.name === "Call");
-    const channelBody = (MessageSchema as any).fields.payload.variants.find(
-      (v: any) => v.name === "ChannelMessage",
-    ).fields.fields.body;
-    const item = channelBody.variants.find((v: any) => v.name === "Item");
+  it("marks opaque payload fields as canonical payload primitives", () => {
+    const messageKind = resolveWireTypeRef(wireMessageRootRef, wireMessageSchemaRegistry);
+    expect(messageKind?.tag).toBe("struct");
+    if (!messageKind || messageKind.tag !== "struct") {
+      throw new Error("expected Message root to resolve to a struct");
+    }
 
-    expect(call.fields.fields.args).toEqual({ kind: "bytes", opaque: true });
-    expect(item.fields.fields.item).toEqual({ kind: "bytes", opaque: true });
+    const payloadField = messageKind.fields.find((field) => field.name === "payload");
+    expect(payloadField).toBeDefined();
+    if (!payloadField) {
+      throw new Error("expected Message.payload field");
+    }
+
+    const payloadKind = resolveWireTypeRef(payloadField.type_ref, wireMessageSchemaRegistry);
+    expect(payloadKind?.tag).toBe("enum");
+    if (!payloadKind || payloadKind.tag !== "enum") {
+      throw new Error("expected Message.payload to resolve to an enum");
+    }
+
+    const requestMessageVariant = payloadKind.variants.find((variant) => variant.name === "RequestMessage");
+    const channelMessageVariant = payloadKind.variants.find((variant) => variant.name === "ChannelMessage");
+    expect(requestMessageVariant?.payload.tag).toBe("newtype");
+    expect(channelMessageVariant?.payload.tag).toBe("newtype");
+    if (!requestMessageVariant || requestMessageVariant.payload.tag !== "newtype") {
+      throw new Error("expected Message.payload.RequestMessage to be a newtype");
+    }
+    if (!channelMessageVariant || channelMessageVariant.payload.tag !== "newtype") {
+      throw new Error("expected Message.payload.ChannelMessage to be a newtype");
+    }
+
+    const requestMessageKind = resolveWireTypeRef(
+      requestMessageVariant.payload.type_ref,
+      wireMessageSchemaRegistry,
+    );
+    expect(requestMessageKind?.tag).toBe("struct");
+    if (!requestMessageKind || requestMessageKind.tag !== "struct") {
+      throw new Error("expected RequestMessage to resolve to a struct");
+    }
+
+    const requestBodyField = requestMessageKind.fields.find((field) => field.name === "body");
+    expect(requestBodyField).toBeDefined();
+    if (!requestBodyField) {
+      throw new Error("expected RequestMessage.body field");
+    }
+
+    const requestBodyKind = resolveWireTypeRef(requestBodyField.type_ref, wireMessageSchemaRegistry);
+    expect(requestBodyKind?.tag).toBe("enum");
+    if (!requestBodyKind || requestBodyKind.tag !== "enum") {
+      throw new Error("expected RequestBody to resolve to an enum");
+    }
+
+    const callVariant = requestBodyKind.variants.find((variant) => variant.name === "Call");
+    expect(callVariant?.payload.tag).toBe("newtype");
+    if (!callVariant || callVariant.payload.tag !== "newtype") {
+      throw new Error("expected RequestBody.Call to be a newtype");
+    }
+
+    const requestCallKind = resolveWireTypeRef(callVariant.payload.type_ref, wireMessageSchemaRegistry);
+    expect(requestCallKind?.tag).toBe("struct");
+    if (!requestCallKind || requestCallKind.tag !== "struct") {
+      throw new Error("expected RequestCall to resolve to a struct");
+    }
+
+    const argsField = requestCallKind.fields.find((field) => field.name === "args");
+    expect(argsField).toBeDefined();
+    if (!argsField) {
+      throw new Error("expected RequestCall.args field");
+    }
+
+    const argsKind = resolveWireTypeRef(argsField.type_ref, wireMessageSchemaRegistry);
+    expect(argsKind).toEqual({ tag: "primitive", primitive_type: "payload" });
+
+    const channelMessageKind = resolveWireTypeRef(
+      channelMessageVariant.payload.type_ref,
+      wireMessageSchemaRegistry,
+    );
+    expect(channelMessageKind?.tag).toBe("struct");
+    if (!channelMessageKind || channelMessageKind.tag !== "struct") {
+      throw new Error("expected ChannelMessage to resolve to a struct");
+    }
+
+    const channelBodyField = channelMessageKind.fields.find((field) => field.name === "body");
+    expect(channelBodyField).toBeDefined();
+    if (!channelBodyField) {
+      throw new Error("expected ChannelMessage.body field");
+    }
+
+    const channelBodyKind = resolveWireTypeRef(channelBodyField.type_ref, wireMessageSchemaRegistry);
+    expect(channelBodyKind?.tag).toBe("enum");
+    if (!channelBodyKind || channelBodyKind.tag !== "enum") {
+      throw new Error("expected ChannelBody to resolve to an enum");
+    }
+
+    const itemVariant = channelBodyKind.variants.find((variant) => variant.name === "Item");
+    expect(itemVariant?.payload.tag).toBe("newtype");
+    if (!itemVariant || itemVariant.payload.tag !== "newtype") {
+      throw new Error("expected ChannelBody.Item to be a newtype");
+    }
+
+    const channelItemKind = resolveWireTypeRef(itemVariant.payload.type_ref, wireMessageSchemaRegistry);
+    expect(channelItemKind?.tag).toBe("struct");
+    if (!channelItemKind || channelItemKind.tag !== "struct") {
+      throw new Error("expected ChannelItem to resolve to a struct");
+    }
+
+    const itemField = channelItemKind.fields.find((field) => field.name === "item");
+    expect(itemField).toBeDefined();
+    if (!itemField) {
+      throw new Error("expected ChannelItem.item field");
+    }
+
+    const itemKind = resolveWireTypeRef(itemField.type_ref, wireMessageSchemaRegistry);
+    expect(itemKind).toEqual({ tag: "primitive", primitive_type: "payload" });
   });
 });

@@ -154,10 +154,13 @@ function buildPlanInner(
       return { tag: "array", element: element ?? IDENTITY };
     }
     case "primitive":
-      if (rk.primitive_type !== lk.primitive_type) {
-        throw new TranslationError(
-          `primitive type mismatch: remote "${rk.primitive_type}" vs local "${lk.primitive_type}"`,
-        );
+      {
+        const lkPrimitive = lk as Extract<WireSchemaKind, { tag: "primitive" }>;
+        if (rk.primitive_type !== lkPrimitive.primitive_type) {
+          throw new TranslationError(
+            `primitive type mismatch: remote "${rk.primitive_type}" vs local "${lkPrimitive.primitive_type}"`,
+          );
+        }
       }
       return IDENTITY;
     case "channel":

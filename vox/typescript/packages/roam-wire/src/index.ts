@@ -86,5 +86,4 @@ export {
   wireMessageSchemasCbor,
   wireMessageSchemaRegistry,
   wireMessageRootRef,
-  wireSchemaRegistry,
 } from "./schemas.ts";
