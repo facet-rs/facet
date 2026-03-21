@@ -16,6 +16,18 @@ public protocol LinkSource: Sendable {
     func nextLink() async throws -> LinkAttachment
 }
 
+public struct AnyLinkSource: LinkSource, Sendable {
+    private let nextLinkFn: @Sendable () async throws -> LinkAttachment
+
+    public init(_ nextLink: @escaping @Sendable () async throws -> LinkAttachment) {
+        self.nextLinkFn = nextLink
+    }
+
+    public func nextLink() async throws -> LinkAttachment {
+        try await nextLinkFn()
+    }
+}
+
 public actor SingleAttachmentSource: LinkSource {
     private var attachment: LinkAttachment?
 
@@ -38,6 +50,24 @@ public func singleAttachmentSource(_ attachment: LinkAttachment) -> some LinkSou
 
 public func singleLinkSource(_ link: any Link) -> some LinkSource {
     singleAttachmentSource(.initiator(link))
+}
+
+public actor PrefetchedLinkSource<Base: LinkSource>: LinkSource {
+    private var first: LinkAttachment?
+    private let base: Base
+
+    public init(first: LinkAttachment, base: Base) {
+        self.first = first
+        self.base = base
+    }
+
+    public func nextLink() async throws -> LinkAttachment {
+        if let first {
+            self.first = nil
+            return first
+        }
+        return try await base.nextLink()
+    }
 }
 
 struct TransportedLinkSource<Base: LinkSource>: LinkSource {

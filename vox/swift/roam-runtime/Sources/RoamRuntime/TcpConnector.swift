@@ -1,5 +1,6 @@
 public protocol SessionConnector: Sendable {
-    func openConduit() async throws -> any Conduit
+    var transport: TransportConduitKind { get }
+    func openAttachment() async throws -> LinkAttachment
 }
 
 public struct TcpConnector: SessionConnector, LinkSource, Sendable {
@@ -25,19 +26,8 @@ public struct TcpConnector: SessionConnector, LinkSource, Sendable {
         LinkAttachment.initiator(try await connectLink(host: host, port: port))
     }
 
-    public func openConduit() async throws -> any Conduit {
-        switch transport {
-        case .bare:
-            let attachment = try await TransportedLinkSource(
-                source: self,
-                conduit: .bare
-            ).nextLink()
-            return BareConduit(link: attachment.link)
-        case .stable:
-            return try await StableConduit.connect(
-                source: TransportedLinkSource(source: self, conduit: .stable)
-            )
-        }
+    public func openAttachment() async throws -> LinkAttachment {
+        try await TransportedLinkSource(source: self, conduit: transport).nextLink()
     }
 }
 
@@ -100,8 +90,8 @@ private struct TimedTransportedLinkSource<Base: LinkSource>: LinkSource {
                     try await Task.sleep(nanoseconds: timeoutNs)
                     throw TransportError.protocolViolation("transport prologue timed out")
                 }
+                defer { group.cancelAll() }
                 _ = try await group.next()
-                group.cancelAll()
             }
             return attachment
         } catch {

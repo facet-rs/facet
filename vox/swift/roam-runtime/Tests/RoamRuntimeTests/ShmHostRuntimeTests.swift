@@ -59,14 +59,12 @@ private struct ShmHostNoopDispatcher: ServiceDispatcher {
     func preregister(
         methodId _: UInt64,
         payload _: [UInt8],
-        channels _: [UInt64],
         registry _: ChannelRegistry
     ) async {}
 
     func dispatch(
         methodId _: UInt64,
         payload _: [UInt8],
-        channels _: [UInt64],
         requestId _: UInt64,
         registry _: ChannelRegistry,
         taskTx _: @escaping @Sendable (TaskMessage) -> Void
@@ -151,65 +149,52 @@ struct ShmHostRuntimeTests {
         let guest = try ShmGuestTransport.attach(ticket: ticket)
         let guestConduit = guest.bareConduit()
         let hostConduit = host.bareConduit()
+        try await withAsyncCleanup({
+            try? await guest.close()
+            try? await host.close()
+        }) {
+            try await guestConduit.send(.protocolError(description: "guest-inline"))
+            let hostInline = try await withHostTimeout(milliseconds: 2_000) {
+                try await hostConduit.recv()
+            }
+            if let hostInline {
+                #expect(protocolErrorDescription(hostInline) == "guest-inline")
+            } else {
+                Issue.record("expected inline frame from guest")
+            }
 
-        defer {
-            close(ticket.doorbellFd)
-            if ticket.mmapControlFd >= 0 {
-                close(ticket.mmapControlFd)
+            try await hostConduit.send(.protocolError(description: "host-inline"))
+            let guestInline = try await withHostTimeout(milliseconds: 2_000) {
+                try await guestConduit.recv()
+            }
+            if let guestInline {
+                #expect(protocolErrorDescription(guestInline) == "host-inline")
+            } else {
+                Issue.record("expected inline frame from host")
+            }
+
+            let largeGuestText = String(repeating: "g", count: 12_000)
+            try await guestConduit.send(.protocolError(description: largeGuestText))
+            let hostLarge = try await withHostTimeout(milliseconds: 2_000) {
+                try await hostConduit.recv()
+            }
+            if let hostLarge {
+                #expect(protocolErrorDescription(hostLarge) == largeGuestText)
+            } else {
+                Issue.record("expected large frame from guest")
+            }
+
+            let largeHostText = String(repeating: "h", count: 12_000)
+            try await hostConduit.send(.protocolError(description: largeHostText))
+            let guestLarge = try await withHostTimeout(milliseconds: 2_000) {
+                try await guestConduit.recv()
+            }
+            if let guestLarge {
+                #expect(protocolErrorDescription(guestLarge) == largeHostText)
+            } else {
+                Issue.record("expected large frame from host")
             }
         }
-
-        defer {
-            Task {
-                try? await guest.close()
-                try? await host.close()
-            }
-        }
-
-        try await guestConduit.send(.protocolError(description: "guest-inline"))
-        let hostInline = try await withHostTimeout(milliseconds: 2_000) {
-            try await hostConduit.recv()
-        }
-        if let hostInline {
-            #expect(protocolErrorDescription(hostInline) == "guest-inline")
-        } else {
-            Issue.record("expected inline frame from guest")
-        }
-
-        try await hostConduit.send(.protocolError(description: "host-inline"))
-        let guestInline = try await withHostTimeout(milliseconds: 2_000) {
-            try await guestConduit.recv()
-        }
-        if let guestInline {
-            #expect(protocolErrorDescription(guestInline) == "host-inline")
-        } else {
-            Issue.record("expected inline frame from host")
-        }
-
-        let largeGuestText = String(repeating: "g", count: 12_000)
-        try await guestConduit.send(.protocolError(description: largeGuestText))
-        let hostLarge = try await withHostTimeout(milliseconds: 2_000) {
-            try await hostConduit.recv()
-        }
-        if let hostLarge {
-            #expect(protocolErrorDescription(hostLarge) == largeGuestText)
-        } else {
-            Issue.record("expected large frame from guest")
-        }
-
-        let largeHostText = String(repeating: "h", count: 12_000)
-        try await hostConduit.send(.protocolError(description: largeHostText))
-        let guestLarge = try await withHostTimeout(milliseconds: 2_000) {
-            try await guestConduit.recv()
-        }
-        if let guestLarge {
-            #expect(protocolErrorDescription(guestLarge) == largeHostText)
-        } else {
-            Issue.record("expected large frame from host")
-        }
-
-        try await guest.close()
-        try await host.close()
     }
 
     @Test func sendBootstrapSuccessTransfersDoorbellSegmentAndMmapFds() throws {
@@ -290,40 +275,28 @@ struct ShmHostRuntimeTests {
         let ticket = try prepared.makeGuestTicket()
         let host = try prepared.intoTransport()
         let guest = try ShmGuestTransport.attach(ticket: ticket)
-
-        defer {
-            close(ticket.doorbellFd)
-            if ticket.mmapControlFd >= 0 {
-                close(ticket.mmapControlFd)
+        try await withAsyncCleanup({
+            try? await guest.close()
+            try? await host.close()
+        }) {
+            let hostTask = Task {
+                _ = try await performAcceptorTransportPrologue(transport: host, supportedConduit: .bare)
+                _ = try await establishAcceptor(
+                    conduit: host,
+                    dispatcher: ShmHostNoopDispatcher()
+                )
             }
-        }
-        defer {
-            Task {
-                try? await guest.close()
-                try? await host.close()
+            let guestTask = Task {
+                try await performInitiatorTransportPrologue(transport: guest, conduit: .bare)
+                _ = try await establishInitiator(
+                    conduit: guest,
+                    dispatcher: ShmHostNoopDispatcher()
+                )
             }
-        }
 
-        let hostTask = Task {
-            _ = try await performAcceptorTransportPrologue(transport: host, supportedConduit: .bare)
-            _ = try await establishAcceptor(
-                conduit: BareConduit(link: host),
-                dispatcher: ShmHostNoopDispatcher()
-            )
+            _ = try await withHostTimeout(milliseconds: 2_000) { try await hostTask.value }
+            _ = try await withHostTimeout(milliseconds: 2_000) { try await guestTask.value }
         }
-        let guestTask = Task {
-            try await performInitiatorTransportPrologue(transport: guest, conduit: .bare)
-            _ = try await establishInitiator(
-                conduit: BareConduit(link: guest),
-                dispatcher: ShmHostNoopDispatcher()
-            )
-        }
-
-        _ = try await withHostTimeout(milliseconds: 2_000) { try await hostTask.value }
-        _ = try await withHostTimeout(milliseconds: 2_000) { try await guestTask.value }
-
-        try await guest.close()
-        try await host.close()
     }
 }
 #endif

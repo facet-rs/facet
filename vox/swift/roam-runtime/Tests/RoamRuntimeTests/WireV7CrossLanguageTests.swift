@@ -39,29 +39,8 @@ struct WireV7CrossLanguageTests {
         }
     }
 
-    private func assertFixtureDecoded(name: String, _ msg: MessageV7) {
+    private func assertMessageFixtureDecoded(name: String, _ msg: MessageV7) {
         switch name {
-        case "message_hello":
-            #expect(msg.connectionId == 0)
-            guard case .hello(let hello) = msg.payload else {
-                Issue.record("expected hello payload")
-                return
-            }
-            #expect(hello.version == 7)
-            #expect(hello.connectionSettings.parity == .odd)
-            #expect(hello.connectionSettings.maxConcurrentRequests == 64)
-            assertSampleMetadata(hello.metadata)
-
-        case "message_hello_yourself":
-            #expect(msg.connectionId == 0)
-            guard case .helloYourself(let hello) = msg.payload else {
-                Issue.record("expected helloYourself payload")
-                return
-            }
-            #expect(hello.connectionSettings.parity == .even)
-            #expect(hello.connectionSettings.maxConcurrentRequests == 32)
-            assertSampleMetadata(hello.metadata)
-
         case "message_protocol_error":
             #expect(msg.connectionId == 0)
             guard case .protocolError(let err) = msg.payload else {
@@ -116,7 +95,6 @@ struct WireV7CrossLanguageTests {
             }
             #expect(req.id == 11)
             #expect(call.methodId == 0xE5A1_D6B2_C390_F001)
-            #expect(call.channels == [3, 5])
             #expect(call.args.bytes == [0xF8, 0xAC, 0xD1, 0x91, 0x01])
             assertSampleMetadata(call.metadata)
 
@@ -129,7 +107,6 @@ struct WireV7CrossLanguageTests {
                 return
             }
             #expect(req.id == 11)
-            #expect(response.channels == [7])
             #expect(response.ret.bytes == [0x8C, 0xE0, 0xBA, 0xD6, 0x0F])
             assertSampleMetadata(response.metadata)
 
@@ -195,27 +172,8 @@ struct WireV7CrossLanguageTests {
 
     // r[verify session.message]
     // r[verify session.message.payloads]
-    // r[verify session.connection-settings.hello]
-    @Test func rustV7HelloFixtureRoundTripsInV7Codec() throws {
-        let bytes = try loadWireV7Fixture("message_hello")
-        let decoded = try MessageV7.decode(from: Data(bytes))
-        #expect(decoded.connectionId == 0)
-        guard case .hello(let hello) = decoded.payload else {
-            Issue.record("expected hello payload")
-            return
-        }
-        #expect(hello.version == 7)
-        #expect(hello.connectionSettings.parity == .odd)
-        #expect(hello.connectionSettings.maxConcurrentRequests == 64)
-        #expect(decoded.encode() == bytes)
-    }
-
-    // r[verify session.message]
-    // r[verify session.message.payloads]
     @Test func rustV7NestedPayloadFixturesRoundTrip() throws {
         let names = [
-            "message_hello",
-            "message_hello_yourself",
             "message_protocol_error",
             "message_connection_open",
             "message_connection_accept",
@@ -233,9 +191,13 @@ struct WireV7CrossLanguageTests {
         for name in names {
             let bytes = try loadWireV7Fixture(name)
             #expect(!bytes.isEmpty)
-            let decoded = try MessageV7.decode(from: Data(bytes))
-            #expect(decoded.encode() == bytes, "\(name) failed byte-for-byte round trip")
-            assertFixtureDecoded(name: name, decoded)
+            do {
+                let decoded = try MessageV7.decode(from: Data(bytes))
+                #expect(decoded.encode() == bytes, "\(name) failed byte-for-byte round trip")
+                assertMessageFixtureDecoded(name: name, decoded)
+            } catch {
+                Issue.record("\(name): \(error)")
+            }
         }
     }
 }

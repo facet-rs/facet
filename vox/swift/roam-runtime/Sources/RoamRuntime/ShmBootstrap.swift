@@ -227,14 +227,25 @@ private func connectUnixSocket(fd: Int32, path: String) throws {
         raw.copyMemory(from: pathBytes, byteCount: pathBytes.count)
     }
 
-    let result = withUnsafePointer(to: &addr) { ptr in
-        ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
-            connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
+    var lastErr: Int32 = 0
+    for attempt in 0..<100 {
+        let result = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+                connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
         }
-    }
 
-    if result != 0 {
-        throw ShmBootstrapError.connectFailed(errno: errno)
+        if result == 0 {
+            return
+        }
+
+        lastErr = errno
+        let shouldRetry = lastErr == ECONNREFUSED || lastErr == ENOENT
+        if !shouldRetry || attempt == 99 {
+            throw ShmBootstrapError.connectFailed(errno: lastErr)
+        }
+
+        usleep(5_000)
     }
 }
 

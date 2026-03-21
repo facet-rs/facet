@@ -43,7 +43,9 @@ public final class NIOFrameLink: Link, @unchecked Sendable {
     }
 
     public func close() async throws {
-        try await channel.close()
+        if channel.isActive {
+            try? await channel.close()
+        }
         if let group = owningGroup {
             owningGroup = nil
             try await group.shutdownGracefully()
@@ -167,7 +169,9 @@ func connectLink(host: String, port: Int) async throws -> NIOFrameLink {
                 owningGroup: group
             )
         } catch {
-            try? await channel.close()
+            if channel.isActive {
+                try? await channel.close()
+            }
             throw error
         }
     } catch {

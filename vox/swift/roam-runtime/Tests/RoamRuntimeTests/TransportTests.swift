@@ -50,7 +50,9 @@ private func startLocalServer(
         throw error
     }
     guard let port = channel.localAddress?.port else {
-        try await channel.close()
+        if channel.isActive {
+            try await channel.close()
+        }
         try await group.shutdownGracefully()
         throw TransportError.connectionClosed
     }
@@ -58,7 +60,9 @@ private func startLocalServer(
 }
 
 private func stopLocalServer(_ server: LocalServer) async {
-    try? await server.channel.close()
+    if server.channel.isActive {
+        try? await server.channel.close()
+    }
     try? await server.group.shutdownGracefully()
 }
 

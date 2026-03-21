@@ -22,23 +22,20 @@ final class InteropCounter: @unchecked Sendable {
 struct InteropDispatcher: ServiceDispatcher {
     let counter: InteropCounter
 
-    func preregister(methodId: UInt64, payload: [UInt8], channels: [UInt64], registry: ChannelRegistry) async {
+    func preregister(methodId: UInt64, payload: [UInt8], registry: ChannelRegistry) async {
         _ = methodId
         _ = payload
-        _ = channels
         _ = registry
     }
 
     func dispatch(
         methodId: UInt64,
         payload: [UInt8],
-        channels: [UInt64],
         requestId: UInt64,
         registry: ChannelRegistry,
         taskTx: @escaping @Sendable (TaskMessage) -> Void
     ) async {
         _ = registry
-        _ = channels
         switch methodId {
         case 1:
             let input = String(decoding: payload, as: UTF8.self)
@@ -517,7 +514,6 @@ struct ShmGuestClientMain {
                         requestId: 11,
                         methodId: 0xE5A1_D6B2_C390_F001,
                         metadata: metadata,
-                        channels: [3, 5],
                         payload: Array("swift-request".utf8)
                     ))
                 try await conduit.send(
@@ -544,8 +540,7 @@ struct ShmGuestClientMain {
                     case .requestMessage(let request):
                         if request.id == 11,
                            case .response(let response) = request.body,
-                           response.ret.bytes == [42],
-                           response.channels == [7]
+                           response.ret.bytes == [42]
                         {
                             sawResponse = true
                         }
@@ -600,7 +595,6 @@ struct ShmGuestClientMain {
                         connId: msg.connectionId,
                         requestId: request.id,
                         metadata: [],
-                        channels: [],
                         payload: call.args.bytes
                     )
                     try await conduit.send(response)

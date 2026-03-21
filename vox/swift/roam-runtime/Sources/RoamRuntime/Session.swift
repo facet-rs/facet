@@ -36,22 +36,23 @@ public final class Session: @unchecked Sendable {
         keepalive: DriverKeepaliveConfig? = nil,
         resumable: Bool = true
     ) async throws -> Session {
-        let conduit = try await connector.openConduit()
-        let recoverConduit: (@Sendable () async throws -> any Conduit)?
+        let attachment = try await connector.openAttachment()
+        let recoverAttachment: (@Sendable () async throws -> LinkAttachment)?
         if resumable {
-            recoverConduit = { @Sendable in
-                try await connector.openConduit()
+            recoverAttachment = { @Sendable in
+                try await connector.openAttachment()
             }
         } else {
-            recoverConduit = nil
+            recoverAttachment = nil
         }
         let (connection, driver, handle, sessionResumeKey) = try await establishInitiator(
-            conduit: conduit,
+            attachment: attachment,
+            transport: connector.transport,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             keepalive: keepalive,
             resumable: resumable,
-            recoverConduit: recoverConduit
+            recoverAttachment: recoverAttachment
         )
         return Session(
             role: .initiator,
@@ -69,9 +70,10 @@ public final class Session: @unchecked Sendable {
         keepalive: DriverKeepaliveConfig? = nil,
         resumable: Bool = false
     ) async throws -> Session {
-        let conduit = try await connector.openConduit()
+        let attachment = try await connector.openAttachment()
         return try await acceptorOn(
-            conduit,
+            attachment,
+            transport: connector.transport,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             keepalive: keepalive,
@@ -87,9 +89,10 @@ public final class Session: @unchecked Sendable {
         keepalive: DriverKeepaliveConfig? = nil,
         resumable: Bool = false
     ) async throws -> SessionAcceptOutcome {
-        let conduit = try await connector.openConduit()
+        let attachment = try await connector.openAttachment()
         return try await acceptorOnOrResume(
-            conduit,
+            attachment,
+            transport: connector.transport,
             registry: registry,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
@@ -99,14 +102,16 @@ public final class Session: @unchecked Sendable {
     }
 
     public static func initiatorOn(
-        _ conduit: any Conduit,
+        _ link: any Link,
+        transport: TransportConduitKind = .bare,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
         keepalive: DriverKeepaliveConfig? = nil,
         resumable: Bool = false
     ) async throws -> Session {
         let (connection, driver, handle, sessionResumeKey) = try await establishInitiator(
-            conduit: conduit,
+            attachment: .initiator(link),
+            transport: transport,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             keepalive: keepalive,
@@ -122,14 +127,17 @@ public final class Session: @unchecked Sendable {
     }
 
     public static func acceptorOn(
-        _ conduit: any Conduit,
+        _ attachment: LinkAttachment,
+        transport: TransportConduitKind? = nil,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
         keepalive: DriverKeepaliveConfig? = nil,
         resumable: Bool = false
     ) async throws -> Session {
+        let selectedTransport = transport ?? (attachment.clientHello == nil ? .bare : .stable)
         let (connection, driver, handle, sessionResumeKey) = try await establishAcceptor(
-            conduit: conduit,
+            attachment: attachment,
+            transport: selectedTransport,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             keepalive: keepalive,
@@ -144,29 +152,53 @@ public final class Session: @unchecked Sendable {
         )
     }
 
+    public static func acceptorOn(
+        _ link: any Link,
+        transport: TransportConduitKind = .bare,
+        dispatcher: any ServiceDispatcher,
+        acceptConnections: Bool = false,
+        keepalive: DriverKeepaliveConfig? = nil,
+        resumable: Bool = false
+    ) async throws -> Session {
+        try await acceptorOn(
+            .init(link: link),
+            transport: transport,
+            dispatcher: dispatcher,
+            acceptConnections: acceptConnections,
+            keepalive: keepalive,
+            resumable: resumable
+        )
+    }
+
     public static func acceptorOnOrResume(
-        _ conduit: any Conduit,
+        _ attachment: LinkAttachment,
+        transport: TransportConduitKind? = nil,
         registry: SessionRegistry,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
         keepalive: DriverKeepaliveConfig? = nil,
         resumable: Bool = false
     ) async throws -> SessionAcceptOutcome {
-        guard let first = try await conduit.recv() else {
+        guard let firstBytes = try await attachment.link.recvRawPrologue() else {
             throw ConnectionError.connectionClosed
         }
-        guard case .hello(let hello) = first.payload else {
+        let firstMessage = try HandshakeMessage.decodeCbor(firstBytes)
+        guard case .hello(let hello) = firstMessage else {
             throw ConnectionError.handshakeFailed("expected Hello")
         }
 
-        if let resumeKey = metadataSessionResumeKey(hello.metadata) {
+        let prefetchedAttachment = LinkAttachment(
+            link: PrefetchedLink(firstRawPrologue: firstBytes, base: attachment.link),
+            clientHello: attachment.clientHello
+        )
+        let selectedTransport = transport ?? (attachment.clientHello == nil ? .bare : .stable)
+
+        if let resumeKey = hello.resumeKey?.bytes {
             guard let handle = registry.get(resumeKey) else {
                 throw ConnectionError.protocolViolation(rule: "unknown session resume key")
             }
             do {
-                try await handle.acceptResumedConduit(
-                    PrefetchedConduit(firstMessage: first, base: conduit)
-                )
+                try await handle.acceptResumedAttachment(prefetchedAttachment)
             } catch {
                 registry.remove(resumeKey)
                 throw error
@@ -175,7 +207,8 @@ public final class Session: @unchecked Sendable {
         }
 
         let session = try await acceptorOn(
-            PrefetchedConduit(firstMessage: first, base: conduit),
+            prefetchedAttachment,
+            transport: selectedTransport,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             keepalive: keepalive,
@@ -185,6 +218,26 @@ public final class Session: @unchecked Sendable {
             registry.insert(resumeKey, handle: session.handle)
         }
         return .established(session)
+    }
+
+    public static func acceptorOnOrResume(
+        _ link: any Link,
+        transport: TransportConduitKind = .bare,
+        registry: SessionRegistry,
+        dispatcher: any ServiceDispatcher,
+        acceptConnections: Bool = false,
+        keepalive: DriverKeepaliveConfig? = nil,
+        resumable: Bool = false
+    ) async throws -> SessionAcceptOutcome {
+        try await acceptorOnOrResume(
+            .init(link: link),
+            transport: transport,
+            registry: registry,
+            dispatcher: dispatcher,
+            acceptConnections: acceptConnections,
+            keepalive: keepalive,
+            resumable: resumable
+        )
     }
 }
 

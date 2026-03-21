@@ -19,7 +19,6 @@ struct ShmTransportMappingTests {
             requestId: 42,
             methodId: 99,
             metadata: [MetadataEntryV7(key: "k", value: .string("v"), flags: 1)],
-            channels: [3, 4],
             payload: [1, 2, 3]
         )
         try assertShmRoundtrip(request)
@@ -28,7 +27,6 @@ struct ShmTransportMappingTests {
             connId: 7,
             requestId: 42,
             metadata: [MetadataEntryV7(key: "status", value: .u64(200), flags: 0)],
-            channels: [8],
             payload: [9, 8, 7]
         )
         try assertShmRoundtrip(response)
@@ -65,14 +63,7 @@ struct ShmTransportMappingTests {
     }
 
     // r[verify transport.shm]
-    @Test func helloAndCreditRoundtrip() throws {
-        try assertShmRoundtrip(
-            .hello(
-                HelloV7(
-                    version: 7,
-                    connectionSettings: ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: 64),
-                    metadata: []
-                )))
+    @Test func creditRoundtrip() throws {
         try assertShmRoundtrip(.credit(connId: 0, channelId: 1, bytes: 64))
     }
 }

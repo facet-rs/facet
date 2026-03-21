@@ -4,27 +4,33 @@ import Testing
 @testable import RoamRuntime
 
 private enum ResumeInboundEvent: Sendable {
-    case message(MessageV7)
+    case frame([UInt8])
     case closed
 }
 
-private actor ResumeScriptedConduit: Conduit {
+private actor ResumeScriptedLink: Link {
     private var sentMessages: [MessageV7] = []
+    private var sentHandshakes: [HandshakeMessage] = []
     private var inboundQueue: [ResumeInboundEvent] = []
     private var recvWaiters: [CheckedContinuation<ResumeInboundEvent, Never>] = []
     private var closed = false
 
-    init(initialMessage: MessageV7? = nil) {
-        if let initialMessage {
-            inboundQueue.append(.message(initialMessage))
+    init(initialHandshake: HandshakeMessage? = nil) {
+        if let initialHandshake {
+            inboundQueue.append(.frame(initialHandshake.encodeCbor()))
         }
     }
 
-    func send(_ message: MessageV7) async throws {
+    func sendFrame(_ bytes: [UInt8]) async throws {
+        if let handshake = try? HandshakeMessage.decodeCbor(bytes) {
+            sentHandshakes.append(handshake)
+            return
+        }
+        let message = try MessageV7.decode(from: Data(bytes))
         sentMessages.append(message)
     }
 
-    func recv() async throws -> MessageV7? {
+    func recvFrame() async throws -> [UInt8]? {
         let event: ResumeInboundEvent
         if !inboundQueue.isEmpty {
             event = inboundQueue.removeFirst()
@@ -35,8 +41,8 @@ private actor ResumeScriptedConduit: Conduit {
         }
 
         switch event {
-        case .message(let message):
-            return message
+        case .frame(let bytes):
+            return bytes
         case .closed:
             return nil
         }
@@ -53,7 +59,11 @@ private actor ResumeScriptedConduit: Conduit {
     }
 
     func enqueueMessage(_ message: MessageV7) {
-        enqueue(.message(message))
+        enqueue(.frame(message.encode()))
+    }
+
+    func enqueueHandshake(_ message: HandshakeMessage) {
+        enqueue(.frame(message.encodeCbor()))
     }
 
     func sentRequestIds() -> [UInt64] {
@@ -71,6 +81,10 @@ private actor ResumeScriptedConduit: Conduit {
         sentMessages
     }
 
+    func sentHandshakeMessages() -> [HandshakeMessage] {
+        sentHandshakes
+    }
+
     private func enqueue(_ event: ResumeInboundEvent) {
         if let waiter = recvWaiters.first {
             recvWaiters.removeFirst()
@@ -82,17 +96,18 @@ private actor ResumeScriptedConduit: Conduit {
 }
 
 private actor ResumeScriptedConnector: SessionConnector {
-    private var conduits: [ResumeScriptedConduit]
+    let transport: TransportConduitKind = .bare
+    private var links: [ResumeScriptedLink]
 
-    init(_ conduits: [ResumeScriptedConduit]) {
-        self.conduits = conduits
+    init(_ links: [ResumeScriptedLink]) {
+        self.links = links
     }
 
-    func openConduit() async throws -> any Conduit {
-        guard !conduits.isEmpty else {
+    func openAttachment() async throws -> LinkAttachment {
+        guard !links.isEmpty else {
             throw ConnectionError.connectionClosed
         }
-        return conduits.removeFirst()
+        return .initiator(links.removeFirst())
     }
 }
 
@@ -100,14 +115,12 @@ private struct ResumeNoopDispatcher: ServiceDispatcher {
     func preregister(
         methodId _: UInt64,
         payload _: [UInt8],
-        channels _: [UInt64],
         registry _: ChannelRegistry
     ) async {}
 
     func dispatch(
         methodId _: UInt64,
         payload _: [UInt8],
-        channels _: [UInt64],
         requestId _: UInt64,
         registry _: ChannelRegistry,
         taskTx _: @escaping @Sendable (TaskMessage) -> Void
@@ -147,14 +160,12 @@ private struct ResumeBlockingDispatcher: ServiceDispatcher {
     func preregister(
         methodId _: UInt64,
         payload _: [UInt8],
-        channels _: [UInt64],
         registry _: ChannelRegistry
     ) async {}
 
     func dispatch(
         methodId _: UInt64,
         payload _: [UInt8],
-        channels _: [UInt64],
         requestId: UInt64,
         registry _: ChannelRegistry,
         taskTx: @escaping @Sendable (TaskMessage) -> Void
@@ -165,7 +176,7 @@ private struct ResumeBlockingDispatcher: ServiceDispatcher {
 }
 
 private func awaitResumeRequestId(
-    _ conduit: ResumeScriptedConduit,
+    _ conduit: ResumeScriptedLink,
     index: Int,
     timeoutMs: UInt64 = 1_000
 ) async -> UInt64? {
@@ -182,7 +193,7 @@ private func awaitResumeRequestId(
 }
 
 private func awaitResumeResponsePayload(
-    _ conduit: ResumeScriptedConduit,
+    _ conduit: ResumeScriptedLink,
     requestId: UInt64,
     timeoutMs: UInt64 = 1_000
 ) async -> [UInt8]? {
@@ -206,14 +217,13 @@ private func awaitResumeResponsePayload(
 struct SessionResumeTests {
     @Test func manualResumeKeepsPendingCallAliveAcrossDisconnect() async throws {
         let resumeKey = freshSessionResumeKey()
-        let initial = ResumeScriptedConduit(
-            initialMessage: .helloYourself(
-                HelloYourselfV7(
+        let initial = ResumeScriptedLink(
+            initialHandshake: .helloYourself(
+                HandshakeHelloYourself(
                     connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
-                    metadata: appendSessionResumeKeyMetadata(
-                        appendRetrySupportMetadata([]),
-                        key: resumeKey
-                    )
+                    messagePayloadSchemaCbor: wireMessageSchemasCbor,
+                    supportsRetry: true,
+                    resumeKey: .init(bytes: resumeKey)
                 ))
         )
 
@@ -225,55 +235,56 @@ struct SessionResumeTests {
         let driverTask = Task {
             try await driver.run()
         }
-        defer {
-            driverTask.cancel()
-            Task { try? await initial.close() }
-        }
+        try await withAsyncCleanup({
+            try? await initial.close()
+            await cancelAndDrain(driverTask)
+        }) {
+            let callTask = Task {
+                try await connection.callRaw(
+                    methodId: 7,
+                    payload: [0xAB],
+                    retry: .persistIdem,
+                    timeout: 5.0
+                )
+            }
 
-        let callTask = Task {
-            try await connection.callRaw(
-                methodId: 7,
-                payload: [0xAB],
-                retry: .persistIdem,
-                timeout: 5.0
+            guard let requestId = await awaitResumeRequestId(initial, index: 0) else {
+                Issue.record("expected initial request to be sent")
+                return
+            }
+
+            try await initial.close()
+
+            let replacement = ResumeScriptedLink(
+                initialHandshake: .helloYourself(
+                    HandshakeHelloYourself(
+                        connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
+                        messagePayloadSchemaCbor: wireMessageSchemasCbor,
+                        supportsRetry: true,
+                        resumeKey: .init(bytes: resumeKey)
+                    ))
             )
+            try await handle.resume(replacement)
+            await replacement.enqueueMessage(
+                .response(connId: 0, requestId: requestId, metadata: [], payload: [0x42])
+            )
+
+            let response = try await callTask.value
+            #expect(response == [0x42])
         }
-
-        guard let requestId = await awaitResumeRequestId(initial, index: 0) else {
-            Issue.record("expected initial request to be sent")
-            return
-        }
-
-        try await initial.close()
-
-        let replacement = ResumeScriptedConduit(
-            initialMessage: .helloYourself(
-                HelloYourselfV7(
-                    connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
-                    metadata: appendSessionResumeKeyMetadata(
-                        appendRetrySupportMetadata([]),
-                        key: resumeKey
-                    )
-                ))
-        )
-        try await handle.resume(replacement)
-        await replacement.enqueueMessage(
-            .response(connId: 0, requestId: requestId, metadata: [], channels: [], payload: [0x42])
-        )
-
-        let response = try await callTask.value
-        #expect(response == [0x42])
     }
 
     @Test func acceptorRegistryResumesExistingSession() async throws {
         let registry = SessionRegistry()
         let probe = ResumeBlockingProbe()
-        let initial = ResumeScriptedConduit(
-            initialMessage: .hello(
-                HelloV7(
-                    version: 7,
+        let initial = ResumeScriptedLink(
+            initialHandshake: .hello(
+                HandshakeHello(
+                    parity: .odd,
                     connectionSettings: ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: 64),
-                    metadata: appendRetrySupportMetadata([])
+                    messagePayloadSchemaCbor: wireMessageSchemasCbor,
+                    supportsRetry: true,
+                    resumeKey: nil
                 ))
         )
 
@@ -292,77 +303,73 @@ struct SessionResumeTests {
         let driverTask = Task {
             try await session.run()
         }
-        defer {
-            driverTask.cancel()
-            Task { try? await initial.close() }
-        }
+        try await withAsyncCleanup({
+            try? await initial.close()
+            await cancelAndDrain(driverTask)
+        }) {
+            guard let sessionResumeKey = session.sessionResumeKey else {
+                Issue.record("expected session resume key")
+                return
+            }
 
-        guard let sessionResumeKey = session.sessionResumeKey else {
-            Issue.record("expected session resume key")
-            return
-        }
-
-        let operationMetadata = ensureOperationId([], operationId: 99)
-        await initial.enqueueMessage(
-            .request(
-                connId: 0,
-                requestId: 11,
-                methodId: 7,
-                metadata: operationMetadata,
-                channels: [],
-                payload: [0xAB]
+            let operationMetadata = ensureOperationId([], operationId: 99)
+            await initial.enqueueMessage(
+                .request(
+                    connId: 0,
+                    requestId: 11,
+                    methodId: 7,
+                    metadata: operationMetadata,
+                    payload: [0xAB]
+                )
             )
-        )
 
-        try await initial.close()
+            try await initial.close()
 
-        let replacement = ResumeScriptedConduit(
-            initialMessage: .hello(
-                HelloV7(
-                    version: 7,
-                    connectionSettings: ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: 64),
-                    metadata: appendSessionResumeKeyMetadata(
-                        appendRetrySupportMetadata([]),
-                        key: sessionResumeKey
-                    )
-                ))
-        )
+            let replacement = ResumeScriptedLink(
+                initialHandshake: .hello(
+                    HandshakeHello(
+                        parity: .odd,
+                        connectionSettings: ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: 64),
+                        messagePayloadSchemaCbor: wireMessageSchemasCbor,
+                        supportsRetry: true,
+                        resumeKey: .init(bytes: sessionResumeKey)
+                    ))
+            )
 
-        let resumed = try await Session.acceptorOnOrResume(
-            replacement,
-            registry: registry,
-            dispatcher: ResumeBlockingDispatcher(probe: probe),
-            resumable: true
-        )
-        guard case .resumed = resumed else {
-            Issue.record("expected resumed session outcome")
-            return
+            let resumed = try await Session.acceptorOnOrResume(
+                replacement,
+                registry: registry,
+                dispatcher: ResumeBlockingDispatcher(probe: probe),
+                resumable: true
+            )
+            guard case .resumed = resumed else {
+                Issue.record("expected resumed session outcome")
+                return
+            }
+
+            await probe.release()
+            #expect(await awaitResumeResponsePayload(replacement, requestId: 11) == [0x42])
         }
-
-        await probe.release()
-        #expect(await awaitResumeResponsePayload(replacement, requestId: 11) == [0x42])
     }
 
     @Test func connectorInitiatorAutoResumesPendingCall() async throws {
         let resumeKey = freshSessionResumeKey()
-        let initial = ResumeScriptedConduit(
-            initialMessage: .helloYourself(
-                HelloYourselfV7(
+        let initial = ResumeScriptedLink(
+            initialHandshake: .helloYourself(
+                HandshakeHelloYourself(
                     connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
-                    metadata: appendSessionResumeKeyMetadata(
-                        appendRetrySupportMetadata([]),
-                        key: resumeKey
-                    )
+                    messagePayloadSchemaCbor: wireMessageSchemasCbor,
+                    supportsRetry: true,
+                    resumeKey: .init(bytes: resumeKey)
                 ))
         )
-        let replacement = ResumeScriptedConduit(
-            initialMessage: .helloYourself(
-                HelloYourselfV7(
+        let replacement = ResumeScriptedLink(
+            initialHandshake: .helloYourself(
+                HandshakeHelloYourself(
                     connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
-                    metadata: appendSessionResumeKeyMetadata(
-                        appendRetrySupportMetadata([]),
-                        key: resumeKey
-                    )
+                    messagePayloadSchemaCbor: wireMessageSchemasCbor,
+                    supportsRetry: true,
+                    resumeKey: .init(bytes: resumeKey)
                 ))
         )
         let connector = ResumeScriptedConnector([initial, replacement])
@@ -375,32 +382,32 @@ struct SessionResumeTests {
         let driverTask = Task {
             try await session.run()
         }
-        defer {
-            driverTask.cancel()
-            Task { try? await initial.close() }
-            Task { try? await replacement.close() }
-        }
+        try await withAsyncCleanup({
+            try? await initial.close()
+            try? await replacement.close()
+            await cancelAndDrain(driverTask)
+        }) {
+            let callTask = Task {
+                try await session.connection.callRaw(
+                    methodId: 13,
+                    payload: [0xCD],
+                    retry: .persistIdem,
+                    timeout: 5.0
+                )
+            }
 
-        let callTask = Task {
-            try await session.connection.callRaw(
-                methodId: 13,
-                payload: [0xCD],
-                retry: .persistIdem,
-                timeout: 5.0
+            guard let requestId = await awaitResumeRequestId(initial, index: 0) else {
+                Issue.record("expected initial request to be sent")
+                return
+            }
+
+            try await initial.close()
+            await replacement.enqueueMessage(
+                .response(connId: 0, requestId: requestId, metadata: [], payload: [0x24])
             )
+
+            let response = try await callTask.value
+            #expect(response == [0x24])
         }
-
-        guard let requestId = await awaitResumeRequestId(initial, index: 0) else {
-            Issue.record("expected initial request to be sent")
-            return
-        }
-
-        try await initial.close()
-        await replacement.enqueueMessage(
-            .response(connId: 0, requestId: requestId, metadata: [], channels: [], payload: [0x24])
-        )
-
-        let response = try await callTask.value
-        #expect(response == [0x24])
     }
 }

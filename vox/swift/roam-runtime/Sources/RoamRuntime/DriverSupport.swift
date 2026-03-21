@@ -123,15 +123,17 @@ func makeSessionDriverAndConnection(
     sessionResumeKey: [UInt8]?,
     localRootSettings: ConnectionSettingsV7,
     peerRootSettings: ConnectionSettingsV7,
-    recoverConduit: (@Sendable () async throws -> any Conduit)? = nil
+    transport: TransportConduitKind,
+    recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil
 ) -> (Connection, Driver, SessionHandle) {
     let coordinator = SessionResumeCoordinator(
         role: role,
         localRootSettings: localRootSettings,
         peerRootSettings: peerRootSettings,
+        transport: transport,
         resumable: resumable,
         sessionResumeKey: sessionResumeKey,
-        recoverConduit: recoverConduit
+        recoverAttachment: recoverAttachment
     )
 
     let runtimeConduit: any Conduit

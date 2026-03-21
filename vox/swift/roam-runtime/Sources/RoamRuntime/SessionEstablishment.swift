@@ -1,29 +1,192 @@
 import Foundation
 
-private let sessionEstablishmentMetadataFlagsNone: UInt64 = 0
-private let sessionEstablishmentConnectionCorrelationKey = "moire.connection_correlation_id"
+struct SessionHandshakeResult {
+    let negotiated: Negotiated
+    let peerSupportsRetry: Bool
+    let sessionResumeKey: [UInt8]?
+    let localRootSettings: ConnectionSettingsV7
+    let peerRootSettings: ConnectionSettingsV7
+}
 
-private func establishmentMetadataString(_ metadata: [MetadataEntryV7], key: String) -> String? {
-    for entry in metadata where entry.key == key {
-        if entry.key == key, case .string(let value) = entry.value {
-            return value
+func oppositeParity(_ parity: ParityV7) -> ParityV7 {
+    switch parity {
+    case .odd:
+        return .even
+    case .even:
+        return .odd
+    }
+}
+
+func sendHandshakeSorry(_ link: any Link, reason: String) async {
+    try? await sendHandshake(link, .sorry(HandshakeSorry(reason: reason)))
+}
+
+func requireIdentityMessageSchema(
+    _ peerMessageSchemaCbor: [UInt8],
+    on link: any Link
+) async throws {
+    guard handshakeMessageSchemasMatch(peerMessageSchemaCbor) else {
+        let reason = "unsupported message schema translation"
+        await sendHandshakeSorry(link, reason: reason)
+        throw ConnectionError.handshakeFailed(reason)
+    }
+}
+
+func performInitiatorHandshake(
+    link: any Link,
+    maxPayloadSize: UInt32,
+    maxConcurrentRequests: UInt32,
+    resumable: Bool,
+    resumeKey: [UInt8]? = nil
+) async throws -> SessionHandshakeResult {
+    let ourSettings = ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: maxConcurrentRequests)
+    let hello = HandshakeHello(
+        parity: ourSettings.parity,
+        connectionSettings: ourSettings,
+        messagePayloadSchemaCbor: wireMessageSchemasCbor,
+        supportsRetry: true,
+        resumeKey: resumeKey.map(ResumeKeyBytes.init(bytes:))
+    )
+    try await sendHandshake(link, .hello(hello))
+
+    let peerHello: HandshakeHelloYourself
+    switch try await recvHandshake(link) {
+    case .helloYourself(let helloYourself):
+        peerHello = helloYourself
+    case .sorry(let sorry):
+        throw ConnectionError.handshakeFailed(sorry.reason)
+    default:
+        await sendHandshakeSorry(link, reason: "expected HelloYourself or Sorry")
+        throw ConnectionError.handshakeFailed("expected HelloYourself")
+    }
+
+    try await requireIdentityMessageSchema(peerHello.messagePayloadSchemaCbor, on: link)
+
+    let sessionResumeKey = peerHello.resumeKey?.bytes
+    if resumable && sessionResumeKey == nil {
+        await sendHandshakeSorry(link, reason: "peer did not advertise session resumption")
+        throw ConnectionError.handshakeFailed("peer did not advertise session resumption")
+    }
+
+    try await sendHandshake(link, .letsGo(HandshakeLetsGo()))
+
+    let negotiated = Negotiated(
+        maxPayloadSize: maxPayloadSize,
+        initialCredit: 64 * 1024,
+        maxConcurrentRequests: min(
+            ourSettings.maxConcurrentRequests,
+            peerHello.connectionSettings.maxConcurrentRequests
+        )
+    )
+    debugLog(
+        "handshake complete: maxPayloadSize=\(negotiated.maxPayloadSize), "
+            + "initialCredit=\(negotiated.initialCredit), "
+            + "maxConcurrentRequests=\(negotiated.maxConcurrentRequests)"
+    )
+
+    return SessionHandshakeResult(
+        negotiated: negotiated,
+        peerSupportsRetry: peerHello.supportsRetry,
+        sessionResumeKey: sessionResumeKey,
+        localRootSettings: ourSettings,
+        peerRootSettings: peerHello.connectionSettings
+    )
+}
+
+func performAcceptorHandshake(
+    link: any Link,
+    maxPayloadSize: UInt32,
+    maxConcurrentRequests: UInt32,
+    resumable: Bool,
+    expectedResumeKey: [UInt8]? = nil
+) async throws -> SessionHandshakeResult {
+    let peerHello: HandshakeHello
+    switch try await recvHandshake(link) {
+    case .hello(let hello):
+        peerHello = hello
+    default:
+        throw ConnectionError.handshakeFailed("expected Hello")
+    }
+
+    try await requireIdentityMessageSchema(peerHello.messagePayloadSchemaCbor, on: link)
+
+    if let expectedResumeKey {
+        guard let actualResumeKey = peerHello.resumeKey?.bytes,
+            sessionResumeKeysEqual(actualResumeKey, expectedResumeKey)
+        else {
+            let reason = "session resume key mismatch"
+            await sendHandshakeSorry(link, reason: reason)
+            throw ConnectionError.protocolViolation(rule: reason)
         }
     }
-    return nil
+
+    let ourSettings = ConnectionSettingsV7(
+        parity: oppositeParity(peerHello.parity),
+        maxConcurrentRequests: maxConcurrentRequests
+    )
+    let sessionResumeKey = resumable ? freshSessionResumeKey() : nil
+    let helloYourself = HandshakeHelloYourself(
+        connectionSettings: ourSettings,
+        messagePayloadSchemaCbor: wireMessageSchemasCbor,
+        supportsRetry: true,
+        resumeKey: sessionResumeKey.map(ResumeKeyBytes.init(bytes:))
+    )
+    try await sendHandshake(link, .helloYourself(helloYourself))
+
+    switch try await recvHandshake(link) {
+    case .letsGo:
+        break
+    case .sorry(let sorry):
+        throw ConnectionError.handshakeFailed(sorry.reason)
+    default:
+        throw ConnectionError.handshakeFailed("expected LetsGo")
+    }
+
+    let negotiated = Negotiated(
+        maxPayloadSize: maxPayloadSize,
+        initialCredit: 64 * 1024,
+        maxConcurrentRequests: min(
+            ourSettings.maxConcurrentRequests,
+            peerHello.connectionSettings.maxConcurrentRequests
+        )
+    )
+    debugLog(
+        "handshake complete: maxPayloadSize=\(negotiated.maxPayloadSize), "
+            + "initialCredit=\(negotiated.initialCredit), "
+            + "maxConcurrentRequests=\(negotiated.maxConcurrentRequests)"
+    )
+
+    return SessionHandshakeResult(
+        negotiated: negotiated,
+        peerSupportsRetry: peerHello.supportsRetry,
+        sessionResumeKey: sessionResumeKey,
+        localRootSettings: ourSettings,
+        peerRootSettings: peerHello.connectionSettings
+    )
 }
 
-private func establishmentHelloCorrelationId(_ hello: HelloV7) -> String? {
-    establishmentMetadataString(hello.metadata, key: sessionEstablishmentConnectionCorrelationKey)
-}
-
-private func establishmentNextConnectionCorrelationId() -> String {
-    "swift.\(UUID().uuidString.lowercased())"
+func buildEstablishedConduit(
+    transport: TransportConduitKind,
+    attachment: LinkAttachment,
+    recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil
+) async throws -> any Conduit {
+    switch transport {
+    case .bare:
+        return BareConduit(link: attachment.link)
+    case .stable:
+        if let recoverAttachment {
+            return try await StableConduit.connect(
+                source: PrefetchedLinkSource(
+                    first: attachment,
+                    base: AnyLinkSource(recoverAttachment)
+                )
+            )
+        }
+        return try await StableConduit.connect(source: singleAttachmentSource(attachment))
+    }
 }
 
 /// Establish a SHM guest connection as an initiator.
-///
-/// SHM is a transport bootstrap; session establishment still performs the v7
-/// Hello/HelloYourself exchange over the selected conduit.
 public func establishShmGuest<D: ServiceDispatcher>(
     transport: ShmGuestTransport,
     dispatcher: D,
@@ -36,9 +199,9 @@ public func establishShmGuest<D: ServiceDispatcher>(
     switch role {
     case .initiator:
         try await performInitiatorTransportPrologue(transport: transport, conduit: conduit)
-        let selectedConduit = BareConduit(link: transport)
         return try await establishInitiator(
-            conduit: selectedConduit,
+            attachment: .initiator(transport),
+            transport: conduit,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             maxPayloadSize: transport.negotiated.maxPayloadSize,
@@ -47,9 +210,9 @@ public func establishShmGuest<D: ServiceDispatcher>(
         )
     case .acceptor:
         _ = try await performAcceptorTransportPrologue(transport: transport, supportedConduit: .bare)
-        let selectedConduit = BareConduit(link: transport)
         return try await establishAcceptor(
-            conduit: selectedConduit,
+            attachment: .init(link: transport),
+            transport: .bare,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             keepalive: keepalive,
@@ -58,89 +221,96 @@ public func establishShmGuest<D: ServiceDispatcher>(
     }
 }
 
-/// Establish a connection as initiator.
 public func establishInitiator(
-    conduit: any Conduit,
+    attachment: LinkAttachment,
+    transport: TransportConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,
     keepalive: DriverKeepaliveConfig? = nil,
     resumable: Bool = false,
-    recoverConduit: (@Sendable () async throws -> any Conduit)? = nil
+    recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
     let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
-    let ourInitialCredit: UInt32 = 64 * 1024
-    let ourCorrelationId = establishmentNextConnectionCorrelationId()
-    let ourHello = HelloV7(
-        version: 7,
-        connectionSettings: ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: 64),
-        metadata: appendRetrySupportMetadata([
-            MetadataEntryV7(
-                key: sessionEstablishmentConnectionCorrelationKey,
-                value: .string(ourCorrelationId),
-                flags: sessionEstablishmentMetadataFlagsNone
-            )
-        ])
-    )
-    try await conduit.send(.hello(ourHello))
-
-    guard let peerMsg = try await conduit.recv() else {
-        try? await conduit.send(.protocolError(description: "handshake.expected-hello-yourself"))
-        throw ConnectionError.handshakeFailed("expected HelloYourself")
-    }
-    guard case .helloYourself(let peerHello) = peerMsg.payload else {
-        try? await conduit.send(.protocolError(description: "handshake.expected-hello-yourself"))
-        throw ConnectionError.handshakeFailed("expected HelloYourself")
-    }
-
-    let peerCorrelationId = establishmentMetadataString(
-        peerHello.metadata,
-        key: sessionEstablishmentConnectionCorrelationKey
-    )
-    let peerSupportsRetry = metadataSupportsRetry(peerHello.metadata)
-    let sessionResumeKey = metadataSessionResumeKey(peerHello.metadata)
-    if resumable && sessionResumeKey == nil {
-        throw ConnectionError.handshakeFailed("peer did not advertise session resumption")
-    }
-    let canonicalCorrelationId = ourCorrelationId.isEmpty ? peerCorrelationId : ourCorrelationId
-    _ = canonicalCorrelationId
-
-    let negotiated = Negotiated(
+    let handshake = try await performInitiatorHandshake(
+        link: attachment.link,
         maxPayloadSize: ourMaxPayload,
-        initialCredit: ourInitialCredit,
-        maxConcurrentRequests: min(
-            ourHello.connectionSettings.maxConcurrentRequests,
-            peerHello.connectionSettings.maxConcurrentRequests
-        )
-    )
-    debugLog(
-        "handshake complete: maxPayloadSize=\(negotiated.maxPayloadSize), initialCredit=\(negotiated.initialCredit), maxConcurrentRequests=\(negotiated.maxConcurrentRequests)"
+        maxConcurrentRequests: 64,
+        resumable: resumable
     )
 
-    try await conduit.setMaxFrameSize(Int(negotiated.maxPayloadSize) + 64)
+    let conduit = try await buildEstablishedConduit(
+        transport: transport,
+        attachment: attachment,
+        recoverAttachment: recoverAttachment
+    )
+    try await conduit.setMaxFrameSize(Int(handshake.negotiated.maxPayloadSize) + 64)
 
-    let ourSettings = ourHello.connectionSettings
-    let peerSettings = peerHello.connectionSettings
     let (connection, driver, handle) = makeSessionDriverAndConnection(
         conduit: conduit,
         dispatcher: dispatcher,
         role: .initiator,
-        negotiated: negotiated,
-        peerSupportsRetry: peerSupportsRetry,
+        negotiated: handshake.negotiated,
+        peerSupportsRetry: handshake.peerSupportsRetry,
         acceptConnections: acceptConnections,
         keepalive: keepalive,
         resumable: resumable,
-        sessionResumeKey: sessionResumeKey,
-        localRootSettings: ourSettings,
-        peerRootSettings: peerSettings,
-        recoverConduit: recoverConduit
+        sessionResumeKey: handshake.sessionResumeKey,
+        localRootSettings: handshake.localRootSettings,
+        peerRootSettings: handshake.peerRootSettings,
+        transport: transport,
+        recoverAttachment: recoverAttachment
     )
-    return (connection, driver, handle, sessionResumeKey)
+    return (connection, driver, handle, handshake.sessionResumeKey)
 }
 
-/// Establish a connection as acceptor.
+public func establishInitiator(
+    link: any Link,
+    transport: TransportConduitKind = .bare,
+    dispatcher: any ServiceDispatcher,
+    acceptConnections: Bool = false,
+    maxPayloadSize: UInt32? = nil,
+    keepalive: DriverKeepaliveConfig? = nil,
+    resumable: Bool = false,
+    recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil
+) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
+    try await establishInitiator(
+        attachment: .initiator(link),
+        transport: transport,
+        dispatcher: dispatcher,
+        acceptConnections: acceptConnections,
+        maxPayloadSize: maxPayloadSize,
+        keepalive: keepalive,
+        resumable: resumable,
+        recoverAttachment: recoverAttachment
+    )
+}
+
+public func establishInitiator(
+    conduit: any Link,
+    transport: TransportConduitKind = .bare,
+    dispatcher: any ServiceDispatcher,
+    acceptConnections: Bool = false,
+    maxPayloadSize: UInt32? = nil,
+    keepalive: DriverKeepaliveConfig? = nil,
+    resumable: Bool = false,
+    recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil
+) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
+    try await establishInitiator(
+        link: conduit,
+        transport: transport,
+        dispatcher: dispatcher,
+        acceptConnections: acceptConnections,
+        maxPayloadSize: maxPayloadSize,
+        keepalive: keepalive,
+        resumable: resumable,
+        recoverAttachment: recoverAttachment
+    )
+}
+
 public func establishAcceptor(
-    conduit: any Conduit,
+    attachment: LinkAttachment,
+    transport: TransportConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,
@@ -148,103 +318,73 @@ public func establishAcceptor(
     resumable: Bool = false
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
     let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
-    let ourInitialCredit: UInt32 = 64 * 1024
-    let ourCorrelationId = establishmentNextConnectionCorrelationId()
-    guard let peerMsg = try await conduit.recv() else {
-        throw ConnectionError.handshakeFailed("expected Hello")
-    }
-    guard case .hello(let peerHello) = peerMsg.payload else {
-        try? await conduit.send(.protocolError(description: "handshake.expected-hello"))
-        throw ConnectionError.handshakeFailed("expected Hello")
-    }
-    if peerHello.version != 7 {
-        try? await conduit.send(.protocolError(description: "message.hello.unknown-version"))
-        throw ConnectionError.handshakeFailed("message.hello.unknown-version")
-    }
-
-    var ourMetadata = appendRetrySupportMetadata([
-        MetadataEntryV7(
-            key: sessionEstablishmentConnectionCorrelationKey,
-            value: .string(ourCorrelationId),
-            flags: sessionEstablishmentMetadataFlagsNone
-        )
-    ])
-    let sessionResumeKey: [UInt8]?
-    if resumable {
-        let key = freshSessionResumeKey()
-        ourMetadata = appendSessionResumeKeyMetadata(ourMetadata, key: key)
-        sessionResumeKey = key
-    } else {
-        sessionResumeKey = nil
-    }
-
-    let ourHello = HelloYourselfV7(
-        connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
-        metadata: ourMetadata
-    )
-    try await conduit.send(.helloYourself(ourHello))
-
-    let peerCorrelationId = establishmentHelloCorrelationId(peerHello)
-    let peerSupportsRetry = metadataSupportsRetry(peerHello.metadata)
-    let canonicalCorrelationId = peerCorrelationId ?? ourCorrelationId
-    _ = canonicalCorrelationId
-
-    let negotiated = Negotiated(
+    let handshake = try await performAcceptorHandshake(
+        link: attachment.link,
         maxPayloadSize: ourMaxPayload,
-        initialCredit: ourInitialCredit,
-        maxConcurrentRequests: min(
-            ourHello.connectionSettings.maxConcurrentRequests,
-            peerHello.connectionSettings.maxConcurrentRequests
-        )
-    )
-    debugLog(
-        "handshake complete: maxPayloadSize=\(negotiated.maxPayloadSize), initialCredit=\(negotiated.initialCredit), maxConcurrentRequests=\(negotiated.maxConcurrentRequests)"
+        maxConcurrentRequests: 64,
+        resumable: resumable
     )
 
-    try await conduit.setMaxFrameSize(Int(negotiated.maxPayloadSize) + 64)
+    let conduit = try await buildEstablishedConduit(
+        transport: transport,
+        attachment: attachment
+    )
+    try await conduit.setMaxFrameSize(Int(handshake.negotiated.maxPayloadSize) + 64)
 
-    let localSettings = ourHello.connectionSettings
-    let peerSettings = peerHello.connectionSettings
     let (connection, driver, handle) = makeSessionDriverAndConnection(
         conduit: conduit,
         dispatcher: dispatcher,
         role: .acceptor,
-        negotiated: negotiated,
-        peerSupportsRetry: peerSupportsRetry,
+        negotiated: handshake.negotiated,
+        peerSupportsRetry: handshake.peerSupportsRetry,
         acceptConnections: acceptConnections,
         keepalive: keepalive,
         resumable: resumable,
-        sessionResumeKey: sessionResumeKey,
-        localRootSettings: localSettings,
-        peerRootSettings: peerSettings
+        sessionResumeKey: handshake.sessionResumeKey,
+        localRootSettings: handshake.localRootSettings,
+        peerRootSettings: handshake.peerRootSettings,
+        transport: transport,
+        recoverAttachment: nil
     )
-    return (connection, driver, handle, sessionResumeKey)
+    return (connection, driver, handle, handshake.sessionResumeKey)
 }
 
-func waitForHello(_ conduit: any Conduit) async throws -> HelloV7 {
-    guard let message = try await conduit.recv() else {
-        throw ConnectionError.handshakeFailed("expected Hello")
-    }
-    switch message.payload {
-    case .hello(let hello):
-        return hello
-    case .protocolError(let error):
-        throw ConnectionError.protocolViolation(rule: error.description)
-    default:
-        throw ConnectionError.handshakeFailed("expected Hello")
-    }
+public func establishAcceptor(
+    link: any Link,
+    transport: TransportConduitKind = .bare,
+    dispatcher: any ServiceDispatcher,
+    acceptConnections: Bool = false,
+    maxPayloadSize: UInt32? = nil,
+    keepalive: DriverKeepaliveConfig? = nil,
+    resumable: Bool = false
+) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
+    try await establishAcceptor(
+        attachment: .init(link: link),
+        transport: transport,
+        dispatcher: dispatcher,
+        acceptConnections: acceptConnections,
+        maxPayloadSize: maxPayloadSize,
+        keepalive: keepalive,
+        resumable: resumable
+    )
 }
 
-func waitForHelloYourself(_ conduit: any Conduit) async throws -> HelloYourselfV7 {
-    guard let message = try await conduit.recv() else {
-        throw ConnectionError.handshakeFailed("expected HelloYourself")
-    }
-    switch message.payload {
-    case .helloYourself(let helloYourself):
-        return helloYourself
-    case .protocolError(let error):
-        throw ConnectionError.protocolViolation(rule: error.description)
-    default:
-        throw ConnectionError.handshakeFailed("expected HelloYourself")
-    }
+public func establishAcceptor(
+    conduit: any Link,
+    transport: TransportConduitKind = .bare,
+    dispatcher: any ServiceDispatcher,
+    acceptConnections: Bool = false,
+    maxPayloadSize: UInt32? = nil,
+    keepalive: DriverKeepaliveConfig? = nil,
+    resumable: Bool = false
+) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
+    try await establishAcceptor(
+        link: conduit,
+        transport: transport,
+        dispatcher: dispatcher,
+        acceptConnections: acceptConnections,
+        maxPayloadSize: maxPayloadSize,
+        keepalive: keepalive,
+        resumable: resumable
+    )
 }

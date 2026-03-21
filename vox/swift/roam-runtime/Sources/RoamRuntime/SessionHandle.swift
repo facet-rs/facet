@@ -7,12 +7,20 @@ public final class SessionHandle: @unchecked Sendable {
         self.coordinator = coordinator
     }
 
-    public func resume(_ conduit: any Conduit) async throws {
-        try await coordinator.resume(conduit)
+    public func resume(_ link: any Link) async throws {
+        try await coordinator.resume(.initiator(link))
     }
 
-    public func acceptResumedConduit(_ conduit: any Conduit) async throws {
-        try await coordinator.acceptResumedConduit(conduit)
+    public func resume(_ attachment: LinkAttachment) async throws {
+        try await coordinator.resume(attachment)
+    }
+
+    public func acceptResumedLink(_ link: any Link) async throws {
+        try await coordinator.acceptResumedAttachment(.init(link: link))
+    }
+
+    public func acceptResumedAttachment(_ attachment: LinkAttachment) async throws {
+        try await coordinator.acceptResumedAttachment(attachment)
     }
 
     public func shutdown() async {

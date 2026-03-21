@@ -53,7 +53,7 @@ struct WireV7PostcardNegativeTests {
     // r[verify session.message]
     // r[verify session.message.payloads]
     @Test func wireDecodeRejectsTrailingBytes() throws {
-        var bytes = try loadWireV7Fixture("message_hello")
+        var bytes = try loadWireV7Fixture("message_protocol_error")
         bytes.append(0xFF)
         expectWireError(.trailingBytes) {
             _ = try MessageV7.decode(from: Data(bytes))
@@ -71,7 +71,7 @@ struct WireV7PostcardNegativeTests {
     // r[verify session.message]
     // r[verify session.message.payloads]
     @Test func wireDecodeRejectsTruncatedStringField() {
-        let truncatedProtocolError: [UInt8] = [0, 2, 3, 0x41, 0x42]
+        let truncatedProtocolError: [UInt8] = [0, 0, 3, 0x41, 0x42]
         expectWireError(.truncated) {
             _ = try MessageV7.decode(from: Data(truncatedProtocolError))
         }
@@ -80,7 +80,7 @@ struct WireV7PostcardNegativeTests {
     // r[verify session.message]
     // r[verify session.message.payloads]
     @Test func wireDecodeRejectsInvalidParityVariant() {
-        let bytes: [UInt8] = [0, 0, 7, 3, 1, 0]
+        let bytes: [UInt8] = [0, 1, 3, 1, 0]
         expectWireError(.unknownVariant(3)) {
             _ = try MessageV7.decode(from: Data(bytes))
         }
@@ -91,8 +91,7 @@ struct WireV7PostcardNegativeTests {
     @Test func wireDecodeRejectsOverflowingU32Field() {
         var bytes: [UInt8] = []
         bytes += encodeVarint(0) // connection_id
-        bytes += encodeVarint(0) // payload: hello
-        bytes += encodeVarint(7) // hello.version
+        bytes += encodeVarint(1) // payload: connection_open
         bytes += encodeVarint(0) // parity: odd
         bytes += [0x80, 0x80, 0x80, 0x80, 0x10] // max_concurrent_requests > u32
         bytes += encodeVarint(0) // metadata: empty vec
@@ -105,7 +104,7 @@ struct WireV7PostcardNegativeTests {
     // r[verify session.message]
     // r[verify session.message.payloads]
     @Test func wireDecodeRejectsInvalidUtf8InStringField() {
-        let bytes: [UInt8] = [0, 2, 2, 0xC3, 0x28]
+        let bytes: [UInt8] = [0, 0, 2, 0xC3, 0x28]
         expectWireError(.invalidUtf8) {
             _ = try MessageV7.decode(from: Data(bytes))
         }

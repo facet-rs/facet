@@ -2,19 +2,19 @@ import Foundation
 
 actor SessionResumeCoordinator {
     private struct ResumeRequest {
-        let conduit: any Conduit
+        let attachment: LinkAttachment
         let result: CheckedContinuation<Void, Error>
     }
 
     private let role: Role
     private let localRootSettings: ConnectionSettingsV7
     private let peerRootSettings: ConnectionSettingsV7
+    private let transport: TransportConduitKind
     private let resumable: Bool
     private let sessionResumeKey: [UInt8]?
-    private let recoverConduit: (@Sendable () async throws -> any Conduit)?
+    private let recoverAttachment: (@Sendable () async throws -> LinkAttachment)?
 
     private var closed = false
-    private var disconnected = false
     private var pendingResumes: [ResumeRequest] = []
     private var resumeWaiter: CheckedContinuation<ResumeRequest?, Never>?
 
@@ -22,16 +22,18 @@ actor SessionResumeCoordinator {
         role: Role,
         localRootSettings: ConnectionSettingsV7,
         peerRootSettings: ConnectionSettingsV7,
+        transport: TransportConduitKind,
         resumable: Bool,
         sessionResumeKey: [UInt8]?,
-        recoverConduit: (@Sendable () async throws -> any Conduit)?
+        recoverAttachment: (@Sendable () async throws -> LinkAttachment)?
     ) {
         self.role = role
         self.localRootSettings = localRootSettings
         self.peerRootSettings = peerRootSettings
+        self.transport = transport
         self.resumable = resumable
         self.sessionResumeKey = sessionResumeKey
-        self.recoverConduit = recoverConduit
+        self.recoverAttachment = recoverAttachment
     }
 
     func sessionHandle() -> SessionHandle {
@@ -42,23 +44,23 @@ actor SessionResumeCoordinator {
         sessionResumeKey
     }
 
-    func resume(_ conduit: any Conduit) async throws {
+    func resume(_ attachment: LinkAttachment) async throws {
         guard resumable else {
             throw ConnectionError.protocolViolation(rule: "session is not resumable")
         }
-        try await enqueueResume(conduit)
+        try await enqueueResume(attachment)
     }
 
-    func acceptResumedConduit(_ conduit: any Conduit) async throws {
+    func acceptResumedAttachment(_ attachment: LinkAttachment) async throws {
         guard resumable else {
             throw ConnectionError.protocolViolation(rule: "session is not resumable")
         }
-        try await enqueueResume(conduit)
+        try await enqueueResume(attachment)
     }
 
-    private func enqueueResume(_ conduit: any Conduit) async throws {
+    private func enqueueResume(_ attachment: LinkAttachment) async throws {
         try await withCheckedThrowingContinuation { continuation in
-            let request = ResumeRequest(conduit: conduit, result: continuation)
+            let request = ResumeRequest(attachment: attachment, result: continuation)
             if let waiter = resumeWaiter {
                 resumeWaiter = nil
                 waiter.resume(returning: request)
@@ -73,13 +75,10 @@ actor SessionResumeCoordinator {
             return nil
         }
 
-        disconnected = true
-        if let recoverConduit {
+        if let recoverAttachment {
             do {
-                let conduit = try await recoverConduit()
-                try await resumeOnConduit(conduit)
-                disconnected = false
-                return conduit
+                let attachment = try await recoverAttachment()
+                return try await buildResumedConduit(from: attachment)
             } catch {
             }
         }
@@ -89,10 +88,9 @@ actor SessionResumeCoordinator {
                 return nil
             }
             do {
-                try await resumeOnConduit(pending.conduit)
-                disconnected = false
+                let conduit = try await buildResumedConduit(from: pending.attachment)
                 pending.result.resume()
-                return pending.conduit
+                return conduit
             } catch {
                 pending.result.resume(throwing: error)
             }
@@ -126,62 +124,63 @@ actor SessionResumeCoordinator {
         }
     }
 
-    private func resumeOnConduit(_ conduit: any Conduit) async throws {
+    private func buildResumedConduit(
+        from attachment: LinkAttachment
+    ) async throws -> any Conduit {
         guard let sessionResumeKey else {
             throw ConnectionError.protocolViolation(rule: "session is not resumable")
         }
 
         switch role {
         case .initiator:
-            let metadata = appendSessionResumeKeyMetadata(
-                appendRetrySupportMetadata([]),
-                key: sessionResumeKey
+            let handshake = try await performInitiatorHandshake(
+                link: attachment.link,
+                maxPayloadSize: 1024 * 1024,
+                maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
+                resumable: true,
+                resumeKey: sessionResumeKey
             )
-            try await conduit.send(
-                .hello(
-                    HelloV7(
-                        version: 7,
-                        connectionSettings: localRootSettings,
-                        metadata: metadata
-                    ))
-            )
-            let helloYourself = try await waitForHelloYourself(conduit)
-            guard helloYourself.connectionSettings == peerRootSettings else {
+            guard handshake.localRootSettings == localRootSettings else {
+                throw ConnectionError.protocolViolation(
+                    rule: "local root settings changed across session resume"
+                )
+            }
+            guard handshake.peerRootSettings == peerRootSettings else {
                 throw ConnectionError.protocolViolation(
                     rule: "peer root settings changed across session resume"
                 )
             }
-            guard let echoedKey = metadataSessionResumeKey(helloYourself.metadata),
+            guard let echoedKey = handshake.sessionResumeKey,
                 sessionResumeKeysEqual(echoedKey, sessionResumeKey)
             else {
                 throw ConnectionError.protocolViolation(rule: "session resume key mismatch")
             }
 
         case .acceptor:
-            let hello = try await waitForHello(conduit)
-            guard hello.connectionSettings == peerRootSettings else {
+            let handshake = try await performAcceptorHandshake(
+                link: attachment.link,
+                maxPayloadSize: 1024 * 1024,
+                maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
+                resumable: false,
+                expectedResumeKey: sessionResumeKey
+            )
+            guard handshake.localRootSettings == localRootSettings else {
+                throw ConnectionError.protocolViolation(
+                    rule: "local root settings changed across session resume"
+                )
+            }
+            guard handshake.peerRootSettings == peerRootSettings else {
                 throw ConnectionError.protocolViolation(
                     rule: "peer root settings changed across session resume"
                 )
             }
-            guard let actualKey = metadataSessionResumeKey(hello.metadata),
-                sessionResumeKeysEqual(actualKey, sessionResumeKey)
-            else {
-                throw ConnectionError.protocolViolation(rule: "session resume key mismatch")
-            }
-
-            let metadata = appendSessionResumeKeyMetadata(
-                appendRetrySupportMetadata([]),
-                key: sessionResumeKey
-            )
-            try await conduit.send(
-                .helloYourself(
-                    HelloYourselfV7(
-                        connectionSettings: localRootSettings,
-                        metadata: metadata
-                    ))
-            )
         }
+
+        return try await buildEstablishedConduit(
+            transport: transport,
+            attachment: attachment,
+            recoverAttachment: recoverAttachment
+        )
     }
 }
 

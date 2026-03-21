@@ -19,11 +19,28 @@ public struct OpaquePayloadV7: Sendable, Equatable {
   }
 
   func encode() -> [UInt8] {
-    encodeBytes(bytes)
+    let len = UInt32(bytes.count)
+    return [
+      UInt8(truncatingIfNeeded: len),
+      UInt8(truncatingIfNeeded: len >> 8),
+      UInt8(truncatingIfNeeded: len >> 16),
+      UInt8(truncatingIfNeeded: len >> 24),
+    ] + bytes
   }
 
   static func decode(from data: Data, offset: inout Int) throws -> Self {
-    .init(Array(try decodeBytesV7(from: data, offset: &offset)))
+    guard offset + 4 <= data.count else { throw WireV7Error.truncated }
+    let start = data.startIndex + offset
+    let len = Int(
+      UInt32(data[start]) | (UInt32(data[start + 1]) << 8) | (UInt32(data[start + 2]) << 16)
+        | (UInt32(data[start + 3]) << 24))
+    offset += 4
+    guard offset + len <= data.count else { throw WireV7Error.truncated }
+    let payloadStart = data.startIndex + offset
+    let payloadEnd = payloadStart + len
+    let payload = Array(data[payloadStart..<payloadEnd])
+    offset += len
+    return .init(payload)
   }
 
   /// Encode without a length prefix — for trailing fields only.

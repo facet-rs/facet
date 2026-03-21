@@ -448,6 +448,10 @@ public final class ShmGuestRuntime: @unchecked Sendable {
     private var retiredOutboundMmapRegions: [ShmRegion] = []
     private var fatalError = false
 
+    deinit {
+        closeMmapControlFd()
+    }
+
     // r[impl shm.guest.attach]
     // r[impl shm.guest.attach-failure]
     /// Attach to an SHM segment, discovering var slot classes from the segment itself.
@@ -545,7 +549,7 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         let ringOffset = Int(peerEntry.ringOffset)
         let g2h = try ShmBipBuffer.attach(region: region, headerOffset: ringOffset)
         let h2g = try ShmBipBuffer.attach(region: region, headerOffset: ringOffset + shmBipbufHeaderSize + Int(g2h.capacity))
-        let doorbell = ticket.map { ShmDoorbell(fd: $0.doorbellFd) }
+        let doorbell = ticket.map { ShmDoorbell(fd: $0.doorbellFd, ownsFd: true) }
         let mmapControlFd = ticket?.mmapControlFd ?? -1
         let mmapAttachments: ShmMmapAttachments?
         if mmapControlFd >= 0 {
@@ -920,6 +924,13 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         let ptr = try peerStatePointer()
         let raw = atomicLoadU32Acquire(UnsafeRawPointer(ptr))
         return ShmPeerState(rawValue: raw) ?? .empty
+    }
+
+    private func closeMmapControlFd() {
+        guard mmapControlFd >= 0 else {
+            return
+        }
+        close(mmapControlFd)
     }
 
     private func hostGoodbyeFlag() -> Bool {
