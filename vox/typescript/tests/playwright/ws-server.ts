@@ -78,8 +78,6 @@ function waitForWsServerReady(wsServer: ChildProcess, wsPort: number): Promise<v
       }
       settled = true;
       clearTimeout(timeout);
-      wsServer.stdout?.off("data", onStdout);
-      wsServer.stderr?.off("data", onStderr);
       wsServer.off("error", onError);
       wsServer.off("exit", onExit);
       cb();

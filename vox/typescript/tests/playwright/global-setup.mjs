@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -21,33 +21,6 @@ const wasmTargets = [
     outputFile: join(projectRoot, "typescript/tests/browser-inprocess/pkg/wasm_inprocess_tests.js"),
   },
 ];
-
-function newestMtime(path) {
-  const stat = statSync(path);
-  if (!stat.isDirectory()) {
-    return stat.mtimeMs;
-  }
-
-  let newest = stat.mtimeMs;
-  for (const entry of readdirSync(path)) {
-    newest = Math.max(newest, newestMtime(join(path, entry)));
-  }
-  return newest;
-}
-
-function needsBuild(target) {
-  if (!existsSync(target.outputFile)) {
-    return true;
-  }
-
-  const outputMtime = statSync(target.outputFile).mtimeMs;
-  const inputMtime = Math.max(
-    newestMtime(join(target.crateDir, "Cargo.toml")),
-    newestMtime(join(target.crateDir, "src")),
-  );
-
-  return inputMtime > outputMtime;
-}
 
 function wasmPackCommand() {
   const candidates = [
@@ -91,8 +64,6 @@ function buildTarget(target) {
 
 export default async function globalSetup() {
   for (const target of wasmTargets) {
-    if (needsBuild(target)) {
-      buildTarget(target);
-    }
+    buildTarget(target);
   }
 }

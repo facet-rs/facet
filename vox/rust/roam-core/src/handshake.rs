@@ -40,6 +40,11 @@ fn message_schema() -> Vec<Schema> {
 /// Send a CBOR-encoded handshake message on a raw link.
 async fn send_handshake<Tx: LinkTx>(tx: &Tx, msg: &HandshakeMessage) -> Result<(), HandshakeError> {
     let bytes = facet_cbor::to_vec(msg).map_err(|e| HandshakeError::Encode(e.to_string()))?;
+    roam_types::dlog!(
+        "[handshake] send {:?} ({} bytes)",
+        handshake_tag(msg),
+        bytes.len()
+    );
     let permit = tx.reserve().await.map_err(HandshakeError::Io)?;
     let mut slot = permit.alloc(bytes.len()).map_err(HandshakeError::Io)?;
     slot.as_mut_slice().copy_from_slice(&bytes);
@@ -54,7 +59,23 @@ async fn recv_handshake<Rx: LinkRx>(rx: &mut Rx) -> Result<HandshakeMessage, Han
         .await
         .map_err(|error| HandshakeError::Io(std::io::Error::other(error.to_string())))?
         .ok_or(HandshakeError::PeerClosed)?;
-    facet_cbor::from_slice(backing.as_bytes()).map_err(|e| HandshakeError::Decode(e.to_string()))
+    roam_types::dlog!(
+        "[handshake] recv raw frame ({} bytes)",
+        backing.as_bytes().len()
+    );
+    let msg = facet_cbor::from_slice(backing.as_bytes())
+        .map_err(|e| HandshakeError::Decode(e.to_string()))?;
+    roam_types::dlog!("[handshake] recv {:?}", handshake_tag(&msg));
+    Ok(msg)
+}
+
+fn handshake_tag(msg: &HandshakeMessage) -> &'static str {
+    match msg {
+        HandshakeMessage::Hello(_) => "Hello",
+        HandshakeMessage::HelloYourself(_) => "HelloYourself",
+        HandshakeMessage::LetsGo(_) => "LetsGo",
+        HandshakeMessage::Sorry(_) => "Sorry",
+    }
 }
 
 // r[impl session.handshake]

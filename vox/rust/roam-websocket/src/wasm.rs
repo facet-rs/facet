@@ -241,7 +241,12 @@ impl WriteSlot for WsWriteSlot {
 
     fn commit(mut self) {
         self.committed = true;
-        let _ = self.ws.send_with_u8_array(&self.buf);
+        // Copy into a JS-owned typed array before reusing the Rust buffer.
+        // The browser WebSocket implementation is free to enqueue the payload
+        // asynchronously, so clearing/recycling the Rust Vec immediately after
+        // `send_with_u8_array` can corrupt the outbound frame.
+        let payload = js_sys::Uint8Array::from(self.buf.as_slice());
+        let _ = self.ws.send_with_array_buffer(&payload.buffer());
         self.buf.clear();
         let _ = self.buf_tx.try_send(std::mem::take(&mut self.buf));
     }

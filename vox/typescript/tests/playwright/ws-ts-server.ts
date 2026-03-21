@@ -286,7 +286,7 @@ export async function startTsWsServer(port: number): Promise<TsWsServerHandle> {
 
   wss.on("connection", (socket) => {
     const link = new NodeWsLink(socket);
-    void session.acceptorTransportOrResume(link, registry).then((accepted) => {
+    void session.acceptorTransportOrResume(link, registry, { resumable: true }).then((accepted) => {
       if (accepted.tag === "Resumed") {
         return;
       }
