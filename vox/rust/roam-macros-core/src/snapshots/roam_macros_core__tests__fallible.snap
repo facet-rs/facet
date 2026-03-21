@@ -30,13 +30,13 @@ pub fn calc_service_descriptor() -> &'static ::roam::session::ServiceDescriptor 
 }
 pub trait Calc
 where
-    Self: Send + Sync,
+    Self: ::roam::MaybeSend + ::roam::MaybeSync,
 {
     fn div(
         &self,
         a: f64,
         b: f64,
-    ) -> impl std::future::Future<Output = Result<f64, DivError>> + Send;
+    ) -> impl std::future::Future<Output = Result<f64, DivError>> + ::roam::MaybeSend;
 }
 #[doc = r" Dispatcher for this service."]
 #[doc = r""]
@@ -49,7 +49,7 @@ pub struct CalcDispatcher<H> {
 }
 impl<H> CalcDispatcher<H>
 where
-    H: Calc + Clone + Send + Sync + 'static,
+    H: Calc + Clone + ::roam::MaybeSend + ::roam::MaybeSync + 'static,
 {
     #[doc = r" Create a new dispatcher wrapping the given handler."]
     pub fn new(handler: H) -> Self {
@@ -80,7 +80,7 @@ where
 }
 impl<H, R> ::roam::Handler<R> for CalcDispatcher<H>
 where
-    H: Calc + Clone + Send + Sync + 'static,
+    H: Calc + Clone + ::roam::MaybeSend + ::roam::MaybeSync + 'static,
     R: ::roam::ReplySink,
 {
     fn retry_policy(&self, method_id: ::roam::MethodId) -> ::roam::RetryPolicy {
@@ -91,6 +91,25 @@ where
             };
         }
         ::roam::RetryPolicy::VOLATILE
+    }
+    fn args_have_channels(&self, method_id: ::roam::MethodId) -> bool {
+        if method_id == calc_service_descriptor().methods[0usize].id {
+            return ::roam::hash::shape_contains_channel(
+                calc_service_descriptor().methods[0usize].args_shape,
+            );
+        }
+        false
+    }
+    fn response_wire_shape(
+        &self,
+        method_id: ::roam::MethodId,
+    ) -> Option<&'static ::roam::facet::Shape> {
+        if method_id == calc_service_descriptor().methods[0usize].id {
+            return Some(
+                <Result<f64, ::roam::RoamError<DivError>> as ::roam::facet::Facet<'static>>::SHAPE,
+            );
+        }
+        None
     }
     async fn handle(
         &self,
@@ -115,12 +134,12 @@ where
         if method_id == calc_service_descriptor().methods[0usize].id {
             let deser_result = if let Some(binder) = reply.channel_binder() {
                 ::roam::with_channel_binder(binder, || {
-                    ::roam::schema_deser::schema_deserialize_args_borrowed(
+                    ::roam::schema_deser::schema_deserialize_args_borrowed::<(f64, f64)>(
                         args_bytes, method_id, &schemas,
                     )
                 })
             } else {
-                ::roam::schema_deser::schema_deserialize_args_borrowed(
+                ::roam::schema_deser::schema_deserialize_args_borrowed::<(f64, f64)>(
                     args_bytes, method_id, &schemas,
                 )
             };
@@ -206,24 +225,31 @@ impl CalcClient {
             metadata: Default::default(),
             schemas: Default::default(),
         };
-        let with_tracker = ::roam::Caller::call(&self.caller, req)
-            .await
-            .map_err(|e| match e {
-                ::roam::RoamError::UnknownMethod => ::roam::RoamError::<DivError>::UnknownMethod,
-                ::roam::RoamError::InvalidPayload(msg) => {
-                    ::roam::RoamError::<DivError>::InvalidPayload(msg)
-                }
-                ::roam::RoamError::Cancelled => ::roam::RoamError::<DivError>::Cancelled,
-                ::roam::RoamError::ConnectionClosed => {
-                    ::roam::RoamError::<DivError>::ConnectionClosed
-                }
-                ::roam::RoamError::SessionShutdown => {
-                    ::roam::RoamError::<DivError>::SessionShutdown
-                }
-                ::roam::RoamError::SendFailed => ::roam::RoamError::<DivError>::SendFailed,
-                ::roam::RoamError::Indeterminate => ::roam::RoamError::<DivError>::Indeterminate,
-                ::roam::RoamError::User(never) => match never {},
-            })?;
+        let with_tracker = match ::roam::Caller::call(&self.caller, req).await {
+            Ok(with_tracker) => with_tracker,
+            Err(e) => {
+                return Err(match e {
+                    ::roam::RoamError::UnknownMethod => {
+                        ::roam::RoamError::<DivError>::UnknownMethod
+                    }
+                    ::roam::RoamError::InvalidPayload(msg) => {
+                        ::roam::RoamError::<DivError>::InvalidPayload(msg)
+                    }
+                    ::roam::RoamError::Cancelled => ::roam::RoamError::<DivError>::Cancelled,
+                    ::roam::RoamError::ConnectionClosed => {
+                        ::roam::RoamError::<DivError>::ConnectionClosed
+                    }
+                    ::roam::RoamError::SessionShutdown => {
+                        ::roam::RoamError::<DivError>::SessionShutdown
+                    }
+                    ::roam::RoamError::SendFailed => ::roam::RoamError::<DivError>::SendFailed,
+                    ::roam::RoamError::Indeterminate => {
+                        ::roam::RoamError::<DivError>::Indeterminate
+                    }
+                    ::roam::RoamError::User(never) => match never {},
+                });
+            }
+        };
         let ::roam::WithTracker {
             value: response,
             tracker: schema_tracker,
@@ -237,13 +263,14 @@ impl CalcClient {
             }
         };
         let result: Result<f64, ::roam::RoamError<DivError>> =
-            ::roam::schema_deser::schema_deserialize_response(
-                ret_bytes,
-                method_id,
-                &schema_tracker,
-            )
+            ::roam::schema_deser::schema_deserialize_response::<
+                Result<f64, ::roam::RoamError<DivError>>,
+            >(ret_bytes, method_id, &schema_tracker)
             .map_err(|e| ::roam::RoamError::<DivError>::InvalidPayload(e.to_string()))?;
-        result
+        match result {
+            Ok(ret) => Ok(ret),
+            Err(err) => Err(err),
+        }
     }
 }
 impl From<::roam::DriverCaller> for CalcClient {

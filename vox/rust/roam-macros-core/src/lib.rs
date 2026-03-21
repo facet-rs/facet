@@ -547,11 +547,11 @@ fn generate_dispatch_arm(
     let ok_ty = ok_ty_ref.to_token_stream();
     // For the response Shape expression, we need 'static (Shape is always 'static).
     // Replace 'roam with 'static so the Shape reference is valid in the dispatch scope.
-    let _ok_ty_static: proc_macro2::TokenStream = ok_ty
+    let ok_ty_dispatch: proc_macro2::TokenStream = ok_ty
         .to_string()
         .replace("'roam", "'static")
         .parse()
-        .expect("ok_ty_static parse");
+        .expect("ok_ty_dispatch parse");
     let err_ty = err_ty_ref
         .map(Type::to_token_stream)
         .unwrap_or_else(|| quote! { ::core::convert::Infallible });
@@ -639,7 +639,7 @@ fn generate_dispatch_arm(
                         e
                     );
                     reply
-                        .send_typed_error::<#ok_ty, ::core::convert::Infallible>(
+                        .send_typed_error::<#ok_ty_dispatch, ::core::convert::Infallible>(
                             #roam::RoamError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
                         )
                         .await;

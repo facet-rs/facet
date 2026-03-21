@@ -28,9 +28,9 @@ pub fn adder_service_descriptor() -> &'static ::roam::session::ServiceDescriptor
 }
 pub trait Adder
 where
-    Self: Send + Sync,
+    Self: ::roam::MaybeSend + ::roam::MaybeSync,
 {
-    fn add(&self, a: i32, b: i32) -> impl std::future::Future<Output = i32> + Send;
+    fn add(&self, a: i32, b: i32) -> impl std::future::Future<Output = i32> + ::roam::MaybeSend;
 }
 #[doc = r" Dispatcher for this service."]
 #[doc = r""]
@@ -43,7 +43,7 @@ pub struct AdderDispatcher<H> {
 }
 impl<H> AdderDispatcher<H>
 where
-    H: Adder + Clone + Send + Sync + 'static,
+    H: Adder + Clone + ::roam::MaybeSend + ::roam::MaybeSync + 'static,
 {
     #[doc = r" Create a new dispatcher wrapping the given handler."]
     pub fn new(handler: H) -> Self {
@@ -74,7 +74,7 @@ where
 }
 impl<H, R> ::roam::Handler<R> for AdderDispatcher<H>
 where
-    H: Adder + Clone + Send + Sync + 'static,
+    H: Adder + Clone + ::roam::MaybeSend + ::roam::MaybeSync + 'static,
     R: ::roam::ReplySink,
 {
     fn retry_policy(&self, method_id: ::roam::MethodId) -> ::roam::RetryPolicy {
@@ -85,6 +85,23 @@ where
             };
         }
         ::roam::RetryPolicy::VOLATILE
+    }
+    fn args_have_channels(&self, method_id: ::roam::MethodId) -> bool {
+        if method_id == adder_service_descriptor().methods[0usize].id {
+            return ::roam::hash::shape_contains_channel(
+                adder_service_descriptor().methods[0usize].args_shape,
+            );
+        }
+        false
+    }
+    fn response_wire_shape(
+        &self,
+        method_id: ::roam::MethodId,
+    ) -> Option<&'static ::roam::facet::Shape> {
+        if method_id == adder_service_descriptor().methods[0usize].id {
+            return Some (< Result < i32 , :: roam :: RoamError < :: core :: convert :: Infallible >> as :: roam :: facet :: Facet < 'static >> :: SHAPE ,) ;
+        }
+        None
     }
     async fn handle(
         &self,
@@ -109,12 +126,12 @@ where
         if method_id == adder_service_descriptor().methods[0usize].id {
             let deser_result = if let Some(binder) = reply.channel_binder() {
                 ::roam::with_channel_binder(binder, || {
-                    ::roam::schema_deser::schema_deserialize_args_borrowed(
+                    ::roam::schema_deser::schema_deserialize_args_borrowed::<(i32, i32)>(
                         args_bytes, method_id, &schemas,
                     )
                 })
             } else {
-                ::roam::schema_deser::schema_deserialize_args_borrowed(
+                ::roam::schema_deser::schema_deserialize_args_borrowed::<(i32, i32)>(
                     args_bytes, method_id, &schemas,
                 )
             };
@@ -200,32 +217,35 @@ impl AdderClient {
             metadata: Default::default(),
             schemas: Default::default(),
         };
-        let with_tracker = ::roam::Caller::call(&self.caller, req)
-            .await
-            .map_err(|e| match e {
-                ::roam::RoamError::UnknownMethod => {
-                    ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
-                }
-                ::roam::RoamError::InvalidPayload(msg) => {
-                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(msg)
-                }
-                ::roam::RoamError::Cancelled => {
-                    ::roam::RoamError::<::core::convert::Infallible>::Cancelled
-                }
-                ::roam::RoamError::ConnectionClosed => {
-                    ::roam::RoamError::<::core::convert::Infallible>::ConnectionClosed
-                }
-                ::roam::RoamError::SessionShutdown => {
-                    ::roam::RoamError::<::core::convert::Infallible>::SessionShutdown
-                }
-                ::roam::RoamError::SendFailed => {
-                    ::roam::RoamError::<::core::convert::Infallible>::SendFailed
-                }
-                ::roam::RoamError::Indeterminate => {
-                    ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
-                }
-                ::roam::RoamError::User(never) => match never {},
-            })?;
+        let with_tracker = match ::roam::Caller::call(&self.caller, req).await {
+            Ok(with_tracker) => with_tracker,
+            Err(e) => {
+                return Err(match e {
+                    ::roam::RoamError::UnknownMethod => {
+                        ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
+                    }
+                    ::roam::RoamError::InvalidPayload(msg) => {
+                        ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(msg)
+                    }
+                    ::roam::RoamError::Cancelled => {
+                        ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                    }
+                    ::roam::RoamError::ConnectionClosed => {
+                        ::roam::RoamError::<::core::convert::Infallible>::ConnectionClosed
+                    }
+                    ::roam::RoamError::SessionShutdown => {
+                        ::roam::RoamError::<::core::convert::Infallible>::SessionShutdown
+                    }
+                    ::roam::RoamError::SendFailed => {
+                        ::roam::RoamError::<::core::convert::Infallible>::SendFailed
+                    }
+                    ::roam::RoamError::Indeterminate => {
+                        ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
+                    }
+                    ::roam::RoamError::User(never) => match never {},
+                });
+            }
+        };
         let ::roam::WithTracker {
             value: response,
             tracker: schema_tracker,
@@ -241,15 +261,16 @@ impl AdderClient {
             }
         };
         let result: Result<i32, ::roam::RoamError<::core::convert::Infallible>> =
-            ::roam::schema_deser::schema_deserialize_response(
-                ret_bytes,
-                method_id,
-                &schema_tracker,
-            )
+            ::roam::schema_deser::schema_deserialize_response::<
+                Result<i32, ::roam::RoamError<::core::convert::Infallible>>,
+            >(ret_bytes, method_id, &schema_tracker)
             .map_err(|e| {
                 ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
             })?;
-        result
+        match result {
+            Ok(ret) => Ok(ret),
+            Err(err) => Err(err),
+        }
     }
 }
 impl From<::roam::DriverCaller> for AdderClient {

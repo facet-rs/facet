@@ -338,7 +338,7 @@ async fn operation_replay_after_resume_has_schemas() {
     )
     .expect("session establishment timed out");
 
-    let _ = match server_result.expect("server failed") {
+    let (_server_client, _server_handle) = match server_result.expect("server failed") {
         SessionAcceptOutcome::Established(c, h) => (c, h),
         _ => panic!("expected Established"),
     };

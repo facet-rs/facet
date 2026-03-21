@@ -38,15 +38,15 @@ pub fn audit_service_descriptor() -> &'static ::roam::session::ServiceDescriptor
 }
 pub trait Audit
 where
-    Self: Send + Sync,
+    Self: ::roam::MaybeSend + ::roam::MaybeSync,
 {
     fn record<'roam>(
         &self,
         cx: &::roam::RequestContext<'_>,
         call: impl ::roam::Call<'roam, &'roam str, ::core::convert::Infallible>,
         payload: String,
-    ) -> impl std::future::Future<Output = ()> + Send;
-    fn ping(&self) -> impl std::future::Future<Output = u64> + Send;
+    ) -> impl std::future::Future<Output = ()> + ::roam::MaybeSend;
+    fn ping(&self) -> impl std::future::Future<Output = u64> + ::roam::MaybeSend;
 }
 #[doc = r" Dispatcher for this service."]
 #[doc = r""]
@@ -59,7 +59,7 @@ pub struct AuditDispatcher<H> {
 }
 impl<H> AuditDispatcher<H>
 where
-    H: Audit + Clone + Send + Sync + 'static,
+    H: Audit + Clone + ::roam::MaybeSend + ::roam::MaybeSync + 'static,
 {
     #[doc = r" Create a new dispatcher wrapping the given handler."]
     pub fn new(handler: H) -> Self {
@@ -90,7 +90,7 @@ where
 }
 impl<H, R> ::roam::Handler<R> for AuditDispatcher<H>
 where
-    H: Audit + Clone + Send + Sync + 'static,
+    H: Audit + Clone + ::roam::MaybeSend + ::roam::MaybeSync + 'static,
     R: ::roam::ReplySink,
 {
     fn retry_policy(&self, method_id: ::roam::MethodId) -> ::roam::RetryPolicy {
@@ -107,6 +107,31 @@ where
             };
         }
         ::roam::RetryPolicy::VOLATILE
+    }
+    fn args_have_channels(&self, method_id: ::roam::MethodId) -> bool {
+        if method_id == audit_service_descriptor().methods[0usize].id {
+            return ::roam::hash::shape_contains_channel(
+                audit_service_descriptor().methods[0usize].args_shape,
+            );
+        }
+        if method_id == audit_service_descriptor().methods[1usize].id {
+            return ::roam::hash::shape_contains_channel(
+                audit_service_descriptor().methods[1usize].args_shape,
+            );
+        }
+        false
+    }
+    fn response_wire_shape(
+        &self,
+        method_id: ::roam::MethodId,
+    ) -> Option<&'static ::roam::facet::Shape> {
+        if method_id == audit_service_descriptor().methods[0usize].id {
+            return Some (< Result < & 'static str , :: roam :: RoamError < :: core :: convert :: Infallible >> as :: roam :: facet :: Facet < 'static >> :: SHAPE ,) ;
+        }
+        if method_id == audit_service_descriptor().methods[1usize].id {
+            return Some (< Result < u64 , :: roam :: RoamError < :: core :: convert :: Infallible >> as :: roam :: facet :: Facet < 'static >> :: SHAPE ,) ;
+        }
+        None
     }
     async fn handle(
         &self,
@@ -131,12 +156,12 @@ where
         if method_id == audit_service_descriptor().methods[0usize].id {
             let deser_result = if let Some(binder) = reply.channel_binder() {
                 ::roam::with_channel_binder(binder, || {
-                    ::roam::schema_deser::schema_deserialize_args_borrowed(
+                    ::roam::schema_deser::schema_deserialize_args_borrowed::<(String,)>(
                         args_bytes, method_id, &schemas,
                     )
                 })
             } else {
-                ::roam::schema_deser::schema_deserialize_args_borrowed(
+                ::roam::schema_deser::schema_deserialize_args_borrowed::<(String,)>(
                     args_bytes, method_id, &schemas,
                 )
             };
@@ -149,7 +174,7 @@ where
                         e
                     );
                     reply
-                        .send_typed_error::<&'roam str, ::core::convert::Infallible>(
+                        .send_typed_error::<&'static str, ::core::convert::Infallible>(
                             ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(
                                 e.to_string(),
                             ),
@@ -181,12 +206,12 @@ where
         if method_id == audit_service_descriptor().methods[1usize].id {
             let deser_result = if let Some(binder) = reply.channel_binder() {
                 ::roam::with_channel_binder(binder, || {
-                    ::roam::schema_deser::schema_deserialize_args_borrowed(
+                    ::roam::schema_deser::schema_deserialize_args_borrowed::<()>(
                         args_bytes, method_id, &schemas,
                     )
                 })
             } else {
-                ::roam::schema_deser::schema_deserialize_args_borrowed(
+                ::roam::schema_deser::schema_deserialize_args_borrowed::<()>(
                     args_bytes, method_id, &schemas,
                 )
             };
@@ -275,32 +300,35 @@ impl AuditClient {
             metadata: Default::default(),
             schemas: Default::default(),
         };
-        let with_tracker = ::roam::Caller::call(&self.caller, req)
-            .await
-            .map_err(|e| match e {
-                ::roam::RoamError::UnknownMethod => {
-                    ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
-                }
-                ::roam::RoamError::InvalidPayload(msg) => {
-                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(msg)
-                }
-                ::roam::RoamError::Cancelled => {
-                    ::roam::RoamError::<::core::convert::Infallible>::Cancelled
-                }
-                ::roam::RoamError::ConnectionClosed => {
-                    ::roam::RoamError::<::core::convert::Infallible>::ConnectionClosed
-                }
-                ::roam::RoamError::SessionShutdown => {
-                    ::roam::RoamError::<::core::convert::Infallible>::SessionShutdown
-                }
-                ::roam::RoamError::SendFailed => {
-                    ::roam::RoamError::<::core::convert::Infallible>::SendFailed
-                }
-                ::roam::RoamError::Indeterminate => {
-                    ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
-                }
-                ::roam::RoamError::User(never) => match never {},
-            })?;
+        let with_tracker = match ::roam::Caller::call(&self.caller, req).await {
+            Ok(with_tracker) => with_tracker,
+            Err(e) => {
+                return Err(match e {
+                    ::roam::RoamError::UnknownMethod => {
+                        ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
+                    }
+                    ::roam::RoamError::InvalidPayload(msg) => {
+                        ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(msg)
+                    }
+                    ::roam::RoamError::Cancelled => {
+                        ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                    }
+                    ::roam::RoamError::ConnectionClosed => {
+                        ::roam::RoamError::<::core::convert::Infallible>::ConnectionClosed
+                    }
+                    ::roam::RoamError::SessionShutdown => {
+                        ::roam::RoamError::<::core::convert::Infallible>::SessionShutdown
+                    }
+                    ::roam::RoamError::SendFailed => {
+                        ::roam::RoamError::<::core::convert::Infallible>::SendFailed
+                    }
+                    ::roam::RoamError::Indeterminate => {
+                        ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
+                    }
+                    ::roam::RoamError::User(never) => match never {},
+                });
+            }
+        };
         let ::roam::WithTracker {
             value: response,
             tracker: schema_tracker,
@@ -317,16 +345,16 @@ impl AuditClient {
                 }
             };
             let result: Result<&'static str, ::roam::RoamError<::core::convert::Infallible>> =
-                ::roam::schema_deser::schema_deserialize_response_borrowed(
-                    ret_bytes,
-                    method_id,
-                    &schema_tracker,
-                )
+                ::roam::schema_deser::schema_deserialize_response_borrowed::<
+                    Result<&'static str, ::roam::RoamError<::core::convert::Infallible>>,
+                >(ret_bytes, method_id, &schema_tracker)
                 .map_err(|e| {
                     ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
                 })?;
-            let ret = result?;
-            Ok(ret)
+            match result {
+                Ok(ret) => Ok(ret),
+                Err(err) => Err(err),
+            }
         })
     }
     pub async fn ping(&self) -> Result<u64, ::roam::RoamError> {
@@ -338,32 +366,35 @@ impl AuditClient {
             metadata: Default::default(),
             schemas: Default::default(),
         };
-        let with_tracker = ::roam::Caller::call(&self.caller, req)
-            .await
-            .map_err(|e| match e {
-                ::roam::RoamError::UnknownMethod => {
-                    ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
-                }
-                ::roam::RoamError::InvalidPayload(msg) => {
-                    ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(msg)
-                }
-                ::roam::RoamError::Cancelled => {
-                    ::roam::RoamError::<::core::convert::Infallible>::Cancelled
-                }
-                ::roam::RoamError::ConnectionClosed => {
-                    ::roam::RoamError::<::core::convert::Infallible>::ConnectionClosed
-                }
-                ::roam::RoamError::SessionShutdown => {
-                    ::roam::RoamError::<::core::convert::Infallible>::SessionShutdown
-                }
-                ::roam::RoamError::SendFailed => {
-                    ::roam::RoamError::<::core::convert::Infallible>::SendFailed
-                }
-                ::roam::RoamError::Indeterminate => {
-                    ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
-                }
-                ::roam::RoamError::User(never) => match never {},
-            })?;
+        let with_tracker = match ::roam::Caller::call(&self.caller, req).await {
+            Ok(with_tracker) => with_tracker,
+            Err(e) => {
+                return Err(match e {
+                    ::roam::RoamError::UnknownMethod => {
+                        ::roam::RoamError::<::core::convert::Infallible>::UnknownMethod
+                    }
+                    ::roam::RoamError::InvalidPayload(msg) => {
+                        ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(msg)
+                    }
+                    ::roam::RoamError::Cancelled => {
+                        ::roam::RoamError::<::core::convert::Infallible>::Cancelled
+                    }
+                    ::roam::RoamError::ConnectionClosed => {
+                        ::roam::RoamError::<::core::convert::Infallible>::ConnectionClosed
+                    }
+                    ::roam::RoamError::SessionShutdown => {
+                        ::roam::RoamError::<::core::convert::Infallible>::SessionShutdown
+                    }
+                    ::roam::RoamError::SendFailed => {
+                        ::roam::RoamError::<::core::convert::Infallible>::SendFailed
+                    }
+                    ::roam::RoamError::Indeterminate => {
+                        ::roam::RoamError::<::core::convert::Infallible>::Indeterminate
+                    }
+                    ::roam::RoamError::User(never) => match never {},
+                });
+            }
+        };
         let ::roam::WithTracker {
             value: response,
             tracker: schema_tracker,
@@ -379,15 +410,16 @@ impl AuditClient {
             }
         };
         let result: Result<u64, ::roam::RoamError<::core::convert::Infallible>> =
-            ::roam::schema_deser::schema_deserialize_response(
-                ret_bytes,
-                method_id,
-                &schema_tracker,
-            )
+            ::roam::schema_deser::schema_deserialize_response::<
+                Result<u64, ::roam::RoamError<::core::convert::Infallible>>,
+            >(ret_bytes, method_id, &schema_tracker)
             .map_err(|e| {
                 ::roam::RoamError::<::core::convert::Infallible>::InvalidPayload(e.to_string())
             })?;
-        result
+        match result {
+            Ok(ret) => Ok(ret),
+            Err(err) => Err(err),
+        }
     }
 }
 impl From<::roam::DriverCaller> for AuditClient {
