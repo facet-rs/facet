@@ -182,91 +182,6 @@ public struct MetadataEntryV7: Sendable, Equatable {
   }
 }
 
-public struct HelloV7: Sendable, Equatable {
-  public var parity: ParityV7
-  public var connectionSettings: ConnectionSettingsV7
-  public var messagePayloadSchema: [Schema]
-  public var supportsRetry: Bool
-  public var resumeKey: ResumeKeyBytes?
-
-  public init(
-    parity: ParityV7, connectionSettings: ConnectionSettingsV7, messagePayloadSchema: [Schema],
-    supportsRetry: Bool, resumeKey: ResumeKeyBytes?
-  ) {
-    self.parity = parity
-    self.connectionSettings = connectionSettings
-    self.messagePayloadSchema = messagePayloadSchema
-    self.supportsRetry = supportsRetry
-    self.resumeKey = resumeKey
-  }
-
-  func encode() -> [UInt8] {
-    var out: [UInt8] = []
-    out += parity.encode()
-    out += connectionSettings.encode()
-    out += encodeVec(messagePayloadSchema, encoder: { $0.encode() })
-    out += encodeBool(supportsRetry)
-    out += encodeOption(resumeKey, encoder: { $0.encode() })
-    return out
-  }
-
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let parity = try ParityV7.decode(from: data, offset: &offset)
-    let connectionSettings = try ConnectionSettingsV7.decode(from: data, offset: &offset)
-    let messagePayloadSchema = try decodeVec(
-      from: data, offset: &offset,
-      decoder: { data, off in try Schema.decode(from: data, offset: &off) })
-    let supportsRetry = try decodeBool(from: data, offset: &offset)
-    let resumeKey = try decodeOption(
-      from: data, offset: &offset,
-      decoder: { data, off in try ResumeKeyBytes.decode(from: data, offset: &off) })
-    return .init(
-      parity: parity, connectionSettings: connectionSettings,
-      messagePayloadSchema: messagePayloadSchema, supportsRetry: supportsRetry, resumeKey: resumeKey
-    )
-  }
-}
-
-public struct HelloYourselfV7: Sendable, Equatable {
-  public var connectionSettings: ConnectionSettingsV7
-  public var messagePayloadSchema: [Schema]
-  public var supportsRetry: Bool
-  public var resumeKey: ResumeKeyBytes?
-
-  public init(
-    connectionSettings: ConnectionSettingsV7, messagePayloadSchema: [Schema], supportsRetry: Bool,
-    resumeKey: ResumeKeyBytes?
-  ) {
-    self.connectionSettings = connectionSettings
-    self.messagePayloadSchema = messagePayloadSchema
-    self.supportsRetry = supportsRetry
-    self.resumeKey = resumeKey
-  }
-
-  func encode() -> [UInt8] {
-    var out: [UInt8] = []
-    out += connectionSettings.encode()
-    out += encodeVec(messagePayloadSchema, encoder: { $0.encode() })
-    out += encodeBool(supportsRetry)
-    out += encodeOption(resumeKey, encoder: { $0.encode() })
-    return out
-  }
-
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let connectionSettings = try ConnectionSettingsV7.decode(from: data, offset: &offset)
-    let messagePayloadSchema = try decodeVec(
-      from: data, offset: &offset,
-      decoder: { data, off in try Schema.decode(from: data, offset: &off) })
-    let supportsRetry = try decodeBool(from: data, offset: &offset)
-    let resumeKey = try decodeOption(
-      from: data, offset: &offset,
-      decoder: { data, off in try ResumeKeyBytes.decode(from: data, offset: &off) })
-    return .init(
-      connectionSettings: connectionSettings, messagePayloadSchema: messagePayloadSchema,
-      supportsRetry: supportsRetry, resumeKey: resumeKey)
-  }
-}
-
 public struct ProtocolErrorV7: Sendable, Equatable {
   public var description: String
 
@@ -837,7 +752,7 @@ extension MessageV7 {
     requestId: UInt64,
     methodId: UInt64,
     metadata: [MetadataEntryV7],
-    channels: [UInt64],
+    schemas: [UInt8] = [],
     payload: [UInt8]
   ) -> MessageV7 {
     MessageV7(
@@ -846,7 +761,7 @@ extension MessageV7 {
         .init(
           id: requestId,
           body: .call(
-            .init(methodId: methodId, channels: channels, metadata: metadata, args: .init(payload)))
+            .init(methodId: methodId, metadata: metadata, args: .init(payload), schemas: schemas))
         ))
     )
   }
@@ -855,7 +770,7 @@ extension MessageV7 {
     connId: UInt64,
     requestId: UInt64,
     metadata: [MetadataEntryV7],
-    channels: [UInt64],
+    schemas: [UInt8] = [],
     payload: [UInt8]
   ) -> MessageV7 {
     MessageV7(
@@ -863,7 +778,7 @@ extension MessageV7 {
       payload: .requestMessage(
         .init(
           id: requestId,
-          body: .response(.init(channels: channels, metadata: metadata, ret: .init(payload)))
+          body: .response(.init(metadata: metadata, ret: .init(payload), schemas: schemas))
         ))
     )
   }
@@ -913,3 +828,13 @@ extension MessageV7 {
     )
   }
 }
+
+public let wireMessageSchemasCbor: [UInt8] = [
+  129, 163, 98, 105, 100, 27, 91, 18, 235, 93, 247, 0, 103, 82, 107, 116, 121, 112, 101, 95, 112,
+  97, 114, 97, 109, 115, 128, 100, 107, 105, 110, 100, 163, 99, 116, 97, 103, 100, 101, 110, 117,
+  109, 100, 110, 97, 109, 101, 102, 80, 97, 114, 105, 116, 121, 104, 118, 97, 114, 105, 97, 110,
+  116, 115, 130, 163, 100, 110, 97, 109, 101, 99, 79, 100, 100, 101, 105, 110, 100, 101, 120, 0,
+  103, 112, 97, 121, 108, 111, 97, 100, 100, 117, 110, 105, 116, 163, 100, 110, 97, 109, 101, 100,
+  69, 118, 101, 110, 101, 105, 110, 100, 101, 120, 1, 103, 112, 97, 121, 108, 111, 97, 100, 100,
+  117, 110, 105, 116,
+]

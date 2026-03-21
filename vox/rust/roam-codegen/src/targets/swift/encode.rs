@@ -29,6 +29,9 @@ pub fn generate_encode_expr(shape: &'static Shape, value: &str) -> String {
             let inner_encode = generate_encode_closure(inner);
             format!("encodeOption({value}, encoder: {inner_encode})")
         }
+        ShapeKind::Tx { .. } | ShapeKind::Rx { .. } => {
+            format!("encodeVarint({value}.channelId)")
+        }
         ShapeKind::Tuple { elements } if elements.len() == 2 => {
             let a_encode = generate_encode_closure(elements[0].shape);
             let b_encode = generate_encode_closure(elements[1].shape);
@@ -90,6 +93,7 @@ pub fn generate_encode_closure(shape: &'static Shape) -> String {
             let inner_closure = generate_encode_closure(inner);
             format!("{{ encodeOption($0, encoder: {inner_closure}) }}")
         }
+        ShapeKind::Tx { .. } | ShapeKind::Rx { .. } => "{ encodeVarint($0.channelId) }".into(),
         ShapeKind::Tuple { elements } if elements.len() == 2 => {
             let a_encode = generate_encode_closure(elements[0].shape);
             let b_encode = generate_encode_closure(elements[1].shape);

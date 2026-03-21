@@ -7,7 +7,6 @@ enum HandleCommand: Sendable {
         methodId: UInt64,
         metadata: [MetadataEntryV7],
         payload: [UInt8],
-        channels: [UInt64],
         retry: RetryPolicy,
         timeout: TimeInterval?,
         prepareRetry: (@Sendable () async -> PreparedRetryRequest)?,

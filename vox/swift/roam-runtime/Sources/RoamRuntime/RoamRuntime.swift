@@ -15,7 +15,6 @@ public protocol RoamConnection: Sendable {
         methodId: UInt64,
         metadata: [MetadataEntryV7],
         payload: Data,
-        channels: [UInt64],
         retry: RetryPolicy,
         timeout: TimeInterval?,
         prepareRetry: (@Sendable () async -> PreparedRetryRequest)?,
@@ -36,7 +35,6 @@ public extension RoamConnection {
     func call(
         methodId: UInt64,
         payload: Data,
-        channels: [UInt64],
         retry: RetryPolicy,
         timeout: TimeInterval?
     ) async throws -> Data {
@@ -44,7 +42,6 @@ public extension RoamConnection {
             methodId: methodId,
             metadata: [],
             payload: payload,
-            channels: channels,
             retry: retry,
             timeout: timeout,
             prepareRetry: nil,
@@ -55,7 +52,6 @@ public extension RoamConnection {
     func call(
         methodId: UInt64,
         payload: Data,
-        channels: [UInt64],
         retry: RetryPolicy,
         timeout: TimeInterval?,
         prepareRetry: (@Sendable () async -> PreparedRetryRequest)?,
@@ -65,7 +61,6 @@ public extension RoamConnection {
             methodId: methodId,
             metadata: [],
             payload: payload,
-            channels: channels,
             retry: retry,
             timeout: timeout,
             prepareRetry: prepareRetry,
@@ -77,14 +72,12 @@ public extension RoamConnection {
         methodId: UInt64,
         metadata: [MetadataEntryV7],
         payload: Data,
-        channels: [UInt64],
         timeout: TimeInterval?
     ) async throws -> Data {
         try await call(
             methodId: methodId,
             metadata: metadata,
             payload: payload,
-            channels: channels,
             retry: .volatile,
             timeout: timeout,
             prepareRetry: nil,
@@ -97,7 +90,6 @@ public extension RoamConnection {
             methodId: methodId,
             metadata: [],
             payload: payload,
-            channels: [],
             retry: .volatile,
             timeout: nil,
             prepareRetry: nil,
@@ -110,7 +102,6 @@ public extension RoamConnection {
             methodId: methodId,
             metadata: [],
             payload: payload,
-            channels: [],
             retry: .volatile,
             timeout: timeout,
             prepareRetry: nil,
@@ -118,41 +109,6 @@ public extension RoamConnection {
         )
     }
 
-    func call(
-        methodId: UInt64,
-        metadata: [MetadataEntryV7],
-        payload: Data,
-        timeout: TimeInterval?
-    ) async throws -> Data {
-        try await call(
-            methodId: methodId,
-            metadata: metadata,
-            payload: payload,
-            channels: [],
-            retry: .volatile,
-            timeout: timeout,
-            prepareRetry: nil,
-            finalizeChannels: nil
-        )
-    }
-
-    func call(
-        methodId: UInt64,
-        payload: Data,
-        channels: [UInt64],
-        timeout: TimeInterval?
-    ) async throws -> Data {
-        try await call(
-            methodId: methodId,
-            metadata: [],
-            payload: payload,
-            channels: channels,
-            retry: .volatile,
-            timeout: timeout,
-            prepareRetry: nil,
-            finalizeChannels: nil
-        )
-    }
 }
 
 // MARK: - Connection RoamConnection Conformance

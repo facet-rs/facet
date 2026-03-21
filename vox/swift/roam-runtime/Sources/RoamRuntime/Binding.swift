@@ -281,7 +281,7 @@ public typealias IncomingChannelRegistry = ChannelRegistry
 
 /// Bind channels from method arguments using schema.
 public func bindChannels(
-    schemas: [Schema],
+    schemas: [BindingSchema],
     args: [Any],
     allocator: ChannelIdAllocator,
     incomingRegistry: ChannelRegistry,
@@ -301,7 +301,7 @@ public func bindChannels(
 }
 
 public func finalizeBoundChannels(
-    schemas: [Schema],
+    schemas: [BindingSchema],
     args: [Any]
 ) {
     for (schema, arg) in zip(schemas, args) {
@@ -310,7 +310,7 @@ public func finalizeBoundChannels(
 }
 
 /// Collect bound channel IDs in argument declaration order.
-public func collectChannelIds(schemas: [Schema], args: [Any]) -> [UInt64] {
+public func collectChannelIds(schemas: [BindingSchema], args: [Any]) -> [UInt64] {
     var channelIds: [UInt64] = []
     for (schema, arg) in zip(schemas, args) {
         collectChannelIdsFromValue(schema: schema, value: arg, out: &channelIds)
@@ -318,7 +318,7 @@ public func collectChannelIds(schemas: [Schema], args: [Any]) -> [UInt64] {
     return channelIds
 }
 
-private func collectChannelIdsFromValue(schema: Schema, value: Any, out: inout [UInt64]) {
+private func collectChannelIdsFromValue(schema: BindingSchema, value: Any, out: inout [UInt64]) {
     switch schema {
     case .rx(_, _):
         if let rx = value as? AnyUnboundRx {
@@ -352,7 +352,7 @@ private func collectChannelIdsFromValue(schema: Schema, value: Any, out: inout [
 }
 
 private func bindValue(
-    schema: Schema,
+    schema: BindingSchema,
     value: Any,
     allocator: ChannelIdAllocator,
     incomingRegistry: ChannelRegistry,
@@ -435,7 +435,7 @@ private func bindValue(
     }
 }
 
-private func finalizeValue(schema: Schema, value: Any) {
+private func finalizeValue(schema: BindingSchema, value: Any) {
     switch schema {
     case .rx:
         (value as? AnyRetryFinalizableChannel)?.finishRetryBinding()

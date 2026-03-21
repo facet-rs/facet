@@ -119,7 +119,7 @@ fn generate_channeling_dispatcher(service: &ServiceDescriptor) -> String {
 
         // Main dispatch method
         w.writeln(
-            "public func dispatch(methodId: UInt64, requestId: UInt64, channels: [UInt64], payload: Data) async {",
+            "public func dispatch(methodId: UInt64, requestId: UInt64, payload: Data) async {",
         )
         .unwrap();
         {
@@ -132,7 +132,7 @@ fn generate_channeling_dispatcher(service: &ServiceDescriptor) -> String {
                 cw_writeln!(w, "case {}:", hex_u64(method_id)).unwrap();
                 cw_writeln!(
                     w,
-                    "    await {dispatch_name}(requestId: requestId, channels: channels, payload: payload)"
+                    "    await {dispatch_name}(requestId: requestId, payload: payload)"
                 )
                 .unwrap();
             }
@@ -182,13 +182,15 @@ fn generate_channeling_dispatcher(service: &ServiceDescriptor) -> String {
 
 /// Generate preregisterChannels method.
 fn generate_preregister_channels(w: &mut CodeWriter<&mut String>, service: &ServiceDescriptor) {
-    w.writeln("/// Pre-register Rx channel IDs from request channels.")
+    w.writeln("/// Pre-register Rx channel IDs from request payloads.")
         .unwrap();
     w.writeln("/// Call this synchronously before spawning the dispatch task to avoid")
         .unwrap();
     w.writeln("/// race conditions where Data arrives before channels are registered.")
         .unwrap();
-    w.writeln("public static func preregisterChannels(methodId: UInt64, channels: [UInt64], registry: ChannelRegistry) async {")
+    w.writeln(
+        "public static func preregisterChannels(methodId: UInt64, payload: Data, registry: ChannelRegistry) async {",
+    )
         .unwrap();
     {
         let _indent = w.indent();
@@ -196,35 +198,48 @@ fn generate_preregister_channels(w: &mut CodeWriter<&mut String>, service: &Serv
 
         for method in service.methods {
             let method_id = crate::method_id(method);
-            let has_rx_args = method.args.iter().any(|a| is_rx(a.shape));
+            let has_channel_args = method.args.iter().any(|a| is_rx(a.shape) || is_tx(a.shape));
 
-            if has_rx_args {
-                let channel_arg_count = method
-                    .args
-                    .iter()
-                    .filter(|a| is_rx(a.shape) || is_tx(a.shape))
-                    .count();
+            if has_channel_args {
                 cw_writeln!(w, "case {}:", hex_u64(method_id)).unwrap();
-                cw_writeln!(w, "    guard channels.count >= {channel_arg_count} else {{").unwrap();
-                w.writeln("        return").unwrap();
-                w.writeln("    }").unwrap();
-                w.writeln("    var channelCursor = 0").unwrap();
-
-                // Channel IDs are provided in declaration order.
-                for arg in method.args {
-                    let arg_name = arg.name.to_lower_camel_case();
-                    if is_rx(arg.shape) {
-                        // Schema Rx = client sends, server receives → need to preregister
-                        cw_writeln!(w, "    let {arg_name}ChannelId = channels[channelCursor]")
+                w.writeln("    do {").unwrap();
+                {
+                    let _indent = w.indent();
+                    if !method.args.is_empty() {
+                        w.writeln("var preregisterCursor = 0").unwrap();
+                    }
+                    for arg in method.args {
+                        let arg_name = arg.name.to_lower_camel_case();
+                        if is_rx(arg.shape) {
+                            cw_writeln!(
+                                w,
+                                "let {arg_name}ChannelId = try decodeVarint(from: payload, offset: &preregisterCursor)"
+                            )
                             .unwrap();
-                        w.writeln("    channelCursor += 1").unwrap();
-                        cw_writeln!(w, "    await registry.markKnown({arg_name}ChannelId)")
+                            cw_writeln!(w, "await registry.markKnown({arg_name}ChannelId)")
+                                .unwrap();
+                        } else if is_tx(arg.shape) {
+                            w.writeln(
+                                "_ = try decodeVarint(from: payload, offset: &preregisterCursor)",
+                            )
                             .unwrap();
-                    } else if is_tx(arg.shape) {
-                        cw_writeln!(w, "    _ = channels[channelCursor] // {arg_name}").unwrap();
-                        w.writeln("    channelCursor += 1").unwrap();
+                        } else {
+                            let discard_name = format!("_discard_{arg_name}");
+                            let decode_stmt = generate_decode_stmt_with_cursor(
+                                arg.shape,
+                                &discard_name,
+                                "",
+                                "preregisterCursor",
+                            );
+                            for line in decode_stmt.lines() {
+                                w.writeln(line).unwrap();
+                            }
+                        }
                     }
                 }
+                w.writeln("    } catch {").unwrap();
+                w.writeln("        return").unwrap();
+                w.writeln("    }").unwrap();
             }
         }
 
@@ -248,7 +263,7 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
 
     cw_writeln!(
         w,
-        "private func {dispatch_name}(requestId: UInt64, channels: [UInt64], payload: Data) async {{"
+        "private func {dispatch_name}(requestId: UInt64, payload: Data) async {{"
     )
     .unwrap();
     {
@@ -256,32 +271,17 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
         w.writeln("do {").unwrap();
         {
             let _indent = w.indent();
-            let has_payload_args = method
-                .args
-                .iter()
-                .any(|a| !is_rx(a.shape) && !is_tx(a.shape));
-            let has_channel_args = method.args.iter().any(|a| is_rx(a.shape) || is_tx(a.shape));
-            let cursor_var = if has_payload_args {
+            let cursor_var = if !method.args.is_empty() {
                 let name = unique_decode_cursor_name(method.args);
                 cw_writeln!(w, "var {name} = 0").unwrap();
                 Some(name)
             } else {
                 None
             };
-            if has_channel_args {
-                w.writeln("var channelCursor = 0").unwrap();
-            }
 
             for arg in method.args {
                 let arg_name = arg.name.to_lower_camel_case();
-                generate_channeling_decode_arg(
-                    w,
-                    &arg_name,
-                    arg.shape,
-                    cursor_var.as_deref(),
-                    "channels",
-                    Some("channelCursor"),
-                );
+                generate_channeling_decode_arg(w, &arg_name, arg.shape, cursor_var.as_deref());
             }
             let arg_names: Vec<String> = method
                 .args
@@ -394,27 +394,18 @@ fn generate_channeling_decode_arg(
     name: &str,
     shape: &'static Shape,
     cursor_var: Option<&str>,
-    channels_var: &str,
-    channel_cursor_var: Option<&str>,
 ) {
     match classify_shape(shape) {
         ShapeKind::Rx { inner } => {
             // Schema Rx = client passes Rx to method, sends via paired Tx
             // Server needs to receive → create server Rx
             let inline_decode = generate_inline_decode(inner, "Data(bytes)", "off");
-            let channel_cursor_var =
-                channel_cursor_var.expect("channel cursor required for channeling args");
+            let cursor_var = cursor_var.expect("payload cursor required for channeling args");
             cw_writeln!(
                 w,
-                "guard {channel_cursor_var} < {channels_var}.count else {{ throw RoamError.decodeError(\"missing channel id for {name}\") }}"
+                "let {name}ChannelId = try decodeVarint(from: payload, offset: &{cursor_var})"
             )
             .unwrap();
-            cw_writeln!(
-                w,
-                "let {name}ChannelId = {channels_var}[{channel_cursor_var}]"
-            )
-            .unwrap();
-            cw_writeln!(w, "{channel_cursor_var} += 1").unwrap();
             cw_writeln!(
                 w,
                 "let {name}Receiver = await registry.register({name}ChannelId, initialCredit: 16, onConsumed: {{ [taskSender = self.taskSender] additional in taskSender(.grantCredit(channelId: {name}ChannelId, bytes: additional)) }})"
@@ -433,19 +424,12 @@ fn generate_channeling_decode_arg(
             // Schema Tx = client passes Tx to method, receives via paired Rx
             // Server needs to send → create server Tx
             let encode_closure = generate_encode_closure(inner);
-            let channel_cursor_var =
-                channel_cursor_var.expect("channel cursor required for channeling args");
+            let cursor_var = cursor_var.expect("payload cursor required for channeling args");
             cw_writeln!(
                 w,
-                "guard {channel_cursor_var} < {channels_var}.count else {{ throw RoamError.decodeError(\"missing channel id for {name}\") }}"
+                "let {name}ChannelId = try decodeVarint(from: payload, offset: &{cursor_var})"
             )
             .unwrap();
-            cw_writeln!(
-                w,
-                "let {name}ChannelId = {channels_var}[{channel_cursor_var}]"
-            )
-            .unwrap();
-            cw_writeln!(w, "{channel_cursor_var} += 1").unwrap();
             cw_writeln!(
                 w,
                 "let {name} = await createServerTx(channelId: {name}ChannelId, taskSender: taskSender, registry: registry, initialCredit: 16, serialize: ({encode_closure}))"

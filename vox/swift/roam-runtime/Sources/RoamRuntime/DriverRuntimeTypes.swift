@@ -2,11 +2,9 @@ import Foundation
 
 public struct PreparedRetryRequest: Sendable {
     public let payload: [UInt8]
-    public let channels: [UInt64]
 
-    public init(payload: [UInt8], channels: [UInt64]) {
+    public init(payload: [UInt8]) {
         self.payload = payload
-        self.channels = channels
     }
 }
 
@@ -19,7 +17,6 @@ struct DriverQueuedCall: Sendable {
     let methodId: UInt64
     let metadata: [MetadataEntryV7]
     let payload: [UInt8]
-    let channels: [UInt64]
     let retry: RetryPolicy
     let timeout: TimeInterval?
     let prepareRetry: (@Sendable () async -> PreparedRetryRequest)?

@@ -7,7 +7,7 @@
 //! for the same operation.
 
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
-use roam_types::{MethodDescriptor, ServiceDescriptor, ShapeKind, classify_shape, is_rx, is_tx};
+use roam_types::{MethodDescriptor, ServiceDescriptor, ShapeKind, classify_shape};
 
 use super::decode::generate_decode_stmt_from_with_cursor;
 use super::encode::generate_encode_expr;
@@ -187,7 +187,7 @@ fn generate_client_method(
             let method_id = crate::method_id(method);
             cw_writeln!(
                 w,
-                "let response = try await connection.call(methodId: {}, payload: payload, channels: [], retry: {retry_policy}, timeout: timeout)",
+                "let response = try await connection.call(methodId: {}, payload: payload, retry: {retry_policy}, timeout: timeout)",
                 hex_u64(method_id),
             )
             .unwrap();
@@ -199,14 +199,6 @@ fn generate_client_method(
 
 /// Generate code to encode method arguments (for client).
 fn generate_encode_args(w: &mut CodeWriter<&mut String>, args: &[roam_types::ArgDescriptor]) {
-    generate_encode_args_filtered(w, args, false);
-}
-
-fn generate_encode_args_filtered(
-    w: &mut CodeWriter<&mut String>,
-    args: &[roam_types::ArgDescriptor],
-    skip_channels: bool,
-) {
     if args.is_empty() {
         w.writeln("let payload = Data()").unwrap();
         return;
@@ -214,9 +206,6 @@ fn generate_encode_args_filtered(
 
     w.writeln("var payloadBytes: [UInt8] = []").unwrap();
     for arg in args {
-        if skip_channels && (is_tx(arg.shape) || is_rx(arg.shape)) {
-            continue;
-        }
         let arg_name = arg.name.to_lower_camel_case();
         let encode_expr = generate_encode_expr(arg.shape, &arg_name);
         cw_writeln!(w, "payloadBytes += {encode_expr}").unwrap();
@@ -268,14 +257,8 @@ fn generate_streaming_client_body(
         }
         w.writeln(")").unwrap();
         w.blank_line().unwrap();
-        generate_encode_args_filtered(w, method.args, true);
-        cw_writeln!(
-            w,
-            "let channels = collectChannelIds(schemas: {service_name_lower}_schemas[\"{method_id_name}\"]!.args, args: [{}])",
-            arg_names.join(", ")
-        )
-        .unwrap();
-        w.writeln("return PreparedRetryRequest(payload: Array(payload), channels: channels)")
+        generate_encode_args(w, method.args);
+        w.writeln("return PreparedRetryRequest(payload: Array(payload))")
             .unwrap();
     }
     w.writeln("}").unwrap();
@@ -288,7 +271,7 @@ fn generate_streaming_client_body(
     let _ = ret_type;
     cw_writeln!(
         w,
-        "let response = try await connection.call(methodId: {}, payload: Data(prepared.payload), channels: prepared.channels, retry: {retry_policy}, timeout: timeout, prepareRetry: prepareRetry, finalizeChannels: {{ finalizeBoundChannels(schemas: {service_name_lower}_schemas[\"{method_id_name}\"]!.args, args: [{}]) }})",
+        "let response = try await connection.call(methodId: {}, payload: Data(prepared.payload), retry: {retry_policy}, timeout: timeout, prepareRetry: prepareRetry, finalizeChannels: {{ finalizeBoundChannels(schemas: {service_name_lower}_schemas[\"{method_id_name}\"]!.args, args: [{}]) }})",
         hex_u64(method_id),
         arg_names.join(", ")
     )

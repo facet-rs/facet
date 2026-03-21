@@ -11,7 +11,8 @@
 use facet_core::{Field, ScalarType, Shape};
 use heck::ToLowerCamelCase;
 use roam_types::{
-    EnumInfo, ShapeKind, StructInfo, VariantKind, classify_shape, classify_variant, is_bytes,
+    EnumInfo, ShapeKind, StructInfo, VariantKind, classify_shape, classify_variant,
+    extract_schemas, is_bytes,
 };
 
 /// A wire type to generate Swift code for.
@@ -43,6 +44,21 @@ pub fn generate_wire_types(types: &[WireType]) -> String {
 
     // Generate factory methods extension on MessageV7
     out.push_str(&generate_factory_methods(types));
+
+    if let Some(root) = types.first() {
+        let extracted = extract_schemas(root.shape).expect("wire schema extraction should succeed");
+        let cbor_bytes = facet_cbor::to_vec(&extracted.schemas)
+            .expect("wire schema CBOR serialization should succeed");
+        let body = cbor_bytes
+            .iter()
+            .map(|b| b.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push('\n');
+        out.push_str(&format!(
+            "public let wireMessageSchemasCbor: [UInt8] = [{body}]\n"
+        ));
+    }
 
     out
 }
@@ -754,7 +770,7 @@ fn generate_factory_methods(types: &[WireType]) -> String {
     out.push_str("        requestId: UInt64,\n");
     out.push_str("        methodId: UInt64,\n");
     out.push_str("        metadata: [MetadataEntryV7],\n");
-    out.push_str("        channels: [UInt64],\n");
+    out.push_str("        schemas: [UInt8] = [],\n");
     out.push_str("        payload: [UInt8]\n");
     out.push_str("    ) -> MessageV7 {\n");
     out.push_str("        MessageV7(\n");
@@ -762,7 +778,7 @@ fn generate_factory_methods(types: &[WireType]) -> String {
     out.push_str("            payload: .requestMessage(\n");
     out.push_str("                .init(\n");
     out.push_str("                    id: requestId,\n");
-    out.push_str("                    body: .call(.init(methodId: methodId, channels: channels, metadata: metadata, args: .init(payload)))\n");
+    out.push_str("                    body: .call(.init(methodId: methodId, metadata: metadata, args: .init(payload), schemas: schemas))\n");
     out.push_str("                ))\n");
     out.push_str("        )\n");
     out.push_str("    }\n\n");
@@ -771,7 +787,7 @@ fn generate_factory_methods(types: &[WireType]) -> String {
     out.push_str("        connId: UInt64,\n");
     out.push_str("        requestId: UInt64,\n");
     out.push_str("        metadata: [MetadataEntryV7],\n");
-    out.push_str("        channels: [UInt64],\n");
+    out.push_str("        schemas: [UInt8] = [],\n");
     out.push_str("        payload: [UInt8]\n");
     out.push_str("    ) -> MessageV7 {\n");
     out.push_str("        MessageV7(\n");
@@ -779,7 +795,7 @@ fn generate_factory_methods(types: &[WireType]) -> String {
     out.push_str("            payload: .requestMessage(\n");
     out.push_str("                .init(\n");
     out.push_str("                    id: requestId,\n");
-    out.push_str("                    body: .response(.init(channels: channels, metadata: metadata, ret: .init(payload)))\n");
+    out.push_str("                    body: .response(.init(metadata: metadata, ret: .init(payload), schemas: schemas))\n");
     out.push_str("                ))\n");
     out.push_str("        )\n");
     out.push_str("    }\n\n");

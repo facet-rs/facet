@@ -1,4 +1,4 @@
-//! Swift schema generation for runtime channel binding.
+//! Swift binding-schema generation for runtime channel binding.
 //!
 //! Generates runtime schema information for channel discovery.
 
@@ -26,12 +26,14 @@ fn generate_method_schemas(service: &ServiceDescriptor) -> String {
     let service_name = service.service_name.to_lower_camel_case();
 
     out.push_str(&format!(
-        "public let {service_name}_schemas: [String: MethodSchema] = [\n"
+        "public let {service_name}_schemas: [String: MethodBindingSchema] = [\n"
     ));
 
     for method in service.methods {
         let method_name = method.method_name.to_lower_camel_case();
-        out.push_str(&format!("    \"{method_name}\": MethodSchema(args: ["));
+        out.push_str(&format!(
+            "    \"{method_name}\": MethodBindingSchema(args: ["
+        ));
 
         let schemas: Vec<String> = method
             .args
@@ -47,7 +49,7 @@ fn generate_method_schemas(service: &ServiceDescriptor) -> String {
     out
 }
 
-/// Convert a Shape to its Swift Schema representation.
+/// Convert a Shape to its Swift binding-schema representation.
 fn shape_to_schema(shape: &'static Shape) -> String {
     if is_bytes(shape) {
         return ".bytes".into();
@@ -133,8 +135,10 @@ fn generate_serializers(service: &ServiceDescriptor) -> String {
         w.blank_line().unwrap();
 
         // txSerializer
-        w.writeln("public func txSerializer(for schema: Schema) -> @Sendable (Any) -> [UInt8] {")
-            .unwrap();
+        w.writeln(
+            "public func txSerializer(for schema: BindingSchema) -> @Sendable (Any) -> [UInt8] {",
+        )
+        .unwrap();
         {
             let _indent = w.indent();
             w.writeln("switch schema {").unwrap();
@@ -179,7 +183,7 @@ fn generate_serializers(service: &ServiceDescriptor) -> String {
 
         // rxDeserializer
         w.writeln(
-            "public func rxDeserializer(for schema: Schema) -> @Sendable ([UInt8]) throws -> Any {",
+            "public func rxDeserializer(for schema: BindingSchema) -> @Sendable ([UInt8]) throws -> Any {",
         )
         .unwrap();
         {

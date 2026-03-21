@@ -13,7 +13,6 @@ extension Driver {
             connId: responseContext.connectionId,
             requestId: requestId,
             metadata: responseContext.responseMetadata,
-            channels: [],
             payload: payload
         )
     }
@@ -80,7 +79,7 @@ extension Driver {
     func handleCommand(_ cmd: HandleCommand) async {
         switch cmd {
         case .call(
-            let requestId, let methodId, let metadata, let payload, let channels, let retry,
+            let requestId, let methodId, let metadata, let payload, let retry,
             let timeout, let prepareRetry, let responseTx):
             let isClosed = await state.isConnectionClosed()
             guard !isClosed else {
@@ -93,7 +92,6 @@ extension Driver {
                 methodId: methodId,
                 metadata: metadata,
                 payload: payload,
-                channels: channels,
                 retry: retry,
                 timeout: timeout,
                 prepareRetry: prepareRetry
@@ -115,7 +113,6 @@ extension Driver {
                 requestId: requestId,
                 methodId: methodId,
                 metadata: metadata,
-                channels: channels,
                 payload: payload
             )
             do {
@@ -181,7 +178,6 @@ extension Driver {
                     methodId: call.methodId,
                     metadata: call.metadata,
                     payload: rebuilt.payload,
-                    channels: rebuilt.channels,
                     retry: call.retry,
                     timeout: call.timeout,
                     prepareRetry: call.prepareRetry
@@ -195,7 +191,6 @@ extension Driver {
                 requestId: replayCall.requestId,
                 methodId: replayCall.methodId,
                 metadata: replayCall.metadata,
-                channels: replayCall.channels,
                 payload: replayCall.payload
             )
 
@@ -255,7 +250,7 @@ extension Driver {
         let inFlight = await state.pendingCallsSnapshot()
         pendingCalls.removeAll()
         for call in inFlight {
-            if !call.channels.isEmpty && !call.retry.idem {
+            if call.prepareRetry != nil && !call.retry.idem {
                 guard let pending = await state.claimPendingResponse(
                     call.requestId,
                     reason: "resume-channel-indeterminate"

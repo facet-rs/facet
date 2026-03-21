@@ -19,8 +19,6 @@ extension Driver {
         keepaliveRuntime: inout DriverKeepaliveRuntime?
     ) async throws {
         switch msg.payload {
-        case .hello, .helloYourself:
-            break
         case .ping(let ping):
             do {
                 try await conduit.send(.pong(.init(nonce: ping.nonce)))
@@ -63,7 +61,6 @@ extension Driver {
                     requestId: request.id,
                     methodId: call.methodId,
                     metadata: call.metadata,
-                    channels: call.channels,
                     payload: call.args.bytes
                 )
             case .response(let response):
@@ -127,7 +124,6 @@ extension Driver {
         requestId: UInt64,
         methodId: UInt64,
         metadata: [MetadataEntryV7],
-        channels: [UInt64],
         payload: [UInt8]
     ) async throws {
         let retry = dispatcher.retryPolicy(methodId: methodId)
@@ -175,7 +171,6 @@ extension Driver {
         await dispatcher.preregister(
             methodId: methodId,
             payload: payload,
-            channels: channels,
             registry: serverRegistry
         )
 
@@ -183,7 +178,6 @@ extension Driver {
             await dispatcher.dispatch(
                 methodId: methodId,
                 payload: payload,
-                channels: channels,
                 requestId: requestId,
                 registry: serverRegistry,
                 taskTx: taskTx

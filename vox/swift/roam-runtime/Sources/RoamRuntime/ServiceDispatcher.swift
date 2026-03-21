@@ -8,7 +8,6 @@ public protocol ServiceDispatcher: Sendable {
     func preregister(
         methodId: UInt64,
         payload: [UInt8],
-        channels: [UInt64],
         registry: ChannelRegistry
     ) async
 
@@ -16,7 +15,6 @@ public protocol ServiceDispatcher: Sendable {
     func dispatch(
         methodId: UInt64,
         payload: [UInt8],
-        channels: [UInt64],
         requestId: UInt64,
         registry: ChannelRegistry,
         taskTx: @escaping @Sendable (TaskMessage) -> Void
