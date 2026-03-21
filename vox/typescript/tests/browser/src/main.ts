@@ -3,7 +3,12 @@
 // This test connects to a Rust WebSocket server and makes RPC calls
 // using generated client code for the Testbed service.
 
-import { channel, session, type LinkAttachment, type LinkSource } from "@bearcove/roam-core";
+import {
+  channel,
+  session,
+  type LinkAttachment,
+  type LinkSource,
+} from "@bearcove/roam-core";
 import { connectTestbed, TestbedClient } from "@bearcove/roam-generated/testbed.generated.ts";
 import { WsLink, WsLinkSource } from "@bearcove/roam-ws";
 

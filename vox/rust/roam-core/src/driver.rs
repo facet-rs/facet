@@ -556,6 +556,69 @@ struct DriverChannelBinder {
 /// Default initial credit for all channels.
 const DEFAULT_CHANNEL_CREDIT: u32 = 16;
 
+fn register_rx_channel_impl(
+    shared: &Arc<DriverShared>,
+    channel_id: ChannelId,
+    queue_name: &'static str,
+    liveness: Option<ChannelLivenessHandle>,
+    local_control_tx: mpsc::UnboundedSender<DriverLocalControl>,
+) -> roam_types::BoundChannelReceiver {
+    let (tx, rx) = mpsc::channel(queue_name, 64);
+
+    let mut terminal_buffered = false;
+    {
+        let mut senders = shared.channel_senders.lock();
+
+        // Publish the live sender and keep the registry locked until any
+        // pre-registration backlog has been drained.
+        //
+        // This makes the handoff lossless and order-preserving:
+        // - items that raced with registration cannot create a fresh orphan
+        //   buffer entry because the live sender is already visible
+        // - newer items cannot bypass older buffered items because
+        //   handle_channel() blocks on channel_senders until the drain finishes
+        senders.insert(channel_id, tx.clone());
+
+        let buffered = shared.channel_buffers.lock().remove(&channel_id);
+        if let Some(buffered) = buffered {
+            for msg in buffered {
+                let is_terminal = matches!(
+                    msg,
+                    IncomingChannelMessage::Close(_) | IncomingChannelMessage::Reset(_)
+                );
+                let _ = tx.try_send(msg);
+                if is_terminal {
+                    terminal_buffered = true;
+                    break;
+                }
+            }
+        }
+
+        if terminal_buffered {
+            senders.remove(&channel_id);
+        }
+    }
+
+    if terminal_buffered {
+        shared.channel_credits.lock().remove(&channel_id);
+        return roam_types::BoundChannelReceiver {
+            receiver: rx,
+            liveness,
+            replenisher: None,
+        };
+    }
+
+    roam_types::BoundChannelReceiver {
+        receiver: rx,
+        liveness,
+        replenisher: Some(Arc::new(DriverChannelCreditReplenisher::new(
+            channel_id,
+            DEFAULT_CHANNEL_CREDIT,
+            local_control_tx,
+        )) as ChannelCreditReplenisherHandle),
+    }
+}
+
 impl DriverChannelBinder {
     fn create_tx_channel(&self) -> (ChannelId, Arc<CreditSink<DriverChannelSink>>) {
         let channel_id = self.shared.channel_ids.lock().alloc();
@@ -573,40 +636,13 @@ impl DriverChannelBinder {
     }
 
     fn register_rx_channel(&self, channel_id: ChannelId) -> roam_types::BoundChannelReceiver {
-        let (tx, rx) = mpsc::channel("driver.register_rx_channel", 64);
-        let mut terminal_buffered = false;
-        if let Some(buffered) = self.shared.channel_buffers.lock().remove(&channel_id) {
-            for msg in buffered {
-                let is_terminal = matches!(
-                    msg,
-                    IncomingChannelMessage::Close(_) | IncomingChannelMessage::Reset(_)
-                );
-                let _ = tx.try_send(msg);
-                if is_terminal {
-                    terminal_buffered = true;
-                    break;
-                }
-            }
-        }
-        if terminal_buffered {
-            self.shared.channel_credits.lock().remove(&channel_id);
-            return roam_types::BoundChannelReceiver {
-                receiver: rx,
-                liveness: self.channel_liveness(),
-                replenisher: None,
-            };
-        }
-
-        self.shared.channel_senders.lock().insert(channel_id, tx);
-        roam_types::BoundChannelReceiver {
-            receiver: rx,
-            liveness: self.channel_liveness(),
-            replenisher: Some(Arc::new(DriverChannelCreditReplenisher::new(
-                channel_id,
-                DEFAULT_CHANNEL_CREDIT,
-                self.local_control_tx.clone(),
-            )) as ChannelCreditReplenisherHandle),
-        }
+        register_rx_channel_impl(
+            &self.shared,
+            channel_id,
+            "driver.register_rx_channel",
+            self.channel_liveness(),
+            self.local_control_tx.clone(),
+        )
     }
 }
 
@@ -696,41 +732,13 @@ impl DriverCaller {
     /// The channel ID comes from the peer (e.g. from `RequestCall.channels`).
     /// The returned receiver should be bound to an `Rx` handle via `Rx::bind()`.
     pub fn register_rx_channel(&self, channel_id: ChannelId) -> roam_types::BoundChannelReceiver {
-        let (tx, rx) = mpsc::channel("driver.caller.register_rx_channel", 64);
-        let mut terminal_buffered = false;
-        // Drain any buffered messages that arrived before registration.
-        if let Some(buffered) = self.shared.channel_buffers.lock().remove(&channel_id) {
-            for msg in buffered {
-                let is_terminal = matches!(
-                    msg,
-                    IncomingChannelMessage::Close(_) | IncomingChannelMessage::Reset(_)
-                );
-                let _ = tx.try_send(msg);
-                if is_terminal {
-                    terminal_buffered = true;
-                    break;
-                }
-            }
-        }
-        if terminal_buffered {
-            self.shared.channel_credits.lock().remove(&channel_id);
-            return roam_types::BoundChannelReceiver {
-                receiver: rx,
-                liveness: self.channel_liveness(),
-                replenisher: None,
-            };
-        }
-
-        self.shared.channel_senders.lock().insert(channel_id, tx);
-        roam_types::BoundChannelReceiver {
-            receiver: rx,
-            liveness: self.channel_liveness(),
-            replenisher: Some(Arc::new(DriverChannelCreditReplenisher::new(
-                channel_id,
-                DEFAULT_CHANNEL_CREDIT,
-                self.local_control_tx.clone(),
-            )) as ChannelCreditReplenisherHandle),
-        }
+        register_rx_channel_impl(
+            &self.shared,
+            channel_id,
+            "driver.caller.register_rx_channel",
+            self.channel_liveness(),
+            self.local_control_tx.clone(),
+        )
     }
 }
 

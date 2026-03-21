@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { RpcErrorCode, type ConnectionSettings } from "@bearcove/roam-wire";
+import {
+  RpcErrorCode,
+  type ConnectionSettings,
+  type Message,
+} from "@bearcove/roam-wire";
 import { BareConduit } from "./conduit.ts";
 import { Driver, type Dispatcher } from "./driver.ts";
 import { handshakeAsAcceptor, handshakeAsInitiator, type HandshakeResult } from "./handshake.ts";
 import { RequestContext } from "./request_context.ts";
 import {
   Session,
+  ConnectionHandle,
   SessionError,
   SessionRegistry,
   session,
@@ -489,6 +494,76 @@ describe("session resumption", () => {
     serverSession.handle().shutdown();
 
     await Promise.allSettled([serverSession.closed(), clientSession.closed()]);
+  });
+
+  it("restarts channel flushing when new work arrives during a pending exit", async () => {
+    const settings: ConnectionSettings = {
+      parity: { tag: "Odd" },
+      max_concurrent_requests: 64,
+    };
+    const sent: Message[] = [];
+    const fakeSession = {
+      sendMessage: async (message: Message) => {
+        sent.push(message);
+      },
+    };
+    const connection = new ConnectionHandle(
+      fakeSession as never,
+      0n,
+      settings,
+      settings,
+      false,
+    );
+
+    let pollCount = 0;
+    const fakeRegistry = {
+      pollOutgoing() {
+        pollCount += 1;
+        if (pollCount === 1) {
+          void connection.flushOutgoing();
+          return { kind: "pending" } as const;
+        }
+        if (pollCount === 2) {
+          return {
+            kind: "data",
+            channelId: 7n,
+            payload: Uint8Array.of(1, 2, 3),
+          } as const;
+        }
+        return { kind: "done" } as const;
+      },
+    };
+    (
+      connection as unknown as {
+        channelRegistry: typeof fakeRegistry;
+      }
+    ).channelRegistry = fakeRegistry;
+
+    await connection.flushOutgoing();
+
+    expect(pollCount).toBe(3);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      connection_id: 0n,
+      payload: {
+        tag: "ChannelMessage",
+        value: {
+          id: 7n,
+          body: {
+            tag: "Item",
+          },
+        },
+      },
+    });
+    expect(
+      Array.from(
+        sent[0].payload.tag === "ChannelMessage"
+          ? sent[0].payload.value.body.tag === "Item"
+            ? sent[0].payload.value.body.value.item
+            : new Uint8Array(0)
+          : new Uint8Array(0),
+      ),
+    ).toEqual([1, 2, 3]);
   });
 
   it("keeps a pending call alive across registry-driven acceptor resume", async () => {

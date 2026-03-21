@@ -1106,6 +1106,7 @@ export class ConnectionHandle {
   private nextOperationId = 1n;
   private closed = false;
   private flushPromise: Promise<void> | null = null;
+  private flushRequested = false;
 
   constructor(
     private readonly session: SessionCore,
@@ -1491,6 +1492,7 @@ export class ConnectionHandle {
     if (this.closed) {
       return;
     }
+    this.flushRequested = true;
     if (this.flushPromise) {
       await this.flushPromise;
       return;
@@ -1498,20 +1500,26 @@ export class ConnectionHandle {
 
     const flush = (async () => {
       while (!this.closed) {
-        const poll = this.channelRegistry.pollOutgoing();
-        if (poll.kind === "pending" || poll.kind === "done") {
-          return;
+        this.flushRequested = false;
+        while (!this.closed) {
+          const poll = this.channelRegistry.pollOutgoing();
+          if (poll.kind === "pending" || poll.kind === "done") {
+            break;
+          }
+          switch (poll.kind) {
+            case "data":
+              await this.sendChannelData(poll.channelId, poll.payload);
+              break;
+            case "close":
+              await this.sendChannelClose(poll.channelId);
+              break;
+            case "credit":
+              await this.sendChannelCredit(poll.channelId, poll.additional);
+              break;
+          }
         }
-        switch (poll.kind) {
-          case "data":
-            await this.sendChannelData(poll.channelId, poll.payload);
-            break;
-          case "close":
-            await this.sendChannelClose(poll.channelId);
-            break;
-          case "credit":
-            await this.sendChannelCredit(poll.channelId, poll.additional);
-            break;
+        if (!this.flushRequested) {
+          return;
         }
       }
     })();

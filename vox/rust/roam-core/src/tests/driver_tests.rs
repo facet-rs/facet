@@ -11,8 +11,8 @@ use roam_types::{
     ChannelItem, ChannelMessage, ChannelSink, Conduit, ConduitRx, ConnectionSettings, Handler,
     IncomingChannelMessage, Link, LinkRx, LinkTx, LinkTxPermit, Message, MessageFamily,
     MessagePayload, Metadata, MethodId, Parity, Payload, ReplySink, RequestBody, RequestCall,
-    RequestCancel, RequestId, RequestMessage, RequestResponse, RetryPolicy, RoamError, SelfRef, Tx,
-    WriteSlot, channel, ensure_operation_id, metadata_operation_id,
+    RequestCancel, RequestMessage, RequestResponse, RetryPolicy, RoamError, SelfRef, Tx, WriteSlot,
+    channel, ensure_operation_id, metadata_operation_id,
 };
 
 use roam_types::{HandshakeResult, SessionResumeKey, SessionRole};
