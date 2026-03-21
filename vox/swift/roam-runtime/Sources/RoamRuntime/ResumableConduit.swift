@@ -48,6 +48,7 @@ actor SessionResumeCoordinator {
         guard resumable else {
             throw ConnectionError.protocolViolation(rule: "session is not resumable")
         }
+        traceLog(.resume, "resume requested transport=\(transport)")
         try await enqueueResume(attachment)
     }
 
@@ -59,15 +60,22 @@ actor SessionResumeCoordinator {
     }
 
     private func enqueueResume(_ attachment: LinkAttachment) async throws {
+        traceLog(
+            .resume,
+            "enqueue pending=\(pendingResumes.count) waiter=\(resumeWaiter != nil)"
+        )
         try await withCheckedThrowingContinuation { continuation in
             let request = ResumeRequest(attachment: attachment, result: continuation)
             if let waiter = resumeWaiter {
                 resumeWaiter = nil
+                traceLog(.resume, "resume delivered directly to parked waiter")
                 waiter.resume(returning: request)
             } else {
                 pendingResumes.append(request)
+                traceLog(.resume, "resume queued pending=\(pendingResumes.count)")
             }
         }
+        traceLog(.resume, "resume continuation completed")
     }
 
     func replacementConduit() async throws -> (any Conduit)? {
@@ -77,21 +85,27 @@ actor SessionResumeCoordinator {
 
         if let recoverAttachment {
             do {
+                traceLog(.resume, "trying recoverAttachment")
                 let attachment = try await recoverAttachment()
+                traceLog(.resume, "recoverAttachment succeeded")
                 return try await buildResumedConduit(from: attachment)
             } catch {
+                traceLog(.resume, "recoverAttachment failed: \(String(describing: error))")
             }
         }
 
         while !closed {
             guard let pending = await nextResume() else {
+                traceLog(.resume, "replacementConduit observed closed coordinator")
                 return nil
             }
             do {
                 let conduit = try await buildResumedConduit(from: pending.attachment)
                 pending.result.resume()
+                traceLog(.resume, "replacementConduit built resumed conduit")
                 return conduit
             } catch {
+                traceLog(.resume, "replacementConduit failed: \(String(describing: error))")
                 pending.result.resume(throwing: error)
             }
         }
@@ -100,6 +114,10 @@ actor SessionResumeCoordinator {
     }
 
     func shutdown() {
+        traceLog(
+            .resume,
+            "shutdown pending=\(pendingResumes.count) waiter=\(resumeWaiter != nil)"
+        )
         closed = true
         let waiter = resumeWaiter
         resumeWaiter = nil
@@ -114,11 +132,13 @@ actor SessionResumeCoordinator {
 
     private func nextResume() async -> ResumeRequest? {
         if !pendingResumes.isEmpty {
+            traceLog(.resume, "nextResume returning queued pending=\(pendingResumes.count)")
             return pendingResumes.removeFirst()
         }
         if closed {
             return nil
         }
+        traceLog(.resume, "nextResume parking waiter")
         return await withCheckedContinuation { continuation in
             resumeWaiter = continuation
         }
@@ -130,6 +150,7 @@ actor SessionResumeCoordinator {
         guard let sessionResumeKey else {
             throw ConnectionError.protocolViolation(rule: "session is not resumable")
         }
+        traceLog(.resume, "buildResumedConduit role=\(role)")
 
         switch role {
         case .initiator:
@@ -246,6 +267,7 @@ final actor ResumableConduit: Conduit {
     }
 
     func close() async throws {
+        traceLog(.resume, "resumable conduit closing")
         closed = true
         await coordinator.shutdown()
         try await conduit?.close()
@@ -259,6 +281,7 @@ final actor ResumableConduit: Conduit {
         if let conduit {
             return conduit
         }
+        traceLog(.resume, "active conduit missing, ensuring replacement")
         guard let replacement = try await ensureReplacementConduit() else {
             throw ConnectionError.connectionClosed
         }
@@ -267,9 +290,11 @@ final actor ResumableConduit: Conduit {
 
     private func ensureReplacementConduit() async throws -> (any Conduit)? {
         if let replacementTask {
+            traceLog(.resume, "awaiting existing replacement task")
             return try await replacementTask.value
         }
 
+        traceLog(.resume, "spawning replacement task")
         let task = Task<(any Conduit)?, Error> { [coordinator] in
             try await coordinator.replacementConduit()
         }
@@ -277,6 +302,7 @@ final actor ResumableConduit: Conduit {
         defer { replacementTask = nil }
 
         let replacement = try await task.value
+        traceLog(.resume, "replacement task completed replacement=\(replacement != nil)")
         conduit = replacement
         if let replacement, let maxFrameSize {
             try await replacement.setMaxFrameSize(maxFrameSize)

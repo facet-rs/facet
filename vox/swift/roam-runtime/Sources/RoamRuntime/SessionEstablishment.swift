@@ -39,6 +39,7 @@ func performInitiatorHandshake(
     resumable: Bool,
     resumeKey: [UInt8]? = nil
 ) async throws -> SessionHandshakeResult {
+    traceLog(.handshake, "initiator sending Hello resumable=\(resumable)")
     let ourSettings = ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: maxConcurrentRequests)
     let hello = HandshakeHello(
         parity: ourSettings.parity,
@@ -52,6 +53,7 @@ func performInitiatorHandshake(
     let peerHello: HandshakeHelloYourself
     switch try await recvHandshake(link) {
     case .helloYourself(let helloYourself):
+        traceLog(.handshake, "initiator received HelloYourself")
         peerHello = helloYourself
     case .sorry(let sorry):
         throw ConnectionError.handshakeFailed(sorry.reason)
@@ -69,6 +71,7 @@ func performInitiatorHandshake(
     }
 
     try await sendHandshake(link, .letsGo(HandshakeLetsGo()))
+    traceLog(.handshake, "initiator sent LetsGo")
 
     let negotiated = Negotiated(
         maxPayloadSize: maxPayloadSize,
@@ -103,6 +106,7 @@ func performAcceptorHandshake(
     let peerHello: HandshakeHello
     switch try await recvHandshake(link) {
     case .hello(let hello):
+        traceLog(.handshake, "acceptor received Hello resumable=\(hello.resumeKey != nil)")
         peerHello = hello
     default:
         throw ConnectionError.handshakeFailed("expected Hello")
@@ -132,9 +136,11 @@ func performAcceptorHandshake(
         resumeKey: sessionResumeKey.map(ResumeKeyBytes.init(bytes:))
     )
     try await sendHandshake(link, .helloYourself(helloYourself))
+    traceLog(.handshake, "acceptor sent HelloYourself resumable=\(sessionResumeKey != nil)")
 
     switch try await recvHandshake(link) {
     case .letsGo:
+        traceLog(.handshake, "acceptor received LetsGo")
         break
     case .sorry(let sorry):
         throw ConnectionError.handshakeFailed(sorry.reason)

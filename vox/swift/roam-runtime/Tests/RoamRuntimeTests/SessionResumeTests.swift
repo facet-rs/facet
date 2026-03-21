@@ -16,14 +16,15 @@ private actor ResumeScriptedLink: Link {
     private var closed = false
 
     init(initialHandshake: HandshakeMessage? = nil) {
-        if let initialHandshake {
-            inboundQueue.append(.frame(initialHandshake.encodeCbor()))
-        }
+        self.inboundQueue = initialHandshake.map { [.frame($0.encodeCbor())] } ?? []
     }
 
     func sendFrame(_ bytes: [UInt8]) async throws {
         if let handshake = try? HandshakeMessage.decodeCbor(bytes) {
             sentHandshakes.append(handshake)
+            if case .helloYourself = handshake {
+                enqueueHandshake(.letsGo(HandshakeLetsGo()))
+            }
             return
         }
         let message = try MessageV7.decode(from: Data(bytes))

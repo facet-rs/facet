@@ -16,6 +16,7 @@ extension Driver {
     public func run() async throws {
         var keepaliveRuntime = makeKeepaliveRuntime()
         var seenResumeGeneration: UInt64 = 0
+        traceLog(.driver, "run start")
 
         let cont = eventContinuation
         let conduit = self.conduit
@@ -23,13 +24,16 @@ extension Driver {
             do {
                 while true {
                     if let msg = try await conduit.recv() {
+                        traceLog(.driver, "reader received message")
                         cont.yield(.incomingMessage(msg))
                     } else {
+                        traceLog(.driver, "reader observed conduit close")
                         cont.yield(.conduitClosed)
                         break
                     }
                 }
             } catch {
+                traceLog(.driver, "reader failed: \(String(describing: error))")
                 cont.yield(.conduitFailed(String(describing: error)))
             }
         }
@@ -65,6 +69,7 @@ extension Driver {
                         let generation = await resumable.currentResumeGeneration()
                         if generation != seenResumeGeneration {
                             seenResumeGeneration = generation
+                            traceLog(.driver, "resume generation advanced to \(generation)")
                             await replayPendingCallsAfterResume()
                         }
                     }
@@ -82,11 +87,13 @@ extension Driver {
                 }
             }
         } catch {
+            traceLog(.driver, "run threw: \(String(describing: error))")
             eventContinuation.finish()
             await failAllPending()
             try? await conduit.close()
             throw error
         }
+        traceLog(.driver, "run exiting")
         await failAllPending()
         try? await conduit.close()
     }
