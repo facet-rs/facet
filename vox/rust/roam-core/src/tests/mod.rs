@@ -199,14 +199,15 @@ impl ChannelSink for DropCloseSink {
     fn send_payload<'a>(
         &self,
         _payload: Payload<'a>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), TxError>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn roam_types::MaybeSendFuture<Output = Result<(), TxError>> + 'a>>
+    {
         Box::pin(async { Ok(()) })
     }
 
     fn close_channel(
         &self,
         _metadata: Metadata,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), TxError>> + Send + 'static>>
+    ) -> std::pin::Pin<Box<dyn roam_types::MaybeSendFuture<Output = Result<(), TxError>> + 'static>>
     {
         let close_count = self.close_count.clone();
         Box::pin(async move {
@@ -239,7 +240,8 @@ impl ChannelSink for TestSink {
     fn send_payload<'a>(
         &self,
         payload: Payload<'a>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), TxError>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn roam_types::MaybeSendFuture<Output = Result<(), TxError>> + 'a>>
+    {
         let gate = self.gate.clone();
         let send_count = self.send_count.clone();
         let saw_owned_payload = self.saw_owned_payload.clone();
@@ -257,7 +259,7 @@ impl ChannelSink for TestSink {
     fn close_channel(
         &self,
         metadata: Metadata,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), TxError>> + Send + 'static>>
+    ) -> std::pin::Pin<Box<dyn roam_types::MaybeSendFuture<Output = Result<(), TxError>> + 'static>>
     {
         let gate = self.gate.clone();
         let close_count = self.close_count.clone();

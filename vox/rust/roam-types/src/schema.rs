@@ -2417,10 +2417,10 @@ mod tests {
     #[test]
     fn type_ids_are_content_hashes() {
         let mut tracker = SchemaSendTracker::new();
-        let schemas = tracker
+        let extracted = tracker
             .extract_schemas(<(u32, String) as Facet>::SHAPE)
-            .unwrap()
-            .schemas;
+            .unwrap();
+        let schemas = extracted.schemas;
         assert!(schemas.len() >= 3);
 
         // Same type extracted again must produce the same content hash.
@@ -2436,15 +2436,12 @@ mod tests {
 
         // Different types must produce different hashes.
         let mut tracker3 = SchemaSendTracker::new();
-        let schemas3 = tracker3
+        let extracted3 = tracker3
             .extract_schemas(<(u64, String) as Facet>::SHAPE)
-            .unwrap()
-            .schemas;
-        let root_hash = schemas.last().unwrap().id;
-        let root_hash3 = schemas3.last().unwrap().id;
+            .unwrap();
         assert_ne!(
-            root_hash, root_hash3,
-            "different types should have different hashes"
+            extracted.root, extracted3.root,
+            "different types should produce different root refs"
         );
     }
 

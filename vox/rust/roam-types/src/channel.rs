@@ -944,7 +944,7 @@ mod tests {
         fn send_payload<'payload>(
             &self,
             _payload: Payload<'payload>,
-        ) -> Pin<Box<dyn Future<Output = Result<(), TxError>> + Send + 'payload>> {
+        ) -> Pin<Box<dyn crate::MaybeSendFuture<Output = Result<(), TxError>> + 'payload>> {
             self.send_calls.fetch_add(1, Ordering::AcqRel);
             Box::pin(async { Ok(()) })
         }
@@ -952,7 +952,7 @@ mod tests {
         fn close_channel(
             &self,
             _metadata: Metadata,
-        ) -> Pin<Box<dyn Future<Output = Result<(), TxError>> + Send + 'static>> {
+        ) -> Pin<Box<dyn crate::MaybeSendFuture<Output = Result<(), TxError>> + 'static>> {
             self.close_calls.fetch_add(1, Ordering::AcqRel);
             Box::pin(async { Ok(()) })
         }

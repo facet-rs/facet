@@ -24,7 +24,8 @@ impl ChannelSink for ImmediateSink {
     fn send_payload<'a>(
         &self,
         payload: Payload<'a>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), TxError>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn roam_types::MaybeSendFuture<Output = Result<(), TxError>> + 'a>>
+    {
         let count = self.send_count.clone();
         Box::pin(async move {
             let _ = payload;
@@ -36,7 +37,7 @@ impl ChannelSink for ImmediateSink {
     fn close_channel(
         &self,
         _metadata: Metadata,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), TxError>> + Send + 'static>>
+    ) -> std::pin::Pin<Box<dyn roam_types::MaybeSendFuture<Output = Result<(), TxError>> + 'static>>
     {
         Box::pin(async { Ok(()) })
     }
