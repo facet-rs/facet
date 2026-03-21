@@ -17,6 +17,7 @@ private func loadWireV7Fixture(_ name: String) throws -> [UInt8] {
     return Array(try Data(contentsOf: path))
 }
 
+@Suite(.serialized)
 struct WireV7CrossLanguageTests {
     private func assertSampleMetadata(_ metadata: [MetadataEntryV7]) {
         #expect(metadata.count == 3)

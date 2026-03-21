@@ -49,6 +49,7 @@ private func expectPostcardError(_ expected: PostcardError, _ body: () throws ->
     }
 }
 
+@Suite(.serialized)
 struct WireV7PostcardNegativeTests {
     // r[verify session.message]
     // r[verify session.message.payloads]

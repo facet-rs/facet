@@ -66,6 +66,7 @@ private func stopLocalServer(_ server: LocalServer) async {
     try? await server.group.shutdownGracefully()
 }
 
+@Suite(.serialized)
 struct TransportTests {
     @Test func connectEnablesSocketKeepalive() async throws {
         let server = try await startLocalServer()

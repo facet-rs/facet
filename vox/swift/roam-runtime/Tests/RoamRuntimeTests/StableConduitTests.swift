@@ -141,6 +141,7 @@ private func awaitStep<T: Sendable>(
     }
 }
 
+@Suite(.serialized)
 struct StableConduitTests {
     @Test func stableSendRecvSingle() async throws {
         let (clientLink, serverLink) = testLinkPair()

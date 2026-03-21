@@ -439,6 +439,7 @@ private func awaitTaskResult<T: Sendable>(
     }
 }
 
+@Suite(.serialized)
 struct ConnectionFailureTests {
     @Test func initiatorHelloCarriesConnectionCorrelationMetadata() async throws {
         let transport = ScriptedTransport()

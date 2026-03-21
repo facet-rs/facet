@@ -4,6 +4,7 @@ import Testing
 
 @testable import RoamRuntime
 
+@Suite(.serialized)
 struct ShmDiagnosticsTests {
     @Test func registryDumpsRegisteredSnapshotsWhenEnabled() {
         ShmDiagnosticsRegistry.setEnabled(true)

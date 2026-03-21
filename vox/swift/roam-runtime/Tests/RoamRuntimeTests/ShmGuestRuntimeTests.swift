@@ -353,6 +353,7 @@ private func establishShmInitiator(
     return (transport, handle, driver)
 }
 
+@Suite(.serialized)
 struct ShmVarSlotPoolTests {
     // r[verify shm.varslot]
     // r[verify shm.varslot.allocate]
@@ -470,6 +471,7 @@ struct ShmVarSlotPoolTests {
     }
 }
 
+@Suite(.serialized)
 struct ShmGuestLifecycleTests {
     // r[verify shm.architecture]
     // r[verify shm.signal]
@@ -557,6 +559,7 @@ struct ShmGuestLifecycleTests {
     }
 }
 
+@Suite(.serialized)
 struct ShmDoorbellAndPayloadTests {
     // r[verify zerocopy.send.shm]
     // r[verify zerocopy.recv.shm.inline]
@@ -866,6 +869,7 @@ struct ShmDoorbellAndPayloadTests {
     }
 }
 
+@Suite(.serialized)
 struct ShmGuestRemapTests {
     // r[verify transport.shm]
     @Test func closedTransportSendReturnsConnectionClosed() async throws {
@@ -1035,6 +1039,7 @@ struct ShmGuestRemapTests {
     }
 }
 
+@Suite(.serialized)
 struct ShmDriverRaceTests {
     // r[verify transport.shm]
     @Test func timedOutCallSendsCancelOverShm() async throws {

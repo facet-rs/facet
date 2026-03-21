@@ -215,6 +215,7 @@ private func awaitResumeResponsePayload(
     return nil
 }
 
+@Suite(.serialized)
 struct SessionResumeTests {
     @Test func manualResumeKeepsPendingCallAliveAcrossDisconnect() async throws {
         let resumeKey = freshSessionResumeKey()

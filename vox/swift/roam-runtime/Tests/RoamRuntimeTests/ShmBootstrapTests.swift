@@ -219,6 +219,7 @@ private func XCTUnwrap<T>(_ value: T?) throws -> T {
     throw POSIXError(.EINVAL)
 }
 
+@Suite(.serialized)
 struct ShmBootstrapTests {
     // r[verify shm.spawn]
     // r[verify shm.spawn.fd-inheritance]

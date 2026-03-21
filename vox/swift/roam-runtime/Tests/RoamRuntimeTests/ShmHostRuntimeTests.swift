@@ -71,6 +71,7 @@ private struct ShmHostNoopDispatcher: ServiceDispatcher {
     ) async {}
 }
 
+@Suite(.serialized)
 struct ShmHostRuntimeTests {
     @Test func reservePeerUsesDatagramSocketForMmapControl() throws {
         let path = hostTmpPath("mmap-control-socket-type.bin")

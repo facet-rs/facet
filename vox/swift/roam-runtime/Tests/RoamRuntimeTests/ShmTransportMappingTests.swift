@@ -10,6 +10,7 @@ private func assertShmRoundtrip(_ msg: MessageV7) throws {
     #expect(decoded.encode() == msg.encode())
 }
 
+@Suite(.serialized)
 struct ShmTransportMappingTests {
     // r[verify transport.shm]
     // r[verify zerocopy.framing.link.shm]

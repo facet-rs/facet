@@ -23,6 +23,7 @@ private func makeTempPath(_ suffix: String) -> String {
     return "/tmp/roam-swift-shm-\(id)-\(suffix)"
 }
 
+@Suite(.serialized)
 struct ShmFoundationFixtureParityTests {
     // r[verify shm.segment.header]
     // r[verify shm.segment.magic.v7]
@@ -95,6 +96,7 @@ struct ShmFoundationFixtureParityTests {
     }
 }
 
+@Suite(.serialized)
 struct ShmHeaderValidationTests {
     // r[verify shm.segment.header]
     // r[verify shm.segment.magic.v7]
@@ -154,6 +156,7 @@ struct ShmHeaderValidationTests {
     }
 }
 
+@Suite(.serialized)
 struct ShmBipBufferCorrectnessTests {
     private enum StressError: Error {
         case mismatch(expected: UInt32, actual: UInt32, read: UInt32, write: UInt32, watermark: UInt32)
@@ -390,6 +393,7 @@ struct ShmBipBufferCorrectnessTests {
     }
 }
 
+@Suite(.serialized)
 struct ShmFileRegionTests {
     // r[verify shm.file]
     // r[verify shm.file.create]

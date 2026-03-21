@@ -38,6 +38,7 @@ private func readU64LE(_ bytes: [UInt8], _ at: Int) -> UInt64 {
     return b0 | b1 | b2 | b3 | b4 | b5 | b6 | b7
 }
 
+@Suite(.serialized)
 struct ShmV7FixtureTests {
     // r[verify shm.segment.magic.v7]
     // r[verify shm.segment.header]
