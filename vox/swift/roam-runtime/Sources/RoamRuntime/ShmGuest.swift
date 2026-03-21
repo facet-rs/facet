@@ -519,58 +519,36 @@ public final class ShmGuestRuntime: @unchecked Sendable {
             guard ticket.peerId >= 1, UInt32(ticket.peerId) <= header.maxGuests else {
                 throw ShmGuestAttachError.invalidTicketPeer(ticket.peerId)
             }
-            let offset = Int(header.peerTableOffset) + Int(ticket.peerId - 1) * shmPeerEntrySize
-            let statePtr = try region.pointer(at: offset)
-            var expected = ShmPeerState.reserved.rawValue
-            if !atomicCompareExchangeU32(statePtr, expected: &expected, desired: ShmPeerState.attached.rawValue) {
+            let statePtr = try shmPeerStatePointer(region: region, header: header, peerId: ticket.peerId)
+            if !transitionShmPeerState(statePtr: statePtr, from: .reserved, to: .attached) {
                 throw ShmGuestAttachError.slotNotReserved
             }
             chosenPeerId = ticket.peerId
         } else {
-            var claimed: UInt8?
-            for id in UInt8(1)...UInt8(header.maxGuests) {
-                let offset = Int(header.peerTableOffset) + Int(id - 1) * shmPeerEntrySize
-                let statePtr = try region.pointer(at: offset)
-                var expected = ShmPeerState.empty.rawValue
-                if atomicCompareExchangeU32(statePtr, expected: &expected, desired: ShmPeerState.attached.rawValue) {
-                    let epochPtr = statePtr.advanced(by: 4)
-                    _ = atomicFetchAddU32(epochPtr, 1)
-                    claimed = id
-                    break
-                }
-            }
-            guard let peer = claimed else {
+            guard let peer = try claimEmptyShmPeer(region: region, header: header, to: .attached) else {
                 throw ShmGuestAttachError.noPeerSlots
             }
             chosenPeerId = peer
         }
 
-        let peerEntry = try view.peerEntry(peerId: chosenPeerId)
-        let ringOffset = Int(peerEntry.ringOffset)
-        let g2h = try ShmBipBuffer.attach(region: region, headerOffset: ringOffset)
-        let h2g = try ShmBipBuffer.attach(region: region, headerOffset: ringOffset + shmBipbufHeaderSize + Int(g2h.capacity))
-        let doorbell = ticket.map { ShmDoorbell(fd: $0.doorbellFd, ownsFd: true) }
+        let buffers = try attachShmPeerBuffers(region: region, view: view, peerId: chosenPeerId)
         let mmapControlFd = ticket?.mmapControlFd ?? -1
-        let mmapAttachments: ShmMmapAttachments?
-        if mmapControlFd >= 0 {
-            mmapAttachments = ShmMmapAttachments(controlFd: mmapControlFd)
-        } else {
-            mmapAttachments = nil
-        }
-        let maxSlotSize = classes.map(\.slotSize).max() ?? 0
-        let maxVarSlotPayload = maxSlotSize >= 4 ? maxSlotSize - 4 : 0
+        let endpoints = makeShmControlEndpoints(
+            doorbellFd: ticket?.doorbellFd,
+            mmapControlFd: mmapControlFd
+        )
 
         return ShmGuestRuntime(
             peerId: chosenPeerId,
             region: region,
             header: header,
-            guestToHost: g2h,
-            hostToGuest: h2g,
+            guestToHost: buffers.guestToHost,
+            hostToGuest: buffers.hostToGuest,
             slotPool: pool,
-            doorbell: doorbell,
-            mmapAttachments: mmapAttachments,
+            doorbell: endpoints.doorbell,
+            mmapAttachments: endpoints.mmapAttachments,
             mmapControlFd: mmapControlFd,
-            maxVarSlotPayload: maxVarSlotPayload
+            maxVarSlotPayload: shmMaxVarSlotPayload(classes: classes)
         )
     }
 
@@ -794,8 +772,7 @@ public final class ShmGuestRuntime: @unchecked Sendable {
     }
 
     private func peerStatePointer() throws -> UnsafeMutableRawPointer {
-        let offset = Int(header.peerTableOffset) + Int(peerId - 1) * shmPeerEntrySize
-        return try region.pointer(at: offset)
+        try shmPeerStatePointer(region: region, header: header, peerId: peerId)
     }
 
 }

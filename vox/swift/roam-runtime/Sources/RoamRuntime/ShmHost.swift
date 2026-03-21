@@ -142,9 +142,7 @@ public final class ShmHostSegment: @unchecked Sendable {
         }
 
         let header = try ShmSegmentView(region: region).header
-        let maxVarSlotPayload = (config.sizeClasses.map(\.slotSize).max() ?? 0) >= 4
-            ? (config.sizeClasses.map(\.slotSize).max() ?? 0) - 4
-            : 0
+        let maxVarSlotPayload = shmMaxVarSlotPayload(classes: config.sizeClasses)
 
         return ShmHostSegment(
             path: path,
@@ -188,11 +186,7 @@ public final class ShmHostSegment: @unchecked Sendable {
         let maxGuests = UInt8(header.maxGuests)
         for peerId in UInt8(1)...maxGuests {
             let statePtr = try peerStatePointer(peerId: peerId)
-            var expected = ShmPeerState.empty.rawValue
-            if atomicCompareExchangeU32(statePtr, expected: &expected, desired: ShmPeerState.reserved.rawValue) {
-                let epochPtr = statePtr.advanced(by: 4)
-                _ = atomicFetchAddU32(epochPtr, 1)
-
+            if transitionShmPeerState(statePtr: statePtr, from: .empty, to: .reserved, bumpEpochOnSuccess: true) {
                 let doorbellPair = try makeStreamSocketPair()
                 let mmapPair = try makeDatagramSocketPair()
                 return ShmPreparedHostPeer(
@@ -214,8 +208,7 @@ public final class ShmHostSegment: @unchecked Sendable {
         defer { lock.unlock() }
         do {
             let statePtr = try peerStatePointer(peerId: peerId)
-            var expected = ShmPeerState.reserved.rawValue
-            _ = atomicCompareExchangeU32(statePtr, expected: &expected, desired: ShmPeerState.empty.rawValue)
+            _ = transitionShmPeerState(statePtr: statePtr, from: .reserved, to: .empty)
         } catch {
             return
         }
@@ -235,21 +228,21 @@ public final class ShmHostSegment: @unchecked Sendable {
         guard peerId >= 1, UInt32(peerId) <= header.maxGuests else {
             throw ShmHostSegmentError.invalidPeerId(peerId)
         }
-        let offset = Int(header.peerTableOffset) + Int(peerId - 1) * shmPeerEntrySize
-        return try region.pointer(at: offset)
+        do {
+            return try shmPeerStatePointer(region: region, header: header, peerId: peerId)
+        } catch ShmLayoutError.invalidPeerId {
+            throw ShmHostSegmentError.invalidPeerId(peerId)
+        } catch {
+            throw error
+        }
     }
 
     fileprivate func bipBuffers(peerId: UInt8) throws -> (guestToHost: ShmBipBuffer, hostToGuest: ShmBipBuffer) {
         guard peerId >= 1, UInt32(peerId) <= header.maxGuests else {
             throw ShmHostSegmentError.invalidPeerId(peerId)
         }
-        let ringOffset = ringBaseOffset + Int(peerId - 1) * ringStride
-        let guestToHost = try ShmBipBuffer.attach(region: region, headerOffset: ringOffset)
-        let hostToGuest = try ShmBipBuffer.attach(
-            region: region,
-            headerOffset: ringOffset + shmBipbufHeaderSize + Int(guestToHost.capacity)
-        )
-        return (guestToHost: guestToHost, hostToGuest: hostToGuest)
+        let view = try ShmSegmentView(region: region)
+        return try attachShmPeerBuffers(region: region, view: view, peerId: peerId)
     }
 
     fileprivate func makeRuntimeSlotPool() throws -> ShmVarSlotPool {
@@ -411,13 +404,7 @@ public final class ShmHostRuntime: @unchecked Sendable {
         let header = try ShmSegmentView(region: segment.region).header
         let buffers = try segment.bipBuffers(peerId: peerId)
         let pool = try segment.makeRuntimeSlotPool()
-        let doorbell = ShmDoorbell(fd: doorbellFd, ownsFd: true)
-        let attachments: ShmMmapAttachments?
-        if mmapControlFd >= 0 {
-            attachments = ShmMmapAttachments(controlFd: mmapControlFd)
-        } else {
-            attachments = nil
-        }
+        let endpoints = makeShmControlEndpoints(doorbellFd: doorbellFd, mmapControlFd: mmapControlFd)
 
         return ShmHostRuntime(
             peerId: peerId,
@@ -427,8 +414,8 @@ public final class ShmHostRuntime: @unchecked Sendable {
             guestToHost: buffers.guestToHost,
             hostToGuest: buffers.hostToGuest,
             slotPool: pool,
-            doorbell: doorbell,
-            mmapAttachments: attachments,
+            doorbell: endpoints.doorbell,
+            mmapAttachments: endpoints.mmapAttachments,
             mmapControlFd: mmapControlFd,
             maxVarSlotPayload: segment.maxVarSlotPayload
         )
