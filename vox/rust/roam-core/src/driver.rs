@@ -7,8 +7,8 @@ use std::{
     },
 };
 
-use moire::sync::SyncMutex;
-use tokio::sync::{Semaphore, watch};
+use moire::sync::{Semaphore, SyncMutex};
+use tokio::sync::watch;
 
 use moire::task::FutureExt as _;
 use roam_types::{
@@ -204,8 +204,7 @@ struct DriverShared {
     operations: Arc<dyn OperationStore>,
     channel_ids: SyncMutex<IdAllocator<ChannelId>>,
     /// Registry mapping inbound channel IDs to the sender that feeds the Rx handle.
-    channel_senders:
-        SyncMutex<BTreeMap<ChannelId, tokio::sync::mpsc::Sender<IncomingChannelMessage>>>,
+    channel_senders: SyncMutex<BTreeMap<ChannelId, mpsc::Sender<IncomingChannelMessage>>>,
     /// Buffer for channel messages that arrive before the channel is registered.
     ///
     /// This handles the race between the caller sending items immediately after
@@ -487,7 +486,7 @@ impl ChannelSink for DriverChannelSink {
     fn send_payload<'payload>(
         &self,
         payload: Payload<'payload>,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), TxError>> + Send + 'payload>> {
+    ) -> Pin<Box<dyn roam_types::MaybeSendFuture<Output = Result<(), TxError>> + 'payload>> {
         let sender = self.sender.clone();
         let channel_id = self.channel_id;
         Box::pin(async move {
@@ -504,7 +503,7 @@ impl ChannelSink for DriverChannelSink {
     fn close_channel(
         &self,
         _metadata: roam_types::Metadata,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), TxError>> + Send + 'static>> {
+    ) -> Pin<Box<dyn roam_types::MaybeSendFuture<Output = Result<(), TxError>> + 'static>> {
         // [FIXME] ChannelSink::close_channel takes borrowed Metadata but returns 'static future.
         // We drop the borrowed metadata and send an empty one. This matches the [FIXME] in the
         // trait definition — the signature needs to be fixed to take owned metadata.
@@ -573,7 +572,7 @@ impl DriverChannelBinder {
     }
 
     fn register_rx_channel(&self, channel_id: ChannelId) -> roam_types::BoundChannelReceiver {
-        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let (tx, rx) = mpsc::channel("driver.register_rx_channel", 64);
         let mut terminal_buffered = false;
         if let Some(buffered) = self.shared.channel_buffers.lock().remove(&channel_id) {
             for msg in buffered {
@@ -696,7 +695,7 @@ impl DriverCaller {
     /// The channel ID comes from the peer (e.g. from `RequestCall.channels`).
     /// The returned receiver should be bound to an `Rx` handle via `Rx::bind()`.
     pub fn register_rx_channel(&self, channel_id: ChannelId) -> roam_types::BoundChannelReceiver {
-        let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let (tx, rx) = mpsc::channel("driver.caller.register_rx_channel", 64);
         let mut terminal_buffered = false;
         // Drain any buffered messages that arrived before registration.
         if let Some(buffered) = self.shared.channel_buffers.lock().remove(&channel_id) {

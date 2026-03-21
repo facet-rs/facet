@@ -37,15 +37,8 @@ pub use memory_link::*;
 mod session;
 pub use session::*;
 
-#[cfg(not(target_arch = "wasm32"))]
 mod driver;
-#[cfg(not(target_arch = "wasm32"))]
 pub use driver::*;
-
-#[cfg(target_arch = "wasm32")]
-mod wasm_driver;
-#[cfg(target_arch = "wasm32")]
-pub use wasm_driver::*;
 
 use facet_reflect::Partial;
 use roam_types::{Backing, SelfRef};

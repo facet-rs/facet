@@ -2567,6 +2567,7 @@ dependencies = [
  "futures-channel",
  "heck 0.5.0",
  "indexmap",
+ "moire",
  "smallvec 1.15.1",
  "structstruck",
  "tokio",

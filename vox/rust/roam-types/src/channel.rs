@@ -1,19 +1,14 @@
-use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
-#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Mutex;
-#[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use facet::Facet;
 use facet_core::PtrConst;
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::sync::{Notify, Semaphore, mpsc};
+use moire::sync::{Notify, Semaphore, mpsc};
 
 use crate::ChannelId;
-#[cfg(not(target_arch = "wasm32"))]
 use crate::{Backing, ChannelClose, ChannelItem, ChannelReset, Metadata, Payload, SelfRef};
 
 // ---------------------------------------------------------------------------
@@ -21,7 +16,6 @@ use crate::{Backing, ChannelClose, ChannelItem, ChannelReset, Metadata, Payload,
 // can bind channels immediately.
 // ---------------------------------------------------------------------------
 
-#[cfg(not(target_arch = "wasm32"))]
 std::thread_local! {
     static CHANNEL_BINDER: std::cell::RefCell<Option<&'static dyn ChannelBinder>> =
         const { std::cell::RefCell::new(None) };
@@ -31,7 +25,6 @@ std::thread_local! {
 ///
 /// Any `Tx<T>` or `Rx<T>` deserialized (via `TryFrom<ChannelId>`) during `f`
 /// will be bound through this binder.
-#[cfg(not(target_arch = "wasm32"))]
 pub fn with_channel_binder<R>(binder: &dyn ChannelBinder, f: impl FnOnce() -> R) -> R {
     // SAFETY: we restore the previous value (always None in practice) on exit,
     // so the binder reference doesn't escape the closure's lifetime.
@@ -47,44 +40,35 @@ pub fn with_channel_binder<R>(binder: &dyn ChannelBinder, f: impl FnOnce() -> R)
 
 // r[impl rpc.channel.pair]
 /// The binding stored in a channel core — either a sink or a receiver, never both.
-#[cfg(not(target_arch = "wasm32"))]
 pub enum ChannelBinding {
     Sink(BoundChannelSink),
     Receiver(BoundChannelReceiver),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub trait ChannelLiveness: Send + Sync + 'static {}
+pub trait ChannelLiveness: crate::MaybeSend + crate::MaybeSync + 'static {}
 
-#[cfg(not(target_arch = "wasm32"))]
-impl<T: Send + Sync + 'static> ChannelLiveness for T {}
+impl<T: crate::MaybeSend + crate::MaybeSync + 'static> ChannelLiveness for T {}
 
-#[cfg(not(target_arch = "wasm32"))]
 pub type ChannelLivenessHandle = Arc<dyn ChannelLiveness>;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub trait ChannelCreditReplenisher: Send + Sync + 'static {
+pub trait ChannelCreditReplenisher: crate::MaybeSend + crate::MaybeSync + 'static {
     fn on_item_consumed(&self);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub type ChannelCreditReplenisherHandle = Arc<dyn ChannelCreditReplenisher>;
 
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 pub struct BoundChannelSink {
     pub sink: Arc<dyn ChannelSink>,
     pub liveness: Option<ChannelLivenessHandle>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub struct BoundChannelReceiver {
     pub receiver: mpsc::Receiver<IncomingChannelMessage>,
     pub liveness: Option<ChannelLivenessHandle>,
     pub replenisher: Option<ChannelCreditReplenisherHandle>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 struct LogicalReceiverState {
     generation: u64,
     liveness: Option<ChannelLivenessHandle>,
@@ -98,20 +82,18 @@ struct LogicalReceiverState {
 /// Contains a `Mutex<Option<ChannelBinding>>` that is written once during
 /// binding and read/taken by the paired handle. The mutex is only locked
 /// during binding (once) and on first use by the paired handle (once).
-#[cfg(not(target_arch = "wasm32"))]
 pub struct ChannelCore {
     binding: Mutex<Option<ChannelBinding>>,
     logical_receiver: Mutex<Option<LogicalReceiverState>>,
     binding_changed: Notify,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl ChannelCore {
     fn new() -> Self {
         Self {
             binding: Mutex::new(None),
             logical_receiver: Mutex::new(None),
-            binding_changed: Notify::new(),
+            binding_changed: Notify::new("roam_types.channel.binding_changed"),
         }
     }
 
@@ -147,6 +129,7 @@ impl ChannelCore {
     }
 
     pub fn bind_retryable_receiver(self: &Arc<Self>, bound: BoundChannelReceiver) {
+        #[cfg(not(target_arch = "wasm32"))]
         if tokio::runtime::Handle::try_current().is_err() {
             self.set_binding(ChannelBinding::Receiver(bound));
             return;
@@ -157,7 +140,7 @@ impl ChannelCore {
             .lock()
             .expect("channel core logical receiver mutex poisoned");
         let state = guard.get_or_insert_with(|| {
-            let (tx, rx) = mpsc::channel(64);
+            let (tx, rx) = mpsc::channel("roam_types.channel.logical_receiver", 64);
             LogicalReceiverState {
                 generation: 0,
                 liveness: None,
@@ -178,7 +161,7 @@ impl ChannelCore {
         drop(guard);
         let core = Arc::clone(self);
 
-        tokio::spawn(async move {
+        moire::task::spawn(async move {
             let mut receiver = bound.receiver;
             let replenisher = bound.replenisher.clone();
             while let Some(msg) = receiver.recv().await {
@@ -255,16 +238,12 @@ impl ChannelCore {
 #[derive(Facet)]
 #[facet(opaque)]
 pub(crate) struct CoreSlot {
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) inner: Option<Arc<ChannelCore>>,
 }
 
 impl CoreSlot {
     pub(crate) fn empty() -> Self {
-        Self {
-            #[cfg(not(target_arch = "wasm32"))]
-            inner: None,
-        }
+        Self { inner: None }
     }
 }
 
@@ -275,32 +254,24 @@ impl CoreSlot {
 /// binds the handle that appears in args or return values, and the paired
 /// handle reads or takes the binding from the shared core.
 pub fn channel<T>() -> (Tx<T>, Rx<T>) {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let core = Arc::new(ChannelCore::new());
-        (Tx::paired(core.clone()), Rx::paired(core))
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        (Tx::unbound(), Rx::unbound())
-    }
+    let core = Arc::new(ChannelCore::new());
+    (Tx::paired(core.clone()), Rx::paired(core))
 }
 
 /// Runtime sink implemented by the session driver.
 ///
 /// The contract is strict: successful completion means the item has gone
 /// through the conduit to the link commit boundary.
-#[cfg(not(target_arch = "wasm32"))]
-pub trait ChannelSink: Send + Sync + 'static {
+pub trait ChannelSink: crate::MaybeSend + crate::MaybeSync + 'static {
     fn send_payload<'payload>(
         &self,
         payload: Payload<'payload>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), TxError>> + Send + 'payload>>;
+    ) -> Pin<Box<dyn crate::MaybeSendFuture<Output = Result<(), TxError>> + 'payload>>;
 
     fn close_channel(
         &self,
         metadata: Metadata,
-    ) -> Pin<Box<dyn Future<Output = Result<(), TxError>> + Send + 'static>>;
+    ) -> Pin<Box<dyn crate::MaybeSendFuture<Output = Result<(), TxError>> + 'static>>;
 
     /// Synchronous drop-time close signal.
     ///
@@ -317,13 +288,11 @@ pub trait ChannelSink: Send + Sync + 'static {
 /// Each `send_payload` acquires one permit from the semaphore, blocking if
 /// credit is zero. The semaphore is shared with the driver so that incoming
 /// `GrantCredit` messages can add permits via [`CreditSink::credit`].
-#[cfg(not(target_arch = "wasm32"))]
 pub struct CreditSink<S: ChannelSink> {
     inner: S,
     credit: Arc<Semaphore>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl<S: ChannelSink> CreditSink<S> {
     // r[impl rpc.flow-control.credit.initial]
     // r[impl rpc.flow-control.credit.initial.zero]
@@ -331,7 +300,10 @@ impl<S: ChannelSink> CreditSink<S> {
     pub fn new(inner: S, initial_credit: u32) -> Self {
         Self {
             inner,
-            credit: Arc::new(Semaphore::new(initial_credit as usize)),
+            credit: Arc::new(Semaphore::new(
+                "roam_types.channel.credit",
+                initial_credit as usize,
+            )),
         }
     }
 
@@ -342,20 +314,19 @@ impl<S: ChannelSink> CreditSink<S> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl<S: ChannelSink> ChannelSink for CreditSink<S> {
     fn send_payload<'payload>(
         &self,
         payload: Payload<'payload>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), TxError>> + Send + 'payload>> {
+    ) -> Pin<Box<dyn crate::MaybeSendFuture<Output = Result<(), TxError>> + 'payload>> {
         let credit = self.credit.clone();
         let fut = self.inner.send_payload(payload);
         Box::pin(async move {
             let permit = credit
-                .acquire()
+                .acquire_owned()
                 .await
                 .map_err(|_| TxError::Transport("channel credit semaphore closed".into()))?;
-            permit.forget();
+            std::mem::forget(permit);
             fut.await
         })
     }
@@ -363,7 +334,7 @@ impl<S: ChannelSink> ChannelSink for CreditSink<S> {
     fn close_channel(
         &self,
         metadata: Metadata,
-    ) -> Pin<Box<dyn Future<Output = Result<(), TxError>> + Send + 'static>> {
+    ) -> Pin<Box<dyn crate::MaybeSendFuture<Output = Result<(), TxError>> + 'static>> {
         // Close does not consume credit — it's a control message.
         self.inner.close_channel(metadata)
     }
@@ -374,14 +345,12 @@ impl<S: ChannelSink> ChannelSink for CreditSink<S> {
 }
 
 /// Message delivered to an `Rx` by the driver.
-#[cfg(not(target_arch = "wasm32"))]
 pub enum IncomingChannelMessage {
     Item(SelfRef<ChannelItem<'static>>),
     Close(SelfRef<ChannelClose<'static>>),
     Reset(SelfRef<ChannelReset<'static>>),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub struct LogicalIncomingChannelMessage {
     pub msg: IncomingChannelMessage,
     pub replenisher: Option<ChannelCreditReplenisherHandle>,
@@ -391,16 +360,12 @@ pub struct LogicalIncomingChannelMessage {
 #[derive(Facet)]
 #[facet(opaque)]
 pub(crate) struct SinkSlot {
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) inner: Option<Arc<dyn ChannelSink>>,
 }
 
 impl SinkSlot {
     pub(crate) fn empty() -> Self {
-        Self {
-            #[cfg(not(target_arch = "wasm32"))]
-            inner: None,
-        }
+        Self { inner: None }
     }
 }
 
@@ -408,16 +373,12 @@ impl SinkSlot {
 #[derive(Facet)]
 #[facet(opaque)]
 pub(crate) struct LivenessSlot {
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) inner: Option<ChannelLivenessHandle>,
 }
 
 impl LivenessSlot {
     pub(crate) fn empty() -> Self {
-        Self {
-            #[cfg(not(target_arch = "wasm32"))]
-            inner: None,
-        }
+        Self { inner: None }
     }
 }
 
@@ -425,32 +386,24 @@ impl LivenessSlot {
 #[derive(Facet)]
 #[facet(opaque)]
 pub(crate) struct ReceiverSlot {
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) inner: Option<mpsc::Receiver<IncomingChannelMessage>>,
 }
 
 impl ReceiverSlot {
     pub(crate) fn empty() -> Self {
-        Self {
-            #[cfg(not(target_arch = "wasm32"))]
-            inner: None,
-        }
+        Self { inner: None }
     }
 }
 
 #[derive(Facet)]
 #[facet(opaque)]
 pub(crate) struct LogicalReceiverSlot {
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) inner: Option<mpsc::Receiver<LogicalIncomingChannelMessage>>,
 }
 
 impl LogicalReceiverSlot {
     pub(crate) fn empty() -> Self {
-        Self {
-            #[cfg(not(target_arch = "wasm32"))]
-            inner: None,
-        }
+        Self { inner: None }
     }
 }
 
@@ -458,16 +411,12 @@ impl LogicalReceiverSlot {
 #[derive(Facet)]
 #[facet(opaque)]
 pub(crate) struct ReplenisherSlot {
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) inner: Option<ChannelCreditReplenisherHandle>,
 }
 
 impl ReplenisherSlot {
     pub(crate) fn empty() -> Self {
-        Self {
-            #[cfg(not(target_arch = "wasm32"))]
-            inner: None,
-        }
+        Self { inner: None }
     }
 }
 
@@ -487,7 +436,6 @@ pub struct Tx<T> {
     pub(crate) sink: SinkSlot,
     pub(crate) core: CoreSlot,
     pub(crate) liveness: LivenessSlot,
-    #[cfg(not(target_arch = "wasm32"))]
     #[facet(opaque)]
     closed: AtomicBool,
     #[facet(opaque)]
@@ -502,14 +450,12 @@ impl<T> Tx<T> {
             sink: SinkSlot::empty(),
             core: CoreSlot::empty(),
             liveness: LivenessSlot::empty(),
-            #[cfg(not(target_arch = "wasm32"))]
             closed: AtomicBool::new(false),
             _marker: PhantomData,
         }
     }
 
     /// Create a Tx that is part of a `channel()` pair.
-    #[cfg(not(target_arch = "wasm32"))]
     fn paired(core: Arc<ChannelCore>) -> Self {
         Self {
             channel_id: ChannelId::RESERVED,
@@ -522,30 +468,21 @@ impl<T> Tx<T> {
     }
 
     pub fn is_bound(&self) -> bool {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if self.sink.inner.is_some() {
-                return true;
-            }
-            if let Some(core) = &self.core.inner {
-                return core.get_sink().is_some();
-            }
-            false
+        if self.sink.inner.is_some() {
+            return true;
         }
-        #[cfg(target_arch = "wasm32")]
+        if let Some(core) = &self.core.inner {
+            return core.get_sink().is_some();
+        }
         false
     }
 
     /// Check if this Tx is part of a channel() pair (has a shared core).
     pub fn has_core(&self) -> bool {
-        #[cfg(not(target_arch = "wasm32"))]
-        return self.core.inner.is_some();
-        #[cfg(target_arch = "wasm32")]
-        return false;
+        self.core.inner.is_some()
     }
 
     // r[impl rpc.channel.pair.tx-read]
-    #[cfg(not(target_arch = "wasm32"))]
     fn resolve_sink_now(&self) -> Option<Arc<dyn ChannelSink>> {
         // Fast path: local slot (standalone/callee-side handle)
         if let Some(sink) = &self.sink.inner {
@@ -560,7 +497,6 @@ impl<T> Tx<T> {
         None
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub async fn send<'value>(&self, value: T) -> Result<(), TxError>
     where
         T: Facet<'value>,
@@ -588,7 +524,6 @@ impl<T> Tx<T> {
     }
 
     // r[impl rpc.channel.lifecycle]
-    #[cfg(not(target_arch = "wasm32"))]
     pub async fn close<'value>(&self, metadata: Metadata<'value>) -> Result<(), TxError> {
         self.closed.store(true, Ordering::Release);
         let sink = if let Some(sink) = self.resolve_sink_now() {
@@ -608,13 +543,11 @@ impl<T> Tx<T> {
     }
 
     #[doc(hidden)]
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn bind(&mut self, sink: Arc<dyn ChannelSink>) {
         self.bind_with_liveness(sink, None);
     }
 
     #[doc(hidden)]
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn bind_with_liveness(
         &mut self,
         sink: Arc<dyn ChannelSink>,
@@ -625,7 +558,6 @@ impl<T> Tx<T> {
     }
 
     #[doc(hidden)]
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn finish_retry_binding(&self) {
         if let Some(core) = &self.core.inner {
             core.finish_retry_binding();
@@ -633,7 +565,6 @@ impl<T> Tx<T> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl<T> Drop for Tx<T> {
     fn drop(&mut self) {
         if self.closed.swap(true, Ordering::AcqRel) {
@@ -664,23 +595,17 @@ impl<T> TryFrom<&Tx<T>> for ChannelId {
         // Case 1: Caller passes Tx in args (callee sends, caller receives).
         // Allocate a channel ID and store the receiver binding in the shared
         // core so the caller's paired Rx can pick it up.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let channel_id = CHANNEL_BINDER.with(|cell| {
-                let borrow = cell.borrow();
-                let Some(binder) = *borrow else {
-                    return Err("serializing Tx requires an active ChannelBinder".to_string());
-                };
-                let (channel_id, bound) = binder.create_rx();
-                if let Some(core) = &value.core.inner {
-                    core.bind_retryable_receiver(bound);
-                }
-                Ok(channel_id)
-            });
-            return channel_id;
-        }
-        #[cfg(target_arch = "wasm32")]
-        Ok(value.channel_id)
+        CHANNEL_BINDER.with(|cell| {
+            let borrow = cell.borrow();
+            let Some(binder) = *borrow else {
+                return Err("serializing Tx requires an active ChannelBinder".to_string());
+            };
+            let (channel_id, bound) = binder.create_rx();
+            if let Some(core) = &value.core.inner {
+                core.bind_retryable_receiver(bound);
+            }
+            Ok(channel_id)
+        })
     }
 }
 
@@ -691,7 +616,6 @@ impl<T> TryFrom<ChannelId> for Tx<T> {
         let mut tx = Self::unbound();
         tx.channel_id = channel_id;
 
-        #[cfg(not(target_arch = "wasm32"))]
         CHANNEL_BINDER.with(|cell| {
             let Some(binder) = *cell.borrow() else {
                 return Err("deserializing Tx requires an active ChannelBinder".to_string());
@@ -757,7 +681,6 @@ impl<T> Rx<T> {
     }
 
     /// Create an Rx that is part of a `channel()` pair.
-    #[cfg(not(target_arch = "wasm32"))]
     fn paired(core: Arc<ChannelCore>) -> Self {
         Self {
             channel_id: ChannelId::RESERVED,
@@ -771,27 +694,15 @@ impl<T> Rx<T> {
     }
 
     pub fn is_bound(&self) -> bool {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if self.receiver.inner.is_some() {
-                return true;
-            }
-            false
-        }
-        #[cfg(target_arch = "wasm32")]
-        false
+        self.receiver.inner.is_some()
     }
 
     /// Check if this Rx is part of a channel() pair (has a shared core).
     pub fn has_core(&self) -> bool {
-        #[cfg(not(target_arch = "wasm32"))]
-        return self.core.inner.is_some();
-        #[cfg(target_arch = "wasm32")]
-        return false;
+        self.core.inner.is_some()
     }
 
     // r[impl rpc.channel.pair.rx-take]
-    #[cfg(not(target_arch = "wasm32"))]
     pub async fn recv(&mut self) -> Result<Option<SelfRef<T>>, RxError>
     where
         T: Facet<'static>,
@@ -884,13 +795,11 @@ impl<T> Rx<T> {
     }
 
     #[doc(hidden)]
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn bind(&mut self, receiver: mpsc::Receiver<IncomingChannelMessage>) {
         self.bind_with_liveness(receiver, None);
     }
 
     #[doc(hidden)]
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn bind_with_liveness(
         &mut self,
         receiver: mpsc::Receiver<IncomingChannelMessage>,
@@ -910,24 +819,18 @@ impl<T> TryFrom<&Rx<T>> for ChannelId {
         // Case 2: Caller passes Rx in args (callee receives, caller sends).
         // Allocate a channel ID and store the sink binding in the shared
         // core so the caller's paired Tx can pick it up.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let channel_id = CHANNEL_BINDER.with(|cell| {
-                let borrow = cell.borrow();
-                let Some(binder) = *borrow else {
-                    return Err("serializing Rx requires an active ChannelBinder".to_string());
-                };
-                let (channel_id, sink) = binder.create_tx();
-                let liveness = binder.channel_liveness();
-                if let Some(core) = &value.core.inner {
-                    core.set_binding(ChannelBinding::Sink(BoundChannelSink { sink, liveness }));
-                }
-                Ok(channel_id)
-            });
-            return channel_id;
-        }
-        #[cfg(target_arch = "wasm32")]
-        Ok(value.channel_id)
+        CHANNEL_BINDER.with(|cell| {
+            let borrow = cell.borrow();
+            let Some(binder) = *borrow else {
+                return Err("serializing Rx requires an active ChannelBinder".to_string());
+            };
+            let (channel_id, sink) = binder.create_tx();
+            let liveness = binder.channel_liveness();
+            if let Some(core) = &value.core.inner {
+                core.set_binding(ChannelBinding::Sink(BoundChannelSink { sink, liveness }));
+            }
+            Ok(channel_id)
+        })
     }
 }
 
@@ -938,7 +841,6 @@ impl<T> TryFrom<ChannelId> for Rx<T> {
         let mut rx = Self::unbound();
         rx.channel_id = channel_id;
 
-        #[cfg(not(target_arch = "wasm32"))]
         CHANNEL_BINDER.with(|cell| {
             let Some(binder) = *cell.borrow() else {
                 return Err("deserializing Rx requires an active ChannelBinder".to_string());
@@ -991,7 +893,7 @@ pub fn is_channel(shape: &facet_core::Shape) -> bool {
     is_tx(shape) || is_rx(shape)
 }
 
-pub trait ChannelBinder: Send + Sync {
+pub trait ChannelBinder: crate::MaybeSend + crate::MaybeSync {
     /// Allocate a channel ID and create a sink for sending items.
     ///
     fn create_tx(&self) -> (ChannelId, Arc<dyn ChannelSink>);
@@ -1134,7 +1036,7 @@ mod tests {
 
     #[tokio::test]
     async fn rx_recv_returns_none_on_close() {
-        let (tx, rx_inner) = mpsc::channel(1);
+        let (tx, rx_inner) = mpsc::channel("roam_types.channel.test.rx1", 1);
         let mut rx = Rx::<u32>::unbound();
         rx.bind(rx_inner);
 
@@ -1153,7 +1055,7 @@ mod tests {
 
     #[tokio::test]
     async fn rx_recv_returns_reset_error() {
-        let (tx, rx_inner) = mpsc::channel(1);
+        let (tx, rx_inner) = mpsc::channel("roam_types.channel.test.rx2", 1);
         let mut rx = Rx::<u32>::unbound();
         rx.bind(rx_inner);
 
@@ -1178,7 +1080,7 @@ mod tests {
     async fn rx_recv_rejects_outgoing_payload_variant_as_protocol_error() {
         static VALUE: u32 = 42;
 
-        let (tx, rx_inner) = mpsc::channel(1);
+        let (tx, rx_inner) = mpsc::channel("roam_types.channel.test.rx3", 1);
         let mut rx = Rx::<u32>::unbound();
         rx.bind(rx_inner);
 
@@ -1201,7 +1103,7 @@ mod tests {
 
     #[tokio::test]
     async fn rx_recv_notifies_replenisher_after_consuming_an_item() {
-        let (tx, rx_inner) = mpsc::channel(1);
+        let (tx, rx_inner) = mpsc::channel("roam_types.channel.test.rx4", 1);
         let replenisher = Arc::new(CountingReplenisher::new());
         let mut rx = Rx::<u32>::unbound();
         rx.bind(rx_inner);
@@ -1229,7 +1131,7 @@ mod tests {
 
     #[tokio::test]
     async fn rx_recv_logical_receiver_decodes_items_and_notifies_replenisher() {
-        let (tx, rx_inner) = mpsc::channel(1);
+        let (tx, rx_inner) = mpsc::channel("roam_types.channel.test.rx5", 1);
         let replenisher = Arc::new(CountingReplenisher::new());
         let core = Arc::new(ChannelCore::new());
         core.bind_retryable_receiver(BoundChannelReceiver {
@@ -1290,7 +1192,7 @@ mod tests {
         }
 
         fn create_rx(&self) -> (ChannelId, BoundChannelReceiver) {
-            let (tx, rx) = mpsc::channel(8);
+            let (tx, rx) = mpsc::channel("roam_types.channel.test.bind_retryable1", 8);
             // Keep the sender alive by leaking it — test only.
             std::mem::forget(tx);
             (
@@ -1308,7 +1210,7 @@ mod tests {
         }
 
         fn register_rx(&self, _channel_id: ChannelId) -> BoundChannelReceiver {
-            let (_tx, rx) = mpsc::channel(8);
+            let (_tx, rx) = mpsc::channel("roam_types.channel.test.bind_retryable2", 8);
             BoundChannelReceiver {
                 receiver: rx,
                 liveness: None,

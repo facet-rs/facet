@@ -172,7 +172,6 @@ where
         reply.send_reply(response).await;
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
         self.inner.as_ref().and_then(|reply| reply.channel_binder())
     }

@@ -398,7 +398,6 @@ impl ConnectionSender {
         self.connection_id
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) async fn send_with_binder<'a>(
         &self,
         msg: ConnectionMessage<'a>,
@@ -420,23 +419,7 @@ impl ConnectionSender {
 
     /// Send an arbitrary connection message
     pub async fn send<'a>(&self, msg: ConnectionMessage<'a>) -> Result<(), ()> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            return self.send_with_binder(msg, None).await;
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        let payload = match msg {
-            ConnectionMessage::Request(r) => MessagePayload::RequestMessage(r),
-            ConnectionMessage::Channel(c) => MessagePayload::ChannelMessage(c),
-        };
-        #[cfg(target_arch = "wasm32")]
-        let message = Message {
-            connection_id: self.connection_id,
-            payload,
-        };
-        #[cfg(target_arch = "wasm32")]
-        return self.sess_core.send(message, None).await.map_err(|_| ());
+        self.send_with_binder(msg, None).await
     }
 
     /// Send a received connection message without re-materializing payload values.
@@ -456,34 +439,17 @@ impl ConnectionSender {
             }),
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.sess_core
-                .send(
-                    Message {
-                        connection_id: self.connection_id,
-                        payload,
-                    },
-                    None,
-                    Some(&*schemas),
-                )
-                .await
-                .map_err(|_| ())
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.sess_core
-                .send(
-                    Message {
-                        connection_id: self.connection_id,
-                        payload,
-                    },
-                    Some(&*schemas),
-                )
-                .await
-                .map_err(|_| ())
-        }
+        self.sess_core
+            .send(
+                Message {
+                    connection_id: self.connection_id,
+                    payload,
+                },
+                None,
+                Some(&*schemas),
+            )
+            .await
+            .map_err(|_| ())
     }
 
     /// Send a response specifically
@@ -1616,7 +1582,6 @@ struct SessionCoreInner {
 
 impl SessionCore {
     // r[impl schema.principles.sender-driven]
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) async fn send<'a>(
         &self,
         mut msg: Message<'a>,
@@ -1671,62 +1636,6 @@ impl SessionCore {
             inner.tx.clone()
         };
         tx.send_msg(msg, binder).await.map_err(|_| ())
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) async fn send<'a>(
-        &self,
-        mut msg: Message<'a>,
-        forwarded_schemas: Option<&roam_types::SchemaRecvTracker>,
-    ) -> Result<(), ()> {
-        let tx = {
-            let mut inner = self.inner.lock().expect("session core mutex poisoned");
-            let conn_id = msg.connection_id;
-
-            if let MessagePayload::RequestMessage(req) = &mut msg.payload {
-                roam_types::dlog!(
-                    "[session-core] send request: conn={:?} req={:?} body={} forwarded={}",
-                    conn_id,
-                    req.id,
-                    match &req.body {
-                        RequestBody::Call(_) => "Call",
-                        RequestBody::Response(_) => "Response",
-                        RequestBody::Cancel(_) => "Cancel",
-                    },
-                    forwarded_schemas.is_some()
-                );
-                let conn_state = inner
-                    .conns
-                    .entry(conn_id)
-                    .or_insert_with(SendConnState::new);
-                match &mut req.body {
-                    RequestBody::Call(call) => {
-                        Self::prepare_call_schemas(
-                            conn_state,
-                            req.id,
-                            call.method_id,
-                            call,
-                            forwarded_schemas,
-                        );
-                    }
-                    RequestBody::Response(resp) => {
-                        if let Some(method_id) = conn_state.inflight_incoming.remove(&req.id) {
-                            Self::prepare_response_schemas(
-                                conn_state,
-                                req.id,
-                                method_id,
-                                resp,
-                                forwarded_schemas,
-                            );
-                        }
-                    }
-                    RequestBody::Cancel(_) => {}
-                }
-            }
-
-            inner.tx.clone()
-        };
-        tx.send_msg(msg).await.map_err(|_| ())
     }
 
     /// Record that an incoming call was received, so we can look up the
@@ -1961,42 +1870,21 @@ pub(crate) struct RecoveredConduit {
     pub handshake: HandshakeResult,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) trait ConduitRecoverer: Send {
+pub(crate) trait ConduitRecoverer: MaybeSend {
     fn next_conduit<'a>(
         &'a mut self,
         resume_key: Option<&'a SessionResumeKey>,
     ) -> BoxFut<'a, Result<RecoveredConduit, SessionError>>;
 }
 
-#[cfg(target_arch = "wasm32")]
-pub(crate) trait ConduitRecoverer {
-    fn next_conduit<'a>(
-        &'a mut self,
-        resume_key: Option<&'a SessionResumeKey>,
-    ) -> BoxFut<'a, Result<RecoveredConduit, SessionError>>;
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub trait DynConduitTx: Send + Sync {
+pub trait DynConduitTx: MaybeSend + MaybeSync {
     fn send_msg<'a>(
         &'a self,
         msg: Message<'a>,
         binder: Option<&'a dyn roam_types::ChannelBinder>,
     ) -> BoxFut<'a, std::io::Result<()>>;
 }
-#[cfg(target_arch = "wasm32")]
-pub trait DynConduitTx {
-    fn send_msg<'a>(&'a self, msg: Message<'a>) -> BoxFut<'a, std::io::Result<()>>;
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub trait DynConduitRx: Send {
-    fn recv_msg<'a>(&'a mut self)
-    -> BoxFut<'a, std::io::Result<Option<SelfRef<Message<'static>>>>>;
-}
-#[cfg(target_arch = "wasm32")]
-pub trait DynConduitRx {
+pub trait DynConduitRx: MaybeSend {
     fn recv_msg<'a>(&'a mut self)
     -> BoxFut<'a, std::io::Result<Option<SelfRef<Message<'static>>>>>;
 }
@@ -2008,7 +1896,6 @@ where
     T: ConduitTx<Msg = MessageFamily> + MaybeSend + MaybeSync,
     for<'p> <T as ConduitTx>::Permit<'p>: MaybeSend,
 {
-    #[cfg(not(target_arch = "wasm32"))]
     fn send_msg<'a>(
         &'a self,
         msg: Message<'a>,
@@ -2022,16 +1909,6 @@ where
                 permit.send(msg)
             };
             result.map_err(|e| std::io::Error::other(e.to_string()))
-        })
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn send_msg<'a>(&'a self, msg: Message<'a>) -> BoxFut<'a, std::io::Result<()>> {
-        Box::pin(async move {
-            let permit = self.reserve().await?;
-            permit
-                .send(msg)
-                .map_err(|e| std::io::Error::other(e.to_string()))
         })
     }
 }

@@ -12,7 +12,7 @@ use roam_inprocess::JsInProcessLink;
 use roam_types::{Rx, Tx};
 use spec_proto::{
     Canvas, Color, Config, LookupError, MathError, Measurement, Message, Person, Point, Profile,
-    Record, Rectangle, Shape, Status, Tag, Testbed, TestbedClient, TestbedDispatcher,
+    Record, Rectangle, Shape, Status, Tag, TaggedPoint, Testbed, TestbedClient, TestbedDispatcher,
 };
 use wasm_bindgen::prelude::*;
 
@@ -74,21 +74,35 @@ impl Testbed for TestbedService {
         }
     }
 
-    // Channel methods (sum, generate, transform) are not testable on wasm32
-    // because Tx/Rx runtime methods are cfg-gated to non-wasm targets.
-    // These stubs satisfy the trait but won't be exercised by tests.
-
-    async fn sum(&self, _numbers: Rx<i32>) -> i64 {
-        0
+    async fn sum(&self, mut numbers: Rx<i32>) -> i64 {
+        let mut total = 0_i64;
+        while let Ok(Some(n)) = numbers.recv().await {
+            total += *n as i64;
+        }
+        total
     }
 
-    async fn generate(&self, _count: u32, _output: Tx<i32>) {}
+    async fn generate(&self, count: u32, output: Tx<i32>) {
+        for value in 0..count {
+            let _ = output.send(value as i32).await;
+        }
+        let _ = output.close(Default::default()).await;
+    }
 
-    async fn generate_retry_non_idem(&self, _count: u32, _output: Tx<i32>) {}
+    async fn generate_retry_non_idem(&self, count: u32, output: Tx<i32>) {
+        self.generate(count, output).await;
+    }
 
-    async fn generate_retry_idem(&self, _count: u32, _output: Tx<i32>) {}
+    async fn generate_retry_idem(&self, count: u32, output: Tx<i32>) {
+        self.generate(count, output).await;
+    }
 
-    async fn transform(&self, _input: Rx<String>, _output: Tx<String>) {}
+    async fn transform(&self, mut input: Rx<String>, output: Tx<String>) {
+        while let Ok(Some(item)) = input.recv().await {
+            let _ = output.send(item.to_uppercase()).await;
+        }
+        let _ = output.close(Default::default()).await;
+    }
 
     async fn echo_point(&self, point: Point) -> Point {
         point
@@ -145,6 +159,59 @@ impl Testbed for TestbedService {
 
     async fn swap_pair(&self, pair: (i32, String)) -> (String, i32) {
         (pair.1, pair.0)
+    }
+
+    async fn echo_bytes(&self, data: Vec<u8>) -> Vec<u8> {
+        data
+    }
+
+    async fn echo_bool(&self, b: bool) -> bool {
+        b
+    }
+
+    async fn echo_u64(&self, n: u64) -> u64 {
+        n
+    }
+
+    async fn echo_option_string(&self, s: Option<String>) -> Option<String> {
+        s
+    }
+
+    async fn sum_large(&self, mut numbers: Rx<i32>) -> i64 {
+        let mut total = 0_i64;
+        while let Ok(Some(n)) = numbers.recv().await {
+            total += *n as i64;
+        }
+        total
+    }
+
+    async fn generate_large(&self, count: u32, output: Tx<i32>) {
+        self.generate(count, output).await;
+    }
+
+    async fn all_colors(&self) -> Vec<Color> {
+        vec![Color::Red, Color::Green, Color::Blue]
+    }
+
+    async fn describe_point(&self, label: String, x: i32, y: i32, active: bool) -> TaggedPoint {
+        TaggedPoint {
+            label,
+            x,
+            y,
+            active,
+        }
+    }
+
+    async fn echo_shape(&self, shape: Shape) -> Shape {
+        shape
+    }
+
+    async fn echo_status_v1(&self, status: Status) -> Status {
+        status
+    }
+
+    async fn echo_tag_v1(&self, tag: Tag) -> Tag {
+        tag
     }
 
     async fn echo_profile(&self, profile: Profile) -> Profile {

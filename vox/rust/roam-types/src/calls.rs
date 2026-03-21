@@ -200,7 +200,6 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
     ///
     /// Returns `None` by default. The driver's `ReplySink` implementation
     /// overrides this to provide actual channel binding.
-    #[cfg(not(target_arch = "wasm32"))]
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
         None
     }
@@ -252,7 +251,6 @@ pub trait Caller: Clone + MaybeSend + MaybeSync + 'static {
     ///
     /// Returns `None` by default. The driver's `Caller` implementation
     /// overrides this to provide actual channel binding.
-    #[cfg(not(target_arch = "wasm32"))]
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
         None
     }
@@ -265,7 +263,6 @@ trait ErasedCallerDyn: MaybeSend + MaybeSync + 'static {
 
     fn is_connected(&self) -> bool;
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder>;
 }
 
@@ -282,7 +279,6 @@ impl<C: Caller> ErasedCallerDyn for C {
         Caller::is_connected(self)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
         Caller::channel_binder(self)
     }
@@ -362,7 +358,6 @@ impl Caller for ErasedCaller {
         self.inner.is_connected()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
         self.inner.channel_binder()
     }

@@ -216,7 +216,6 @@ where
         self.caller.is_connected()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
         self.caller.channel_binder()
     }

@@ -57,6 +57,8 @@ pub use roam_types::{
     LinkRx,
     LinkTx,
     LinkTxPermit,
+    MaybeSend,
+    MaybeSync,
     MessageFamily,
     Metadata,
     MetadataEntry,
@@ -104,7 +106,6 @@ pub use roam_types::{
 pub use roam_core::*;
 
 // Channel binding via thread-local binder during deserialization
-#[cfg(not(target_arch = "wasm32"))]
 pub use roam_types::channel::with_channel_binder;
 
 // Re-export the session module (generated code uses `roam::session::ServiceDescriptor`)

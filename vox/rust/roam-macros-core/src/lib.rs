@@ -275,7 +275,7 @@ fn generate_service_trait(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenSt
         #trait_doc
         pub trait #trait_name
         where
-            Self: Send + Sync,
+            Self: #roam::MaybeSend + #roam::MaybeSync,
         {
             #(#methods)*
         }
@@ -320,7 +320,7 @@ fn generate_trait_method(method: &ServiceMethod, roam: &TokenStream2) -> TokenSt
         signature_params.extend(params);
         quote! {
             #method_doc
-            fn #method_name #method_lifetime (&self, #(#signature_params),*) -> impl std::future::Future<Output = ()> + Send;
+            fn #method_name #method_lifetime (&self, #(#signature_params),*) -> impl std::future::Future<Output = ()> + #roam::MaybeSend;
         }
     } else {
         let output_ty = return_type.to_token_stream();
@@ -331,7 +331,7 @@ fn generate_trait_method(method: &ServiceMethod, roam: &TokenStream2) -> TokenSt
         signature_params.extend(params);
         quote! {
             #method_doc
-            fn #method_name (&self, #(#signature_params),*) -> impl std::future::Future<Output = #output_ty> + Send;
+            fn #method_name (&self, #(#signature_params),*) -> impl std::future::Future<Output = #output_ty> + #roam::MaybeSend;
         }
     }
 }
@@ -435,7 +435,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
 
         impl<H> #dispatcher_name<H>
         where
-            H: #trait_name + Clone + Send + Sync + 'static,
+            H: #trait_name + Clone + #roam::MaybeSend + #roam::MaybeSync + 'static,
         {
             /// Create a new dispatcher wrapping the given handler.
             pub fn new(handler: H) -> Self {
@@ -470,7 +470,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, roam: &TokenStream2) -> TokenStrea
 
         impl<H, R> #roam::Handler<R> for #dispatcher_name<H>
         where
-            H: #trait_name + Clone + Send + Sync + 'static,
+            H: #trait_name + Clone + #roam::MaybeSend + #roam::MaybeSync + 'static,
             R: #roam::ReplySink,
         {
             fn retry_policy(&self, method_id: #roam::MethodId) -> #roam::RetryPolicy {
