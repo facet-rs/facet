@@ -128,7 +128,7 @@ func performAcceptorHandshake(
         parity: oppositeParity(peerHello.parity),
         maxConcurrentRequests: maxConcurrentRequests
     )
-    let sessionResumeKey = resumable ? freshSessionResumeKey() : nil
+    let sessionResumeKey = expectedResumeKey ?? (resumable ? freshSessionResumeKey() : nil)
     let helloYourself = HandshakeHelloYourself(
         connectionSettings: ourSettings,
         messagePayloadSchemaCbor: wireMessageSchemasCbor,
@@ -172,6 +172,7 @@ func performAcceptorHandshake(
 }
 
 func buildEstablishedConduit(
+    role: Role,
     transport: TransportConduitKind,
     attachment: LinkAttachment,
     recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil
@@ -188,7 +189,28 @@ func buildEstablishedConduit(
                 )
             )
         }
+        if role == .acceptor && attachment.clientHello == nil {
+            return try await StableConduit.connect(
+                source: DeferredStableAcceptorAttachmentSource(link: attachment.link)
+            )
+        }
         return try await StableConduit.connect(source: singleAttachmentSource(attachment))
+    }
+}
+
+private actor DeferredStableAcceptorAttachmentSource: LinkSource {
+    private var link: (any Link)?
+
+    init(link: any Link) {
+        self.link = link
+    }
+
+    func nextLink() async throws -> LinkAttachment {
+        guard let link else {
+            throw TransportError.protocolViolation("single-use stable acceptor source exhausted")
+        }
+        self.link = nil
+        return try await prepareStableAcceptorAttachment(link: link)
     }
 }
 
@@ -246,6 +268,7 @@ public func establishInitiator(
     )
 
     let conduit = try await buildEstablishedConduit(
+        role: .initiator,
         transport: transport,
         attachment: attachment,
         recoverAttachment: recoverAttachment
@@ -332,6 +355,7 @@ public func establishAcceptor(
     )
 
     let conduit = try await buildEstablishedConduit(
+        role: .acceptor,
         transport: transport,
         attachment: attachment
     )

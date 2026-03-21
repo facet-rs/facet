@@ -70,6 +70,10 @@ extension Driver {
                         if generation != seenResumeGeneration {
                             seenResumeGeneration = generation
                             traceLog(.driver, "resume generation advanced to \(generation)")
+                            let interruptedRequestIds = await state.clearIncomingInFlightForResume()
+                            for requestId in interruptedRequestIds {
+                                _ = await operations.failWithoutReply(ownerRequestId: requestId)
+                            }
                             await replayPendingCallsAfterResume()
                         }
                     }

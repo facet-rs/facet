@@ -748,6 +748,7 @@ pub fn run_fault_host_goodbye_wake_case() {
     run_async(async {
         let dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
         let shm_path = dir.path().join("xlang-shm-fault-host-goodbye-wake.shm");
+        let ready_path = dir.path().join("xlang-shm-fault-host-goodbye-wake.ready");
         let class = [SizeClassConfig {
             slot_size: 4096,
             slot_count: 4,
@@ -772,13 +773,20 @@ pub fn run_fault_host_goodbye_wake_case() {
             .arg(format!("--hub-path={}", shm_path.display()))
             .arg(format!("--peer-id={}", peer_id.get()))
             .arg(format!("--doorbell-fd={guest_fd}"))
+            .arg(format!("--ready-file={}", ready_path.display()))
             .arg("--scenario=fault-host-goodbye-wake")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("spawn swift guest: {e}"))?;
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let wait_started = Instant::now();
+        while !ready_path.exists() {
+            if wait_started.elapsed() > Duration::from_secs(1) {
+                return Err("swift guest did not signal ready".to_string());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         segment.set_host_goodbye();
         ring_doorbell(host_fd);
 

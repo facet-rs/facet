@@ -87,6 +87,14 @@ final class ConnectionHandle: @unchecked Sendable {
         await requestSemaphore?.close()
     }
 
+    func freshOperationMetadata(from metadata: [MetadataEntryV7]) async -> [MetadataEntryV7] {
+        guard peerSupportsRetry else {
+            return metadata
+        }
+        let operationId = await operationIdAllocator.allocate()
+        return replacingOperationId(metadata, operationId: operationId)
+    }
+
     func sendTaskMessage(_ msg: TaskMessage) {
         _ = taskTx(msg)
     }

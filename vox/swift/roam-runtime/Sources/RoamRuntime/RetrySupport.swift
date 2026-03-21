@@ -51,3 +51,16 @@ public func ensureOperationId(
         )
     ]
 }
+
+public func replacingOperationId(
+    _ metadata: [MetadataEntryV7],
+    operationId: UInt64
+) -> [MetadataEntryV7] {
+    metadata.filter { $0.key != operationIdMetadataKey } + [
+        MetadataEntryV7(
+            key: operationIdMetadataKey,
+            value: .u64(operationId),
+            flags: retryMetadataFlagsNone
+        )
+    ]
+}

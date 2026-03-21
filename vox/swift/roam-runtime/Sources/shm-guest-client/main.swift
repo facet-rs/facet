@@ -67,6 +67,7 @@ struct SpawnArgs {
     let peerId: UInt8
     let doorbellFd: Int32
     let mmapControlFd: Int32
+    let readyFile: String?
     let scenario: String
     let iterations: Int?
     let sizes: [Int]?
@@ -82,6 +83,7 @@ private func parseArgs(_ args: [String]) -> SpawnArgs {
     var peerId: UInt8?
     var doorbellFd: Int32?
     var mmapControlFd: Int32 = -1
+    var readyFile: String?
     var scenario = "data-path"
     var iterations: Int?
     var sizes: [Int]?
@@ -103,6 +105,8 @@ private func parseArgs(_ args: [String]) -> SpawnArgs {
             mmapControlFd = fd
         } else if let value = arg.split(separator: "=", maxSplits: 1).last, arg.hasPrefix("--scenario=") {
             scenario = String(value)
+        } else if let value = arg.split(separator: "=", maxSplits: 1).last, arg.hasPrefix("--ready-file=") {
+            readyFile = String(value)
         } else if let value = arg.split(separator: "=", maxSplits: 1).last, arg.hasPrefix("--iterations=") {
             guard let n = Int(value), n > 0 else {
                 fail("invalid --iterations value")
@@ -136,6 +140,7 @@ private func parseArgs(_ args: [String]) -> SpawnArgs {
         peerId: peerId,
         doorbellFd: doorbellFd,
         mmapControlFd: mmapControlFd,
+        readyFile: readyFile,
         scenario: scenario,
         iterations: iterations,
         sizes: sizes
@@ -199,6 +204,14 @@ struct ShmGuestClientMain {
             guest = try ShmGuestRuntime.attach(ticket: ticket)
         } catch {
             fail("attach failed: \(error)")
+        }
+
+        if let readyFile = args.readyFile {
+            do {
+                try Data("ready".utf8).write(to: URL(fileURLWithPath: readyFile))
+            } catch {
+                fail("failed to write ready file: \(error)")
+            }
         }
 
         switch args.scenario {

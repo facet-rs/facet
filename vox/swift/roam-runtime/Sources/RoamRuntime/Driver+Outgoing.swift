@@ -173,10 +173,16 @@ extension Driver {
             let replayCall: DriverQueuedCall
             if let prepareRetry = call.prepareRetry {
                 let rebuilt = await prepareRetry()
+                let replayMetadata =
+                    if call.retry.idem {
+                        await handle.freshOperationMetadata(from: call.metadata)
+                    } else {
+                        call.metadata
+                    }
                 replayCall = DriverQueuedCall(
                     requestId: call.requestId,
                     methodId: call.methodId,
-                    metadata: call.metadata,
+                    metadata: replayMetadata,
                     payload: rebuilt.payload,
                     retry: call.retry,
                     timeout: call.timeout,

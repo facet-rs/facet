@@ -538,75 +538,23 @@ public final class ShmHostRuntime: @unchecked Sendable {
             return nil
         }
 
-        let bytes = Array(readable)
-        let decoded: ShmDecodedFrame
         do {
-            decoded = try decodeShmFrame(bytes)
-        } catch {
-            fatalError = true
-            throw ShmHostReceiveError.malformedFrame
-        }
-
-        switch decoded {
-        case .inline(let header, let payload):
-            try guestToHost.release(header.totalLen)
-            return ShmGuestFrame(payload: payload)
-
-        case .slotRef(let header, let slotRef):
-            let handle = ShmVarSlotHandle(
-                classIdx: slotRef.classIdx,
-                extentIdx: slotRef.extentIdx,
-                slotIdx: slotRef.slotIdx,
-                generation: slotRef.slotGeneration
-            )
-
-            guard let clsSize = slotPool.slotSize(classIdx: slotRef.classIdx), clsSize >= 4 else {
-                fatalError = true
-                throw ShmHostReceiveError.slotError
-            }
-            guard let payloadPtr = slotPool.payloadPointer(handle) else {
-                fatalError = true
-                throw ShmHostReceiveError.slotError
-            }
-
-            let slotBytes = UnsafeRawBufferPointer(start: UnsafeRawPointer(payloadPtr), count: Int(clsSize))
-            let payloadLen = readU32LEHost(Array(slotBytes.prefix(4)), 0)
-            if payloadLen > clsSize - 4 {
-                fatalError = true
-                throw ShmHostReceiveError.payloadTooLarge
-            }
-            let payload = Array(
-                UnsafeRawBufferPointer(
-                    start: UnsafeRawPointer(payloadPtr.advanced(by: 4)),
-                    count: Int(payloadLen)
+            return try receiveShmFrame(
+                bytes: Array(readable),
+                maxPayloadSize: self.header.maxPayloadSize,
+                inbox: guestToHost,
+                slotPool: slotPool,
+                doorbell: doorbell,
+                mmapAttachments: mmapAttachments,
+                errors: ShmReceiveErrors<ShmHostReceiveError>(
+                    malformedFrame: .malformedFrame,
+                    slotError: .slotError,
+                    payloadTooLarge: .payloadTooLarge
                 )
             )
-
-            do {
-                try slotPool.free(handle)
-            } catch {
-                fatalError = true
-                throw ShmHostReceiveError.slotError
-            }
-
-            try guestToHost.release(header.totalLen)
-            try doorbell?.signal()
-            return ShmGuestFrame(payload: payload)
-
-        case .mmapRef(let header, let mmapRef):
-            guard mmapRef.payloadLen <= self.header.maxPayloadSize else {
-                fatalError = true
-                throw ShmHostReceiveError.payloadTooLarge
-            }
-            guard let mmapAttachments, mmapAttachments.drainControl(),
-                  let payload = mmapAttachments.resolve(mmapRef: mmapRef)
-            else {
-                fatalError = true
-                throw ShmHostReceiveError.malformedFrame
-            }
-            try guestToHost.release(header.totalLen)
-            try doorbell?.signal()
-            return ShmGuestFrame(payload: payload)
+        } catch let error as ShmHostReceiveError {
+            fatalError = true
+            throw error
         }
     }
 
@@ -904,14 +852,6 @@ private func writeU64LEHost(_ value: UInt64, to bytes: inout [UInt8], at index: 
     bytes[index + 5] = UInt8(truncatingIfNeeded: le >> 40)
     bytes[index + 6] = UInt8(truncatingIfNeeded: le >> 48)
     bytes[index + 7] = UInt8(truncatingIfNeeded: le >> 56)
-}
-
-@inline(__always)
-private func readU32LEHost(_ bytes: [UInt8], _ at: Int) -> UInt32 {
-    UInt32(bytes[at])
-        | (UInt32(bytes[at + 1]) << 8)
-        | (UInt32(bytes[at + 2]) << 16)
-        | (UInt32(bytes[at + 3]) << 24)
 }
 
 @inline(__always)

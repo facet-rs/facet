@@ -198,6 +198,7 @@ actor SessionResumeCoordinator {
         }
 
         return try await buildEstablishedConduit(
+            role: role,
             transport: transport,
             attachment: attachment,
             recoverAttachment: recoverAttachment

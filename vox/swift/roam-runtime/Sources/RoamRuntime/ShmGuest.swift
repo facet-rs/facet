@@ -488,8 +488,8 @@ public final class ShmGuestRuntime: @unchecked Sendable {
             let offset = Int(header.varSlotPoolOffset) + i * 64
             let rawBuf = try region.mutableBytes(at: offset, count: 8)
             let bytes = Array(rawBuf)
-            let slotSize = readU32LE(bytes, 0)
-            let slotCount = readU32LE(bytes, 4)
+            let slotSize = readShmU32LE(bytes, 0)
+            let slotCount = readShmU32LE(bytes, 4)
             classes.append(ShmVarSlotClass(slotSize: slotSize, count: slotCount))
         }
         return classes
@@ -723,79 +723,23 @@ public final class ShmGuestRuntime: @unchecked Sendable {
             return nil
         }
 
-        let bytes = Array(readable)
-        let decoded: ShmDecodedFrame
         do {
-            decoded = try decodeShmFrame(bytes)
-        } catch {
-            fatalError = true
-            throw ShmGuestReceiveError.malformedFrame
-        }
-
-        switch decoded {
-        case .inline(let header, let payload):
-            try hostToGuest.release(header.totalLen)
-            return ShmGuestFrame(payload: payload)
-
-        case .slotRef(let header, let slotRef):
-            let handle = ShmVarSlotHandle(
-                classIdx: slotRef.classIdx,
-                extentIdx: slotRef.extentIdx,
-                slotIdx: slotRef.slotIdx,
-                generation: slotRef.slotGeneration
+            return try receiveShmFrame(
+                bytes: Array(readable),
+                maxPayloadSize: self.header.maxPayloadSize,
+                inbox: hostToGuest,
+                slotPool: slotPool,
+                doorbell: doorbell,
+                mmapAttachments: mmapAttachments,
+                errors: ShmReceiveErrors<ShmGuestReceiveError>(
+                    malformedFrame: .malformedFrame,
+                    slotError: .slotError,
+                    payloadTooLarge: .payloadTooLarge
+                )
             )
-
-            guard let clsSize = slotPool.slotSize(classIdx: slotRef.classIdx) else {
-                fatalError = true
-                throw ShmGuestReceiveError.slotError
-            }
-            if clsSize < 4 {
-                fatalError = true
-                throw ShmGuestReceiveError.payloadTooLarge
-            }
-
-            guard let payloadPtr = slotPool.payloadPointer(handle) else {
-                fatalError = true
-                throw ShmGuestReceiveError.slotError
-            }
-
-            let slotBytes = UnsafeRawBufferPointer(start: UnsafeRawPointer(payloadPtr), count: Int(clsSize))
-            let payloadLen = readU32LE(Array(slotBytes.prefix(4)), 0)
-            if payloadLen > clsSize - 4 {
-                fatalError = true
-                throw ShmGuestReceiveError.payloadTooLarge
-            }
-            let payload = Array(
-                UnsafeRawBufferPointer(
-                    start: UnsafeRawPointer(payloadPtr.advanced(by: 4)),
-                    count: Int(payloadLen)
-                ))
-
-            do {
-                try slotPool.free(handle)
-            } catch {
-                fatalError = true
-                throw ShmGuestReceiveError.slotError
-            }
-
-            try hostToGuest.release(header.totalLen)
-            try doorbell?.signal()
-
-            return ShmGuestFrame(payload: payload)
-        case .mmapRef(let header, let mmapRef):
-            guard mmapRef.payloadLen <= self.header.maxPayloadSize else {
-                fatalError = true
-                throw ShmGuestReceiveError.payloadTooLarge
-            }
-            guard let mmapAttachments, mmapAttachments.drainControl(),
-                  let payload = mmapAttachments.resolve(mmapRef: mmapRef)
-            else {
-                fatalError = true
-                throw ShmGuestReceiveError.malformedFrame
-            }
-            try hostToGuest.release(header.totalLen)
-            try doorbell?.signal()
-            return ShmGuestFrame(payload: payload)
+        } catch let error as ShmGuestReceiveError {
+            fatalError = true
+            throw error
         }
     }
 
@@ -874,14 +818,6 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         return try region.pointer(at: offset)
     }
 
-}
-
-@inline(__always)
-private func readU32LE(_ bytes: [UInt8], _ at: Int) -> UInt32 {
-    UInt32(bytes[at])
-        | (UInt32(bytes[at + 1]) << 8)
-        | (UInt32(bytes[at + 2]) << 16)
-        | (UInt32(bytes[at + 3]) << 24)
 }
 
 @inline(__always)
