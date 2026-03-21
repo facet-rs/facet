@@ -394,6 +394,10 @@ fn forwarded_channel_body<'a>(
 }
 
 impl ConnectionSender {
+    pub(crate) fn connection_id(&self) -> ConnectionId {
+        self.connection_id
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) async fn send_with_binder<'a>(
         &self,
@@ -1026,6 +1030,21 @@ impl Session {
                 self.handle_inbound_reject(conn_id, reject);
             }
             MessagePayload::RequestMessage(r) => {
+                roam_types::dlog!(
+                    "[session {:?}] recv request: conn={:?} req={:?} body={} method={:?}",
+                    self.role,
+                    conn_id,
+                    r.id,
+                    match &r.body {
+                        RequestBody::Call(_) => "Call",
+                        RequestBody::Response(_) => "Response",
+                        RequestBody::Cancel(_) => "Cancel",
+                    },
+                    match &r.body {
+                        RequestBody::Call(call) => Some(call.method_id),
+                        RequestBody::Response(_) | RequestBody::Cancel(_) => None,
+                    }
+                );
                 // Record any inlined schemas from the incoming request before routing
                 let response_had_schema_payload = matches!(&r.body, RequestBody::Response(resp) if !resp.schemas.is_empty());
                 {
@@ -1086,10 +1105,23 @@ impl Session {
                     _ => return,
                 };
                 let conn_tx = state.conn_tx.clone();
+                let request_id = r.id;
+                let body_kind = match &r.body {
+                    RequestBody::Call(_) => "Call",
+                    RequestBody::Response(_) => "Response",
+                    RequestBody::Cancel(_) => "Cancel",
+                };
                 let recv_msg = RecvMessage {
                     schemas: Arc::clone(&state.schema_recv_tracker),
                     msg: r.map(ConnectionMessage::Request),
                 };
+                roam_types::dlog!(
+                    "[session {:?}] dispatch request: conn={:?} req={:?} body={}",
+                    self.role,
+                    conn_id,
+                    request_id,
+                    body_kind
+                );
                 if conn_tx.send(recv_msg).await.is_err() {
                     self.remove_connection(&conn_id);
                     self.maybe_request_shutdown_after_root_closed();
@@ -1576,6 +1608,17 @@ impl SessionCore {
             let conn_id = msg.connection_id;
 
             if let MessagePayload::RequestMessage(req) = &mut msg.payload {
+                roam_types::dlog!(
+                    "[session-core] send request: conn={:?} req={:?} body={} forwarded={}",
+                    conn_id,
+                    req.id,
+                    match &req.body {
+                        RequestBody::Call(_) => "Call",
+                        RequestBody::Response(_) => "Response",
+                        RequestBody::Cancel(_) => "Cancel",
+                    },
+                    forwarded_schemas.is_some()
+                );
                 let conn_state = inner
                     .conns
                     .entry(conn_id)
@@ -1621,6 +1664,17 @@ impl SessionCore {
             let conn_id = msg.connection_id;
 
             if let MessagePayload::RequestMessage(req) = &mut msg.payload {
+                roam_types::dlog!(
+                    "[session-core] send request: conn={:?} req={:?} body={} forwarded={}",
+                    conn_id,
+                    req.id,
+                    match &req.body {
+                        RequestBody::Call(_) => "Call",
+                        RequestBody::Response(_) => "Response",
+                        RequestBody::Cancel(_) => "Cancel",
+                    },
+                    forwarded_schemas.is_some()
+                );
                 let conn_state = inner
                     .conns
                     .entry(conn_id)

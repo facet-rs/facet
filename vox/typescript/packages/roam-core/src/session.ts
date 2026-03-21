@@ -660,6 +660,9 @@ class SessionCore {
   async sendMessage(message: Message): Promise<void> {
     this.assertConnected("resume before sending");
 
+    roamLogger()?.debug(
+      `[roam:session] sendMessage: tag=${message.payload.tag} conn=${message.connection_id}`,
+    );
     const op = this.sendChain.then(() => this.conduit.send(message));
     this.sendChain = op.then(() => undefined, () => undefined);
     await op;
@@ -1161,16 +1164,27 @@ export class ConnectionHandle {
     const localResponseSchemaSet = request.sendSchemas
       ? localSchemaSetForMethod(request.descriptor.id, "response", request.sendSchemas)
       : null;
-    const values = Object.values(request.args);
-    const initial = request.prepareRetry
-      ? request.prepareRetry()
+    const encodeCurrentArgs = (): Uint8Array => {
+      const values = Object.values(request.args);
+      return values.length === 0
+        ? new Uint8Array(0)
+        : localArgsSchemaSet
+        ? encodeWithKind(values, localArgsSchemaSet.root.kind, localArgsSchemaSet.registry)
+        : encodeWithSchema(values, request.descriptor.args, request.schemaRegistry);
+    };
+    const prepareRetry = request.prepareRetry
+      ? () => {
+          const rebuilt = request.prepareRetry!();
+          return {
+            payload: localArgsSchemaSet ? encodeCurrentArgs() : rebuilt.payload,
+            channels: rebuilt.channels,
+          };
+        }
+      : undefined;
+    const initial = prepareRetry
+      ? prepareRetry()
       : {
-          payload:
-            values.length === 0
-              ? new Uint8Array(0)
-              : localArgsSchemaSet
-              ? encodeWithKind(values, localArgsSchemaSet.root.kind, localArgsSchemaSet.registry)
-              : encodeWithSchema(values, request.descriptor.args, request.schemaRegistry),
+          payload: encodeCurrentArgs(),
           channels: request.channels ?? [],
         };
     const metadataCarrier = request.metadata ? request.metadata.clone() : new ClientMetadata();
@@ -1208,7 +1222,7 @@ export class ConnectionHandle {
         computeSchemas,
         persist: request.descriptor.retry?.persist ?? false,
         idem: request.descriptor.retry?.idem ?? false,
-        prepareRetry: request.prepareRetry,
+        prepareRetry,
         finalizeChannels: request.finalizeChannels,
         requestIds: new Set(),
         settled: false,
@@ -1330,6 +1344,9 @@ export class ConnectionHandle {
     if (!state || state.settled) {
       return;
     }
+    roamLogger()?.debug(
+      `[roam:session] resolveResponse: req=${requestId} payload=${payload.length}`,
+    );
     this.clearPendingState(state);
     state.resolve(payload);
   }
@@ -1437,6 +1454,10 @@ export class ConnectionHandle {
         state.payload = rebuilt.payload.slice();
         state.channels = [...rebuilt.channels];
       }
+      const schemas = state.computeSchemas?.();
+      roamLogger()?.debug(
+        `[roam:session] sendPendingRequest: req=${requestId} method=${state.methodId} payload=${state.payload.length} channels=${state.channels.length} schemas=${schemas?.length ?? 0}`,
+      );
       await this.session.sendMessage(
         messageRequest(
           requestId,
@@ -1445,7 +1466,7 @@ export class ConnectionHandle {
           cloneMetadata(state.metadata),
           [...state.channels],
           this.id,
-          state.computeSchemas?.(),
+          schemas,
         ),
       );
       await this.flushOutgoing();

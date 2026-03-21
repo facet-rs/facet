@@ -17,7 +17,10 @@ import { TestbedDispatcher } from "@bearcove/roam-generated/testbed_evolved.gene
 import { setRoamLogger } from "@bearcove/roam-core";
 import { runSubjectServer } from "./harness.ts";
 
-setRoamLogger(console);
+setRoamLogger({
+  debug: (...args) => console.error(...args),
+  error: (...args) => console.error(...args),
+});
 
 class EvolvedTestbedService implements TestbedHandler {
   echoProfile(profile: Profile): Profile {

@@ -756,6 +756,7 @@ async fn spawn_subject_cmd_with_env(
     command
         .current_dir(workspace_root())
         .env("PEER_ADDR", peer_addr)
+        .env("ROAM_DLOG", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1011,6 +1012,7 @@ pub async fn spawn_server_subject(spec: SubjectSpec) -> Result<(String, Child), 
         .env("PEER_ADDR", "unused")
         .env("SUBJECT_MODE", "server-listen")
         .env("LISTEN_PORT", "0")
+        .env("ROAM_DLOG", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped()) // we read this ourselves
         .stderr(Stdio::piped()); // pumped after addr is read

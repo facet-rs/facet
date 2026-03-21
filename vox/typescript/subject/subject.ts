@@ -39,7 +39,10 @@ import {
 } from "@bearcove/roam-core";
 
 // Enable roam internals logging for test visibility
-setRoamLogger(console);
+setRoamLogger({
+  debug: (...args) => console.error(...args),
+  error: (...args) => console.error(...args),
+});
 
 // Service implementation
 class TestbedService implements TestbedHandler {

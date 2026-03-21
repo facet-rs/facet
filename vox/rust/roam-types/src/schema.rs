@@ -1788,7 +1788,7 @@ impl ExtractCtx {
                 }
             }
             Type::User(UserType::Opaque) => SchemaKind::Primitive {
-                primitive_type: PrimitiveType::Bytes,
+                primitive_type: PrimitiveType::Payload,
             },
             other => {
                 return Err(SchemaExtractError::UnhandledType {
@@ -2100,6 +2100,21 @@ mod tests {
             schemas[0].kind,
             SchemaKind::Primitive {
                 primitive_type: PrimitiveType::Bytes
+            }
+        ));
+    }
+
+    // r[verify zerocopy.framing.value.opaque]
+    #[test]
+    fn opaque_payload_is_payload_primitive() {
+        let schemas = extract_schemas(crate::Payload::<'static>::SHAPE)
+            .unwrap()
+            .schemas;
+        assert_eq!(schemas.len(), 1);
+        assert!(matches!(
+            schemas[0].kind,
+            SchemaKind::Primitive {
+                primitive_type: PrimitiveType::Payload
             }
         ));
     }

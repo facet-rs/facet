@@ -340,6 +340,18 @@ impl ReplySink for DriverReplySink {
             .take()
             .expect("unreachable: send_reply takes self by value");
 
+        roam_types::dlog!(
+            "[driver] send_reply: conn={:?} req={:?} method={:?} payload={} operation_id={:?}",
+            sender.connection_id(),
+            self.request_id,
+            self.method_id,
+            match &response.ret {
+                Payload::Value { .. } => "Value",
+                Payload::PostcardBytes(_) => "PostcardBytes",
+            },
+            self.operation_id
+        );
+
         if let Payload::Value { shape, .. } = &response.ret
             && let Ok(extracted) = roam_types::extract_schemas(shape)
         {
@@ -366,6 +378,13 @@ impl ReplySink for DriverReplySink {
             response.schemas = schemas_for_wire;
 
             // Send the full response (with schemas) on the wire.
+            roam_types::dlog!(
+                "[driver] send_reply wire send: conn={:?} req={:?} method={:?} schemas={}",
+                sender.connection_id(),
+                self.request_id,
+                self.method_id,
+                response.schemas.0.len()
+            );
             if let Err(_e) = sender.send_response(self.request_id, response).await {
                 sender.mark_failure(self.request_id, FailureDisposition::Cancelled);
             }
@@ -398,11 +417,19 @@ impl ReplySink for DriverReplySink {
                     sender.mark_failure(waiter, FailureDisposition::Cancelled);
                 }
             }
-        } else if let Err(_e) = sender
-            .send_response_for_method(self.request_id, self.method_id, response)
-            .await
-        {
-            sender.mark_failure(self.request_id, FailureDisposition::Cancelled);
+        } else {
+            roam_types::dlog!(
+                "[driver] send_reply direct send: conn={:?} req={:?} method={:?}",
+                sender.connection_id(),
+                self.request_id,
+                self.method_id
+            );
+            if let Err(_e) = sender
+                .send_response_for_method(self.request_id, self.method_id, response)
+                .await
+            {
+                sender.mark_failure(self.request_id, FailureDisposition::Cancelled);
+            }
         }
     }
 
@@ -1230,6 +1257,22 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         let crate::session::RecvMessage { schemas, msg } = recv;
         let is_request = matches!(&*msg, ConnectionMessage::Request(_));
         if is_request {
+            if let ConnectionMessage::Request(req) = &*msg {
+                roam_types::dlog!(
+                    "[driver] handle_recv request: conn={:?} req={:?} body={} method={:?}",
+                    self.sender.connection_id(),
+                    req.id,
+                    match &req.body {
+                        RequestBody::Call(_) => "Call",
+                        RequestBody::Response(_) => "Response",
+                        RequestBody::Cancel(_) => "Cancel",
+                    },
+                    match &req.body {
+                        RequestBody::Call(call) => Some(call.method_id),
+                        RequestBody::Response(_) | RequestBody::Cancel(_) => None,
+                    }
+                );
+            }
             let msg = msg.map(|m| match m {
                 ConnectionMessage::Request(r) => r,
                 _ => unreachable!(),
@@ -1255,6 +1298,16 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         let is_cancel = matches!(&msg.body, RequestBody::Cancel(_));
 
         if is_call {
+            let method_id = match &msg.body {
+                RequestBody::Call(call) => call.method_id,
+                _ => unreachable!(),
+            };
+            roam_types::dlog!(
+                "[driver] inbound call: conn={:?} req={:?} method={:?}",
+                self.sender.connection_id(),
+                req_id,
+                method_id
+            );
             // r[impl rpc.request]
             // r[impl rpc.error.scope]
             let call = msg.map(|m| match m.body {
@@ -1264,6 +1317,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             let handler = Arc::clone(&self.handler);
             let retry = handler.retry_policy(call.method_id);
             let operation_id = metadata_operation_id(&call.metadata);
+            let method_id = call.method_id;
 
             if let Some(operation_id) = operation_id {
                 // 1. Check live tracker (in-flight operations in this session)
@@ -1378,7 +1432,17 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             let has_channels = false;
             let join_handle = moire::task::spawn(
                 async move {
+                    roam_types::dlog!(
+                        "[driver] handler start: req={:?} method={:?}",
+                        req_id,
+                        method_id
+                    );
                     handler.handle(call, reply, schemas).await;
+                    roam_types::dlog!(
+                        "[driver] handler done: req={:?} method={:?}",
+                        req_id,
+                        method_id
+                    );
                 }
                 .named("handler"),
             );
@@ -1393,14 +1457,26 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             );
         } else if is_response {
             // r[impl rpc.response.one-per-request]
+            roam_types::dlog!(
+                "[driver] inbound response: conn={:?} req={:?}",
+                self.sender.connection_id(),
+                req_id
+            );
             tracing::debug!(%req_id, "driver received response");
             if let Some(tx) = self.shared.pending_responses.lock().remove(&req_id) {
+                roam_types::dlog!("[driver] routing response to waiter: req={:?}", req_id);
                 tracing::debug!(%req_id, "routing response to pending oneshot");
                 let _: Result<(), _> = tx.send(PendingResponse { msg, schemas });
             } else {
+                roam_types::dlog!("[driver] dropped unmatched response: req={:?}", req_id);
                 tracing::debug!(%req_id, "no pending response slot for this req_id");
             }
         } else if is_cancel {
+            roam_types::dlog!(
+                "[driver] inbound cancel: conn={:?} req={:?}",
+                self.sender.connection_id(),
+                req_id
+            );
             // r[impl rpc.cancel]
             // r[impl rpc.cancel.channels]
             tracing::debug!(%req_id, in_flight = self.in_flight_handlers.contains_key(&req_id), "received cancel");

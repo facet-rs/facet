@@ -294,8 +294,31 @@ function encodeByKind(
       return;
     }
     case "channel":
+      writer.writeVarint(extractChannelId(value));
       return;
   }
+}
+
+function extractChannelId(value: unknown): bigint {
+  if (typeof value === "bigint") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error(`channel: expected non-negative integer, got ${value}`);
+    }
+    return BigInt(value);
+  }
+  if (value && typeof value === "object" && "channelId" in value) {
+    const channelId = (value as { channelId: unknown }).channelId;
+    if (typeof channelId === "bigint") {
+      return channelId;
+    }
+    if (typeof channelId === "number" && Number.isInteger(channelId) && channelId >= 0) {
+      return BigInt(channelId);
+    }
+  }
+  throw new Error("channel: expected bigint, number, or bound channel handle");
 }
 
 function encodePrimitive(value: unknown, primitiveType: string, writer: BufWriter): void {
@@ -419,8 +442,7 @@ export function skipValue(
       return off;
     }
     case "channel":
-      // Channels encode as unit (zero bytes)
-      return offset;
+      return decodeU64(buf, offset).next;
   }
 }
 
@@ -932,7 +954,7 @@ function decodeByKind(
       return { value: result, next: off };
     }
     case "channel":
-      return { value: undefined, next: offset };
+      return decodeU64(buf, offset);
   }
 }
 
