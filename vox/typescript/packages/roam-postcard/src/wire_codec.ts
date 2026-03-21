@@ -258,6 +258,12 @@ function encodeByKind(
       return;
     }
     case "list": {
+      if (isByteListKind(kind, registry)) {
+        const bytes = coerceUint8Array(value, "list<u8>");
+        writer.writeVarint(bytes.length);
+        writer.writeBytes(bytes);
+        return;
+      }
       const values = value as unknown[];
       writer.writeVarint(values.length);
       for (const item of values) {
@@ -364,13 +370,13 @@ function encodePrimitive(value: unknown, primitiveType: string, writer: BufWrite
     case "unit":
       return;
     case "bytes": {
-      const bytes = value as Uint8Array;
+      const bytes = coerceUint8Array(value, "bytes");
       writer.writeVarint(bytes.length);
       writer.writeBytes(bytes);
       return;
     }
     case "payload": {
-      const bytes = value as Uint8Array;
+      const bytes = coerceUint8Array(value, "payload");
       const len = bytes.length;
       writer.writeByte(len & 0xff);
       writer.writeByte((len >> 8) & 0xff);
@@ -408,6 +414,9 @@ export function skipValue(
     case "tuple":
       return skipTuple(buf, offset, kind.elements, registry);
     case "list": {
+      if (isByteListKind(kind, registry)) {
+        return decodeBytes(buf, offset).next;
+      }
       const { value: len, next } = decodeVarintNumber(buf, offset);
       let off = next;
       const elemKind = resolveTypeRefKind(kind.element, registry);
@@ -593,9 +602,12 @@ export function decodeWithPlan(
 
     case "list": {
       const { value: len, next } = decodeVarintNumber(buf, offset);
-      let off = next;
       const localList = localKind as Extract<WireSchemaKind, { tag: "list" }>;
       const remoteList = remoteKind as Extract<WireSchemaKind, { tag: "list" }>;
+      if (isByteListKind(localList, registry) && isByteListKind(remoteList, registry)) {
+        return decodeBytes(buf, offset);
+      }
+      let off = next;
       const localElemKind = resolveTypeRefKind(localList.element, registry);
       const remoteElemKind = resolveTypeRefKind(remoteList.element, registry);
       const result: unknown[] = [];
@@ -910,6 +922,9 @@ function decodeByKind(
       return { value: result, next: off };
     }
     case "list": {
+      if (isByteListKind(kind, registry)) {
+        return decodeBytes(buf, offset);
+      }
       const { value: len, next } = decodeVarintNumber(buf, offset);
       const elemKind = resolveTypeRefKind(kind.element, registry);
       const result: unknown[] = [];
@@ -1051,6 +1066,33 @@ function decodePrimitive(
 // ============================================================================
 // Helpers
 // ============================================================================
+
+function isByteListKind(
+  kind: WireSchemaKind,
+  registry: WireSchemaRegistry,
+): boolean {
+  if (kind.tag !== "list") {
+    return false;
+  }
+  const elementKind = resolveTypeRefKind(kind.element, registry);
+  return elementKind.tag === "primitive" && elementKind.primitive_type === "u8";
+}
+
+function coerceUint8Array(value: unknown, context: string): Uint8Array {
+  if (value instanceof Uint8Array) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return Uint8Array.from(value);
+  }
+  if (value instanceof ArrayBuffer) {
+    return new Uint8Array(value);
+  }
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  throw new Error(`${context}: expected Uint8Array-compatible value`);
+}
 
 function resolveTypeRefKind(
   ref_: WireTypeRef,

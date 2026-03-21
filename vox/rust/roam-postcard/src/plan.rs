@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use facet_core::{Shape, Type, UserType};
 use roam_types::{
-    ExtractedSchemas, FieldSchema, Schema, SchemaHash, SchemaKind, SchemaRegistry, TypeRef,
-    VariantPayload, VariantSchema,
+    ExtractedSchemas, FieldSchema, PrimitiveType, Schema, SchemaHash, SchemaKind, SchemaRegistry,
+    TypeRef, VariantPayload, VariantSchema,
 };
 
 use crate::error::{PathSegment, SchemaSide, TranslationError, TranslationErrorKind};
@@ -180,6 +180,12 @@ pub fn build_plan(input: &PlanInput) -> Result<TranslationPlan, TranslationError
         }));
     }
 
+    if is_byte_buffer_kind(&remote.kind, &input.remote.registry)
+        && is_byte_buffer_kind(&local.kind, &input.local.registry)
+    {
+        return Ok(TranslationPlan::Identity);
+    }
+
     match (&remote.kind, &local.kind) {
         (
             SchemaKind::Struct {
@@ -337,6 +343,21 @@ fn nested_plan(
         },
     };
     build_plan(&sub_input).map(Some)
+}
+
+fn is_byte_buffer_kind(kind: &SchemaKind, registry: &SchemaRegistry) -> bool {
+    match kind {
+        SchemaKind::Primitive {
+            primitive_type: PrimitiveType::Bytes,
+        } => true,
+        SchemaKind::List { element } => matches!(
+            element.resolve_kind(registry),
+            Some(SchemaKind::Primitive {
+                primitive_type: PrimitiveType::U8,
+            })
+        ),
+        _ => false,
+    }
 }
 
 fn build_struct_plan(

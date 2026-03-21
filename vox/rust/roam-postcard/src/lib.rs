@@ -453,6 +453,40 @@ mod tests {
         })
     }
 
+    #[test]
+    fn translation_bytes_and_list_u8_are_compatible() {
+        let remote = SchemaSet::from_schemas(vec![
+            roam_types::Schema {
+                id: roam_types::SchemaHash(1),
+                type_params: vec![],
+                kind: roam_types::SchemaKind::Primitive {
+                    primitive_type: roam_types::PrimitiveType::U8,
+                },
+            },
+            roam_types::Schema {
+                id: roam_types::SchemaHash(2),
+                type_params: vec![],
+                kind: roam_types::SchemaKind::List {
+                    element: roam_types::TypeRef::concrete(roam_types::SchemaHash(1)),
+                },
+            },
+        ]);
+        let local = SchemaSet::from_extracted(
+            roam_types::extract_schemas(<Vec<u8> as Facet>::SHAPE).expect("schema extraction"),
+        );
+        let plan = build_plan(&PlanInput {
+            remote: &remote,
+            local: &local,
+        })
+        .expect("list<u8> and bytes should be translation-compatible");
+        assert!(matches!(plan, TranslationPlan::Identity));
+
+        let bytes = to_vec(&vec![1u8, 2, 3, 4]).expect("serialize remote bytes");
+        let result: Vec<u8> =
+            from_slice_with_plan(&bytes, &plan, &remote.registry).expect("translate byte buffer");
+        assert_eq!(result, vec![1, 2, 3, 4]);
+    }
+
     // r[verify schema.translation.skip-unknown]
     #[test]
     fn translation_remote_has_extra_field() {

@@ -1608,6 +1608,19 @@ impl ExtractCtx {
                 });
             }
             Def::Slice(slice_def) => {
+                if let Some(ScalarType::U8) = slice_def.t().scalar_type() {
+                    self.emit_schema(
+                        decl_id,
+                        MixedSchema {
+                            id,
+                            type_params: vec![],
+                            kind: SchemaKind::Primitive {
+                                primitive_type: PrimitiveType::Bytes,
+                            },
+                        },
+                    );
+                    return Ok(TypeRef::concrete(id));
+                }
                 let elem_ref = self.type_ref_for_shape(slice_def.t(), &param_map)?;
                 let args = self.extract_type_args(shape)?;
                 self.emit_schema(
@@ -2095,6 +2108,30 @@ mod tests {
     #[test]
     fn vec_u8_is_bytes() {
         let schemas = extract_schemas(<Vec<u8> as Facet>::SHAPE).unwrap().schemas;
+        assert_eq!(schemas.len(), 1);
+        assert!(matches!(
+            schemas[0].kind,
+            SchemaKind::Primitive {
+                primitive_type: PrimitiveType::Bytes
+            }
+        ));
+    }
+
+    #[test]
+    fn slice_u8_is_bytes() {
+        let schemas = extract_schemas(<&[u8] as Facet>::SHAPE).unwrap().schemas;
+        assert_eq!(schemas.len(), 1);
+        assert!(matches!(
+            schemas[0].kind,
+            SchemaKind::Primitive {
+                primitive_type: PrimitiveType::Bytes
+            }
+        ));
+    }
+
+    #[test]
+    fn cbor_payload_is_bytes() {
+        let schemas = extract_schemas(CborPayload::SHAPE).unwrap().schemas;
         assert_eq!(schemas.len(), 1);
         assert!(matches!(
             schemas[0].kind,

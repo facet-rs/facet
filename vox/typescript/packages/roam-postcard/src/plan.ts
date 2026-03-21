@@ -109,6 +109,10 @@ function buildPlanInner(
   const rk = remote.kind;
   const lk = local.kind;
 
+  if (isByteBufferKind(rk, remoteReg) && isByteBufferKind(lk, localReg)) {
+    return IDENTITY;
+  }
+
   if (rk.tag !== lk.tag) {
     throw new TranslationError(
       `schema kind mismatch: remote "${rk.tag}" vs local "${lk.tag}"`,
@@ -343,4 +347,18 @@ function buildEnumPlan(
 function schemaName(kind: WireSchemaKind): string | null {
   if (kind.tag === "struct" || kind.tag === "enum") return kind.name;
   return null;
+}
+
+function isByteBufferKind(
+  kind: WireSchemaKind,
+  registry: WireSchemaRegistry,
+): boolean {
+  if (kind.tag === "primitive") {
+    return kind.primitive_type === "bytes";
+  }
+  if (kind.tag !== "list") {
+    return false;
+  }
+  const elementKind = resolveWireTypeRef(kind.element, registry);
+  return elementKind?.tag === "primitive" && elementKind.primitive_type === "u8";
 }
