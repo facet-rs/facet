@@ -860,6 +860,250 @@ mod serialize_bench {
         }
     }
 
+    #[derive(Facet)]
+    pub struct GnarlyAttrBorrowed<'a> {
+        pub key: &'a str,
+        pub value: &'a str,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    pub enum GnarlyKindBorrowed<'a> {
+        File {
+            mime: &'a str,
+            tags: Vec<&'a str>,
+        },
+        Directory {
+            child_count: u32,
+            children: Vec<&'a str>,
+        },
+        Symlink {
+            target: &'a str,
+            hops: Vec<u32>,
+        },
+    }
+
+    #[derive(Facet)]
+    pub struct GnarlyEntryBorrowed<'a> {
+        pub id: u64,
+        pub parent: Option<u64>,
+        pub name: &'a str,
+        pub path: &'a str,
+        pub attrs: Vec<GnarlyAttrBorrowed<'a>>,
+        pub chunks: Vec<&'a [u8]>,
+        pub kind: GnarlyKindBorrowed<'a>,
+    }
+
+    #[derive(Facet)]
+    pub struct GnarlyPayloadBorrowed<'a> {
+        pub revision: u64,
+        pub mount: &'a str,
+        pub entries: Vec<GnarlyEntryBorrowed<'a>>,
+        pub footer: Option<&'a str>,
+        pub digest: &'a [u8],
+    }
+
+    #[derive(Facet)]
+    pub struct GnarlyAttrOwned {
+        pub key: String,
+        pub value: String,
+    }
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    pub enum GnarlyKindOwned {
+        File {
+            mime: String,
+            tags: Vec<String>,
+        },
+        Directory {
+            child_count: u32,
+            children: Vec<String>,
+        },
+        Symlink {
+            target: String,
+            hops: Vec<u32>,
+        },
+    }
+
+    #[derive(Facet)]
+    pub struct GnarlyEntryOwned {
+        pub id: u64,
+        pub parent: Option<u64>,
+        pub name: String,
+        pub path: String,
+        pub attrs: Vec<GnarlyAttrOwned>,
+        pub chunks: Vec<Vec<u8>>,
+        pub kind: GnarlyKindOwned,
+    }
+
+    #[derive(Facet)]
+    pub struct GnarlyPayloadOwned {
+        pub revision: u64,
+        pub mount: String,
+        pub entries: Vec<GnarlyEntryOwned>,
+        pub footer: Option<String>,
+        pub digest: Vec<u8>,
+    }
+
+    type GnarlyBorrowedArgs<'a> = (GnarlyPayloadBorrowed<'a>,);
+
+    pub static GNARLY_BORROWED_PLAN: LazyLock<PlanResult> = LazyLock::new(|| {
+        let remote_extracted =
+            extract_schemas(<GnarlyBorrowedArgs<'static> as Facet<'static>>::SHAPE)
+                .expect("schema extraction");
+        let remote =
+            SchemaSet::from_root_and_schemas(remote_extracted.root, remote_extracted.schemas);
+        let local_extracted =
+            extract_schemas(<GnarlyBorrowedArgs<'static> as Facet<'static>>::SHAPE)
+                .expect("schema extraction");
+        let local = SchemaSet::from_root_and_schemas(local_extracted.root, local_extracted.schemas);
+        let plan = build_plan(&PlanInput {
+            remote: &remote,
+            local: &local,
+        })
+        .expect("identity translation plan");
+        PlanResult {
+            plan,
+            registry: remote.registry,
+        }
+    });
+
+    pub struct GnarlyEntryFixture {
+        pub id: u64,
+        pub parent: Option<u64>,
+        pub name: String,
+        pub path: String,
+        pub attrs: Vec<(String, String)>,
+        pub chunks: Vec<Vec<u8>>,
+        pub kind: GnarlyEntryKindFixture,
+    }
+
+    pub enum GnarlyEntryKindFixture {
+        File {
+            mime: String,
+            tags: Vec<String>,
+        },
+        Directory {
+            child_count: u32,
+            children: Vec<String>,
+        },
+        Symlink {
+            target: String,
+            hops: Vec<u32>,
+        },
+    }
+
+    pub struct GnarlyFixture {
+        pub mount: String,
+        pub footer: Option<String>,
+        pub digest: Vec<u8>,
+        pub entries: Vec<GnarlyEntryFixture>,
+    }
+
+    impl GnarlyFixture {
+        pub fn borrowed_payload(&self) -> GnarlyPayloadBorrowed<'_> {
+            GnarlyPayloadBorrowed {
+                revision: 7,
+                mount: &self.mount,
+                entries: self
+                    .entries
+                    .iter()
+                    .map(|entry| GnarlyEntryBorrowed {
+                        id: entry.id,
+                        parent: entry.parent,
+                        name: &entry.name,
+                        path: &entry.path,
+                        attrs: entry
+                            .attrs
+                            .iter()
+                            .map(|(key, value)| GnarlyAttrBorrowed {
+                                key: key.as_str(),
+                                value: value.as_str(),
+                            })
+                            .collect(),
+                        chunks: entry.chunks.iter().map(Vec::as_slice).collect(),
+                        kind: match &entry.kind {
+                            GnarlyEntryKindFixture::File { mime, tags } => {
+                                GnarlyKindBorrowed::File {
+                                    mime,
+                                    tags: tags.iter().map(String::as_str).collect(),
+                                }
+                            }
+                            GnarlyEntryKindFixture::Directory {
+                                child_count,
+                                children,
+                            } => GnarlyKindBorrowed::Directory {
+                                child_count: *child_count,
+                                children: children.iter().map(String::as_str).collect(),
+                            },
+                            GnarlyEntryKindFixture::Symlink { target, hops } => {
+                                GnarlyKindBorrowed::Symlink {
+                                    target,
+                                    hops: hops.clone(),
+                                }
+                            }
+                        },
+                    })
+                    .collect(),
+                footer: self.footer.as_deref(),
+                digest: &self.digest,
+            }
+        }
+    }
+
+    pub fn make_gnarly_fixture(entry_count: usize) -> GnarlyFixture {
+        let entries = (0..entry_count)
+            .map(|i| {
+                let chunks = (0..3)
+                    .map(|j| vec![((i + j) & 0xFF) as u8; 32 * (j + 1)])
+                    .collect();
+                let attrs = vec![
+                    ("owner".to_string(), format!("user-{i}")),
+                    ("class".to_string(), format!("hot-path-{i}")),
+                    ("etag".to_string(), format!("etag-{i:08x}")),
+                ];
+                let kind = match i % 3 {
+                    0 => GnarlyEntryKindFixture::File {
+                        mime: "application/octet-stream".to_string(),
+                        tags: vec![
+                            "warm".to_string(),
+                            "cacheable".to_string(),
+                            format!("tag-{i}"),
+                        ],
+                    },
+                    1 => GnarlyEntryKindFixture::Directory {
+                        child_count: (i as u32) + 3,
+                        children: vec![
+                            format!("child-{i}-0"),
+                            format!("child-{i}-1"),
+                            format!("child-{i}-2"),
+                        ],
+                    },
+                    _ => GnarlyEntryKindFixture::Symlink {
+                        target: format!("/target/{i}/nested/item"),
+                        hops: vec![1, 2, 3, i as u32],
+                    },
+                };
+                GnarlyEntryFixture {
+                    id: 1000 + i as u64,
+                    parent: if i == 0 { None } else { Some(999 + i as u64) },
+                    name: format!("entry-{i}"),
+                    path: format!("/mount/very/deep/path/with/component/{i}/file.bin"),
+                    attrs,
+                    chunks,
+                    kind,
+                }
+            })
+            .collect();
+        GnarlyFixture {
+            mount: "/mnt/bench-fast-path".to_string(),
+            footer: Some("benchmark footer".to_string()),
+            digest: vec![0x44; 64],
+            entries,
+        }
+    }
+
     pub fn postcard_plan_encode(msg: &Message<'_>) -> usize {
         let msg = divan::black_box(msg);
         to_vec(msg).expect("serialize").len()
@@ -903,6 +1147,24 @@ mod serialize_bench {
             from_slice_borrowed_with_plan(input, &MESSAGE_PLAN.plan, &MESSAGE_PLAN.registry)
                 .expect("plan decode");
         score_message_and_payload_scan(&msg)
+    }
+
+    pub fn postcard_gnarly_borrowed_roundtrip(fixture: &GnarlyFixture) -> usize {
+        let bytes = encode_postcard_gnarly_message(divan::black_box(fixture));
+        let input = divan::black_box(&bytes);
+        let msg: Message<'_> =
+            from_slice_borrowed_with_plan(input, &MESSAGE_PLAN.plan, &MESSAGE_PLAN.registry)
+                .expect("plan decode");
+        score_message_and_gnarly_borrowed(&msg)
+    }
+
+    pub fn postcard_gnarly_owned_roundtrip(fixture: &GnarlyFixture) -> usize {
+        let bytes = encode_postcard_gnarly_message(divan::black_box(fixture));
+        let input = divan::black_box(&bytes);
+        let msg: Message<'_> =
+            from_slice_borrowed_with_plan(input, &MESSAGE_PLAN.plan, &MESSAGE_PLAN.registry)
+                .expect("plan decode");
+        score_message_and_gnarly_owned(&msg)
     }
 
     fn score_message(msg: &Message<'_>) -> usize {
@@ -983,6 +1245,55 @@ mod serialize_bench {
         score
     }
 
+    fn score_message_and_gnarly_borrowed(msg: &Message<'_>) -> usize {
+        let mut score = score_message(msg);
+        if let MessagePayload::RequestMessage(RequestMessage {
+            body:
+                RequestBody::Call(RequestCall {
+                    args: Payload::PostcardBytes(bytes),
+                    ..
+                }),
+            ..
+        }) = &msg.payload
+        {
+            let (payload,): GnarlyBorrowedArgs<'_> = from_slice_borrowed_with_plan(
+                bytes,
+                &GNARLY_BORROWED_PLAN.plan,
+                &GNARLY_BORROWED_PLAN.registry,
+            )
+            .expect("gnarly borrowed decode");
+            score = score.wrapping_add(score_gnarly_borrowed(&payload));
+        } else {
+            panic!("expected request call payload bytes");
+        }
+        score
+    }
+
+    fn score_message_and_gnarly_owned(msg: &Message<'_>) -> usize {
+        let mut score = score_message(msg);
+        if let MessagePayload::RequestMessage(RequestMessage {
+            body:
+                RequestBody::Call(RequestCall {
+                    args: Payload::PostcardBytes(bytes),
+                    ..
+                }),
+            ..
+        }) = &msg.payload
+        {
+            let (payload,): GnarlyBorrowedArgs<'_> = from_slice_borrowed_with_plan(
+                bytes,
+                &GNARLY_BORROWED_PLAN.plan,
+                &GNARLY_BORROWED_PLAN.registry,
+            )
+            .expect("gnarly borrowed decode");
+            let owned = materialize_gnarly_owned(&payload);
+            score = score.wrapping_add(score_gnarly_owned(&owned));
+        } else {
+            panic!("expected request call payload bytes");
+        }
+        score
+    }
+
     fn score_fast_path_payload(payload: &FastPathPayload<'_>) -> usize {
         let mut score = payload.inode as usize
             ^ payload.parent_inode as usize
@@ -1009,8 +1320,150 @@ mod serialize_bench {
         score
     }
 
+    fn score_gnarly_borrowed(payload: &GnarlyPayloadBorrowed<'_>) -> usize {
+        let mut score = payload.revision as usize
+            ^ payload.mount.len()
+            ^ payload.digest.len()
+            ^ payload.footer.map_or(0, str::len);
+        for entry in &payload.entries {
+            score = score.wrapping_add(entry.id as usize);
+            score = score.wrapping_add(entry.parent.unwrap_or_default() as usize);
+            score = score.wrapping_add(entry.name.len());
+            score = score.wrapping_add(entry.path.len());
+            for attr in &entry.attrs {
+                score = score.wrapping_add(attr.key.len() ^ attr.value.len());
+            }
+            for chunk in &entry.chunks {
+                score = score.wrapping_add(chunk.len());
+            }
+            score = score.wrapping_add(match &entry.kind {
+                GnarlyKindBorrowed::File { mime, tags } => {
+                    mime.len() + tags.iter().map(|tag| tag.len()).sum::<usize>()
+                }
+                GnarlyKindBorrowed::Directory {
+                    child_count,
+                    children,
+                } => {
+                    *child_count as usize + children.iter().map(|child| child.len()).sum::<usize>()
+                }
+                GnarlyKindBorrowed::Symlink { target, hops } => {
+                    target.len() + hops.iter().copied().map(|hop| hop as usize).sum::<usize>()
+                }
+            });
+        }
+        score
+    }
+
+    fn score_gnarly_owned(payload: &GnarlyPayloadOwned) -> usize {
+        let mut score = payload.revision as usize
+            ^ payload.mount.len()
+            ^ payload.digest.len()
+            ^ payload.footer.as_ref().map_or(0, String::len);
+        for entry in &payload.entries {
+            score = score.wrapping_add(entry.id as usize);
+            score = score.wrapping_add(entry.parent.unwrap_or_default() as usize);
+            score = score.wrapping_add(entry.name.len());
+            score = score.wrapping_add(entry.path.len());
+            for attr in &entry.attrs {
+                score = score.wrapping_add(attr.key.len() ^ attr.value.len());
+            }
+            for chunk in &entry.chunks {
+                score = score.wrapping_add(chunk.len());
+            }
+            score = score.wrapping_add(match &entry.kind {
+                GnarlyKindOwned::File { mime, tags } => {
+                    mime.len() + tags.iter().map(String::len).sum::<usize>()
+                }
+                GnarlyKindOwned::Directory {
+                    child_count,
+                    children,
+                } => *child_count as usize + children.iter().map(String::len).sum::<usize>(),
+                GnarlyKindOwned::Symlink { target, hops } => {
+                    target.len() + hops.iter().copied().map(|hop| hop as usize).sum::<usize>()
+                }
+            });
+        }
+        score
+    }
+
+    fn materialize_gnarly_owned(payload: &GnarlyPayloadBorrowed<'_>) -> GnarlyPayloadOwned {
+        GnarlyPayloadOwned {
+            revision: payload.revision,
+            mount: payload.mount.to_string(),
+            entries: payload
+                .entries
+                .iter()
+                .map(|entry| GnarlyEntryOwned {
+                    id: entry.id,
+                    parent: entry.parent,
+                    name: entry.name.to_string(),
+                    path: entry.path.to_string(),
+                    attrs: entry
+                        .attrs
+                        .iter()
+                        .map(|attr| GnarlyAttrOwned {
+                            key: attr.key.to_string(),
+                            value: attr.value.to_string(),
+                        })
+                        .collect(),
+                    chunks: entry.chunks.iter().map(|chunk| chunk.to_vec()).collect(),
+                    kind: match &entry.kind {
+                        GnarlyKindBorrowed::File { mime, tags } => GnarlyKindOwned::File {
+                            mime: mime.to_string(),
+                            tags: tags.iter().map(|tag| (*tag).to_string()).collect(),
+                        },
+                        GnarlyKindBorrowed::Directory {
+                            child_count,
+                            children,
+                        } => GnarlyKindOwned::Directory {
+                            child_count: *child_count,
+                            children: children.iter().map(|child| (*child).to_string()).collect(),
+                        },
+                        GnarlyKindBorrowed::Symlink { target, hops } => GnarlyKindOwned::Symlink {
+                            target: target.to_string(),
+                            hops: hops.clone(),
+                        },
+                    },
+                })
+                .collect(),
+            footer: payload.footer.map(str::to_string),
+            digest: payload.digest.to_vec(),
+        }
+    }
+
     pub fn encode_postcard_payload_message(fixture: &FastPathPayloadFixture) -> Vec<u8> {
         let payload = fixture.payload();
+        let args = (payload,);
+        let msg = Message {
+            connection_id: ConnectionId(1),
+            payload: MessagePayload::RequestMessage(RequestMessage {
+                id: RequestId(42),
+                body: RequestBody::Call(RequestCall {
+                    method_id: MethodId(7),
+                    metadata: vec![
+                        MetadataEntry {
+                            key: "authorization",
+                            value: MetadataValue::String(
+                                "Bearer eyJhbGciOiJIUzI1NiJ9.e30.ZRrHA1JJJW8opB1Qfp7QDm",
+                            ),
+                            flags: MetadataFlags::SENSITIVE,
+                        },
+                        MetadataEntry {
+                            key: "attempt",
+                            value: MetadataValue::U64(3),
+                            flags: MetadataFlags::NONE,
+                        },
+                    ],
+                    args: Payload::outgoing(&args),
+                    schemas: CborPayload::default(),
+                }),
+            }),
+        };
+        to_vec(&msg).expect("serialize")
+    }
+
+    pub fn encode_postcard_gnarly_message(fixture: &GnarlyFixture) -> Vec<u8> {
+        let payload = fixture.borrowed_payload();
         let args = (payload,);
         let msg = Message {
             connection_id: ConnectionId(1),
@@ -1094,6 +1547,17 @@ mod serialize_bench {
     pub fn exact_payload_message_roundtrip_scan(fixture: &FastPathPayloadFixture) -> usize {
         let bytes = encode_exact_payload_message(divan::black_box(fixture));
         decode_exact_layout_payload_score_scan(divan::black_box(&bytes))
+    }
+
+    pub fn exact_gnarly_borrowed_roundtrip(fixture: &GnarlyFixture) -> usize {
+        let bytes = encode_exact_gnarly_message(divan::black_box(fixture));
+        decode_exact_gnarly_borrowed_score(divan::black_box(&bytes))
+    }
+
+    pub fn exact_gnarly_owned_roundtrip(fixture: &GnarlyFixture) -> usize {
+        let bytes = encode_exact_gnarly_message(divan::black_box(fixture));
+        let owned = decode_exact_gnarly_owned(divan::black_box(&bytes));
+        score_gnarly_owned(&owned)
     }
 
     fn encode_exact_layout(msg: &Message<'_>) -> Vec<u8> {
@@ -1377,6 +1841,317 @@ mod serialize_bench {
         score
     }
 
+    fn encode_exact_gnarly_message(fixture: &GnarlyFixture) -> Vec<u8> {
+        let mut payload_bytes = Vec::new();
+        push_u64(&mut payload_bytes, 7);
+        push_bytes(&mut payload_bytes, fixture.mount.as_bytes());
+        push_u32(&mut payload_bytes, fixture.entries.len() as u32);
+        for entry in &fixture.entries {
+            push_u64(&mut payload_bytes, entry.id);
+            match entry.parent {
+                Some(parent) => {
+                    push_u8(&mut payload_bytes, 1);
+                    push_u64(&mut payload_bytes, parent);
+                }
+                None => push_u8(&mut payload_bytes, 0),
+            }
+            push_bytes(&mut payload_bytes, entry.name.as_bytes());
+            push_bytes(&mut payload_bytes, entry.path.as_bytes());
+            push_u32(&mut payload_bytes, entry.attrs.len() as u32);
+            for (key, value) in &entry.attrs {
+                push_bytes(&mut payload_bytes, key.as_bytes());
+                push_bytes(&mut payload_bytes, value.as_bytes());
+            }
+            push_u32(&mut payload_bytes, entry.chunks.len() as u32);
+            for chunk in &entry.chunks {
+                push_bytes(&mut payload_bytes, chunk);
+            }
+            match &entry.kind {
+                GnarlyEntryKindFixture::File { mime, tags } => {
+                    push_u8(&mut payload_bytes, 0);
+                    push_bytes(&mut payload_bytes, mime.as_bytes());
+                    push_u32(&mut payload_bytes, tags.len() as u32);
+                    for tag in tags {
+                        push_bytes(&mut payload_bytes, tag.as_bytes());
+                    }
+                }
+                GnarlyEntryKindFixture::Directory {
+                    child_count,
+                    children,
+                } => {
+                    push_u8(&mut payload_bytes, 1);
+                    push_u32(&mut payload_bytes, *child_count);
+                    push_u32(&mut payload_bytes, children.len() as u32);
+                    for child in children {
+                        push_bytes(&mut payload_bytes, child.as_bytes());
+                    }
+                }
+                GnarlyEntryKindFixture::Symlink { target, hops } => {
+                    push_u8(&mut payload_bytes, 2);
+                    push_bytes(&mut payload_bytes, target.as_bytes());
+                    push_u32(&mut payload_bytes, hops.len() as u32);
+                    for hop in hops {
+                        push_u32(&mut payload_bytes, *hop);
+                    }
+                }
+            }
+        }
+        match &fixture.footer {
+            Some(footer) => {
+                push_u8(&mut payload_bytes, 1);
+                push_bytes(&mut payload_bytes, footer.as_bytes());
+            }
+            None => push_u8(&mut payload_bytes, 0),
+        }
+        push_bytes(&mut payload_bytes, &fixture.digest);
+
+        let mut out = Vec::with_capacity(128 + payload_bytes.len());
+        push_u64(&mut out, 1);
+        push_u8(&mut out, TAG_REQUEST_MESSAGE);
+        push_u64(&mut out, 42);
+        push_u8(&mut out, TAG_REQUEST_CALL);
+        push_u64(&mut out, 7);
+        push_u32(&mut out, 2);
+        push_bytes(&mut out, b"authorization");
+        push_u8(&mut out, TAG_METADATA_STRING);
+        push_bytes(
+            &mut out,
+            b"Bearer eyJhbGciOiJIUzI1NiJ9.e30.ZRrHA1JJJW8opB1Qfp7QDm",
+        );
+        push_u64(&mut out, 1);
+        push_bytes(&mut out, b"attempt");
+        push_u8(&mut out, TAG_METADATA_U64);
+        push_u64(&mut out, 3);
+        push_u64(&mut out, 0);
+        push_bytes(&mut out, &payload_bytes);
+        push_bytes(&mut out, &[]);
+        out
+    }
+
+    fn decode_exact_gnarly_borrowed_score(input: &[u8]) -> usize {
+        let mut cursor = 0usize;
+        let connection_id = read_u64(input, &mut cursor);
+        let payload_tag = read_u8(input, &mut cursor);
+        assert_eq!(payload_tag, TAG_REQUEST_MESSAGE);
+        let request_id = read_u64(input, &mut cursor);
+        let body_tag = read_u8(input, &mut cursor);
+        assert_eq!(body_tag, TAG_REQUEST_CALL);
+        let method_id = read_u64(input, &mut cursor);
+        let metadata_count = read_u32(input, &mut cursor) as usize;
+        let mut score =
+            connection_id as usize ^ request_id as usize ^ method_id as usize ^ metadata_count;
+        for _ in 0..metadata_count {
+            let key = read_len_prefixed(input, &mut cursor);
+            score = score.wrapping_add(key.len());
+            let value_tag = read_u8(input, &mut cursor);
+            score = score.wrapping_add(match value_tag {
+                TAG_METADATA_STRING | TAG_METADATA_BYTES => {
+                    read_len_prefixed(input, &mut cursor).len()
+                }
+                TAG_METADATA_U64 => read_u64(input, &mut cursor) as usize,
+                other => panic!("unexpected metadata tag {other}"),
+            });
+            score = score.wrapping_add(read_u64(input, &mut cursor) as usize);
+        }
+        let payload = read_len_prefixed(input, &mut cursor);
+        score = score.wrapping_add(decode_exact_gnarly_payload_borrowed_score(payload));
+        let schemas = read_len_prefixed(input, &mut cursor);
+        score = score.wrapping_add(schemas.len());
+        assert_eq!(cursor, input.len());
+        score
+    }
+
+    fn decode_exact_gnarly_payload_borrowed_score(input: &[u8]) -> usize {
+        let mut cursor = 0usize;
+        let revision = read_u64(input, &mut cursor);
+        let mount = read_len_prefixed(input, &mut cursor);
+        let entry_count = read_u32(input, &mut cursor) as usize;
+        let mut score = revision as usize ^ mount.len() ^ entry_count;
+        for _ in 0..entry_count {
+            score = score.wrapping_add(read_u64(input, &mut cursor) as usize);
+            let has_parent = read_u8(input, &mut cursor);
+            if has_parent != 0 {
+                score = score.wrapping_add(read_u64(input, &mut cursor) as usize);
+            }
+            score = score.wrapping_add(read_len_prefixed(input, &mut cursor).len());
+            score = score.wrapping_add(read_len_prefixed(input, &mut cursor).len());
+            let attr_count = read_u32(input, &mut cursor) as usize;
+            for _ in 0..attr_count {
+                score = score.wrapping_add(read_len_prefixed(input, &mut cursor).len());
+                score = score.wrapping_add(read_len_prefixed(input, &mut cursor).len());
+            }
+            let chunk_count = read_u32(input, &mut cursor) as usize;
+            for _ in 0..chunk_count {
+                score = score.wrapping_add(read_len_prefixed(input, &mut cursor).len());
+            }
+            let kind_tag = read_u8(input, &mut cursor);
+            score = score.wrapping_add(match kind_tag {
+                0 => {
+                    let mime = read_len_prefixed(input, &mut cursor).len();
+                    let tag_count = read_u32(input, &mut cursor) as usize;
+                    let tags = (0..tag_count)
+                        .map(|_| read_len_prefixed(input, &mut cursor).len())
+                        .sum::<usize>();
+                    mime + tags
+                }
+                1 => {
+                    let child_count = read_u32(input, &mut cursor) as usize;
+                    let n = read_u32(input, &mut cursor) as usize;
+                    let children = (0..n)
+                        .map(|_| read_len_prefixed(input, &mut cursor).len())
+                        .sum::<usize>();
+                    child_count + children
+                }
+                2 => {
+                    let target = read_len_prefixed(input, &mut cursor).len();
+                    let n = read_u32(input, &mut cursor) as usize;
+                    let hops = (0..n)
+                        .map(|_| read_u32(input, &mut cursor) as usize)
+                        .sum::<usize>();
+                    target + hops
+                }
+                other => panic!("unexpected gnarly tag {other}"),
+            });
+        }
+        let footer_tag = read_u8(input, &mut cursor);
+        if footer_tag != 0 {
+            score = score.wrapping_add(read_len_prefixed(input, &mut cursor).len());
+        }
+        score = score.wrapping_add(read_len_prefixed(input, &mut cursor).len());
+        assert_eq!(cursor, input.len());
+        score
+    }
+
+    fn decode_exact_gnarly_owned(input: &[u8]) -> GnarlyPayloadOwned {
+        let mut cursor = 0usize;
+        let _connection_id = read_u64(input, &mut cursor);
+        let payload_tag = read_u8(input, &mut cursor);
+        assert_eq!(payload_tag, TAG_REQUEST_MESSAGE);
+        let _request_id = read_u64(input, &mut cursor);
+        let body_tag = read_u8(input, &mut cursor);
+        assert_eq!(body_tag, TAG_REQUEST_CALL);
+        let _method_id = read_u64(input, &mut cursor);
+        let metadata_count = read_u32(input, &mut cursor) as usize;
+        for _ in 0..metadata_count {
+            let _ = read_len_prefixed(input, &mut cursor);
+            let value_tag = read_u8(input, &mut cursor);
+            match value_tag {
+                TAG_METADATA_STRING | TAG_METADATA_BYTES => {
+                    let _ = read_len_prefixed(input, &mut cursor);
+                }
+                TAG_METADATA_U64 => {
+                    let _ = read_u64(input, &mut cursor);
+                }
+                other => panic!("unexpected metadata tag {other}"),
+            }
+            let _ = read_u64(input, &mut cursor);
+        }
+        let payload = read_len_prefixed(input, &mut cursor);
+        let owned = decode_exact_gnarly_payload_owned(payload);
+        let _schemas = read_len_prefixed(input, &mut cursor);
+        assert_eq!(cursor, input.len());
+        owned
+    }
+
+    fn decode_exact_gnarly_payload_owned(input: &[u8]) -> GnarlyPayloadOwned {
+        let mut cursor = 0usize;
+        let revision = read_u64(input, &mut cursor);
+        let mount =
+            String::from_utf8(read_len_prefixed(input, &mut cursor).to_vec()).expect("utf8");
+        let entry_count = read_u32(input, &mut cursor) as usize;
+        let mut entries = Vec::with_capacity(entry_count);
+        for _ in 0..entry_count {
+            let id = read_u64(input, &mut cursor);
+            let parent = if read_u8(input, &mut cursor) == 0 {
+                None
+            } else {
+                Some(read_u64(input, &mut cursor))
+            };
+            let name =
+                String::from_utf8(read_len_prefixed(input, &mut cursor).to_vec()).expect("utf8");
+            let path =
+                String::from_utf8(read_len_prefixed(input, &mut cursor).to_vec()).expect("utf8");
+            let attr_count = read_u32(input, &mut cursor) as usize;
+            let mut attrs = Vec::with_capacity(attr_count);
+            for _ in 0..attr_count {
+                let key = String::from_utf8(read_len_prefixed(input, &mut cursor).to_vec())
+                    .expect("utf8");
+                let value = String::from_utf8(read_len_prefixed(input, &mut cursor).to_vec())
+                    .expect("utf8");
+                attrs.push(GnarlyAttrOwned { key, value });
+            }
+            let chunk_count = read_u32(input, &mut cursor) as usize;
+            let mut chunks = Vec::with_capacity(chunk_count);
+            for _ in 0..chunk_count {
+                chunks.push(read_len_prefixed(input, &mut cursor).to_vec());
+            }
+            let kind = match read_u8(input, &mut cursor) {
+                0 => {
+                    let mime = String::from_utf8(read_len_prefixed(input, &mut cursor).to_vec())
+                        .expect("utf8");
+                    let tag_count = read_u32(input, &mut cursor) as usize;
+                    let mut tags = Vec::with_capacity(tag_count);
+                    for _ in 0..tag_count {
+                        tags.push(
+                            String::from_utf8(read_len_prefixed(input, &mut cursor).to_vec())
+                                .expect("utf8"),
+                        );
+                    }
+                    GnarlyKindOwned::File { mime, tags }
+                }
+                1 => {
+                    let child_count = read_u32(input, &mut cursor);
+                    let n = read_u32(input, &mut cursor) as usize;
+                    let mut children = Vec::with_capacity(n);
+                    for _ in 0..n {
+                        children.push(
+                            String::from_utf8(read_len_prefixed(input, &mut cursor).to_vec())
+                                .expect("utf8"),
+                        );
+                    }
+                    GnarlyKindOwned::Directory {
+                        child_count,
+                        children,
+                    }
+                }
+                2 => {
+                    let target = String::from_utf8(read_len_prefixed(input, &mut cursor).to_vec())
+                        .expect("utf8");
+                    let n = read_u32(input, &mut cursor) as usize;
+                    let mut hops = Vec::with_capacity(n);
+                    for _ in 0..n {
+                        hops.push(read_u32(input, &mut cursor));
+                    }
+                    GnarlyKindOwned::Symlink { target, hops }
+                }
+                other => panic!("unexpected gnarly tag {other}"),
+            };
+            entries.push(GnarlyEntryOwned {
+                id,
+                parent,
+                name,
+                path,
+                attrs,
+                chunks,
+                kind,
+            });
+        }
+        let footer = if read_u8(input, &mut cursor) == 0 {
+            None
+        } else {
+            Some(String::from_utf8(read_len_prefixed(input, &mut cursor).to_vec()).expect("utf8"))
+        };
+        let digest = read_len_prefixed(input, &mut cursor).to_vec();
+        assert_eq!(cursor, input.len());
+        GnarlyPayloadOwned {
+            revision,
+            mount,
+            entries,
+            footer,
+            digest,
+        }
+    }
+
     fn metadata_entry_size(entry: &MetadataEntry<'_>) -> usize {
         4 + entry.key.len()
             + 1
@@ -1473,6 +2248,7 @@ mod serialize_bench {
 const SERIALIZE_FIELD_COUNTS: &[usize] = &[4, 16, 64, 256];
 const BLOB_SIZES: &[usize] = &[256, 1024, 4096, 8192, 16384, 32768, 65536, 262144, 1048576];
 const EXACT_LAYOUT_ARGS_SIZES: &[usize] = &[64, 256, 4096, 65536];
+const GNARLY_ENTRY_COUNTS: &[usize] = &[2, 8, 32];
 
 #[divan::bench(args = SERIALIZE_FIELD_COUNTS)]
 fn serialize_to_vec(bencher: divan::Bencher, n: usize) {
@@ -1626,6 +2402,39 @@ fn message_payload_exact_layout_roundtrip_scan(bencher: divan::Bencher, n: usize
             &fixture,
         ))
     });
+}
+
+#[divan::bench(args = GNARLY_ENTRY_COUNTS)]
+fn message_gnarly_postcard_borrowed_roundtrip(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_gnarly_fixture(n);
+    bencher.bench_local(|| {
+        divan::black_box(serialize_bench::postcard_gnarly_borrowed_roundtrip(
+            &fixture,
+        ))
+    });
+}
+
+#[divan::bench(args = GNARLY_ENTRY_COUNTS)]
+fn message_gnarly_postcard_owned_roundtrip(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_gnarly_fixture(n);
+    bencher.bench_local(|| {
+        divan::black_box(serialize_bench::postcard_gnarly_owned_roundtrip(&fixture))
+    });
+}
+
+#[divan::bench(args = GNARLY_ENTRY_COUNTS)]
+fn message_gnarly_exact_borrowed_roundtrip(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_gnarly_fixture(n);
+    bencher.bench_local(|| {
+        divan::black_box(serialize_bench::exact_gnarly_borrowed_roundtrip(&fixture))
+    });
+}
+
+#[divan::bench(args = GNARLY_ENTRY_COUNTS)]
+fn message_gnarly_exact_owned_roundtrip(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_gnarly_fixture(n);
+    bencher
+        .bench_local(|| divan::black_box(serialize_bench::exact_gnarly_owned_roundtrip(&fixture)));
 }
 
 // --- Blob benchmarks: large binary payload ---
