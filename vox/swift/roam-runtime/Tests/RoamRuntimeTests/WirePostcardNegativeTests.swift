@@ -4,7 +4,7 @@ import Testing
 
 @testable import RoamRuntime
 
-private func loadWireV7Fixture(_ name: String) throws -> [UInt8] {
+private func loadWireFixture(_ name: String) throws -> [UInt8] {
     let testFile = URL(fileURLWithPath: #filePath)
     let projectRoot =
         testFile
@@ -50,11 +50,11 @@ private func expectPostcardError(_ expected: PostcardError, _ body: () throws ->
 }
 
 @Suite(.serialized)
-struct WireV7PostcardNegativeTests {
+struct WirePostcardNegativeTests {
     // r[verify session.message]
     // r[verify session.message.payloads]
     @Test func wireDecodeRejectsTrailingBytes() throws {
-        var bytes = try loadWireV7Fixture("message_protocol_error")
+        var bytes = try loadWireFixture("message_protocol_error")
         bytes.append(0xFF)
         expectWireError(.trailingBytes) {
             _ = try Message.decode(from: Data(bytes))

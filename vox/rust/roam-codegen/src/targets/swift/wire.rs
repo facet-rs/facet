@@ -220,9 +220,7 @@ fn swift_scalar_type(scalar: ScalarType) -> String {
 /// swift_name; otherwise fall back to the Rust name.
 fn lookup_wire_name(rust_name: &str, types: &[WireType]) -> String {
     for wt in types {
-        // Match by checking if the swift_name is derived from this rust_name.
-        // The xtask creates WireTypes with swift_name = rust_name + "V7".
-        // We can also check the Shape's type_identifier.
+        // Match by checking the reflected type identifier for the underlying Rust shape.
         if wt.shape.type_identifier.ends_with(rust_name) {
             return wt.swift_name.clone();
         }

@@ -4,7 +4,7 @@ import Testing
 
 @testable import RoamRuntime
 
-private func loadWireV7Fixture(_ name: String) throws -> [UInt8] {
+private func loadWireFixture(_ name: String) throws -> [UInt8] {
     let testFile = URL(fileURLWithPath: #filePath)
     let projectRoot =
         testFile
@@ -18,7 +18,7 @@ private func loadWireV7Fixture(_ name: String) throws -> [UInt8] {
 }
 
 @Suite(.serialized)
-struct WireV7CrossLanguageTests {
+struct WireCrossLanguageTests {
     private func assertSampleMetadata(_ metadata: [MetadataEntry]) {
         #expect(metadata.count == 3)
         #expect(metadata[0].key == "trace-id")
@@ -173,7 +173,7 @@ struct WireV7CrossLanguageTests {
 
     // r[verify session.message]
     // r[verify session.message.payloads]
-    @Test func rustV7NestedPayloadFixturesRoundTrip() throws {
+    @Test func rustWirePayloadFixturesRoundTrip() throws {
         let names = [
             "message_protocol_error",
             "message_connection_open",
@@ -190,7 +190,7 @@ struct WireV7CrossLanguageTests {
         ]
 
         for name in names {
-            let bytes = try loadWireV7Fixture(name)
+            let bytes = try loadWireFixture(name)
             #expect(!bytes.isEmpty)
             do {
                 let decoded = try Message.decode(from: Data(bytes))
