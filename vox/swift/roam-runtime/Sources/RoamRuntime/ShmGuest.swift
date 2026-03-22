@@ -370,14 +370,6 @@ public enum ShmGuestReceiveError: Error, Equatable {
     case payloadTooLarge
 }
 
-private struct OutboundMmapRegion {
-    let region: ShmRegion
-    let mapId: UInt32
-    let mapGeneration: UInt32
-    let mappingLength: Int
-    var nextOffset: Int
-}
-
 // r[impl shm.mmap.attach]
 // r[impl shm.mmap.bounds]
 // r[impl shm.mmap.aba]
@@ -443,9 +435,10 @@ public final class ShmGuestRuntime: @unchecked Sendable {
     private let mmapAttachments: ShmMmapAttachments?
     private var mmapControlFd: Int32
     private let maxVarSlotPayload: UInt32
-    private var nextMmapId: UInt32 = 1
-    private var outboundMmapRegion: OutboundMmapRegion?
-    private var retiredOutboundMmapRegions: [ShmRegion] = []
+    private let outboundMmapAllocator = ShmOutboundMmapAllocator(
+        pathPrefix: "roam-swift-mmap-",
+        minRegionSize: 4 * 1024 * 1024
+    )
     private var fatalError = false
 
     deinit {
@@ -607,7 +600,12 @@ public final class ShmGuestRuntime: @unchecked Sendable {
                 mmapUnavailable: .mmapUnavailable
             )
         ) { payload, payloadLen in
-            let allocation = try self.allocateOutboundMmapSlice(payloadCount: Int(payloadLen))
+            let allocation = try self.outboundMmapAllocator.allocateSlice(
+                payloadCount: Int(payloadLen),
+                mmapControlFd: self.mmapControlFd,
+                allocationFailed: ShmGuestSendError.mmapAllocationFailed,
+                controlError: { ShmGuestSendError.mmapControlError(errno: $0) }
+            )
             payload.withUnsafeBytes { raw in
                 if let base = raw.baseAddress {
                     memcpy(
@@ -626,62 +624,6 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         }
     }
 
-    private func allocateMmapId() -> UInt32 {
-        let mapId = nextMmapId
-        nextMmapId &+= 1
-        if nextMmapId == 0 {
-            nextMmapId = 1
-        }
-        return mapId
-    }
-
-    private func allocateOutboundMmapSlice(payloadCount: Int) throws
-        -> (region: ShmRegion, mapId: UInt32, mapGeneration: UInt32, mapOffset: Int)
-    {
-        if var active = outboundMmapRegion, active.nextOffset + payloadCount <= active.mappingLength {
-            let offset = active.nextOffset
-            active.nextOffset += payloadCount
-            outboundMmapRegion = active
-            return (active.region, active.mapId, active.mapGeneration, offset)
-        }
-
-        let pageSize = max(Int(getpagesize()), 4096)
-        let minRegionSize = 4 * 1024 * 1024
-        let regionSize = alignUp(max(payloadCount, minRegionSize), pageSize)
-        let mmapPath = "\(NSTemporaryDirectory())roam-swift-mmap-\(UUID().uuidString).bin"
-        let region: ShmRegion
-        do {
-            region = try ShmRegion.create(path: mmapPath, size: regionSize, cleanup: .auto)
-        } catch {
-            throw ShmGuestSendError.mmapAllocationFailed
-        }
-
-        let mapId = allocateMmapId()
-        let mapGeneration: UInt32 = 1
-        let sendRc = roam_mmap_control_send(
-            mmapControlFd,
-            region.rawFd,
-            mapId,
-            mapGeneration,
-            UInt64(regionSize)
-        )
-        guard sendRc == 0 else {
-            throw ShmGuestSendError.mmapControlError(errno: errno)
-        }
-
-        if let previous = outboundMmapRegion {
-            retiredOutboundMmapRegions.append(previous.region)
-        }
-        outboundMmapRegion = OutboundMmapRegion(
-            region: region,
-            mapId: mapId,
-            mapGeneration: mapGeneration,
-            mappingLength: regionSize,
-            nextOffset: payloadCount
-        )
-        return (region, mapId, mapGeneration, 0)
-    }
-
     // r[impl zerocopy.recv.shm.inline]
     // r[impl zerocopy.recv.shm.slotref]
     // r[impl shm.signal.doorbell.integration]
@@ -693,7 +635,7 @@ public final class ShmGuestRuntime: @unchecked Sendable {
     public func receive() throws -> ShmGuestFrame? {
         _ = try checkRemap()
 
-        if fatalError || hostGoodbyeFlag() {
+        if shouldTerminateShmReceive(fatalError: fatalError, sawHostGoodbye: hostGoodbyeFlag()) {
             return nil
         }
 
@@ -736,11 +678,12 @@ public final class ShmGuestRuntime: @unchecked Sendable {
 
     // r[impl shm.guest.detach]
     public func detach() {
-        if let statePtr = try? peerStatePointer() {
-            atomicStoreU32Release(statePtr, ShmPeerState.goodbye.rawValue)
-        }
-        try? doorbell?.signal()
-        while (try? receive()) != nil {}
+        detachShmRuntime(
+            statePtr: try? peerStatePointer(),
+            doorbell: doorbell,
+            drain: { try self.receive() },
+            closeMmapControl: { self.closeMmapControlFd() }
+        )
     }
 
     public func isHostGoodbye() -> Bool {
@@ -775,9 +718,4 @@ public final class ShmGuestRuntime: @unchecked Sendable {
         try shmPeerStatePointer(region: region, header: header, peerId: peerId)
     }
 
-}
-
-@inline(__always)
-private func alignUp(_ value: Int, _ alignment: Int) -> Int {
-    ((value + alignment - 1) / alignment) * alignment
 }

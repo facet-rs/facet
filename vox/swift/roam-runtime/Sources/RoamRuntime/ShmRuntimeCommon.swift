@@ -1,4 +1,11 @@
 import Foundation
+import CRoamShmFfi
+
+#if os(macOS)
+import Darwin
+#elseif os(Linux)
+import Glibc
+#endif
 
 func shmMaxVarSlotPayload(classes: [ShmVarSlotClass]) -> UInt32 {
     let maxSlotSize = classes.map(\.slotSize).max() ?? 0
@@ -132,4 +139,111 @@ func closeShmMmapControlFd(_ fd: inout Int32) {
     }
     close(fd)
     fd = -1
+}
+
+@inline(__always)
+func shmAlignUp(_ value: Int, _ alignment: Int) -> Int {
+    ((value + alignment - 1) / alignment) * alignment
+}
+
+@inline(__always)
+func shouldTerminateShmReceive(
+    fatalError: Bool,
+    sawHostGoodbye: Bool,
+    sawPeerGoodbye: Bool = false
+) -> Bool {
+    fatalError || sawHostGoodbye || sawPeerGoodbye
+}
+
+func detachShmRuntime(
+    statePtr: UnsafeMutableRawPointer?,
+    doorbell: ShmDoorbell?,
+    drain: () throws -> ShmGuestFrame?,
+    closeMmapControl: (() -> Void)? = nil
+) {
+    if let statePtr {
+        atomicStoreU32Release(statePtr, ShmPeerState.goodbye.rawValue)
+    }
+    try? doorbell?.signal()
+    while (try? drain()) != nil {}
+    closeMmapControl?()
+}
+
+private struct ShmOutboundMmapRegion {
+    let region: ShmRegion
+    let mapId: UInt32
+    let mapGeneration: UInt32
+    let mappingLength: Int
+    var nextOffset: Int
+}
+
+final class ShmOutboundMmapAllocator: @unchecked Sendable {
+    private let pathPrefix: String
+    private let minRegionSize: Int
+    private var nextMmapId: UInt32 = 1
+    private var activeRegion: ShmOutboundMmapRegion?
+    private var retiredRegions: [ShmRegion] = []
+
+    init(pathPrefix: String, minRegionSize: Int = 0) {
+        self.pathPrefix = pathPrefix
+        self.minRegionSize = minRegionSize
+    }
+
+    func allocateSlice<E: Error>(
+        payloadCount: Int,
+        mmapControlFd: Int32,
+        allocationFailed: E,
+        controlError: (Int32) -> E
+    ) throws -> (region: ShmRegion, mapId: UInt32, mapGeneration: UInt32, mapOffset: Int) {
+        if var active = activeRegion, active.nextOffset + payloadCount <= active.mappingLength {
+            let offset = active.nextOffset
+            active.nextOffset += payloadCount
+            activeRegion = active
+            return (active.region, active.mapId, active.mapGeneration, offset)
+        }
+
+        let pageSize = max(Int(getpagesize()), 4096)
+        let regionSize = shmAlignUp(max(payloadCount, minRegionSize), pageSize)
+        let mmapPath = "\(NSTemporaryDirectory())\(pathPrefix)\(UUID().uuidString).bin"
+        let region: ShmRegion
+        do {
+            region = try ShmRegion.create(path: mmapPath, size: regionSize, cleanup: .auto)
+        } catch {
+            throw allocationFailed
+        }
+
+        let mapId = allocateMmapId()
+        let mapGeneration: UInt32 = 1
+        let sendRc = roam_mmap_control_send(
+            mmapControlFd,
+            region.rawFd,
+            mapId,
+            mapGeneration,
+            UInt64(regionSize)
+        )
+        guard sendRc == 0 else {
+            throw controlError(errno)
+        }
+
+        if let previous = activeRegion {
+            retiredRegions.append(previous.region)
+        }
+        activeRegion = ShmOutboundMmapRegion(
+            region: region,
+            mapId: mapId,
+            mapGeneration: mapGeneration,
+            mappingLength: regionSize,
+            nextOffset: payloadCount
+        )
+        return (region, mapId, mapGeneration, 0)
+    }
+
+    private func allocateMmapId() -> UInt32 {
+        let mapId = nextMmapId
+        nextMmapId &+= 1
+        if nextMmapId == 0 {
+            nextMmapId = 1
+        }
+        return mapId
+    }
 }

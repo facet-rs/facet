@@ -392,7 +392,7 @@ public final class ShmHostRuntime: @unchecked Sendable {
     private let mmapAttachments: ShmMmapAttachments?
     private var mmapControlFd: Int32
     private let maxVarSlotPayload: UInt32
-    private var nextMmapId: UInt32 = 1
+    private let outboundMmapAllocator = ShmOutboundMmapAllocator(pathPrefix: "roam-swift-host-mmap-")
     private var fatalError = false
 
     public static func attach(
@@ -475,40 +475,27 @@ public final class ShmHostRuntime: @unchecked Sendable {
                 mmapUnavailable: .mmapUnavailable
             )
         ) { payload, payloadLen in
-            let pageSize = max(Int(getpagesize()), 4096)
-            let payloadCount = Int(payloadLen)
-            let mappingLength = max(((payloadCount + pageSize - 1) / pageSize) * pageSize, payloadCount)
-            let mmapPath = "\(NSTemporaryDirectory())roam-swift-host-mmap-\(UUID().uuidString).bin"
-            let mapping: ShmRegion
-            do {
-                mapping = try ShmRegion.create(path: mmapPath, size: mappingLength, cleanup: .auto)
-            } catch {
-                throw ShmHostSendError.mmapAllocationFailed
-            }
+            let allocation = try self.outboundMmapAllocator.allocateSlice(
+                payloadCount: Int(payloadLen),
+                mmapControlFd: self.mmapControlFd,
+                allocationFailed: ShmHostSendError.mmapAllocationFailed,
+                controlError: { ShmHostSendError.mmapControlError(errno: $0) }
+            )
 
             payload.withUnsafeBytes { raw in
                 if let base = raw.baseAddress {
-                    memcpy(mapping.basePointer(), base, raw.count)
+                    memcpy(
+                        allocation.region.basePointer().advanced(by: allocation.mapOffset),
+                        base,
+                        raw.count
+                    )
                 }
             }
 
-            let mapId = self.allocateMmapId()
-            let mapGeneration: UInt32 = 1
-            let sendRc = roam_mmap_control_send(
-                self.mmapControlFd,
-                mapping.rawFd,
-                mapId,
-                mapGeneration,
-                UInt64(mappingLength)
-            )
-            guard sendRc == 0 else {
-                throw ShmHostSendError.mmapControlError(errno: errno)
-            }
-
             return ShmMmapRef(
-                mapId: mapId,
-                mapGeneration: mapGeneration,
-                mapOffset: 0,
+                mapId: allocation.mapId,
+                mapGeneration: allocation.mapGeneration,
+                mapOffset: UInt64(allocation.mapOffset),
                 payloadLen: payloadLen
             )
         }
@@ -517,7 +504,11 @@ public final class ShmHostRuntime: @unchecked Sendable {
     public func receive() throws -> ShmGuestFrame? {
         _ = try checkRemap()
 
-        if fatalError || hostGoodbyeFlag() || peerGoodbyeFlag() {
+        if shouldTerminateShmReceive(
+            fatalError: fatalError,
+            sawHostGoodbye: hostGoodbyeFlag(),
+            sawPeerGoodbye: peerGoodbyeFlag()
+        ) {
             return nil
         }
 
@@ -546,12 +537,12 @@ public final class ShmHostRuntime: @unchecked Sendable {
     }
 
     public func detach() {
-        if let statePtr = try? segment.peerStatePointer(peerId: peerId) {
-            atomicStoreU32Release(statePtr, ShmPeerState.goodbye.rawValue)
-        }
-        try? doorbell?.signal()
-        while (try? receive()) != nil {}
-        closeMmapControlFd()
+        detachShmRuntime(
+            statePtr: try? segment.peerStatePointer(peerId: peerId),
+            doorbell: doorbell,
+            drain: { try self.receive() },
+            closeMmapControl: { self.closeMmapControlFd() }
+        )
     }
 
     public func isHostGoodbye() -> Bool {
@@ -579,15 +570,6 @@ public final class ShmHostRuntime: @unchecked Sendable {
             hostToGuest = buffers.hostToGuest
             slotPool.updateRegion(region)
         }
-    }
-
-    private func allocateMmapId() -> UInt32 {
-        let mapId = nextMmapId
-        nextMmapId &+= 1
-        if nextMmapId == 0 {
-            nextMmapId = 1
-        }
-        return mapId
     }
 
     private func hostGoodbyeFlag() -> Bool {
