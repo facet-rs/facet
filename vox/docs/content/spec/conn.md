@@ -576,7 +576,7 @@ parity that the browser peer picked when connecting over WS.
 
 ## Rust runtime API for virtual connections
 
-The Rust v7 runtime (`roam-core`) exposes virtual connections as first-class
+The Rust runtime (`roam-core`) exposes virtual connections as first-class
 session operations:
 
 1. Create a session and keep `session.run()` running.

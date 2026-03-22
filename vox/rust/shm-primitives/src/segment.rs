@@ -1,8 +1,8 @@
 use crate::sync::{AtomicU32, AtomicU64, Ordering};
 
-/// Magic bytes that identify a v7 roam SHM segment.
+/// Magic bytes that identify a roam SHM segment.
 ///
-/// r[impl shm.segment.magic.v7]
+/// r[impl shm.segment.magic]
 pub const MAGIC: [u8; 8] = *b"ROAMHUB\x07";
 
 /// Current segment format version.
@@ -36,7 +36,7 @@ pub struct SegmentHeaderInit {
 /// r[impl shm.segment.config]
 #[repr(C)]
 pub struct SegmentHeader {
-    /// "ROAMHUB\x07" — identifies a v7 roam SHM segment.
+    /// "ROAMHUB\x07" — identifies a roam SHM segment.
     pub magic: [u8; 8],
     /// Segment format version (currently 7).
     pub version: u32,
@@ -95,14 +95,14 @@ impl SegmentHeader {
         self._reserved = [0u8; 48];
     }
 
-    /// Validate that the header looks like a v7 roam segment.
+    /// Validate that the header looks like a roam segment.
     ///
     /// Returns `Err` with a description if validation fails.
     ///
-    /// r[impl shm.segment.magic.v7]
+    /// r[impl shm.segment.magic]
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.magic != MAGIC {
-            return Err("bad magic: not a roam v7 segment");
+            return Err("bad magic: not a roam segment");
         }
         if self.version != SEGMENT_VERSION {
             return Err("unsupported segment version");

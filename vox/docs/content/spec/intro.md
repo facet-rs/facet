@@ -10,10 +10,7 @@ weight = 10
 > Rust traits *are* the schema. Implementations for other languages (Swift,
 > TypeScript, etc.) are generated from Rust definitions.
 
-If you're upgrading an existing codebase, read the
-[v6 -> v7 migration guide](../v6-to-v7/).
-
-This specification describes the current roam v9 protocol model. The v9 line
+This specification describes the current protocol model. The current line
 introduces a transport prologue below the conduit/session layers so conduit
 mode is selected on the wire before session establishment.
 

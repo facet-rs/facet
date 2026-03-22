@@ -4,7 +4,7 @@ import Testing
 
 @testable import RoamRuntime
 
-private func loadShmV7Fixture(_ name: String) throws -> [UInt8] {
+private func loadShmFixture(_ name: String) throws -> [UInt8] {
     let testFile = URL(fileURLWithPath: #filePath)
     let projectRoot =
         testFile
@@ -13,7 +13,7 @@ private func loadShmV7Fixture(_ name: String) throws -> [UInt8] {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .deletingLastPathComponent()
-    let path = projectRoot.appendingPathComponent("test-fixtures/golden-vectors/shm-v7/\(name).bin")
+    let path = projectRoot.appendingPathComponent("test-fixtures/golden-vectors/shm/\(name).bin")
     return Array(try Data(contentsOf: path))
 }
 
@@ -39,11 +39,11 @@ private func readU64LE(_ bytes: [UInt8], _ at: Int) -> UInt64 {
 }
 
 @Suite(.serialized)
-struct ShmV7FixtureTests {
-    // r[verify shm.segment.magic.v7]
+struct ShmFixtureTests {
+    // r[verify shm.segment.magic]
     // r[verify shm.segment.header]
-    @Test func segmentHeaderHasV7MagicAndVersion() throws {
-        let bytes = try loadShmV7Fixture("segment_header")
+    @Test func segmentHeaderHasMagicAndVersion() throws {
+        let bytes = try loadShmFixture("segment_header")
         #expect(bytes.count == 128)
         #expect(Array(bytes[0..<8]) == Array("ROAMHUB\u{07}".utf8))
         #expect(readU32LE(bytes, 8) == 7)
@@ -52,8 +52,8 @@ struct ShmV7FixtureTests {
 
     // r[verify shm.framing.header]
     // r[verify shm.framing.flags]
-    @Test func frameHeaderIsV7EightByteHeader() throws {
-        let bytes = try loadShmV7Fixture("frame_header")
+    @Test func frameHeaderIsEightByteHeader() throws {
+        let bytes = try loadShmFixture("frame_header")
         #expect(bytes.count == 8)
         #expect(readU32LE(bytes, 0) == 20)
         #expect(bytes[4] == 0x01) // SLOT_REF
@@ -66,18 +66,18 @@ struct ShmV7FixtureTests {
     // r[verify shm.framing.slot-ref]
     // r[verify shm.framing.mmap-ref]
     @Test func inlineAndReferenceFixturesHaveExpectedSizes() throws {
-        let inline = try loadShmV7Fixture("frame_inline")
+        let inline = try loadShmFixture("frame_inline")
         #expect(inline.count == 20)
         #expect(readU32LE(inline, 0) == 20)
         #expect(inline[4] == 0)
         #expect(Array(inline[8..<17]) == Array("swift-shm".utf8))
 
-        let slotRef = try loadShmV7Fixture("frame_slot_ref")
+        let slotRef = try loadShmFixture("frame_slot_ref")
         #expect(slotRef.count == 20)
         #expect(readU32LE(slotRef, 0) == 20)
         #expect(slotRef[4] == 0x01) // SLOT_REF
 
-        let mmapRef = try loadShmV7Fixture("frame_mmap_ref")
+        let mmapRef = try loadShmFixture("frame_mmap_ref")
         #expect(mmapRef.count == 32)
         #expect(readU32LE(mmapRef, 0) == 32)
         #expect(mmapRef[4] == 0x02) // MMAP_REF

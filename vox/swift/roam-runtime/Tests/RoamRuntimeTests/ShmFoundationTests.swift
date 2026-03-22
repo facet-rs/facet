@@ -14,7 +14,7 @@ private func loadShmFixture(_ name: String) throws -> [UInt8] {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .deletingLastPathComponent()
-    let path = projectRoot.appendingPathComponent("test-fixtures/golden-vectors/shm-v7/\(name).bin")
+    let path = projectRoot.appendingPathComponent("test-fixtures/golden-vectors/shm/\(name).bin")
     return Array(try Data(contentsOf: path))
 }
 
@@ -26,7 +26,7 @@ private func makeTempPath(_ suffix: String) -> String {
 @Suite(.serialized)
 struct ShmFoundationFixtureParityTests {
     // r[verify shm.segment.header]
-    // r[verify shm.segment.magic.v7]
+    // r[verify shm.segment.magic]
     // r[verify shm.segment.config]
     @Test func segmentHeaderFixtureParses() throws {
         let bytes = try loadShmFixture("segment_header")
@@ -99,7 +99,7 @@ struct ShmFoundationFixtureParityTests {
 @Suite(.serialized)
 struct ShmHeaderValidationTests {
     // r[verify shm.segment.header]
-    // r[verify shm.segment.magic.v7]
+    // r[verify shm.segment.magic]
     @Test func rejectsInvalidHeaderInvariants() throws {
         var bytes = try loadShmFixture("segment_header")
 

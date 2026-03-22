@@ -1,8 +1,8 @@
 import Foundation
 
-// r[impl shm.segment.magic.v7]
+// r[impl shm.segment.magic]
 private let shmSegmentMagicLegacy = Array("RAPAHUB\u{01}".utf8)
-// r[impl shm.segment.magic.v7]
+// r[impl shm.segment.magic]
 private let shmSegmentMagicV7 = Array("ROAMHUB\u{07}".utf8)
 public let shmSegmentMagic = shmSegmentMagicV7
 public let shmSegmentHeaderSize = 128
@@ -51,7 +51,7 @@ public struct ShmSegmentHeader: Sendable, Equatable {
 
     // r[impl shm.segment.header]
     // r[impl shm.segment.config]
-    // r[impl shm.segment.magic.v7]
+    // r[impl shm.segment.magic]
     public static func decode(from bytes: [UInt8]) throws -> ShmSegmentHeader {
         guard bytes.count >= shmSegmentHeaderSize else {
             throw ShmLayoutError.headerTooShort(bytes.count)
@@ -108,7 +108,7 @@ public struct ShmSegmentHeader: Sendable, Equatable {
     }
 
     // r[impl shm.segment.header]
-    // r[impl shm.segment.magic.v7]
+    // r[impl shm.segment.magic]
     public func validateV2(mappedSize: UInt64? = nil) throws {
         if version != 2 && version != 7 {
             throw ShmLayoutError.unsupportedVersion(version)

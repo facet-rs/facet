@@ -225,7 +225,7 @@ impl PreparedPeer {
 
 /// Backward-compat host options placeholder.
 ///
-/// v7 currently has no peer-add tunables in this helper layer.
+/// The current helper layer has no peer-add tunables.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AddPeerOptions;
 
@@ -234,7 +234,7 @@ pub type MultiPeerHostDriver = ShmHost;
 
 /// Thin compatibility wrapper around [`HostHub`].
 ///
-/// This keeps old call sites compiling while using the v7 primitive orchestration.
+/// This keeps old call sites compiling while using the current primitive orchestration.
 pub struct ShmHost {
     hub: HostHub,
 }

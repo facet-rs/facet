@@ -12,9 +12,9 @@ weight = 15
 > know or care what those bytes contain. SHM provides the delivery
 > mechanism (BipBuffers, VarSlotPool, signaling).
 
-## Rust v7 API status
+## Rust API Status
 
-For Rust users, the current v7 implementation in this repository is based on
+For Rust users, the current implementation in this repository is based on
 low-level composition:
 
 1. Create/attach the shared segment with `roam_shm::segment::Segment`.
@@ -23,8 +23,8 @@ low-level composition:
 4. Run the normal roam runtime (`BareConduit` + session builder + `Driver`) on top of that link.
 
 The older monolithic host orchestration API (`ShmHost`, `bootstrap`,
-`MultiPeerHostDriver`) is not the primary v7 shape. Instead, v7 provides a thin
-Unix helper module (`roam_shm::host`) that wraps peer reservation/spawn tickets
+`MultiPeerHostDriver`) is not the primary shape. Instead, the current runtime
+provides a thin Unix helper module (`roam_shm::host`) that wraps peer reservation/spawn tickets
 while keeping SHM as a transport primitive.
 
 Host-side sketch (Unix, one peer):
@@ -153,7 +153,7 @@ let mut driver = Driver::new(root_handle, my_dispatcher, Parity::Even);
 > 80      48    reserved            Reserved (zero)
 > ```
 
-> r[shm.segment.magic.v7]
+> r[shm.segment.magic]
 >
 > The magic field MUST be exactly `ROAMHUB\x07` (8 bytes). A guest
 > MUST validate the magic before proceeding.

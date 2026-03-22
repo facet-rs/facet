@@ -1,7 +1,7 @@
-# SHM v7 Golden Vectors
+# SHM Golden Vectors
 
 These fixtures are generated from the active `rust/roam-shm` implementation
-for the current SHM v7 spec (`docs/content/spec/shm.md`).
+for the current SHM transport spec (`docs/content/spec/shm.md`).
 
 Regenerate with:
 

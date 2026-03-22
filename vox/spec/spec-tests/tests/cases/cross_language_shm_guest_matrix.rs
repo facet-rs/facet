@@ -249,9 +249,9 @@ pub fn run_data_path_case() {
     }
 }
 
-pub fn run_message_v7_case() {
+pub fn run_message_case() {
     let dir = tempfile::tempdir().unwrap();
-    let shm_path = dir.path().join("xlang-shm-message-v7.shm");
+    let shm_path = dir.path().join("xlang-shm-message.shm");
     let class = [SizeClassConfig {
         slot_size: 4096,
         slot_count: 2,
@@ -274,7 +274,7 @@ pub fn run_message_v7_case() {
         .arg(format!("--hub-path={}", shm_path.display()))
         .arg(format!("--peer-id={}", peer_id.get()))
         .arg(format!("--doorbell-fd={guest_fd}"))
-        .arg("--scenario=message-v7")
+        .arg("--scenario=message")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -293,7 +293,7 @@ pub fn run_message_v7_case() {
             .wait_with_output()
             .expect("wait for swift guest process");
         panic!(
-            "expected three MessageV7 frames from Swift guest, got {}\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+            "expected three Message frames from Swift guest, got {}\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
             payloads.len(),
             output.status,
             String::from_utf8_lossy(&output.stdout),

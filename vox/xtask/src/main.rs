@@ -1094,8 +1094,8 @@ fn generate_spec_matrix(
         }
         #[cfg(all(unix, target_os = "macos"))]
         #[test]
-        fn lang_swift_to_rust_transport_shm_direction_guest_to_host_cross_language_message_v7() {
-            cross_language_shm_guest_matrix::run_message_v7_case();
+        fn lang_swift_to_rust_transport_shm_direction_guest_to_host_cross_language_message() {
+            cross_language_shm_guest_matrix::run_message_case();
         }
         #[cfg(all(unix, target_os = "macos"))]
         #[test]

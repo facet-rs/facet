@@ -103,5 +103,3 @@ async fn classify<'roam>(
 ```
 
 For non-Rust bindings, generate code from service descriptors with `roam-codegen`.
-
-For migration details, see [Migrating from v6 to v7](/guides/v6-to-v7/).

@@ -4,9 +4,6 @@ description = "Services, method identity, handlers, and callers"
 weight = 12
 +++
 
-If you're coming from roam v6 APIs, see the
-[v6 -> v7 migration guide](../v6-to-v7/).
-
 > r[rpc]
 >
 > The RPC layer sits on top of connections. It defines how requests are made,
@@ -146,7 +143,7 @@ let result = response.ret;
 > `SessionHandle::open_connection(...)`, receiving a connection handle when the
 > counterpart accepts it.
 
-In Rust v7, virtual connections are independent driver/caller contexts:
+In Rust, virtual connections are independent driver/caller contexts:
 
 ```rust
 let vconn_handle = session_handle

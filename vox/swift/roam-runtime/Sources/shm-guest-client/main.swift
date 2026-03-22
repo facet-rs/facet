@@ -511,7 +511,7 @@ struct ShmGuestClientMain {
             }
             fail("timed out waiting for host-goodbye wake")
 
-        case "message-v7":
+        case "message":
             let transport = ShmGuestTransport(runtime: guest)
             let conduit = transport.bareConduit()
 
@@ -578,7 +578,7 @@ struct ShmGuestClientMain {
                 }
             }
 
-            fail("timed out waiting for message-v7 responses")
+            fail("timed out waiting for message responses")
 
         case "rpc-bench-echo":
             guard let iterations = args.iterations else {

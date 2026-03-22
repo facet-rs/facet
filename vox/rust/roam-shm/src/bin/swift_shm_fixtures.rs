@@ -1,4 +1,4 @@
-//! Generate SHM golden vectors for Swift runtime parity tests (v7 spec).
+//! Generate SHM golden vectors for Swift runtime parity tests.
 
 use roam_shm::framing::{
     DEFAULT_INLINE_THRESHOLD, FLAG_MMAP_REF, FLAG_SLOT_REF, FRAME_HEADER_SIZE, MMAP_REF_ENTRY_SIZE,
@@ -33,7 +33,7 @@ fn output_dir() -> PathBuf {
         .unwrap()
         .parent()
         .unwrap()
-        .join("test-fixtures/golden-vectors/shm-v7")
+        .join("test-fixtures/golden-vectors/shm")
 }
 
 fn main() {
@@ -150,7 +150,7 @@ fn main() {
     put_u32_le(&mut mmap_ref_frame, 28, 0); // reserved
     write_vector(&out_dir, "frame_mmap_ref", &mmap_ref_frame);
 
-    println!("\nGenerated SHM v7 vectors in {}", out_dir.display());
+    println!("\nGenerated SHM vectors in {}", out_dir.display());
     println!("Header magic: {:?}", MAGIC);
     println!("Header version: {}", SEGMENT_VERSION);
     println!("Peer entry size: {}", PEER_ENTRY_SIZE);
