@@ -782,6 +782,84 @@ mod serialize_bench {
         ExactCallFixture { args, schemas }
     }
 
+    #[derive(Facet)]
+    pub struct FastPathPayload<'a> {
+        pub inode: u64,
+        pub parent_inode: u64,
+        pub size: u64,
+        pub mode: u32,
+        pub uid: u32,
+        pub gid: u32,
+        pub link_count: u32,
+        pub mtime_ns: u64,
+        pub ctime_ns: u64,
+        pub name: &'a str,
+        pub path: &'a str,
+        pub etag: &'a [u8],
+        pub checksum: &'a [u8],
+        pub inline_data: &'a [u8],
+    }
+
+    type FastPathArgs<'a> = (FastPathPayload<'a>,);
+
+    pub static PAYLOAD_PLAN: LazyLock<PlanResult> = LazyLock::new(|| {
+        let remote_extracted = extract_schemas(<FastPathArgs<'static> as Facet<'static>>::SHAPE)
+            .expect("schema extraction");
+        let remote =
+            SchemaSet::from_root_and_schemas(remote_extracted.root, remote_extracted.schemas);
+        let local_extracted = extract_schemas(<FastPathArgs<'static> as Facet<'static>>::SHAPE)
+            .expect("schema extraction");
+        let local = SchemaSet::from_root_and_schemas(local_extracted.root, local_extracted.schemas);
+        let plan = build_plan(&PlanInput {
+            remote: &remote,
+            local: &local,
+        })
+        .expect("identity translation plan");
+        PlanResult {
+            plan,
+            registry: remote.registry,
+        }
+    });
+
+    pub struct FastPathPayloadFixture {
+        pub name: String,
+        pub path: String,
+        pub etag: Vec<u8>,
+        pub checksum: Vec<u8>,
+        pub inline_data: Vec<u8>,
+    }
+
+    impl FastPathPayloadFixture {
+        pub fn payload(&self) -> FastPathPayload<'_> {
+            FastPathPayload {
+                inode: 0x10_20_30_40,
+                parent_inode: 0x01_02_03_04,
+                size: self.inline_data.len() as u64,
+                mode: 0o100644,
+                uid: 501,
+                gid: 20,
+                link_count: 1,
+                mtime_ns: 1_735_689_123_456_789,
+                ctime_ns: 1_735_689_123_400_000,
+                name: &self.name,
+                path: &self.path,
+                etag: &self.etag,
+                checksum: &self.checksum,
+                inline_data: &self.inline_data,
+            }
+        }
+    }
+
+    pub fn make_fast_path_payload_fixture(n: usize) -> FastPathPayloadFixture {
+        FastPathPayloadFixture {
+            name: format!("inode-{n}"),
+            path: format!("/bench/very/realistic/path/for/{n}/payload.bin"),
+            etag: vec![0x11; 16],
+            checksum: vec![0x22; 32],
+            inline_data: vec![0x5A; n],
+        }
+    }
+
     pub fn postcard_plan_encode(msg: &Message<'_>) -> usize {
         let msg = divan::black_box(msg);
         to_vec(msg).expect("serialize").len()
@@ -799,6 +877,32 @@ mod serialize_bench {
         let msg = divan::black_box(msg);
         let bytes = to_vec(msg).expect("serialize");
         postcard_plan_decode(divan::black_box(&bytes))
+    }
+
+    pub fn postcard_payload_message_encode(fixture: &FastPathPayloadFixture) -> usize {
+        encode_postcard_payload_message(divan::black_box(fixture)).len()
+    }
+
+    pub fn postcard_payload_message_decode(input: &[u8]) -> usize {
+        let input = divan::black_box(input);
+        let msg: Message<'_> =
+            from_slice_borrowed_with_plan(input, &MESSAGE_PLAN.plan, &MESSAGE_PLAN.registry)
+                .expect("plan decode");
+        score_message_and_payload(&msg)
+    }
+
+    pub fn postcard_payload_message_roundtrip(fixture: &FastPathPayloadFixture) -> usize {
+        let bytes = encode_postcard_payload_message(divan::black_box(fixture));
+        postcard_payload_message_decode(divan::black_box(&bytes))
+    }
+
+    pub fn postcard_payload_message_roundtrip_scan(fixture: &FastPathPayloadFixture) -> usize {
+        let bytes = encode_postcard_payload_message(divan::black_box(fixture));
+        let input = divan::black_box(&bytes);
+        let msg: Message<'_> =
+            from_slice_borrowed_with_plan(input, &MESSAGE_PLAN.plan, &MESSAGE_PLAN.registry)
+                .expect("plan decode");
+        score_message_and_payload_scan(&msg)
     }
 
     fn score_message(msg: &Message<'_>) -> usize {
@@ -837,6 +941,105 @@ mod serialize_bench {
         score
     }
 
+    fn score_message_and_payload(msg: &Message<'_>) -> usize {
+        let mut score = score_message(msg);
+        if let MessagePayload::RequestMessage(RequestMessage {
+            body:
+                RequestBody::Call(RequestCall {
+                    args: Payload::PostcardBytes(bytes),
+                    ..
+                }),
+            ..
+        }) = &msg.payload
+        {
+            let (payload,): FastPathArgs<'_> =
+                from_slice_borrowed_with_plan(bytes, &PAYLOAD_PLAN.plan, &PAYLOAD_PLAN.registry)
+                    .expect("payload decode");
+            score = score.wrapping_add(score_fast_path_payload(&payload));
+        } else {
+            panic!("expected request call payload bytes");
+        }
+        score
+    }
+
+    fn score_message_and_payload_scan(msg: &Message<'_>) -> usize {
+        let mut score = score_message(msg);
+        if let MessagePayload::RequestMessage(RequestMessage {
+            body:
+                RequestBody::Call(RequestCall {
+                    args: Payload::PostcardBytes(bytes),
+                    ..
+                }),
+            ..
+        }) = &msg.payload
+        {
+            let (payload,): FastPathArgs<'_> =
+                from_slice_borrowed_with_plan(bytes, &PAYLOAD_PLAN.plan, &PAYLOAD_PLAN.registry)
+                    .expect("payload decode");
+            score = score.wrapping_add(score_fast_path_payload_scan(&payload));
+        } else {
+            panic!("expected request call payload bytes");
+        }
+        score
+    }
+
+    fn score_fast_path_payload(payload: &FastPathPayload<'_>) -> usize {
+        let mut score = payload.inode as usize
+            ^ payload.parent_inode as usize
+            ^ payload.size as usize
+            ^ payload.mode as usize
+            ^ payload.uid as usize
+            ^ payload.gid as usize
+            ^ payload.link_count as usize
+            ^ payload.mtime_ns as usize
+            ^ payload.ctime_ns as usize;
+        score = score.wrapping_add(payload.name.len());
+        score = score.wrapping_add(payload.path.len());
+        score = score.wrapping_add(payload.etag.len());
+        score = score.wrapping_add(payload.checksum.len());
+        score = score.wrapping_add(payload.inline_data.len());
+        score
+    }
+
+    fn score_fast_path_payload_scan(payload: &FastPathPayload<'_>) -> usize {
+        let mut score = score_fast_path_payload(payload);
+        for byte in payload.inline_data {
+            score = score.wrapping_add(*byte as usize);
+        }
+        score
+    }
+
+    pub fn encode_postcard_payload_message(fixture: &FastPathPayloadFixture) -> Vec<u8> {
+        let payload = fixture.payload();
+        let args = (payload,);
+        let msg = Message {
+            connection_id: ConnectionId(1),
+            payload: MessagePayload::RequestMessage(RequestMessage {
+                id: RequestId(42),
+                body: RequestBody::Call(RequestCall {
+                    method_id: MethodId(7),
+                    metadata: vec![
+                        MetadataEntry {
+                            key: "authorization",
+                            value: MetadataValue::String(
+                                "Bearer eyJhbGciOiJIUzI1NiJ9.e30.ZRrHA1JJJW8opB1Qfp7QDm",
+                            ),
+                            flags: MetadataFlags::SENSITIVE,
+                        },
+                        MetadataEntry {
+                            key: "attempt",
+                            value: MetadataValue::U64(3),
+                            flags: MetadataFlags::NONE,
+                        },
+                    ],
+                    args: Payload::outgoing(&args),
+                    schemas: CborPayload::default(),
+                }),
+            }),
+        };
+        to_vec(&msg).expect("serialize")
+    }
+
     trait MetadataFlagsScore {
         fn flags_score(self) -> usize;
     }
@@ -872,6 +1075,25 @@ mod serialize_bench {
         let msg = divan::black_box(msg);
         let bytes = encode_exact_layout(msg);
         decode_exact_layout_score(divan::black_box(&bytes))
+    }
+
+    pub fn exact_payload_message_encode(fixture: &FastPathPayloadFixture) -> usize {
+        encode_exact_payload_message(divan::black_box(fixture)).len()
+    }
+
+    pub fn exact_payload_message_decode(input: &[u8]) -> usize {
+        let input = divan::black_box(input);
+        decode_exact_layout_payload_score(input)
+    }
+
+    pub fn exact_payload_message_roundtrip(fixture: &FastPathPayloadFixture) -> usize {
+        let bytes = encode_exact_payload_message(divan::black_box(fixture));
+        decode_exact_layout_payload_score(divan::black_box(&bytes))
+    }
+
+    pub fn exact_payload_message_roundtrip_scan(fixture: &FastPathPayloadFixture) -> usize {
+        let bytes = encode_exact_payload_message(divan::black_box(fixture));
+        decode_exact_layout_payload_score_scan(divan::black_box(&bytes))
     }
 
     fn encode_exact_layout(msg: &Message<'_>) -> Vec<u8> {
@@ -967,6 +1189,194 @@ mod serialize_bench {
         score
     }
 
+    pub fn encode_exact_payload_message(fixture: &FastPathPayloadFixture) -> Vec<u8> {
+        let payload = fixture.payload();
+        let mut payload_bytes = Vec::with_capacity(
+            96 + payload.name.len()
+                + payload.path.len()
+                + payload.etag.len()
+                + payload.checksum.len()
+                + payload.inline_data.len(),
+        );
+        push_u64(&mut payload_bytes, payload.inode);
+        push_u64(&mut payload_bytes, payload.parent_inode);
+        push_u64(&mut payload_bytes, payload.size);
+        push_u32(&mut payload_bytes, payload.mode);
+        push_u32(&mut payload_bytes, payload.uid);
+        push_u32(&mut payload_bytes, payload.gid);
+        push_u32(&mut payload_bytes, payload.link_count);
+        push_u64(&mut payload_bytes, payload.mtime_ns);
+        push_u64(&mut payload_bytes, payload.ctime_ns);
+        push_bytes(&mut payload_bytes, payload.name.as_bytes());
+        push_bytes(&mut payload_bytes, payload.path.as_bytes());
+        push_bytes(&mut payload_bytes, payload.etag);
+        push_bytes(&mut payload_bytes, payload.checksum);
+        push_bytes(&mut payload_bytes, payload.inline_data);
+
+        let mut out =
+            Vec::with_capacity(128 + payload_bytes.len() + 2 * metadata_entry_size_hint() + 4);
+        push_u64(&mut out, 1);
+        push_u8(&mut out, TAG_REQUEST_MESSAGE);
+        push_u64(&mut out, 42);
+        push_u8(&mut out, TAG_REQUEST_CALL);
+        push_u64(&mut out, 7);
+        push_u32(&mut out, 2);
+        push_bytes(&mut out, b"authorization");
+        push_u8(&mut out, TAG_METADATA_STRING);
+        push_bytes(
+            &mut out,
+            b"Bearer eyJhbGciOiJIUzI1NiJ9.e30.ZRrHA1JJJW8opB1Qfp7QDm",
+        );
+        push_u64(&mut out, 1);
+        push_bytes(&mut out, b"attempt");
+        push_u8(&mut out, TAG_METADATA_U64);
+        push_u64(&mut out, 3);
+        push_u64(&mut out, 0);
+        push_bytes(&mut out, &payload_bytes);
+        push_bytes(&mut out, &[]);
+        out
+    }
+
+    fn decode_exact_layout_payload_score(input: &[u8]) -> usize {
+        let mut cursor = 0usize;
+        let connection_id = read_u64(input, &mut cursor);
+        let payload_tag = read_u8(input, &mut cursor);
+        assert_eq!(payload_tag, TAG_REQUEST_MESSAGE);
+        let request_id = read_u64(input, &mut cursor);
+        let body_tag = read_u8(input, &mut cursor);
+        assert_eq!(body_tag, TAG_REQUEST_CALL);
+        let method_id = read_u64(input, &mut cursor);
+        let metadata_count = read_u32(input, &mut cursor) as usize;
+
+        let mut score =
+            connection_id as usize ^ request_id as usize ^ method_id as usize ^ metadata_count;
+        for _ in 0..metadata_count {
+            let key = read_len_prefixed(input, &mut cursor);
+            score = score.wrapping_add(key.len());
+            let value_tag = read_u8(input, &mut cursor);
+            score = score.wrapping_add(match value_tag {
+                TAG_METADATA_STRING | TAG_METADATA_BYTES => {
+                    read_len_prefixed(input, &mut cursor).len()
+                }
+                TAG_METADATA_U64 => read_u64(input, &mut cursor) as usize,
+                other => panic!("unexpected metadata tag {other}"),
+            });
+            score = score.wrapping_add(read_u64(input, &mut cursor) as usize);
+        }
+
+        let payload = read_len_prefixed(input, &mut cursor);
+        score = score.wrapping_add(decode_exact_payload_score(payload));
+        let schemas = read_len_prefixed(input, &mut cursor);
+        score = score.wrapping_add(schemas.len());
+        assert_eq!(cursor, input.len());
+        score
+    }
+
+    fn decode_exact_layout_payload_score_scan(input: &[u8]) -> usize {
+        let mut cursor = 0usize;
+        let connection_id = read_u64(input, &mut cursor);
+        let payload_tag = read_u8(input, &mut cursor);
+        assert_eq!(payload_tag, TAG_REQUEST_MESSAGE);
+        let request_id = read_u64(input, &mut cursor);
+        let body_tag = read_u8(input, &mut cursor);
+        assert_eq!(body_tag, TAG_REQUEST_CALL);
+        let method_id = read_u64(input, &mut cursor);
+        let metadata_count = read_u32(input, &mut cursor) as usize;
+
+        let mut score =
+            connection_id as usize ^ request_id as usize ^ method_id as usize ^ metadata_count;
+        for _ in 0..metadata_count {
+            let key = read_len_prefixed(input, &mut cursor);
+            score = score.wrapping_add(key.len());
+            let value_tag = read_u8(input, &mut cursor);
+            score = score.wrapping_add(match value_tag {
+                TAG_METADATA_STRING | TAG_METADATA_BYTES => {
+                    read_len_prefixed(input, &mut cursor).len()
+                }
+                TAG_METADATA_U64 => read_u64(input, &mut cursor) as usize,
+                other => panic!("unexpected metadata tag {other}"),
+            });
+            score = score.wrapping_add(read_u64(input, &mut cursor) as usize);
+        }
+
+        let payload = read_len_prefixed(input, &mut cursor);
+        score = score.wrapping_add(decode_exact_payload_score_scan(payload));
+        let schemas = read_len_prefixed(input, &mut cursor);
+        score = score.wrapping_add(schemas.len());
+        assert_eq!(cursor, input.len());
+        score
+    }
+
+    fn decode_exact_payload_score(input: &[u8]) -> usize {
+        let mut cursor = 0usize;
+        let inode = read_u64(input, &mut cursor);
+        let parent_inode = read_u64(input, &mut cursor);
+        let size = read_u64(input, &mut cursor);
+        let mode = read_u32(input, &mut cursor);
+        let uid = read_u32(input, &mut cursor);
+        let gid = read_u32(input, &mut cursor);
+        let link_count = read_u32(input, &mut cursor);
+        let mtime_ns = read_u64(input, &mut cursor);
+        let ctime_ns = read_u64(input, &mut cursor);
+        let name = read_len_prefixed(input, &mut cursor);
+        let path = read_len_prefixed(input, &mut cursor);
+        let etag = read_len_prefixed(input, &mut cursor);
+        let checksum = read_len_prefixed(input, &mut cursor);
+        let inline_data = read_len_prefixed(input, &mut cursor);
+        assert_eq!(cursor, input.len());
+        inode as usize
+            ^ parent_inode as usize
+            ^ size as usize
+            ^ mode as usize
+            ^ uid as usize
+            ^ gid as usize
+            ^ link_count as usize
+            ^ mtime_ns as usize
+            ^ ctime_ns as usize
+            ^ name.len()
+            ^ path.len()
+            ^ etag.len()
+            ^ checksum.len()
+            ^ inline_data.len()
+    }
+
+    fn decode_exact_payload_score_scan(input: &[u8]) -> usize {
+        let mut cursor = 0usize;
+        let inode = read_u64(input, &mut cursor);
+        let parent_inode = read_u64(input, &mut cursor);
+        let size = read_u64(input, &mut cursor);
+        let mode = read_u32(input, &mut cursor);
+        let uid = read_u32(input, &mut cursor);
+        let gid = read_u32(input, &mut cursor);
+        let link_count = read_u32(input, &mut cursor);
+        let mtime_ns = read_u64(input, &mut cursor);
+        let ctime_ns = read_u64(input, &mut cursor);
+        let name = read_len_prefixed(input, &mut cursor);
+        let path = read_len_prefixed(input, &mut cursor);
+        let etag = read_len_prefixed(input, &mut cursor);
+        let checksum = read_len_prefixed(input, &mut cursor);
+        let inline_data = read_len_prefixed(input, &mut cursor);
+        assert_eq!(cursor, input.len());
+        let mut score = inode as usize
+            ^ parent_inode as usize
+            ^ size as usize
+            ^ mode as usize
+            ^ uid as usize
+            ^ gid as usize
+            ^ link_count as usize
+            ^ mtime_ns as usize
+            ^ ctime_ns as usize
+            ^ name.len()
+            ^ path.len()
+            ^ etag.len()
+            ^ checksum.len()
+            ^ inline_data.len();
+        for byte in inline_data {
+            score = score.wrapping_add(*byte as usize);
+        }
+        score
+    }
+
     fn metadata_entry_size(entry: &MetadataEntry<'_>) -> usize {
         4 + entry.key.len()
             + 1
@@ -976,6 +1386,10 @@ mod serialize_bench {
                 MetadataValue::U64(_) => 8,
             }
             + 8
+    }
+
+    const fn metadata_entry_size_hint() -> usize {
+        64
     }
 
     fn push_u8(out: &mut Vec<u8>, value: u8) {
@@ -1144,6 +1558,74 @@ fn message_exact_layout_roundtrip(bencher: divan::Bencher, n: usize) {
     let fixture = serialize_bench::make_exact_call_fixture(n);
     let msg = fixture.message();
     bencher.bench_local(|| divan::black_box(serialize_bench::exact_layout_roundtrip(&msg)));
+}
+
+#[divan::bench(args = EXACT_LAYOUT_ARGS_SIZES)]
+fn message_payload_postcard_plan_encode(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_fast_path_payload_fixture(n);
+    bencher.bench_local(|| {
+        divan::black_box(serialize_bench::postcard_payload_message_encode(&fixture))
+    });
+}
+
+#[divan::bench(args = EXACT_LAYOUT_ARGS_SIZES)]
+fn message_payload_postcard_plan_decode(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_fast_path_payload_fixture(n);
+    let bytes = serialize_bench::encode_postcard_payload_message(&fixture);
+    bencher
+        .bench_local(|| divan::black_box(serialize_bench::postcard_payload_message_decode(&bytes)));
+}
+
+#[divan::bench(args = EXACT_LAYOUT_ARGS_SIZES)]
+fn message_payload_postcard_plan_roundtrip(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_fast_path_payload_fixture(n);
+    bencher.bench_local(|| {
+        divan::black_box(serialize_bench::postcard_payload_message_roundtrip(
+            &fixture,
+        ))
+    });
+}
+
+#[divan::bench(args = EXACT_LAYOUT_ARGS_SIZES)]
+fn message_payload_exact_layout_encode(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_fast_path_payload_fixture(n);
+    bencher
+        .bench_local(|| divan::black_box(serialize_bench::exact_payload_message_encode(&fixture)));
+}
+
+#[divan::bench(args = EXACT_LAYOUT_ARGS_SIZES)]
+fn message_payload_exact_layout_decode(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_fast_path_payload_fixture(n);
+    let bytes = serialize_bench::encode_exact_payload_message(&fixture);
+    bencher.bench_local(|| divan::black_box(serialize_bench::exact_payload_message_decode(&bytes)));
+}
+
+#[divan::bench(args = EXACT_LAYOUT_ARGS_SIZES)]
+fn message_payload_exact_layout_roundtrip(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_fast_path_payload_fixture(n);
+    bencher.bench_local(|| {
+        divan::black_box(serialize_bench::exact_payload_message_roundtrip(&fixture))
+    });
+}
+
+#[divan::bench(args = EXACT_LAYOUT_ARGS_SIZES)]
+fn message_payload_postcard_plan_roundtrip_scan(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_fast_path_payload_fixture(n);
+    bencher.bench_local(|| {
+        divan::black_box(serialize_bench::postcard_payload_message_roundtrip_scan(
+            &fixture,
+        ))
+    });
+}
+
+#[divan::bench(args = EXACT_LAYOUT_ARGS_SIZES)]
+fn message_payload_exact_layout_roundtrip_scan(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_fast_path_payload_fixture(n);
+    bencher.bench_local(|| {
+        divan::black_box(serialize_bench::exact_payload_message_roundtrip_scan(
+            &fixture,
+        ))
+    });
 }
 
 // --- Blob benchmarks: large binary payload ---
