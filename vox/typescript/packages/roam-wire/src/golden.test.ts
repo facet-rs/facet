@@ -75,18 +75,18 @@ function expectedMessages(): Array<[name: string, message: Message]> {
   ];
 }
 
-describe("wire-v7 golden vectors", () => {
+describe("wire golden vectors", () => {
   it("encodes bytes matching Rust fixtures", () => {
     for (const [name, message] of expectedMessages()) {
       const encoded = encodeMessage(message);
-      const expected = loadGoldenVector(`wire-v7/${name}.bin`);
+      const expected = loadGoldenVector(`wire/${name}.bin`);
       expect(Array.from(encoded), name).toEqual(Array.from(expected));
     }
   });
 
   it("decodes Rust fixtures into expected messages", () => {
     for (const [name, expectedMessage] of expectedMessages()) {
-      const bytes = loadGoldenVector(`wire-v7/${name}.bin`);
+      const bytes = loadGoldenVector(`wire/${name}.bin`);
       const decoded = decodeMessage(bytes);
       expect(decoded.next, name).toBe(bytes.length);
       expect(decoded.value, name).toEqual(expectedMessage);

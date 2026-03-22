@@ -304,7 +304,7 @@ fn main() {
     // They are CBOR-encoded handshake messages exchanged before postcard traffic.
 
     write_fixture(
-        "wire-v7/message_protocol_error.bin",
+        "wire/message_protocol_error.bin",
         &encode_message(&Message {
             connection_id: ConnectionId::ROOT,
             payload: MessagePayload::ProtocolError(ProtocolError {
@@ -314,7 +314,7 @@ fn main() {
     );
 
     write_fixture(
-        "wire-v7/message_connection_open.bin",
+        "wire/message_connection_open.bin",
         &encode_message(&Message {
             connection_id: ConnectionId(2),
             payload: MessagePayload::ConnectionOpen(ConnectionOpen {
@@ -325,7 +325,7 @@ fn main() {
     );
 
     write_fixture(
-        "wire-v7/message_connection_accept.bin",
+        "wire/message_connection_accept.bin",
         &encode_message(&Message {
             connection_id: ConnectionId(2),
             payload: MessagePayload::ConnectionAccept(ConnectionAccept {
@@ -339,7 +339,7 @@ fn main() {
     );
 
     write_fixture(
-        "wire-v7/message_connection_reject.bin",
+        "wire/message_connection_reject.bin",
         &encode_message(&Message {
             connection_id: ConnectionId(4),
             payload: MessagePayload::ConnectionReject(ConnectionReject {
@@ -349,7 +349,7 @@ fn main() {
     );
 
     write_fixture(
-        "wire-v7/message_connection_close.bin",
+        "wire/message_connection_close.bin",
         &encode_message(&Message {
             connection_id: ConnectionId(2),
             payload: MessagePayload::ConnectionClose(ConnectionClose {
@@ -360,7 +360,7 @@ fn main() {
 
     let args_call: u32 = 0x1234_5678;
     write_fixture(
-        "wire-v7/message_request_call.bin",
+        "wire/message_request_call.bin",
         &encode_message(&Message {
             connection_id: ConnectionId(2),
             payload: MessagePayload::RequestMessage(RequestMessage {
@@ -377,7 +377,7 @@ fn main() {
 
     let ret_response: u64 = 0xFACE_B00C;
     write_fixture(
-        "wire-v7/message_request_response.bin",
+        "wire/message_request_response.bin",
         &encode_message(&Message {
             connection_id: ConnectionId(2),
             payload: MessagePayload::RequestMessage(RequestMessage {
@@ -392,7 +392,7 @@ fn main() {
     );
 
     write_fixture(
-        "wire-v7/message_request_cancel.bin",
+        "wire/message_request_cancel.bin",
         &encode_message(&Message {
             connection_id: ConnectionId(2),
             payload: MessagePayload::RequestMessage(RequestMessage {
@@ -406,7 +406,7 @@ fn main() {
 
     let channel_item_value: u16 = 77;
     write_fixture(
-        "wire-v7/message_channel_item.bin",
+        "wire/message_channel_item.bin",
         &encode_message(&Message {
             connection_id: ConnectionId(2),
             payload: MessagePayload::ChannelMessage(ChannelMessage {
@@ -419,7 +419,7 @@ fn main() {
     );
 
     write_fixture(
-        "wire-v7/message_channel_close.bin",
+        "wire/message_channel_close.bin",
         &encode_message(&Message {
             connection_id: ConnectionId(2),
             payload: MessagePayload::ChannelMessage(ChannelMessage {
@@ -432,7 +432,7 @@ fn main() {
     );
 
     write_fixture(
-        "wire-v7/message_channel_reset.bin",
+        "wire/message_channel_reset.bin",
         &encode_message(&Message {
             connection_id: ConnectionId(2),
             payload: MessagePayload::ChannelMessage(ChannelMessage {
@@ -445,7 +445,7 @@ fn main() {
     );
 
     write_fixture(
-        "wire-v7/message_channel_grant_credit.bin",
+        "wire/message_channel_grant_credit.bin",
         &encode_message(&Message {
             connection_id: ConnectionId(2),
             payload: MessagePayload::ChannelMessage(ChannelMessage {
