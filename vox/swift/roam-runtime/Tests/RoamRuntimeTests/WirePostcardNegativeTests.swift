@@ -4,19 +4,6 @@ import Testing
 
 @testable import RoamRuntime
 
-private func loadWireFixture(_ name: String) throws -> [UInt8] {
-    let testFile = URL(fileURLWithPath: #filePath)
-    let projectRoot =
-        testFile
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-    let path = projectRoot.appendingPathComponent("test-fixtures/golden-vectors/wire-v7/\(name).bin")
-    return Array(try Data(contentsOf: path))
-}
-
 private func samePostcardError(_ lhs: PostcardError, _ rhs: PostcardError) -> Bool {
     switch (lhs, rhs) {
     case (.truncated, .truncated), (.invalidUtf8, .invalidUtf8), (.unknownVariant, .unknownVariant),
@@ -53,8 +40,8 @@ private func expectPostcardError(_ expected: PostcardError, _ body: () throws ->
 struct WirePostcardNegativeTests {
     // r[verify session.message]
     // r[verify session.message.payloads]
-    @Test func wireDecodeRejectsTrailingBytes() throws {
-        var bytes = try loadWireFixture("message_protocol_error")
+    @Test func wireDecodeRejectsTrailingBytes() {
+        var bytes = Message.protocolError(description: "bad frame sequence").encode()
         bytes.append(0xFF)
         expectWireError(.trailingBytes) {
             _ = try Message.decode(from: Data(bytes))
