@@ -556,11 +556,17 @@ fn roam_tcp_stream(bencher: divan::Bencher, n: usize) {
 // ============================================================================
 
 mod serialize_bench {
+    use std::sync::LazyLock;
+
     use facet::{Facet, Peek, PtrConst};
-    use roam_postcard::{peek_to_scatter_plan, to_vec};
+    use roam_postcard::{
+        PlanInput, SchemaSet, TranslationPlan, build_plan, from_slice_borrowed_with_plan,
+        peek_to_scatter_plan, to_vec,
+    };
     use roam_types::{
-        Message, MessageFamily, MessagePayload, MetadataEntry, MetadataFlags, MetadataValue,
-        MsgFamily, Payload, RequestBody, RequestCall, RequestMessage,
+        CborPayload, ConnectionId, Message, MessageFamily, MessagePayload, MetadataEntry,
+        MetadataFlags, MetadataValue, MethodId, MsgFamily, Payload, RequestBody, RequestCall,
+        RequestId, RequestMessage, SchemaRegistry, extract_schemas,
     };
 
     #[derive(Facet)]
@@ -711,6 +717,312 @@ mod serialize_bench {
         buf.len()
     }
 
+    pub struct PlanResult {
+        pub plan: TranslationPlan,
+        pub registry: SchemaRegistry,
+    }
+
+    pub static MESSAGE_PLAN: LazyLock<PlanResult> = LazyLock::new(|| {
+        let remote_extracted =
+            extract_schemas(<MessageFamily as MsgFamily>::shape()).expect("schema extraction");
+        let remote =
+            SchemaSet::from_root_and_schemas(remote_extracted.root, remote_extracted.schemas);
+        let local_extracted =
+            extract_schemas(<MessageFamily as MsgFamily>::shape()).expect("schema extraction");
+        let local = SchemaSet::from_root_and_schemas(local_extracted.root, local_extracted.schemas);
+        let plan = build_plan(&PlanInput {
+            remote: &remote,
+            local: &local,
+        })
+        .expect("identity translation plan");
+        PlanResult {
+            plan,
+            registry: remote.registry,
+        }
+    });
+
+    pub struct ExactCallFixture {
+        pub args: Vec<u8>,
+        pub schemas: Vec<u8>,
+    }
+
+    impl ExactCallFixture {
+        pub fn message(&self) -> Message<'_> {
+            Message {
+                connection_id: ConnectionId(1),
+                payload: MessagePayload::RequestMessage(RequestMessage {
+                    id: RequestId(42),
+                    body: RequestBody::Call(RequestCall {
+                        method_id: MethodId(7),
+                        metadata: vec![
+                            MetadataEntry {
+                                key: "authorization",
+                                value: MetadataValue::String(
+                                    "Bearer eyJhbGciOiJIUzI1NiJ9.e30.ZRrHA1JJJW8opB1Qfp7QDm",
+                                ),
+                                flags: MetadataFlags::SENSITIVE,
+                            },
+                            MetadataEntry {
+                                key: "attempt",
+                                value: MetadataValue::U64(3),
+                                flags: MetadataFlags::NONE,
+                            },
+                        ],
+                        args: Payload::PostcardBytes(&self.args),
+                        schemas: CborPayload(self.schemas.clone()),
+                    }),
+                }),
+            }
+        }
+    }
+
+    pub fn make_exact_call_fixture(n: usize) -> ExactCallFixture {
+        let args = vec![0xA5; n];
+        let schemas = Vec::new();
+        ExactCallFixture { args, schemas }
+    }
+
+    pub fn postcard_plan_encode(msg: &Message<'_>) -> usize {
+        let msg = divan::black_box(msg);
+        to_vec(msg).expect("serialize").len()
+    }
+
+    pub fn postcard_plan_decode(input: &[u8]) -> usize {
+        let input = divan::black_box(input);
+        let msg: Message<'_> =
+            from_slice_borrowed_with_plan(input, &MESSAGE_PLAN.plan, &MESSAGE_PLAN.registry)
+                .expect("plan decode");
+        score_message(&msg)
+    }
+
+    pub fn postcard_plan_roundtrip(msg: &Message<'_>) -> usize {
+        let msg = divan::black_box(msg);
+        let bytes = to_vec(msg).expect("serialize");
+        postcard_plan_decode(divan::black_box(&bytes))
+    }
+
+    fn score_message(msg: &Message<'_>) -> usize {
+        let mut score = msg.connection_id.0 as usize;
+        if let MessagePayload::RequestMessage(RequestMessage {
+            id,
+            body:
+                RequestBody::Call(RequestCall {
+                    method_id,
+                    metadata,
+                    args,
+                    schemas,
+                }),
+        }) = &msg.payload
+        {
+            score ^= id.0 as usize;
+            score ^= method_id.0 as usize;
+            score ^= metadata.len();
+            for entry in metadata {
+                score = score.wrapping_add(entry.key.len());
+                score = score.wrapping_add(entry.flags.flags_score());
+                score = score.wrapping_add(match &entry.value {
+                    MetadataValue::String(s) => s.len(),
+                    MetadataValue::Bytes(b) => b.len(),
+                    MetadataValue::U64(v) => *v as usize,
+                });
+            }
+            score = score.wrapping_add(match args {
+                Payload::PostcardBytes(bytes) => bytes.len(),
+                Payload::Value { .. } => 0,
+            });
+            score = score.wrapping_add(schemas.0.len());
+        } else {
+            panic!("expected request call message");
+        }
+        score
+    }
+
+    trait MetadataFlagsScore {
+        fn flags_score(self) -> usize;
+    }
+
+    impl MetadataFlagsScore for MetadataFlags {
+        fn flags_score(self) -> usize {
+            if self == MetadataFlags::NONE { 0 } else { 1 }
+        }
+    }
+
+    const TAG_REQUEST_MESSAGE: u8 = 5;
+    const TAG_REQUEST_CALL: u8 = 0;
+    const TAG_METADATA_STRING: u8 = 0;
+    const TAG_METADATA_BYTES: u8 = 1;
+    const TAG_METADATA_U64: u8 = 2;
+
+    pub fn exact_layout_encode(msg: &Message<'_>) -> usize {
+        let msg = divan::black_box(msg);
+        encode_exact_layout(msg).len()
+    }
+
+    pub fn exact_layout_encode_bytes(msg: &Message<'_>) -> Vec<u8> {
+        let msg = divan::black_box(msg);
+        encode_exact_layout(msg)
+    }
+
+    pub fn exact_layout_decode(input: &[u8]) -> usize {
+        let input = divan::black_box(input);
+        decode_exact_layout_score(input)
+    }
+
+    pub fn exact_layout_roundtrip(msg: &Message<'_>) -> usize {
+        let msg = divan::black_box(msg);
+        let bytes = encode_exact_layout(msg);
+        decode_exact_layout_score(divan::black_box(&bytes))
+    }
+
+    fn encode_exact_layout(msg: &Message<'_>) -> Vec<u8> {
+        let MessagePayload::RequestMessage(RequestMessage {
+            id,
+            body:
+                RequestBody::Call(RequestCall {
+                    method_id,
+                    metadata,
+                    args,
+                    schemas,
+                }),
+        }) = &msg.payload
+        else {
+            panic!("expected request call message");
+        };
+
+        let Payload::PostcardBytes(arg_bytes) = args else {
+            panic!("expected borrowed postcard bytes");
+        };
+
+        let mut out = Vec::with_capacity(
+            128 + arg_bytes.len()
+                + schemas.0.len()
+                + metadata.iter().map(metadata_entry_size).sum::<usize>(),
+        );
+        push_u64(&mut out, msg.connection_id.0);
+        push_u8(&mut out, TAG_REQUEST_MESSAGE);
+        push_u64(&mut out, id.0);
+        push_u8(&mut out, TAG_REQUEST_CALL);
+        push_u64(&mut out, method_id.0);
+        push_u32(&mut out, metadata.len() as u32);
+        for entry in metadata {
+            push_bytes(&mut out, entry.key.as_bytes());
+            match &entry.value {
+                MetadataValue::String(s) => {
+                    push_u8(&mut out, TAG_METADATA_STRING);
+                    push_bytes(&mut out, s.as_bytes());
+                }
+                MetadataValue::Bytes(bytes) => {
+                    push_u8(&mut out, TAG_METADATA_BYTES);
+                    push_bytes(&mut out, bytes);
+                }
+                MetadataValue::U64(v) => {
+                    push_u8(&mut out, TAG_METADATA_U64);
+                    push_u64(&mut out, *v);
+                }
+            }
+            let flags = if entry.flags == MetadataFlags::NONE {
+                0
+            } else {
+                1
+            };
+            push_u64(&mut out, flags);
+        }
+        push_bytes(&mut out, arg_bytes);
+        push_bytes(&mut out, &schemas.0);
+        out
+    }
+
+    fn decode_exact_layout_score(input: &[u8]) -> usize {
+        let mut cursor = 0usize;
+        let connection_id = read_u64(input, &mut cursor);
+        let payload_tag = read_u8(input, &mut cursor);
+        assert_eq!(payload_tag, TAG_REQUEST_MESSAGE);
+        let request_id = read_u64(input, &mut cursor);
+        let body_tag = read_u8(input, &mut cursor);
+        assert_eq!(body_tag, TAG_REQUEST_CALL);
+        let method_id = read_u64(input, &mut cursor);
+        let metadata_count = read_u32(input, &mut cursor) as usize;
+
+        let mut score =
+            connection_id as usize ^ request_id as usize ^ method_id as usize ^ metadata_count;
+        for _ in 0..metadata_count {
+            let key = read_len_prefixed(input, &mut cursor);
+            score = score.wrapping_add(key.len());
+            let value_tag = read_u8(input, &mut cursor);
+            score = score.wrapping_add(match value_tag {
+                TAG_METADATA_STRING | TAG_METADATA_BYTES => {
+                    read_len_prefixed(input, &mut cursor).len()
+                }
+                TAG_METADATA_U64 => read_u64(input, &mut cursor) as usize,
+                other => panic!("unexpected metadata tag {other}"),
+            });
+            score = score.wrapping_add(read_u64(input, &mut cursor) as usize);
+        }
+
+        let args = read_len_prefixed(input, &mut cursor);
+        let schemas = read_len_prefixed(input, &mut cursor);
+        score = score.wrapping_add(args.len());
+        score = score.wrapping_add(schemas.len());
+        assert_eq!(cursor, input.len());
+        score
+    }
+
+    fn metadata_entry_size(entry: &MetadataEntry<'_>) -> usize {
+        4 + entry.key.len()
+            + 1
+            + match &entry.value {
+                MetadataValue::String(s) => 4 + s.len(),
+                MetadataValue::Bytes(bytes) => 4 + bytes.len(),
+                MetadataValue::U64(_) => 8,
+            }
+            + 8
+    }
+
+    fn push_u8(out: &mut Vec<u8>, value: u8) {
+        out.push(value);
+    }
+
+    fn push_u32(out: &mut Vec<u8>, value: u32) {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn push_u64(out: &mut Vec<u8>, value: u64) {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn push_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
+        push_u32(out, bytes.len() as u32);
+        out.extend_from_slice(bytes);
+    }
+
+    fn read_u8(input: &[u8], cursor: &mut usize) -> u8 {
+        let value = input[*cursor];
+        *cursor += 1;
+        value
+    }
+
+    fn read_u32(input: &[u8], cursor: &mut usize) -> u32 {
+        let start = *cursor;
+        let end = start + 4;
+        *cursor = end;
+        u32::from_le_bytes(input[start..end].try_into().expect("u32 bytes"))
+    }
+
+    fn read_u64(input: &[u8], cursor: &mut usize) -> u64 {
+        let start = *cursor;
+        let end = start + 8;
+        *cursor = end;
+        u64::from_le_bytes(input[start..end].try_into().expect("u64 bytes"))
+    }
+
+    fn read_len_prefixed<'a>(input: &'a [u8], cursor: &mut usize) -> &'a [u8] {
+        let len = read_u32(input, cursor) as usize;
+        let start = *cursor;
+        let end = start + len;
+        *cursor = end;
+        &input[start..end]
+    }
+
     // --- Blob benchmarks: struct with a large &[u8] payload ---
 
     #[derive(Facet)]
@@ -746,6 +1058,7 @@ mod serialize_bench {
 
 const SERIALIZE_FIELD_COUNTS: &[usize] = &[4, 16, 64, 256];
 const BLOB_SIZES: &[usize] = &[256, 1024, 4096, 8192, 16384, 32768, 65536, 262144, 1048576];
+const EXACT_LAYOUT_ARGS_SIZES: &[usize] = &[64, 256, 4096, 65536];
 
 #[divan::bench(args = SERIALIZE_FIELD_COUNTS)]
 fn serialize_to_vec(bencher: divan::Bencher, n: usize) {
@@ -787,6 +1100,50 @@ fn serialize_to_vec_write_tcp(bencher: divan::Bencher, n: usize) {
             divan::black_box(serialize_bench::bench_to_vec_write(&msg, &mut stream).await)
         })
     });
+}
+
+#[divan::bench(args = EXACT_LAYOUT_ARGS_SIZES)]
+fn message_postcard_plan_encode(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_exact_call_fixture(n);
+    let msg = fixture.message();
+    bencher.bench_local(|| divan::black_box(serialize_bench::postcard_plan_encode(&msg)));
+}
+
+#[divan::bench(args = EXACT_LAYOUT_ARGS_SIZES)]
+fn message_postcard_plan_decode(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_exact_call_fixture(n);
+    let msg = fixture.message();
+    let bytes = roam_postcard::to_vec(&msg).expect("serialize");
+    bencher.bench_local(|| divan::black_box(serialize_bench::postcard_plan_decode(&bytes)));
+}
+
+#[divan::bench(args = EXACT_LAYOUT_ARGS_SIZES)]
+fn message_postcard_plan_roundtrip(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_exact_call_fixture(n);
+    let msg = fixture.message();
+    bencher.bench_local(|| divan::black_box(serialize_bench::postcard_plan_roundtrip(&msg)));
+}
+
+#[divan::bench(args = EXACT_LAYOUT_ARGS_SIZES)]
+fn message_exact_layout_encode(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_exact_call_fixture(n);
+    let msg = fixture.message();
+    bencher.bench_local(|| divan::black_box(serialize_bench::exact_layout_encode(&msg)));
+}
+
+#[divan::bench(args = EXACT_LAYOUT_ARGS_SIZES)]
+fn message_exact_layout_decode(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_exact_call_fixture(n);
+    let msg = fixture.message();
+    let bytes = serialize_bench::exact_layout_encode_bytes(&msg);
+    bencher.bench_local(|| divan::black_box(serialize_bench::exact_layout_decode(&bytes)));
+}
+
+#[divan::bench(args = EXACT_LAYOUT_ARGS_SIZES)]
+fn message_exact_layout_roundtrip(bencher: divan::Bencher, n: usize) {
+    let fixture = serialize_bench::make_exact_call_fixture(n);
+    let msg = fixture.message();
+    bencher.bench_local(|| divan::black_box(serialize_bench::exact_layout_roundtrip(&msg)));
 }
 
 // --- Blob benchmarks: large binary payload ---
