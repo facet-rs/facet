@@ -23,7 +23,7 @@ public final class Connection: @unchecked Sendable {
 
     public func call(
         methodId: UInt64,
-        metadata: [MetadataEntryV7],
+        metadata: [MetadataEntry],
         payload: Data,
         retry: RetryPolicy = .volatile,
         timeout: TimeInterval?,
@@ -44,7 +44,7 @@ public final class Connection: @unchecked Sendable {
 
     public func callRaw(
         methodId: UInt64,
-        metadata: [MetadataEntryV7] = [],
+        metadata: [MetadataEntry] = [],
         payload: [UInt8],
         retry: RetryPolicy = .volatile,
         timeout: TimeInterval? = nil,

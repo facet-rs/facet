@@ -4,7 +4,7 @@ import Testing
 
 @testable import RoamRuntime
 
-private func assertShmRoundtrip(_ msg: MessageV7) throws {
+private func assertShmRoundtrip(_ msg: Message) throws {
     let frame = try messageToShmFrame(msg)
     let decoded = try shmFrameToMessage(frame)
     #expect(decoded.encode() == msg.encode())
@@ -15,19 +15,19 @@ struct ShmTransportMappingTests {
     // r[verify transport.shm]
     // r[verify zerocopy.framing.link.shm]
     @Test func requestResponseRoundtrip() throws {
-        let request = MessageV7.request(
+        let request = Message.request(
             connId: 7,
             requestId: 42,
             methodId: 99,
-            metadata: [MetadataEntryV7(key: "k", value: .string("v"), flags: 1)],
+            metadata: [MetadataEntry(key: "k", value: .string("v"), flags: 1)],
             payload: [1, 2, 3]
         )
         try assertShmRoundtrip(request)
 
-        let response = MessageV7.response(
+        let response = Message.response(
             connId: 7,
             requestId: 42,
-            metadata: [MetadataEntryV7(key: "status", value: .u64(200), flags: 0)],
+            metadata: [MetadataEntry(key: "status", value: .u64(200), flags: 0)],
             payload: [9, 8, 7]
         )
         try assertShmRoundtrip(response)
@@ -47,19 +47,19 @@ struct ShmTransportMappingTests {
         try assertShmRoundtrip(
             .connectionOpen(
                 connId: 33,
-                settings: ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: 8),
-                metadata: [MetadataEntryV7(key: "a", value: .bytes([1]), flags: 0)]
+                settings: ConnectionSettings(parity: .odd, maxConcurrentRequests: 8),
+                metadata: [MetadataEntry(key: "a", value: .bytes([1]), flags: 0)]
             ))
         try assertShmRoundtrip(
             .connectionAccept(
                 connId: 17,
-                settings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 8),
-                metadata: [MetadataEntryV7(key: "b", value: .u64(2), flags: 0)]
+                settings: ConnectionSettings(parity: .even, maxConcurrentRequests: 8),
+                metadata: [MetadataEntry(key: "b", value: .u64(2), flags: 0)]
             ))
         try assertShmRoundtrip(
             .connectionReject(
                 connId: 33,
-                metadata: [MetadataEntryV7(key: "c", value: .string("x"), flags: 0)]
+                metadata: [MetadataEntry(key: "c", value: .string("x"), flags: 0)]
             ))
     }
 

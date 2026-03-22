@@ -36,7 +36,7 @@ final class ConnectionHandle: @unchecked Sendable {
     /// r[impl rpc.flow-control.max-concurrent-requests] - Blocks if maxConcurrentRequests are in-flight.
     func callRaw(
         methodId: UInt64,
-        metadata: [MetadataEntryV7] = [],
+        metadata: [MetadataEntry] = [],
         payload: [UInt8],
         retry: RetryPolicy = .volatile,
         timeout: TimeInterval? = nil,
@@ -48,7 +48,7 @@ final class ConnectionHandle: @unchecked Sendable {
         }
 
         let requestId = await requestIdAllocator.allocate()
-        let outboundMetadata: [MetadataEntryV7]
+        let outboundMetadata: [MetadataEntry]
         if peerSupportsRetry {
             let operationId = await operationIdAllocator.allocate()
             outboundMetadata = ensureOperationId(metadata, operationId: operationId)
@@ -87,7 +87,7 @@ final class ConnectionHandle: @unchecked Sendable {
         await requestSemaphore?.close()
     }
 
-    func freshOperationMetadata(from metadata: [MetadataEntryV7]) async -> [MetadataEntryV7] {
+    func freshOperationMetadata(from metadata: [MetadataEntry]) async -> [MetadataEntry] {
         guard peerSupportsRetry else {
             return metadata
         }

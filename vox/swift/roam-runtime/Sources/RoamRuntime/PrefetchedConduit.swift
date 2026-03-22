@@ -3,18 +3,18 @@ import Foundation
 final class PrefetchedConduit: Conduit, @unchecked Sendable {
     private let base: any Conduit
     private let lock = NSLock()
-    private var firstMessage: MessageV7?
+    private var firstMessage: Message?
 
-    init(firstMessage: MessageV7, base: any Conduit) {
+    init(firstMessage: Message, base: any Conduit) {
         self.base = base
         self.firstMessage = firstMessage
     }
 
-    func send(_ message: MessageV7) async throws {
+    func send(_ message: Message) async throws {
         try await base.send(message)
     }
 
-    func recv() async throws -> MessageV7? {
+    func recv() async throws -> Message? {
         if let first = takeFirstMessage() {
             return first
         }
@@ -29,7 +29,7 @@ final class PrefetchedConduit: Conduit, @unchecked Sendable {
         try await base.close()
     }
 
-    private func takeFirstMessage() -> MessageV7? {
+    private func takeFirstMessage() -> Message? {
         lock.lock()
         defer { lock.unlock() }
         defer { firstMessage = nil }

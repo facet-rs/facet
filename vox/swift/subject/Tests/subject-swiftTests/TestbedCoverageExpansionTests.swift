@@ -119,7 +119,7 @@ private final class LoopbackConnection: RoamConnection, @unchecked Sendable {
 
     func call(
         methodId: UInt64,
-        metadata _: [MetadataEntryV7],
+        metadata _: [MetadataEntry],
         payload: Data,
         retry _: RetryPolicy,
         timeout _: TimeInterval?,

@@ -15,7 +15,7 @@ extension Driver {
     /// r[impl rpc.request] - Request before Response in message sequence.
     /// r[impl session.protocol-error] - Unknown message variant triggers Goodbye.
     func handleMessage(
-        _ msg: MessageV7,
+        _ msg: Message,
         keepaliveRuntime: inout DriverKeepaliveRuntime?
     ) async throws {
         switch msg.payload {
@@ -123,7 +123,7 @@ extension Driver {
         connId: UInt64,
         requestId: UInt64,
         methodId: UInt64,
-        metadata: [MetadataEntryV7],
+        metadata: [MetadataEntry],
         payload: [UInt8]
     ) async throws {
         let retry = dispatcher.retryPolicy(methodId: methodId)

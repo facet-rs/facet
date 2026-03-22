@@ -97,7 +97,7 @@ actor DriverState {
     func addInFlight(
         _ requestId: UInt64,
         connectionId: UInt64,
-        responseMetadata: [MetadataEntryV7]
+        responseMetadata: [MetadataEntry]
     ) -> Bool {
         let inserted = inFlightRequests.insert(requestId).inserted
         if inserted {
@@ -112,7 +112,7 @@ actor DriverState {
     func removeInFlight(_ requestId: UInt64) -> (
         removed: Bool,
         connectionId: UInt64,
-        responseMetadata: [MetadataEntryV7]
+        responseMetadata: [MetadataEntry]
     ) {
         let removed = inFlightRequests.remove(requestId) != nil
         let context = inFlightResponseContext.removeValue(forKey: requestId)

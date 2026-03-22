@@ -19,7 +19,7 @@ private func loadWireV7Fixture(_ name: String) throws -> [UInt8] {
 
 @Suite(.serialized)
 struct WireV7CrossLanguageTests {
-    private func assertSampleMetadata(_ metadata: [MetadataEntryV7]) {
+    private func assertSampleMetadata(_ metadata: [MetadataEntry]) {
         #expect(metadata.count == 3)
         #expect(metadata[0].key == "trace-id")
         #expect(metadata[1].key == "auth")
@@ -40,7 +40,7 @@ struct WireV7CrossLanguageTests {
         }
     }
 
-    private func assertMessageFixtureDecoded(name: String, _ msg: MessageV7) {
+    private func assertMessageFixtureDecoded(name: String, _ msg: Message) {
         switch name {
         case "message_protocol_error":
             #expect(msg.connectionId == 0)
@@ -193,7 +193,7 @@ struct WireV7CrossLanguageTests {
             let bytes = try loadWireV7Fixture(name)
             #expect(!bytes.isEmpty)
             do {
-                let decoded = try MessageV7.decode(from: Data(bytes))
+                let decoded = try Message.decode(from: Data(bytes))
                 #expect(decoded.encode() == bytes, "\(name) failed byte-for-byte round trip")
                 assertMessageFixtureDecoded(name: name, decoded)
             } catch {

@@ -2,11 +2,11 @@ import Foundation
 
 struct InFlightResponseContext: Sendable {
     let connectionId: UInt64
-    let responseMetadata: [MetadataEntryV7]
+    let responseMetadata: [MetadataEntry]
 }
 
 enum DriverEvent: Sendable {
-    case incomingMessage(MessageV7)
+    case incomingMessage(Message)
     case wake
     case retryTick
     case conduitClosed
@@ -121,8 +121,8 @@ func makeSessionDriverAndConnection(
     keepalive: DriverKeepaliveConfig? = nil,
     resumable: Bool,
     sessionResumeKey: [UInt8]?,
-    localRootSettings: ConnectionSettingsV7,
-    peerRootSettings: ConnectionSettingsV7,
+    localRootSettings: ConnectionSettings,
+    peerRootSettings: ConnectionSettings,
     transport: TransportConduitKind,
     recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil
 ) -> (Connection, Driver, SessionHandle) {

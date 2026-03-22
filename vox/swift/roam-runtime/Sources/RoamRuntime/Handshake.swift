@@ -30,8 +30,8 @@ public struct ResumeKeyBytes: Sendable, Equatable {
 }
 
 struct HandshakeHello: Sendable, Equatable {
-    let parity: ParityV7
-    let connectionSettings: ConnectionSettingsV7
+    let parity: Parity
+    let connectionSettings: ConnectionSettings
     let messagePayloadSchemaCbor: [UInt8]
     let supportsRetry: Bool
     let resumeKey: ResumeKeyBytes?
@@ -52,8 +52,8 @@ struct HandshakeHello: Sendable, Equatable {
 
     static func decodeCbor(_ bytes: [UInt8], offset: inout Int) throws -> Self {
         let count = try cborReadMapHeader(bytes, offset: &offset)
-        var parity: ParityV7 = .odd
-        var connectionSettings = ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: 64)
+        var parity: Parity = .odd
+        var connectionSettings = ConnectionSettings(parity: .odd, maxConcurrentRequests: 64)
         var messagePayloadSchemaCbor: [UInt8] = []
         var supportsRetry = false
         var resumeKey: ResumeKeyBytes?
@@ -62,9 +62,9 @@ struct HandshakeHello: Sendable, Equatable {
             let key = try cborReadText(bytes, offset: &offset)
             switch key {
             case "parity":
-                parity = try ParityV7.decodeCbor(bytes, offset: &offset)
+                parity = try Parity.decodeCbor(bytes, offset: &offset)
             case "connection_settings":
-                connectionSettings = try ConnectionSettingsV7.decodeCbor(bytes, offset: &offset)
+                connectionSettings = try ConnectionSettings.decodeCbor(bytes, offset: &offset)
             case "message_payload_schema":
                 messagePayloadSchemaCbor = try cborReadRawValue(bytes, offset: &offset)
             case "supports_retry":
@@ -92,7 +92,7 @@ struct HandshakeHello: Sendable, Equatable {
 }
 
 struct HandshakeHelloYourself: Sendable, Equatable {
-    let connectionSettings: ConnectionSettingsV7
+    let connectionSettings: ConnectionSettings
     let messagePayloadSchemaCbor: [UInt8]
     let supportsRetry: Bool
     let resumeKey: ResumeKeyBytes?
@@ -111,7 +111,7 @@ struct HandshakeHelloYourself: Sendable, Equatable {
 
     static func decodeCbor(_ bytes: [UInt8], offset: inout Int) throws -> Self {
         let count = try cborReadMapHeader(bytes, offset: &offset)
-        var connectionSettings = ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64)
+        var connectionSettings = ConnectionSettings(parity: .even, maxConcurrentRequests: 64)
         var messagePayloadSchemaCbor: [UInt8] = []
         var supportsRetry = false
         var resumeKey: ResumeKeyBytes?
@@ -120,7 +120,7 @@ struct HandshakeHelloYourself: Sendable, Equatable {
             let key = try cborReadText(bytes, offset: &offset)
             switch key {
             case "connection_settings":
-                connectionSettings = try ConnectionSettingsV7.decodeCbor(bytes, offset: &offset)
+                connectionSettings = try ConnectionSettings.decodeCbor(bytes, offset: &offset)
             case "message_payload_schema":
                 messagePayloadSchemaCbor = try cborReadRawValue(bytes, offset: &offset)
             case "supports_retry":
@@ -235,7 +235,7 @@ enum HandshakeMessage: Sendable, Equatable {
     }
 }
 
-extension ParityV7 {
+extension Parity {
     fileprivate func encodeCbor() -> [UInt8] {
         switch self {
         case .odd:
@@ -260,7 +260,7 @@ extension ParityV7 {
     }
 }
 
-extension ConnectionSettingsV7 {
+extension ConnectionSettings {
     fileprivate func encodeCbor() -> [UInt8] {
         cborEncodeMapHeader(2)
             + cborEncodeText("parity")
@@ -271,13 +271,13 @@ extension ConnectionSettingsV7 {
 
     fileprivate static func decodeCbor(_ bytes: [UInt8], offset: inout Int) throws -> Self {
         let count = try cborReadMapHeader(bytes, offset: &offset)
-        var parity: ParityV7 = .odd
+        var parity: Parity = .odd
         var maxConcurrentRequests: UInt32 = 64
         for _ in 0..<count {
             let key = try cborReadText(bytes, offset: &offset)
             switch key {
             case "parity":
-                parity = try ParityV7.decodeCbor(bytes, offset: &offset)
+                parity = try Parity.decodeCbor(bytes, offset: &offset)
             case "max_concurrent_requests":
                 let value = try cborReadUnsigned(bytes, offset: &offset)
                 guard value <= UInt64(UInt32.max) else { throw CborError.overflow }

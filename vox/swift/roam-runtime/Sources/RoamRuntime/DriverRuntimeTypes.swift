@@ -9,13 +9,13 @@ public struct PreparedRetryRequest: Sendable {
 }
 
 struct DriverQueuedTaskMessage: Sendable {
-    let message: MessageV7
+    let message: Message
 }
 
 struct DriverQueuedCall: Sendable {
     let requestId: UInt64
     let methodId: UInt64
-    let metadata: [MetadataEntryV7]
+    let metadata: [MetadataEntry]
     let payload: [UInt8]
     let retry: RetryPolicy
     let timeout: TimeInterval?

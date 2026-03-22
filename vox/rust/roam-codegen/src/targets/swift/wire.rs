@@ -1,11 +1,11 @@
 //! Swift wire type code generation.
 //!
 //! Generates a complete Swift source file containing all wire protocol types
-//! (MessageV7, MessagePayloadV7, etc.) with encode/decode methods. The generated
+//! (Message, MessagePayload, etc.) with encode/decode methods. The generated
 //! code is driven by facet `Shape`s from `roam_types::message`.
 //!
 //! The only special-cased type is `Payload` (`ShapeKind::Opaque`), which maps to
-//! `OpaquePayloadV7` with both length-prefixed and trailing byte handling.
+//! `OpaquePayload` with both length-prefixed and trailing byte handling.
 //! Everything else is normal struct/enum codegen.
 
 use facet_core::{Field, ScalarType, Shape};
@@ -17,7 +17,7 @@ use roam_types::{
 
 /// A wire type to generate Swift code for.
 pub struct WireType {
-    /// The Swift name for this type (e.g. "MessageV7", "HelloV7")
+    /// The Swift name for this type (e.g. "Message", "HelloV7")
     pub swift_name: String,
     /// The facet Shape for this type
     pub shape: &'static Shape,
@@ -30,11 +30,11 @@ pub fn generate_wire_types(types: &[WireType]) -> String {
     out.push_str("// DO NOT EDIT — regenerate with `cargo xtask codegen --swift-wire`\n\n");
     out.push_str("import Foundation\n\n");
 
-    // Preamble: error type + helpers + OpaquePayloadV7
+    // Preamble: error type + helpers + OpaquePayload
     out.push_str(&generate_preamble());
 
     // Metadata typealias (Metadata is Vec<MetadataEntry> in Rust, we alias for convenience)
-    out.push_str("public typealias MetadataV7 = [MetadataEntryV7]\n\n");
+    out.push_str("public typealias Metadata = [MetadataEntry]\n\n");
 
     // Generate each type
     for wt in types {
@@ -42,12 +42,12 @@ pub fn generate_wire_types(types: &[WireType]) -> String {
         out.push('\n');
     }
 
-    // Generate factory methods extension on MessageV7
+    // Generate factory methods extension on Message
     out.push_str(&generate_factory_methods(types));
 
     if let Some(root) = types
         .iter()
-        .find(|wt| wt.swift_name == "MessageV7")
+        .find(|wt| wt.swift_name == "Message")
         .or_else(|| types.last())
     {
         let extracted = extract_schemas(root.shape).expect("wire schema extraction should succeed");
@@ -67,12 +67,12 @@ pub fn generate_wire_types(types: &[WireType]) -> String {
     out
 }
 
-/// Generate the static preamble: WireV7Error, helpers, OpaquePayloadV7.
+/// Generate the static preamble: WireError, helpers, OpaquePayload.
 fn generate_preamble() -> String {
     let mut out = String::new();
 
     // Error type
-    out.push_str("public enum WireV7Error: Error, Equatable {\n");
+    out.push_str("public enum WireError: Error, Equatable {\n");
     out.push_str("    case truncated\n");
     out.push_str("    case unknownVariant(UInt64)\n");
     out.push_str("    case overflow\n");
@@ -80,8 +80,8 @@ fn generate_preamble() -> String {
     out.push_str("    case trailingBytes\n");
     out.push_str("}\n\n");
 
-    // OpaquePayloadV7
-    out.push_str("public struct OpaquePayloadV7: Sendable, Equatable {\n");
+    // OpaquePayload
+    out.push_str("public struct OpaquePayload: Sendable, Equatable {\n");
     out.push_str("    public var bytes: [UInt8]\n\n");
     out.push_str("    public init(_ bytes: [UInt8]) {\n");
     out.push_str("        self.bytes = bytes\n");
@@ -96,11 +96,11 @@ fn generate_preamble() -> String {
     out.push_str("        ] + bytes\n");
     out.push_str("    }\n\n");
     out.push_str("    static func decode(from data: Data, offset: inout Int) throws -> Self {\n");
-    out.push_str("        guard offset + 4 <= data.count else { throw WireV7Error.truncated }\n");
+    out.push_str("        guard offset + 4 <= data.count else { throw WireError.truncated }\n");
     out.push_str("        let start = data.startIndex + offset\n");
     out.push_str("        let len = Int(UInt32(data[start]) | (UInt32(data[start + 1]) << 8) | (UInt32(data[start + 2]) << 16) | (UInt32(data[start + 3]) << 24))\n");
     out.push_str("        offset += 4\n");
-    out.push_str("        guard offset + len <= data.count else { throw WireV7Error.truncated }\n");
+    out.push_str("        guard offset + len <= data.count else { throw WireError.truncated }\n");
     out.push_str("        let payloadStart = data.startIndex + offset\n");
     out.push_str("        let payloadEnd = payloadStart + len\n");
     out.push_str("        let payload = Array(data[payloadStart..<payloadEnd])\n");
@@ -123,25 +123,25 @@ fn generate_preamble() -> String {
     // Helper functions
     out.push_str("@inline(__always)\n");
     out.push_str(
-        "private func decodeVarintU32V7(from data: Data, offset: inout Int) throws -> UInt32 {\n",
+        "private func decodeWireVarintU32(from data: Data, offset: inout Int) throws -> UInt32 {\n",
     );
     out.push_str("    let value = try decodeVarint(from: data, offset: &offset)\n");
     out.push_str("    guard value <= UInt64(UInt32.max) else {\n");
-    out.push_str("        throw WireV7Error.overflow\n");
+    out.push_str("        throw WireError.overflow\n");
     out.push_str("    }\n");
     out.push_str("    return UInt32(value)\n");
     out.push_str("}\n\n");
 
     out.push_str("@inline(__always)\n");
     out.push_str(
-        "private func decodeStringV7(from data: Data, offset: inout Int) throws -> String {\n",
+        "private func decodeWireString(from data: Data, offset: inout Int) throws -> String {\n",
     );
     out.push_str("    do {\n");
     out.push_str("        return try decodeString(from: data, offset: &offset)\n");
     out.push_str("    } catch PostcardError.invalidUtf8 {\n");
-    out.push_str("        throw WireV7Error.invalidUtf8\n");
+    out.push_str("        throw WireError.invalidUtf8\n");
     out.push_str("    } catch PostcardError.truncated {\n");
-    out.push_str("        throw WireV7Error.truncated\n");
+    out.push_str("        throw WireError.truncated\n");
     out.push_str("    } catch {\n");
     out.push_str("        throw error\n");
     out.push_str("    }\n");
@@ -149,12 +149,12 @@ fn generate_preamble() -> String {
 
     out.push_str("@inline(__always)\n");
     out.push_str(
-        "private func decodeBytesV7(from data: Data, offset: inout Int) throws -> Data {\n",
+        "private func decodeWireBytes(from data: Data, offset: inout Int) throws -> Data {\n",
     );
     out.push_str("    do {\n");
     out.push_str("        return try decodeBytes(from: data, offset: &offset)\n");
     out.push_str("    } catch PostcardError.truncated {\n");
-    out.push_str("        throw WireV7Error.truncated\n");
+    out.push_str("        throw WireError.truncated\n");
     out.push_str("    } catch {\n");
     out.push_str("        throw error\n");
     out.push_str("    }\n");
@@ -187,7 +187,7 @@ fn swift_wire_type(shape: &'static Shape, _field: Option<&Field>, types: &[WireT
             name: Some(name), ..
         }) => lookup_wire_name(name, types),
         ShapeKind::Pointer { pointee } => swift_wire_type(pointee, _field, types),
-        ShapeKind::Opaque => "OpaquePayloadV7".into(),
+        ShapeKind::Opaque => "OpaquePayload".into(),
         ShapeKind::TupleStruct { fields } if fields.len() == 1 => {
             swift_wire_type(fields[0].shape(), None, types)
         }
@@ -234,7 +234,7 @@ fn lookup_wire_name(rust_name: &str, types: &[WireType]) -> String {
 fn generate_one_type(swift_name: &str, shape: &'static Shape, types: &[WireType]) -> String {
     match classify_shape(shape) {
         ShapeKind::Struct(StructInfo { fields, .. }) => {
-            generate_struct(swift_name, fields, types, swift_name == "MessageV7")
+            generate_struct(swift_name, fields, types, swift_name == "Message")
         }
         ShapeKind::Enum(EnumInfo { variants, .. }) => generate_enum(swift_name, variants, types),
         _ => format!("// Unsupported shape for {swift_name}\n"),
@@ -313,13 +313,13 @@ fn generate_struct(name: &str, fields: &[Field], types: &[WireType], is_top_leve
     ));
     out.push_str("    }\n");
 
-    // Top-level MessageV7 gets an extra decode(from:) without offset that checks trailing bytes
+    // Top-level Message gets an extra decode(from:) without offset that checks trailing bytes
     if is_top_level {
         out.push_str("\n    public static func decode(from data: Data) throws -> Self {\n");
         out.push_str("        var offset = 0\n");
         out.push_str("        let result = try decode(from: data, offset: &offset)\n");
         out.push_str("        guard offset == data.count else {\n");
-        out.push_str("            throw WireV7Error.trailingBytes\n");
+        out.push_str("            throw WireError.trailingBytes\n");
         out.push_str("        }\n");
         out.push_str("        return result\n");
         out.push_str("    }\n");
@@ -481,7 +481,7 @@ fn generate_enum(name: &str, variants: &[facet_core::Variant], types: &[WireType
         }
     }
     out.push_str("        default:\n");
-    out.push_str("            throw WireV7Error.unknownVariant(disc)\n");
+    out.push_str("            throw WireError.unknownVariant(disc)\n");
     out.push_str("        }\n");
     out.push_str("    }\n");
 
@@ -504,7 +504,7 @@ fn encode_shape_expr(
 ) -> String {
     let is_trailing = field.is_some_and(|f| f.has_builtin_attr("trailing"));
 
-    // Opaque type → OpaquePayloadV7
+    // Opaque type → OpaquePayload
     if matches!(classify_shape(shape), ShapeKind::Opaque) {
         return if is_trailing {
             format!("{value}.encodeTrailing()")
@@ -591,17 +591,17 @@ fn decode_field_expr(field: &Field, types: &[WireType]) -> String {
 fn decode_shape_expr(shape: &'static Shape, field: Option<&Field>, types: &[WireType]) -> String {
     let is_trailing = field.is_some_and(|f| f.has_builtin_attr("trailing"));
 
-    // Opaque type → OpaquePayloadV7
+    // Opaque type → OpaquePayload
     if matches!(classify_shape(shape), ShapeKind::Opaque) {
         return if is_trailing {
-            "OpaquePayloadV7.decodeTrailing(from: data, offset: &offset)".into()
+            "OpaquePayload.decodeTrailing(from: data, offset: &offset)".into()
         } else {
-            "try OpaquePayloadV7.decode(from: data, offset: &offset)".into()
+            "try OpaquePayload.decode(from: data, offset: &offset)".into()
         };
     }
 
     if is_bytes(shape) {
-        return "Array(try decodeBytesV7(from: data, offset: &offset))".into();
+        return "Array(try decodeWireBytes(from: data, offset: &offset))".into();
     }
 
     match classify_shape(shape) {
@@ -641,7 +641,7 @@ fn decode_scalar(scalar: ScalarType) -> String {
         ScalarType::I8 => "try decodeI8(from: data, offset: &offset)".into(),
         ScalarType::U16 => "try decodeU16(from: data, offset: &offset)".into(),
         ScalarType::I16 => "try decodeI16(from: data, offset: &offset)".into(),
-        ScalarType::U32 => "try decodeVarintU32V7(from: data, offset: &offset)".into(),
+        ScalarType::U32 => "try decodeWireVarintU32(from: data, offset: &offset)".into(),
         ScalarType::I32 => "try decodeI32(from: data, offset: &offset)".into(),
         ScalarType::U64 | ScalarType::USize => {
             "try decodeVarint(from: data, offset: &offset)".into()
@@ -650,7 +650,7 @@ fn decode_scalar(scalar: ScalarType) -> String {
         ScalarType::F32 => "try decodeF32(from: data, offset: &offset)".into(),
         ScalarType::F64 => "try decodeF64(from: data, offset: &offset)".into(),
         ScalarType::Char | ScalarType::Str | ScalarType::String | ScalarType::CowStr => {
-            "try decodeStringV7(from: data, offset: &offset)".into()
+            "try decodeWireString(from: data, offset: &offset)".into()
         }
         _ => "nil /* unsupported scalar decode */".into(),
     }
@@ -659,7 +659,7 @@ fn decode_scalar(scalar: ScalarType) -> String {
 /// Generate a decode closure for use with decodeVec.
 fn decode_element_closure(shape: &'static Shape, types: &[WireType]) -> String {
     if is_bytes(shape) {
-        return "{ data, off in Array(try decodeBytesV7(from: data, offset: &off)) }".into();
+        return "{ data, off in Array(try decodeWireBytes(from: data, offset: &off)) }".into();
     }
 
     match classify_shape(shape) {
@@ -684,10 +684,10 @@ fn decode_element_closure(shape: &'static Shape, types: &[WireType]) -> String {
             format!("{{ data, off in try decodeVec(from: data, offset: &off, decoder: {inner}) }}")
         }
         ShapeKind::Opaque => {
-            "{ data, off in try OpaquePayloadV7.decode(from: data, offset: &off) }".into()
+            "{ data, off in try OpaquePayload.decode(from: data, offset: &off) }".into()
         }
         ShapeKind::Pointer { pointee } => decode_element_closure(pointee, types),
-        _ => "{ _, _ in throw WireV7Error.truncated }".into(),
+        _ => "{ _, _ in throw WireError.truncated }".into(),
     }
 }
 
@@ -698,7 +698,7 @@ fn decode_scalar_with_params(scalar: ScalarType, data: &str, offset: &str) -> St
         ScalarType::I8 => format!("try decodeI8(from: {data}, offset: &{offset})"),
         ScalarType::U16 => format!("try decodeU16(from: {data}, offset: &{offset})"),
         ScalarType::I16 => format!("try decodeI16(from: {data}, offset: &{offset})"),
-        ScalarType::U32 => format!("try decodeVarintU32V7(from: {data}, offset: &{offset})"),
+        ScalarType::U32 => format!("try decodeWireVarintU32(from: {data}, offset: &{offset})"),
         ScalarType::I32 => format!("try decodeI32(from: {data}, offset: &{offset})"),
         ScalarType::U64 | ScalarType::USize => {
             format!("try decodeVarint(from: {data}, offset: &{offset})")
@@ -709,16 +709,16 @@ fn decode_scalar_with_params(scalar: ScalarType, data: &str, offset: &str) -> St
         ScalarType::F32 => format!("try decodeF32(from: {data}, offset: &{offset})"),
         ScalarType::F64 => format!("try decodeF64(from: {data}, offset: &{offset})"),
         ScalarType::Char | ScalarType::Str | ScalarType::String | ScalarType::CowStr => {
-            format!("try decodeStringV7(from: {data}, offset: &{offset})")
+            format!("try decodeWireString(from: {data}, offset: &{offset})")
         }
         _ => "nil /* unsupported scalar */".to_string(),
     }
 }
 
-/// Generate convenience factory methods on MessageV7.
+/// Generate convenience factory methods on Message.
 fn generate_factory_methods(types: &[WireType]) -> String {
     // Find the MessagePayload shape to inspect variants
-    let payload_wt = types.iter().find(|wt| wt.swift_name == "MessagePayloadV7");
+    let payload_wt = types.iter().find(|wt| wt.swift_name == "MessagePayload");
     let payload_wt = match payload_wt {
         Some(wt) => wt,
         None => return String::new(),
@@ -730,7 +730,7 @@ fn generate_factory_methods(types: &[WireType]) -> String {
     };
 
     let mut out = String::new();
-    out.push_str("public extension MessageV7 {\n");
+    out.push_str("public extension Message {\n");
 
     for v in variants {
         let variant_name = v.name.to_lower_camel_case();
@@ -744,18 +744,18 @@ fn generate_factory_methods(types: &[WireType]) -> String {
 
             if is_control {
                 out.push_str(&format!(
-                    "    static func {variant_name}(_ value: {inner_swift}) -> MessageV7 {{\n"
+                    "    static func {variant_name}(_ value: {inner_swift}) -> Message {{\n"
                 ));
                 out.push_str(&format!(
-                    "        MessageV7(connectionId: 0, payload: .{variant_name}(value))\n"
+                    "        Message(connectionId: 0, payload: .{variant_name}(value))\n"
                 ));
                 out.push_str("    }\n\n");
             } else {
                 out.push_str(&format!(
-                    "    static func {variant_name}(connId: UInt64, _ value: {inner_swift}) -> MessageV7 {{\n"
+                    "    static func {variant_name}(connId: UInt64, _ value: {inner_swift}) -> Message {{\n"
                 ));
                 out.push_str(&format!(
-                    "        MessageV7(connectionId: connId, payload: .{variant_name}(value))\n"
+                    "        Message(connectionId: connId, payload: .{variant_name}(value))\n"
                 ));
                 out.push_str("    }\n\n");
             }
@@ -764,35 +764,37 @@ fn generate_factory_methods(types: &[WireType]) -> String {
 
     // Additional ergonomic factory methods that flatten nested structs.
     // These match the existing hand-coded API.
-    out.push_str("    static func protocolError(description: String) -> MessageV7 {\n");
-    out.push_str("        MessageV7(connectionId: 0, payload: .protocolError(.init(description: description)))\n");
+    out.push_str("    static func protocolError(description: String) -> Message {\n");
+    out.push_str("        Message(connectionId: 0, payload: .protocolError(.init(description: description)))\n");
     out.push_str("    }\n\n");
 
-    out.push_str("    static func connectionOpen(connId: UInt64, settings: ConnectionSettingsV7, metadata: [MetadataEntryV7]) -> MessageV7 {\n");
-    out.push_str("        MessageV7(connectionId: connId, payload: .connectionOpen(.init(connectionSettings: settings, metadata: metadata)))\n");
+    out.push_str("    static func connectionOpen(connId: UInt64, settings: ConnectionSettings, metadata: [MetadataEntry]) -> Message {\n");
+    out.push_str("        Message(connectionId: connId, payload: .connectionOpen(.init(connectionSettings: settings, metadata: metadata)))\n");
     out.push_str("    }\n\n");
 
-    out.push_str("    static func connectionAccept(connId: UInt64, settings: ConnectionSettingsV7, metadata: [MetadataEntryV7]) -> MessageV7 {\n");
-    out.push_str("        MessageV7(connectionId: connId, payload: .connectionAccept(.init(connectionSettings: settings, metadata: metadata)))\n");
+    out.push_str("    static func connectionAccept(connId: UInt64, settings: ConnectionSettings, metadata: [MetadataEntry]) -> Message {\n");
+    out.push_str("        Message(connectionId: connId, payload: .connectionAccept(.init(connectionSettings: settings, metadata: metadata)))\n");
     out.push_str("    }\n\n");
 
-    out.push_str("    static func connectionReject(connId: UInt64, metadata: [MetadataEntryV7]) -> MessageV7 {\n");
-    out.push_str("        MessageV7(connectionId: connId, payload: .connectionReject(.init(metadata: metadata)))\n");
+    out.push_str("    static func connectionReject(connId: UInt64, metadata: [MetadataEntry]) -> Message {\n");
+    out.push_str("        Message(connectionId: connId, payload: .connectionReject(.init(metadata: metadata)))\n");
     out.push_str("    }\n\n");
 
-    out.push_str("    static func connectionClose(connId: UInt64, metadata: [MetadataEntryV7]) -> MessageV7 {\n");
-    out.push_str("        MessageV7(connectionId: connId, payload: .connectionClose(.init(metadata: metadata)))\n");
+    out.push_str(
+        "    static func connectionClose(connId: UInt64, metadata: [MetadataEntry]) -> Message {\n",
+    );
+    out.push_str("        Message(connectionId: connId, payload: .connectionClose(.init(metadata: metadata)))\n");
     out.push_str("    }\n\n");
 
     out.push_str("    static func request(\n");
     out.push_str("        connId: UInt64,\n");
     out.push_str("        requestId: UInt64,\n");
     out.push_str("        methodId: UInt64,\n");
-    out.push_str("        metadata: [MetadataEntryV7],\n");
+    out.push_str("        metadata: [MetadataEntry],\n");
     out.push_str("        schemas: [UInt8] = [],\n");
     out.push_str("        payload: [UInt8]\n");
-    out.push_str("    ) -> MessageV7 {\n");
-    out.push_str("        MessageV7(\n");
+    out.push_str("    ) -> Message {\n");
+    out.push_str("        Message(\n");
     out.push_str("            connectionId: connId,\n");
     out.push_str("            payload: .requestMessage(\n");
     out.push_str("                .init(\n");
@@ -805,11 +807,11 @@ fn generate_factory_methods(types: &[WireType]) -> String {
     out.push_str("    static func response(\n");
     out.push_str("        connId: UInt64,\n");
     out.push_str("        requestId: UInt64,\n");
-    out.push_str("        metadata: [MetadataEntryV7],\n");
+    out.push_str("        metadata: [MetadataEntry],\n");
     out.push_str("        schemas: [UInt8] = [],\n");
     out.push_str("        payload: [UInt8]\n");
-    out.push_str("    ) -> MessageV7 {\n");
-    out.push_str("        MessageV7(\n");
+    out.push_str("    ) -> Message {\n");
+    out.push_str("        Message(\n");
     out.push_str("            connectionId: connId,\n");
     out.push_str("            payload: .requestMessage(\n");
     out.push_str("                .init(\n");
@@ -819,8 +821,8 @@ fn generate_factory_methods(types: &[WireType]) -> String {
     out.push_str("        )\n");
     out.push_str("    }\n\n");
 
-    out.push_str("    static func cancel(connId: UInt64, requestId: UInt64, metadata: [MetadataEntryV7] = []) -> MessageV7 {\n");
-    out.push_str("        MessageV7(\n");
+    out.push_str("    static func cancel(connId: UInt64, requestId: UInt64, metadata: [MetadataEntry] = []) -> Message {\n");
+    out.push_str("        Message(\n");
     out.push_str("            connectionId: connId,\n");
     out.push_str("            payload: .requestMessage(\n");
     out.push_str("                .init(\n");
@@ -830,31 +832,33 @@ fn generate_factory_methods(types: &[WireType]) -> String {
     out.push_str("        )\n");
     out.push_str("    }\n\n");
 
-    out.push_str("    static func data(connId: UInt64, channelId: UInt64, payload: [UInt8]) -> MessageV7 {\n");
-    out.push_str("        MessageV7(\n");
+    out.push_str(
+        "    static func data(connId: UInt64, channelId: UInt64, payload: [UInt8]) -> Message {\n",
+    );
+    out.push_str("        Message(\n");
     out.push_str("            connectionId: connId,\n");
     out.push_str("            payload: .channelMessage(.init(id: channelId, body: .item(.init(item: .init(payload)))))\n");
     out.push_str("        )\n");
     out.push_str("    }\n\n");
 
-    out.push_str("    static func close(connId: UInt64, channelId: UInt64, metadata: [MetadataEntryV7] = []) -> MessageV7 {\n");
-    out.push_str("        MessageV7(\n");
+    out.push_str("    static func close(connId: UInt64, channelId: UInt64, metadata: [MetadataEntry] = []) -> Message {\n");
+    out.push_str("        Message(\n");
     out.push_str("            connectionId: connId,\n");
     out.push_str("            payload: .channelMessage(.init(id: channelId, body: .close(.init(metadata: metadata))))\n");
     out.push_str("        )\n");
     out.push_str("    }\n\n");
 
-    out.push_str("    static func reset(connId: UInt64, channelId: UInt64, metadata: [MetadataEntryV7] = []) -> MessageV7 {\n");
-    out.push_str("        MessageV7(\n");
+    out.push_str("    static func reset(connId: UInt64, channelId: UInt64, metadata: [MetadataEntry] = []) -> Message {\n");
+    out.push_str("        Message(\n");
     out.push_str("            connectionId: connId,\n");
     out.push_str("            payload: .channelMessage(.init(id: channelId, body: .reset(.init(metadata: metadata))))\n");
     out.push_str("        )\n");
     out.push_str("    }\n\n");
 
     out.push_str(
-        "    static func credit(connId: UInt64, channelId: UInt64, bytes: UInt32) -> MessageV7 {\n",
+        "    static func credit(connId: UInt64, channelId: UInt64, bytes: UInt32) -> Message {\n",
     );
-    out.push_str("        MessageV7(\n");
+    out.push_str("        Message(\n");
     out.push_str("            connectionId: connId,\n");
     out.push_str("            payload: .channelMessage(.init(id: channelId, body: .grantCredit(.init(additional: bytes))))\n");
     out.push_str("        )\n");

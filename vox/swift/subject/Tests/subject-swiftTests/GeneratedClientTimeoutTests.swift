@@ -26,7 +26,7 @@ private final class CapturingConnection: RoamConnection, @unchecked Sendable {
 
     func call(
         methodId: UInt64,
-        metadata _: [MetadataEntryV7],
+        metadata _: [MetadataEntry],
         payload _: Data,
         retry _: RetryPolicy,
         timeout: TimeInterval?,

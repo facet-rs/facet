@@ -5,11 +5,11 @@ private let sessionResumeMetadataFlagsNone: UInt64 = 0
 public let sessionResumeKeyMetadataKey = "roam-session-key"
 
 public func appendSessionResumeKeyMetadata(
-    _ metadata: [MetadataEntryV7],
+    _ metadata: [MetadataEntry],
     key: [UInt8]
-) -> [MetadataEntryV7] {
+) -> [MetadataEntry] {
     metadata + [
-        MetadataEntryV7(
+        MetadataEntry(
             key: sessionResumeKeyMetadataKey,
             value: .bytes(key),
             flags: sessionResumeMetadataFlagsNone
@@ -17,7 +17,7 @@ public func appendSessionResumeKeyMetadata(
     ]
 }
 
-public func metadataSessionResumeKey(_ metadata: [MetadataEntryV7]) -> [UInt8]? {
+public func metadataSessionResumeKey(_ metadata: [MetadataEntry]) -> [UInt8]? {
     for entry in metadata where entry.key == sessionResumeKeyMetadataKey {
         if case .bytes(let key) = entry.value, key.count == 16 {
             return key

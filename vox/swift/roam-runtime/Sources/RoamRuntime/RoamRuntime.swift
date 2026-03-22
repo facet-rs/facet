@@ -13,7 +13,7 @@ public protocol RoamConnection: Sendable {
     /// Make a raw RPC call.
     func call(
         methodId: UInt64,
-        metadata: [MetadataEntryV7],
+        metadata: [MetadataEntry],
         payload: Data,
         retry: RetryPolicy,
         timeout: TimeInterval?,
@@ -70,7 +70,7 @@ public extension RoamConnection {
 
     func call(
         methodId: UInt64,
-        metadata: [MetadataEntryV7],
+        metadata: [MetadataEntry],
         payload: Data,
         timeout: TimeInterval?
     ) async throws -> Data {

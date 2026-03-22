@@ -9,7 +9,7 @@ private enum ResumeInboundEvent: Sendable {
 }
 
 private actor ResumeScriptedLink: Link {
-    private var sentMessages: [MessageV7] = []
+    private var sentMessages: [Message] = []
     private var sentHandshakes: [HandshakeMessage] = []
     private var inboundQueue: [ResumeInboundEvent] = []
     private var recvWaiters: [CheckedContinuation<ResumeInboundEvent, Never>] = []
@@ -27,7 +27,7 @@ private actor ResumeScriptedLink: Link {
             }
             return
         }
-        let message = try MessageV7.decode(from: Data(bytes))
+        let message = try Message.decode(from: Data(bytes))
         sentMessages.append(message)
     }
 
@@ -59,7 +59,7 @@ private actor ResumeScriptedLink: Link {
         enqueue(.closed)
     }
 
-    func enqueueMessage(_ message: MessageV7) {
+    func enqueueMessage(_ message: Message) {
         enqueue(.frame(message.encode()))
     }
 
@@ -78,7 +78,7 @@ private actor ResumeScriptedLink: Link {
         }
     }
 
-    func sentMessagesSnapshot() -> [MessageV7] {
+    func sentMessagesSnapshot() -> [Message] {
         sentMessages
     }
 
@@ -222,7 +222,7 @@ struct SessionResumeTests {
         let initial = ResumeScriptedLink(
             initialHandshake: .helloYourself(
                 HandshakeHelloYourself(
-                    connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
+                    connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
                     resumeKey: .init(bytes: resumeKey)
@@ -260,7 +260,7 @@ struct SessionResumeTests {
             let replacement = ResumeScriptedLink(
                 initialHandshake: .helloYourself(
                     HandshakeHelloYourself(
-                        connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
+                        connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
                         messagePayloadSchemaCbor: wireMessageSchemasCbor,
                         supportsRetry: true,
                         resumeKey: .init(bytes: resumeKey)
@@ -283,7 +283,7 @@ struct SessionResumeTests {
             initialHandshake: .hello(
                 HandshakeHello(
                     parity: .odd,
-                    connectionSettings: ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: 64),
+                    connectionSettings: ConnectionSettings(parity: .odd, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
                     resumeKey: nil
@@ -331,7 +331,7 @@ struct SessionResumeTests {
                 initialHandshake: .hello(
                     HandshakeHello(
                         parity: .odd,
-                        connectionSettings: ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: 64),
+                        connectionSettings: ConnectionSettings(parity: .odd, maxConcurrentRequests: 64),
                         messagePayloadSchemaCbor: wireMessageSchemasCbor,
                         supportsRetry: true,
                         resumeKey: .init(bytes: sessionResumeKey)
@@ -359,7 +359,7 @@ struct SessionResumeTests {
         let initial = ResumeScriptedLink(
             initialHandshake: .helloYourself(
                 HandshakeHelloYourself(
-                    connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
+                    connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
                     resumeKey: .init(bytes: resumeKey)
@@ -368,7 +368,7 @@ struct SessionResumeTests {
         let replacement = ResumeScriptedLink(
             initialHandshake: .helloYourself(
                 HandshakeHelloYourself(
-                    connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
+                    connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
                     resumeKey: .init(bytes: resumeKey)

@@ -200,7 +200,7 @@ private struct HandshakeHarness {
 
             let helloYourself = HandshakeMessage.helloYourself(
                 HandshakeHelloYourself(
-                    connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
+                    connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
                     resumeKey: nil
@@ -262,7 +262,7 @@ private func writeRawFrame(_ fd: Int32, bytes: [UInt8]) throws {
     try writeAll(fd, bytes: frame)
 }
 
-private func writeFrame(_ fd: Int32, message: MessageV7) throws {
+private func writeFrame(_ fd: Int32, message: RoamRuntime.Message) throws {
     try writeRawFrame(fd, bytes: message.encode())
 }
 
@@ -277,11 +277,11 @@ private func readRawFrame(_ fd: Int32) throws -> [UInt8]? {
     return try readExactly(fd, count: Int(frameLen))
 }
 
-private func readFrame(_ fd: Int32) throws -> MessageV7? {
+private func readFrame(_ fd: Int32) throws -> RoamRuntime.Message? {
     guard let payload = try readRawFrame(fd) else {
         return nil
     }
-    return try MessageV7.decode(from: Data(payload))
+    return try RoamRuntime.Message.decode(from: Data(payload))
 }
 
 private func writeAll(_ fd: Int32, bytes: [UInt8]) throws {

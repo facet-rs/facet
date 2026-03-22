@@ -201,11 +201,11 @@ private func hostPeerBuffers(
 private func hostReadMessage(
     from guestToHost: ShmBipBuffer,
     timeoutMs: UInt64 = 1_000
-) async throws -> MessageV7? {
+) async throws -> Message? {
     guard let payload = try await hostReadRawPayload(from: guestToHost, timeoutMs: timeoutMs) else {
         return nil
     }
-    return try MessageV7.decode(from: Data(payload))
+    return try Message.decode(from: Data(payload))
 }
 
 private func hostReadRawPayload(
@@ -236,7 +236,7 @@ private func hostReadRawPayload(
 }
 
 private func hostSendMessage(
-    _ message: MessageV7,
+    _ message: Message,
     to hostToGuest: ShmBipBuffer,
     doorbell: ShmDoorbell,
     timeoutMs: UInt64 = 1_000
@@ -329,7 +329,7 @@ private func establishShmInitiator(
     try await hostSendRawPayload(
         HandshakeMessage.helloYourself(
             HandshakeHelloYourself(
-                connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
+                connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
                 messagePayloadSchemaCbor: wireMessageSchemasCbor,
                 supportsRetry: true,
                 resumeKey: nil
@@ -672,7 +672,7 @@ struct ShmDoorbellAndPayloadTests {
             try await hostConduit.send(.protocolError(description: expected))
 
             let frame = try #require(try guest.receive())
-            let msg = try MessageV7.decode(from: Data(frame.payload))
+            let msg = try Message.decode(from: Data(frame.payload))
             guard case .protocolError(let error) = msg.payload else {
                 Issue.record("expected protocol error payload")
                 return
@@ -706,10 +706,10 @@ struct ShmDoorbellAndPayloadTests {
             try? await host.close()
         }) {
             let expected = String(repeating: "g", count: 5_000)
-            let outbound = MessageV7.protocolError(description: expected)
+            let outbound = Message.protocolError(description: expected)
             try guest.send(frame: ShmGuestFrame(payload: outbound.encode()))
 
-            let inbound = try await withThrowingTaskGroup(of: MessageV7?.self) { group in
+            let inbound = try await withThrowingTaskGroup(of: Message?.self) { group in
                 group.addTask {
                     try await hostConduit.recv()
                 }
@@ -802,7 +802,7 @@ struct ShmDoorbellAndPayloadTests {
 
         try await host.close()
 
-        let payload = MessageV7.protocolError(description: String(repeating: "y", count: 5_000)).encode()
+        let payload = Message.protocolError(description: String(repeating: "y", count: 5_000)).encode()
         let start = ContinuousClock.now
         do {
             try guest.send(frame: ShmGuestFrame(payload: payload))
@@ -913,7 +913,7 @@ struct ShmGuestRemapTests {
         let start = ContinuousClock.now
 
         do {
-            _ = try await withThrowingTaskGroup(of: MessageV7?.self) { group in
+            _ = try await withThrowingTaskGroup(of: Message?.self) { group in
                 group.addTask {
                     try await conduit.recv()
                 }
@@ -957,7 +957,7 @@ struct ShmGuestRemapTests {
             try? await transport.close()
         }) {
             let hostDoorbell = ShmDoorbell(fd: pair.host)
-            let recvTask = Task<MessageV7?, Error> {
+            let recvTask = Task<Message?, Error> {
                 try await conduit.recv()
             }
             defer { recvTask.cancel() }
@@ -967,7 +967,7 @@ struct ShmGuestRemapTests {
             try hostDoorbell.signal()
 
             let start = ContinuousClock.now
-            let result = try await withThrowingTaskGroup(of: MessageV7?.self) { group in
+            let result = try await withThrowingTaskGroup(of: Message?.self) { group in
                 group.addTask {
                     try await recvTask.value
                 }

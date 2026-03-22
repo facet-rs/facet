@@ -6,6 +6,6 @@ This crate provides:
 
 - `RoamRuntime`: protocol session and connection helpers
 - `Shm*` utilities for shared-memory transport setup and buffer handling
-- `WireV7` protocol helpers and codecs
+- `Wire` protocol helpers and codecs
 
 See the root `README.md` and the generated test fixtures in `Tests/` for usage examples.

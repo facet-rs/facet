@@ -52,7 +52,7 @@ enum Commands {
         /// Generate Swift server-only bindings
         #[facet(args::named, default)]
         swift_server: bool,
-        /// Generate Swift wire protocol types (WireV7.swift)
+        /// Generate Swift wire protocol types (Wire.swift)
         #[facet(args::named, default)]
         swift_wire: bool,
     },
@@ -421,7 +421,7 @@ fn codegen_swift_wire(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
         .join("roam-runtime")
         .join("Sources")
         .join("RoamRuntime")
-        .join("WireV7.swift");
+        .join("Wire.swift");
 
     macro_rules! wire_type {
         ($swift_name:literal, $ty:ty) => {
@@ -433,30 +433,30 @@ fn codegen_swift_wire(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
     }
 
     let types = vec![
-        wire_type!("ParityV7", rt::Parity),
-        wire_type!("ConnectionSettingsV7", rt::ConnectionSettings),
-        wire_type!("MetadataValueV7", rt::MetadataValue<'static>),
-        wire_type!("MetadataEntryV7", rt::MetadataEntry<'static>),
-        wire_type!("ProtocolErrorV7", rt::ProtocolError<'static>),
-        wire_type!("PingV7", rt::Ping),
-        wire_type!("PongV7", rt::Pong),
-        wire_type!("ConnectionOpenV7", rt::ConnectionOpen<'static>),
-        wire_type!("ConnectionAcceptV7", rt::ConnectionAccept<'static>),
-        wire_type!("ConnectionRejectV7", rt::ConnectionReject<'static>),
-        wire_type!("ConnectionCloseV7", rt::ConnectionClose<'static>),
-        wire_type!("RequestCallV7", rt::RequestCall<'static>),
-        wire_type!("RequestResponseV7", rt::RequestResponse<'static>),
-        wire_type!("RequestCancelV7", rt::RequestCancel<'static>),
-        wire_type!("RequestBodyV7", rt::RequestBody<'static>),
-        wire_type!("RequestMessageV7", rt::RequestMessage<'static>),
-        wire_type!("ChannelItemV7", rt::ChannelItem<'static>),
-        wire_type!("ChannelCloseV7", rt::ChannelClose<'static>),
-        wire_type!("ChannelResetV7", rt::ChannelReset<'static>),
-        wire_type!("ChannelGrantCreditV7", rt::ChannelGrantCredit),
-        wire_type!("ChannelBodyV7", rt::ChannelBody<'static>),
-        wire_type!("ChannelMessageV7", rt::ChannelMessage<'static>),
-        wire_type!("MessagePayloadV7", rt::MessagePayload<'static>),
-        wire_type!("MessageV7", rt::Message<'static>),
+        wire_type!("Parity", rt::Parity),
+        wire_type!("ConnectionSettings", rt::ConnectionSettings),
+        wire_type!("MetadataValue", rt::MetadataValue<'static>),
+        wire_type!("MetadataEntry", rt::MetadataEntry<'static>),
+        wire_type!("ProtocolError", rt::ProtocolError<'static>),
+        wire_type!("Ping", rt::Ping),
+        wire_type!("Pong", rt::Pong),
+        wire_type!("ConnectionOpen", rt::ConnectionOpen<'static>),
+        wire_type!("ConnectionAccept", rt::ConnectionAccept<'static>),
+        wire_type!("ConnectionReject", rt::ConnectionReject<'static>),
+        wire_type!("ConnectionClose", rt::ConnectionClose<'static>),
+        wire_type!("RequestCall", rt::RequestCall<'static>),
+        wire_type!("RequestResponse", rt::RequestResponse<'static>),
+        wire_type!("RequestCancel", rt::RequestCancel<'static>),
+        wire_type!("RequestBody", rt::RequestBody<'static>),
+        wire_type!("RequestMessage", rt::RequestMessage<'static>),
+        wire_type!("ChannelItem", rt::ChannelItem<'static>),
+        wire_type!("ChannelClose", rt::ChannelClose<'static>),
+        wire_type!("ChannelReset", rt::ChannelReset<'static>),
+        wire_type!("ChannelGrantCredit", rt::ChannelGrantCredit),
+        wire_type!("ChannelBody", rt::ChannelBody<'static>),
+        wire_type!("ChannelMessage", rt::ChannelMessage<'static>),
+        wire_type!("MessagePayload", rt::MessagePayload<'static>),
+        wire_type!("Message", rt::Message<'static>),
     ];
 
     let code = generate_wire_types(&types);

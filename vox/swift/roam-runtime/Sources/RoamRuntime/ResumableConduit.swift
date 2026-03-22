@@ -7,8 +7,8 @@ actor SessionResumeCoordinator {
     }
 
     private let role: Role
-    private let localRootSettings: ConnectionSettingsV7
-    private let peerRootSettings: ConnectionSettingsV7
+    private let localRootSettings: ConnectionSettings
+    private let peerRootSettings: ConnectionSettings
     private let transport: TransportConduitKind
     private let resumable: Bool
     private let sessionResumeKey: [UInt8]?
@@ -20,8 +20,8 @@ actor SessionResumeCoordinator {
 
     init(
         role: Role,
-        localRootSettings: ConnectionSettingsV7,
-        peerRootSettings: ConnectionSettingsV7,
+        localRootSettings: ConnectionSettings,
+        peerRootSettings: ConnectionSettings,
         transport: TransportConduitKind,
         resumable: Bool,
         sessionResumeKey: [UInt8]?,
@@ -219,7 +219,7 @@ final actor ResumableConduit: Conduit {
         self.coordinator = coordinator
     }
 
-    func send(_ message: MessageV7) async throws {
+    func send(_ message: Message) async throws {
         while true {
             if closed {
                 throw ConnectionError.connectionClosed
@@ -238,7 +238,7 @@ final actor ResumableConduit: Conduit {
         }
     }
 
-    func recv() async throws -> MessageV7? {
+    func recv() async throws -> Message? {
         while true {
             if closed {
                 return nil

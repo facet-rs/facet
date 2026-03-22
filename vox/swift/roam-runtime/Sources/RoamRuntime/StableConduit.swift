@@ -27,7 +27,7 @@ private struct StablePacketAck: Sendable {
 private struct StableFrame: Sendable {
     let seq: UInt32
     let ack: StablePacketAck?
-    let item: MessageV7
+    let item: Message
 }
 
 private struct ReplayEntry: Sendable {
@@ -159,9 +159,9 @@ private func decodeStableFrame(_ bytes: [UInt8]) throws -> StableFrame {
     let ackValue = try decodeOption(from: data, offset: &offset) { data, offset in
         try decodeU32(from: data, offset: &offset)
     }
-    let item = try MessageV7.decode(from: data, offset: &offset)
+    let item = try Message.decode(from: data, offset: &offset)
     guard offset == data.count else {
-        throw WireV7Error.trailingBytes
+        throw WireError.trailingBytes
     }
     return StableFrame(
         seq: seq,
@@ -333,7 +333,7 @@ public final class StableConduit: Conduit, @unchecked Sendable {
         return conduit
     }
 
-    public func send(_ message: MessageV7) async throws {
+    public func send(_ message: Message) async throws {
         try await withSendPermit {
             let itemBytes = message.encode()
             let seq = await state.enqueueReplayEntry(itemBytes: itemBytes)
@@ -355,7 +355,7 @@ public final class StableConduit: Conduit, @unchecked Sendable {
         }
     }
 
-    public func recv() async throws -> MessageV7? {
+    public func recv() async throws -> Message? {
         while true {
             let lease = try await state.ensureLink()
             let payload: [UInt8]

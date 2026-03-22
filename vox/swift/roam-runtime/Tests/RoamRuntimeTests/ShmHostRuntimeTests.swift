@@ -48,7 +48,7 @@ private func withHostTimeout<T: Sendable>(
     }
 }
 
-private func protocolErrorDescription(_ msg: MessageV7) -> String? {
+private func protocolErrorDescription(_ msg: Message) -> String? {
     guard case .protocolError(let payload) = msg.payload else {
         return nil
     }

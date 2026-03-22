@@ -150,7 +150,7 @@ struct StableConduitTests {
             serverLinks: [serverLink]
         )
 
-        let message = MessageV7.ping(.init(nonce: 42))
+        let message = Message.ping(.init(nonce: 42))
         try await client.send(message)
         let received = try await server.recv()
 
@@ -165,10 +165,10 @@ struct StableConduitTests {
             serverLinks: [serverLink1, serverLink2]
         )
 
-        let alpha = MessageV7.ping(.init(nonce: 1))
-        let ack = MessageV7.pong(.init(nonce: 1))
-        let beta = MessageV7.ping(.init(nonce: 2))
-        let gamma = MessageV7.ping(.init(nonce: 3))
+        let alpha = Message.ping(.init(nonce: 1))
+        let ack = Message.pong(.init(nonce: 1))
+        let beta = Message.ping(.init(nonce: 2))
+        let gamma = Message.ping(.init(nonce: 3))
 
         try await awaitStep("client send alpha") {
             try await client.send(alpha)

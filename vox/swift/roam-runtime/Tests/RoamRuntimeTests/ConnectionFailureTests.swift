@@ -22,12 +22,12 @@ private enum InboundEvent: Sendable {
 
 private enum SentFrame: Sendable {
     case handshake(HandshakeMessage)
-    case message(MessageV7)
+    case message(Message)
 }
 
 private actor ScriptedTransport: Link {
     private var sentFrames: [SentFrame] = []
-    private var sentMessages: [MessageV7] = []
+    private var sentMessages: [Message] = []
     private var sentHandshakes: [HandshakeMessage] = []
     private var inboundQueue: [InboundEvent] = []
     private var recvWaiters: [CheckedContinuation<InboundEvent, Never>] = []
@@ -45,7 +45,7 @@ private actor ScriptedTransport: Link {
         autoRespondPing: Bool = false,
         initialHandshake: HandshakeMessage? = .helloYourself(
             HandshakeHelloYourself(
-                connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
+                connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
                 messagePayloadSchemaCbor: wireMessageSchemasCbor,
                 supportsRetry: true,
                 resumeKey: nil
@@ -66,7 +66,7 @@ private actor ScriptedTransport: Link {
         failNextRequestSend = true
     }
 
-    func enqueueMessage(_ message: MessageV7) {
+    func enqueueMessage(_ message: Message) {
         enqueueInbound(.frame(message.encode()))
     }
 
@@ -74,7 +74,7 @@ private actor ScriptedTransport: Link {
         enqueueInbound(.frame(handshake.encodeCbor()))
     }
 
-    func sent() -> [MessageV7] {
+    func sent() -> [Message] {
         sentMessages
     }
 
@@ -100,13 +100,13 @@ private actor ScriptedTransport: Link {
             return
         }
 
-        let message = try MessageV7.decode(from: Data(bytes))
+        let message = try Message.decode(from: Data(bytes))
         sentFrames.append(.message(message))
         sentMessages.append(message)
 
         if case .ping(let ping) = message.payload {
             if autoRespondPing {
-                enqueueInbound(.frame(MessageV7.pong(.init(nonce: ping.nonce)).encode()))
+                enqueueInbound(.frame(Message.pong(.init(nonce: ping.nonce)).encode()))
             }
             return
         }
@@ -125,7 +125,7 @@ private actor ScriptedTransport: Link {
             if requestSends <= autoRespondRequestCount {
                 enqueueInbound(
                     .frame(
-                        MessageV7.response(
+                        Message.response(
                             connId: 0,
                             requestId: requestId,
                             metadata: [],
@@ -272,7 +272,7 @@ private struct BlockingResponseDispatcher: ServiceDispatcher {
     }
 }
 
-private func metadataString(_ metadata: [MetadataEntryV7], key: String) -> String? {
+private func metadataString(_ metadata: [MetadataEntry], key: String) -> String? {
     for entry in metadata where entry.key == key {
         if case .string(let value) = entry.value {
             return value
@@ -466,7 +466,7 @@ struct ConnectionFailureTests {
             autoRespondRequestCount: 1,
             initialHandshake: .helloYourself(
                 HandshakeHelloYourself(
-                    connectionSettings: ConnectionSettingsV7(parity: .even, maxConcurrentRequests: 64),
+                    connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
                     resumeKey: nil
@@ -512,7 +512,7 @@ struct ConnectionFailureTests {
             initialHandshake: .hello(
                 HandshakeHello(
                     parity: .odd,
-                    connectionSettings: ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: 64),
+                    connectionSettings: ConnectionSettings(parity: .odd, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
                     resumeKey: nil
@@ -588,7 +588,7 @@ struct ConnectionFailureTests {
             initialHandshake: .hello(
                 HandshakeHello(
                     parity: .odd,
-                    connectionSettings: ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: 64),
+                    connectionSettings: ConnectionSettings(parity: .odd, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
                     resumeKey: nil
@@ -610,17 +610,17 @@ struct ConnectionFailureTests {
                     requestId: 77,
                     methodId: 42,
                     metadata: [
-                        MetadataEntryV7(
+                        MetadataEntry(
                             key: peepsMethodNameMetadataKey,
                             value: .string("DemoRpc.test"),
                             flags: 0
                         ),
-                        MetadataEntryV7(
+                        MetadataEntry(
                             key: peepsRequestEntityIdMetadataKey,
                             value: .string("request:abc"),
                             flags: 0
                         ),
-                        MetadataEntryV7(key: "unrelated", value: .string("keep_out"), flags: 0),
+                        MetadataEntry(key: "unrelated", value: .string("keep_out"), flags: 0),
                     ],
                     payload: []
                 )
@@ -628,7 +628,7 @@ struct ConnectionFailureTests {
 
             let start = ContinuousClock.now
             let timeout = Duration.milliseconds(1_000)
-            var responseMetadata: [MetadataEntryV7]? = nil
+            var responseMetadata: [MetadataEntry]? = nil
             while ContinuousClock.now - start < timeout {
                 let sent = await transport.sent()
                 for message in sent {

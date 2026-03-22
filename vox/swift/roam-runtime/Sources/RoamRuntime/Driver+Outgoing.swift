@@ -4,7 +4,7 @@ extension Driver {
     private func responseMessage(
         requestId: UInt64,
         payload: [UInt8]
-    ) async -> MessageV7? {
+    ) async -> Message? {
         let responseContext = await state.removeInFlight(requestId)
         guard responseContext.removed else {
             return nil
@@ -31,7 +31,7 @@ extension Driver {
 
     /// Handle a task message from a handler.
     func handleTaskMessage(_ msg: TaskMessage) async throws {
-        let wireMsg: MessageV7
+        let wireMsg: Message
         switch msg {
         case .data(let channelId, let payload):
             wireMsg = .data(connId: 0, channelId: channelId, payload: payload)
@@ -108,7 +108,7 @@ extension Driver {
                 return
             }
 
-            let msg = MessageV7.request(
+            let msg = Message.request(
                 connId: 0,
                 requestId: requestId,
                 methodId: methodId,
@@ -192,7 +192,7 @@ extension Driver {
                 replayCall = call
             }
 
-            let msg = MessageV7.request(
+            let msg = Message.request(
                 connId: 0,
                 requestId: replayCall.requestId,
                 methodId: replayCall.methodId,

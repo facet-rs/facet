@@ -515,9 +515,9 @@ struct ShmGuestClientMain {
             let transport = ShmGuestTransport(runtime: guest)
             let conduit = transport.bareConduit()
 
-            let metadata: MetadataV7 = [
-                MetadataEntryV7(key: "trace-id", value: .string("swift-trace"), flags: 0),
-                MetadataEntryV7(key: "attempt", value: .u64(1), flags: 0),
+            let metadata: Metadata = [
+                MetadataEntry(key: "trace-id", value: .string("swift-trace"), flags: 0),
+                MetadataEntry(key: "attempt", value: .u64(1), flags: 0),
             ]
 
             do {
@@ -533,7 +533,7 @@ struct ShmGuestClientMain {
                     .close(
                         connId: 2,
                         channelId: 3,
-                        metadata: [MetadataEntryV7(key: "reason", value: .string("swift-close"), flags: 0)]
+                        metadata: [MetadataEntry(key: "reason", value: .string("swift-close"), flags: 0)]
                     ))
                 try await conduit.send(.protocolError(description: "swift protocol violation"))
             } catch {
@@ -604,7 +604,7 @@ struct ShmGuestClientMain {
                     guard case .call(let call) = request.body else {
                         continue
                     }
-                    let response = MessageV7.response(
+                    let response = Message.response(
                         connId: msg.connectionId,
                         requestId: request.id,
                         metadata: [],

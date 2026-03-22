@@ -1,8 +1,8 @@
 import Foundation
 
 public protocol Conduit: Sendable {
-    func send(_ message: MessageV7) async throws
-    func recv() async throws -> MessageV7?
+    func send(_ message: Message) async throws
+    func recv() async throws -> Message?
     func setMaxFrameSize(_ size: Int) async throws
     func close() async throws
 }
@@ -14,15 +14,15 @@ public final class BareConduit: Conduit, @unchecked Sendable {
         self.link = link
     }
 
-    public func send(_ message: MessageV7) async throws {
+    public func send(_ message: Message) async throws {
         try await link.sendFrame(message.encode())
     }
 
-    public func recv() async throws -> MessageV7? {
+    public func recv() async throws -> Message? {
         guard let bytes = try await link.recvFrame() else {
             return nil
         }
-        return try MessageV7.decode(from: Data(bytes))
+        return try Message.decode(from: Data(bytes))
     }
 
     public func setMaxFrameSize(_ size: Int) async throws {

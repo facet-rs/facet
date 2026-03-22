@@ -27,14 +27,14 @@ private func samePostcardError(_ lhs: PostcardError, _ rhs: PostcardError) -> Bo
     }
 }
 
-private func expectWireError(_ expected: WireV7Error, _ body: () throws -> Void) {
+private func expectWireError(_ expected: WireError, _ body: () throws -> Void) {
     do {
         try body()
-        Issue.record("expected WireV7Error \(expected)")
-    } catch let actual as WireV7Error {
+        Issue.record("expected WireError \(expected)")
+    } catch let actual as WireError {
         #expect(actual == expected)
     } catch {
-        Issue.record("expected WireV7Error \(expected), got \(error)")
+        Issue.record("expected WireError \(expected), got \(error)")
     }
 }
 
@@ -57,7 +57,7 @@ struct WireV7PostcardNegativeTests {
         var bytes = try loadWireV7Fixture("message_protocol_error")
         bytes.append(0xFF)
         expectWireError(.trailingBytes) {
-            _ = try MessageV7.decode(from: Data(bytes))
+            _ = try Message.decode(from: Data(bytes))
         }
     }
 
@@ -65,7 +65,7 @@ struct WireV7PostcardNegativeTests {
     // r[verify session.message.payloads]
     @Test func wireDecodeRejectsUnknownPayloadVariant() {
         expectWireError(.unknownVariant(11)) {
-            _ = try MessageV7.decode(from: Data([0, 11]))
+            _ = try Message.decode(from: Data([0, 11]))
         }
     }
 
@@ -74,7 +74,7 @@ struct WireV7PostcardNegativeTests {
     @Test func wireDecodeRejectsTruncatedStringField() {
         let truncatedProtocolError: [UInt8] = [0, 0, 3, 0x41, 0x42]
         expectWireError(.truncated) {
-            _ = try MessageV7.decode(from: Data(truncatedProtocolError))
+            _ = try Message.decode(from: Data(truncatedProtocolError))
         }
     }
 
@@ -83,7 +83,7 @@ struct WireV7PostcardNegativeTests {
     @Test func wireDecodeRejectsInvalidParityVariant() {
         let bytes: [UInt8] = [0, 1, 3, 1, 0]
         expectWireError(.unknownVariant(3)) {
-            _ = try MessageV7.decode(from: Data(bytes))
+            _ = try Message.decode(from: Data(bytes))
         }
     }
 
@@ -98,7 +98,7 @@ struct WireV7PostcardNegativeTests {
         bytes += encodeVarint(0) // metadata: empty vec
 
         expectWireError(.overflow) {
-            _ = try MessageV7.decode(from: Data(bytes))
+            _ = try Message.decode(from: Data(bytes))
         }
     }
 
@@ -107,7 +107,7 @@ struct WireV7PostcardNegativeTests {
     @Test func wireDecodeRejectsInvalidUtf8InStringField() {
         let bytes: [UInt8] = [0, 0, 2, 0xC3, 0x28]
         expectWireError(.invalidUtf8) {
-            _ = try MessageV7.decode(from: Data(bytes))
+            _ = try Message.decode(from: Data(bytes))
         }
     }
 

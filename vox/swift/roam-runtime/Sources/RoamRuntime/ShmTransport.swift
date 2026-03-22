@@ -6,18 +6,18 @@ public enum ShmTransportConvertError: Error, Equatable {
 
 // r[impl transport.shm]
 // r[impl zerocopy.framing.link.shm]
-func messageToShmFrame(_ msg: MessageV7) throws -> ShmGuestFrame {
+func messageToShmFrame(_ msg: Message) throws -> ShmGuestFrame {
     ShmGuestFrame(payload: msg.encode())
 }
 
 // r[impl transport.shm]
 // r[impl zerocopy.framing.link.shm]
-func shmFrameToMessage(_ frame: ShmGuestFrame) throws -> MessageV7 {
+func shmFrameToMessage(_ frame: ShmGuestFrame) throws -> Message {
     do {
-        return try MessageV7.decode(from: Data(frame.payload))
-    } catch WireV7Error.trailingBytes {
+        return try Message.decode(from: Data(frame.payload))
+    } catch WireError.trailingBytes {
         // Inline SHM frames are 4-byte aligned and can carry up to 3 trailing zero bytes.
-        // MessageV7 is self-delimiting; retry decode after trimming zero padding.
+        // Message is self-delimiting; retry decode after trimming zero padding.
         for pad in 1...3 {
             guard frame.payload.count >= pad else {
                 break
@@ -28,12 +28,12 @@ func shmFrameToMessage(_ frame: ShmGuestFrame) throws -> MessageV7 {
             }
             let trimmed = Array(frame.payload.dropLast(pad))
             do {
-                return try MessageV7.decode(from: Data(trimmed))
+                return try Message.decode(from: Data(trimmed))
             } catch {
                 continue
             }
         }
-        throw ShmTransportConvertError.decodeError("\(WireV7Error.trailingBytes)")
+        throw ShmTransportConvertError.decodeError("\(WireError.trailingBytes)")
     } catch {
         throw ShmTransportConvertError.decodeError("\(error)")
     }

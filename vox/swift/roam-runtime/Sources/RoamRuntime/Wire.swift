@@ -3,7 +3,7 @@
 
 import Foundation
 
-public enum WireV7Error: Error, Equatable {
+public enum WireError: Error, Equatable {
   case truncated
   case unknownVariant(UInt64)
   case overflow
@@ -11,7 +11,7 @@ public enum WireV7Error: Error, Equatable {
   case trailingBytes
 }
 
-public struct OpaquePayloadV7: Sendable, Equatable {
+public struct OpaquePayload: Sendable, Equatable {
   public var bytes: [UInt8]
 
   public init(_ bytes: [UInt8]) {
@@ -29,13 +29,13 @@ public struct OpaquePayloadV7: Sendable, Equatable {
   }
 
   static func decode(from data: Data, offset: inout Int) throws -> Self {
-    guard offset + 4 <= data.count else { throw WireV7Error.truncated }
+    guard offset + 4 <= data.count else { throw WireError.truncated }
     let start = data.startIndex + offset
     let len = Int(
       UInt32(data[start]) | (UInt32(data[start + 1]) << 8) | (UInt32(data[start + 2]) << 16)
         | (UInt32(data[start + 3]) << 24))
     offset += 4
-    guard offset + len <= data.count else { throw WireV7Error.truncated }
+    guard offset + len <= data.count else { throw WireError.truncated }
     let payloadStart = data.startIndex + offset
     let payloadEnd = payloadStart + len
     let payload = Array(data[payloadStart..<payloadEnd])
@@ -58,41 +58,41 @@ public struct OpaquePayloadV7: Sendable, Equatable {
 }
 
 @inline(__always)
-private func decodeVarintU32V7(from data: Data, offset: inout Int) throws -> UInt32 {
+private func decodeWireVarintU32(from data: Data, offset: inout Int) throws -> UInt32 {
   let value = try decodeVarint(from: data, offset: &offset)
   guard value <= UInt64(UInt32.max) else {
-    throw WireV7Error.overflow
+    throw WireError.overflow
   }
   return UInt32(value)
 }
 
 @inline(__always)
-private func decodeStringV7(from data: Data, offset: inout Int) throws -> String {
+private func decodeWireString(from data: Data, offset: inout Int) throws -> String {
   do {
     return try decodeString(from: data, offset: &offset)
   } catch PostcardError.invalidUtf8 {
-    throw WireV7Error.invalidUtf8
+    throw WireError.invalidUtf8
   } catch PostcardError.truncated {
-    throw WireV7Error.truncated
+    throw WireError.truncated
   } catch {
     throw error
   }
 }
 
 @inline(__always)
-private func decodeBytesV7(from data: Data, offset: inout Int) throws -> Data {
+private func decodeWireBytes(from data: Data, offset: inout Int) throws -> Data {
   do {
     return try decodeBytes(from: data, offset: &offset)
   } catch PostcardError.truncated {
-    throw WireV7Error.truncated
+    throw WireError.truncated
   } catch {
     throw error
   }
 }
 
-public typealias MetadataV7 = [MetadataEntryV7]
+public typealias Metadata = [MetadataEntry]
 
-public enum ParityV7: Sendable, Equatable {
+public enum Parity: Sendable, Equatable {
   case odd
   case even
 
@@ -113,16 +113,16 @@ public enum ParityV7: Sendable, Equatable {
     case 1:
       return .even
     default:
-      throw WireV7Error.unknownVariant(disc)
+      throw WireError.unknownVariant(disc)
     }
   }
 }
 
-public struct ConnectionSettingsV7: Sendable, Equatable {
-  public var parity: ParityV7
+public struct ConnectionSettings: Sendable, Equatable {
+  public var parity: Parity
   public var maxConcurrentRequests: UInt32
 
-  public init(parity: ParityV7, maxConcurrentRequests: UInt32) {
+  public init(parity: Parity, maxConcurrentRequests: UInt32) {
     self.parity = parity
     self.maxConcurrentRequests = maxConcurrentRequests
   }
@@ -135,13 +135,13 @@ public struct ConnectionSettingsV7: Sendable, Equatable {
   }
 
   static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let parity = try ParityV7.decode(from: data, offset: &offset)
-    let maxConcurrentRequests = try decodeVarintU32V7(from: data, offset: &offset)
+    let parity = try Parity.decode(from: data, offset: &offset)
+    let maxConcurrentRequests = try decodeWireVarintU32(from: data, offset: &offset)
     return .init(parity: parity, maxConcurrentRequests: maxConcurrentRequests)
   }
 }
 
-public enum MetadataValueV7: Sendable, Equatable {
+public enum MetadataValue: Sendable, Equatable {
   case string(String)
   case bytes([UInt8])
   case u64(UInt64)
@@ -161,23 +161,23 @@ public enum MetadataValueV7: Sendable, Equatable {
     let disc = try decodeVarint(from: data, offset: &offset)
     switch disc {
     case 0:
-      return .string(try decodeStringV7(from: data, offset: &offset))
+      return .string(try decodeWireString(from: data, offset: &offset))
     case 1:
-      return .bytes(Array(try decodeBytesV7(from: data, offset: &offset)))
+      return .bytes(Array(try decodeWireBytes(from: data, offset: &offset)))
     case 2:
       return .u64(try decodeVarint(from: data, offset: &offset))
     default:
-      throw WireV7Error.unknownVariant(disc)
+      throw WireError.unknownVariant(disc)
     }
   }
 }
 
-public struct MetadataEntryV7: Sendable, Equatable {
+public struct MetadataEntry: Sendable, Equatable {
   public var key: String
-  public var value: MetadataValueV7
+  public var value: MetadataValue
   public var flags: UInt64
 
-  public init(key: String, value: MetadataValueV7, flags: UInt64) {
+  public init(key: String, value: MetadataValue, flags: UInt64) {
     self.key = key
     self.value = value
     self.flags = flags
@@ -192,14 +192,14 @@ public struct MetadataEntryV7: Sendable, Equatable {
   }
 
   static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let key = try decodeStringV7(from: data, offset: &offset)
-    let value = try MetadataValueV7.decode(from: data, offset: &offset)
+    let key = try decodeWireString(from: data, offset: &offset)
+    let value = try MetadataValue.decode(from: data, offset: &offset)
     let flags = try decodeVarint(from: data, offset: &offset)
     return .init(key: key, value: value, flags: flags)
   }
 }
 
-public struct ProtocolErrorV7: Sendable, Equatable {
+public struct ProtocolError: Sendable, Equatable {
   public var description: String
 
   public init(description: String) {
@@ -211,12 +211,12 @@ public struct ProtocolErrorV7: Sendable, Equatable {
   }
 
   static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let description = try decodeStringV7(from: data, offset: &offset)
+    let description = try decodeWireString(from: data, offset: &offset)
     return .init(description: description)
   }
 }
 
-public struct PingV7: Sendable, Equatable {
+public struct Ping: Sendable, Equatable {
   public var nonce: UInt64
 
   public init(nonce: UInt64) {
@@ -233,7 +233,7 @@ public struct PingV7: Sendable, Equatable {
   }
 }
 
-public struct PongV7: Sendable, Equatable {
+public struct Pong: Sendable, Equatable {
   public var nonce: UInt64
 
   public init(nonce: UInt64) {
@@ -250,11 +250,11 @@ public struct PongV7: Sendable, Equatable {
   }
 }
 
-public struct ConnectionOpenV7: Sendable, Equatable {
-  public var connectionSettings: ConnectionSettingsV7
-  public var metadata: [MetadataEntryV7]
+public struct ConnectionOpen: Sendable, Equatable {
+  public var connectionSettings: ConnectionSettings
+  public var metadata: [MetadataEntry]
 
-  public init(connectionSettings: ConnectionSettingsV7, metadata: [MetadataEntryV7]) {
+  public init(connectionSettings: ConnectionSettings, metadata: [MetadataEntry]) {
     self.connectionSettings = connectionSettings
     self.metadata = metadata
   }
@@ -267,19 +267,19 @@ public struct ConnectionOpenV7: Sendable, Equatable {
   }
 
   static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let connectionSettings = try ConnectionSettingsV7.decode(from: data, offset: &offset)
+    let connectionSettings = try ConnectionSettings.decode(from: data, offset: &offset)
     let metadata = try decodeVec(
       from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntryV7.decode(from: data, offset: &off) })
+      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
     return .init(connectionSettings: connectionSettings, metadata: metadata)
   }
 }
 
-public struct ConnectionAcceptV7: Sendable, Equatable {
-  public var connectionSettings: ConnectionSettingsV7
-  public var metadata: [MetadataEntryV7]
+public struct ConnectionAccept: Sendable, Equatable {
+  public var connectionSettings: ConnectionSettings
+  public var metadata: [MetadataEntry]
 
-  public init(connectionSettings: ConnectionSettingsV7, metadata: [MetadataEntryV7]) {
+  public init(connectionSettings: ConnectionSettings, metadata: [MetadataEntry]) {
     self.connectionSettings = connectionSettings
     self.metadata = metadata
   }
@@ -292,18 +292,18 @@ public struct ConnectionAcceptV7: Sendable, Equatable {
   }
 
   static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let connectionSettings = try ConnectionSettingsV7.decode(from: data, offset: &offset)
+    let connectionSettings = try ConnectionSettings.decode(from: data, offset: &offset)
     let metadata = try decodeVec(
       from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntryV7.decode(from: data, offset: &off) })
+      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
     return .init(connectionSettings: connectionSettings, metadata: metadata)
   }
 }
 
-public struct ConnectionRejectV7: Sendable, Equatable {
-  public var metadata: [MetadataEntryV7]
+public struct ConnectionReject: Sendable, Equatable {
+  public var metadata: [MetadataEntry]
 
-  public init(metadata: [MetadataEntryV7]) {
+  public init(metadata: [MetadataEntry]) {
     self.metadata = metadata
   }
 
@@ -314,15 +314,15 @@ public struct ConnectionRejectV7: Sendable, Equatable {
   static func decode(from data: Data, offset: inout Int) throws -> Self {
     let metadata = try decodeVec(
       from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntryV7.decode(from: data, offset: &off) })
+      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
     return .init(metadata: metadata)
   }
 }
 
-public struct ConnectionCloseV7: Sendable, Equatable {
-  public var metadata: [MetadataEntryV7]
+public struct ConnectionClose: Sendable, Equatable {
+  public var metadata: [MetadataEntry]
 
-  public init(metadata: [MetadataEntryV7]) {
+  public init(metadata: [MetadataEntry]) {
     self.metadata = metadata
   }
 
@@ -333,20 +333,18 @@ public struct ConnectionCloseV7: Sendable, Equatable {
   static func decode(from data: Data, offset: inout Int) throws -> Self {
     let metadata = try decodeVec(
       from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntryV7.decode(from: data, offset: &off) })
+      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
     return .init(metadata: metadata)
   }
 }
 
-public struct RequestCallV7: Sendable, Equatable {
+public struct RequestCall: Sendable, Equatable {
   public var methodId: UInt64
-  public var metadata: [MetadataEntryV7]
-  public var args: OpaquePayloadV7
+  public var metadata: [MetadataEntry]
+  public var args: OpaquePayload
   public var schemas: [UInt8]
 
-  public init(
-    methodId: UInt64, metadata: [MetadataEntryV7], args: OpaquePayloadV7, schemas: [UInt8]
-  ) {
+  public init(methodId: UInt64, metadata: [MetadataEntry], args: OpaquePayload, schemas: [UInt8]) {
     self.methodId = methodId
     self.metadata = metadata
     self.args = args
@@ -366,19 +364,19 @@ public struct RequestCallV7: Sendable, Equatable {
     let methodId = try decodeVarint(from: data, offset: &offset)
     let metadata = try decodeVec(
       from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntryV7.decode(from: data, offset: &off) })
-    let args = try OpaquePayloadV7.decode(from: data, offset: &offset)
-    let schemas = Array(try decodeBytesV7(from: data, offset: &offset))
+      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
+    let args = try OpaquePayload.decode(from: data, offset: &offset)
+    let schemas = Array(try decodeWireBytes(from: data, offset: &offset))
     return .init(methodId: methodId, metadata: metadata, args: args, schemas: schemas)
   }
 }
 
-public struct RequestResponseV7: Sendable, Equatable {
-  public var metadata: [MetadataEntryV7]
-  public var ret: OpaquePayloadV7
+public struct RequestResponse: Sendable, Equatable {
+  public var metadata: [MetadataEntry]
+  public var ret: OpaquePayload
   public var schemas: [UInt8]
 
-  public init(metadata: [MetadataEntryV7], ret: OpaquePayloadV7, schemas: [UInt8]) {
+  public init(metadata: [MetadataEntry], ret: OpaquePayload, schemas: [UInt8]) {
     self.metadata = metadata
     self.ret = ret
     self.schemas = schemas
@@ -395,17 +393,17 @@ public struct RequestResponseV7: Sendable, Equatable {
   static func decode(from data: Data, offset: inout Int) throws -> Self {
     let metadata = try decodeVec(
       from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntryV7.decode(from: data, offset: &off) })
-    let ret = try OpaquePayloadV7.decode(from: data, offset: &offset)
-    let schemas = Array(try decodeBytesV7(from: data, offset: &offset))
+      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
+    let ret = try OpaquePayload.decode(from: data, offset: &offset)
+    let schemas = Array(try decodeWireBytes(from: data, offset: &offset))
     return .init(metadata: metadata, ret: ret, schemas: schemas)
   }
 }
 
-public struct RequestCancelV7: Sendable, Equatable {
-  public var metadata: [MetadataEntryV7]
+public struct RequestCancel: Sendable, Equatable {
+  public var metadata: [MetadataEntry]
 
-  public init(metadata: [MetadataEntryV7]) {
+  public init(metadata: [MetadataEntry]) {
     self.metadata = metadata
   }
 
@@ -416,15 +414,15 @@ public struct RequestCancelV7: Sendable, Equatable {
   static func decode(from data: Data, offset: inout Int) throws -> Self {
     let metadata = try decodeVec(
       from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntryV7.decode(from: data, offset: &off) })
+      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
     return .init(metadata: metadata)
   }
 }
 
-public enum RequestBodyV7: Sendable, Equatable {
-  case call(RequestCallV7)
-  case response(RequestResponseV7)
-  case cancel(RequestCancelV7)
+public enum RequestBody: Sendable, Equatable {
+  case call(RequestCall)
+  case response(RequestResponse)
+  case cancel(RequestCancel)
 
   func encode() -> [UInt8] {
     switch self {
@@ -441,22 +439,22 @@ public enum RequestBodyV7: Sendable, Equatable {
     let disc = try decodeVarint(from: data, offset: &offset)
     switch disc {
     case 0:
-      return .call(try RequestCallV7.decode(from: data, offset: &offset))
+      return .call(try RequestCall.decode(from: data, offset: &offset))
     case 1:
-      return .response(try RequestResponseV7.decode(from: data, offset: &offset))
+      return .response(try RequestResponse.decode(from: data, offset: &offset))
     case 2:
-      return .cancel(try RequestCancelV7.decode(from: data, offset: &offset))
+      return .cancel(try RequestCancel.decode(from: data, offset: &offset))
     default:
-      throw WireV7Error.unknownVariant(disc)
+      throw WireError.unknownVariant(disc)
     }
   }
 }
 
-public struct RequestMessageV7: Sendable, Equatable {
+public struct RequestMessage: Sendable, Equatable {
   public var id: UInt64
-  public var body: RequestBodyV7
+  public var body: RequestBody
 
-  public init(id: UInt64, body: RequestBodyV7) {
+  public init(id: UInt64, body: RequestBody) {
     self.id = id
     self.body = body
   }
@@ -470,15 +468,15 @@ public struct RequestMessageV7: Sendable, Equatable {
 
   static func decode(from data: Data, offset: inout Int) throws -> Self {
     let id = try decodeVarint(from: data, offset: &offset)
-    let body = try RequestBodyV7.decode(from: data, offset: &offset)
+    let body = try RequestBody.decode(from: data, offset: &offset)
     return .init(id: id, body: body)
   }
 }
 
-public struct ChannelItemV7: Sendable, Equatable {
-  public var item: OpaquePayloadV7
+public struct ChannelItem: Sendable, Equatable {
+  public var item: OpaquePayload
 
-  public init(item: OpaquePayloadV7) {
+  public init(item: OpaquePayload) {
     self.item = item
   }
 
@@ -487,15 +485,15 @@ public struct ChannelItemV7: Sendable, Equatable {
   }
 
   static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let item = try OpaquePayloadV7.decode(from: data, offset: &offset)
+    let item = try OpaquePayload.decode(from: data, offset: &offset)
     return .init(item: item)
   }
 }
 
-public struct ChannelCloseV7: Sendable, Equatable {
-  public var metadata: [MetadataEntryV7]
+public struct ChannelClose: Sendable, Equatable {
+  public var metadata: [MetadataEntry]
 
-  public init(metadata: [MetadataEntryV7]) {
+  public init(metadata: [MetadataEntry]) {
     self.metadata = metadata
   }
 
@@ -506,15 +504,15 @@ public struct ChannelCloseV7: Sendable, Equatable {
   static func decode(from data: Data, offset: inout Int) throws -> Self {
     let metadata = try decodeVec(
       from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntryV7.decode(from: data, offset: &off) })
+      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
     return .init(metadata: metadata)
   }
 }
 
-public struct ChannelResetV7: Sendable, Equatable {
-  public var metadata: [MetadataEntryV7]
+public struct ChannelReset: Sendable, Equatable {
+  public var metadata: [MetadataEntry]
 
-  public init(metadata: [MetadataEntryV7]) {
+  public init(metadata: [MetadataEntry]) {
     self.metadata = metadata
   }
 
@@ -525,12 +523,12 @@ public struct ChannelResetV7: Sendable, Equatable {
   static func decode(from data: Data, offset: inout Int) throws -> Self {
     let metadata = try decodeVec(
       from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntryV7.decode(from: data, offset: &off) })
+      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
     return .init(metadata: metadata)
   }
 }
 
-public struct ChannelGrantCreditV7: Sendable, Equatable {
+public struct ChannelGrantCredit: Sendable, Equatable {
   public var additional: UInt32
 
   public init(additional: UInt32) {
@@ -542,16 +540,16 @@ public struct ChannelGrantCreditV7: Sendable, Equatable {
   }
 
   static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let additional = try decodeVarintU32V7(from: data, offset: &offset)
+    let additional = try decodeWireVarintU32(from: data, offset: &offset)
     return .init(additional: additional)
   }
 }
 
-public enum ChannelBodyV7: Sendable, Equatable {
-  case item(ChannelItemV7)
-  case close(ChannelCloseV7)
-  case reset(ChannelResetV7)
-  case grantCredit(ChannelGrantCreditV7)
+public enum ChannelBody: Sendable, Equatable {
+  case item(ChannelItem)
+  case close(ChannelClose)
+  case reset(ChannelReset)
+  case grantCredit(ChannelGrantCredit)
 
   func encode() -> [UInt8] {
     switch self {
@@ -570,24 +568,24 @@ public enum ChannelBodyV7: Sendable, Equatable {
     let disc = try decodeVarint(from: data, offset: &offset)
     switch disc {
     case 0:
-      return .item(try ChannelItemV7.decode(from: data, offset: &offset))
+      return .item(try ChannelItem.decode(from: data, offset: &offset))
     case 1:
-      return .close(try ChannelCloseV7.decode(from: data, offset: &offset))
+      return .close(try ChannelClose.decode(from: data, offset: &offset))
     case 2:
-      return .reset(try ChannelResetV7.decode(from: data, offset: &offset))
+      return .reset(try ChannelReset.decode(from: data, offset: &offset))
     case 3:
-      return .grantCredit(try ChannelGrantCreditV7.decode(from: data, offset: &offset))
+      return .grantCredit(try ChannelGrantCredit.decode(from: data, offset: &offset))
     default:
-      throw WireV7Error.unknownVariant(disc)
+      throw WireError.unknownVariant(disc)
     }
   }
 }
 
-public struct ChannelMessageV7: Sendable, Equatable {
+public struct ChannelMessage: Sendable, Equatable {
   public var id: UInt64
-  public var body: ChannelBodyV7
+  public var body: ChannelBody
 
-  public init(id: UInt64, body: ChannelBodyV7) {
+  public init(id: UInt64, body: ChannelBody) {
     self.id = id
     self.body = body
   }
@@ -601,21 +599,21 @@ public struct ChannelMessageV7: Sendable, Equatable {
 
   static func decode(from data: Data, offset: inout Int) throws -> Self {
     let id = try decodeVarint(from: data, offset: &offset)
-    let body = try ChannelBodyV7.decode(from: data, offset: &offset)
+    let body = try ChannelBody.decode(from: data, offset: &offset)
     return .init(id: id, body: body)
   }
 }
 
-public enum MessagePayloadV7: Sendable, Equatable {
-  case protocolError(ProtocolErrorV7)
-  case connectionOpen(ConnectionOpenV7)
-  case connectionAccept(ConnectionAcceptV7)
-  case connectionReject(ConnectionRejectV7)
-  case connectionClose(ConnectionCloseV7)
-  case requestMessage(RequestMessageV7)
-  case channelMessage(ChannelMessageV7)
-  case ping(PingV7)
-  case pong(PongV7)
+public enum MessagePayload: Sendable, Equatable {
+  case protocolError(ProtocolError)
+  case connectionOpen(ConnectionOpen)
+  case connectionAccept(ConnectionAccept)
+  case connectionReject(ConnectionReject)
+  case connectionClose(ConnectionClose)
+  case requestMessage(RequestMessage)
+  case channelMessage(ChannelMessage)
+  case ping(Ping)
+  case pong(Pong)
 
   func encode() -> [UInt8] {
     switch self {
@@ -644,34 +642,34 @@ public enum MessagePayloadV7: Sendable, Equatable {
     let disc = try decodeVarint(from: data, offset: &offset)
     switch disc {
     case 0:
-      return .protocolError(try ProtocolErrorV7.decode(from: data, offset: &offset))
+      return .protocolError(try ProtocolError.decode(from: data, offset: &offset))
     case 1:
-      return .connectionOpen(try ConnectionOpenV7.decode(from: data, offset: &offset))
+      return .connectionOpen(try ConnectionOpen.decode(from: data, offset: &offset))
     case 2:
-      return .connectionAccept(try ConnectionAcceptV7.decode(from: data, offset: &offset))
+      return .connectionAccept(try ConnectionAccept.decode(from: data, offset: &offset))
     case 3:
-      return .connectionReject(try ConnectionRejectV7.decode(from: data, offset: &offset))
+      return .connectionReject(try ConnectionReject.decode(from: data, offset: &offset))
     case 4:
-      return .connectionClose(try ConnectionCloseV7.decode(from: data, offset: &offset))
+      return .connectionClose(try ConnectionClose.decode(from: data, offset: &offset))
     case 5:
-      return .requestMessage(try RequestMessageV7.decode(from: data, offset: &offset))
+      return .requestMessage(try RequestMessage.decode(from: data, offset: &offset))
     case 6:
-      return .channelMessage(try ChannelMessageV7.decode(from: data, offset: &offset))
+      return .channelMessage(try ChannelMessage.decode(from: data, offset: &offset))
     case 7:
-      return .ping(try PingV7.decode(from: data, offset: &offset))
+      return .ping(try Ping.decode(from: data, offset: &offset))
     case 8:
-      return .pong(try PongV7.decode(from: data, offset: &offset))
+      return .pong(try Pong.decode(from: data, offset: &offset))
     default:
-      throw WireV7Error.unknownVariant(disc)
+      throw WireError.unknownVariant(disc)
     }
   }
 }
 
-public struct MessageV7: Sendable, Equatable {
+public struct Message: Sendable, Equatable {
   public var connectionId: UInt64
-  public var payload: MessagePayloadV7
+  public var payload: MessagePayload
 
-  public init(connectionId: UInt64, payload: MessagePayloadV7) {
+  public init(connectionId: UInt64, payload: MessagePayload) {
     self.connectionId = connectionId
     self.payload = payload
   }
@@ -685,7 +683,7 @@ public struct MessageV7: Sendable, Equatable {
 
   public static func decode(from data: Data, offset: inout Int) throws -> Self {
     let connectionId = try decodeVarint(from: data, offset: &offset)
-    let payload = try MessagePayloadV7.decode(from: data, offset: &offset)
+    let payload = try MessagePayload.decode(from: data, offset: &offset)
     return .init(connectionId: connectionId, payload: payload)
   }
 
@@ -693,86 +691,86 @@ public struct MessageV7: Sendable, Equatable {
     var offset = 0
     let result = try decode(from: data, offset: &offset)
     guard offset == data.count else {
-      throw WireV7Error.trailingBytes
+      throw WireError.trailingBytes
     }
     return result
   }
 }
 
-extension MessageV7 {
-  public static func protocolError(_ value: ProtocolErrorV7) -> MessageV7 {
-    MessageV7(connectionId: 0, payload: .protocolError(value))
+extension Message {
+  public static func protocolError(_ value: ProtocolError) -> Message {
+    Message(connectionId: 0, payload: .protocolError(value))
   }
 
-  public static func connectionOpen(connId: UInt64, _ value: ConnectionOpenV7) -> MessageV7 {
-    MessageV7(connectionId: connId, payload: .connectionOpen(value))
+  public static func connectionOpen(connId: UInt64, _ value: ConnectionOpen) -> Message {
+    Message(connectionId: connId, payload: .connectionOpen(value))
   }
 
-  public static func connectionAccept(connId: UInt64, _ value: ConnectionAcceptV7) -> MessageV7 {
-    MessageV7(connectionId: connId, payload: .connectionAccept(value))
+  public static func connectionAccept(connId: UInt64, _ value: ConnectionAccept) -> Message {
+    Message(connectionId: connId, payload: .connectionAccept(value))
   }
 
-  public static func connectionReject(connId: UInt64, _ value: ConnectionRejectV7) -> MessageV7 {
-    MessageV7(connectionId: connId, payload: .connectionReject(value))
+  public static func connectionReject(connId: UInt64, _ value: ConnectionReject) -> Message {
+    Message(connectionId: connId, payload: .connectionReject(value))
   }
 
-  public static func connectionClose(connId: UInt64, _ value: ConnectionCloseV7) -> MessageV7 {
-    MessageV7(connectionId: connId, payload: .connectionClose(value))
+  public static func connectionClose(connId: UInt64, _ value: ConnectionClose) -> Message {
+    Message(connectionId: connId, payload: .connectionClose(value))
   }
 
-  public static func requestMessage(connId: UInt64, _ value: RequestMessageV7) -> MessageV7 {
-    MessageV7(connectionId: connId, payload: .requestMessage(value))
+  public static func requestMessage(connId: UInt64, _ value: RequestMessage) -> Message {
+    Message(connectionId: connId, payload: .requestMessage(value))
   }
 
-  public static func channelMessage(connId: UInt64, _ value: ChannelMessageV7) -> MessageV7 {
-    MessageV7(connectionId: connId, payload: .channelMessage(value))
+  public static func channelMessage(connId: UInt64, _ value: ChannelMessage) -> Message {
+    Message(connectionId: connId, payload: .channelMessage(value))
   }
 
-  public static func ping(_ value: PingV7) -> MessageV7 {
-    MessageV7(connectionId: 0, payload: .ping(value))
+  public static func ping(_ value: Ping) -> Message {
+    Message(connectionId: 0, payload: .ping(value))
   }
 
-  public static func pong(_ value: PongV7) -> MessageV7 {
-    MessageV7(connectionId: 0, payload: .pong(value))
+  public static func pong(_ value: Pong) -> Message {
+    Message(connectionId: 0, payload: .pong(value))
   }
 
-  public static func protocolError(description: String) -> MessageV7 {
-    MessageV7(connectionId: 0, payload: .protocolError(.init(description: description)))
+  public static func protocolError(description: String) -> Message {
+    Message(connectionId: 0, payload: .protocolError(.init(description: description)))
   }
 
   public static func connectionOpen(
-    connId: UInt64, settings: ConnectionSettingsV7, metadata: [MetadataEntryV7]
-  ) -> MessageV7 {
-    MessageV7(
+    connId: UInt64, settings: ConnectionSettings, metadata: [MetadataEntry]
+  ) -> Message {
+    Message(
       connectionId: connId,
       payload: .connectionOpen(.init(connectionSettings: settings, metadata: metadata)))
   }
 
   public static func connectionAccept(
-    connId: UInt64, settings: ConnectionSettingsV7, metadata: [MetadataEntryV7]
-  ) -> MessageV7 {
-    MessageV7(
+    connId: UInt64, settings: ConnectionSettings, metadata: [MetadataEntry]
+  ) -> Message {
+    Message(
       connectionId: connId,
       payload: .connectionAccept(.init(connectionSettings: settings, metadata: metadata)))
   }
 
-  public static func connectionReject(connId: UInt64, metadata: [MetadataEntryV7]) -> MessageV7 {
-    MessageV7(connectionId: connId, payload: .connectionReject(.init(metadata: metadata)))
+  public static func connectionReject(connId: UInt64, metadata: [MetadataEntry]) -> Message {
+    Message(connectionId: connId, payload: .connectionReject(.init(metadata: metadata)))
   }
 
-  public static func connectionClose(connId: UInt64, metadata: [MetadataEntryV7]) -> MessageV7 {
-    MessageV7(connectionId: connId, payload: .connectionClose(.init(metadata: metadata)))
+  public static func connectionClose(connId: UInt64, metadata: [MetadataEntry]) -> Message {
+    Message(connectionId: connId, payload: .connectionClose(.init(metadata: metadata)))
   }
 
   public static func request(
     connId: UInt64,
     requestId: UInt64,
     methodId: UInt64,
-    metadata: [MetadataEntryV7],
+    metadata: [MetadataEntry],
     schemas: [UInt8] = [],
     payload: [UInt8]
-  ) -> MessageV7 {
-    MessageV7(
+  ) -> Message {
+    Message(
       connectionId: connId,
       payload: .requestMessage(
         .init(
@@ -786,11 +784,11 @@ extension MessageV7 {
   public static func response(
     connId: UInt64,
     requestId: UInt64,
-    metadata: [MetadataEntryV7],
+    metadata: [MetadataEntry],
     schemas: [UInt8] = [],
     payload: [UInt8]
-  ) -> MessageV7 {
-    MessageV7(
+  ) -> Message {
+    Message(
       connectionId: connId,
       payload: .requestMessage(
         .init(
@@ -800,10 +798,10 @@ extension MessageV7 {
     )
   }
 
-  public static func cancel(connId: UInt64, requestId: UInt64, metadata: [MetadataEntryV7] = [])
-    -> MessageV7
+  public static func cancel(connId: UInt64, requestId: UInt64, metadata: [MetadataEntry] = [])
+    -> Message
   {
-    MessageV7(
+    Message(
       connectionId: connId,
       payload: .requestMessage(
         .init(
@@ -813,33 +811,33 @@ extension MessageV7 {
     )
   }
 
-  public static func data(connId: UInt64, channelId: UInt64, payload: [UInt8]) -> MessageV7 {
-    MessageV7(
+  public static func data(connId: UInt64, channelId: UInt64, payload: [UInt8]) -> Message {
+    Message(
       connectionId: connId,
       payload: .channelMessage(.init(id: channelId, body: .item(.init(item: .init(payload)))))
     )
   }
 
-  public static func close(connId: UInt64, channelId: UInt64, metadata: [MetadataEntryV7] = [])
-    -> MessageV7
+  public static func close(connId: UInt64, channelId: UInt64, metadata: [MetadataEntry] = [])
+    -> Message
   {
-    MessageV7(
+    Message(
       connectionId: connId,
       payload: .channelMessage(.init(id: channelId, body: .close(.init(metadata: metadata))))
     )
   }
 
-  public static func reset(connId: UInt64, channelId: UInt64, metadata: [MetadataEntryV7] = [])
-    -> MessageV7
+  public static func reset(connId: UInt64, channelId: UInt64, metadata: [MetadataEntry] = [])
+    -> Message
   {
-    MessageV7(
+    Message(
       connectionId: connId,
       payload: .channelMessage(.init(id: channelId, body: .reset(.init(metadata: metadata))))
     )
   }
 
-  public static func credit(connId: UInt64, channelId: UInt64, bytes: UInt32) -> MessageV7 {
-    MessageV7(
+  public static func credit(connId: UInt64, channelId: UInt64, bytes: UInt32) -> Message {
+    Message(
       connectionId: connId,
       payload: .channelMessage(.init(id: channelId, body: .grantCredit(.init(additional: bytes))))
     )

@@ -4,11 +4,11 @@ struct SessionHandshakeResult {
     let negotiated: Negotiated
     let peerSupportsRetry: Bool
     let sessionResumeKey: [UInt8]?
-    let localRootSettings: ConnectionSettingsV7
-    let peerRootSettings: ConnectionSettingsV7
+    let localRootSettings: ConnectionSettings
+    let peerRootSettings: ConnectionSettings
 }
 
-func oppositeParity(_ parity: ParityV7) -> ParityV7 {
+func oppositeParity(_ parity: Parity) -> Parity {
     switch parity {
     case .odd:
         return .even
@@ -40,7 +40,7 @@ func performInitiatorHandshake(
     resumeKey: [UInt8]? = nil
 ) async throws -> SessionHandshakeResult {
     traceLog(.handshake, "initiator sending Hello resumable=\(resumable)")
-    let ourSettings = ConnectionSettingsV7(parity: .odd, maxConcurrentRequests: maxConcurrentRequests)
+    let ourSettings = ConnectionSettings(parity: .odd, maxConcurrentRequests: maxConcurrentRequests)
     let hello = HandshakeHello(
         parity: ourSettings.parity,
         connectionSettings: ourSettings,
@@ -124,7 +124,7 @@ func performAcceptorHandshake(
         }
     }
 
-    let ourSettings = ConnectionSettingsV7(
+    let ourSettings = ConnectionSettings(
         parity: oppositeParity(peerHello.parity),
         maxConcurrentRequests: maxConcurrentRequests
     )
