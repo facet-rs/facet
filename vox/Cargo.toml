@@ -69,8 +69,8 @@ facet-cbor = { path = "rust/facet-cbor", version = "0.2.0" }
 ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "0.2.0" }
 
 # Not internal crates
-moire = { git = "https://github.com/bearcove/moire", rev = "13eac79" }
-moire-types = { git = "https://github.com/bearcove/moire", rev = "13eac79" }
+moire = { version = "1.0.0", git = "https://github.com/bearcove/moire", rev = "13eac79" }
+moire-types = { version = "1.0.0", git = "https://github.com/bearcove/moire", rev = "13eac79" }
 
 bitflags = "2.11.0"
 structstruck = "0.5.1"

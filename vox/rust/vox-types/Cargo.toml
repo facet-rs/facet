@@ -30,7 +30,7 @@ vox-postcard.workspace = true
 vox-schema.workspace = true
 smallvec.workspace = true
 structstruck.workspace = true
-facet-cbor = { path = "../facet-cbor" }
+facet-cbor.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio.workspace = true
