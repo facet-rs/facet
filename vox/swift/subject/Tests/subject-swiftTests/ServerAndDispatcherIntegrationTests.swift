@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import Testing
 
-@testable import RoamRuntime
+@testable import VoxRuntime
 @testable import subject_swift
 
 private actor SubjectEnvGate {
@@ -75,7 +75,7 @@ private actor TaskMessageRecorder {
 
     func firstResponse() -> (UInt64, [UInt8])? {
         for message in messages {
-            if case .response(let requestId, let payload) = message {
+            if case .response(let requestId, let payload, _) = message {
                 return (requestId, payload)
             }
         }
@@ -262,7 +262,7 @@ private func writeRawFrame(_ fd: Int32, bytes: [UInt8]) throws {
     try writeAll(fd, bytes: frame)
 }
 
-private func writeFrame(_ fd: Int32, message: RoamRuntime.Message) throws {
+private func writeFrame(_ fd: Int32, message: VoxRuntime.Message) throws {
     try writeRawFrame(fd, bytes: message.encode())
 }
 
@@ -277,11 +277,11 @@ private func readRawFrame(_ fd: Int32) throws -> [UInt8]? {
     return try readExactly(fd, count: Int(frameLen))
 }
 
-private func readFrame(_ fd: Int32) throws -> RoamRuntime.Message? {
+private func readFrame(_ fd: Int32) throws -> VoxRuntime.Message? {
     guard let payload = try readRawFrame(fd) else {
         return nil
     }
-    return try RoamRuntime.Message.decode(from: Data(payload))
+    return try VoxRuntime.Message.decode(from: Data(payload))
 }
 
 private func writeAll(_ fd: Int32, bytes: [UInt8]) throws {
@@ -428,6 +428,7 @@ struct ServerAndDispatcherIntegrationTests {
             payload: encodeString("swift-subject"),
             requestId: requestId,
             registry: registry,
+            schemaSendTracker: SchemaSendTracker(),
             taskTx: { msg in
                 Task { await recorder.append(msg) }
             }

@@ -1,14 +1,14 @@
-// Browser test for roam in-process transport.
+// Browser test for vox in-process transport.
 //
 // Wires a Rust WASM acceptor (server) to a TypeScript initiator (client)
 // in the same browser tab, with no network involved.
 
 import init, { start_acceptor } from "../pkg/wasm_inprocess_tests.js";
-import { InProcessLink } from "@bearcove/roam-inprocess";
+import { InProcessLink } from "@bearcove/vox-inprocess";
 import {
   session,
-} from "@bearcove/roam-core";
-import type { TestbedClient } from "@bearcove/roam-generated/testbed.generated.ts";
+} from "@bearcove/vox-core";
+import type { TestbedClient } from "@bearcove/vox-generated/testbed.generated.ts";
 
 // Make test results available to Playwright
 declare global {
@@ -344,7 +344,7 @@ async function runTests(): Promise<void> {
 
     // Import the TestbedClient constructor dynamically to avoid circular issues
     const { TestbedClient } = await import(
-      "@bearcove/roam-generated/testbed.generated.ts"
+      "@bearcove/vox-generated/testbed.generated.ts"
     );
     const client = new TestbedClient(established.rootConnection().caller());
 

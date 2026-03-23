@@ -4,19 +4,19 @@ use std::sync::{
 };
 
 use eyre::{Result, WrapErr, eyre};
-use roam::{
+use vox::{
     AcceptedConnection, ConnectionAcceptor, ConnectionId, ConnectionSettings, Driver, Metadata,
     MetadataEntry, MetadataFlags, MetadataValue, Parity,
 };
-use roam_stream::StreamLink;
+use vox_stream::StreamLink;
 
-#[roam::service]
+#[vox::service]
 trait CounterLab {
     async fn bump(&self) -> u32;
     async fn echo(&self, value: String) -> String;
 }
 
-#[roam::service]
+#[vox::service]
 trait StringLab {
     async fn shout(&self, value: String) -> String;
 }
@@ -138,9 +138,9 @@ async fn run_demo() -> Result<()> {
         println!("[server] waiting for client");
         let (socket, _) = listener.accept().await.expect("accept");
         println!("[server] client connected; establishing root session");
-        let (server_root_guard, _) = roam::acceptor_on(StreamLink::tcp(socket))
+        let (server_root_guard, _) = vox::acceptor_on(StreamLink::tcp(socket))
             .on_connection(CounterLabAcceptor)
-            .establish::<roam::DriverCaller>(())
+            .establish::<vox::DriverCaller>(())
             .await
             .expect("server establish");
         let _ = server_ready_tx.send(());
@@ -153,8 +153,8 @@ async fn run_demo() -> Result<()> {
         .await
         .wrap_err("connecting client socket")?;
     let (_root_caller_guard, session_handle) =
-        roam::initiator_on(StreamLink::tcp(socket), roam::TransportMode::Bare)
-            .establish::<roam::DriverCaller>(())
+        vox::initiator_on(StreamLink::tcp(socket), vox::TransportMode::Bare)
+            .establish::<vox::DriverCaller>(())
             .await
             .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;
     println!("[client] root session established");

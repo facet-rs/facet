@@ -4,9 +4,9 @@ import path from 'node:path';
 export default defineConfig({
   resolve: {
     alias: {
-      '@bearcove/roam-core': path.resolve(__dirname, '../../packages/roam-core/src'),
-      '@bearcove/roam-ws': path.resolve(__dirname, '../../packages/roam-ws/src'),
-      '@bearcove/roam-generated': path.resolve(__dirname, '../../generated'),
+      '@bearcove/vox-core': path.resolve(__dirname, '../../packages/vox-core/src'),
+      '@bearcove/vox-ws': path.resolve(__dirname, '../../packages/vox-ws/src'),
+      '@bearcove/vox-generated': path.resolve(__dirname, '../../generated'),
     },
   },
   build: {

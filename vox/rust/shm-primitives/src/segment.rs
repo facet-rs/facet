@@ -1,9 +1,9 @@
 use crate::sync::{AtomicU32, AtomicU64, Ordering};
 
-/// Magic bytes that identify a roam SHM segment.
+/// Magic bytes that identify a vox SHM segment.
 ///
 /// r[impl shm.segment.magic]
-pub const MAGIC: [u8; 8] = *b"ROAMHUB\x07";
+pub const MAGIC: [u8; 8] = *b"TELXHUB\x07";
 
 /// Current segment format version.
 pub const SEGMENT_VERSION: u32 = 7;
@@ -25,7 +25,7 @@ pub struct SegmentHeaderInit {
     pub num_var_slot_classes: u32,
 }
 
-/// The segment header lives at offset 0 of every roam SHM segment.
+/// The segment header lives at offset 0 of every vox SHM segment.
 ///
 /// All fields are set by the host at creation time and treated as read-only
 /// by guests after attach — except `host_goodbye` and `current_size`, which
@@ -36,7 +36,7 @@ pub struct SegmentHeaderInit {
 /// r[impl shm.segment.config]
 #[repr(C)]
 pub struct SegmentHeader {
-    /// "ROAMHUB\x07" — identifies a roam SHM segment.
+    /// "TELXHUB\x07" — identifies a vox SHM segment.
     pub magic: [u8; 8],
     /// Segment format version (currently 7).
     pub version: u32,
@@ -95,14 +95,14 @@ impl SegmentHeader {
         self._reserved = [0u8; 48];
     }
 
-    /// Validate that the header looks like a roam segment.
+    /// Validate that the header looks like a vox segment.
     ///
     /// Returns `Err` with a description if validation fails.
     ///
     /// r[impl shm.segment.magic]
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.magic != MAGIC {
-            return Err("bad magic: not a roam segment");
+            return Err("bad magic: not a vox segment");
         }
         if self.version != SEGMENT_VERSION {
             return Err("unsupported segment version");

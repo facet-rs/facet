@@ -162,7 +162,7 @@ The hard cases are:
 
 - `Option<T>`
 - `Result<T, E>`
-- `RoamError<E>`
+- `VoxError<E>`
 
 These matter because Rust may use niche optimizations and other layout
 choices that are invisible at the semantic level.

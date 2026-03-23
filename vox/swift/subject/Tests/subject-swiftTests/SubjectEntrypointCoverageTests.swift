@@ -5,9 +5,9 @@ import Foundation
 @preconcurrency import NIOCore
 @preconcurrency import NIOPosix
 import Testing
-import CRoamShmFfi
+import CVoxShmFfi
 
-@testable import RoamRuntime
+@testable import VoxRuntime
 @testable import subject_swift
 
 private actor SubjectEnvGate {
@@ -190,6 +190,7 @@ private struct NoopDispatcher: ServiceDispatcher {
         payload _: [UInt8],
         requestId _: UInt64,
         registry _: ChannelRegistry,
+        schemaSendTracker _: SchemaSendTracker,
         taskTx _: @escaping @Sendable (TaskMessage) -> Void
     ) async {}
 }
@@ -446,7 +447,7 @@ private func startBootstrapServer(
 
         let payloadBytes = [UInt8](payloadPath.utf8)
         let rc = payloadBytes.withUnsafeBufferPointer { buf in
-            roam_shm_bootstrap_response_send_unix(
+            vox_shm_bootstrap_response_send_unix(
                 client,
                 0,
                 1,
@@ -705,7 +706,7 @@ struct SubjectEntrypointCoverageTests {
 
     @Test func runShmClientInvalidControlSocketFailsFast() async {
         await SubjectEnvGate.shared.withEnvironment([
-            ("SHM_CONTROL_SOCK", "/tmp/roam-nonexistent-\(UUID().uuidString).sock"),
+            ("SHM_CONTROL_SOCK", "/tmp/vox-nonexistent-\(UUID().uuidString).sock"),
             ("SHM_SESSION_ID", UUID().uuidString.lowercased()),
             ("CLIENT_SCENARIO", "echo"),
         ]) {
@@ -724,7 +725,7 @@ struct SubjectEntrypointCoverageTests {
 
     @Test func runShmServerInvalidControlSocketFailsFast() async {
         await SubjectEnvGate.shared.withEnvironment([
-            ("SHM_CONTROL_SOCK", "/tmp/roam-nonexistent-\(UUID().uuidString).sock"),
+            ("SHM_CONTROL_SOCK", "/tmp/vox-nonexistent-\(UUID().uuidString).sock"),
             ("SHM_SESSION_ID", UUID().uuidString.lowercased()),
             ("ACCEPT_CONNECTIONS", "1"),
         ]) {

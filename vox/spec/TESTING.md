@@ -1,12 +1,12 @@
 # Testing Architecture
 
-This document describes the testing infrastructure for roam protocol conformance.
+This document describes the testing infrastructure for vox protocol conformance.
 
 ## Overview
 
 The spec-tests crate provides a **protocol conformance test suite** that validates
-roam implementations at the wire level. The goal is to test implementations as
-black boxes, communicating only via the roam wire protocol.
+vox implementations at the wire level. The goal is to test implementations as
+black boxes, communicating only via the vox wire protocol.
 
 ## Subjects
 
@@ -40,8 +40,8 @@ Tests fundamental protocol behavior:
        +------raw length-prefixed frames------+
 ```
 
-The harness uses `LengthPrefixedFramed` to send/receive raw wire messages. No roam
-runtime types are used - just `roam_wire::Message`.
+The harness uses `LengthPrefixedFramed` to send/receive raw wire messages. No vox
+runtime types are used - just `vox_wire::Message`.
 
 ### 2. RPC Mechanics Tests
 
@@ -49,8 +49,8 @@ runtime types are used - just `roam_wire::Message`.
 
 Tests RPC call mechanics:
 - Request/Response roundtrip
-- Unknown method → `RoamError::UnknownMethod`
-- Invalid payload → `RoamError::InvalidPayload`
+- Unknown method → `VoxError::UnknownMethod`
+- Invalid payload → `VoxError::InvalidPayload`
 - Request pipelining (multiple in-flight requests)
 
 **How it works:** Same as protocol tests - wire-level communication with subject.
@@ -77,11 +77,11 @@ Tests the generated client code by running the subject as a client:
 
 **How it works:**
 ```
-[Test Harness as Server] <----roam protocol----> [Subject as Client]
+[Test Harness as Server] <----vox protocol----> [Subject as Client]
 ```
 
 **Note:** The harness must implement the `Testbed` service to act as server.
-This currently uses roam runtime types (`Rx`, `Tx`, `ServiceDispatcher`).
+This currently uses vox runtime types (`Rx`, `Tx`, `ServiceDispatcher`).
 See "Design Considerations" below.
 
 ### 5. Browser/WebSocket Tests
@@ -149,7 +149,7 @@ cd typescript/tests/playwright && pnpm test
 | `SUBJECT_MODE` | `server` or `client` | `server` |
 | `PEER_ADDR` | Address to connect to (client mode) | — |
 | `CLIENT_SCENARIO` | Which test scenario to run as client | `echo` |
-| `ROAM_WIRE_SPY` | Enable wire-level message logging | — |
+| `VOX_WIRE_SPY` | Enable wire-level message logging | — |
 
 ## Design Considerations
 
@@ -160,13 +160,13 @@ The test harness treats implementations as black boxes. This ensures:
 2. Same tests work for any language implementation
 3. Clear separation between "test harness" and "implementation under test"
 
-### Issue: Harness Using roam Internals
+### Issue: Harness Using vox Internals
 
-Currently, `client_mode.rs` uses roam runtime types (`Rx`, `Tx`,
-`roam_stream::establish_acceptor`) to act as a server. This is problematic
+Currently, `client_mode.rs` uses vox runtime types (`Rx`, `Tx`,
+`vox_stream::establish_acceptor`) to act as a server. This is problematic
 because:
 
-1. We're testing roam-against-roam rather than testing the wire protocol
+1. We're testing vox-against-vox rather than testing the wire protocol
 2. Bugs in the harness could mask bugs in the subject
 3. The harness should be a minimal wire-level implementation
 

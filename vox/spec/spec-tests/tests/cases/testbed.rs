@@ -1,8 +1,8 @@
-use roam::RoamError;
 use spec_proto::{Color, LookupError, MathError, Message, Point, Rectangle, Shape, Tag};
 use spec_tests::harness::{
     SubjectSpec, accept_subject_spec, run_async, run_subject_client_scenario,
 };
+use vox::VoxError;
 
 // r[verify call.initiate]
 // r[verify call.complete]
@@ -31,7 +31,7 @@ pub fn run_rpc_user_error_roundtrip(spec: SubjectSpec) {
         let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let result = client.divide(10, 0).await;
         match result {
-            Err(RoamError::User(MathError::DivisionByZero)) => {}
+            Err(VoxError::User(MathError::DivisionByZero)) => {}
             Ok(resp) => {
                 return Err(format!(
                     "expected Err(User(DivisionByZero)), got Ok({})",
@@ -101,7 +101,7 @@ pub fn run_rpc_lookup_user_error(spec: SubjectSpec) {
         let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let result = client.lookup(999).await;
         match result {
-            Err(RoamError::User(err)) => {
+            Err(VoxError::User(err)) => {
                 // Any lookup error is acceptable — key thing is it's a user error
                 let _ = err;
             }
@@ -418,7 +418,7 @@ pub fn run_rpc_divide_overflow(spec: SubjectSpec) {
         // i64::MIN / -1 overflows
         let result = client.divide(i64::MIN, -1).await;
         match result {
-            Err(RoamError::User(MathError::Overflow)) => {}
+            Err(VoxError::User(MathError::Overflow)) => {}
             Ok(v) => return Err(format!("divide_overflow: expected Overflow, got Ok({v})")),
             Err(other) => return Err(format!("divide_overflow: expected Overflow, got {other:?}")),
         }
@@ -460,7 +460,7 @@ pub fn run_rpc_lookup_access_denied(spec: SubjectSpec) {
         let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let result = client.lookup(100).await;
         match result {
-            Err(RoamError::User(LookupError::AccessDenied)) => {}
+            Err(VoxError::User(LookupError::AccessDenied)) => {}
             Ok(v) => return Err(format!("expected AccessDenied, got Ok({v:?})")),
             Err(other) => return Err(format!("expected AccessDenied, got {other:?}")),
         }
@@ -710,7 +710,7 @@ pub fn run_rpc_channeling_large_stream(spec: SubjectSpec) {
     run_async(async {
         let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let n: u32 = 100; // well above default initial_credit of 16
-        let (tx, mut rx) = roam::channel::<i32>();
+        let (tx, mut rx) = vox::channel::<i32>();
         let recv = spec_tests::harness::spawn_loud(async move {
             let mut received = Vec::new();
             while let Ok(Some(v)) = rx.recv().await {
@@ -741,7 +741,7 @@ pub fn run_rpc_channeling_sum_large(spec: SubjectSpec) {
     run_async(async {
         let (client, mut child, _sh) = accept_subject_spec(spec).await?;
         let n: i32 = 100;
-        let (tx, rx) = roam::channel::<i32>();
+        let (tx, rx) = vox::channel::<i32>();
         spec_tests::harness::spawn_loud(async move {
             for i in 0..n {
                 tx.send(i).await.unwrap();

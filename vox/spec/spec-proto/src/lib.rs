@@ -3,8 +3,8 @@
 pub mod evolved;
 
 use facet::Facet;
-use roam::service;
-use roam::{Rx, Tx};
+use vox::service;
+use vox::{Rx, Tx};
 
 /// Testbed service for conformance testing.
 ///
@@ -57,7 +57,7 @@ pub trait Testbed {
     /// Server streams numbers back to client on an idempotent retry probe.
     ///
     /// Tests: channel retry reruns the method with fresh channel bindings.
-    #[roam(idem)]
+    #[vox(idem)]
     async fn generate_retry_idem(&self, count: u32, output: Tx<i32>);
 
     /// Bidirectional: client sends strings, server echoes each back.
@@ -298,6 +298,6 @@ pub enum LookupError {
     AccessDenied = 1,
 }
 
-pub fn all_services() -> Vec<&'static roam::session::ServiceDescriptor> {
+pub fn all_services() -> Vec<&'static vox::session::ServiceDescriptor> {
     vec![testbed_service_descriptor()]
 }

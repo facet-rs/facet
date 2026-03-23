@@ -1,15 +1,15 @@
-// Shared subject harness for roam compliance testing.
+// Shared subject harness for vox compliance testing.
 //
 // Generic over the service being served — callers provide a Dispatcher factory.
 
-import { tcpConnector } from "@bearcove/roam-tcp";
+import { tcpConnector } from "@bearcove/vox-tcp";
 import {
   Driver,
   SessionError,
   session,
   type Dispatcher,
   type SessionConduitKind,
-} from "@bearcove/roam-core";
+} from "@bearcove/vox-core";
 
 function subjectConduit(): SessionConduitKind {
   return process.env.SPEC_CONDUIT === "stable" ? "stable" : "bare";

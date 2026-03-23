@@ -775,8 +775,8 @@ mod tests {
     fn stream_response_roundtrip_success() {
         let names = BootstrapSuccessNames {
             segment_path: "/tmp/test.shm".to_string(),
-            doorbell_name: r"\\.\pipe\roam-db-1234".to_string(),
-            mmap_ctrl_name: r"\\.\pipe\roam-mc-5678".to_string(),
+            doorbell_name: r"\\.\pipe\vox-db-1234".to_string(),
+            mmap_ctrl_name: r"\\.\pipe\vox-mc-5678".to_string(),
         };
         let payload = names.encode();
 
@@ -790,8 +790,8 @@ mod tests {
         assert_eq!(got.response.peer_id, 3);
         let got_names = got.names.expect("success must have names");
         assert_eq!(got_names.segment_path, "/tmp/test.shm");
-        assert_eq!(got_names.doorbell_name, r"\\.\pipe\roam-db-1234");
-        assert_eq!(got_names.mmap_ctrl_name, r"\\.\pipe\roam-mc-5678");
+        assert_eq!(got_names.doorbell_name, r"\\.\pipe\vox-db-1234");
+        assert_eq!(got_names.mmap_ctrl_name, r"\\.\pipe\vox-mc-5678");
     }
 
     #[test]

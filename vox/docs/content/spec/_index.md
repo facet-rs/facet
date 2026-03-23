@@ -1,10 +1,10 @@
 +++
 title = "Specification"
-description = "Formal specification for the Roam protocol, transports, and stability rules."
+description = "Formal specification for the Vox protocol, transports, and stability rules."
 weight = 10
 +++
 
-The Roam specification defines the protocol and runtime model across layers:
+The Vox specification defines the protocol and runtime model across layers:
 
 - Requests and channels
 - Connections and sessions

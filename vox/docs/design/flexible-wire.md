@@ -1,6 +1,6 @@
 # Flexible Wire Protocol
 
-Design notes for making the roam wire protocol itself schema-negotiated,
+Design notes for making the vox wire protocol itself schema-negotiated,
 so protocol evolution doesn't require breaking changes.
 
 ## Handshake (CBOR)

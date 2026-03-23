@@ -16,12 +16,12 @@ weight = 11
 
 > r[transport.memory]
 >
-> Roam provides an in-memory transport via `MemoryLink`, based on tokio MPSC
+> Vox provides an in-memory transport via `MemoryLink`, based on tokio MPSC
 > channels.
 
 > r[transport.stream]
 >
-> Roam provides a stream transport via `StreamLink`, which prefixes each payload
+> Vox provides a stream transport via `StreamLink`, which prefixes each payload
 > with its length: a 32-bit LE unsigned integer.
 
 > r[transport.stream.kinds]
@@ -36,12 +36,12 @@ weight = 11
 
 > r[transport.stream.local]
 >
-> Roam provides a `LocalLink` abstraction that uses named pipes on Windows and
+> Vox provides a `LocalLink` abstraction that uses named pipes on Windows and
 > Unix sockets on Linux & macOS. Endpoints/addresses are a `String` internally.
 
 > r[transport.websocket]
 >
-> Roam provides a WebSocket link, which sends payloads via WebSocket binary
+> Vox provides a WebSocket link, which sends payloads via WebSocket binary
 > frames.
 
 > r[transport.websocket.platforms]
@@ -51,7 +51,7 @@ weight = 11
 
 > r[transport.inprocess]
 >
-> Roam provides an in-process link for WASM ↔ JS communication within the
+> Vox provides an in-process link for WASM ↔ JS communication within the
 > same browser tab. The Rust side sends via a `js_sys::Function` callback and
 > receives via an MPSC channel fed by JS. No network is involved.
 
@@ -61,7 +61,7 @@ weight = 11
 
 > r[transport.shm]
 >
-> Roam provides a shared memory transport. It is designed for high-performance
+> Vox provides a shared memory transport. It is designed for high-performance
 > IPC on a single machine.
 
 > r[link.split]
@@ -201,7 +201,7 @@ weight = 11
 
 > r[transport.prologue.reject-close]
 >
-> After `TransportReject`, the link attachment is unusable for roam traffic and
+> After `TransportReject`, the link attachment is unusable for vox traffic and
 > MUST be closed or abandoned by the peers.
 
 # Conduits
@@ -458,7 +458,7 @@ starts only after that conduit has been selected and initialized.
 
 > r[session.protocol-error]
 >
-> When their counterpart does something that violates the roam spec, a peer MUST
+> When their counterpart does something that violates the vox spec, a peer MUST
 > send a `ProtocolError` message describing the violation, and MUST tear down
 > the entire session, including its underlying conduit and link.
 >
@@ -552,11 +552,11 @@ The design objective is to allow proxies to map existing connections without
 having to translate request IDs or channel IDs.
 
 Case study: [dodeca](https://github.com/bearcove/dodeca) is a static site
-generator. It's using roam RPC over the shared memory transport to communicate
+generator. It's using vox RPC over the shared memory transport to communicate
 the host (main binary) and cells, which implement basic functionality.
 
 Dodeca's HTTP server is implemented as a cell: on top of serving HTML, it also
-accepts new roam sessions over WebSocket connections, to serve the DevTools
+accepts new vox sessions over WebSocket connections, to serve the DevTools
 service (which allows inspecting the template variables and patching the page
 live when new changes are made to the Markdown, etc.).
 
@@ -564,7 +564,7 @@ The HTTP server cell finds itself in the middle of the host and the browser, and
 has to forward calls somehow:
 
 ```aasvg
-.----------------.   roam/SHM   .----------------.   roam/WebSocket   .----------------.
+.----------------.   vox/SHM   .----------------.   vox/WebSocket   .----------------.
 | Host           |<------------>| HTTP Server    |<------------------>| Browser        |
 | (main binary)  |              | Cell           |                    | (DevTools)     |
 '----------------'              '----------------'                    '----------------'
@@ -576,7 +576,7 @@ parity that the browser peer picked when connecting over WS.
 
 ## Rust runtime API for virtual connections
 
-The Rust runtime (`roam-core`) exposes virtual connections as first-class
+The Rust runtime (`vox-core`) exposes virtual connections as first-class
 session operations:
 
 1. Create a session and keep `session.run()` running.
@@ -587,24 +587,24 @@ session operations:
 Example (open outbound):
 
 ```rust
-let (mut session, root_handle, session_handle) = roam_core::session::initiator(conduit)
+let (mut session, root_handle, session_handle) = vox_core::session::initiator(conduit)
     .establish()
     .await?;
 
-let mut root_driver = roam_core::Driver::new(root_handle, root_dispatcher, roam_types::Parity::Odd);
+let mut root_driver = vox_core::Driver::new(root_handle, root_dispatcher, vox_types::Parity::Odd);
 let root_caller = root_driver.caller();
 
 let vconn_handle = session_handle
     .open_connection(
-        roam_types::ConnectionSettings {
-            parity: roam_types::Parity::Odd,
+        vox_types::ConnectionSettings {
+            parity: vox_types::Parity::Odd,
             max_concurrent_requests: 64,
         },
         vec![],
     )
     .await?;
 
-let mut vconn_driver = roam_core::Driver::new(vconn_handle, vconn_dispatcher, roam_types::Parity::Odd);
+let mut vconn_driver = vox_core::Driver::new(vconn_handle, vconn_dispatcher, vox_types::Parity::Odd);
 let vconn_caller = vconn_driver.caller();
 ```
 
@@ -615,7 +615,7 @@ caller context than the root connection.
 Example (accept inbound):
 
 ```rust
-let (mut session, root_handle, _session_handle) = roam_core::session::acceptor(conduit)
+let (mut session, root_handle, _session_handle) = vox_core::session::acceptor(conduit)
     .on_connection(my_connection_acceptor)
     .establish()
     .await?;

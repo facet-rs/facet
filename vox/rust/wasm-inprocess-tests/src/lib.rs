@@ -1,4 +1,4 @@
-//! Browser tests for roam in-process transport (Rust WASM acceptor).
+//! Browser tests for vox in-process transport (Rust WASM acceptor).
 //!
 //! This crate only compiles for wasm32 target. Build with:
 //! ```
@@ -7,13 +7,13 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use roam_core::acceptor_on;
-use roam_inprocess::JsInProcessLink;
-use roam_types::{Rx, Tx};
 use spec_proto::{
     Canvas, Color, Config, LookupError, MathError, Measurement, Message, Person, Point, Profile,
     Record, Rectangle, Shape, Status, Tag, TaggedPoint, Testbed, TestbedClient, TestbedDispatcher,
 };
+use vox_core::acceptor_on;
+use vox_inprocess::JsInProcessLink;
+use vox_types::{Rx, Tx};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -239,7 +239,7 @@ impl Testbed for TestbedService {
     }
 }
 
-/// Start a roam acceptor (server) using the in-process transport.
+/// Start a vox acceptor (server) using the in-process transport.
 ///
 /// Returns a `JsInProcessLink` that JS should wire to an `InProcessTransport`.
 /// The acceptor runs in the background via `wasm_bindgen_futures::spawn_local`.

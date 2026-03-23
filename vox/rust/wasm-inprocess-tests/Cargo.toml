@@ -9,9 +9,9 @@ crate-type = ["cdylib"]
 
 # All dependencies are wasm32-only since the entire crate is cfg-gated
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-roam-inprocess.workspace = true
-roam-core.workspace = true
-roam-types.workspace = true
+vox-inprocess.workspace = true
+vox-core.workspace = true
+vox-types.workspace = true
 spec-proto.workspace = true
 
 js-sys.workspace = true

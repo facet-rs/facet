@@ -3,7 +3,7 @@
 ## `sum`
 
 ```rust
-#[roam::service]
+#[vox::service]
 trait Adder {
     async fn sum(&self, numbers: Rx<i32>) -> i64;
 }
@@ -21,7 +21,7 @@ Generated client method:
 
 ```rust
 impl AdderClient {
-    async fn sum(&self, numbers: Rx<i32>) -> Result<ResponseParts<i64>, RoamError>;
+    async fn sum(&self, numbers: Rx<i32>) -> Result<ResponseParts<i64>, VoxError>;
 }
 ```
 
@@ -31,7 +31,7 @@ values, then returns the total.
 The caller creates a channel pair:
 
 ```rust
-let (tx, rx) = roam::channel::<i32>();
+let (tx, rx) = vox::channel::<i32>();
 ```
 
 The caller keeps `tx` to send items. It passes `rx` to the call:
@@ -47,7 +47,7 @@ needs to bind `tx` so the caller can send into the same channel.
 ## `start_ingester` — Rx in return position
 
 ```rust
-#[roam::service]
+#[vox::service]
 trait Pipeline {
     async fn start_ingester(&self) -> Rx<Job>;
 }
@@ -65,7 +65,7 @@ Generated client method:
 
 ```rust
 impl PipelineClient {
-    async fn start_ingester(&self) -> Result<ResponseParts<Rx<Job>>, RoamError>;
+    async fn start_ingester(&self) -> Result<ResponseParts<Rx<Job>>, VoxError>;
 }
 ```
 
@@ -89,7 +89,7 @@ channel ID. Position affects both who allocates the ID and the data direction.
 ## `generate` — Tx in arg position
 
 ```rust
-#[roam::service]
+#[vox::service]
 trait Generator {
     async fn generate(&self, count: u32, output: Tx<i32>);
 }
@@ -104,7 +104,7 @@ The caller creates `(tx, rx) = channel()`, passes `tx` to the call, keeps
 ## `open_log` — Tx in return position
 
 ```rust
-#[roam::service]
+#[vox::service]
 trait Logger {
     async fn open_log(&self, name: String) -> Tx<LogEntry>;
 }

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cross-language test matrix for roam RPC
+# Cross-language test matrix for vox RPC
 # Tests all 16 (client, server) pairs: {Rust, Go, TypeScript, Swift} × {Rust, Go, TypeScript, Swift}
 
 set -eu

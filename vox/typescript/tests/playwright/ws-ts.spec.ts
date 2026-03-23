@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import { startWsServer } from "./ws-server";
 
-// Root of the roam project
+// Root of the vox project
 const projectRoot = new URL("../../../", import.meta.url).pathname;
 
 let wsServer: ChildProcess | null = null;

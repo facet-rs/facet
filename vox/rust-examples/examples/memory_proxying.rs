@@ -1,5 +1,5 @@
 use eyre::{Result, WrapErr, eyre};
-use roam::{
+use vox::{
     AcceptedConnection, ConnectionAcceptor, ConnectionId, ConnectionSettings, Driver, DriverCaller,
     Metadata, MetadataEntry, MetadataFlags, MetadataValue, Parity, SessionHandle,
 };
@@ -7,7 +7,7 @@ use roam::{
 const PROXY_SERVICE: &str = "math_text_proxy";
 const UPSTREAM_SERVICE: &str = "math_text_upstream";
 
-#[roam::service]
+#[vox::service]
 trait MathText {
     async fn add(&self, a: i32, b: i32) -> Result<i32, String>;
     async fn reverse(&self, value: String) -> Result<String, String>;
@@ -99,7 +99,7 @@ impl ConnectionAcceptor for ProxyAcceptor {
                     {
                         Ok(upstream_conn) => {
                             println!("[host] upstream vconn to guest-b is ready");
-                            roam::proxy_connections(incoming_handle, upstream_conn).await;
+                            vox::proxy_connections(incoming_handle, upstream_conn).await;
                         }
                         Err(err) => {
                             let msg = format!("failed to open upstream vconn: {err:?}");
@@ -148,12 +148,12 @@ fn main() -> Result<()> {
 }
 
 async fn run_demo() -> Result<()> {
-    let (host_a_link, guest_a_link) = roam::memory_link_pair(64);
-    let (host_b_link, guest_b_link) = roam::memory_link_pair(64);
+    let (host_a_link, guest_a_link) = vox::memory_link_pair(64);
+    let (host_b_link, guest_b_link) = vox::memory_link_pair(64);
 
     println!("[guest-b] starting root session");
     let guest_b_task = tokio::spawn(async move {
-        let (guest_b_root_guard, _) = roam::acceptor_on_link(
+        let (guest_b_root_guard, _) = vox::acceptor_on_link(
             guest_b_link,
             ConnectionSettings {
                 parity: Parity::Even,
@@ -171,7 +171,7 @@ async fn run_demo() -> Result<()> {
     });
 
     println!("[host] establishing session to guest-b");
-    let (_host_root_to_b_guard, upstream_session_handle) = roam::initiator_on_link(
+    let (_host_root_to_b_guard, upstream_session_handle) = vox::initiator_on_link(
         host_b_link,
         ConnectionSettings {
             parity: Parity::Odd,
@@ -190,7 +190,7 @@ async fn run_demo() -> Result<()> {
         upstream_session: upstream_session_handle,
     };
     let host_for_a_task = tokio::spawn(async move {
-        let (host_root_for_a_guard, _) = roam::acceptor_on_link(
+        let (host_root_for_a_guard, _) = vox::acceptor_on_link(
             host_a_link,
             ConnectionSettings {
                 parity: Parity::Even,
@@ -208,7 +208,7 @@ async fn run_demo() -> Result<()> {
     });
 
     println!("[guest-a] establishing root session to host");
-    let (_guest_a_root_guard, guest_a_session_handle) = roam::initiator_on_link(
+    let (_guest_a_root_guard, guest_a_session_handle) = vox::initiator_on_link(
         guest_a_link,
         ConnectionSettings {
             parity: Parity::Odd,

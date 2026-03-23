@@ -1,15 +1,15 @@
-# roam
+# vox
 
 A Rust-native RPC protocol that's going places.
 
-And remember: roam wasn't built in a day.
+And remember: vox wasn't built in a day.
 
-## What is roam?
+## What is vox?
 
-roam is a **Rust-native** RPC protocol. Rust is the lowest common denominator — there's no independent schema language. Rust traits *are* the schema:
+vox is a **Rust-native** RPC protocol. Rust is the lowest common denominator — there's no independent schema language. Rust traits *are* the schema:
 
 ```rust
-#[roam::service]
+#[vox::service]
 pub trait Calculator {
     /// Infallible method — just returns a value
     async fn add(&self, a: i32, b: i32) -> i32;
@@ -113,7 +113,7 @@ let dispatcher = CalculatorDispatcher::new(handler)
 Built-in OpenTelemetry integration with distributed tracing:
 
 ```rust
-use roam_telemetry::{TelemetryMiddleware, OtlpExporter, TracingCaller};
+use vox_telemetry::{TelemetryMiddleware, OtlpExporter, TracingCaller};
 
 // Server side: export spans to Tempo/Jaeger
 let exporter = OtlpExporter::new("http://tempo:4318/v1/traces", "my-service");

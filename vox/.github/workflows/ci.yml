@@ -79,8 +79,8 @@ jobs:
         # Note: Miri doesn't support all libc calls, so some tests may need to be skipped
         continue-on-error: true
 
-      - name: Run Miri (roam-shm)
-        run: cargo +nightly miri test -p roam-shm
+      - name: Run Miri (vox-shm)
+        run: cargo +nightly miri test -p vox-shm
         continue-on-error: true
 
   rust-loom:
@@ -243,16 +243,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build Rust FFI staticlib
-        run: cargo build --release -p roam-shm-ffi
+        run: cargo build --release -p vox-shm-ffi
 
       - name: Build subject
         run: swift build -c release --package-path swift/subject
 
-      - name: Run RoamRuntime Swift tests
+      - name: Run VoxRuntime Swift tests
         run: swift test --no-parallel -Xlinker -L$(pwd)/target/release
 
       - name: Build Swift shm-guest-client
-        run: swift build -c debug --package-path swift/roam-runtime --product shm-guest-client
+        run: swift build -c debug --package-path swift/vox-runtime --product shm-guest-client
 
       - name: Run SHM cross-language guest regression tests (via spec-tests)
         run: >
@@ -301,12 +301,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build Rust FFI staticlib
-        run: cargo build --release -p roam-shm-ffi
+        run: cargo build --release -p vox-shm-ffi
 
       - name: Build subject
         run: swift build -c release --package-path swift/subject
 
-      - name: Run RoamRuntime Swift tests
+      - name: Run VoxRuntime Swift tests
         run: swift test --no-parallel -Xlinker -L$(pwd)/target/release
 
       - name: Run Swift TCP subject matrix tests
@@ -333,8 +333,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Check roam-websocket for wasm32
-        run: cargo check --target wasm32-unknown-unknown -p roam-websocket
+      - name: Check vox-websocket for wasm32
+        run: cargo check --target wasm32-unknown-unknown -p vox-websocket
 
       - name: Check wasm-browser-tests for wasm32
         run: cargo check --target wasm32-unknown-unknown -p wasm-browser-tests
@@ -398,5 +398,5 @@ jobs:
       - name: Build subject
         run: cargo build -p subject-rust
 
-      - name: Test workspace
-        run: cargo nextest run --workspace
+      - name: Test workspace (Rust-only, no cross-language)
+        run: cargo nextest run --workspace -E 'not test(/lang_.*(typescript|swift)/)'

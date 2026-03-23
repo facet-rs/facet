@@ -1,16 +1,16 @@
 use std::convert::Infallible;
 
 use eyre::{Result, WrapErr, eyre};
-use roam::{Call, Rx, Tx, channel};
-use roam_stream::StreamLink;
+use vox::{Call, Rx, Tx, channel};
+use vox_stream::StreamLink;
 
-#[roam::service]
+#[vox::service]
 trait WordLab {
     // Borrowed arg.
     async fn is_short(&self, word: &str) -> bool;
 
     // Borrowed return.
-    async fn classify(&self, word: String) -> &'roam str;
+    async fn classify(&self, word: String) -> &'vox str;
 
     // Borrowed arg + bidirectional channels.
     async fn transform(&self, prefix: &str, input: Rx<String>, output: Tx<String>) -> u32;
@@ -24,7 +24,7 @@ impl WordLab for WordLabService {
         word.len() <= 4
     }
 
-    async fn classify<'roam>(&self, call: impl Call<'roam, &'roam str, Infallible>, word: String) {
+    async fn classify<'vox>(&self, call: impl Call<'vox, &'vox str, Infallible>, word: String) {
         let label = if word.len() <= 4 { "short" } else { "long" };
         call.ok(label).await;
     }
@@ -67,7 +67,7 @@ async fn run_demo() -> Result<()> {
         println!("[server] waiting for client");
         let (socket, _) = listener.accept().await.expect("accept");
         println!("[server] client connected; establishing session");
-        let (server_caller_guard, _) = roam::acceptor_on(StreamLink::tcp(socket))
+        let (server_caller_guard, _) = vox::acceptor_on(StreamLink::tcp(socket))
             .establish::<WordLabClient>(WordLabDispatcher::new(WordLabService))
             .await
             .expect("server establish");
@@ -79,7 +79,7 @@ async fn run_demo() -> Result<()> {
     let socket = tokio::net::TcpStream::connect(addr)
         .await
         .wrap_err("connecting client socket")?;
-    let (client, _) = roam::initiator_on(StreamLink::tcp(socket), roam::TransportMode::Bare)
+    let (client, _) = vox::initiator_on(StreamLink::tcp(socket), vox::TransportMode::Bare)
         .establish::<WordLabClient>(())
         .await
         .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;

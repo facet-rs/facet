@@ -1,4 +1,4 @@
-//! Browser tests for roam Rust/Wasm client.
+//! Browser tests for vox Rust/Wasm client.
 //!
 //! This crate only compiles for wasm32 target. Build with:
 //! ```
@@ -7,9 +7,9 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use roam_core::{TransportMode, initiator_on};
-use roam_websocket::WsLink;
 use spec_proto::{Color, LookupError, MathError, Message, Point, Rectangle, Shape, TestbedClient};
+use vox_core::{TransportMode, initiator_on};
+use vox_websocket::WsLink;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -504,7 +504,7 @@ async fn run_fallible_tests(client: &TestbedClient, results: &mut Vec<TestResult
     // Test: divide (error - division by zero)
     console_log!("Testing divide (error)...");
     match client.divide(10, 0).await {
-        Err(roam_types::RoamError::User(MathError::DivisionByZero)) => {
+        Err(vox_types::VoxError::User(MathError::DivisionByZero)) => {
             results.push(TestResult {
                 name: "divide_error".into(),
                 passed: true,
@@ -563,7 +563,7 @@ async fn run_fallible_tests(client: &TestbedClient, results: &mut Vec<TestResult
     // Test: lookup (error - not found)
     console_log!("Testing lookup (error)...");
     match client.lookup(999).await {
-        Err(roam_types::RoamError::User(LookupError::NotFound)) => {
+        Err(vox_types::VoxError::User(LookupError::NotFound)) => {
             results.push(TestResult {
                 name: "lookup_error".into(),
                 passed: true,

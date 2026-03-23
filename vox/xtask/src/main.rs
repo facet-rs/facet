@@ -1,4 +1,4 @@
-//! xtask: Development tasks for roam
+//! xtask: Development tasks for vox
 //!
 //! Run with: `cargo xtask <command>`
 
@@ -8,7 +8,7 @@ use facet::Facet;
 use figue as args;
 use xshell::{Shell, cmd};
 
-/// Development tasks for roam
+/// Development tasks for vox
 #[derive(Facet)]
 struct Cli {
     #[facet(args::subcommand)]
@@ -326,7 +326,7 @@ fn codegen_typescript(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
 
     // Generate TypeScript for all services in spec-proto
     for service in spec_proto::all_services() {
-        let ts = roam_codegen::targets::typescript::generate_service(service);
+        let ts = vox_codegen::targets::typescript::generate_service(service);
         let filename = format!("{}.generated.ts", service.service_name.to_lowercase());
         let out_path = out_dir.join(&filename);
         write_if_changed(&out_path, fmt_typescript(&out_path, ts))?;
@@ -335,7 +335,7 @@ fn codegen_typescript(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
     // Generate TypeScript for the evolved testbed (schema compat testing)
     {
         let evolved = spec_proto::evolved::testbed_service_descriptor();
-        let ts = roam_codegen::targets::typescript::generate_service(evolved);
+        let ts = vox_codegen::targets::typescript::generate_service(evolved);
         let out_path = out_dir.join("testbed_evolved.generated.ts");
         write_if_changed(&out_path, fmt_typescript(&out_path, ts))?;
     }
@@ -348,13 +348,13 @@ fn codegen_typescript(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
 fn codegen_typescript_wire(
     workspace_root: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use roam_codegen::targets::typescript::wire::*;
-    use roam_types as rt;
+    use vox_codegen::targets::typescript::wire::*;
+    use vox_types as rt;
 
     let out_path = workspace_root
         .join("typescript")
         .join("packages")
-        .join("roam-wire")
+        .join("vox-wire")
         .join("src")
         .join("wire.generated.ts");
 
@@ -385,25 +385,25 @@ fn codegen_swift(
 
     let testbed = spec_proto::testbed_service_descriptor();
     if swift && !swift_client && !swift_server {
-        let code = roam_codegen::targets::swift::generate_service(testbed);
+        let code = vox_codegen::targets::swift::generate_service(testbed);
         let out_path = out_dir.join("Testbed.swift");
         write_if_changed(&out_path, fmt_swift(&out_path, code))?;
         return Ok(());
     }
 
     if swift_client || (swift && !swift_server) {
-        let code = roam_codegen::targets::swift::generate_service_with_bindings(
+        let code = vox_codegen::targets::swift::generate_service_with_bindings(
             testbed,
-            roam_codegen::targets::swift::SwiftBindings::Client,
+            vox_codegen::targets::swift::SwiftBindings::Client,
         );
         let out_path = out_dir.join("TestbedClient.swift");
         write_if_changed(&out_path, fmt_swift(&out_path, code))?;
     }
 
     if swift_server || (swift && !swift_client) {
-        let code = roam_codegen::targets::swift::generate_service_with_bindings(
+        let code = vox_codegen::targets::swift::generate_service_with_bindings(
             testbed,
-            roam_codegen::targets::swift::SwiftBindings::Server,
+            vox_codegen::targets::swift::SwiftBindings::Server,
         );
         let out_path = out_dir.join("TestbedServer.swift");
         write_if_changed(&out_path, fmt_swift(&out_path, code))?;
@@ -413,14 +413,14 @@ fn codegen_swift(
 }
 
 fn codegen_swift_wire(workspace_root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    use roam_codegen::targets::swift::wire::{WireType, generate_wire_types};
-    use roam_types as rt;
+    use vox_codegen::targets::swift::wire::{WireType, generate_wire_types};
+    use vox_types as rt;
 
     let out_path = workspace_root
         .join("swift")
-        .join("roam-runtime")
+        .join("vox-runtime")
         .join("Sources")
-        .join("RoamRuntime")
+        .join("VoxRuntime")
         .join("Wire.swift");
 
     macro_rules! wire_type {

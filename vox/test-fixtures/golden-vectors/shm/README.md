@@ -1,12 +1,12 @@
 # SHM Golden Vectors
 
-These fixtures are generated from the active `rust/roam-shm` implementation
+These fixtures are generated from the active `rust/vox-shm` implementation
 for the current SHM transport spec (`docs/content/spec/shm.md`).
 
 Regenerate with:
 
 ```bash
-cargo run -p roam-shm --bin swift_shm_fixtures
+cargo run -p vox-shm --bin swift_shm_fixtures
 ```
 
 Outputs:

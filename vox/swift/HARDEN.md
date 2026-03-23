@@ -1,4 +1,4 @@
-# Roam Swift Hardening Guide
+# Vox Swift Hardening Guide
 
 This guide defines non-optional hardening rules for Swift runtime code under `swift/`.
 The goal is to prevent crashy boundary bugs, opaque transport failures, and silent
@@ -56,7 +56,7 @@ policy + automated checks:
 Run:
 
 ```bash
-cd swift/roam-runtime
+cd swift/vox-runtime
 ./scripts/check-hardening.sh
 ```
 

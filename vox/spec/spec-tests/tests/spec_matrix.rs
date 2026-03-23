@@ -1130,167 +1130,134 @@ mod lang_swift_transport_tcp {
     const SPEC: SubjectSpec = SUBJECT_SWIFT_TCP;
     mod direction_harness_to_subject {
         use super::*;
-        #[ignore]
         #[test]
         fn rpc_echo_roundtrip() {
             testbed::run_rpc_echo_roundtrip(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_user_error_roundtrip() {
             testbed::run_rpc_user_error_roundtrip(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_pipelining_multiple_requests() {
             testbed::run_rpc_pipelining_multiple_requests(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_reverse_roundtrip() {
             testbed::run_rpc_reverse_roundtrip(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_lookup_user_error() {
             testbed::run_rpc_lookup_user_error(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_complex_struct_echo() {
             testbed::run_rpc_complex_struct_echo(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_optional_field() {
             testbed::run_rpc_optional_field(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_nested_struct() {
             testbed::run_rpc_nested_struct(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_option_return() {
             testbed::run_rpc_option_return(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_enum_struct_variants() {
             testbed::run_rpc_enum_struct_variants(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_vec_of_structs() {
             testbed::run_rpc_vec_of_structs(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_enum_newtype_variants() {
             testbed::run_rpc_enum_newtype_variants(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_vec_return() {
             testbed::run_rpc_vec_return(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_tuple_type() {
             testbed::run_rpc_tuple_type(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_divide_overflow() {
             testbed::run_rpc_divide_overflow(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_lookup_found() {
             testbed::run_rpc_lookup_found(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_lookup_access_denied() {
             testbed::run_rpc_lookup_access_denied(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_bytes() {
             testbed::run_rpc_echo_bytes(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_bool() {
             testbed::run_rpc_echo_bool(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_u64() {
             testbed::run_rpc_echo_u64(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_option_string() {
             testbed::run_rpc_echo_option_string(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_describe_point() {
             testbed::run_rpc_describe_point(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_all_colors() {
             testbed::run_rpc_all_colors(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_shape() {
             testbed::run_rpc_echo_shape(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_status() {
             testbed::run_rpc_echo_status(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_tag() {
             testbed::run_rpc_echo_tag(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_pipelining_10_concurrent() {
             testbed::run_rpc_pipelining_10_concurrent(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_channeling_large_stream() {
             testbed::run_rpc_channeling_large_stream(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_channeling_sum_large() {
             testbed::run_rpc_channeling_sum_large(SPEC);
         }
-        #[ignore]
         #[test]
         fn channeling_generate_server_to_client() {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
-        #[ignore]
         #[test]
         fn binary_payload_sizes() {
             binary_payloads::run_subject_process_message_binary_payload_sizes(SPEC);
         }
-        #[ignore]
         #[test]
         fn channel_retry_non_idem_fails_closed() {
             channel_retry::run_channel_retry_non_idem_fails_closed(SPEC);
         }
-        #[ignore]
         #[test]
         fn channel_retry_idem_reruns_with_fresh_channels() {
             channel_retry::run_channel_retry_idem_reruns_with_fresh_channels(SPEC);
@@ -1298,157 +1265,126 @@ mod lang_swift_transport_tcp {
     }
     mod direction_subject_to_harness {
         use super::*;
-        #[ignore]
         #[test]
         fn channeling_sum_client_to_server() {
             channeling::run_channeling_sum_client_to_server(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo() {
             testbed::run_subject_calls_echo(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_shape_area() {
             testbed::run_subject_calls_shape_area(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_create_canvas() {
             testbed::run_subject_calls_create_canvas(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_process_message() {
             testbed::run_subject_calls_process_message(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_reverse() {
             testbed::run_subject_calls_reverse(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_divide_success() {
             testbed::run_subject_calls_divide_success(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_divide_zero() {
             testbed::run_subject_calls_divide_zero(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_divide_overflow() {
             testbed::run_subject_calls_divide_overflow(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_lookup_found() {
             testbed::run_subject_calls_lookup_found(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_lookup_found_no_email() {
             testbed::run_subject_calls_lookup_found_no_email(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_lookup_not_found() {
             testbed::run_subject_calls_lookup_not_found(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_lookup_access_denied() {
             testbed::run_subject_calls_lookup_access_denied(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_point() {
             testbed::run_subject_calls_echo_point(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_create_person() {
             testbed::run_subject_calls_create_person(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_rectangle_area() {
             testbed::run_subject_calls_rectangle_area(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_parse_color() {
             testbed::run_subject_calls_parse_color(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_get_points() {
             testbed::run_subject_calls_get_points(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_swap_pair() {
             testbed::run_subject_calls_swap_pair(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_bytes() {
             testbed::run_subject_calls_echo_bytes(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_bool() {
             testbed::run_subject_calls_echo_bool(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_u64() {
             testbed::run_subject_calls_echo_u64(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_option_string() {
             testbed::run_subject_calls_echo_option_string(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_describe_point() {
             testbed::run_subject_calls_describe_point(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_all_colors() {
             testbed::run_subject_calls_all_colors(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_shape() {
             testbed::run_subject_calls_echo_shape(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_pipelining() {
             testbed::run_subject_calls_pipelining(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_sum_large() {
             testbed::run_subject_calls_sum_large(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_generate_large() {
             testbed::run_subject_calls_generate_large(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_sum_client_to_server() {
             testbed::run_subject_calls_sum_client_to_server(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_transform_bidi() {
             testbed::run_subject_calls_transform_bidi(SPEC);
@@ -1456,7 +1392,6 @@ mod lang_swift_transport_tcp {
     }
     mod direction_bidirectional {
         use super::*;
-        #[ignore]
         #[test]
         fn channeling_transform() {
             channeling::run_channeling_transform_bidirectional(SPEC);
@@ -1468,167 +1403,134 @@ mod lang_swift_transport_shm_guest_mode {
     const SPEC: SubjectSpec = SUBJECT_SWIFT_SHM_GUEST;
     mod direction_harness_to_subject {
         use super::*;
-        #[ignore]
         #[test]
         fn rpc_echo_roundtrip() {
             testbed::run_rpc_echo_roundtrip(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_user_error_roundtrip() {
             testbed::run_rpc_user_error_roundtrip(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_pipelining_multiple_requests() {
             testbed::run_rpc_pipelining_multiple_requests(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_reverse_roundtrip() {
             testbed::run_rpc_reverse_roundtrip(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_lookup_user_error() {
             testbed::run_rpc_lookup_user_error(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_complex_struct_echo() {
             testbed::run_rpc_complex_struct_echo(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_optional_field() {
             testbed::run_rpc_optional_field(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_nested_struct() {
             testbed::run_rpc_nested_struct(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_option_return() {
             testbed::run_rpc_option_return(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_enum_struct_variants() {
             testbed::run_rpc_enum_struct_variants(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_vec_of_structs() {
             testbed::run_rpc_vec_of_structs(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_enum_newtype_variants() {
             testbed::run_rpc_enum_newtype_variants(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_vec_return() {
             testbed::run_rpc_vec_return(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_tuple_type() {
             testbed::run_rpc_tuple_type(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_divide_overflow() {
             testbed::run_rpc_divide_overflow(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_lookup_found() {
             testbed::run_rpc_lookup_found(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_lookup_access_denied() {
             testbed::run_rpc_lookup_access_denied(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_bytes() {
             testbed::run_rpc_echo_bytes(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_bool() {
             testbed::run_rpc_echo_bool(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_u64() {
             testbed::run_rpc_echo_u64(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_option_string() {
             testbed::run_rpc_echo_option_string(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_describe_point() {
             testbed::run_rpc_describe_point(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_all_colors() {
             testbed::run_rpc_all_colors(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_shape() {
             testbed::run_rpc_echo_shape(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_status() {
             testbed::run_rpc_echo_status(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_tag() {
             testbed::run_rpc_echo_tag(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_pipelining_10_concurrent() {
             testbed::run_rpc_pipelining_10_concurrent(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_channeling_large_stream() {
             testbed::run_rpc_channeling_large_stream(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_channeling_sum_large() {
             testbed::run_rpc_channeling_sum_large(SPEC);
         }
-        #[ignore]
         #[test]
         fn channeling_generate_server_to_client() {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
-        #[ignore]
         #[test]
         fn binary_payload_sizes() {
             binary_payloads::run_subject_process_message_binary_payload_sizes(SPEC);
         }
-        #[ignore]
         #[test]
         fn channel_retry_non_idem_fails_closed() {
             channel_retry::run_channel_retry_non_idem_fails_closed(SPEC);
         }
-        #[ignore]
         #[test]
         fn channel_retry_idem_reruns_with_fresh_channels() {
             channel_retry::run_channel_retry_idem_reruns_with_fresh_channels(SPEC);
@@ -1636,157 +1538,126 @@ mod lang_swift_transport_shm_guest_mode {
     }
     mod direction_subject_to_harness {
         use super::*;
-        #[ignore]
         #[test]
         fn channeling_sum_client_to_server() {
             channeling::run_channeling_sum_client_to_server(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo() {
             testbed::run_subject_calls_echo(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_shape_area() {
             testbed::run_subject_calls_shape_area(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_create_canvas() {
             testbed::run_subject_calls_create_canvas(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_process_message() {
             testbed::run_subject_calls_process_message(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_reverse() {
             testbed::run_subject_calls_reverse(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_divide_success() {
             testbed::run_subject_calls_divide_success(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_divide_zero() {
             testbed::run_subject_calls_divide_zero(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_divide_overflow() {
             testbed::run_subject_calls_divide_overflow(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_lookup_found() {
             testbed::run_subject_calls_lookup_found(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_lookup_found_no_email() {
             testbed::run_subject_calls_lookup_found_no_email(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_lookup_not_found() {
             testbed::run_subject_calls_lookup_not_found(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_lookup_access_denied() {
             testbed::run_subject_calls_lookup_access_denied(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_point() {
             testbed::run_subject_calls_echo_point(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_create_person() {
             testbed::run_subject_calls_create_person(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_rectangle_area() {
             testbed::run_subject_calls_rectangle_area(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_parse_color() {
             testbed::run_subject_calls_parse_color(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_get_points() {
             testbed::run_subject_calls_get_points(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_swap_pair() {
             testbed::run_subject_calls_swap_pair(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_bytes() {
             testbed::run_subject_calls_echo_bytes(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_bool() {
             testbed::run_subject_calls_echo_bool(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_u64() {
             testbed::run_subject_calls_echo_u64(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_option_string() {
             testbed::run_subject_calls_echo_option_string(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_describe_point() {
             testbed::run_subject_calls_describe_point(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_all_colors() {
             testbed::run_subject_calls_all_colors(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_shape() {
             testbed::run_subject_calls_echo_shape(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_pipelining() {
             testbed::run_subject_calls_pipelining(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_sum_large() {
             testbed::run_subject_calls_sum_large(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_generate_large() {
             testbed::run_subject_calls_generate_large(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_sum_client_to_server() {
             testbed::run_subject_calls_sum_client_to_server(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_transform_bidi() {
             testbed::run_subject_calls_transform_bidi(SPEC);
@@ -1794,7 +1665,6 @@ mod lang_swift_transport_shm_guest_mode {
     }
     mod direction_bidirectional {
         use super::*;
-        #[ignore]
         #[test]
         fn channeling_transform() {
             channeling::run_channeling_transform_bidirectional(SPEC);
@@ -1802,7 +1672,6 @@ mod lang_swift_transport_shm_guest_mode {
     }
     mod direction_harness_to_subject_shm_only {
         use super::*;
-        #[ignore]
         #[test]
         fn binary_payload_cutover_boundaries() {
             binary_payloads::run_subject_process_message_binary_payload_shm_cutover_boundaries(
@@ -1816,167 +1685,134 @@ mod lang_swift_transport_shm_host_mode {
     const SPEC: SubjectSpec = SUBJECT_SWIFT_SHM_HOST;
     mod direction_harness_to_subject {
         use super::*;
-        #[ignore]
         #[test]
         fn rpc_echo_roundtrip() {
             testbed::run_rpc_echo_roundtrip(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_user_error_roundtrip() {
             testbed::run_rpc_user_error_roundtrip(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_pipelining_multiple_requests() {
             testbed::run_rpc_pipelining_multiple_requests(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_reverse_roundtrip() {
             testbed::run_rpc_reverse_roundtrip(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_lookup_user_error() {
             testbed::run_rpc_lookup_user_error(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_complex_struct_echo() {
             testbed::run_rpc_complex_struct_echo(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_optional_field() {
             testbed::run_rpc_optional_field(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_nested_struct() {
             testbed::run_rpc_nested_struct(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_option_return() {
             testbed::run_rpc_option_return(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_enum_struct_variants() {
             testbed::run_rpc_enum_struct_variants(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_vec_of_structs() {
             testbed::run_rpc_vec_of_structs(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_enum_newtype_variants() {
             testbed::run_rpc_enum_newtype_variants(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_vec_return() {
             testbed::run_rpc_vec_return(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_tuple_type() {
             testbed::run_rpc_tuple_type(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_divide_overflow() {
             testbed::run_rpc_divide_overflow(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_lookup_found() {
             testbed::run_rpc_lookup_found(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_lookup_access_denied() {
             testbed::run_rpc_lookup_access_denied(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_bytes() {
             testbed::run_rpc_echo_bytes(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_bool() {
             testbed::run_rpc_echo_bool(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_u64() {
             testbed::run_rpc_echo_u64(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_option_string() {
             testbed::run_rpc_echo_option_string(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_describe_point() {
             testbed::run_rpc_describe_point(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_all_colors() {
             testbed::run_rpc_all_colors(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_shape() {
             testbed::run_rpc_echo_shape(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_status() {
             testbed::run_rpc_echo_status(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_echo_tag() {
             testbed::run_rpc_echo_tag(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_pipelining_10_concurrent() {
             testbed::run_rpc_pipelining_10_concurrent(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_channeling_large_stream() {
             testbed::run_rpc_channeling_large_stream(SPEC);
         }
-        #[ignore]
         #[test]
         fn rpc_channeling_sum_large() {
             testbed::run_rpc_channeling_sum_large(SPEC);
         }
-        #[ignore]
         #[test]
         fn channeling_generate_server_to_client() {
             channeling::run_channeling_generate_server_to_client(SPEC);
         }
-        #[ignore]
         #[test]
         fn binary_payload_sizes() {
             binary_payloads::run_subject_process_message_binary_payload_sizes(SPEC);
         }
-        #[ignore]
         #[test]
         fn channel_retry_non_idem_fails_closed() {
             channel_retry::run_channel_retry_non_idem_fails_closed(SPEC);
         }
-        #[ignore]
         #[test]
         fn channel_retry_idem_reruns_with_fresh_channels() {
             channel_retry::run_channel_retry_idem_reruns_with_fresh_channels(SPEC);
@@ -1984,157 +1820,126 @@ mod lang_swift_transport_shm_host_mode {
     }
     mod direction_subject_to_harness {
         use super::*;
-        #[ignore]
         #[test]
         fn channeling_sum_client_to_server() {
             channeling::run_channeling_sum_client_to_server(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo() {
             testbed::run_subject_calls_echo(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_shape_area() {
             testbed::run_subject_calls_shape_area(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_create_canvas() {
             testbed::run_subject_calls_create_canvas(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_process_message() {
             testbed::run_subject_calls_process_message(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_reverse() {
             testbed::run_subject_calls_reverse(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_divide_success() {
             testbed::run_subject_calls_divide_success(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_divide_zero() {
             testbed::run_subject_calls_divide_zero(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_divide_overflow() {
             testbed::run_subject_calls_divide_overflow(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_lookup_found() {
             testbed::run_subject_calls_lookup_found(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_lookup_found_no_email() {
             testbed::run_subject_calls_lookup_found_no_email(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_lookup_not_found() {
             testbed::run_subject_calls_lookup_not_found(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_lookup_access_denied() {
             testbed::run_subject_calls_lookup_access_denied(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_point() {
             testbed::run_subject_calls_echo_point(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_create_person() {
             testbed::run_subject_calls_create_person(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_rectangle_area() {
             testbed::run_subject_calls_rectangle_area(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_parse_color() {
             testbed::run_subject_calls_parse_color(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_get_points() {
             testbed::run_subject_calls_get_points(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_swap_pair() {
             testbed::run_subject_calls_swap_pair(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_bytes() {
             testbed::run_subject_calls_echo_bytes(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_bool() {
             testbed::run_subject_calls_echo_bool(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_u64() {
             testbed::run_subject_calls_echo_u64(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_option_string() {
             testbed::run_subject_calls_echo_option_string(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_describe_point() {
             testbed::run_subject_calls_describe_point(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_all_colors() {
             testbed::run_subject_calls_all_colors(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_echo_shape() {
             testbed::run_subject_calls_echo_shape(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_pipelining() {
             testbed::run_subject_calls_pipelining(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_sum_large() {
             testbed::run_subject_calls_sum_large(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_generate_large() {
             testbed::run_subject_calls_generate_large(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_sum_client_to_server() {
             testbed::run_subject_calls_sum_client_to_server(SPEC);
         }
-        #[ignore]
         #[test]
         fn subject_calls_transform_bidi() {
             testbed::run_subject_calls_transform_bidi(SPEC);
@@ -2142,7 +1947,6 @@ mod lang_swift_transport_shm_host_mode {
     }
     mod direction_bidirectional {
         use super::*;
-        #[ignore]
         #[test]
         fn channeling_transform() {
             channeling::run_channeling_transform_bidirectional(SPEC);
@@ -2150,7 +1954,6 @@ mod lang_swift_transport_shm_host_mode {
     }
     mod direction_harness_to_subject_shm_only {
         use super::*;
-        #[ignore]
         #[test]
         fn binary_payload_cutover_boundaries() {
             binary_payloads::run_subject_process_message_binary_payload_shm_cutover_boundaries(
@@ -2538,152 +2341,122 @@ mod lang_rust_server_swift_client_tcp {
     use super::*;
     const SERVER: SubjectSpec = SUBJECT_RUST_TCP;
     const CLIENT: SubjectSpec = SUBJECT_SWIFT_TCP;
-    #[ignore]
     #[test]
     fn echo() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo");
     }
-    #[ignore]
     #[test]
     fn reverse() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "reverse");
     }
-    #[ignore]
     #[test]
     fn divide_success() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_success");
     }
-    #[ignore]
     #[test]
     fn divide_zero() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_zero");
     }
-    #[ignore]
     #[test]
     fn divide_overflow() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_overflow");
     }
-    #[ignore]
     #[test]
     fn lookup_found() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found");
     }
-    #[ignore]
     #[test]
     fn lookup_found_no_email() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found_no_email");
     }
-    #[ignore]
     #[test]
     fn lookup_not_found() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_not_found");
     }
-    #[ignore]
     #[test]
     fn lookup_access_denied() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_access_denied");
     }
-    #[ignore]
     #[test]
     fn echo_point() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_point");
     }
-    #[ignore]
     #[test]
     fn create_person() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_person");
     }
-    #[ignore]
     #[test]
     fn rectangle_area() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "rectangle_area");
     }
-    #[ignore]
     #[test]
     fn parse_color() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "parse_color");
     }
-    #[ignore]
     #[test]
     fn get_points() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "get_points");
     }
-    #[ignore]
     #[test]
     fn swap_pair() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "swap_pair");
     }
-    #[ignore]
     #[test]
     fn echo_bytes() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bytes");
     }
-    #[ignore]
     #[test]
     fn echo_bool() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bool");
     }
-    #[ignore]
     #[test]
     fn echo_u64() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_u64");
     }
-    #[ignore]
     #[test]
     fn echo_option_string() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_option_string");
     }
-    #[ignore]
     #[test]
     fn describe_point() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "describe_point");
     }
-    #[ignore]
     #[test]
     fn all_colors() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "all_colors");
     }
-    #[ignore]
     #[test]
     fn echo_shape() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_shape");
     }
-    #[ignore]
     #[test]
     fn shape_area() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "shape_area");
     }
-    #[ignore]
     #[test]
     fn create_canvas() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_canvas");
     }
-    #[ignore]
     #[test]
     fn process_message() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "process_message");
     }
-    #[ignore]
     #[test]
     fn pipelining() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "pipelining");
     }
-    #[ignore]
     #[test]
     fn sum_client_to_server() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_client_to_server");
     }
-    #[ignore]
     #[test]
     fn sum_large() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_large");
     }
-    #[ignore]
     #[test]
     fn generate_large() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "generate_large");
     }
-    #[ignore]
     #[test]
     fn transform_bidi() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "transform_bidi");
@@ -2693,152 +2466,122 @@ mod lang_swift_server_rust_client_tcp {
     use super::*;
     const SERVER: SubjectSpec = SUBJECT_SWIFT_TCP;
     const CLIENT: SubjectSpec = SUBJECT_RUST_TCP;
-    #[ignore]
     #[test]
     fn echo() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo");
     }
-    #[ignore]
     #[test]
     fn reverse() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "reverse");
     }
-    #[ignore]
     #[test]
     fn divide_success() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_success");
     }
-    #[ignore]
     #[test]
     fn divide_zero() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_zero");
     }
-    #[ignore]
     #[test]
     fn divide_overflow() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "divide_overflow");
     }
-    #[ignore]
     #[test]
     fn lookup_found() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found");
     }
-    #[ignore]
     #[test]
     fn lookup_found_no_email() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_found_no_email");
     }
-    #[ignore]
     #[test]
     fn lookup_not_found() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_not_found");
     }
-    #[ignore]
     #[test]
     fn lookup_access_denied() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "lookup_access_denied");
     }
-    #[ignore]
     #[test]
     fn echo_point() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_point");
     }
-    #[ignore]
     #[test]
     fn create_person() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_person");
     }
-    #[ignore]
     #[test]
     fn rectangle_area() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "rectangle_area");
     }
-    #[ignore]
     #[test]
     fn parse_color() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "parse_color");
     }
-    #[ignore]
     #[test]
     fn get_points() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "get_points");
     }
-    #[ignore]
     #[test]
     fn swap_pair() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "swap_pair");
     }
-    #[ignore]
     #[test]
     fn echo_bytes() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bytes");
     }
-    #[ignore]
     #[test]
     fn echo_bool() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_bool");
     }
-    #[ignore]
     #[test]
     fn echo_u64() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_u64");
     }
-    #[ignore]
     #[test]
     fn echo_option_string() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_option_string");
     }
-    #[ignore]
     #[test]
     fn describe_point() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "describe_point");
     }
-    #[ignore]
     #[test]
     fn all_colors() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "all_colors");
     }
-    #[ignore]
     #[test]
     fn echo_shape() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "echo_shape");
     }
-    #[ignore]
     #[test]
     fn shape_area() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "shape_area");
     }
-    #[ignore]
     #[test]
     fn create_canvas() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "create_canvas");
     }
-    #[ignore]
     #[test]
     fn process_message() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "process_message");
     }
-    #[ignore]
     #[test]
     fn pipelining() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "pipelining");
     }
-    #[ignore]
     #[test]
     fn sum_client_to_server() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_client_to_server");
     }
-    #[ignore]
     #[test]
     fn sum_large() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "sum_large");
     }
-    #[ignore]
     #[test]
     fn generate_large() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "generate_large");
     }
-    #[ignore]
     #[test]
     fn transform_bidi() {
         spec_tests::harness::run_cross_language_scenario(SERVER, CLIENT, "transform_bidi");

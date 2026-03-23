@@ -7,7 +7,7 @@ insert_anchor_links = "left"
 
 > r[zerocopy]
 >
-> Roam aims to minimize copies at every layer. This document specifies how
+> Vox aims to minimize copies at every layer. This document specifies how
 > payloads flow through the system — from user code, through serialization
 > and transport, to deserialization on the other side — and which link types
 > enable zero-copy at each stage.
@@ -160,7 +160,7 @@ insert_anchor_links = "left"
 > r[zerocopy.recv.websocket]
 >
 > **WebSocket links:** `recv` receives a complete message as `bytes::Bytes`,
-> converted to `Box<[u8]>`. One copy at the Roam link boundary (transport-
+> converted to `Box<[u8]>`. One copy at the Vox link boundary (transport-
 > internal buffering is not counted). Deserialization borrows from the box.
 
 > r[zerocopy.recv.inprocess]
@@ -455,7 +455,7 @@ insert_anchor_links = "left"
 
 > r[zerocopy.copies]
 >
-> Copy counts are measured at the Roam link boundary — copies internal to
+> Copy counts are measured at the Vox link boundary — copies internal to
 > the transport library (e.g. TLS decryption, WebSocket frame assembly) are
 > not included.
 >

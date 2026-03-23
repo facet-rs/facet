@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Roam are documented here.
+All notable changes to Vox are documented here.
 
 ## [Unreleased]
 
@@ -16,7 +16,7 @@ All notable changes to Roam are documented here.
 
 - Service trait implementations no longer receive `&Context`; methods now either:
   - return owned values directly, or
-  - receive `call: impl roam::Call<T, E>` for explicit `'roam` borrowed response paths.
+  - receive `call: impl vox::Call<T, E>` for explicit `'vox` borrowed response paths.
 - Generated service trait naming and generated descriptor access changed:
   - Generated service traits are still named `{Service}`.
   - Codegen inputs moved from `*_service_detail()` to `*_service_descriptor()`.
@@ -28,13 +28,13 @@ All notable changes to Roam are documented here.
 
 - Client return types were standardized:
   - Owned returns remain direct values (e.g. `T`).
-  - Borrowed `'roam` returns now return `SelfRef<T>`.
+  - Borrowed `'vox` returns now return `SelfRef<T>`.
   - Generated Rust clients do not expose response metadata in return types.
 - Channel APIs now use const-generic credit: `Tx<T, N>` / `Rx<T, N>`, with default credit `N = 16`.
 - SHM hosting moved to a smaller, lower-level v7 API surface:
   - `ShmHost`, `bootstrap`, `driver`, `AddPeerOptions`, `MultiPeerHostDriver` are no longer part of the API surface used for orchestration.
-  - New primitives are `roam_shm::segment::{Segment, SegmentConfig}` and related methods (`reserve_peer`, `claim_peer`, `attach_peer`, `detach_peer`, `recover_crashed_peer`).
-  - Orchestration helpers are now focused and explicit via `roam_shm::ShmLink`, `roam_shm::host::HostHub`, and `roam_shm::host` ticket/link helpers.
+  - New primitives are `vox_shm::segment::{Segment, SegmentConfig}` and related methods (`reserve_peer`, `claim_peer`, `attach_peer`, `detach_peer`, `recover_crashed_peer`).
+  - Orchestration helpers are now focused and explicit via `vox_shm::ShmLink`, `vox_shm::host::HostHub`, and `vox_shm::host` ticket/link helpers.
 
 ### Added
 

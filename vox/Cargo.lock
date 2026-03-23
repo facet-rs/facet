@@ -2030,12 +2030,12 @@ dependencies = [
 name = "peer-server"
 version = "7.3.0"
 dependencies = [
- "roam",
- "roam-core",
- "roam-types",
- "roam-websocket",
  "spec-proto",
  "tokio",
+ "vox",
+ "vox-core",
+ "vox-types",
+ "vox-websocket",
 ]
 
 [[package]]
@@ -2368,250 +2368,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
-name = "roam"
-version = "7.3.0"
-dependencies = [
- "facet",
- "roam-core",
- "roam-postcard",
- "roam-service-macros",
- "roam-shm",
- "roam-stream",
- "roam-types",
- "shm-primitives",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "roam-bench"
-version = "7.3.0"
-dependencies = [
- "divan",
- "facet",
- "futures-util",
- "hyper-util",
- "moire",
- "prost",
- "roam",
- "roam-core",
- "roam-postcard",
- "roam-shm",
- "roam-stream",
- "roam-types",
- "serde",
- "shm-primitives",
- "tarpc",
- "tempfile",
- "tokio",
- "tokio-stream",
- "tonic",
- "tonic-prost",
- "tonic-prost-build",
- "tower",
-]
-
-[[package]]
-name = "roam-codegen"
-version = "7.3.0"
-dependencies = [
- "facet",
- "facet-cbor",
- "facet-core",
- "heck 0.5.0",
- "roam",
- "roam-types",
-]
-
-[[package]]
-name = "roam-core"
-version = "7.3.0"
-dependencies = [
- "facet",
- "facet-cbor",
- "facet-core",
- "facet-error",
- "facet-reflect",
- "facet-testhelpers",
- "getrandom 0.3.4",
- "moire",
- "roam-postcard",
- "roam-shm",
- "roam-types",
- "shm-primitives",
- "smallvec 1.15.1",
- "tempfile",
- "tokio",
- "tracing",
- "wasm-bindgen-futures",
- "zerocopy",
-]
-
-[[package]]
-name = "roam-fdpass"
-version = "7.3.0"
-dependencies = [
- "libc",
- "passfd",
- "tokio",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "roam-inprocess"
-version = "7.3.0"
-dependencies = [
- "futures-channel",
- "futures-util",
- "js-sys",
- "roam-types",
- "wasm-bindgen",
-]
-
-[[package]]
-name = "roam-local"
-version = "7.3.0"
-dependencies = [
- "moire",
- "tokio",
-]
-
-[[package]]
-name = "roam-macros-core"
-version = "7.3.0"
-dependencies = [
- "facet-cargo-toml",
- "heck 0.5.0",
- "insta",
- "proc-macro2",
- "quote",
- "roam-macros-parse",
-]
-
-[[package]]
-name = "roam-macros-parse"
-version = "7.3.0"
-dependencies = [
- "proc-macro2",
- "unsynn",
-]
-
-[[package]]
-name = "roam-postcard"
-version = "7.3.0"
-dependencies = [
- "facet",
- "facet-core",
- "facet-postcard",
- "facet-reflect",
- "roam-schema",
- "roam-types",
-]
-
-[[package]]
-name = "roam-schema"
-version = "7.3.0"
-dependencies = [
- "blake3",
- "facet",
- "facet-cbor",
- "facet-core",
- "indexmap",
-]
-
-[[package]]
-name = "roam-service-macros"
-version = "7.3.0"
-dependencies = [
- "proc-macro2",
- "roam-macros-core",
-]
-
-[[package]]
-name = "roam-shm"
-version = "7.3.0"
-dependencies = [
- "libc",
- "loom",
- "roam-postcard",
- "roam-types",
- "shm-primitives",
- "shm-primitives-async",
- "tempfile",
- "tokio",
- "tracing",
- "zerocopy",
-]
-
-[[package]]
-name = "roam-shm-ffi"
-version = "7.3.0"
-dependencies = [
- "cbindgen",
- "libc",
- "shm-primitives",
-]
-
-[[package]]
-name = "roam-stream"
-version = "7.3.0"
-dependencies = [
- "moire",
- "roam-core",
- "roam-types",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "roam-types"
-version = "7.3.0"
-dependencies = [
- "bitflags",
- "blake3",
- "facet",
- "facet-cbor",
- "facet-core",
- "facet-path",
- "futures-channel",
- "heck 0.5.0",
- "indexmap",
- "moire",
- "roam-postcard",
- "roam-schema",
- "smallvec 1.15.1",
- "structstruck",
- "tokio",
-]
-
-[[package]]
-name = "roam-websocket"
-version = "7.3.0"
-dependencies = [
- "futures-channel",
- "futures-util",
- "getrandom 0.3.4",
- "js-sys",
- "roam-types",
- "tokio",
- "tokio-tungstenite",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
 name = "rust-examples"
 version = "7.3.0"
 dependencies = [
  "eyre",
- "roam",
- "roam-shm",
- "roam-stream",
  "shm-primitives",
  "tempfile",
  "tokio",
+ "vox",
+ "vox-shm",
+ "vox-stream",
 ]
 
 [[package]]
@@ -2840,7 +2606,7 @@ name = "spec-proto"
 version = "7.3.0"
 dependencies = [
  "facet",
- "roam",
+ "vox",
 ]
 
 [[package]]
@@ -2849,19 +2615,19 @@ version = "7.3.0"
 dependencies = [
  "libc",
  "moire",
- "roam",
- "roam-core",
- "roam-local",
- "roam-postcard",
- "roam-shm",
- "roam-stream",
- "roam-types",
- "roam-websocket",
  "shm-primitives",
  "shm-primitives-async",
  "spec-proto",
  "tempfile",
  "tokio",
+ "vox",
+ "vox-core",
+ "vox-local",
+ "vox-postcard",
+ "vox-shm",
+ "vox-stream",
+ "vox-types",
+ "vox-websocket",
 ]
 
 [[package]]
@@ -2931,17 +2697,17 @@ name = "subject-rust"
 version = "7.3.0"
 dependencies = [
  "moire",
- "roam",
- "roam-core",
- "roam-local",
- "roam-shm",
- "roam-stream",
- "roam-types",
  "shm-primitives",
  "spec-proto",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "vox",
+ "vox-core",
+ "vox-local",
+ "vox-shm",
+ "vox-stream",
+ "vox-types",
 ]
 
 [[package]]
@@ -3684,6 +3450,240 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "vox"
+version = "7.3.0"
+dependencies = [
+ "facet",
+ "shm-primitives",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "vox-core",
+ "vox-postcard",
+ "vox-service-macros",
+ "vox-shm",
+ "vox-stream",
+ "vox-types",
+]
+
+[[package]]
+name = "vox-bench"
+version = "7.3.0"
+dependencies = [
+ "divan",
+ "facet",
+ "futures-util",
+ "hyper-util",
+ "moire",
+ "prost",
+ "serde",
+ "shm-primitives",
+ "tarpc",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tower",
+ "vox",
+ "vox-core",
+ "vox-postcard",
+ "vox-shm",
+ "vox-stream",
+ "vox-types",
+]
+
+[[package]]
+name = "vox-codegen"
+version = "7.3.0"
+dependencies = [
+ "facet",
+ "facet-cbor",
+ "facet-core",
+ "heck 0.5.0",
+ "vox",
+ "vox-types",
+]
+
+[[package]]
+name = "vox-core"
+version = "7.3.0"
+dependencies = [
+ "facet",
+ "facet-cbor",
+ "facet-core",
+ "facet-error",
+ "facet-reflect",
+ "facet-testhelpers",
+ "getrandom 0.3.4",
+ "moire",
+ "shm-primitives",
+ "smallvec 1.15.1",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "vox-postcard",
+ "vox-shm",
+ "vox-types",
+ "wasm-bindgen-futures",
+ "zerocopy",
+]
+
+[[package]]
+name = "vox-fdpass"
+version = "7.3.0"
+dependencies = [
+ "libc",
+ "passfd",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "vox-inprocess"
+version = "7.3.0"
+dependencies = [
+ "futures-channel",
+ "futures-util",
+ "js-sys",
+ "vox-types",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "vox-local"
+version = "7.3.0"
+dependencies = [
+ "moire",
+ "tokio",
+]
+
+[[package]]
+name = "vox-macros-core"
+version = "7.3.0"
+dependencies = [
+ "facet-cargo-toml",
+ "heck 0.5.0",
+ "insta",
+ "proc-macro2",
+ "quote",
+ "vox-macros-parse",
+]
+
+[[package]]
+name = "vox-macros-parse"
+version = "7.3.0"
+dependencies = [
+ "proc-macro2",
+ "unsynn",
+]
+
+[[package]]
+name = "vox-postcard"
+version = "7.3.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-postcard",
+ "facet-reflect",
+ "vox-schema",
+ "vox-types",
+]
+
+[[package]]
+name = "vox-schema"
+version = "7.3.0"
+dependencies = [
+ "blake3",
+ "facet",
+ "facet-cbor",
+ "facet-core",
+ "indexmap",
+]
+
+[[package]]
+name = "vox-service-macros"
+version = "7.3.0"
+dependencies = [
+ "proc-macro2",
+ "vox-macros-core",
+]
+
+[[package]]
+name = "vox-shm"
+version = "7.3.0"
+dependencies = [
+ "libc",
+ "loom",
+ "shm-primitives",
+ "shm-primitives-async",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "vox-postcard",
+ "vox-types",
+ "zerocopy",
+]
+
+[[package]]
+name = "vox-shm-ffi"
+version = "7.3.0"
+dependencies = [
+ "cbindgen",
+ "libc",
+ "shm-primitives",
+]
+
+[[package]]
+name = "vox-stream"
+version = "7.3.0"
+dependencies = [
+ "moire",
+ "tempfile",
+ "tokio",
+ "vox-core",
+ "vox-types",
+]
+
+[[package]]
+name = "vox-types"
+version = "7.3.0"
+dependencies = [
+ "bitflags",
+ "blake3",
+ "facet",
+ "facet-cbor",
+ "facet-core",
+ "facet-path",
+ "futures-channel",
+ "heck 0.5.0",
+ "indexmap",
+ "moire",
+ "smallvec 1.15.1",
+ "structstruck",
+ "tokio",
+ "vox-postcard",
+ "vox-schema",
+]
+
+[[package]]
+name = "vox-websocket"
+version = "7.3.0"
+dependencies = [
+ "futures-channel",
+ "futures-util",
+ "getrandom 0.3.4",
+ "js-sys",
+ "tokio",
+ "tokio-tungstenite",
+ "vox-types",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "vte"
 version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3788,10 +3788,10 @@ dependencies = [
 name = "wasm-browser-tests"
 version = "7.3.0"
 dependencies = [
- "roam-core",
- "roam-types",
- "roam-websocket",
  "spec-proto",
+ "vox-core",
+ "vox-types",
+ "vox-websocket",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]
@@ -3811,10 +3811,10 @@ name = "wasm-inprocess-tests"
 version = "7.3.0"
 dependencies = [
  "js-sys",
- "roam-core",
- "roam-inprocess",
- "roam-types",
  "spec-proto",
+ "vox-core",
+ "vox-inprocess",
+ "vox-types",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]
@@ -4172,10 +4172,10 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
- "roam-codegen",
- "roam-types",
  "spec-proto",
  "syn 2.0.117",
+ "vox-codegen",
+ "vox-types",
  "xshell",
 ]
 

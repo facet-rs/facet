@@ -1,0 +1,53 @@
+[package]
+name = "vox-bench"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[features]
+protobuf = [
+    "dep:tonic",
+    "dep:tonic-prost",
+    "dep:prost",
+    "dep:hyper-util",
+    "dep:tower",
+    "dep:tokio-stream",
+    "dep:tonic-prost-build",
+]
+
+[dependencies]
+vox.workspace = true
+vox-core.workspace = true
+vox-types.workspace = true
+vox-postcard.workspace = true
+facet.workspace = true
+vox-shm.workspace = true
+vox-stream.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
+moire.workspace = true
+futures-util.workspace = true
+
+tarpc.workspace = true
+serde.workspace = true
+tonic = { workspace = true, optional = true }
+tonic-prost = { workspace = true, optional = true }
+prost = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
+tower = { workspace = true, optional = true }
+tokio-stream = { workspace = true, optional = true }
+
+shm-primitives.workspace = true
+tempfile.workspace = true
+divan.workspace = true
+
+[build-dependencies]
+tonic-prost-build = { workspace = true, optional = true }
+
+[[bench]]
+name = "rpc"
+harness = false

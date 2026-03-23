@@ -18,7 +18,7 @@ send path should accept borrowed data like `&[u8]` or structs containing
 `&str`. The trait hierarchy (`Conduit<T>`, `ConduitTx<T>`,
 `ConduitTxPermit<T>`) needs lifetime parameters.
 
-Prerequisite for the vertical slice: `#[roam::service]` with a method
+Prerequisite for the vertical slice: `#[vox::service]` with a method
 that takes `&[u8]`, through codegen → RPC machinery → conduit → link.
 
 ## Replay buffer copy path in StableConduit

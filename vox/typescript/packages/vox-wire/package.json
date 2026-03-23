@@ -1,0 +1,46 @@
+{
+  "name": "@bearcove/vox-wire",
+  "version": "7.3.0",
+  "private": false,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "check": "tsgo --noEmit",
+    "test": "vitest run"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "import": {
+          "types": "./dist/index.d.mts",
+          "default": "./dist/index.mjs"
+        }
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "dependencies": {
+    "@bearcove/vox-postcard": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0"
+  },
+  "license": "MIT OR Apache-2.0",
+  "description": "Wire message codecs and helpers for Vox",
+  "repository": "https://github.com/bearcove/vox",
+  "homepage": "https://github.com/bearcove/vox",
+  "keywords": [
+    "vox",
+    "ipc",
+    "rpc",
+    "typescript",
+    "shared-memory"
+  ],
+  "readme": "README.md"
+}

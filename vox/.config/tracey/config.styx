@@ -2,7 +2,7 @@
 
 specs (
     {
-        name roam
+        name vox
         include (docs/content/spec/*.md)
         impls (
             {
@@ -12,16 +12,16 @@ specs (
             }
             {
                 name swift
-                include (swift/roam-runtime/**/*.swift)
+                include (swift/vox-runtime/**/*.swift)
             }
             {
                 name typescript
                 include (
-                    typescript/packages/roam-core/src/session.ts
-                    typescript/packages/roam-core/src/stable_conduit.ts
-                    typescript/packages/roam-core/src/driver.ts
-                    typescript/packages/roam-core/src/channeling/registry.ts
-                    typescript/packages/roam-core/src/channeling/registry.test.ts
+                    typescript/packages/vox-core/src/session.ts
+                    typescript/packages/vox-core/src/stable_conduit.ts
+                    typescript/packages/vox-core/src/driver.ts
+                    typescript/packages/vox-core/src/channeling/registry.ts
+                    typescript/packages/vox-core/src/channeling/registry.test.ts
                 )
             }
         )

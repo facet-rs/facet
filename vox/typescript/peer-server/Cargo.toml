@@ -16,9 +16,9 @@ name = "ws-peer-server"
 path = "src/main.rs"
 
 [dependencies]
-roam.workspace = true
-roam-core.workspace = true
-roam-types.workspace = true
-roam-websocket.workspace = true
+vox.workspace = true
+vox-core.workspace = true
+vox-types.workspace = true
+vox-websocket.workspace = true
 spec-proto.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros"] }

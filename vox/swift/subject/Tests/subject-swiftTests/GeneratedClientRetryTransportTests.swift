@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import RoamRuntime
+@testable import VoxRuntime
 @testable import subject_swift
 
 private enum RetryHarnessTimeout: Error {
@@ -170,6 +170,7 @@ private struct RetryNoopDispatcher: ServiceDispatcher {
         payload _: [UInt8],
         requestId _: UInt64,
         registry _: ChannelRegistry,
+        schemaSendTracker _: SchemaSendTracker,
         taskTx _: @escaping @Sendable (TaskMessage) -> Void
     ) async {}
 }
@@ -218,8 +219,10 @@ private struct RetryProbeDispatcher: ServiceDispatcher {
         payload: [UInt8],
         requestId: UInt64,
         registry: ChannelRegistry,
+        schemaSendTracker: SchemaSendTracker,
         taskTx: @escaping @Sendable (TaskMessage) -> Void
         ) async {
+            _ = schemaSendTracker
             do {
                 var cursor = 0
                 let payloadData = Data(payload)
@@ -432,8 +435,8 @@ struct GeneratedClientRetryTransportTests {
                 try await awaitRetryStep("non-idem call") {
                     try await callTask.value
                 }
-                Issue.record("expected RoamError.indeterminate")
-            } catch RoamError.indeterminate {
+                Issue.record("expected VoxError.indeterminate")
+            } catch VoxError.indeterminate {
                 retryTestLog("non-idem: received indeterminate")
             }
 

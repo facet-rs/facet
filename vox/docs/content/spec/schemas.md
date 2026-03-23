@@ -4,7 +4,7 @@ description = "Backwards-compatible type evolution without changing the wire for
 weight = 14
 +++
 
-Postcard is roam's data wire format. It is compact and fast, but positional —
+Postcard is vox's data wire format. It is compact and fast, but positional —
 fields are identified by their order, not by name. This means that adding,
 removing, or reordering fields changes the byte layout, and a peer reading
 with a different type definition silently misinterprets the data.
@@ -653,7 +653,7 @@ struct MethodSchemaBinding {
     method_id: MethodId,
     /// The root type for this method's args or response. This is a
     /// TypeRef because the root type may be a generic instantiation
-    /// (e.g. `Result<Profile, RoamError<Infallible>>`).
+    /// (e.g. `Result<Profile, VoxError<Infallible>>`).
     root_type: TypeRef,
     direction: BindingDirection,
 }
@@ -697,7 +697,7 @@ struct SchemaPayload {
 >     `TypeSchemaId` of the payload being sent
 >
 > The root type for a response is always the full
-> `Result<T, RoamError<E>>` wire type, regardless of whether the
+> `Result<T, VoxError<E>>` wire type, regardless of whether the
 > handler succeeded or failed.
 >
 > If all schemas for a method's types have already been sent on this
@@ -778,10 +778,10 @@ for the entire service interface up front.
 > include all unsent schemas in the `Response`.
 >
 > The response schema is determined by the method signature — it is the
-> full `Result<T, RoamError<E>>` wire type. It MUST NOT vary based on
+> full `Result<T, VoxError<E>>` wire type. It MUST NOT vary based on
 > whether the handler succeeded or failed. Sending schemas for a different
-> type (e.g. `Result<(), RoamError<E>>` when the method returns
-> `Result<T, RoamError<E>>`) is a protocol error.
+> type (e.g. `Result<(), VoxError<E>>` when the method returns
+> `Result<T, VoxError<E>>`) is a protocol error.
 
 > r[schema.exchange.channels]
 >

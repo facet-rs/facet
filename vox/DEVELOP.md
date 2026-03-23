@@ -1,21 +1,70 @@
 # Development Guide
 
-## Quick Reference
+## Prerequisites
 
-### Running Tests
+- **Rust**: stable toolchain with `cargo nextest` and `cargo insta` installed
+- **Node.js** (v25+): for TypeScript subjects — install via `nvm` or system package
+- **pnpm**: for TypeScript package management
+- **Swift** (macOS only): for Swift subjects and runtime
+- **just**: task runner — `cargo install just` or `brew install just`
+
+## Running the Full Test Suite
+
+`cargo nextest run` runs **all** tests, including cross-language spec tests that
+need external subjects built first. Running it without building subjects will
+produce failures like `"failed to spawn subject: No such file or directory"`.
+
+To run everything from a clean state:
 
 ```bash
-# Run all Rust tests
-cargo nextest run
+# 1. Build Rust subject (needed by spec tests)
+cargo build --package subject-rust
 
-# Run spec tests with Rust subject
+# 2. Install TypeScript dependencies (needed by TS spec tests)
+cd typescript && pnpm install && cd ..
+
+# 3. Build Rust FFI staticlib (needed by Swift)
+cargo build --release -p vox-shm-ffi
+
+# 4. Build Swift runtime in debug mode (needed by SHM cross-language tests —
+#    the shm-guest-client binary is only looked up under .build/debug/)
+swift build --package-path swift/vox-runtime
+
+# 5. Build Swift subject (needed by Swift spec tests)
+swift build -c release --package-path swift/subject
+
+# 6. Run all tests
+cargo nextest run
+```
+
+Or use the `just` recipes which handle build dependencies automatically:
+
+```bash
+just interop-all   # builds + tests all languages (Rust, TypeScript, Swift)
+```
+
+### Running Tests by Language
+
+```bash
+# Rust spec tests (builds subject-rust automatically)
 just rust
 
-# Run spec tests with TypeScript subject
+# TypeScript spec tests (typechecks, runs codegen, builds TS subject)
 just ts
 
-# Run all language subjects
-just all
+# Swift spec tests (builds FFI lib, runs swift tests, builds subject)
+just swift
+
+# All of the above
+just interop-all
+```
+
+### Running Unit Tests Only
+
+If you only want Rust unit/integration tests (no cross-language spec tests):
+
+```bash
+cargo nextest run --workspace --exclude spec-tests
 ```
 
 ### TypeScript Development
@@ -42,33 +91,33 @@ just swift
 
 # Build just the Rust FFI staticlib
 just rust-ffi
-# or: cargo build --release -p roam-shm-ffi
+# or: cargo build --release -p vox-shm-ffi
 
 # Run root Swift package tests the same way CI does
-cargo build --release -p roam-shm-ffi
+cargo build --release -p vox-shm-ffi
 swift test --no-parallel -Xlinker -L$(pwd)/target/release
 
 # Build the Swift subject package
 swift build -c release --package-path swift/subject
 
-# If you specifically want the roam-runtime package path form, build the Rust
+# If you specifically want the vox-runtime package path form, build the Rust
 # staticlib first. The root-level `swift test ... -L$(pwd)/target/release`
 # command is the preferred validation path in this repo.
-swift test --package-path swift/roam-runtime --no-parallel -Xlinker -L$(pwd)/target/release
+swift test --package-path swift/vox-runtime --no-parallel -Xlinker -L$(pwd)/target/release
 
 # Run SHM cross-language tests (Rust host, Swift guest)
-cargo nextest run -p roam-shm --test bootstrap_cross_language
+cargo nextest run -p vox-shm --test bootstrap_cross_language
 ```
 
-#### Consuming RoamRuntime from another Swift package
+#### Consuming VoxRuntime from another Swift package
 
-RoamRuntime depends on `libroam_shm_ffi.a`, a Rust staticlib. Consumers must:
+VoxRuntime depends on `libvox_shm_ffi.a`, a Rust staticlib. Consumers must:
 
-1. Build the staticlib: `cargo build --release -p roam-shm-ffi` (from the roam workspace root)
+1. Build the staticlib: `cargo build --release -p vox-shm-ffi` (from the vox workspace root)
 2. Tell the linker where to find it:
-   - **SPM CLI**: `swift build -Xlinker -L<path-to-roam>/target/release`
-   - **SPM test**: `swift test -Xlinker -L<path-to-roam>/target/release`
-   - **Xcode**: Add `<path-to-roam>/target/release` to `LIBRARY_SEARCH_PATHS`
+   - **SPM CLI**: `swift build -Xlinker -L<path-to-vox>/target/release`
+   - **SPM test**: `swift test -Xlinker -L<path-to-vox>/target/release`
+   - **Xcode**: Add `<path-to-vox>/target/release` to `LIBRARY_SEARCH_PATHS`
 
 ### Code Generation
 
@@ -131,7 +180,7 @@ just fuzz-sand protocol_decode 300
 Current targets:
 - `framing_peek` (SHM frame parser)
 - `shm_link_roundtrip` (SHM send/recv roundtrip)
-- `protocol_decode` (Roam wire message decode/encode)
+- `protocol_decode` (Vox wire message decode/encode)
 - `testbed_mem_session` (generated `spec-proto` RPC traffic over in-memory session/driver)
 
 SAND recipes build three binaries per target under `fuzz/.sand/<target>/`:
@@ -141,14 +190,14 @@ SAND recipes build three binaries per target under `fuzz/.sand/<target>/`:
 
 ## Project Structure
 
-- `rust/` - Rust implementation (roam, roam-session, roam-codegen, etc.)
+- `rust/` - Rust implementation (vox, vox-session, vox-codegen, etc.)
 - `swift/` - Swift implementation
-  - `roam-runtime/` - RoamRuntime Swift package (SHM transport, RPC, codegen)
+  - `vox-runtime/` - VoxRuntime Swift package (SHM transport, RPC, codegen)
   - `subject/` - Test subject for compliance suite
 - `typescript/` - TypeScript implementation
-  - `packages/roam-core/` - Core runtime
-  - `packages/roam-tcp/` - TCP transport
-  - `packages/roam-ws/` - WebSocket transport
+  - `packages/vox-core/` - Core runtime
+  - `packages/vox-tcp/` - TCP transport
+  - `packages/vox-ws/` - WebSocket transport
   - `generated/` - Generated bindings (don't edit manually)
   - `subject/` - Test subject for compliance suite
 - `spec/` - Protocol specification

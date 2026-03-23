@@ -144,14 +144,14 @@ impl Doorbell {
         let uuid = generate_uuid();
 
         // Host→guest event (auto-reset, initially non-signaled)
-        let h2g_name = to_wide(&format!("Local\\roam-doorbell-{uuid}-h2g"));
+        let h2g_name = to_wide(&format!("Local\\vox-doorbell-{uuid}-h2g"));
         let h2g = unsafe { CreateEventW(std::ptr::null(), 0, 0, h2g_name.as_ptr()) };
         if h2g.is_null() || h2g == INVALID_HANDLE_VALUE {
             return Err(io::Error::last_os_error());
         }
 
         // Guest→host event (auto-reset, initially non-signaled)
-        let g2h_name = to_wide(&format!("Local\\roam-doorbell-{uuid}-g2h"));
+        let g2h_name = to_wide(&format!("Local\\vox-doorbell-{uuid}-g2h"));
         let g2h = unsafe { CreateEventW(std::ptr::null(), 0, 0, g2h_name.as_ptr()) };
         if g2h.is_null() || g2h == INVALID_HANDLE_VALUE {
             unsafe {
@@ -198,14 +198,14 @@ impl Doorbell {
     /// This is for spawned guest processes that receive the event name prefix.
     pub fn connect(name: &str) -> io::Result<Self> {
         // Open host→guest event (guest waits on this)
-        let h2g_name = to_wide(&format!("Local\\roam-doorbell-{name}-h2g"));
+        let h2g_name = to_wide(&format!("Local\\vox-doorbell-{name}-h2g"));
         let h2g = unsafe { OpenEventW(EVENT_ALL_ACCESS, 0, h2g_name.as_ptr()) };
         if h2g.is_null() || h2g == INVALID_HANDLE_VALUE {
             return Err(io::Error::last_os_error());
         }
 
         // Open guest→host event (guest signals this)
-        let g2h_name = to_wide(&format!("Local\\roam-doorbell-{name}-g2h"));
+        let g2h_name = to_wide(&format!("Local\\vox-doorbell-{name}-g2h"));
         let g2h = unsafe { OpenEventW(EVENT_ALL_ACCESS, 0, g2h_name.as_ptr()) };
         if g2h.is_null() || g2h == INVALID_HANDLE_VALUE {
             unsafe {

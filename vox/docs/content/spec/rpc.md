@@ -16,20 +16,20 @@ layer defines when multiple attempts address the same logical operation.
 > r[rpc.service]
 >
 > A service is a set of methods. In Rust, a service is defined as a trait
-> annotated with `#[roam::service]`. Methods only take `&self` — a service
+> annotated with `#[vox::service]`. Methods only take `&self` — a service
 > does not carry mutable state. Any state must be managed externally
 > (e.g. behind an `Arc<Mutex<_>>` or similar).
 
 > r[rpc.service.methods]
 >
 > Each method in a service is an async function. Its arguments and return
-> type must implement `Facet`. The `#[roam::service]` macro generates a
+> type must implement `Facet`. The `#[vox::service]` macro generates a
 > `{ServiceName}` trait. Method shape depends on whether the success return
-> type borrows with explicit `'roam`:
+> type borrows with explicit `'vox`:
 >
 >   * Owned success return: method returns the value (`T` or `Result<T, E>`)
->   * Borrowed `'roam` success return: method receives
->     `call: impl roam::Call<Ok, Err>` and replies explicitly
+>   * Borrowed `'vox` success return: method receives
+>     `call: impl vox::Call<Ok, Err>` and replies explicitly
 >
 > This preserves borrowed-reply support while keeping owned-return handlers
 > ergonomic.
@@ -73,7 +73,7 @@ layer defines when multiple attempts address the same logical operation.
 > r[rpc.handler]
 >
 > A handler handles incoming requests on a connection. It is a user-provided
-> implementation of a service trait. The roam runtime takes care of
+> implementation of a service trait. The vox runtime takes care of
 > deserializing arguments, routing to the right method, and sending back responses.
 
 > r[rpc.caller]
@@ -117,12 +117,12 @@ layer defines when multiple attempts address the same logical operation.
 In code, this looks like:
 
 ```rust
-let (mut session, handle, _session_handle) = roam_core::session::initiator(conduit)
+let (mut session, handle, _session_handle) = vox_core::session::initiator(conduit)
     .establish()
     .await?;
 
 let dispatcher = AdderDispatcher::new(my_adder_handler);
-let mut driver = roam_core::Driver::new(handle, dispatcher, roam_types::Parity::Odd);
+let mut driver = vox_core::Driver::new(handle, dispatcher, vox_types::Parity::Odd);
 let client = AdderClient::new(driver.caller());
 let response = client.add(3, 5).await?;
 let result = response.ret;
@@ -148,15 +148,15 @@ In Rust, virtual connections are independent driver/caller contexts:
 ```rust
 let vconn_handle = session_handle
     .open_connection(
-        roam_types::ConnectionSettings {
-            parity: roam_types::Parity::Odd,
+        vox_types::ConnectionSettings {
+            parity: vox_types::Parity::Odd,
             max_concurrent_requests: 64,
         },
         vec![],
     )
     .await?;
 
-let mut vconn_driver = roam_core::Driver::new(vconn_handle, vconn_dispatcher, roam_types::Parity::Odd);
+let mut vconn_driver = vox_core::Driver::new(vconn_handle, vconn_dispatcher, vox_types::Parity::Odd);
 let vconn_client = MyServiceClient::new(vconn_driver.caller());
 ```
 
@@ -215,27 +215,27 @@ identity described in [Retry](./retry/).
 
 > r[rpc.fallible.caller-signature]
 >
-> On the Rust caller side, generated client methods return `Result<_, RoamError<E>>`
+> On the Rust caller side, generated client methods return `Result<_, VoxError<E>>`
 > and do not expose response metadata:
 >
 >   * Infallible `fn foo() -> T` becomes
->     `fn foo() -> Result<R, RoamError>`
+>     `fn foo() -> Result<R, VoxError>`
 >   * Fallible `fn foo() -> Result<T, E>` becomes
->     `fn foo() -> Result<R, RoamError<E>>`
+>     `fn foo() -> Result<R, VoxError<E>>`
 >
 > Where `R` depends on whether return payload `T` borrows from response bytes:
 >
->   * If `T` uses explicit `'roam` borrows, `R = SelfRef<T>`
+>   * If `T` uses explicit `'vox` borrows, `R = SelfRef<T>`
 >   * Otherwise, `R = T`
 >
-> Borrowed return payloads MUST use explicit `'roam`. Other lifetimes in return
+> Borrowed return payloads MUST use explicit `'vox`. Other lifetimes in return
 > payloads are rejected by the Rust service macro.
 >
 > For `Result<T, E>`, `E` MUST be owned (no lifetimes) in Rust generated clients.
 
-> r[rpc.fallible.roam-error]
+> r[rpc.fallible.vox-error]
 >
-> `RoamError<E>` distinguishes application errors from protocol-level errors:
+> `VoxError<E>` distinguishes application errors from protocol-level errors:
 >
 >   * `User(E)` — the handler ran and returned an application error
 >   * `UnknownMethod` — no handler recognized the method ID
@@ -312,7 +312,7 @@ identity described in [Retry](./retry/).
 
 > r[rpc.flow-control]
 >
-> Roam provides backpressure at two levels: request pipelining limits and
+> Vox provides backpressure at two levels: request pipelining limits and
 > per-channel credit-based flow control.
 
 ## Request limits

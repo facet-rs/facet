@@ -1,23 +1,23 @@
-//! Rust subject binary for the roam compliance suite.
+//! Rust subject binary for the vox compliance suite.
 
-use roam::{Rx, Tx};
-use roam_core::{TransportMode, initiator, initiator_on};
-use roam_shm::bootstrap::{BootstrapStatus, encode_request};
-use roam_shm::segment::Segment;
-use roam_stream::tcp_connector;
 use spec_proto::{
     Canvas, Color, Config, LookupError, MathError, Measurement, Message, Person, Point, Profile,
     Record, Rectangle, Shape, Status, Tag, TaggedPoint, Testbed, TestbedClient, TestbedDispatcher,
 };
 use tracing::{debug, error, info, instrument};
+use vox::{Rx, Tx};
+use vox_core::{TransportMode, initiator, initiator_on};
+use vox_shm::bootstrap::{BootstrapStatus, encode_request};
+use vox_shm::segment::Segment;
+use vox_stream::tcp_connector;
 
-#[cfg(windows)]
-use roam_shm::guest_link_from_names;
-#[cfg(unix)]
-use roam_shm::guest_link_from_raw;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
 use std::time::Duration;
+#[cfg(windows)]
+use vox_shm::guest_link_from_names;
+#[cfg(unix)]
+use vox_shm::guest_link_from_raw;
 
 #[derive(Clone)]
 struct TestbedService;
@@ -291,8 +291,8 @@ fn main() -> Result<(), String> {
 ///
 /// Used by cross-language harness tests where another subject acts as the client.
 async fn listen_and_serve() -> Result<(), String> {
-    use roam_core::acceptor_on;
     use tokio::net::TcpListener;
+    use vox_core::acceptor_on;
 
     let listen_port: u16 = std::env::var("LISTEN_PORT")
         .ok()
@@ -316,7 +316,7 @@ async fn listen_and_serve() -> Result<(), String> {
         .map_err(|e| format!("accept: {e}"))?;
     stream.set_nodelay(true).ok();
 
-    let (_client, _sh) = acceptor_on(roam_stream::StreamLink::tcp(stream))
+    let (_client, _sh) = acceptor_on(vox_stream::StreamLink::tcp(stream))
         .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
         .await
         .map_err(|e| format!("handshake: {e}"))?;
@@ -381,7 +381,7 @@ async fn run_client() -> Result<(), String> {
         }
         "divide_zero" => {
             match client.divide(10, 0).await {
-                Err(roam::RoamError::User(MathError::DivisionByZero)) => {}
+                Err(vox::VoxError::User(MathError::DivisionByZero)) => {}
                 other => {
                     return Err(format!(
                         "divide_zero: expected DivisionByZero, got {other:?}"
@@ -392,7 +392,7 @@ async fn run_client() -> Result<(), String> {
         }
         "divide_overflow" => {
             match client.divide(i64::MIN, -1).await {
-                Err(roam::RoamError::User(MathError::Overflow)) => {}
+                Err(vox::VoxError::User(MathError::Overflow)) => {}
                 other => return Err(format!("divide_overflow: expected Overflow, got {other:?}")),
             }
             info!("divide_overflow: got expected Overflow error");
@@ -421,7 +421,7 @@ async fn run_client() -> Result<(), String> {
         }
         "lookup_not_found" => {
             match client.lookup(999).await {
-                Err(roam::RoamError::User(spec_proto::LookupError::NotFound)) => {}
+                Err(vox::VoxError::User(spec_proto::LookupError::NotFound)) => {}
                 other => {
                     return Err(format!(
                         "lookup_not_found: expected NotFound, got {other:?}"
@@ -432,7 +432,7 @@ async fn run_client() -> Result<(), String> {
         }
         "lookup_access_denied" => {
             match client.lookup(100).await {
-                Err(roam::RoamError::User(spec_proto::LookupError::AccessDenied)) => {}
+                Err(vox::VoxError::User(spec_proto::LookupError::AccessDenied)) => {}
                 other => {
                     return Err(format!(
                         "lookup_access_denied: expected AccessDenied, got {other:?}"
@@ -630,7 +630,7 @@ async fn run_client() -> Result<(), String> {
             info!("pipelining OK (10 concurrent echo calls)");
         }
         "sum_large" => {
-            let (tx, rx) = roam::channel::<i32>();
+            let (tx, rx) = vox::channel::<i32>();
             let n: i32 = 100;
             let send_task = tokio::spawn(async move {
                 for i in 0..n {
@@ -650,7 +650,7 @@ async fn run_client() -> Result<(), String> {
             info!("sum_large OK: {result}");
         }
         "generate_large" => {
-            let (tx, mut rx) = roam::channel::<i32>();
+            let (tx, mut rx) = vox::channel::<i32>();
             let n: u32 = 100;
             let recv_task = tokio::spawn(async move {
                 let mut received = Vec::new();
@@ -679,7 +679,7 @@ async fn run_client() -> Result<(), String> {
             info!("generate_large OK: {} items", received.len());
         }
         "sum_client_to_server" => {
-            let (tx, rx) = roam::channel::<i32>();
+            let (tx, rx) = vox::channel::<i32>();
             let send_task = tokio::spawn(async move {
                 for n in [1i32, 2, 3, 4, 5] {
                     tx.send(n).await.unwrap();
@@ -697,8 +697,8 @@ async fn run_client() -> Result<(), String> {
             info!("sum_client_to_server OK: {result}");
         }
         "transform_bidi" => {
-            let (input_tx, input_rx) = roam::channel::<String>();
-            let (output_tx, mut output_rx) = roam::channel::<String>();
+            let (input_tx, input_rx) = vox::channel::<String>();
+            let (output_tx, mut output_rx) = vox::channel::<String>();
             let messages = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
             let msgs_clone = messages.clone();
             let send_task = tokio::spawn(async move {
@@ -786,7 +786,7 @@ async fn run_client() -> Result<(), String> {
             info!("process_message result OK");
         }
         "channel_retry_non_idem" => {
-            let (tx, mut rx) = roam::channel::<i32>();
+            let (tx, mut rx) = vox::channel::<i32>();
             let call = tokio::spawn({
                 let client = client.clone();
                 async move {
@@ -824,7 +824,7 @@ async fn run_client() -> Result<(), String> {
                 .map_err(|_| "timed out draining non-idem channel".to_string())?
                 .map_err(|e| format!("non-idem recv task: {e}"))?;
 
-            if !matches!(result, Err(roam::RoamError::Indeterminate)) {
+            if !matches!(result, Err(vox::VoxError::Indeterminate)) {
                 return Err(format!(
                     "expected non-idem channel retry to fail with Indeterminate, got {result:?}"
                 ));
@@ -838,7 +838,7 @@ async fn run_client() -> Result<(), String> {
             }
         }
         "channel_retry_idem" => {
-            let (tx, mut rx) = roam::channel::<i32>();
+            let (tx, mut rx) = vox::channel::<i32>();
             let call = tokio::spawn({
                 let client = client.clone();
                 async move {
@@ -947,16 +947,16 @@ async fn connect_and_serve_shm() -> Result<(), String> {
 
     #[cfg(windows)]
     let link = {
-        use roam_shm::bootstrap::{
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use vox_shm::bootstrap::{
             BOOTSTRAP_RESPONSE_HEADER_LEN, BootstrapSuccessNames, decode_response,
         };
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let mmap_tx_pipe = std::env::var("SHM_MMAP_TX_PIPE")
             .map_err(|_| "SHM_MMAP_TX_PIPE env var not set".to_string())?;
 
         // On Windows, SHM_CONTROL_SOCK is a named pipe path.
-        let mut stream = roam_local::connect(&control_sock)
+        let mut stream = vox_local::connect(&control_sock)
             .await
             .map_err(|e| format!("connect bootstrap pipe: {e}"))?;
         stream

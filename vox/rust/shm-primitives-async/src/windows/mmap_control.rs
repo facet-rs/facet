@@ -327,7 +327,7 @@ fn unique_pipe_name() -> String {
     let pid = std::process::id();
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    format!(r"\\.\pipe\roam-mmap-{:x}-{:x}-{}", nanos, pid, seq)
+    format!(r"\\.\pipe\vox-mmap-{:x}-{:x}-{}", nanos, pid, seq)
 }
 
 /// Create a paired mmap control channel.

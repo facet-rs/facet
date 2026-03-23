@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 
-// Root of the roam project
+// Root of the vox project
 const projectRoot = new URL("../../../", import.meta.url).pathname;
 
 let viteServer: ChildProcess | null = null;

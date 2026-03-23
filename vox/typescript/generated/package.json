@@ -1,5 +1,5 @@
 {
-  "name": "@bearcove/roam-generated",
+  "name": "@bearcove/vox-generated",
   "version": "7.3.0",
   "private": true,
   "type": "module",
@@ -10,8 +10,8 @@
     "check": "tsgo --noEmit"
   },
   "dependencies": {
-    "@bearcove/roam-core": "workspace:*",
-    "@bearcove/roam-postcard": "workspace:*",
-    "@bearcove/roam-ws": "workspace:*"
+    "@bearcove/vox-core": "workspace:*",
+    "@bearcove/vox-postcard": "workspace:*",
+    "@bearcove/vox-ws": "workspace:*"
   }
 }

@@ -1,31 +1,31 @@
-# Facet Opaque Adapter for Roam Payload
+# Facet Opaque Adapter for Vox Payload
 
 ## Purpose
 
-Define the contract behind `#[facet(opaque = thing)]` so Roam can:
+Define the contract behind `#[facet(opaque = thing)]` so Vox can:
 
 1. serialize erased outgoing payloads,
 2. parse incoming envelopes before payload concrete type is known,
 3. defer payload decoding with low-copy behavior when possible.
 
-## Roam-types Source Cross-References
+## Vox-types Source Cross-References
 
 1. Wire envelope and payload lifetime:
    `Message<'payload>`, `MessagePayload<'payload>`, `Payload<'payload>` in
-   `rust/roam-types/src/message.rs`.
+   `rust/vox-types/src/message.rs`.
 2. Transport boundary:
    `Link`, `LinkTx`, `LinkRx`, `LinkRx::recv -> Result<Option<Backing>, _>` in
-   `rust/roam-types/src/link.rs`.
+   `rust/vox-types/src/link.rs`.
 3. Conduit boundary:
    `Conduit`, `ConduitRx`, `ConduitRx::recv -> Result<Option<SelfRef<T>>, _>` in
-   `rust/roam-types/src/conduit.rs`.
+   `rust/vox-types/src/conduit.rs`.
 4. Backing ownership and transform:
    `SelfRef<T>`, `Backing`, `SelfRef::try_new`, `SelfRef::map` in
-   `rust/roam-types/src/selfref.rs`.
+   `rust/vox-types/src/selfref.rs`.
 5. Dispatch lookup and type plans:
    `ServiceDescriptor::by_id`, `MethodDescriptor.args_plan` in
-   `rust/roam-types/src/services.rs`, and `RpcPlan`/`type_plan` in
-   `rust/roam-types/src/rpc_plan.rs`.
+   `rust/vox-types/src/services.rs`, and `RpcPlan`/`type_plan` in
+   `rust/vox-types/src/rpc_plan.rs`.
 
 ## Core Invariant
 

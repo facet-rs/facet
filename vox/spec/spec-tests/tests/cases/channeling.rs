@@ -16,7 +16,7 @@ pub fn run_channeling_sum_client_to_server(spec: SubjectSpec) {
     run_async(async {
         let (client, mut child, _sh) = accept_subject_spec(spec).await?;
 
-        let (tx, rx) = roam::channel::<i32>();
+        let (tx, rx) = vox::channel::<i32>();
         spawn_loud(async move {
             for n in [1i32, 2, 3, 4, 5] {
                 tx.send(n).await.unwrap();
@@ -42,7 +42,7 @@ pub fn run_channeling_generate_server_to_client(spec: SubjectSpec) {
     run_async(async {
         let (client, mut child, _sh) = accept_subject_spec(spec).await?;
 
-        let (tx, mut rx) = roam::channel::<i32>();
+        let (tx, mut rx) = vox::channel::<i32>();
         let recv = spawn_loud(async move {
             let mut received = Vec::new();
             while let Ok(Some(n)) = rx.recv().await {
@@ -74,8 +74,8 @@ pub fn run_channeling_transform_bidirectional(spec: SubjectSpec) {
     run_async(async {
         let (client, mut child, _sh) = accept_subject_spec(spec).await?;
 
-        let (input_tx, input_rx) = roam::channel::<String>();
-        let (output_tx, mut output_rx) = roam::channel::<String>();
+        let (input_tx, input_rx) = vox::channel::<String>();
+        let (output_tx, mut output_rx) = vox::channel::<String>();
 
         let messages = ["hello", "world", "test"];
         spawn_loud(async move {

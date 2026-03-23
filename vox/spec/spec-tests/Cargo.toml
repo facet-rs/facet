@@ -4,17 +4,17 @@ version = "7.3.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "Compliance tests for the canonical roam spec in docs/content/"
+description = "Compliance tests for the canonical vox spec in docs/content/"
 
 [dependencies]
-roam = { workspace = true }
-roam-core = { workspace = true }
-roam-local.workspace = true
-roam-postcard.workspace = true
-roam-shm.workspace = true
-roam-stream = { workspace = true }
-roam-websocket = { workspace = true }
-roam-types = { workspace = true }
+vox = { workspace = true }
+vox-core = { workspace = true }
+vox-local.workspace = true
+vox-postcard.workspace = true
+vox-shm.workspace = true
+vox-stream = { workspace = true }
+vox-websocket = { workspace = true }
+vox-types = { workspace = true }
 shm-primitives = { workspace = true }
 spec-proto.workspace = true
 moire = { workspace = true }

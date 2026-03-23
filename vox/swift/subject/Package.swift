@@ -7,13 +7,13 @@ let package = Package(
         .macOS(.v14)
     ],
     dependencies: [
-        .package(path: "../roam-runtime")
+        .package(path: "../vox-runtime")
     ],
     targets: [
         .executableTarget(
             name: "subject-swift",
             dependencies: [
-                .product(name: "RoamRuntime", package: "roam-runtime")
+                .product(name: "VoxRuntime", package: "vox-runtime")
             ],
             sources: [
                 "Server.swift",
@@ -25,7 +25,7 @@ let package = Package(
             name: "subject-swiftTests",
             dependencies: [
                 .byName(name: "subject-swift"),
-                .product(name: "RoamRuntime", package: "roam-runtime"),
+                .product(name: "VoxRuntime", package: "vox-runtime"),
             ]
         )
     ]

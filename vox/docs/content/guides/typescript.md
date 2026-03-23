@@ -1,12 +1,12 @@
 +++
 title = "TypeScript Guide"
-description = "How to generate TypeScript bindings from Rust descriptors and wire clients/servers with Roam runtime packages."
+description = "How to generate TypeScript bindings from Rust descriptors and wire clients/servers with Vox runtime packages."
 weight = 23
 +++
 
-TypeScript usage in Roam has two parts:
+TypeScript usage in Vox has two parts:
 
-- runtime packages (`@bearcove/roam-core`, transports, wire/serialization)
+- runtime packages (`@bearcove/vox-core`, transports, wire/serialization)
 - generated service bindings (client, handler interface, dispatcher, descriptor)
 
 ## 1) Runtime dependencies
@@ -16,28 +16,28 @@ For a Node server/client setup, start with:
 ```json
 {
   "dependencies": {
-    "@bearcove/roam-core": "7.0.0",
-    "@bearcove/roam-tcp": "7.0.0",
-    "@bearcove/roam-ws": "7.0.0",
-    "@bearcove/roam-wire": "7.0.0",
-    "@bearcove/roam-postcard": "7.0.0"
+    "@bearcove/vox-core": "7.0.0",
+    "@bearcove/vox-tcp": "7.0.0",
+    "@bearcove/vox-ws": "7.0.0",
+    "@bearcove/vox-wire": "7.0.0",
+    "@bearcove/vox-postcard": "7.0.0"
   }
 }
 ```
 
-Generated files import from `@bearcove/roam-core` and transport packages. The
+Generated files import from `@bearcove/vox-core` and transport packages. The
 wire/postcard packages handle low-level encoding and are typically not used
 directly.
 
 ## 2) Generate TypeScript bindings from Rust
 
-Use `roam-codegen` from a `build.rs` or code-generation script:
+Use `vox-codegen` from a `build.rs` or code-generation script:
 
 ```rust
 // build.rs
 fn main() {
     let svc = my_proto::greeter_service_descriptor();
-    let ts = roam_codegen::targets::typescript::generate_service(svc);
+    let ts = vox_codegen::targets::typescript::generate_service(svc);
     std::fs::write("../typescript/generated/greeter.ts", ts).unwrap();
 }
 ```
@@ -46,15 +46,15 @@ The output contains:
 
 - `GreeterClient` — typed caller
 - `GreeterHandler` interface — implement this on the server
-- `GreeterDispatcher` — wires a `GreeterHandler` into the roam session
+- `GreeterDispatcher` — wires a `GreeterHandler` into the vox session
 - `greeter_descriptor` — schema + retry metadata used by the runtime
 
 ## 3) Use the generated client
 
 ```ts
-import { session } from "@bearcove/roam-core";
-import { wsConnector } from "@bearcove/roam-ws";
-import { GreeterClient } from "@acme/roam-generated/greeter.ts";
+import { session } from "@bearcove/vox-core";
+import { wsConnector } from "@bearcove/vox-ws";
+import { GreeterClient } from "@acme/vox-generated/greeter.ts";
 
 const established = await session.initiator(wsConnector("ws://127.0.0.1:9000"));
 const client = new GreeterClient(established.rootConnection().caller());
@@ -69,10 +69,10 @@ can also use that shorthand directly.
 ## 4) Use the generated dispatcher on the server
 
 ```ts
-import { session } from "@bearcove/roam-core";
-import { tcpConnector } from "@bearcove/roam-tcp";
-import { Driver } from "@bearcove/roam-core";
-import { GreeterDispatcher, type GreeterHandler } from "@acme/roam-generated/greeter.ts";
+import { session } from "@bearcove/vox-core";
+import { tcpConnector } from "@bearcove/vox-tcp";
+import { Driver } from "@bearcove/vox-core";
+import { GreeterDispatcher, type GreeterHandler } from "@acme/vox-generated/greeter.ts";
 
 class GreeterService implements GreeterHandler {
   hello(name: string): string {
@@ -90,7 +90,7 @@ await driver.run();
 
 ## 5) Session resumption and reconnection
 
-For WebSocket clients in browsers or mobile apps, connections drop. Roam's
+For WebSocket clients in browsers or mobile apps, connections drop. Vox's
 session resumption lets a client reconnect transparently — in-flight calls are
 automatically retried on idempotent methods, and the session resumes exactly
 where it left off.
@@ -106,7 +106,7 @@ const established = await session.initiator(wsConnector("ws://api.example.com"),
 });
 ```
 
-When enabled, roam exchanges a session resume key during the handshake. If the
+When enabled, vox exchanges a session resume key during the handshake. If the
 connection drops, the session automatically reconnects using that key.
 
 ### Reconnect policy
@@ -159,7 +159,7 @@ individual attempts or final failure.
 
 ### Keepalive for silent drops
 
-By default, Roam relies on the transport to surface a closed connection. TCP and
+By default, Vox relies on the transport to surface a closed connection. TCP and
 browser WebSocket connections are usually reliable, but certain environments
 (mobile networks, HTTP proxies, NAT gateways) can silently discard packets
 without sending a FIN or RST — leaving the connection open on both sides while
@@ -175,7 +175,7 @@ const established = await session.initiator(wsConnector("ws://api.example.com"),
 });
 ```
 
-Roam sends a protocol-level `Ping` message every `keepaliveIntervalMs`. If the
+Vox sends a protocol-level `Ping` message every `keepaliveIntervalMs`. If the
 peer does not reply with a `Pong` within `keepaliveTimeoutMs` (default: half
 the interval), the connection is forcibly closed and session recovery begins.
 
@@ -193,8 +193,8 @@ the interval as the timeout.
 ### Full production example
 
 ```ts
-import { session } from "@bearcove/roam-core";
-import { wsConnector } from "@bearcove/roam-ws";
+import { session } from "@bearcove/vox-core";
+import { wsConnector } from "@bearcove/vox-ws";
 import { ApiClient } from "@acme/generated/api.ts";
 
 async function connect(): Promise<ApiClient> {
@@ -238,7 +238,7 @@ async function connect(): Promise<ApiClient> {
 
 ## 6) Channels (streaming)
 
-Roam supports bidirectional streaming via typed channels. Channels are created
+Vox supports bidirectional streaming via typed channels. Channels are created
 as a `(Tx, Rx)` pair and one end is passed to a method call; the session
 manages the lifetime automatically.
 
@@ -247,7 +247,7 @@ channel is bound (becomes usable) when it is passed to a method, not when
 `channel()` is called.
 
 ```ts
-import { channel } from "@bearcove/roam-core";
+import { channel } from "@bearcove/vox-core";
 
 // Server streams numbers to the client.
 // Client gives the Tx end to the server and reads from Rx.
@@ -291,7 +291,7 @@ await Promise.all([callPromise, drain]);
 
 ## 7) Error handling
 
-All roam client calls return `Result`-shaped values for fallible methods:
+All vox client calls return `Result`-shaped values for fallible methods:
 
 ```ts
 const result = await client.divide(10n, 0n);
@@ -303,11 +303,11 @@ if (!result.ok) {
 }
 ```
 
-For infrastructure errors (network, protocol, cancellation) roam throws
+For infrastructure errors (network, protocol, cancellation) vox throws
 `RpcError`:
 
 ```ts
-import { RpcError, RpcErrorCode } from "@bearcove/roam-core";
+import { RpcError, RpcErrorCode } from "@bearcove/vox-core";
 
 try {
   await client.echo("hello");
@@ -334,7 +334,7 @@ decide how to handle the ambiguity.
 A common layout is:
 
 - `typescript/generated/*.ts` — generated service bindings
-- a small npm package (e.g. `@acme/roam-generated`) re-exporting those files
+- a small npm package (e.g. `@acme/vox-generated`) re-exporting those files
 - app/service packages depending on both generated bindings and the runtime
 
-Keep generated package versions aligned with the Roam runtime major version.
+Keep generated package versions aligned with the Vox runtime major version.

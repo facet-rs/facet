@@ -1,6 +1,6 @@
 # TypeScript parity TODO
 
-This document is the durable handoff / tracking checklist for bringing the TypeScript implementation to parity with the Rust implementation and therefore the current Roam specification.
+This document is the durable handoff / tracking checklist for bringing the TypeScript implementation to parity with the Rust implementation and therefore the current Vox specification.
 
 ## Goal
 
@@ -30,7 +30,7 @@ Tests are validation, not the target.
 
 A partial start has already happened on this branch:
 
-- Raw CBOR handshake helper code was started in `typescript/packages/roam-core/src/handshake.ts`.
+- Raw CBOR handshake helper code was started in `typescript/packages/vox-core/src/handshake.ts`.
 - `xtask` was updated to generate/export `wireMessageSchemasCbor`.
 - `SchemaTracker` was partially updated to accept current Rust `TypeSchemaId` encoding.
 - `session.ts` was partially moved toward raw-handshake startup for transport-based APIs.
@@ -47,9 +47,9 @@ However, the TS runtime still contains major stale assumptions that conflict wit
 
 At the time of writing, TypeScript also has known compile/diagnostic failures in at least:
 
-- `typescript/packages/roam-wire/src/types.ts`
-- `typescript/packages/roam-core/src/session.ts`
-- `typescript/packages/roam-wire/src/types.generated.ts`
+- `typescript/packages/vox-wire/src/types.ts`
+- `typescript/packages/vox-core/src/session.ts`
+- `typescript/packages/vox-wire/src/types.generated.ts`
 
 ---
 
@@ -72,9 +72,9 @@ Important consequence:
 
 ### References
 
-- `rust/roam-types/src/handshake.rs`
-- `rust/roam-core/src/handshake.rs`
-- `rust/roam-core/src/lib.rs` (`MessagePlan::from_handshake`)
+- `rust/vox-types/src/handshake.rs`
+- `rust/vox-core/src/handshake.rs`
+- `rust/vox-core/src/lib.rs` (`MessagePlan::from_handshake`)
 - `docs/content/spec/conn.md`
 
 ---
@@ -102,8 +102,8 @@ Important rule:
 
 ### References
 
-- `rust/roam-types/src/handshake.rs`
-- `rust/roam-core/src/handshake.rs`
+- `rust/vox-types/src/handshake.rs`
+- `rust/vox-core/src/handshake.rs`
 - `docs/content/spec/conn.md`
 
 ---
@@ -123,8 +123,8 @@ There is no standalone `SchemaMessage` in the current Rust flow.
 
 Owned by:
 
-- `rust/roam-core/src/session/mod.rs` (`SessionCore::send`)
-- `rust/roam-types/src/schema.rs` (`SchemaSendTracker::prepare_send_for_method`)
+- `rust/vox-core/src/session/mod.rs` (`SessionCore::send`)
+- `rust/vox-types/src/schema.rs` (`SchemaSendTracker::prepare_send_for_method`)
 
 Rules:
 
@@ -139,8 +139,8 @@ Rules:
 
 Owned by:
 
-- `rust/roam-core/src/session/mod.rs` (`Session::handle_message`)
-- `rust/roam-types/src/schema.rs` (`SchemaRecvTracker::record_received`)
+- `rust/vox-core/src/session/mod.rs` (`Session::handle_message`)
+- `rust/vox-types/src/schema.rs` (`SchemaRecvTracker::record_received`)
 
 Rules:
 
@@ -152,8 +152,8 @@ Rules:
 
 ### References
 
-- `rust/roam-core/src/session/mod.rs`
-- `rust/roam-types/src/schema.rs`
+- `rust/vox-core/src/session/mod.rs`
+- `rust/vox-types/src/schema.rs`
 
 ---
 
@@ -182,9 +182,9 @@ Important consequences:
 
 ### References
 
-- `rust/roam-postcard/src/decode.rs` (`read_opaque_bytes`)
-- `rust/roam-postcard/src/deserialize.rs`
-- `rust/roam-types/src/message.rs` (`Payload`, `PayloadAdapter`)
+- `rust/vox-postcard/src/decode.rs` (`read_opaque_bytes`)
+- `rust/vox-postcard/src/deserialize.rs`
+- `rust/vox-types/src/message.rs` (`Payload`, `PayloadAdapter`)
 
 ---
 
@@ -207,7 +207,7 @@ On resume, Rust resets per-connection schema state:
 
 ### References
 
-- `rust/roam-core/src/session/mod.rs`
+- `rust/vox-core/src/session/mod.rs`
 - `docs/content/spec/conn.md`
 - `docs/content/spec/retry.md`
 - `docs/content/spec/intro.md`
@@ -238,7 +238,7 @@ Docs explicitly describe stable conduit reconnect as preserving state/channels a
 
 ### References
 
-- `rust/roam-core/src/stable_conduit/mod.rs`
+- `rust/vox-core/src/stable_conduit/mod.rs`
 - `docs/content/spec/conn.md`
 - `docs/content/guides/rust.md` (`stable_conduit_reconnect`)
 
@@ -261,17 +261,17 @@ TypeScript currently does not match this fully.
 ### References
 
 - `docs/content/spec/retry.md`
-- Rust operation-store wiring in `rust/roam-core`
+- Rust operation-store wiring in `rust/vox-core`
 
 ---
 
 ## Major parity gaps in TypeScript
 
-## A. `roam-wire` still models stale handshake/message shapes
+## A. `vox-wire` still models stale handshake/message shapes
 
 ### Problem
 
-`typescript/packages/roam-wire/src/types.ts` still assumes:
+`typescript/packages/vox-wire/src/types.ts` still assumes:
 
 - `Hello`
 - `HelloYourself`
@@ -286,18 +286,18 @@ But Rust moved these to the raw CBOR handshake.
 
 ### TODO
 
-- [ ] Remove stale postcard-level `Hello` / `HelloYourself` assumptions from `roam-wire`
+- [ ] Remove stale postcard-level `Hello` / `HelloYourself` assumptions from `vox-wire`
 - [ ] Stop constructing `Message` values with payload tag `"Hello"` or `"HelloYourself"`
-- [ ] Decide whether handshake types should live in a dedicated TS handshake module instead of `roam-wire` postcard message helpers
-- [ ] Update `roam-wire/src/index.ts` exports accordingly
+- [ ] Decide whether handshake types should live in a dedicated TS handshake module instead of `vox-wire` postcard message helpers
+- [ ] Update `vox-wire/src/index.ts` exports accordingly
 - [ ] Regenerate `types.generated.ts` only from actual postcard message shapes
 - [ ] Make TS wire helpers reflect Rust's current `RequestCall` / `RequestResponse` shapes, including `schemas`
 
 ### Files
 
-- `typescript/packages/roam-wire/src/types.ts`
-- `typescript/packages/roam-wire/src/index.ts`
-- `typescript/packages/roam-wire/src/types.generated.ts`
+- `typescript/packages/vox-wire/src/types.ts`
+- `typescript/packages/vox-wire/src/index.ts`
+- `typescript/packages/vox-wire/src/types.generated.ts`
 
 ---
 
@@ -305,7 +305,7 @@ But Rust moved these to the raw CBOR handshake.
 
 ### Problem
 
-`typescript/packages/roam-core/src/session.ts` still contains stale postcard-handshake assumptions in several places, including:
+`typescript/packages/vox-core/src/session.ts` still contains stale postcard-handshake assumptions in several places, including:
 
 - message switching on `"Hello"` / `"HelloYourself"`
 - use of `messageHello(...)`
@@ -338,8 +338,8 @@ Match Rust:
 
 ### Files
 
-- `typescript/packages/roam-core/src/session.ts`
-- possibly `typescript/packages/roam-core/src/index.ts`
+- `typescript/packages/vox-core/src/session.ts`
+- possibly `typescript/packages/vox-core/src/index.ts`
 
 ---
 
@@ -347,7 +347,7 @@ Match Rust:
 
 ### Problem
 
-`typescript/packages/roam-core/src/schema_tracker.ts` and `cbor.ts` were written around the old `SchemaMessagePayload` framing model.
+`typescript/packages/vox-core/src/schema_tracker.ts` and `cbor.ts` were written around the old `SchemaMessagePayload` framing model.
 
 The tracker itself may still be useful, but the integration point is stale.
 
@@ -362,8 +362,8 @@ The tracker itself may still be useful, but the integration point is stale.
 
 ### Files
 
-- `typescript/packages/roam-core/src/schema_tracker.ts`
-- `typescript/packages/roam-core/src/cbor.ts`
+- `typescript/packages/vox-core/src/schema_tracker.ts`
+- `typescript/packages/vox-core/src/cbor.ts`
 
 ---
 
@@ -386,8 +386,8 @@ This needs verification across all TS postcard encode/decode paths.
 
 ### Likely files
 
-- `typescript/packages/roam-postcard/...`
-- `typescript/packages/roam-wire/...`
+- `typescript/packages/vox-postcard/...`
+- `typescript/packages/vox-wire/...`
 - any TS encode/decode helpers for payload-bearing messages
 
 ---
@@ -412,7 +412,7 @@ Match Rust ordering and responsibilities:
 
 ### TODO
 
-- [ ] Audit `typescript/packages/roam-core/src/stable_conduit.ts` against Rust stable conduit behavior
+- [ ] Audit `typescript/packages/vox-core/src/stable_conduit.ts` against Rust stable conduit behavior
 - [ ] Verify packet framing details
 - [ ] Verify replay/ack trimming semantics
 - [ ] Verify duplicate suppression semantics
@@ -424,9 +424,9 @@ Match Rust ordering and responsibilities:
 
 ### Files
 
-- `typescript/packages/roam-core/src/stable_conduit.ts`
-- `typescript/packages/roam-core/src/session.ts`
-- `typescript/packages/roam-core/src/transport_prologue.ts`
+- `typescript/packages/vox-core/src/stable_conduit.ts`
+- `typescript/packages/vox-core/src/session.ts`
+- `typescript/packages/vox-core/src/transport_prologue.ts`
 
 ---
 
@@ -467,8 +467,8 @@ But only in-process and only in memory.
 
 ### Files
 
-- `typescript/packages/roam-core/src/driver.ts`
-- `typescript/packages/roam-core/src/retry.ts`
+- `typescript/packages/vox-core/src/driver.ts`
+- `typescript/packages/vox-core/src/retry.ts`
 - generated descriptors that expose retry policy
 
 ---
@@ -512,9 +512,9 @@ So the parity question here is layered:
 
 ### Files
 
-- `typescript/packages/roam-core/src/session.ts`
-- `typescript/packages/roam-core/src/stable_conduit.ts`
-- channeling runtime pieces under `typescript/packages/roam-core/src/channeling/`
+- `typescript/packages/vox-core/src/session.ts`
+- `typescript/packages/vox-core/src/stable_conduit.ts`
+- channeling runtime pieces under `typescript/packages/vox-core/src/channeling/`
 
 ---
 
@@ -522,7 +522,7 @@ So the parity question here is layered:
 
 ### Problem
 
-`typescript/packages/roam-core/src/connection.ts` and related tests still model old Hello/HelloYourself postcard exchange.
+`typescript/packages/vox-core/src/connection.ts` and related tests still model old Hello/HelloYourself postcard exchange.
 
 That appears to be a pre-parity architecture and is now in conflict with current Rust/spec semantics.
 
@@ -536,13 +536,13 @@ That appears to be a pre-parity architecture and is now in conflict with current
 
 ### Files
 
-- `typescript/packages/roam-core/src/connection.ts`
-- `typescript/packages/roam-core/src/connection.channeling.test.ts`
-- `typescript/packages/roam-core/src/connection.keepalive.test.ts`
+- `typescript/packages/vox-core/src/connection.ts`
+- `typescript/packages/vox-core/src/connection.channeling.test.ts`
+- `typescript/packages/vox-core/src/connection.keepalive.test.ts`
 
 ---
 
-## I. `roam-wire` message helper payload shapes are out of date
+## I. `vox-wire` message helper payload shapes are out of date
 
 ### Problem
 
@@ -558,12 +558,12 @@ and should align exactly with Rust message layout.
 
 - [ ] Ensure `messageRequest` includes `schemas`
 - [ ] Ensure `messageResponse` includes `schemas`
-- [ ] Audit all handwritten message helper constructors against `rust/roam-types/src/message.rs`
+- [ ] Audit all handwritten message helper constructors against `rust/vox-types/src/message.rs`
 - [ ] Verify discriminants and helper return types remain sound
 
 ### Files
 
-- `typescript/packages/roam-wire/src/types.ts`
+- `typescript/packages/vox-wire/src/types.ts`
 
 ---
 
@@ -587,7 +587,7 @@ We added `wireMessageSchemasCbor`, but TS generation and exports need to reflect
 ### Files
 
 - `xtask/src/main.rs`
-- `typescript/packages/roam-wire/src/schemas.generated.ts`
+- `typescript/packages/vox-wire/src/schemas.generated.ts`
 - potentially new generated handshake artifacts if added
 
 ---
@@ -614,8 +614,8 @@ Those tests are useful only if rewritten to validate the current protocol.
 
 ### Known likely stale test areas
 
-- `typescript/packages/roam-core/src/connection.channeling.test.ts`
-- `typescript/packages/roam-core/src/connection.keepalive.test.ts`
+- `typescript/packages/vox-core/src/connection.channeling.test.ts`
+- `typescript/packages/vox-core/src/connection.keepalive.test.ts`
 - any tests around old `connection.ts` hello exchange
 
 ---
@@ -623,11 +623,11 @@ Those tests are useful only if rewritten to validate the current protocol.
 ## Concrete implementation plan
 
 ## Phase 1 — Repair wire model and remove stale handshake assumptions
-- [ ] Fix `roam-wire/src/types.ts` so it reflects current Rust postcard message shapes
+- [ ] Fix `vox-wire/src/types.ts` so it reflects current Rust postcard message shapes
 - [ ] Remove postcard hello helpers/types from `Message`
 - [ ] Add or relocate handshake-specific TS types/helpers as needed
 - [ ] Regenerate wire artifacts
-- [ ] Get `roam-wire` compiling again
+- [ ] Get `vox-wire` compiling again
 
 ## Phase 2 — Make session/runtime architecture match Rust
 - [ ] Make transport-based APIs do raw CBOR handshake first
@@ -635,7 +635,7 @@ Those tests are useful only if rewritten to validate the current protocol.
 - [ ] Remove old postcard-level hello handling from `session.ts`
 - [ ] Remove stale `SchemaMessage` path
 - [ ] Integrate request/response schema exchange properly
-- [ ] Get `roam-core` compiling again
+- [ ] Get `vox-core` compiling again
 
 ## Phase 3 — Fix payload framing and schema exchange correctness
 - [ ] Audit opaque framing end-to-end
@@ -665,8 +665,8 @@ Those tests are useful only if rewritten to validate the current protocol.
 
 These should happen first:
 
-- [ ] Fix `typescript/packages/roam-wire/src/types.ts`
-- [ ] Remove stale hello/schema-message assumptions from `typescript/packages/roam-core/src/session.ts`
+- [ ] Fix `typescript/packages/vox-wire/src/types.ts`
+- [ ] Remove stale hello/schema-message assumptions from `typescript/packages/vox-core/src/session.ts`
 - [ ] Move schema receive logic to inlined request/response `schemas`
 - [ ] Verify opaque framing in TS postcard implementation
 - [ ] Revisit `StableConduit` integration order after session handshake is corrected

@@ -1,5 +1,5 @@
 {
-  "name": "@bearcove/roam-playwright-tests",
+  "name": "@bearcove/vox-playwright-tests",
   "version": "7.3.0",
   "private": true,
   "type": "module",
@@ -7,8 +7,8 @@
     "test": "playwright test"
   },
   "devDependencies": {
-    "@bearcove/roam-core": "workspace:*",
-    "@bearcove/roam-generated": "workspace:*",
+    "@bearcove/vox-core": "workspace:*",
+    "@bearcove/vox-generated": "workspace:*",
     "@playwright/test": "^1",
     "@types/ws": "^8.18.1",
     "ws": "^8.19.0"

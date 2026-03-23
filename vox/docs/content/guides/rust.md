@@ -1,6 +1,6 @@
 +++
 title = "Rust Guide"
-description = "Use roam + a transport crate to define services, run drivers, and call methods with channels."
+description = "Use vox + a transport crate to define services, run drivers, and call methods with channels."
 weight = 21
 +++
 
@@ -8,19 +8,19 @@ The best way to learn the Rust API is to run the examples in order, from simples
 
 ## 1) `borrowed_and_channels` (smallest complete RPC)
 
-- Source: [rust-examples/examples/borrowed_and_channels.rs](https://github.com/bearcove/roam/blob/main/rust-examples/examples/borrowed_and_channels.rs)
+- Source: [rust-examples/examples/borrowed_and_channels.rs](https://github.com/bearcove/vox/blob/main/rust-examples/examples/borrowed_and_channels.rs)
 - Run: `cargo run -p rust-examples --example borrowed_and_channels`
 - Learn: borrowed args, borrowed returns, and `Rx<T>`/`Tx<T>` channel args.
 
 > ```rust
 > async fn is_short(&self, word: &str) -> bool;
-> async fn classify(&self, word: String) -> &'roam str;
+> async fn classify(&self, word: String) -> &'vox str;
 > async fn transform(&self, prefix: &str, input: Rx<String>, output: Tx<String>) -> u32;
 > ```
 
 ## 2) `virtual_connections` (multiple services on one session)
 
-- Source: [rust-examples/examples/virtual_connections.rs](https://github.com/bearcove/roam/blob/main/rust-examples/examples/virtual_connections.rs)
+- Source: [rust-examples/examples/virtual_connections.rs](https://github.com/bearcove/vox/blob/main/rust-examples/examples/virtual_connections.rs)
 - Run: `cargo run -p rust-examples --example virtual_connections`
 - Learn: `open_connection`, metadata-based accept, and independent per-vconn drivers.
 
@@ -34,7 +34,7 @@ The best way to learn the Rust API is to run the examples in order, from simples
 
 ## 3) `stable_conduit_reconnect` (reconnect + preserved state/channels)
 
-- Source: [rust-examples/examples/stable_conduit_reconnect.rs](https://github.com/bearcove/roam/blob/main/rust-examples/examples/stable_conduit_reconnect.rs)
+- Source: [rust-examples/examples/stable_conduit_reconnect.rs](https://github.com/bearcove/vox/blob/main/rust-examples/examples/stable_conduit_reconnect.rs)
 - Run: `cargo run -p rust-examples --example stable_conduit_reconnect`
 - Learn: forced link cuts with `StableConduit`, automatic re-establish, service state continuity, and channel continuity across reconnect.
 
@@ -47,17 +47,17 @@ The best way to learn the Rust API is to run the examples in order, from simples
 
 ## 4) `memory_proxying` (connection-level proxying)
 
-- Source: [rust-examples/examples/memory_proxying.rs](https://github.com/bearcove/roam/blob/main/rust-examples/examples/memory_proxying.rs)
+- Source: [rust-examples/examples/memory_proxying.rs](https://github.com/bearcove/vox/blob/main/rust-examples/examples/memory_proxying.rs)
 - Run: `cargo run -p rust-examples --example memory_proxying`
 - Learn: host bridges one virtual connection to another without service-specific forwarding code.
 
 > ```rust
-> roam::proxy_connections(incoming_handle, upstream_conn).await;
+> vox::proxy_connections(incoming_handle, upstream_conn).await;
 > ```
 
 ## 5) `shm_host_two_guests` (most complex: host + multiple guest processes)
 
-- Source: [rust-examples/examples/shm_host_two_guests.rs](https://github.com/bearcove/roam/blob/main/rust-examples/examples/shm_host_two_guests.rs)
+- Source: [rust-examples/examples/shm_host_two_guests.rs](https://github.com/bearcove/vox/blob/main/rust-examples/examples/shm_host_two_guests.rs)
 - Run (Unix): `cargo run -p rust-examples --example shm_host_two_guests`
 - Learn: one host process launching two guest processes, SHM bootstrap, and serving different services from each guest.
 
@@ -68,24 +68,24 @@ The best way to learn the Rust API is to run the examples in order, from simples
 
 ## Practical API pattern
 
-Most application code only needs `roam` + one transport crate.
+Most application code only needs `vox` + one transport crate.
 
 ```toml
 [dependencies]
-roam = "7.0.0"
-roam-stream = "7.0.0"
+vox = "7.0.0"
+vox-stream = "7.0.0"
 tokio = { version = "1", features = ["rt", "net"] }
 eyre = "0.6"
 ```
 
-Define a service with `#[roam::service]`, implement it, and establish on each side:
+Define a service with `#[vox::service]`, implement it, and establish on each side:
 
 ```rust
-let (server_guard, _) = roam::acceptor(StreamLink::tcp(server_socket))
+let (server_guard, _) = vox::acceptor(StreamLink::tcp(server_socket))
     .establish::<WordLabClient>(WordLabDispatcher::new(WordLabService))
     .await?;
 
-let (client, _session_handle) = roam::initiator(StreamLink::tcp(client_socket))
+let (client, _session_handle) = vox::initiator(StreamLink::tcp(client_socket))
     .establish::<WordLabClient>(())
     .await?;
 ```
@@ -93,13 +93,13 @@ let (client, _session_handle) = roam::initiator(StreamLink::tcp(client_socket))
 For borrowed returns, implementations receive a `Call` sink:
 
 ```rust
-async fn classify<'roam>(
+async fn classify<'vox>(
     &self,
-    call: impl roam::Call<'roam, &'roam str, std::convert::Infallible>,
+    call: impl vox::Call<'vox, &'vox str, std::convert::Infallible>,
     word: String,
 ) {
     call.ok("short").await;
 }
 ```
 
-For non-Rust bindings, generate code from service descriptors with `roam-codegen`.
+For non-Rust bindings, generate code from service descriptors with `vox-codegen`.

@@ -2,11 +2,11 @@
 
 ## Overview
 
-A `ReconnectingClient` wraps a roam `ConnectionHandle` and provides transparent reconnection when the underlying transport fails. Callers make RPC calls as normal; if the connection is lost, the client automatically reconnects and retries the call.
+A `ReconnectingClient` wraps a vox `ConnectionHandle` and provides transparent reconnection when the underlying transport fails. Callers make RPC calls as normal; if the connection is lost, the client automatically reconnects and retries the call.
 
 ## Motivation
 
-Roam clients currently fail permanently when the connection drops. This forces every consumer to implement their own reconnection logic at the wrong abstraction level. Reconnection belongs in roam-stream, at the transport layer.
+Vox clients currently fail permanently when the connection drops. This forces every consumer to implement their own reconnection logic at the wrong abstraction level. Reconnection belongs in vox-stream, at the transport layer.
 
 ## API
 
@@ -146,7 +146,7 @@ Reconnection is triggered when a call fails with a transport error. Transport er
 
 Reconnection is NOT triggered for:
 
-- RPC-level errors (`RoamError::UnknownMethod`, etc.)
+- RPC-level errors (`VoxError::UnknownMethod`, etc.)
 - Serialization errors
 - Application errors
 
@@ -268,7 +268,7 @@ let status: StatusResponse = client
 2. **Retry exhaustion**: Server stays down, returns `RetriesExhausted` after N attempts
 3. **Backoff timing**: Verify exponential backoff between attempts
 4. **Concurrent callers**: Multiple tasks calling during reconnection all succeed after
-5. **RPC errors pass through**: `RoamError::UnknownMethod` not treated as transport error
+5. **RPC errors pass through**: `VoxError::UnknownMethod` not treated as transport error
 6. **Lazy connect**: No connection until first call
 7. **Goodbye handling**: Server sends Goodbye, client reconnects
 

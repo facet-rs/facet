@@ -1,4 +1,4 @@
-// Browser test client for roam Rust/Wasm
+// Browser test client for vox Rust/Wasm
 //
 // This test loads the Rust-compiled-to-Wasm client and runs it against
 // a Rust WebSocket server to verify cross-platform compatibility.

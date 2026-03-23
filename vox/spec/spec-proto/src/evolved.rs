@@ -9,7 +9,7 @@
 //! v1 trait, so method IDs match. Only the types differ.
 
 use facet::Facet;
-use roam::service;
+use vox::service;
 
 /// Evolved testbed service — same method names, different types.
 #[service]

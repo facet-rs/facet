@@ -1,0 +1,39 @@
+[package]
+name = "vox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core Vox library crate"
+readme = "README.md"
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[features]
+default = ["runtime"]
+runtime = ["dep:vox-core"]
+
+[dependencies]
+vox-types.workspace = true
+vox-service-macros.workspace = true
+vox-core = { workspace = true, optional = true }
+facet.workspace = true
+vox-postcard.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
+vox-stream = { path = "../vox-stream" }
+vox-core = { path = "../vox-core" }
+shm-primitives = { path = "../shm-primitives" }
+vox-shm = { path = "../vox-shm" }
+tempfile.workspace = true
+tracing-subscriber.workspace = true

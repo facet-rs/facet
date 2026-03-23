@@ -4,7 +4,7 @@ version = "7.3.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "Service definitions used by the canonical roam compliance suite"
+description = "Service definitions used by the canonical vox compliance suite"
 
 [package.metadata]
 
@@ -13,4 +13,4 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet.workspace = true
-roam.workspace = true
+vox.workspace = true

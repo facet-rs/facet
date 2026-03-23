@@ -1,12 +1,12 @@
 +++
 title = "Introduction"
-description = "Formal roam RPC protocol specification"
+description = "Formal vox RPC protocol specification"
 weight = 10
 +++
 
 > r[service-macro.is-source-of-truth]
 >
-> roam is a **Rust-native** RPC protocol. There is no independent schema language;
+> vox is a **Rust-native** RPC protocol. There is no independent schema language;
 > Rust traits *are* the schema. Implementations for other languages (Swift,
 > TypeScript, etc.) are generated from Rust definitions.
 
@@ -21,7 +21,7 @@ crates. If it has only one, the `fantastic-proto` crate would contain something
 like:
 
 ```rust
-#[roam::service]
+#[vox::service]
 pub trait Adder {
     /// Load a template by name.
     async fn add(&self, l: u32, r: u32) -> u32;
@@ -29,7 +29,7 @@ pub trait Adder {
 ```
 
 Proto crates are meant to only contain types and trait definitions (as much as
-possible, modulo orphan rules) so that they may be joined with roam codegen to
+possible, modulo orphan rules) so that they may be joined with vox codegen to
 generate client and server code for Swift and TypeScript.
 
 All types that occur as arguments or in return position must implement the
@@ -37,7 +37,7 @@ All types that occur as arguments or in return position must implement the
 
 ## Implementing a service
 
-Given an `Adder` trait, the `roam::service` proc macro generates an
+Given an `Adder` trait, the `vox::service` proc macro generates an
 `Adder` trait:
 
 ```rust
@@ -70,8 +70,8 @@ But how do you obtain a client?
 To "handle" a call (i.e. send a response to an incoming request), or to "make" a
 call (i.e. send a request to the peer, expecting a response), one needs a connection.
 
-roam supports various transports, like memory, TCP and other sockets, WebSocket,
-shared memory; but a roam connection sits several layers above a "TCP connection".
+vox supports various transports, like memory, TCP and other sockets, WebSocket,
+shared memory; but a vox connection sits several layers above a "TCP connection".
 
 ```aasvg
 +------------------------+
@@ -101,7 +101,7 @@ The layers have distinct continuity boundaries:
 
 # Terminology: call, request attempt, response, and operation
 
-roam uses several related terms that refer to different layers of the system.
+vox uses several related terms that refer to different layers of the system.
 This specification uses them consistently as follows.
 
 A **call** is the application-level RPC invocation as seen by the programmer.

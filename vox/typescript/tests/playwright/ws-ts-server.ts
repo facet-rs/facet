@@ -8,7 +8,7 @@ import {
   type Rx,
   type SessionHandle,
   type Tx,
-} from "@bearcove/roam-core";
+} from "@bearcove/vox-core";
 import type {
   Canvas,
   Color,
@@ -26,8 +26,8 @@ import type {
   Status,
   Tag,
   TestbedHandler,
-} from "@bearcove/roam-generated/testbed.generated.ts";
-import { TestbedDispatcher } from "@bearcove/roam-generated/testbed.generated.ts";
+} from "@bearcove/vox-generated/testbed.generated.ts";
+import { TestbedDispatcher } from "@bearcove/vox-generated/testbed.generated.ts";
 
 class NodeWsLink implements Link {
   lastReceived: Uint8Array | undefined;
@@ -123,7 +123,7 @@ class TestbedService implements TestbedHandler {
   }
 
   async echo(message: string): Promise<string> {
-    if (message === "__roam_reconnect__") {
+    if (message === "__vox_reconnect__") {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     return message;

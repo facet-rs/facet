@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import RoamRuntime
+@testable import VoxRuntime
 @testable import subject_swift
 
 private actor TaskResponseInbox {
@@ -9,7 +9,7 @@ private actor TaskResponseInbox {
     private var waiters: [UInt64: CheckedContinuation<[UInt8], Never>] = [:]
 
     func push(_ message: TaskMessage) {
-        guard case .response(let requestId, let payload) = message else {
+        guard case .response(let requestId, let payload, _) = message else {
             return
         }
         if let waiter = waiters.removeValue(forKey: requestId) {
@@ -87,12 +87,13 @@ private struct ServerEnvelope: Sendable {
     let inbox: TaskResponseInbox
 }
 
-private final class LoopbackConnection: RoamConnection, @unchecked Sendable {
+private final class LoopbackConnection: VoxConnection, @unchecked Sendable {
     let channelAllocator = ChannelIdAllocator(role: .initiator)
     let incomingChannelRegistry = ChannelRegistry()
 
     private let adapter: TestbedDispatcherAdapter
     private let serverRegistry = ChannelRegistry()
+    private let schemaSendTracker = SchemaSendTracker()
     private let lock = NSLock()
     private var nextRequestId: UInt64 = 1
 
@@ -124,7 +125,8 @@ private final class LoopbackConnection: RoamConnection, @unchecked Sendable {
         retry _: RetryPolicy,
         timeout _: TimeInterval?,
         prepareRetry _: (@Sendable () async -> PreparedRetryRequest)?,
-        finalizeChannels: (@Sendable () -> Void)?
+        finalizeChannels: (@Sendable () -> Void)?,
+        schemaInfo _: ClientSchemaInfo?
     ) async throws -> Data {
         let requestId: UInt64 = lock.withLock {
             let id = nextRequestId
@@ -145,6 +147,7 @@ private final class LoopbackConnection: RoamConnection, @unchecked Sendable {
             payload: Array(payload),
             requestId: requestId,
             registry: serverRegistry,
+            schemaSendTracker: schemaSendTracker,
             taskTx: { [weak self] message in
                 guard let self else { return }
                 self.serverPump.send(ServerEnvelope(message: message, inbox: inbox))
@@ -317,6 +320,7 @@ struct TestbedDispatcherCoverageTests {
             payload: [],
             requestId: 11,
             registry: registry,
+            schemaSendTracker: SchemaSendTracker(),
             taskTx: { message in Task { await inbox.push(message) } }
         )
 
@@ -334,6 +338,7 @@ struct TestbedDispatcherCoverageTests {
             payload: [0x80],
             requestId: 12,
             registry: registry,
+            schemaSendTracker: SchemaSendTracker(),
             taskTx: { message in Task { await inbox.push(message) } }
         )
 

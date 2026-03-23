@@ -1,10 +1,10 @@
 +++
 title = "Retry"
-description = "Retry safety and semantics in roam"
+description = "Retry safety and semantics in vox"
 weight = 13
 +++
 
-The retry layer defines how roam handles ambiguous failures: cases where the
+The retry layer defines how vox handles ambiguous failures: cases where the
 client does not know whether the server received, started, completed, or lost
 an operation. It sits above transport/session continuity and below application
 logic.

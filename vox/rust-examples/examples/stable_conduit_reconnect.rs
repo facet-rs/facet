@@ -5,13 +5,13 @@ use std::sync::{
 };
 
 use eyre::{Result, WrapErr, eyre};
-use roam::{
+use vox::{
     Attachment, Backing, ConnectionSettings, DriverCaller, HandshakeResult, Link, LinkRx,
     LinkSource, LinkTx, MemoryLink, MemoryLinkRx, MemoryLinkRxError, MemoryLinkTx, MessageFamily,
     Parity, Rx, SessionRole, StableConduit, Tx, channel, prepare_acceptor_attachment,
 };
 
-#[roam::service]
+#[vox::service]
 trait StableLab {
     async fn bump(&self) -> u32;
     async fn transform(&self, prefix: String, input: Rx<String>, output: Tx<String>) -> u32;
@@ -109,7 +109,7 @@ impl Link for KillableMemoryLink {
 }
 
 impl LinkTx for KillableMemoryLinkTx {
-    type Permit = roam::MemoryLinkTxPermit;
+    type Permit = vox::MemoryLinkTxPermit;
 
     async fn reserve(&self) -> std::io::Result<Self::Permit> {
         if self.kill_switch.is_tripped() {
@@ -140,7 +140,7 @@ impl LinkRx for KillableMemoryLinkRx {
 fn killable_memory_link_pair(
     buffer: usize,
 ) -> (KillableMemoryLink, KillableMemoryLink, LinkKillSwitch) {
-    let (a, b) = roam::memory_link_pair(buffer);
+    let (a, b) = vox::memory_link_pair(buffer);
     let kill_switch = LinkKillSwitch::new();
     (
         KillableMemoryLink {
@@ -199,7 +199,7 @@ impl<L> LinkSource for QueuedAcceptorLinkSource<L>
 where
     L: Link + Send + 'static,
 {
-    type Link = roam::SplitLink<L::Tx, L::Rx>;
+    type Link = vox::SplitLink<L::Tx, L::Rx>;
 
     async fn next_link(&mut self) -> std::io::Result<Attachment<Self::Link>> {
         let link = self.links.pop_front().ok_or_else(|| {
@@ -244,13 +244,13 @@ async fn run_demo() -> Result<()> {
         .wrap_err("joining server_conduit_task")?
         .map_err(|e| eyre!("server StableConduit::new failed: {e}"))?;
 
-    println!("[demo] establishing roam session over stable conduits");
+    println!("[demo] establishing vox session over stable conduits");
     let server_task = tokio::spawn(async move {
         let server_settings = ConnectionSettings {
             parity: Parity::Even,
             max_concurrent_requests: 64,
         };
-        let (server_guard, _) = roam::acceptor_conduit(
+        let (server_guard, _) = vox::acceptor_conduit(
             server_conduit,
             HandshakeResult {
                 role: SessionRole::Acceptor,
@@ -277,7 +277,7 @@ async fn run_demo() -> Result<()> {
         parity: Parity::Odd,
         max_concurrent_requests: 64,
     };
-    let (client, _) = roam::initiator_conduit(
+    let (client, _) = vox::initiator_conduit(
         client_conduit,
         HandshakeResult {
             role: SessionRole::Initiator,

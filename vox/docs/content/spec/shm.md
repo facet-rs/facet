@@ -17,24 +17,24 @@ weight = 15
 For Rust users, the current implementation in this repository is based on
 low-level composition:
 
-1. Create/attach the shared segment with `roam_shm::segment::Segment`.
+1. Create/attach the shared segment with `vox_shm::segment::Segment`.
 2. Manage guest slots with `reserve_peer` / `claim_peer` / `attach_peer`.
 3. Build one `ShmLink` per host-guest pair with `ShmLink::for_host` or `ShmLink::for_guest`.
-4. Run the normal roam runtime (`BareConduit` + session builder + `Driver`) on top of that link.
+4. Run the normal vox runtime (`BareConduit` + session builder + `Driver`) on top of that link.
 
 The older monolithic host orchestration API (`ShmHost`, `bootstrap`,
 `MultiPeerHostDriver`) is not the primary shape. Instead, the current runtime
-provides a thin Unix helper module (`roam_shm::host`) that wraps peer reservation/spawn tickets
+provides a thin Unix helper module (`vox_shm::host`) that wraps peer reservation/spawn tickets
 while keeping SHM as a transport primitive.
 
 Host-side sketch (Unix, one peer):
 
 ```rust
 use std::sync::Arc;
-use roam_core::{BareConduit, Driver};
-use roam_core::session::acceptor;
-use roam_shm::{ShmLink, mmap_registry::{MmapChannelRx, MmapChannelTx}, segment::{Segment, SegmentConfig}, varslot::SizeClassConfig};
-use roam_types::Parity;
+use vox_core::{BareConduit, Driver};
+use vox_core::session::acceptor;
+use vox_shm::{ShmLink, mmap_registry::{MmapChannelRx, MmapChannelTx}, segment::{Segment, SegmentConfig}, varslot::SizeClassConfig};
+use vox_types::Parity;
 use shm_primitives::{Doorbell, FileCleanup, MmapControlReceiver, create_mmap_control_pair};
 
 let classes = [SizeClassConfig { slot_size: 4096, slot_count: 16 }];
@@ -136,7 +136,7 @@ let mut driver = Driver::new(root_handle, my_dispatcher, Parity::Even);
 > ```text
 > Offset  Size  Field               Description
 > ──────  ────  ─────               ───────────
-> 0       8     magic               "ROAMHUB\x07"
+> 0       8     magic               "TELXHUB\x07"
 > 8       4     version             Segment format version
 > 12      4     header_size         128
 > 16      8     total_size          Segment size in bytes
@@ -155,7 +155,7 @@ let mut driver = Driver::new(root_handle, my_dispatcher, Parity::Even);
 
 > r[shm.segment.magic]
 >
-> The magic field MUST be exactly `ROAMHUB\x07` (8 bytes). A guest
+> The magic field MUST be exactly `TELXHUB\x07` (8 bytes). A guest
 > MUST validate the magic before proceeding.
 
 > r[shm.segment.config]

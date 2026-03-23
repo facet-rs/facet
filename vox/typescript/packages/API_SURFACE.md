@@ -2,9 +2,9 @@
 
 This document defines the intended public entrypoints for TypeScript workspace packages.
 
-## `@bearcove/roam-core`
+## `@bearcove/vox-core`
 
-`@bearcove/roam-core` is the runtime/client package. Its root export is intentionally limited to:
+`@bearcove/vox-core` is the runtime/client package. Its root export is intentionally limited to:
 
 - Connection/handshake runtime (`Connection`, `ConnectionError`, `helloExchange*`, `defaultHello`)
 - Dispatcher and call plumbing (`ServiceDispatcher`, `ChannelingDispatcher`, `Caller`, `CallBuilder`, middleware types)
@@ -14,9 +14,9 @@ This document defines the intended public entrypoints for TypeScript workspace p
 
 Low-level channel/schema internals are not part of the curated root API.
 
-## `@bearcove/roam-tcp`
+## `@bearcove/vox-tcp`
 
-`@bearcove/roam-tcp` is transport-focused. Its root export is intentionally limited to:
+`@bearcove/vox-tcp` is transport-focused. Its root export is intentionally limited to:
 
 - TCP framing/transport (`LengthPrefixedFramed`, `Server`, `ConnectOptions`)
 - Minimal connection surface needed by transport consumers (`Connection`, `ConnectionError`, `Negotiated`, `HelloExchangeOptions`)
@@ -33,8 +33,8 @@ Allowed cross-package imports:
 Forbidden cross-package imports:
 
 - Any `src` deep import, for example:
-  - `@bearcove/roam-core/src/...`
-  - `../roam-core/src/...`
+  - `@bearcove/vox-core/src/...`
+  - `../vox-core/src/...`
 
 Enforcement:
 
