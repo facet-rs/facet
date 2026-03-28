@@ -66,7 +66,7 @@ shm-primitives = { path = "rust/shm-primitives", version = "0.2.2", default-feat
 shm-primitives-async = { path = "rust/shm-primitives-async", version = "0.2.2", default-features = false }
 vox-postcard = { path = "rust/vox-postcard", version = "0.2.2" }
 facet-cbor = { path = "rust/facet-cbor", version = "0.2.2" }
-ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "0.2.2" }
+ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "8.0.0" }
 
 # Not internal crates
 moire = { version = "1.0.0", git = "https://github.com/bearcove/moire", rev = "13eac79" }
