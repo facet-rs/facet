@@ -1,12 +1,7 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "ES2022",
-    "moduleResolution": "Bundler",
-    "lib": ["ES2022"],
-    "allowImportingTsExtensions": true,
-    "strict": true,
-    "noEmit": true
+    "types": ["node"]
   },
   "include": ["src/**/*.ts"]
 }
