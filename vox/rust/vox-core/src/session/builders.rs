@@ -3,6 +3,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use moire::sync::mpsc;
@@ -820,6 +821,11 @@ struct BareSourceRecoverer<S> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+const SOURCE_RECOVERY_BACKOFF_MIN: Duration = Duration::from_millis(100);
+#[cfg(not(target_arch = "wasm32"))]
+const SOURCE_RECOVERY_BACKOFF_MAX: Duration = Duration::from_secs(5);
+
+#[cfg(not(target_arch = "wasm32"))]
 impl<S> ConduitRecoverer for BareSourceRecoverer<S>
 where
     S: LinkSource,
@@ -833,26 +839,49 @@ where
         resume_key: Option<&'a SessionResumeKey>,
     ) -> vox_types::BoxFut<'a, Result<super::RecoveredConduit, SessionError>> {
         Box::pin(async move {
-            let attachment = self.source.next_link().await.map_err(SessionError::Io)?;
-            let mut link = initiate_transport(attachment.into_link(), TransportMode::Bare)
-                .await
-                .map_err(session_error_from_transport)?;
-            let handshake_result = handshake_as_initiator(
-                &link.tx,
-                &mut link.rx,
-                self.settings.clone(),
-                true,
-                resume_key,
-            )
-            .await
-            .map_err(session_error_from_handshake)?;
-            let conduit = BareConduit::<MessageFamily, _>::new(link);
-            let (tx, rx) = conduit.split();
-            Ok(super::RecoveredConduit {
-                tx: Arc::new(tx) as Arc<dyn crate::DynConduitTx>,
-                rx: Box::new(rx) as Box<dyn crate::DynConduitRx>,
-                handshake: handshake_result,
-            })
+            let mut backoff = SOURCE_RECOVERY_BACKOFF_MIN;
+            let mut use_resume_key = resume_key.is_some();
+
+            loop {
+                let selected_resume_key = if use_resume_key { resume_key } else { None };
+
+                let result: Result<super::RecoveredConduit, SessionError> = async {
+                    let attachment = self.source.next_link().await.map_err(SessionError::Io)?;
+                    let mut link = initiate_transport(attachment.into_link(), TransportMode::Bare)
+                        .await
+                        .map_err(session_error_from_transport)?;
+                    let handshake_result = handshake_as_initiator(
+                        &link.tx,
+                        &mut link.rx,
+                        self.settings.clone(),
+                        true,
+                        selected_resume_key,
+                    )
+                    .await
+                    .map_err(session_error_from_handshake)?;
+                    let conduit = BareConduit::<MessageFamily, _>::new(link);
+                    let (tx, rx) = conduit.split();
+                    Ok(super::RecoveredConduit {
+                        tx: Arc::new(tx) as Arc<dyn crate::DynConduitTx>,
+                        rx: Box::new(rx) as Box<dyn crate::DynConduitRx>,
+                        handshake: handshake_result,
+                    })
+                }
+                .await;
+
+                if let Ok(conduit) = result {
+                    return Ok(conduit);
+                }
+
+                if use_resume_key {
+                    // If a resumption attempt is rejected once, continue trying without
+                    // a resume key so restart scenarios can establish a fresh session.
+                    use_resume_key = false;
+                }
+
+                tokio::time::sleep(backoff).await;
+                backoff = backoff.saturating_mul(2).min(SOURCE_RECOVERY_BACKOFF_MAX);
+            }
         })
     }
 }
@@ -1050,7 +1079,6 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
                 }
                 return Ok(SessionAcceptOutcome::Resumed);
             }
-            return Err(SessionError::Protocol("unknown session resume key".into()));
         }
 
         let (client, session_handle) = self.establish(handler).await?;

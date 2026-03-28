@@ -11,7 +11,7 @@ use vox_types::{
     ChannelItem, ChannelMessage, ChannelSink, Conduit, ConduitRx, ConnectionSettings, Handler,
     IncomingChannelMessage, Link, LinkRx, LinkTx, LinkTxPermit, Message, MessageFamily,
     MessagePayload, Metadata, MethodId, Parity, Payload, ReplySink, RequestBody, RequestCall,
-    RequestCancel, RequestMessage, RequestResponse, RetryPolicy, VoxError, SelfRef, Tx, WriteSlot,
+    RequestCancel, RequestMessage, RequestResponse, RetryPolicy, SelfRef, Tx, VoxError, WriteSlot,
     channel, ensure_operation_id, metadata_operation_id,
 };
 
@@ -1767,6 +1767,111 @@ async fn resumable_source_initiator_keeps_pending_call_alive_across_auto_resume(
     assert_eq!(value, 77);
 
     drop(server_caller);
+    let _ = client_session_handle.shutdown();
+    client_break2.close().await;
+    server_break2.close().await;
+}
+
+#[tokio::test]
+async fn resumable_source_initiator_falls_back_to_fresh_session_when_resume_key_unknown() {
+    let initial_registry = SessionRegistry::default();
+    let restarted_registry = SessionRegistry::default();
+    let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
+    let (client_link2, client_break2, server_link2, server_break2) = breakable_link_pair(64);
+
+    let source = TestLinkSource::new([
+        Attachment::initiator(client_link1),
+        Attachment::initiator(client_link2),
+    ]);
+
+    let started = Arc::new(tokio::sync::Notify::new());
+    let started_for_wait = Arc::clone(&started);
+    let started_wait = started_for_wait.notified();
+    let release = Arc::new(tokio::sync::Notify::new());
+
+    let (server_established, client_established) = tokio::try_join!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            acceptor_on(server_link1)
+                .session_registry(initial_registry.clone())
+                .establish_or_resume::<DriverCaller>(ResumableReplyingHandler {
+                    started,
+                    release: Arc::clone(&release),
+                }),
+        ),
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            crate::initiator(source, TransportMode::Bare).establish::<DriverCaller>(()),
+        ),
+    )
+    .expect("initial session establishment timed out");
+
+    let (initial_server_caller, _initial_server_session_handle) =
+        match server_established.expect("server handshake failed") {
+            SessionAcceptOutcome::Established(client, handle) => (client, handle),
+            SessionAcceptOutcome::Resumed => panic!("first accept should establish a new session"),
+        };
+    let (caller, client_session_handle) = client_established.expect("client handshake failed");
+
+    let call_task = moire::task::spawn(
+        async move {
+            caller
+                .call(RequestCall {
+                    method_id: MethodId(1),
+                    args: Payload::outgoing(&88_u32),
+                    schemas: Default::default(),
+                    metadata: Default::default(),
+                })
+                .await
+        }
+        .named("source_auto_resume_unknown_key_then_fresh"),
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), started_wait)
+        .await
+        .expect("timed out waiting for handler start");
+
+    client_break1.close().await;
+    server_break1.close().await;
+
+    let restarted_started = Arc::new(tokio::sync::Notify::new());
+    let restarted_started_waiter = Arc::clone(&restarted_started);
+    let restarted_started_wait = restarted_started_waiter.notified();
+    let restarted_accept = tokio::time::timeout(
+        Duration::from_secs(1),
+        acceptor_on(server_link2)
+            .session_registry(restarted_registry.clone())
+            .establish_or_resume::<DriverCaller>(ResumableReplyingHandler {
+                started: restarted_started,
+                release: Arc::clone(&release),
+            }),
+    )
+    .await
+    .expect("timed out waiting for fallback reconnection");
+    let (restarted_server_caller, _restarted_server_session_handle) =
+        match restarted_accept.expect("server accept should succeed") {
+            SessionAcceptOutcome::Established(client, handle) => (client, handle),
+            SessionAcceptOutcome::Resumed => panic!("fallback should establish a fresh session"),
+        };
+
+    tokio::time::timeout(Duration::from_secs(1), restarted_started_wait)
+        .await
+        .expect("timed out waiting for restarted handler start");
+    release.notify_waiters();
+
+    let response = call_task
+        .await
+        .expect("call task join")
+        .expect("call should succeed after fallback reconnection");
+    let ret_bytes = match &response.ret {
+        Payload::PostcardBytes(bytes) => *bytes,
+        _ => panic!("expected incoming payload in response"),
+    };
+    let value: u32 = vox_postcard::from_slice(ret_bytes).expect("deserialize response");
+    assert_eq!(value, 88);
+
+    drop(initial_server_caller);
+    drop(restarted_server_caller);
     let _ = client_session_handle.shutdown();
     client_break2.close().await;
     server_break2.close().await;
