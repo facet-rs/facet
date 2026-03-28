@@ -101,12 +101,12 @@ swift-subject-cov-html:
         -format=html -output-dir .coverage/swift-subject/html
 
 examples:
-    @set -eu
-    @for path in rust-examples/examples/*.rs; do \
-      example="$${path##*/}"; \
-      example="$${example%.rs}"; \
-      echo "[examples] running $$example"; \
-      cargo run -p rust-examples --example "$$example"; \
+    #!/bin/bash -eu
+    for path in rust-examples/examples/*.rs; do \
+      example="${path##*/}"; \
+      example="${example%.rs}"; \
+      echo "[examples] running $example"; \
+      cargo run -p rust-examples --example "$example"; \
     done
 
 all *args:
