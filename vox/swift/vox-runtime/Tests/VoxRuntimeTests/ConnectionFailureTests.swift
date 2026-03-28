@@ -528,7 +528,7 @@ struct ConnectionFailureTests {
         let driverTask = Task {
             try await driver.run()
         }
-        try await withAsyncCleanup({
+        await withAsyncCleanup({
             try? await transport.close()
             await cancelAndDrain(driverTask)
         }) {
@@ -603,7 +603,7 @@ struct ConnectionFailureTests {
         let driverTask: Task<Void, Error> = Task {
             try await driver.run()
         }
-        try await withAsyncCleanup({
+        await withAsyncCleanup({
             try? await transport.close()
             await cancelAndDrain(driverTask)
         }) {
@@ -712,7 +712,7 @@ struct ConnectionFailureTests {
         let driverTask = Task {
             try await driver.run()
         }
-        try await withAsyncCleanup({
+        await withAsyncCleanup({
             try? await transport.close()
             await cancelAndDrain(driverTask)
         }) {
@@ -736,7 +736,7 @@ struct ConnectionFailureTests {
         let driverTask = Task {
             try await driver.run()
         }
-        try await withAsyncCleanup({
+        await withAsyncCleanup({
             try? await transport.close()
             await cancelAndDrain(driverTask)
         }) {
@@ -1067,7 +1067,7 @@ struct ConnectionFailureTests {
         let driverTask: Task<Void, Error> = Task {
             try await driver.run()
         }
-        try await withAsyncCleanup({
+        await withAsyncCleanup({
             try? await transport.close()
             await cancelAndDrain(driverTask)
         }) {
@@ -1093,7 +1093,7 @@ struct ConnectionFailureTests {
         let driverTask: Task<Void, Error> = Task {
             try await driver.run()
         }
-        try await withAsyncCleanup({
+        await withAsyncCleanup({
             try? await transport.close()
             await cancelAndDrain(driverTask)
         }) {

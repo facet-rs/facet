@@ -153,27 +153,26 @@ func connectLink(host: String, port: Int) async throws -> NIOFrameLink {
 
     let bootstrap = ClientBootstrap(group: group)
         .channelOption(ChannelOptions.socketOption(.so_keepalive), value: 1)
+        .channelInitializer { channel in
+            do {
+                try channel.pipeline.syncOperations.addHandler(
+                    ByteToMessageHandler(LengthPrefixDecoder(frameLimit: frameLimit))
+                )
+                try channel.pipeline.syncOperations.addHandler(rawHandler)
+                return channel.eventLoop.makeSucceededVoidFuture()
+            } catch {
+                return channel.eventLoop.makeFailedFuture(error)
+            }
+        }
 
     do {
         let channel = try await bootstrap.connect(host: host, port: port).get()
-        do {
-            try await channel.pipeline.addHandler(
-                ByteToMessageHandler(LengthPrefixDecoder(frameLimit: frameLimit))
-            ).flatMap {
-                channel.pipeline.addHandler(rawHandler)
-            }.get()
-            return NIOFrameLink(
-                channel: channel,
-                frameLimit: frameLimit,
-                inboundStream: rawStream,
-                owningGroup: group
-            )
-        } catch {
-            if channel.isActive {
-                try? await channel.close()
-            }
-            throw error
-        }
+        return NIOFrameLink(
+            channel: channel,
+            frameLimit: frameLimit,
+            inboundStream: rawStream,
+            owningGroup: group
+        )
     } catch {
         try? await group.shutdownGracefully()
         throw error
