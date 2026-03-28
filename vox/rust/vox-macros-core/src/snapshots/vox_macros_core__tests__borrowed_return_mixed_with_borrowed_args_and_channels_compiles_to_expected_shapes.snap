@@ -174,7 +174,6 @@ where
                     return;
                 }
             };
-            ::std::eprintln!("[rpc] dispatch invoking method={:?}", method_id);
             let (word,) = args;
             let extensions = ::vox::Extensions::new();
             let context = ::vox::RequestContext::with_extensions(
@@ -225,7 +224,6 @@ where
                     return;
                 }
             };
-            ::std::eprintln!("[rpc] dispatch invoking method={:?}", method_id);
             let (word,) = args;
             let extensions = ::vox::Extensions::new();
             let context = ::vox::RequestContext::with_extensions(
@@ -279,7 +277,6 @@ where
                     return;
                 }
             };
-            ::std::eprintln!("[rpc] dispatch invoking method={:?}", method_id);
             let (prefix, input, output) = args;
             let extensions = ::vox::Extensions::new();
             let context = ::vox::RequestContext::with_extensions(
