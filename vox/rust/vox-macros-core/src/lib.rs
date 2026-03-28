@@ -646,7 +646,6 @@ fn generate_dispatch_arm(
                     return;
                 }
             };
-            ::std::eprintln!("[rpc] dispatch invoking method={:?}", method_id);
             #destructure
             #context_setup
             #invoke_and_reply

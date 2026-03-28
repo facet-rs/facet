@@ -73,14 +73,6 @@ fn resolve_plan<'facet, T: Facet<'facet>>(
             "remote root type ref {remote_root_ref:?} not found in received schemas"
         ))
     })?;
-    ::std::eprintln!(
-        "[schema-deser] resolve_plan remote: method={:?} direction={:?} t={} root_ref={:?} root_kind={:?}",
-        method_id,
-        direction,
-        ::std::any::type_name::<T>(),
-        remote_root_ref,
-        root_kind
-    );
     let root_id = match &remote_root_ref {
         TypeRef::Concrete { type_id, .. } => *type_id,
         TypeRef::Var { .. } => {
@@ -100,16 +92,7 @@ fn resolve_plan<'facet, T: Facet<'facet>>(
 
     let local_extracted = extract_schemas(T::SHAPE)
         .map_err(|e| DeserializeError::protocol(&format!("schema extraction failed: {e}")))?;
-    let local_root_ref = local_extracted.root.clone();
     let local = SchemaSet::from_root_and_schemas(local_extracted.root, local_extracted.schemas);
-    ::std::eprintln!(
-        "[schema-deser] resolve_plan local: method={:?} direction={:?} shape={} root_ref={:?} root_kind={:?}",
-        method_id,
-        direction,
-        T::SHAPE,
-        local_root_ref,
-        local.root.kind
-    );
 
     let plan = build_plan(&PlanInput {
         remote: &remote,
