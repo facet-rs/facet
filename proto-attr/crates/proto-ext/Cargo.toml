@@ -1,6 +1,6 @@
 [package]
 name = "proto-ext"
-version.workspace = true
+version = "0.44.2"
 edition.workspace = true
 license.workspace = true
 description = "Example extension crate using proto-attr grammar"
@@ -11,7 +11,7 @@ proto-attr-macros.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
-facet-showcase = { path = "../../../facet-showcase" }  # relative to proto-attr/crates/proto-ext
+facet-showcase = { path = "../../../facet-showcase" } # relative to proto-attr/crates/proto-ext
 
 [features]
 default = []
