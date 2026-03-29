@@ -26,6 +26,8 @@ vox-types.workspace = true
 vox-service-macros.workspace = true
 vox-core = { workspace = true, optional = true }
 facet.workspace = true
+facet-pretty.workspace = true
+facet-reflect.workspace = true
 vox-postcard.workspace = true
 tracing.workspace = true
 

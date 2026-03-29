@@ -22,6 +22,7 @@ bitflags.workspace = true
 blake3.workspace = true
 facet.workspace = true
 facet-core.workspace = true
+facet-reflect.workspace = true
 facet-path.workspace = true
 heck.workspace = true
 indexmap.workspace = true

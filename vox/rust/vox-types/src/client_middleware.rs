@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::server_middleware::BoxMiddlewareFuture;
 use crate::{
     BoxFut, CallResult, Caller, Extensions, Metadata, MetadataEntry, MetadataFlags, MetadataValue,
-    MethodDescriptor, MethodId, RequestCall, VoxError, ServiceDescriptor,
+    MethodDescriptor, MethodId, RequestCall, ServiceDescriptor, VoxError,
 };
 
 /// Borrowed per-call context exposed to client middleware.

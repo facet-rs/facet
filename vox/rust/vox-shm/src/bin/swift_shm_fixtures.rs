@@ -1,5 +1,10 @@
 //! Generate SHM golden vectors for Swift runtime parity tests.
 
+use shm_primitives::{
+    HeapRegion, MAGIC, SEGMENT_HEADER_SIZE, SEGMENT_VERSION, SegmentHeader, SegmentHeaderInit,
+};
+use std::fs;
+use std::path::{Path, PathBuf};
 use vox_shm::framing::{
     DEFAULT_INLINE_THRESHOLD, FLAG_MMAP_REF, FLAG_SLOT_REF, FRAME_HEADER_SIZE, MMAP_REF_ENTRY_SIZE,
     SLOT_REF_ENTRY_SIZE,
@@ -7,11 +12,6 @@ use vox_shm::framing::{
 use vox_shm::peer_table::{PEER_ENTRY_SIZE, PeerTable, bipbuf_pair_size};
 use vox_shm::segment::{SegmentConfig, SegmentLayout};
 use vox_shm::varslot::{SizeClassConfig, VarSlotPool};
-use shm_primitives::{
-    HeapRegion, MAGIC, SEGMENT_HEADER_SIZE, SEGMENT_VERSION, SegmentHeader, SegmentHeaderInit,
-};
-use std::fs;
-use std::path::{Path, PathBuf};
 
 fn put_u32_le(buf: &mut [u8], off: usize, value: u32) {
     buf[off..off + 4].copy_from_slice(&value.to_le_bytes());

@@ -2,10 +2,10 @@ mod service_macro_shared;
 
 use std::sync::Arc;
 
+use shm_primitives::FileCleanup;
 use vox_core::BareConduit;
 use vox_shm::varslot::SizeClassConfig;
 use vox_shm::{Segment, SegmentConfig, ShmLink, create_test_link_pair};
-use shm_primitives::FileCleanup;
 
 type MessageConduit = BareConduit<vox_types::MessageFamily, ShmLink>;
 
@@ -53,6 +53,18 @@ async fn request_context_opt_in_end_to_end_over_shm() {
 async fn server_middleware_end_to_end_over_shm() {
     let (a, b, _dir) = message_conduit_pair().await;
     service_macro_shared::run_server_middleware_end_to_end(|| (a, b)).await;
+}
+
+#[tokio::test]
+async fn server_request_peek_end_to_end_over_shm() {
+    let (a, b, _dir) = message_conduit_pair().await;
+    service_macro_shared::run_server_request_peek_end_to_end(|| (a, b)).await;
+}
+
+#[tokio::test]
+async fn server_response_peek_end_to_end_over_shm() {
+    let (a, b, _dir) = message_conduit_pair().await;
+    service_macro_shared::run_server_response_peek_end_to_end(|| (a, b)).await;
 }
 
 #[tokio::test]

@@ -441,8 +441,8 @@ mod tests {
 
     use crate::segment::SegmentConfig;
     use crate::varslot::SizeClassConfig;
-    use vox_types::{Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
     use shm_primitives::FileCleanup;
+    use vox_types::{Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
 
     #[tokio::test]
     async fn host_hub_builds_host_and_guest_links() {

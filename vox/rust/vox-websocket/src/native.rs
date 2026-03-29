@@ -271,9 +271,9 @@ impl LinkRx for WsLinkRx {
 
 #[cfg(test)]
 mod tests {
-    use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
     use tokio_tungstenite::WebSocketStream;
     use tokio_tungstenite::tungstenite::protocol::Role;
+    use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
 
     use super::*;
 

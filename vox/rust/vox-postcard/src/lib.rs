@@ -436,8 +436,7 @@ mod tests {
         remote_shape: &'static facet_core::Shape,
         local_shape: &'static facet_core::Shape,
     ) -> Result<PlanResult, error::TranslationError> {
-        let remote_extracted =
-            vox_types::extract_schemas(remote_shape).expect("schema extraction");
+        let remote_extracted = vox_types::extract_schemas(remote_shape).expect("schema extraction");
         let remote =
             SchemaSet::from_root_and_schemas(remote_extracted.root, remote_extracted.schemas);
         let local_extracted = vox_types::extract_schemas(local_shape).expect("schema extraction");
@@ -949,8 +948,8 @@ mod tests {
 
     #[test]
     fn translation_result_with_vox_error_shape() {
-        use vox_types::VoxError;
         use std::convert::Infallible;
+        use vox_types::VoxError;
 
         type T = Result<String, VoxError<Infallible>>;
         let r = plan_for(T::SHAPE, T::SHAPE).unwrap();
@@ -961,8 +960,8 @@ mod tests {
 
     #[test]
     fn translation_result_with_vox_error_err_variant() {
-        use vox_types::VoxError;
         use std::convert::Infallible;
+        use vox_types::VoxError;
 
         type T = Result<String, VoxError<Infallible>>;
         let r = plan_for(T::SHAPE, T::SHAPE).unwrap();

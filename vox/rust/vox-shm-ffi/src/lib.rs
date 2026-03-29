@@ -515,10 +515,7 @@ pub unsafe extern "C" fn vox_var_slot_pool_slot_size(
 ///
 /// `pool` must be a valid pointer returned by `vox_var_slot_pool_attach`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn vox_var_slot_pool_recover_peer(
-    pool: *const VoxVarSlotPool,
-    peer_id: u8,
-) {
+pub unsafe extern "C" fn vox_var_slot_pool_recover_peer(pool: *const VoxVarSlotPool, peer_id: u8) {
     let pool = unsafe { &*pool };
     pool.inner.reclaim_peer_slots(peer_id);
     if let Ok(mut states) = pool.states.lock() {

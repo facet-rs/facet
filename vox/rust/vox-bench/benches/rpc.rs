@@ -307,10 +307,7 @@ fn vox_echo(bencher: divan::Bencher, n: usize) {
     let payload = vec![42u8; n];
     bencher.bench_local(|| {
         TOKIO.block_on(async {
-            let resp = client
-                .echo(payload.clone())
-                .await
-                .expect("vox echo failed");
+            let resp = client.echo(payload.clone()).await.expect("vox echo failed");
             divan::black_box(resp.len());
         })
     });

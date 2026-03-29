@@ -159,7 +159,7 @@ mod tests {
     use super::{ClientLogging, ClientLoggingOptions, RedactedMetadata};
     use crate::{
         Caller, MetadataEntry, MetadataFlags, MetadataValue, MethodDescriptor, MethodId,
-        MiddlewareCaller, Payload, RequestCall, VoxError, ServiceDescriptor,
+        MiddlewareCaller, Payload, RequestCall, ServiceDescriptor, VoxError,
     };
     use vox_types::CallResult;
 

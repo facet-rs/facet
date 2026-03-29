@@ -193,40 +193,100 @@ enum MiddlewareMode {
 }
 
 impl vox::ServerMiddleware for RecordingMiddleware {
-    fn pre<'a>(&'a self, context: &'a vox::RequestContext<'a>) -> vox::BoxMiddlewareFuture<'a> {
-        Box::pin(async move {
-            record_event(&self.events, format!("{}:pre", self.name));
-            match self.mode {
-                MiddlewareMode::Seed => {
-                    let _ = context
-                        .extensions()
-                        .insert(MiddlewareValue(self.name.to_string()));
-                }
-                MiddlewareMode::Append(suffix) => {
-                    let updated = context
-                        .extensions()
-                        .with_mut::<MiddlewareValue, _>(|value| {
-                            value.0.push_str(suffix);
-                        });
-                    assert!(updated.is_some(), "seed middleware should run first");
-                }
+    fn pre<'a>(&'a self, request: vox::ServerRequest<'_>) -> vox::BoxMiddlewareFuture<'a> {
+        let context = request.context();
+        record_event(&self.events, format!("{}:pre", self.name));
+        match self.mode {
+            MiddlewareMode::Seed => {
+                let _ = context
+                    .extensions()
+                    .insert(MiddlewareValue(self.name.to_string()));
             }
-        })
+            MiddlewareMode::Append(suffix) => {
+                let updated = context
+                    .extensions()
+                    .with_mut::<MiddlewareValue, _>(|value| {
+                        value.0.push_str(suffix);
+                    });
+                assert!(updated.is_some(), "seed middleware should run first");
+            }
+        }
+        Box::pin(async {})
     }
 
     fn post<'a>(
         &'a self,
-        _context: &'a vox::RequestContext<'a>,
+        _context: &vox::RequestContext<'_>,
         outcome: vox::ServerCallOutcome,
     ) -> vox::BoxMiddlewareFuture<'a> {
-        Box::pin(async move {
-            record_event(&self.events, format!("{}:post:{outcome:?}", self.name));
-        })
+        record_event(&self.events, format!("{}:post:{outcome:?}", self.name));
+        Box::pin(async {})
+    }
+}
+
+#[derive(Clone)]
+struct ArgsRecordingMiddleware {
+    seen: Arc<Mutex<Vec<(i32, i32)>>>,
+}
+
+impl vox::ServerMiddleware for ArgsRecordingMiddleware {
+    fn pre<'a>(&'a self, request: vox::ServerRequest<'_>) -> vox::BoxMiddlewareFuture<'a> {
+        let tuple = request
+            .args()
+            .into_tuple()
+            .expect("adder args should be exposed as a tuple");
+        let a = *tuple
+            .field(0)
+            .expect("first adder arg should exist")
+            .get::<i32>()
+            .expect("first adder arg should be i32");
+        let b = *tuple
+            .field(1)
+            .expect("second adder arg should exist")
+            .get::<i32>()
+            .expect("second adder arg should be i32");
+        record_args(&self.seen, (a, b));
+        Box::pin(async {})
+    }
+}
+
+#[derive(Clone)]
+struct ResponseRecordingMiddleware {
+    seen: Arc<Mutex<Vec<i32>>>,
+}
+
+impl vox::ServerMiddleware for ResponseRecordingMiddleware {
+    fn response<'a>(
+        &'a self,
+        _context: &vox::ServerResponseContext,
+        response: vox::ServerResponse<'_>,
+    ) -> vox::BoxMiddlewareFuture<'a> {
+        let payload = response
+            .payload_peek()
+            .expect("adder response should be a reflected payload");
+        let result = payload
+            .into_result()
+            .expect("adder response should use the wire Result shape");
+        let value = *result
+            .ok()
+            .expect("adder response should be Ok")
+            .get::<i32>()
+            .expect("adder Ok payload should be i32");
+        record_response(&self.seen, value);
+        Box::pin(async {})
     }
 }
 
 fn record_event(events: &Arc<Mutex<Vec<String>>>, event: String) {
     events.lock().expect("events mutex poisoned").push(event);
+}
+
+fn record_args(args: &Arc<Mutex<Vec<(i32, i32)>>>, value: (i32, i32)) {
+    args.lock().expect("args mutex poisoned").push(value);
+}
+
+fn record_response(values: &Arc<Mutex<Vec<i32>>>, value: i32) {
+    values.lock().expect("responses mutex poisoned").push(value);
 }
 
 fn patterned_payload(len: usize, seed: u8) -> String {
@@ -438,6 +498,105 @@ pub async fn run_server_middleware_end_to_end<L>(
             "first:post:Replied".to_string(),
         ]
     );
+
+    server_task.abort();
+}
+
+pub async fn run_server_request_peek_end_to_end<L>(
+    message_conduit_pair: impl FnOnce() -> (MessageConduit<L>, MessageConduit<L>),
+) where
+    L: Link + Send + 'static,
+    L::Tx: Send + 'static,
+    L::Rx: Send + 'static,
+{
+    let (client_conduit, server_conduit) = message_conduit_pair();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+
+    let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let server_seen = Arc::clone(&seen);
+    let server_task = tokio::task::spawn(async move {
+        let dispatcher = AdderDispatcher::new(MyAdder).with_middleware(ArgsRecordingMiddleware {
+            seen: Arc::clone(&server_seen),
+        });
+        let (server_caller_guard, _sh) =
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
+                .establish::<AdderClient>(dispatcher)
+                .await
+                .expect("server handshake failed");
+        let _ = server_ready_tx.send(());
+        let _server_caller_guard = server_caller_guard;
+        std::future::pending::<()>().await;
+    });
+
+    let (client, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
+        .establish::<AdderClient>(())
+        .await
+        .expect("client handshake failed");
+
+    server_ready_rx.await.expect("server setup failed");
+
+    let sum = client.add(20, 22).await.expect("add call should succeed");
+    assert_eq!(sum, 42);
+
+    for _ in 0..32 {
+        if seen.lock().expect("args mutex poisoned").len() == 1 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+
+    let seen = seen.lock().expect("args mutex poisoned").clone();
+    assert_eq!(seen, vec![(20, 22)]);
+
+    server_task.abort();
+}
+
+pub async fn run_server_response_peek_end_to_end<L>(
+    message_conduit_pair: impl FnOnce() -> (MessageConduit<L>, MessageConduit<L>),
+) where
+    L: Link + Send + 'static,
+    L::Tx: Send + 'static,
+    L::Rx: Send + 'static,
+{
+    let (client_conduit, server_conduit) = message_conduit_pair();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+
+    let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
+    let server_seen = Arc::clone(&seen);
+    let server_task = tokio::task::spawn(async move {
+        let dispatcher =
+            AdderDispatcher::new(MyAdder).with_middleware(ResponseRecordingMiddleware {
+                seen: Arc::clone(&server_seen),
+            });
+        let (server_caller_guard, _sh) =
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
+                .establish::<AdderClient>(dispatcher)
+                .await
+                .expect("server handshake failed");
+        let _ = server_ready_tx.send(());
+        let _server_caller_guard = server_caller_guard;
+        std::future::pending::<()>().await;
+    });
+
+    let (client, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
+        .establish::<AdderClient>(())
+        .await
+        .expect("client handshake failed");
+
+    server_ready_rx.await.expect("server setup failed");
+
+    let sum = client.add(20, 22).await.expect("add call should succeed");
+    assert_eq!(sum, 42);
+
+    for _ in 0..32 {
+        if seen.lock().expect("responses mutex poisoned").len() == 1 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+
+    let seen = seen.lock().expect("responses mutex poisoned").clone();
+    assert_eq!(seen, vec![42]);
 
     server_task.abort();
 }

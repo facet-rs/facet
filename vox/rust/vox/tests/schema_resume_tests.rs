@@ -1,12 +1,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::Notify;
 use vox_core::{
     BareConduit, SessionAcceptOutcome, SessionRegistry, TransportMode, acceptor_on,
     initiate_transport, initiator_on, memory_link_pair, testing::breakable_link_pair,
 };
 use vox_types::{ConnectionSettings, Parity};
-use tokio::sync::Notify;
 
 #[vox::service]
 trait Echo {

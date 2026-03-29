@@ -88,18 +88,18 @@ xshell = "0.2"
 passfd = "0.1"
 
 # facet ecosystem
-facet = { version = "0.44.1", features = ["camino", "reflect"] }
-facet-core = { version = "0.44.1" }
-facet-postcard = { version = "0.44.1", features = ["camino"] }
-facet-path = { version = "0.44.1" }
-facet-reflect = { version = "0.44.1" }
-facet-format = { version = "0.44.1" }
-facet-pretty = { version = "0.44.1" }
-facet-json = { version = "0.44.1" }
-facet-value = { version = "0.44.1" }
-facet-testhelpers = { version = "0.44.1" }
+facet = { version = "0.44.3", features = ["camino", "reflect"] }
+facet-core = { version = "0.44.3" }
+facet-postcard = { version = "0.44.3", features = ["camino"] }
+facet-path = { version = "0.44.3" }
+facet-reflect = { version = "0.44.3" }
+facet-format = { version = "0.44.3" }
+facet-pretty = { version = "0.44.4" }
+facet-json = { version = "0.44.3" }
+facet-value = { version = "0.44.3" }
+facet-testhelpers = { version = "0.44.3" }
 facet-cargo-toml = { version = "0.44.0" }
-facet-error = { version = "0.44.1" }
+facet-error = { version = "0.44.3" }
 
 # Futures utilities
 futures-channel = "0.3"

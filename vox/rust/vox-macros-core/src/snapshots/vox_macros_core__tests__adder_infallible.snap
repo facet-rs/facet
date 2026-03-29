@@ -57,11 +57,6 @@ where
         self.middlewares.push(::std::sync::Arc::new(middleware));
         self
     }
-    async fn run_pre_hooks(&self, context: &::vox::RequestContext<'_>) {
-        for middleware in &self.middlewares {
-            middleware.pre(context).await;
-        }
-    }
     async fn run_post_hooks(
         &self,
         context: &::vox::RequestContext<'_>,
@@ -153,17 +148,32 @@ where
                     return;
                 }
             };
-            let (a, b) = args;
             let extensions = ::vox::Extensions::new();
-            let context = ::vox::RequestContext::with_extensions(
+            let context = ::vox::RequestContext::with_transport(
                 adder_service_descriptor().methods[0usize],
                 &call.metadata,
+                reply.request_id(),
+                reply.connection_id(),
                 &extensions,
             );
             if !self.middlewares.is_empty() {
-                self.run_pre_hooks(&context).await;
+                for middleware in &self.middlewares {
+                    middleware
+                        .pre(::vox::ServerRequest::new(context, ::vox::Peek::new(&args)))
+                        .await;
+                }
             }
-            let (reply, outcome_handle) = ::vox::observe_reply(reply);
+            let (a, b) = args;
+            let (reply, outcome_handle) = ::vox::observe_reply(
+                reply,
+                ::vox::ServerResponseContext::new(
+                    context.method(),
+                    context.request_id(),
+                    context.connection_id(),
+                    context.extensions().clone(),
+                ),
+                self.middlewares.clone(),
+            );
             let value = self.handler.add(a, b).await;
             let sink_call = ::vox::SinkCall::new(reply);
             ::vox::Call::<'_, i32, ::core::convert::Infallible>::ok(sink_call, value).await;

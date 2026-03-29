@@ -5,7 +5,7 @@
 use facet_core::{Facet, ScalarType, Shape};
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use vox_types::{
-    EnumInfo, ServiceDescriptor, ShapeKind, StructInfo, VoxError, TypeRef, VariantKind,
+    EnumInfo, ServiceDescriptor, ShapeKind, StructInfo, TypeRef, VariantKind, VoxError,
     classify_shape, classify_variant, extract_schemas, is_bytes,
 };
 

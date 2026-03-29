@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use moire::task::FutureExt;
+use shm_primitives::FileCleanup;
 use vox_shm::varslot::SizeClassConfig;
 use vox_shm::{Segment, SegmentConfig, ShmLink, create_test_link_pair};
 use vox_types::{
     Caller, ConnectionSettings, Handler, HandshakeResult, MessageFamily, MethodId, Parity, Payload,
     ReplySink, RequestCall, RequestResponse, SelfRef, SessionRole,
 };
-use shm_primitives::FileCleanup;
 
 use crate::session::{acceptor_conduit, initiator_conduit};
 use crate::{BareConduit, DriverCaller, DriverReplySink};

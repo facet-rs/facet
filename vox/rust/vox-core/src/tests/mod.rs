@@ -2,12 +2,12 @@ use facet::Facet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use tokio::sync::{Notify, mpsc};
 use vox_types::{
     Backing, ChannelClose, ChannelItem, ChannelReset, ChannelSink, Conduit, ConduitRx, ConduitTx,
     ConduitTxPermit, IncomingChannelMessage, Metadata, MsgFamily, Payload, Rx, RxError, SelfRef,
     Tx, TxError,
 };
-use tokio::sync::{Notify, mpsc};
 
 use crate::{
     BareConduit, MemoryLink, TransportMode, accept_transport, initiate_transport, memory_link_pair,
@@ -199,8 +199,7 @@ impl ChannelSink for DropCloseSink {
     fn send_payload<'a>(
         &self,
         _payload: Payload<'a>,
-    ) -> std::pin::Pin<Box<dyn vox_types::MaybeSendFuture<Output = Result<(), TxError>> + 'a>>
-    {
+    ) -> std::pin::Pin<Box<dyn vox_types::MaybeSendFuture<Output = Result<(), TxError>> + 'a>> {
         Box::pin(async { Ok(()) })
     }
 
@@ -240,8 +239,7 @@ impl ChannelSink for TestSink {
     fn send_payload<'a>(
         &self,
         payload: Payload<'a>,
-    ) -> std::pin::Pin<Box<dyn vox_types::MaybeSendFuture<Output = Result<(), TxError>> + 'a>>
-    {
+    ) -> std::pin::Pin<Box<dyn vox_types::MaybeSendFuture<Output = Result<(), TxError>> + 'a>> {
         let gate = self.gate.clone();
         let send_count = self.send_count.clone();
         let saw_owned_payload = self.saw_owned_payload.clone();

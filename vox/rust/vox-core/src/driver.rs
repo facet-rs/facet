@@ -16,7 +16,7 @@ use vox_types::{
     ChannelCreditReplenisherHandle, ChannelId, ChannelItem, ChannelLivenessHandle, ChannelMessage,
     ChannelRetryMode, ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage,
     Payload, ReplySink, RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse,
-    SelfRef, VoxError, TxError, ensure_operation_id, metadata_channel_retry_mode,
+    SelfRef, TxError, VoxError, ensure_operation_id, metadata_channel_retry_mode,
     metadata_operation_id,
 };
 
@@ -103,13 +103,34 @@ impl LiveOperationTracker {
             args.hash(&mut h);
             h.finish()
         };
+        let live_operations = self.live.len();
 
         if let Some(live) = self.live.get_mut(&operation_id) {
             if live.method_id != method_id || live.args_hash != args_hash {
+                let request_bindings = self.request_to_operation.len();
+                tracing::trace!(
+                    %operation_id,
+                    %request_id,
+                    ?method_id,
+                    live_operations,
+                    request_bindings,
+                    "live operation conflict"
+                );
                 return AdmitResult::Conflict;
             }
             live.waiters.push(request_id);
             self.request_to_operation.insert(request_id, operation_id);
+            let waiters = live.waiters.len();
+            let request_bindings = self.request_to_operation.len();
+            tracing::trace!(
+                %operation_id,
+                %request_id,
+                ?method_id,
+                waiters,
+                live_operations,
+                request_bindings,
+                "live operation attached"
+            );
             return AdmitResult::Attached;
         }
 
@@ -124,6 +145,16 @@ impl LiveOperationTracker {
             },
         );
         self.request_to_operation.insert(request_id, operation_id);
+        let live_operations = self.live.len();
+        let request_bindings = self.request_to_operation.len();
+        tracing::trace!(
+            %operation_id,
+            %request_id,
+            ?method_id,
+            live_operations,
+            request_bindings,
+            "live operation admitted"
+        );
         AdmitResult::Start
     }
 
@@ -133,6 +164,16 @@ impl LiveOperationTracker {
             for waiter in &live.waiters {
                 self.request_to_operation.remove(waiter);
             }
+            let waiters = live.waiters.len();
+            let live_operations = self.live.len();
+            let request_bindings = self.request_to_operation.len();
+            tracing::trace!(
+                %operation_id,
+                waiters,
+                live_operations,
+                request_bindings,
+                "live operation sealed"
+            );
             live.waiters
         } else {
             vec![]
@@ -145,6 +186,16 @@ impl LiveOperationTracker {
             for waiter in &live.waiters {
                 self.request_to_operation.remove(waiter);
             }
+            let waiters = live.waiters.len();
+            let live_operations = self.live.len();
+            let request_bindings = self.request_to_operation.len();
+            tracing::trace!(
+                %operation_id,
+                waiters,
+                live_operations,
+                request_bindings,
+                "live operation released"
+            );
             Some(live)
         } else {
             None
@@ -156,6 +207,7 @@ impl LiveOperationTracker {
         let Some(&operation_id) = self.request_to_operation.get(&request_id) else {
             return CancelResult::NotFound;
         };
+        let live_operations = self.live.len();
         let Some(live) = self.live.get_mut(&operation_id) else {
             self.request_to_operation.remove(&request_id);
             return CancelResult::NotFound;
@@ -168,6 +220,16 @@ impl LiveOperationTracker {
             }
             live.waiters.retain(|w| *w != request_id);
             self.request_to_operation.remove(&request_id);
+            let waiters = live.waiters.len();
+            let request_bindings = self.request_to_operation.len();
+            tracing::trace!(
+                %operation_id,
+                %request_id,
+                waiters,
+                live_operations,
+                request_bindings,
+                "live operation detached waiter"
+            );
             CancelResult::Detached
         } else {
             // Non-persistent: abort the whole operation.
@@ -175,6 +237,17 @@ impl LiveOperationTracker {
             for waiter in &live.waiters {
                 self.request_to_operation.remove(waiter);
             }
+            let waiters = live.waiters.len();
+            let live_operations = self.live.len();
+            let request_bindings = self.request_to_operation.len();
+            tracing::trace!(
+                %operation_id,
+                %request_id,
+                waiters,
+                live_operations,
+                request_bindings,
+                "live operation aborted"
+            );
             CancelResult::Abort {
                 owner_request_id: live.owner_request_id,
                 waiters: live.waiters,
@@ -237,8 +310,8 @@ impl Drop for CallerDropGuard {
 #[cfg(test)]
 mod tests {
     use super::{DriverChannelCreditReplenisher, DriverLocalControl};
-    use vox_types::{ChannelCreditReplenisher, ChannelId};
     use tokio::sync::mpsc::error::TryRecvError;
+    use vox_types::{ChannelCreditReplenisher, ChannelId};
 
     #[test]
     fn replenisher_batches_at_half_the_initial_window() {
@@ -441,6 +514,14 @@ impl ReplySink for DriverReplySink {
 
     fn channel_binder(&self) -> Option<&dyn ChannelBinder> {
         Some(&self.binder)
+    }
+
+    fn request_id(&self) -> Option<RequestId> {
+        Some(self.request_id)
+    }
+
+    fn connection_id(&self) -> Option<vox_types::ConnectionId> {
+        self.sender.as_ref().map(|sender| sender.connection_id())
     }
 }
 
@@ -1186,17 +1267,16 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 recv = self.rx.recv() => {
                     match recv {
                         Some(recv) => {
-                            tracing::debug!("driver rx received message");
                             self.handle_recv(recv);
                         }
                         None => {
-                            tracing::debug!("driver rx closed, exiting loop");
+                            tracing::trace!("driver rx closed, exiting loop");
                             break;
                         }
                     }
                 }
                 Some((req_id, disposition)) = self.failures_rx.recv() => {
-                    tracing::debug!(%req_id, ?disposition, "failures_rx fired");
+                    tracing::trace!(%req_id, ?disposition, "failures_rx fired");
                     let in_flight_found = self.in_flight_handlers.contains_key(&req_id);
                     let in_flight_method_id =
                         self.in_flight_handlers.get(&req_id).map(|in_flight| in_flight.method_id);
@@ -1213,17 +1293,17 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                             }
                         })
                         .unwrap_or(Some(disposition));
-                    tracing::debug!(%req_id, in_flight_found, ?reply_disposition, "failures_rx computed disposition");
+                    tracing::trace!(%req_id, in_flight_found, ?reply_disposition, "failures_rx computed disposition");
                     // Clean up the handler tracking entry.
                     self.in_flight_handlers.remove(&req_id);
                     let had_pending = self.shared.pending_responses.lock().remove(&req_id).is_some();
-                    tracing::debug!(%req_id, had_pending, "failures_rx checked pending_responses");
+                    tracing::trace!(%req_id, had_pending, "failures_rx checked pending_responses");
                     if !had_pending {
                         let Some(reply_disposition) = reply_disposition else {
-                            tracing::debug!(%req_id, "failures_rx: no reply_disposition, skipping");
+                            tracing::trace!(%req_id, "failures_rx: no reply_disposition, skipping");
                             continue;
                         };
-                        tracing::debug!(%req_id, ?reply_disposition, "failures_rx: sending error response");
+                        tracing::trace!(%req_id, ?reply_disposition, "failures_rx: sending error response");
                         let vox_error = match reply_disposition {
                             FailureDisposition::Cancelled => VoxError::Cancelled,
                             FailureDisposition::Indeterminate => VoxError::Indeterminate,
@@ -1259,7 +1339,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                                 schemas: Default::default(),
                             }).await;
                         }
-                        tracing::debug!(%req_id, "failures_rx: error response sent");
+                        tracing::trace!(%req_id, "failures_rx: error response sent");
                     }
                 }
                 Some(ctrl) = self.local_control_rx.recv() => {
@@ -1289,7 +1369,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 // close_channel_on_drop, but we should not send Close to the peer
                 // for channels the peer has also cleared.
                 if self.shared.stale_close_channels.lock().remove(&channel_id) {
-                    tracing::debug!(%channel_id, "suppressing ChannelClose for stale channel");
+                    tracing::trace!(%channel_id, "suppressing ChannelClose for stale channel");
                     return;
                 }
                 let _ = self
@@ -1338,6 +1418,24 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         RequestBody::Response(_) | RequestBody::Cancel(_) => None,
                     }
                 );
+                match &req.body {
+                    RequestBody::Call(call) => tracing::trace!(
+                        conn_id = self.sender.connection_id().0,
+                        req_id = req.id.0,
+                        method_id = call.method_id.0,
+                        "driver received call"
+                    ),
+                    RequestBody::Response(_) => tracing::trace!(
+                        conn_id = self.sender.connection_id().0,
+                        req_id = req.id.0,
+                        "driver received response message"
+                    ),
+                    RequestBody::Cancel(_) => tracing::trace!(
+                        conn_id = self.sender.connection_id().0,
+                        req_id = req.id.0,
+                        "driver received cancel message"
+                    ),
+                }
             }
             let msg = msg.map(|m| match m {
                 ConnectionMessage::Request(r) => r,
@@ -1527,14 +1625,14 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 self.sender.connection_id(),
                 req_id
             );
-            tracing::debug!(%req_id, "driver received response");
+            tracing::trace!(%req_id, "driver received response");
             if let Some(tx) = self.shared.pending_responses.lock().remove(&req_id) {
                 vox_types::dlog!("[driver] routing response to waiter: req={:?}", req_id);
-                tracing::debug!(%req_id, "routing response to pending oneshot");
+                tracing::trace!(%req_id, "routing response to pending oneshot");
                 let _: Result<(), _> = tx.send(PendingResponse { msg, schemas });
             } else {
                 vox_types::dlog!("[driver] dropped unmatched response: req={:?}", req_id);
-                tracing::debug!(%req_id, "no pending response slot for this req_id");
+                tracing::trace!(%req_id, "no pending response slot for this req_id");
             }
         } else if is_cancel {
             vox_types::dlog!(
@@ -1544,7 +1642,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             );
             // r[impl rpc.cancel]
             // r[impl rpc.cancel.channels]
-            tracing::debug!(%req_id, in_flight = self.in_flight_handlers.contains_key(&req_id), "received cancel");
+            tracing::trace!(%req_id, in_flight = self.in_flight_handlers.contains_key(&req_id), "received cancel");
             match self.live_operations.lock().cancel(req_id) {
                 CancelResult::NotFound => {
                     let should_abort = self
@@ -1552,10 +1650,10 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         .get(&req_id)
                         .map(|in_flight| !in_flight.retry.persist)
                         .unwrap_or(false);
-                    tracing::debug!(%req_id, should_abort, "cancel: not in live operations");
+                    tracing::trace!(%req_id, should_abort, "cancel: not in live operations");
                     if should_abort && let Some(in_flight) = self.in_flight_handlers.remove(&req_id)
                     {
-                        tracing::debug!(%req_id, "aborting handler");
+                        tracing::trace!(%req_id, "aborting handler");
                         in_flight.handle.abort();
                     }
                 }
@@ -1592,6 +1690,12 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             // r[impl rpc.channel.item]
             ChannelBody::Item(_item) => {
                 if let Some(tx) = &sender {
+                    tracing::trace!(
+                        conn_id = self.sender.connection_id().0,
+                        channel_id = chan_id.0,
+                        registered = true,
+                        "driver received channel item"
+                    );
                     let item = msg.map(|m| match m.body {
                         ChannelBody::Item(item) => item,
                         _ => unreachable!(),
@@ -1599,6 +1703,12 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     // try_send: if the Rx has been dropped or the buffer is full, drop the item.
                     let _ = tx.try_send(IncomingChannelMessage::Item(item));
                 } else {
+                    tracing::trace!(
+                        conn_id = self.sender.connection_id().0,
+                        channel_id = chan_id.0,
+                        registered = false,
+                        "driver buffered channel item before registration"
+                    );
                     // Channel not yet registered — buffer until register_rx_channel is called.
                     let item = msg.map(|m| match m.body {
                         ChannelBody::Item(item) => item,
@@ -1615,12 +1725,24 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             // r[impl rpc.channel.close]
             ChannelBody::Close(_close) => {
                 if let Some(tx) = &sender {
+                    tracing::trace!(
+                        conn_id = self.sender.connection_id().0,
+                        channel_id = chan_id.0,
+                        registered = true,
+                        "driver received channel close"
+                    );
                     let close = msg.map(|m| match m.body {
                         ChannelBody::Close(close) => close,
                         _ => unreachable!(),
                     });
                     let _ = tx.try_send(IncomingChannelMessage::Close(close));
                 } else {
+                    tracing::trace!(
+                        conn_id = self.sender.connection_id().0,
+                        channel_id = chan_id.0,
+                        registered = false,
+                        "driver buffered channel close before registration"
+                    );
                     // Channel not yet registered — buffer the close.
                     let close = msg.map(|m| match m.body {
                         ChannelBody::Close(close) => close,
@@ -1639,12 +1761,24 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             // r[impl rpc.channel.reset]
             ChannelBody::Reset(_reset) => {
                 if let Some(tx) = &sender {
+                    tracing::trace!(
+                        conn_id = self.sender.connection_id().0,
+                        channel_id = chan_id.0,
+                        registered = true,
+                        "driver received channel reset"
+                    );
                     let reset = msg.map(|m| match m.body {
                         ChannelBody::Reset(reset) => reset,
                         _ => unreachable!(),
                     });
                     let _ = tx.try_send(IncomingChannelMessage::Reset(reset));
                 } else {
+                    tracing::trace!(
+                        conn_id = self.sender.connection_id().0,
+                        channel_id = chan_id.0,
+                        registered = false,
+                        "driver buffered channel reset before registration"
+                    );
                     // Channel not yet registered — buffer the reset.
                     let reset = msg.map(|m| match m.body {
                         ChannelBody::Reset(reset) => reset,
@@ -1663,6 +1797,12 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             // r[impl rpc.flow-control.credit.grant]
             // r[impl rpc.flow-control.credit.grant.additive]
             ChannelBody::GrantCredit(grant) => {
+                tracing::trace!(
+                    conn_id = self.sender.connection_id().0,
+                    channel_id = chan_id.0,
+                    additional = grant.additional,
+                    "driver received channel credit"
+                );
                 if let Some(semaphore) = self.shared.channel_credits.lock().get(&chan_id) {
                     semaphore.add_permits(grant.additional as usize);
                 }

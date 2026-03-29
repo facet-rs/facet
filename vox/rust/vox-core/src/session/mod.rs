@@ -5,6 +5,8 @@ use std::{
 };
 
 use moire::sync::mpsc;
+use tokio::sync::watch;
+use tracing::{trace, warn};
 use vox_types::{
     BoxFut, ChannelMessage, Conduit, ConduitRx, ConduitTx, ConduitTxPermit, ConnectionAccept,
     ConnectionClose, ConnectionId, ConnectionOpen, ConnectionReject, ConnectionSettings,
@@ -12,8 +14,6 @@ use vox_types::{
     Metadata, Parity, RequestBody, RequestId, RequestMessage, RequestResponse, SelfRef,
     SessionResumeKey, SessionRole,
 };
-use tokio::sync::watch;
-use tracing::{debug, warn};
 
 mod builders;
 pub use builders::*;
@@ -834,7 +834,6 @@ impl Session {
                     vox_types::dlog!("[session {:?}] recv_msg returned", self.role);
                     match msg {
                         Ok(Some(msg)) => {
-                            tracing::debug!(conn_id = msg.connection_id.0, "session received message");
                             self.handle_message(msg, &mut keepalive_runtime).await;
                         }
                         Ok(None) => {
@@ -883,7 +882,7 @@ impl Session {
 
         // Drop all connection slots so per-connection drivers exit immediately.
         self.close_all_connections();
-        debug!("session recv loop exited");
+        trace!("session recv loop exited");
     }
 
     async fn handle_conduit_break(
@@ -998,7 +997,7 @@ impl Session {
                 if conn_id.is_root() {
                     warn!("received ConnectionClose for root connection");
                 } else {
-                    debug!(conn_id = conn_id.0, "received ConnectionClose for virtual connection");
+                    trace!(conn_id = conn_id.0, "received ConnectionClose for virtual connection");
                 }
                 // Remove the connection — dropping conn_tx causes the Driver's rx
                 // to return None, which exits its run loop. All in-flight handlers
@@ -1472,14 +1471,14 @@ impl Session {
     async fn handle_drop_control_request(&mut self, req: DropControlRequest) -> bool {
         match req {
             DropControlRequest::Shutdown => {
-                debug!("session shutdown requested");
+                trace!("session shutdown requested");
                 false
             }
             DropControlRequest::Close(conn_id) => {
                 // r[impl rpc.caller.liveness.last-drop-closes-connection]
                 if conn_id.is_root() {
                     // r[impl rpc.caller.liveness.root-internal-close]
-                    debug!("root callers dropped; internally closing root connection");
+                    trace!("root callers dropped; internally closing root connection");
                     self.root_closed_internal = true;
                     // r[impl rpc.caller.liveness.root-teardown-condition]
                     return self.has_virtual_connections();

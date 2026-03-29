@@ -1,9 +1,9 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use crate::{
-    ClientCallOutcome, ClientContext, ClientMiddleware, ClientRequest, Extensions, MaybeSend,
-    MaybeSendFuture, MaybeSync, Metadata, RequestCall, RequestResponse, VoxError, SelfRef,
-    ServiceDescriptor,
+    ClientCallOutcome, ClientContext, ClientMiddleware, ClientRequest, ConnectionId, Extensions,
+    MaybeSend, MaybeSendFuture, MaybeSync, Metadata, RequestCall, RequestId, RequestResponse,
+    SelfRef, ServiceDescriptor, VoxError,
 };
 
 /// A boxed future that is `Send` on native targets and `!Send` on wasm32.
@@ -201,6 +201,16 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
     /// Returns `None` by default. The driver's `ReplySink` implementation
     /// overrides this to provide actual channel binding.
     fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
+        None
+    }
+
+    /// Return the wire-level request identifier for this reply sink when available.
+    fn request_id(&self) -> Option<RequestId> {
+        None
+    }
+
+    /// Return the virtual connection identifier for this reply sink when available.
+    fn connection_id(&self) -> Option<ConnectionId> {
         None
     }
 }
@@ -561,7 +571,7 @@ mod tests {
     #[tokio::test]
     async fn reply_sink_send_typed_error_preserves_ok_shape() {
         use crate::{
-            VoxError, SchemaKind, TypeRef, VariantPayload, build_registry, extract_schemas,
+            SchemaKind, TypeRef, VariantPayload, VoxError, build_registry, extract_schemas,
         };
 
         struct ShapeReplySink {

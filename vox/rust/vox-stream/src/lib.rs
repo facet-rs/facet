@@ -382,8 +382,8 @@ impl LocalLinkAcceptor {
 
 #[cfg(test)]
 mod tests {
-    use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
     use tokio::io::split;
+    use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
 
     use super::*;
 

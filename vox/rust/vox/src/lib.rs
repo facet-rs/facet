@@ -9,11 +9,13 @@ mod server_logging;
 
 // Re-export the proc macro
 pub use client_logging::{ClientLogging, ClientLoggingOptions};
-pub use vox_service_macros::service;
 pub use server_logging::{ServerLogging, ServerLoggingOptions};
+pub use vox_service_macros::service;
 
 // Re-export facet (generated code uses `vox::facet::Facet`)
 pub use facet;
+pub use facet_reflect;
+pub use facet_reflect::Peek;
 
 // Re-export vox-postcard for generated code and downstream helpers.
 pub use vox_postcard;
@@ -79,13 +81,16 @@ pub use vox_types::{
     RequestResponse,
     ResponseParts,
     RetryPolicy,
-    VoxError,
     Rx,
     RxError,
     SchemaRecvTracker,
     SelfRef,
     ServerCallOutcome,
     ServerMiddleware,
+    ServerRequest,
+    ServerResponse,
+    ServerResponseContext,
+    ServerResponsePayload,
     ServiceDescriptor,
     SessionRole,
     SinkCall,
@@ -93,6 +98,7 @@ pub use vox_types::{
     // Channels
     Tx,
     TxError,
+    VoxError,
     WithTracker,
     WriteSlot,
     // Channels

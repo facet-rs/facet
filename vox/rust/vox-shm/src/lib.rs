@@ -9,12 +9,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 
-use vox_types::{
-    Backing, Link, LinkRx, LinkTx, LinkTxPermit, SharedBacking, TransportMode, WriteSlot,
-};
 use shm_primitives::{BipBuf, PeerId};
 use shm_primitives_async::{Doorbell, SignalResult};
 use tracing::{debug, trace, warn};
+use vox_types::{
+    Backing, Link, LinkRx, LinkTx, LinkTxPermit, SharedBacking, TransportMode, WriteSlot,
+};
 
 use crate::framing::{DEFAULT_INLINE_THRESHOLD, MmapRef, OwnedFrame};
 use crate::mmap_registry::{
@@ -974,9 +974,9 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use vox_types::{LinkRx as _, LinkTx as _, LinkTxPermit as _};
     use shm_primitives::FileCleanup;
     use tokio::time::timeout;
+    use vox_types::{LinkRx as _, LinkTx as _, LinkTxPermit as _};
 
     use super::*;
     use crate::host::create_test_link_pair;

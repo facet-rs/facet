@@ -96,8 +96,7 @@ fn generate_client_impl(service: &ServiceDescriptor) -> String {
     .unwrap();
     {
         let _indent = w.indent();
-        w.writeln("private let connection: VoxConnection")
-            .unwrap();
+        w.writeln("private let connection: VoxConnection").unwrap();
         w.writeln("private let timeout: TimeInterval?").unwrap();
         w.blank_line().unwrap();
         w.writeln("public init(connection: VoxConnection, timeout: TimeInterval? = 30.0) {")

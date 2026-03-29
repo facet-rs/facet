@@ -11,6 +11,8 @@ fn main() {
     use std::time::SystemTime;
     use std::time::{Duration, Instant};
 
+    use shm_primitives::FileCleanup;
+    use shm_primitives_async::clear_cloexec;
     use vox_postcard::{from_slice_borrowed, to_vec};
     use vox_shm::framing::{OwnedFrame, read_frame, write_inline};
     use vox_shm::segment::{Segment, SegmentConfig};
@@ -19,8 +21,6 @@ fn main() {
         ConnectionId, Message, MessagePayload, MethodId, Payload, RequestBody, RequestCall,
         RequestId, RequestMessage,
     };
-    use shm_primitives::FileCleanup;
-    use shm_primitives_async::clear_cloexec;
 
     fn swift_runtime_package_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

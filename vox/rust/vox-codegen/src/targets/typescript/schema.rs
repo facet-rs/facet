@@ -7,8 +7,8 @@
 use facet_core::{Facet, Shape};
 use heck::ToLowerCamelCase;
 use vox_types::{
-    VoxError, Schema, SchemaHash, SchemaKind, ServiceDescriptor, ShapeKind, TypeRef,
-    VariantPayload, VariantSchema, classify_shape,
+    Schema, SchemaHash, SchemaKind, ServiceDescriptor, ShapeKind, TypeRef, VariantPayload,
+    VariantSchema, VoxError, classify_shape,
 };
 
 /// Generate TypeScript constants for canonical service schemas.
