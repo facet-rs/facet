@@ -122,6 +122,8 @@ pub struct PrettyPrinter {
     show_doc_comments: bool,
     /// Maximum length for strings/bytes before truncating the middle (None = no limit)
     max_content_len: Option<usize>,
+    /// Maximum number of collection entries/fields before truncating (None = no limit)
+    max_collection_len: Option<usize>,
 }
 
 impl Default for PrettyPrinter {
@@ -142,6 +144,7 @@ impl PrettyPrinter {
             minimal_option_names: false,
             show_doc_comments: false,
             max_content_len: None,
+            max_collection_len: None,
         }
     }
 
@@ -187,6 +190,16 @@ impl PrettyPrinter {
     /// truncated in the middle, showing the beginning and end with `...` between.
     pub const fn with_max_content_len(mut self, max_len: usize) -> Self {
         self.max_content_len = Some(max_len);
+        self
+    }
+
+    /// Set the maximum number of collection entries and fields before truncating.
+    ///
+    /// When set, sequences, maps, sets, objects, tuples, and struct fields
+    /// longer than this limit will show only the first `max_len` entries,
+    /// followed by an omission marker.
+    pub const fn with_max_collection_len(mut self, max_len: usize) -> Self {
+        self.max_collection_len = Some(max_len);
         self
     }
 
@@ -655,7 +668,8 @@ impl PrettyPrinter {
 
                         self.write_punctuation(f, " [")?;
                         let len = list.len();
-                        for (idx, item) in list.iter().enumerate() {
+                        let visible_len = self.visible_collection_len(len);
+                        for (idx, item) in list.iter().take(visible_len).enumerate() {
                             if !short && !is_simple {
                                 writeln!(f)?;
                                 self.indent(f, format_depth + 1)?;
@@ -671,9 +685,19 @@ impl PrettyPrinter {
                                 short || is_simple,
                             )?;
 
-                            if (!short && !is_simple) || idx + 1 < len {
+                            if (!short && !is_simple) || idx + 1 < visible_len || visible_len < len
+                            {
                                 self.write_punctuation(f, ",")?;
                             }
+                        }
+                        if visible_len < len {
+                            if !short && !is_simple {
+                                writeln!(f)?;
+                                self.indent(f, format_depth + 1)?;
+                            } else if visible_len > 0 {
+                                write!(f, " ")?;
+                            }
+                            self.write_collection_ellipsis(f, len - visible_len, "items")?;
                         }
                         if !short && !is_simple {
                             writeln!(f)?;
@@ -693,7 +717,8 @@ impl PrettyPrinter {
                 self.write_punctuation(f, " [")?;
                 if !value.is_empty() {
                     let len = value.len();
-                    for (idx, item) in value.iter().enumerate() {
+                    let visible_len = self.visible_collection_len(len);
+                    for (idx, item) in value.iter().take(visible_len).enumerate() {
                         if !short {
                             writeln!(f)?;
                             self.indent(f, format_depth + 1)?;
@@ -706,11 +731,20 @@ impl PrettyPrinter {
                             type_depth + 1,
                             short,
                         )?;
-                        if !short || idx + 1 < len {
+                        if !short || idx + 1 < visible_len || visible_len < len {
                             self.write_punctuation(f, ",")?;
                         } else {
                             write!(f, " ")?;
                         }
+                    }
+                    if visible_len < len {
+                        if !short {
+                            writeln!(f)?;
+                            self.indent(f, format_depth + 1)?;
+                        } else if visible_len > 0 {
+                            write!(f, " ")?;
+                        }
+                        self.write_collection_ellipsis(f, len - visible_len, "items")?;
                     }
                     if !short {
                         writeln!(f)?;
@@ -730,7 +764,8 @@ impl PrettyPrinter {
 
                 if !value.is_empty() {
                     let len = value.len();
-                    for (idx, (key, value)) in value.iter().enumerate() {
+                    let visible_len = self.visible_collection_len(len);
+                    for (idx, (key, value)) in value.iter().take(visible_len).enumerate() {
                         if !short {
                             writeln!(f)?;
                             self.indent(f, format_depth + 1)?;
@@ -752,11 +787,20 @@ impl PrettyPrinter {
                             type_depth + 1,
                             short,
                         )?;
-                        if !short || idx + 1 < len {
+                        if !short || idx + 1 < visible_len || visible_len < len {
                             self.write_punctuation(f, ",")?;
                         } else {
                             write!(f, " ")?;
                         }
+                    }
+                    if visible_len < len {
+                        if !short {
+                            writeln!(f)?;
+                            self.indent(f, format_depth + 1)?;
+                        } else if visible_len > 0 {
+                            write!(f, " ")?;
+                        }
+                        self.write_collection_ellipsis(f, len - visible_len, "entries")?;
                     }
                     if !short {
                         writeln!(f)?;
@@ -803,7 +847,8 @@ impl PrettyPrinter {
                             self.write_punctuation(f, "[]")?;
                         } else {
                             self.write_punctuation(f, "[")?;
-                            for idx in 0..len {
+                            let visible_len = self.visible_collection_len(len);
+                            for idx in 0..visible_len {
                                 if !short {
                                     writeln!(f)?;
                                     self.indent(f, format_depth + 1)?;
@@ -818,11 +863,20 @@ impl PrettyPrinter {
                                         short,
                                     )?;
                                 }
-                                if !short || idx + 1 < len {
+                                if !short || idx + 1 < visible_len || visible_len < len {
                                     self.write_punctuation(f, ",")?;
                                 } else {
                                     write!(f, " ")?;
                                 }
+                            }
+                            if visible_len < len {
+                                if !short {
+                                    writeln!(f)?;
+                                    self.indent(f, format_depth + 1)?;
+                                } else if visible_len > 0 {
+                                    write!(f, " ")?;
+                                }
+                                self.write_collection_ellipsis(f, len - visible_len, "items")?;
                             }
                             if !short {
                                 writeln!(f)?;
@@ -837,7 +891,8 @@ impl PrettyPrinter {
                             self.write_punctuation(f, "{}")?;
                         } else {
                             self.write_punctuation(f, "{")?;
-                            for idx in 0..len {
+                            let visible_len = self.visible_collection_len(len);
+                            for idx in 0..visible_len {
                                 if !short {
                                     writeln!(f)?;
                                     self.indent(f, format_depth + 1)?;
@@ -854,11 +909,20 @@ impl PrettyPrinter {
                                         short,
                                     )?;
                                 }
-                                if !short || idx + 1 < len {
+                                if !short || idx + 1 < visible_len || visible_len < len {
                                     self.write_punctuation(f, ",")?;
                                 } else {
                                     write!(f, " ")?;
                                 }
+                            }
+                            if visible_len < len {
+                                if !short {
+                                    writeln!(f)?;
+                                    self.indent(f, format_depth + 1)?;
+                                } else if visible_len > 0 {
+                                    write!(f, " ")?;
+                                }
+                                self.write_collection_ellipsis(f, len - visible_len, "entries")?;
                             }
                             if !short {
                                 writeln!(f)?;
@@ -1098,7 +1162,8 @@ impl PrettyPrinter {
                 self.write_punctuation(f, ",")?;
             }
         } else if !fields.is_empty() {
-            for idx in 0..fields.len() {
+            let visible_len = self.visible_collection_len(fields.len());
+            for idx in 0..visible_len {
                 if !short {
                     writeln!(f)?;
                     self.indent(f, format_depth + 1)?;
@@ -1136,11 +1201,20 @@ impl PrettyPrinter {
                     )?;
                 }
 
-                if !short || idx + 1 < fields.len() {
+                if !short || idx + 1 < visible_len || visible_len < fields.len() {
                     self.write_punctuation(f, ",")?;
                 } else {
                     write!(f, " ")?;
                 }
+            }
+            if visible_len < fields.len() {
+                if !short {
+                    writeln!(f)?;
+                    self.indent(f, format_depth + 1)?;
+                } else if visible_len > 0 {
+                    write!(f, " ")?;
+                }
+                self.write_collection_ellipsis(f, fields.len() - visible_len, "fields")?;
             }
             if !short {
                 writeln!(f)?;
@@ -1163,7 +1237,7 @@ impl PrettyPrinter {
         short: bool,
     ) -> fmt::Result {
         // First, determine which fields will be printed (not skipped)
-        let visible_indices: Vec<usize> = (0..fields.len())
+        let mut visible_indices: Vec<usize> = (0..fields.len())
             .filter(|&idx| {
                 let field = &fields[idx];
                 // SAFETY: peek_field returns a valid Peek with valid data pointer
@@ -1171,6 +1245,10 @@ impl PrettyPrinter {
                 !unsafe { field.should_skip_serializing(field_ptr) }
             })
             .collect();
+        let total_visible = visible_indices.len();
+        if let Some(max) = self.max_collection_len {
+            visible_indices.truncate(max);
+        }
 
         self.write_punctuation(f, " {")?;
         if !visible_indices.is_empty() {
@@ -1222,6 +1300,15 @@ impl PrettyPrinter {
                     write!(f, " ")?;
                 }
             }
+            if total_visible > visible_indices.len() {
+                if !short {
+                    writeln!(f)?;
+                    self.indent(f, format_depth + 1)?;
+                } else {
+                    write!(f, " ")?;
+                }
+                self.write_collection_ellipsis(f, total_visible - visible_indices.len(), "fields")?;
+            }
             if !short {
                 writeln!(f)?;
                 self.indent(f, format_depth)?;
@@ -1237,6 +1324,20 @@ impl PrettyPrinter {
         } else {
             write!(f, "{: <width$}", "", width = indent * self.indent_size)
         }
+    }
+
+    fn visible_collection_len(&self, len: usize) -> usize {
+        self.max_collection_len
+            .map_or(len, |max| Ord::min(len, max))
+    }
+
+    fn write_collection_ellipsis(
+        &self,
+        f: &mut dyn Write,
+        omitted: usize,
+        noun: &str,
+    ) -> fmt::Result {
+        self.write_comment(f, &format!("...({omitted} more {noun})..."))
     }
 
     /// Internal method to format a Peek value
@@ -1512,6 +1613,7 @@ impl PrettyPrinter {
             minimal_option_names: self.minimal_option_names,
             show_doc_comments: self.show_doc_comments,
             max_content_len: self.max_content_len,
+            max_collection_len: self.max_collection_len,
         };
         printer
             .format_unified(
@@ -2302,5 +2404,49 @@ mod tests {
             output
         );
         assert!(output.contains("bytes"), "should mention bytes: {}", output);
+    }
+
+    #[test]
+    fn test_max_collection_len_sequence() {
+        let printer = PrettyPrinter::new()
+            .with_colors(ColorMode::Never)
+            .with_max_collection_len(3);
+
+        let value = vec![1u32, 2, 3, 4, 5];
+        let output = printer.format(&value);
+
+        assert!(output.contains("1"));
+        assert!(output.contains("2"));
+        assert!(output.contains("3"));
+        assert!(!output.contains("5"));
+        assert!(output.contains("more items"), "output: {output}");
+    }
+
+    #[test]
+    fn test_max_collection_len_struct_fields() {
+        #[derive(facet::Facet)]
+        struct Record {
+            alpha: u32,
+            beta: u32,
+            gamma: u32,
+            delta: u32,
+        }
+
+        let printer = PrettyPrinter::new()
+            .with_colors(ColorMode::Never)
+            .with_max_collection_len(2);
+
+        let value = Record {
+            alpha: 1,
+            beta: 2,
+            gamma: 3,
+            delta: 4,
+        };
+        let output = printer.format(&value);
+
+        assert!(output.contains("alpha"));
+        assert!(output.contains("beta"));
+        assert!(!output.contains("gamma"));
+        assert!(output.contains("more fields"), "output: {output}");
     }
 }
