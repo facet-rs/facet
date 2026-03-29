@@ -34,7 +34,7 @@ members = [
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.91"
 readme = "README.md"
@@ -47,25 +47,25 @@ categories = ["network-programming", "asynchronous"]
 
 [workspace.dependencies]
 # Internal crates
-vox = { path = "rust/vox", version = "0.2.2" }
-vox-types = { path = "rust/vox-types", version = "0.2.2" }
-vox-schema = { path = "rust/vox-schema", version = "0.2.2" }
-vox-macros-parse = { path = "rust/vox-macros-parse", version = "0.2.2" }
-vox-macros-core = { path = "rust/vox-macros-core", version = "0.2.2" }
-vox-service-macros = { path = "rust/vox-macros", version = "0.2.2" }
-vox-core = { path = "rust/vox-core", version = "0.2.2" }
-vox-stream = { path = "rust/vox-stream", version = "0.2.2" }
-vox-codegen = { path = "rust/vox-codegen", version = "0.2.2" }
-vox-websocket = { path = "rust/vox-websocket", version = "0.2.2" }
-vox-inprocess = { path = "rust/vox-inprocess", version = "0.2.2" }
-vox-local = { path = "rust/vox-local", version = "0.2.2" }
-vox-shm = { path = "rust/vox-shm", version = "0.2.2" }
-vox-shm-ffi = { path = "rust/vox-shm-ffi", version = "0.2.2" }
+vox = { path = "rust/vox", version = "0.3.0" }
+vox-types = { path = "rust/vox-types", version = "0.3.0" }
+vox-schema = { path = "rust/vox-schema", version = "0.3.0" }
+vox-macros-parse = { path = "rust/vox-macros-parse", version = "0.3.0" }
+vox-macros-core = { path = "rust/vox-macros-core", version = "0.3.0" }
+vox-service-macros = { path = "rust/vox-macros", version = "0.3.0" }
+vox-core = { path = "rust/vox-core", version = "0.3.0" }
+vox-stream = { path = "rust/vox-stream", version = "0.3.0" }
+vox-codegen = { path = "rust/vox-codegen", version = "0.3.0" }
+vox-websocket = { path = "rust/vox-websocket", version = "0.3.0" }
+vox-inprocess = { path = "rust/vox-inprocess", version = "0.3.0" }
+vox-local = { path = "rust/vox-local", version = "0.3.0" }
+vox-shm = { path = "rust/vox-shm", version = "0.3.0" }
+vox-shm-ffi = { path = "rust/vox-shm-ffi", version = "0.3.0" }
 spec-proto = { path = "spec/spec-proto", version = "0.2.2" }
-shm-primitives = { path = "rust/shm-primitives", version = "0.2.2", default-features = false }
-shm-primitives-async = { path = "rust/shm-primitives-async", version = "0.2.2", default-features = false }
-vox-postcard = { path = "rust/vox-postcard", version = "0.2.2" }
-facet-cbor = { path = "rust/facet-cbor", version = "0.2.2" }
+shm-primitives = { path = "rust/shm-primitives", version = "0.3.0", default-features = false }
+shm-primitives-async = { path = "rust/shm-primitives-async", version = "0.3.0", default-features = false }
+vox-postcard = { path = "rust/vox-postcard", version = "0.3.0" }
+facet-cbor = { path = "rust/facet-cbor", version = "0.3.0" }
 ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "8.0.0" }
 
 # Not internal crates

@@ -7,8 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.0](https://github.com/bearcove/vox/compare/vox-codegen-v0.2.2...vox-codegen-v0.3.0) - 2026-03-29
+## [0.3.0](https://github.com/bearcove/vox/compare/vox-schema-v0.2.2...vox-schema-v0.3.0) - 2026-03-29
 
 ### Other
 
-- Expose reflective server middleware payloads and improve Vox runtime tracing ([#267](https://github.com/bearcove/vox/pull/267))
+- update Cargo.toml dependencies
