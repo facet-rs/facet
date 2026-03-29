@@ -41,62 +41,6 @@ name = "facet-macro-parse"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
 
-# Derive plugins
-[[package]]
-name = "facet-error"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
-name = "facet-default"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-# Reflection
-[[package]]
-name = "facet-reflect"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
-name = "facet-solver"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-# Test helpers
-[[package]]
-name = "facet-testhelpers"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
-name = "facet-testhelpers-macros"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-# Pretty printing
-[[package]]
-name = "facet-pretty"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-# CLI & Web
-[[package]]
-name = "facet-urlencoded"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-# Utilities
-[[package]]
-name = "facet-path"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
-name = "facet-validate"
-version_group = "facet"
-changelog_path = "CHANGELOG.md"
-
 # ============================================================================
 # Dev-only packages - excluded from releases
 # ============================================================================
