@@ -109,6 +109,12 @@ impl OperationStore for InMemoryOperationStore {
             .operations
             .entry(operation_id)
             .or_insert(InMemoryState::Admitted);
+        tracing::trace!(
+            %operation_id,
+            operations = inner.operations.len(),
+            schemas = inner.schemas.len(),
+            "operation store admit"
+        );
     }
 
     fn lookup(&self, operation_id: OperationId) -> OperationState {
@@ -167,6 +173,13 @@ impl OperationStore for InMemoryOperationStore {
                 root_type: root_type.clone(),
             },
         );
+        tracing::trace!(
+            %operation_id,
+            response_bytes = response.as_bytes().len(),
+            operations = inner.operations.len(),
+            schemas = inner.schemas.len(),
+            "operation store seal"
+        );
     }
 
     fn remove(&self, operation_id: OperationId) {
@@ -176,6 +189,12 @@ impl OperationStore for InMemoryOperationStore {
             Some(InMemoryState::Admitted)
         ) {
             inner.operations.remove(&operation_id);
+            tracing::trace!(
+                %operation_id,
+                operations = inner.operations.len(),
+                schemas = inner.schemas.len(),
+                "operation store remove admitted"
+            );
         }
     }
 

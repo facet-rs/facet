@@ -1054,6 +1054,9 @@ enum DriverLocalControl {
         channel_id: ChannelId,
         additional: u32,
     },
+    HandlerCompleted {
+        request_id: RequestId,
+    },
 }
 
 struct DriverChannelCreditReplenisher {
@@ -1296,6 +1299,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     tracing::trace!(%req_id, in_flight_found, ?reply_disposition, "failures_rx computed disposition");
                     // Clean up the handler tracking entry.
                     self.in_flight_handlers.remove(&req_id);
+                    tracing::trace!(%req_id, in_flight = self.in_flight_handlers.len(), "handler removed on failure");
                     let had_pending = self.shared.pending_responses.lock().remove(&req_id).is_some();
                     tracing::trace!(%req_id, had_pending, "failures_rx checked pending_responses");
                     if !had_pending {
@@ -1396,6 +1400,15 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     }))
                     .await;
             }
+            DriverLocalControl::HandlerCompleted { request_id } => {
+                let removed = self.in_flight_handlers.remove(&request_id).is_some();
+                tracing::trace!(
+                    %request_id,
+                    removed,
+                    in_flight = self.in_flight_handlers.len(),
+                    "handler completion processed"
+                );
+            }
         }
     }
 
@@ -1480,7 +1493,8 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             });
             let handler = Arc::clone(&self.handler);
             let retry = handler.retry_policy(call.method_id);
-            let operation_id = metadata_operation_id(&call.metadata);
+            // Idempotent requests can be re-executed safely; skip operation tracking/storage.
+            let operation_id = metadata_operation_id(&call.metadata).filter(|_| !retry.idem);
             let method_id = call.method_id;
 
             if let Some(operation_id) = operation_id {
@@ -1592,6 +1606,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 binder: self.internal_binder(),
             };
             let has_channels = handler.args_have_channels(call.method_id);
+            let local_control_tx = self.local_control_tx.clone();
             let join_handle = moire::task::spawn(
                 async move {
                     vox_types::dlog!(
@@ -1605,6 +1620,8 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         req_id,
                         method_id
                     );
+                    let _ = local_control_tx
+                        .send(DriverLocalControl::HandlerCompleted { request_id: req_id });
                 }
                 .named("handler"),
             );
@@ -1618,6 +1635,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     operation_id,
                 },
             );
+            tracing::trace!(%req_id, in_flight = self.in_flight_handlers.len(), "handler inserted");
         } else if is_response {
             // r[impl rpc.response.one-per-request]
             vox_types::dlog!(
@@ -1655,6 +1673,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                     {
                         tracing::trace!(%req_id, "aborting handler");
                         in_flight.handle.abort();
+                        tracing::trace!(%req_id, in_flight = self.in_flight_handlers.len(), "handler removed on cancel");
                     }
                 }
                 CancelResult::Detached => {}
@@ -1667,6 +1686,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                             self.shared.operations.remove(op_id);
                         }
                         in_flight.handle.abort();
+                        tracing::trace!(%owner_request_id, in_flight = self.in_flight_handlers.len(), "owner handler removed on abort");
                     }
                     for waiter in waiters {
                         self.sender
