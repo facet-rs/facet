@@ -27,7 +27,7 @@ pub fn ping_service_descriptor() -> &'static ::vox::session::ServiceDescriptor {
 }
 pub trait Ping
 where
-    Self: ::vox::MaybeSend + ::vox::MaybeSync,
+    Self: Clone + ::vox::MaybeSend + ::vox::MaybeSync + 'static,
 {
     fn ping(&self) -> impl std::future::Future<Output = u64> + ::vox::MaybeSend;
 }
@@ -42,7 +42,7 @@ pub struct PingDispatcher<H> {
 }
 impl<H> PingDispatcher<H>
 where
-    H: Ping + Clone + ::vox::MaybeSend + ::vox::MaybeSync + 'static,
+    H: Ping,
 {
     #[doc = r" Create a new dispatcher wrapping the given handler."]
     pub fn new(handler: H) -> Self {
@@ -68,7 +68,7 @@ where
 }
 impl<H, R> ::vox::Handler<R> for PingDispatcher<H>
 where
-    H: Ping + Clone + ::vox::MaybeSend + ::vox::MaybeSync + 'static,
+    H: Ping,
     R: ::vox::ReplySink,
 {
     fn retry_policy(&self, method_id: ::vox::MethodId) -> ::vox::RetryPolicy {

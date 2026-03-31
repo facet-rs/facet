@@ -38,7 +38,7 @@ pub fn audit_service_descriptor() -> &'static ::vox::session::ServiceDescriptor 
 }
 pub trait Audit
 where
-    Self: ::vox::MaybeSend + ::vox::MaybeSync,
+    Self: Clone + ::vox::MaybeSend + ::vox::MaybeSync + 'static,
 {
     fn record<'vox>(
         &self,
@@ -59,7 +59,7 @@ pub struct AuditDispatcher<H> {
 }
 impl<H> AuditDispatcher<H>
 where
-    H: Audit + Clone + ::vox::MaybeSend + ::vox::MaybeSync + 'static,
+    H: Audit,
 {
     #[doc = r" Create a new dispatcher wrapping the given handler."]
     pub fn new(handler: H) -> Self {
@@ -85,7 +85,7 @@ where
 }
 impl<H, R> ::vox::Handler<R> for AuditDispatcher<H>
 where
-    H: Audit + Clone + ::vox::MaybeSend + ::vox::MaybeSync + 'static,
+    H: Audit,
     R: ::vox::ReplySink,
 {
     fn retry_policy(&self, method_id: ::vox::MethodId) -> ::vox::RetryPolicy {

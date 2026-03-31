@@ -275,7 +275,7 @@ fn generate_service_trait(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStr
         #trait_doc
         pub trait #trait_name
         where
-            Self: #vox::MaybeSend + #vox::MaybeSync,
+            Self: Clone + #vox::MaybeSend + #vox::MaybeSync + 'static,
         {
             #(#methods)*
         }
@@ -435,7 +435,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream
 
         impl<H> #dispatcher_name<H>
         where
-            H: #trait_name + Clone + #vox::MaybeSend + #vox::MaybeSync + 'static,
+            H: #trait_name,
         {
             /// Create a new dispatcher wrapping the given handler.
             pub fn new(handler: H) -> Self {
@@ -464,7 +464,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream
 
         impl<H, R> #vox::Handler<R> for #dispatcher_name<H>
         where
-            H: #trait_name + Clone + #vox::MaybeSend + #vox::MaybeSync + 'static,
+            H: #trait_name,
             R: #vox::ReplySink,
         {
             fn retry_policy(&self, method_id: #vox::MethodId) -> #vox::RetryPolicy {

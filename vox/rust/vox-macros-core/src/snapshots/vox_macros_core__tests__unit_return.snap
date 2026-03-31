@@ -27,7 +27,7 @@ pub fn notifier_service_descriptor() -> &'static ::vox::session::ServiceDescript
 }
 pub trait Notifier
 where
-    Self: ::vox::MaybeSend + ::vox::MaybeSync,
+    Self: Clone + ::vox::MaybeSend + ::vox::MaybeSync + 'static,
 {
     fn notify(&self, msg: String) -> impl std::future::Future<Output = ()> + ::vox::MaybeSend;
 }
@@ -42,7 +42,7 @@ pub struct NotifierDispatcher<H> {
 }
 impl<H> NotifierDispatcher<H>
 where
-    H: Notifier + Clone + ::vox::MaybeSend + ::vox::MaybeSync + 'static,
+    H: Notifier,
 {
     #[doc = r" Create a new dispatcher wrapping the given handler."]
     pub fn new(handler: H) -> Self {
@@ -68,7 +68,7 @@ where
 }
 impl<H, R> ::vox::Handler<R> for NotifierDispatcher<H>
 where
-    H: Notifier + Clone + ::vox::MaybeSend + ::vox::MaybeSync + 'static,
+    H: Notifier,
     R: ::vox::ReplySink,
 {
     fn retry_policy(&self, method_id: ::vox::MethodId) -> ::vox::RetryPolicy {
