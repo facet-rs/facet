@@ -34,7 +34,7 @@ pub async fn connect<Client: FromVoxSession>(
 
     match scheme.as_str() {
         #[cfg(feature = "transport-tcp")]
-        "tcp" => connect_bare(vox_stream::tcp_connector(host)).await,
+        "tcp" => connect_bare(vox_stream::tcp_link_source(host)).await,
         #[cfg(feature = "transport-local")]
         "local" => connect_bare(vox_stream::local_link_source(host)).await,
         _ => Err(SessionError::Protocol(format!(

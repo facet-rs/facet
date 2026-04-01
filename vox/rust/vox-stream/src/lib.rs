@@ -5,6 +5,8 @@
 //! framing.
 
 use std::io;
+#[cfg(not(target_arch = "wasm32"))]
+use std::net::SocketAddr;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::sync::mpsc;
@@ -44,20 +46,20 @@ impl StreamLink<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>
 
 #[cfg(not(target_arch = "wasm32"))]
 pub struct TcpConnector {
-    addr: String,
+    addr: SocketAddr,
     nodelay: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn tcp_connector(addr: impl Into<String>) -> TcpConnector {
+pub fn tcp_link_source(addr: SocketAddr) -> TcpConnector {
     TcpConnector::new(addr)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl TcpConnector {
-    pub fn new(addr: impl Into<String>) -> Self {
+    pub fn new(addr: SocketAddr) -> Self {
         Self {
-            addr: addr.into(),
+            addr,
             nodelay: true,
         }
     }

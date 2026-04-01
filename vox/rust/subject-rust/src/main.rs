@@ -9,7 +9,7 @@ use vox::{Rx, Tx};
 use vox_core::{TransportMode, initiator, initiator_on};
 use vox_shm::bootstrap::{BootstrapStatus, encode_request};
 use vox_shm::segment::Segment;
-use vox_stream::tcp_connector;
+use vox_stream::tcp_link_source;
 
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
@@ -329,7 +329,7 @@ async fn connect_and_serve() -> Result<(), String> {
     let addr = std::env::var("PEER_ADDR").map_err(|_| "PEER_ADDR env var not set".to_string())?;
     info!("connecting to {addr}");
 
-    let (root_caller_guard, _sh) = initiator(tcp_connector(addr), requested_transport_mode())
+    let (root_caller_guard, _sh) = initiator(tcp_link_source(addr), requested_transport_mode())
         .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
         .await
         .map_err(|e| format!("handshake failed: {e}"))?;
@@ -346,7 +346,7 @@ async fn run_client() -> Result<(), String> {
     let scenario = std::env::var("CLIENT_SCENARIO").unwrap_or_else(|_| "echo".to_string());
     info!("client mode: connecting to {addr}, scenario={scenario}");
 
-    let (client, _sh) = initiator(tcp_connector(addr), requested_transport_mode())
+    let (client, _sh) = initiator(tcp_link_source(addr), requested_transport_mode())
         .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
         .await
         .map_err(|e| format!("handshake failed: {e}"))?;
