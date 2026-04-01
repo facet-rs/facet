@@ -38,14 +38,14 @@ pub enum VoxError<E = ::core::convert::Infallible> {
 impl<E: fmt::Display> fmt::Display for VoxError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::User(error) => write!(f, "user error: {error}"),
-            Self::UnknownMethod => f.write_str("unknown method"),
-            Self::InvalidPayload(message) => write!(f, "invalid payload: {message}"),
-            Self::Cancelled => f.write_str("cancelled"),
-            Self::ConnectionClosed => f.write_str("connection closed"),
-            Self::SessionShutdown => f.write_str("session shutdown"),
-            Self::SendFailed => f.write_str("send failed"),
-            Self::Indeterminate => f.write_str("indeterminate"),
+            Self::User(error) => write!(f, "{error}"),
+            Self::UnknownMethod => f.write_str("unknown vox method call"),
+            Self::InvalidPayload(message) => write!(f, "invalid vox payload: {message}"),
+            Self::Cancelled => f.write_str("vox request cancelled"),
+            Self::ConnectionClosed => f.write_str("vox connection closed"),
+            Self::SessionShutdown => f.write_str("vox session shutdown"),
+            Self::SendFailed => f.write_str("vox send failed"),
+            Self::Indeterminate => f.write_str("indeterminate vox error"),
         }
     }
 }

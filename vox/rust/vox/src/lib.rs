@@ -118,11 +118,6 @@ pub use vox_core::*;
 /// - `transport-tcp`
 /// - `transport-local`
 /// - `transport-shm`
-#[cfg(any(
-    feature = "transport-tcp",
-    feature = "transport-local",
-    feature = "transport-shm"
-))]
 pub mod transport {
     /// TCP byte-stream transport (`vox-stream`).
     #[cfg(feature = "transport-tcp")]

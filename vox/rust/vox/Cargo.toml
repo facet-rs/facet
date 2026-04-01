@@ -18,7 +18,7 @@ categories.workspace = true
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-default = ["runtime"]
+default = ["runtime", "transport-tcp", "transport-local"]
 runtime = ["dep:vox-core"]
 transport-tcp = ["dep:vox-stream"]
 transport-local = ["dep:vox-stream"]
