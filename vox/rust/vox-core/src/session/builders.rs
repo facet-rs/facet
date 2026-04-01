@@ -15,7 +15,7 @@ use vox_types::{
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{Attachment, LinkSource, StableConduit};
 use crate::{
-    BareConduit, IntoConduit, OperationStore, TransportMode, accept_transport,
+    BareConduit, IntoConduit, NoopCaller, OperationStore, TransportMode, accept_transport,
     handshake_as_acceptor, handshake_as_initiator, initiate_transport,
 };
 
@@ -247,6 +247,27 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
         self
     }
 
+    /// Establishes a session using a [`NoopCaller`] client.
+    ///
+    /// This is a convenience wrapper around [`Self::establish`] for cases where
+    /// the caller does not need a typed client and the provided handler is `()`.
+    ///
+    /// Returns the constructed [`NoopCaller`] together with the [`SessionHandle`]
+    /// for the newly established session.
+    pub async fn establish_noop(self) -> Result<(NoopCaller, SessionHandle), SessionError>
+    where
+        C: Conduit<Msg = MessageFamily> + 'static,
+        C::Tx: MaybeSend + MaybeSync + 'static,
+        for<'p> <C::Tx as ConduitTx>::Permit<'p>: MaybeSend,
+        C::Rx: MaybeSend + 'static,
+    {
+        self.establish::<NoopCaller>(()).await
+    }
+
+    /// Establish a session using the given settings, on the given link source, etc,
+    ///
+    ///   - requiring (as an arg) a handler for the service the local peer will serve
+    ///   - returning a caller for the service we expect the remote peer to serve
     pub async fn establish<Client: From<DriverCaller>>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
