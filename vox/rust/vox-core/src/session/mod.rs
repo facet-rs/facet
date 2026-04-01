@@ -100,6 +100,31 @@ pub struct AcceptedConnection {
     pub setup: Box<dyn FnOnce(ConnectionHandle) + Send>,
 }
 
+/// `()` as an acceptor: accepts all connections with a no-op handler.
+impl ConnectionAcceptor for () {
+    fn accept(
+        &self,
+        _conn_id: ConnectionId,
+        peer_settings: &ConnectionSettings,
+        _metadata: &[vox_types::MetadataEntry],
+    ) -> Result<AcceptedConnection, Metadata<'static>> {
+        Ok(AcceptedConnection {
+            settings: ConnectionSettings {
+                parity: peer_settings.parity.other(),
+                max_concurrent_requests: peer_settings.max_concurrent_requests,
+            },
+            metadata: vec![],
+            setup: Box::new(|handle| {
+                let mut driver = crate::Driver::new(handle, ());
+                #[cfg(not(target_arch = "wasm32"))]
+                tokio::spawn(async move { driver.run().await });
+                #[cfg(target_arch = "wasm32")]
+                wasm_bindgen_futures::spawn_local(async move { driver.run().await });
+            }),
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Open/close request types (from SessionHandle → run loop)
 // ---------------------------------------------------------------------------

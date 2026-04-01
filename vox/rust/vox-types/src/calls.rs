@@ -1,8 +1,8 @@
-use std::pin::Pin;
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use crate::{
-    ConnectionId, MaybeSend, MaybeSendFuture, MaybeSync, Metadata, RequestId, RequestResponse,
-    SelfRef, VoxError,
+    ConnectionId, MaybeSend, MaybeSendFuture, MaybeSync, Metadata, MethodId, RequestCall,
+    RequestId, RequestResponse, SchemaRecvTracker, SelfRef, VoxError,
 };
 
 /// A boxed future that is `Send` on native targets and `!Send` on wasm32.
@@ -96,12 +96,12 @@ where
     E: facet::Facet<'wire> + MaybeSend,
 {
     /// Send the terminal response for this request attempt, consuming this `Call`.
-    fn reply(self, result: Result<T, E>) -> impl std::future::Future<Output = ()> + MaybeSend;
+    fn reply(self, result: Result<T, E>) -> impl Future<Output = ()> + MaybeSend;
 
     /// Send a successful response for this request attempt, consuming this `Call`.
     ///
     /// Equivalent to `self.reply(Ok(value)).await`.
-    fn ok(self, value: T) -> impl std::future::Future<Output = ()> + MaybeSend
+    fn ok(self, value: T) -> impl Future<Output = ()> + MaybeSend
     where
         Self: Sized,
     {
@@ -111,7 +111,7 @@ where
     /// Send an error response for this request attempt, consuming this `Call`.
     ///
     /// Equivalent to `self.reply(Err(error)).await`.
-    fn err(self, error: E) -> impl std::future::Future<Output = ()> + MaybeSend
+    fn err(self, error: E) -> impl Future<Output = ()> + MaybeSend
     where
         Self: Sized,
     {
@@ -137,10 +137,7 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
     /// with it, and they cannot try sending a second response anyway.
     ///
     /// Do not spawn a task to send the error because it too, might fail.
-    fn send_reply(
-        self,
-        response: RequestResponse<'_>,
-    ) -> impl std::future::Future<Output = ()> + MaybeSend;
+    fn send_reply(self, response: RequestResponse<'_>) -> impl Future<Output = ()> + MaybeSend;
 
     /// Send an error response for this request attempt, consuming the sink.
     ///
@@ -149,7 +146,7 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
     fn send_error<E: for<'a> facet::Facet<'a> + MaybeSend>(
         self,
         error: VoxError<E>,
-    ) -> impl std::future::Future<Output = ()> + MaybeSend
+    ) -> impl Future<Output = ()> + MaybeSend
     where
         Self: Sized,
     {
@@ -174,7 +171,7 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
     fn send_typed_error<'wire, T, E>(
         self,
         error: VoxError<E>,
-    ) -> impl std::future::Future<Output = ()> + MaybeSend
+    ) -> impl Future<Output = ()> + MaybeSend
     where
         Self: Sized,
         T: facet::Facet<'wire> + MaybeSend,
@@ -229,12 +226,12 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
 
 pub trait Handler<R: ReplySink>: MaybeSend + MaybeSync + 'static {
     /// Return the static retry policy for a method ID served by this handler.
-    fn retry_policy(&self, _method_id: crate::MethodId) -> crate::RetryPolicy {
+    fn retry_policy(&self, _method_id: MethodId) -> crate::RetryPolicy {
         crate::RetryPolicy::VOLATILE
     }
 
     /// Return whether the method's argument shape contains any channels.
-    fn args_have_channels(&self, _method_id: crate::MethodId) -> bool {
+    fn args_have_channels(&self, _method_id: MethodId) -> bool {
         false
     }
 
@@ -242,25 +239,25 @@ pub trait Handler<R: ReplySink>: MaybeSend + MaybeSync + 'static {
     ///
     /// This is the full wire type `Result<T, VoxError<E>>`, not the
     /// user-facing return type `T` or `Result<T, E>`.
-    fn response_wire_shape(&self, _method_id: crate::MethodId) -> Option<&'static facet::Shape> {
+    fn response_wire_shape(&self, _method_id: MethodId) -> Option<&'static facet::Shape> {
         None
     }
 
     /// Dispatch an incoming call to the appropriate method implementation.
     fn handle(
         &self,
-        call: SelfRef<crate::RequestCall<'static>>,
+        call: SelfRef<RequestCall<'static>>,
         reply: R,
-        schemas: std::sync::Arc<crate::SchemaRecvTracker>,
-    ) -> impl std::future::Future<Output = ()> + MaybeSend + '_;
+        schemas: Arc<SchemaRecvTracker>,
+    ) -> impl Future<Output = ()> + MaybeSend + '_;
 }
 
 impl<R: ReplySink> Handler<R> for () {
     async fn handle(
         &self,
-        _call: SelfRef<crate::RequestCall<'static>>,
+        _call: SelfRef<RequestCall<'static>>,
         _reply: R,
-        _schemas: std::sync::Arc<crate::SchemaRecvTracker>,
+        _schemas: Arc<SchemaRecvTracker>,
     ) {
     }
 }
@@ -307,13 +304,13 @@ where
 {
     async fn reply(self, result: Result<T, E>) {
         use crate::{Payload, RequestResponse};
-        let wire: Result<T, crate::VoxError<E>> = result.map_err(crate::VoxError::User);
-        let ptr =
-            facet::PtrConst::new((&wire as *const Result<T, crate::VoxError<E>>).cast::<u8>());
-        let shape = <Result<T, crate::VoxError<E>> as facet::Facet<'wire>>::SHAPE;
+        let wire: Result<T, VoxError<E>> = result.map_err(VoxError::User);
+        let ptr = facet::PtrConst::new((&wire as *const Result<T, VoxError<E>>).cast::<u8>());
+        let shape = <Result<T, VoxError<E>> as facet::Facet<'wire>>::SHAPE;
         // SAFETY: `wire` lives until `send_reply(...).await` completes in this function,
         // and `shape` matches the pointed value exactly.
         let ret = unsafe { Payload::outgoing_unchecked(ptr, shape) };
+
         self.reply
             .send_reply(RequestResponse {
                 ret,
