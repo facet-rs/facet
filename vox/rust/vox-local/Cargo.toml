@@ -17,11 +17,7 @@ description = "Cross-platform local IPC for vox - Unix sockets on Unix, named pi
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-tokio = { workspace = true, features = ["net", "io-util", "sync"] }
-moire.workspace = true
-
-[target.'cfg(windows)'.dependencies]
-tokio = { workspace = true, features = ["net", "io-util", "sync"] }
+vox-stream.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "io-util"] }

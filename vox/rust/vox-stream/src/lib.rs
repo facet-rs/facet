@@ -269,6 +269,144 @@ impl<R: AsyncRead + Send + Unpin + 'static> LinkRx for StreamLinkRx<R> {
 type BoxReader = Box<dyn AsyncRead + Send + Unpin>;
 type BoxWriter = Box<dyn AsyncWrite + Send + Unpin>;
 
+/// Raw local IPC stream.
+#[cfg(unix)]
+pub type LocalStream = tokio::net::UnixStream;
+
+/// Raw local IPC stream.
+#[cfg(windows)]
+pub type LocalStream = tokio::net::windows::named_pipe::NamedPipeClient;
+
+/// Raw server stream returned from [`LocalListener::accept`].
+#[cfg(unix)]
+pub type LocalServerStream = LocalStream;
+
+/// Raw server stream returned from [`LocalListener::accept`].
+#[cfg(windows)]
+pub type LocalServerStream = tokio::net::windows::named_pipe::NamedPipeServer;
+
+/// Raw local IPC listener.
+///
+/// This is a thin cross-platform wrapper:
+/// - Unix: a Unix domain socket listener
+/// - Windows: a named pipe acceptor with one pending server instance
+pub struct LocalListener {
+    #[cfg(unix)]
+    inner: tokio::net::UnixListener,
+    #[cfg(windows)]
+    pipe_name: String,
+    #[cfg(windows)]
+    next_server: tokio::net::windows::named_pipe::NamedPipeServer,
+}
+
+impl LocalListener {
+    /// Bind to a local endpoint.
+    #[cfg(unix)]
+    pub fn bind(path: impl AsRef<std::path::Path>) -> io::Result<Self> {
+        let inner = tokio::net::UnixListener::bind(path)?;
+        Ok(Self { inner })
+    }
+
+    /// Bind to a local endpoint.
+    #[cfg(windows)]
+    pub fn bind(pipe_name: impl Into<String>) -> io::Result<Self> {
+        use tokio::net::windows::named_pipe::ServerOptions;
+
+        let pipe_name = pipe_name.into();
+        let next_server = ServerOptions::new().create(&pipe_name)?;
+        Ok(Self {
+            pipe_name,
+            next_server,
+        })
+    }
+
+    /// Accept a new incoming raw stream.
+    #[cfg(unix)]
+    pub async fn accept(&self) -> io::Result<LocalServerStream> {
+        let (stream, _addr) = self.inner.accept().await?;
+        Ok(stream)
+    }
+
+    /// Accept a new incoming raw stream.
+    #[cfg(windows)]
+    pub async fn accept(&mut self) -> io::Result<LocalServerStream> {
+        use tokio::net::windows::named_pipe::ServerOptions;
+
+        self.next_server.connect().await?;
+        let connected = std::mem::replace(
+            &mut self.next_server,
+            ServerOptions::new().create(&self.pipe_name)?,
+        );
+        Ok(connected)
+    }
+}
+
+/// Connect to a local endpoint and return a raw stream.
+#[cfg(unix)]
+pub async fn connect(path: impl AsRef<std::path::Path>) -> io::Result<LocalStream> {
+    tokio::net::UnixStream::connect(path).await
+}
+
+/// Connect to a local endpoint and return a raw stream.
+#[cfg(windows)]
+pub async fn connect(pipe_name: impl AsRef<str>) -> io::Result<LocalStream> {
+    let pipe_name = pipe_name.as_ref();
+    loop {
+        match tokio::net::windows::named_pipe::ClientOptions::new().open(pipe_name) {
+            Ok(client) => return Ok(client),
+            Err(e) if e.raw_os_error() == Some(231) => {
+                moire::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Check if a local endpoint exists.
+#[cfg(unix)]
+pub fn endpoint_exists(path: impl AsRef<std::path::Path>) -> bool {
+    path.as_ref().exists()
+}
+
+/// Check if a local endpoint exists.
+#[cfg(windows)]
+pub fn endpoint_exists(pipe_name: impl AsRef<str>) -> bool {
+    match tokio::net::windows::named_pipe::ClientOptions::new().open(pipe_name.as_ref()) {
+        Ok(_) => true,
+        Err(e) => e.raw_os_error() == Some(231),
+    }
+}
+
+/// Remove a local endpoint.
+#[cfg(unix)]
+pub fn remove_endpoint(path: impl AsRef<std::path::Path>) -> io::Result<()> {
+    std::fs::remove_file(path)
+}
+
+/// Remove a local endpoint.
+#[cfg(windows)]
+pub fn remove_endpoint(_pipe_name: impl AsRef<str>) -> io::Result<()> {
+    Ok(())
+}
+
+/// Convert a conceptual endpoint path into a platform-appropriate local endpoint.
+#[cfg(windows)]
+pub fn path_to_pipe_name(path: impl AsRef<std::path::Path>) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    path.as_ref().hash(&mut hasher);
+    let hash = hasher.finish();
+    format!(r"\\.\pipe\vox-{:016x}", hash)
+}
+
+/// On Unix this is the identity mapping for compatibility with Windows naming.
+#[cfg(unix)]
+pub fn path_to_pipe_name(path: impl AsRef<std::path::Path>) -> std::path::PathBuf {
+    path.as_ref().to_path_buf()
+}
+
 /// Platform-agnostic local IPC link.
 ///
 /// Uses Unix domain sockets on Linux/macOS, named pipes on Windows.
@@ -283,7 +421,7 @@ impl LocalLink {
     /// Connect to a local endpoint by address.
     #[cfg(unix)]
     pub async fn connect(addr: &str) -> io::Result<Self> {
-        let stream = tokio::net::UnixStream::connect(addr).await?;
+        let stream = connect(addr).await?;
         let (r, w) = stream.into_split();
         Ok(Self {
             inner: StreamLink::new(Box::new(r), Box::new(w)),
@@ -293,7 +431,7 @@ impl LocalLink {
     /// Connect to a local endpoint by address.
     #[cfg(windows)]
     pub async fn connect(addr: &str) -> io::Result<Self> {
-        let pipe = tokio::net::windows::named_pipe::ClientOptions::new().open(addr)?;
+        let pipe = connect(addr).await?;
         let (r, w) = tokio::io::split(pipe);
         Ok(Self {
             inner: StreamLink::new(Box::new(r), Box::new(w)),
@@ -307,6 +445,35 @@ impl Link for LocalLink {
 
     fn split(self) -> (Self::Tx, Self::Rx) {
         self.inner.split()
+    }
+}
+
+/// Reconnecting source for [`LocalLink`] attachments.
+///
+/// Each call to `next_link` connects to the same local endpoint and yields an
+/// initiator attachment for stable conduit reconnects.
+// r[impl transport.stream.local]
+// r[impl stable.link-source]
+pub struct LocalLinkSource {
+    addr: String,
+}
+
+pub fn local_link_source(addr: impl Into<String>) -> LocalLinkSource {
+    LocalLinkSource::new(addr)
+}
+
+impl LocalLinkSource {
+    pub fn new(addr: impl Into<String>) -> Self {
+        Self { addr: addr.into() }
+    }
+}
+
+impl LinkSource for LocalLinkSource {
+    type Link = LocalLink;
+
+    async fn next_link(&mut self) -> io::Result<Attachment<Self::Link>> {
+        let link = LocalLink::connect(&self.addr).await?;
+        Ok(Attachment::initiator(link))
     }
 }
 
