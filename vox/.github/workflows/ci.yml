@@ -12,6 +12,39 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  rust-lint:
+    name: Rust / Lint
+    runs-on: depot-ubuntu-24.04-16
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run clippy (strict)
+        run: cargo clippy --all-features --all-targets -- -D warnings
+
+  rust-tests:
+    name: Rust / Tests
+    runs-on: depot-ubuntu-24.04-16
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test workspace (all features, Rust-only)
+        run: cargo nextest run --workspace --all-features -E 'not test(/lang_.*(typescript|swift)/)'
+
   rust-doc:
     name: Rust / Documentation
     runs-on: depot-ubuntu-24.04-16
