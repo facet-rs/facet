@@ -410,7 +410,8 @@ async fn rx_recv_signals_reset() {
 }
 
 mod credit_tests;
-// TODO: port driver_tests and shm_driver_tests to vox/tests/ using generated clients
+mod driver_tests;
+mod shm_driver_tests;
 
 #[test]
 fn test_deser_postcard_borrowed() {

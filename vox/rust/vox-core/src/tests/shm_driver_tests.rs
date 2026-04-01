@@ -129,6 +129,7 @@ async fn echo_call_across_shm_link() {
 
     let args_value: u32 = 42;
     let response = caller
+        .caller
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
@@ -210,6 +211,7 @@ async fn echo_blob_stress_over_shm_link() {
         let len = if i % 2 == 0 { 32 } else { 2048 };
         let payload = vec![(i % 251) as u8; len];
         let response = caller
+            .caller
             .call(RequestCall {
                 method_id: MethodId(2),
                 args: Payload::outgoing(&payload),

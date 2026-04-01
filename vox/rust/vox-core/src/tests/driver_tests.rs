@@ -7,12 +7,12 @@ use std::time::Duration;
 use moire::sync::mpsc;
 use moire::task::FutureExt;
 use vox_types::{
-    Backing, ChannelBody, ChannelClose, ChannelGrantCredit, ChannelId, ChannelItem, ChannelMessage,
-    ChannelSink, Conduit, ConduitRx, ConnectionSettings, Handler, IncomingChannelMessage, Link,
-    LinkRx, LinkTx, LinkTxPermit, Message, MessageFamily, MessagePayload, Metadata, MethodId,
-    Parity, Payload, ReplySink, RequestBody, RequestCall, RequestCancel, RequestMessage,
-    RequestResponse, RetryPolicy, SelfRef, Tx, VoxError, WriteSlot, channel, ensure_operation_id,
-    metadata_operation_id,
+    Backing, ChannelBinder, ChannelBody, ChannelClose, ChannelGrantCredit, ChannelId, ChannelItem,
+    ChannelMessage, ChannelSink, Conduit, ConduitRx, ConnectionSettings, Handler,
+    IncomingChannelMessage, Link, LinkRx, LinkTx, LinkTxPermit, Message, MessageFamily,
+    MessagePayload, Metadata, MethodId, Parity, Payload, ReplySink, RequestBody, RequestCall,
+    RequestCancel, RequestMessage, RequestResponse, RetryPolicy, SelfRef, Tx, VoxError, WriteSlot,
+    channel, ensure_operation_id, metadata_operation_id,
 };
 
 use vox_types::{HandshakeResult, SessionResumeKey, SessionRole};
@@ -614,6 +614,7 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
     drop(caller_clone);
 
     let response = caller
+        .caller
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&42_u32),
@@ -714,7 +715,7 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
         .expect("open virtual connection");
 
     let mut vconn_driver = Driver::new(vconn_handle, ());
-    let vconn_caller = vconn_driver.caller();
+    let vconn_caller = crate::Caller::new(vconn_driver.caller());
     moire::task::spawn(async move { vconn_driver.run().await }.named("vconn_client_driver"));
 
     drop(root_caller);
@@ -785,7 +786,7 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
         updates: updates_tx,
     };
     // Serializing the args binds the Tx's paired Rx via the thread-local binder.
-    let _bytes = vox_types::channel::with_channel_binder(&root_caller, || {
+    let _bytes = vox_types::channel::with_channel_binder(root_caller.caller.driver(), || {
         vox_postcard::to_vec(&args).expect("serialize args")
     });
     // The first allocated channel ID is 1 (odd parity).
@@ -801,6 +802,8 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
 
     let value = 123_u32;
     server_caller
+        .caller
+        .driver()
         .connection_sender()
         .send(ConnectionMessage::Channel(ChannelMessage {
             id: channel_id,
@@ -819,6 +822,8 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
     assert_eq!(*received, 123);
 
     server_caller
+        .caller
+        .driver()
         .connection_sender()
         .send(ConnectionMessage::Channel(ChannelMessage {
             id: channel_id,
@@ -877,7 +882,7 @@ async fn cancel_aborts_in_flight_handler() {
         .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
-    let client_sender = caller.connection_sender().clone();
+    let client_sender = caller.caller.driver().connection_sender().clone();
 
     let _server_caller_guard = server_task.await.expect("server setup failed");
 
@@ -886,6 +891,7 @@ async fn cancel_aborts_in_flight_handler() {
         async move {
             let args_value: u32 = 99;
             caller
+                .caller
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&args_value),
@@ -969,13 +975,14 @@ async fn cancel_does_not_abort_persist_handler() {
         .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
-    let client_sender = caller.connection_sender().clone();
+    let client_sender = caller.caller.driver().connection_sender().clone();
 
     let _server_caller_guard = server_task.await.expect("server setup failed");
 
     let call_task = moire::task::spawn(
         async move {
             caller
+                .caller
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&99_u32),
@@ -1043,6 +1050,7 @@ async fn caller_injects_operation_id_when_peer_supports_retry() {
     let _server_caller_guard = server_task.await.expect("server setup failed");
 
     let response = caller
+        .caller
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&7_u32),
@@ -1086,6 +1094,7 @@ async fn builder_uses_custom_operation_store() {
     let _server_caller_guard = server_task.await.expect("server setup failed");
 
     let _response = caller
+        .caller
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&7_u32),
@@ -1140,6 +1149,7 @@ async fn operation_replay_after_resume_delivers_sealed_outcome() {
             let metadata = metadata.clone();
             async move {
                 caller
+                    .caller
                     .call(RequestCall {
                         method_id: MethodId(1),
                         args: Payload::outgoing(&11_u32),
@@ -1183,6 +1193,7 @@ async fn operation_replay_after_resume_delivers_sealed_outcome() {
     // Replay the same operation ID — should get the sealed response without
     // running the handler again, and without duplicate schema errors.
     let replayed = caller
+        .caller
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&11_u32),
@@ -1249,6 +1260,7 @@ async fn duplicate_operation_id_on_same_connection_is_rejected() {
             let metadata = metadata.clone();
             async move {
                 caller
+                    .caller
                     .call(RequestCall {
                         method_id: MethodId(1),
                         args: Payload::outgoing(&11_u32),
@@ -1272,6 +1284,7 @@ async fn duplicate_operation_id_on_same_connection_is_rejected() {
             let metadata = metadata.clone();
             async move {
                 caller
+                    .caller
                     .call(RequestCall {
                         method_id: MethodId(1),
                         args: Payload::outgoing(&11_u32),
@@ -1373,7 +1386,7 @@ async fn call_through_cbor_handshake_reaches_handler() {
 
     let response = tokio::time::timeout(
         Duration::from_secs(1),
-        caller.call(RequestCall {
+        caller.caller.call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&42_u32),
             schemas: Default::default(),
@@ -1414,7 +1427,7 @@ async fn call_through_stable_conduit_reaches_handler() {
 
     let response = tokio::time::timeout(
         Duration::from_secs(1),
-        caller.call(RequestCall {
+        caller.caller.call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&42_u32),
             schemas: Default::default(),
@@ -1456,7 +1469,7 @@ async fn multiple_calls_through_stable_conduit() {
     for i in 0_u32..10 {
         let response = tokio::time::timeout(
             Duration::from_secs(1),
-            caller.call(RequestCall {
+            caller.caller.call(RequestCall {
                 method_id: MethodId(1),
                 args: Payload::outgoing(&i),
                 schemas: Default::default(),
@@ -1512,6 +1525,7 @@ async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
     let call_task = moire::task::spawn(
         async move {
             caller
+                .caller
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&55_u32),
@@ -1594,6 +1608,7 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
     let call_task = moire::task::spawn(
         async move {
             caller
+                .caller
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&66_u32),
@@ -1717,6 +1732,7 @@ async fn resumable_source_initiator_keeps_pending_call_alive_across_auto_resume(
     let call_task = moire::task::spawn(
         async move {
             caller
+                .caller
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&77_u32),
@@ -1816,6 +1832,7 @@ async fn resumable_source_initiator_falls_back_to_fresh_session_when_resume_key_
     let call_task = moire::task::spawn(
         async move {
             caller
+                .caller
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&88_u32),
@@ -1916,6 +1933,7 @@ async fn resumable_session_reruns_released_idem_call_after_manual_resume() {
     let call_task = moire::task::spawn(
         async move {
             caller
+                .caller
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&77_u32),
@@ -2000,6 +2018,7 @@ async fn resumable_session_returns_indeterminate_for_released_non_idem_call_afte
     let call_task = moire::task::spawn(
         async move {
             caller
+                .caller
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&88_u32),
@@ -2083,6 +2102,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
     let call_task = moire::task::spawn(
         async move {
             caller
+                .caller
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&123_u32),
@@ -2156,6 +2176,7 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
     let call_task = moire::task::spawn(
         async move {
             caller
+                .caller
                 .call(RequestCall {
                     method_id: MethodId(1),
                     args: Payload::outgoing(&123_u32),
@@ -2314,7 +2335,7 @@ async fn open_virtual_connection_and_call() {
 
     // Set up a driver on the client side for the virtual connection.
     let mut vconn_driver = Driver::new(vconn_handle, ());
-    let caller = vconn_driver.caller();
+    let caller = crate::Caller::new(vconn_driver.caller());
     moire::task::spawn(async move { vconn_driver.run().await }.named("vconn_client_driver"));
 
     // Make a call on the virtual connection.
@@ -2367,6 +2388,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
     // Call on the root connection — this sends and receives schemas.
     let args_value: u32 = 100;
     let response = root_caller
+        .caller
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
@@ -2398,7 +2420,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
         .expect("open virtual connection");
 
     let mut vconn_driver = Driver::new(vconn_handle, ());
-    let vconn_caller = vconn_driver.caller();
+    let vconn_caller = crate::Caller::new(vconn_driver.caller());
     moire::task::spawn(async move { vconn_driver.run().await }.named("vconn_driver"));
 
     let args_value: u32 = 200;
@@ -2806,7 +2828,7 @@ async fn close_virtual_connection() {
 
     // Set up a driver on the client side.
     let mut vconn_driver = Driver::new(vconn_handle, ());
-    let caller = vconn_driver.caller();
+    let caller = crate::Caller::new(vconn_driver.caller());
     let caller_closed = caller.clone();
     moire::task::spawn(async move { vconn_driver.run().await }.named("vconn_client_driver"));
 
@@ -2934,7 +2956,7 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
         .expect("open virtual connection");
 
     let mut vconn_driver = Driver::new(vconn_handle, ());
-    let vconn_caller = vconn_driver.caller();
+    let vconn_caller = crate::Caller::new(vconn_driver.caller());
     moire::task::spawn(async move { vconn_driver.run().await }.named("vconn_client_driver"));
 
     let response = vconn_caller
@@ -3007,10 +3029,10 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
 
     let conn_id = vconn_handle.connection_id();
     let mut vconn_driver = Driver::new(vconn_handle, ());
-    let caller = vconn_driver.caller();
+    let caller = crate::Caller::new(vconn_driver.caller());
     moire::task::spawn(async move { vconn_driver.run().await }.named("vconn_client_driver"));
 
-    let (_channel_id, bound_rx) = caller.create_rx();
+    let (_channel_id, bound_rx) = caller.driver().create_rx();
     let mut rx_items = bound_rx.receiver;
 
     session_handle
@@ -3055,6 +3077,7 @@ async fn echo_call_across_memory_link() {
     // Make a call: serialize a u32 as the args payload.
     let args_value: u32 = 42;
     let response = caller
+        .caller
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
@@ -3092,7 +3115,7 @@ async fn buffers_inbound_channel_items_until_rx_is_registered() {
         .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
-    let client_sender = client_caller.connection_sender().clone();
+    let client_sender = client_caller.caller.driver().connection_sender().clone();
 
     let server_caller = server_task.await.expect("server setup failed");
 
@@ -3110,7 +3133,11 @@ async fn buffers_inbound_channel_items_until_rx_is_registered() {
 
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
-    let mut rx = server_caller.register_rx_channel(channel_id).receiver;
+    let mut rx = server_caller
+        .caller
+        .driver()
+        .register_rx_channel(channel_id)
+        .receiver;
     let msg = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv())
         .await
         .expect("timed out waiting for buffered channel item")
@@ -3146,10 +3173,10 @@ async fn grant_credit_unblocks_driver_created_tx_channel() {
         .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
-    let client_sender = client_caller.connection_sender().clone();
+    let client_sender = client_caller.caller.driver().connection_sender().clone();
 
     let server_caller = server_task.await.expect("server setup failed");
-    let (channel_id, sink) = server_caller.create_tx_channel();
+    let (channel_id, sink) = server_caller.caller.driver().create_tx_channel();
 
     // Exhaust the default 16 credits.
     for _ in 0..16 {
@@ -3207,7 +3234,7 @@ async fn buffered_close_before_registration_keeps_channel_terminal() {
         .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
-    let client_sender = client_caller.connection_sender().clone();
+    let client_sender = client_caller.caller.driver().connection_sender().clone();
 
     let server_caller = server_task.await.expect("server setup failed");
     let channel_id = ChannelId(77);
@@ -3224,7 +3251,11 @@ async fn buffered_close_before_registration_keeps_channel_terminal() {
 
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
-    let mut rx = server_caller.register_rx_channel(channel_id).receiver;
+    let mut rx = server_caller
+        .caller
+        .driver()
+        .register_rx_channel(channel_id)
+        .receiver;
     let close = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv())
         .await
         .expect("timed out waiting for buffered close")
@@ -3264,7 +3295,10 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
                 .establish::<NoopClient>(EchoHandler)
                 .await
                 .expect("server handshake failed");
-            (server_caller.connection_sender().clone(), server_caller)
+            (
+                server_caller.caller.driver().connection_sender().clone(),
+                server_caller,
+            )
         }
         .named("server_setup"),
     );
@@ -3290,6 +3324,7 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
 
     let args_value: u32 = 42;
     let response = caller
+        .caller
         .call(RequestCall {
             method_id: MethodId(1),
             args: Payload::outgoing(&args_value),
@@ -3426,7 +3461,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
     let proxy_conn_id = proxy_conn.connection_id();
 
     let mut proxy_driver = Driver::new(proxy_conn, ());
-    let proxy_caller = proxy_driver.caller();
+    let proxy_caller = crate::Caller::new(proxy_driver.caller());
     let proxy_driver_task =
         moire::task::spawn(async move { proxy_driver.run().await }.named("guest_a_proxy_driver"));
 
