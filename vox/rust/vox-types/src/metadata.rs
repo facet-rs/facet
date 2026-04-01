@@ -113,3 +113,31 @@ pub fn metadata_into_owned(metadata: Metadata<'_>) -> Metadata<'static> {
         .map(MetadataEntry::into_owned)
         .collect()
 }
+
+/// Look up a string metadata value by key.
+pub fn metadata_get_str<'a>(metadata: &'a [MetadataEntry<'a>], key: &str) -> Option<&'a str> {
+    metadata.iter().find_map(|e| {
+        if e.key == key {
+            match &e.value {
+                MetadataValue::String(s) => Some(s.as_ref()),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    })
+}
+
+/// Look up a u64 metadata value by key.
+pub fn metadata_get_u64(metadata: &[MetadataEntry], key: &str) -> Option<u64> {
+    metadata.iter().find_map(|e| {
+        if e.key == key {
+            match &e.value {
+                MetadataValue::U64(n) => Some(*n),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    })
+}

@@ -46,6 +46,68 @@ pub trait ConnectionAcceptor: Send + 'static {
     ) -> Result<AcceptedConnection, Metadata<'static>>;
 }
 
+/// A [`ConnectionAcceptor`] that delegates to a closure.
+///
+/// The closure receives the metadata and returns an optional setup function.
+/// If `None` is returned, the connection is rejected.
+///
+/// # Example
+///
+/// ```ignore
+/// use vox::ServiceFactory;
+///
+/// let factory = ServiceFactory::new(|metadata| {
+///     let service = vox::metadata_get_str(metadata, "vox-service")?;
+///     match service {
+///         "Echo" => Some(Box::new(move |handle| {
+///             let mut driver = Driver::new(handle, EchoDispatcher::new(EchoService));
+///             tokio::spawn(async move { driver.run().await });
+///         }) as Box<dyn FnOnce(ConnectionHandle) + Send>),
+///         _ => None,
+///     }
+/// });
+/// ```
+pub struct ServiceFactory<F> {
+    factory: F,
+}
+
+impl<F> ServiceFactory<F>
+where
+    F: Fn(&[vox_types::MetadataEntry]) -> Option<Box<dyn FnOnce(ConnectionHandle) + Send>>
+        + Send
+        + 'static,
+{
+    pub fn new(factory: F) -> Self {
+        Self { factory }
+    }
+}
+
+impl<F> ConnectionAcceptor for ServiceFactory<F>
+where
+    F: Fn(&[vox_types::MetadataEntry]) -> Option<Box<dyn FnOnce(ConnectionHandle) + Send>>
+        + Send
+        + 'static,
+{
+    fn accept(
+        &self,
+        _conn_id: ConnectionId,
+        peer_settings: &ConnectionSettings,
+        metadata: &[vox_types::MetadataEntry],
+    ) -> Result<AcceptedConnection, Metadata<'static>> {
+        match (self.factory)(metadata) {
+            Some(setup) => Ok(AcceptedConnection {
+                settings: ConnectionSettings {
+                    parity: peer_settings.parity.other(),
+                    max_concurrent_requests: peer_settings.max_concurrent_requests,
+                },
+                metadata: vec![],
+                setup,
+            }),
+            None => Err(vec![]),
+        }
+    }
+}
+
 /// Result of accepting a virtual connection.
 pub struct AcceptedConnection {
     /// Our settings for this connection.
@@ -127,6 +189,36 @@ pub struct SessionHandle {
 }
 
 impl SessionHandle {
+    /// Open a typed virtual connection on the session.
+    ///
+    /// Sends `vox-service` metadata automatically from the client's
+    /// `SERVICE_NAME`. Creates a `Driver` and spawns it, returning
+    /// a ready-to-use typed client.
+    pub async fn open<Client: crate::FromVoxSession>(
+        &self,
+        settings: ConnectionSettings,
+    ) -> Result<Client, SessionError> {
+        use crate::{Caller, Driver};
+        use vox_types::{Handler, MetadataEntry, MetadataFlags, MetadataValue};
+
+        let mut metadata: Metadata<'static> = vec![];
+        if let Some(name) = Client::SERVICE_NAME {
+            metadata.push(MetadataEntry {
+                key: crate::session::builders::VOX_SERVICE_METADATA_KEY.into(),
+                value: MetadataValue::String(name.into()),
+                flags: MetadataFlags::NONE,
+            });
+        }
+        let handle = self.open_connection(settings, metadata).await?;
+        let mut driver = Driver::new(handle, ());
+        let caller = Caller::new(driver.caller());
+        #[cfg(not(target_arch = "wasm32"))]
+        tokio::spawn(async move { driver.run().await });
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move { driver.run().await });
+        Ok(Client::from_vox_session(caller, None))
+    }
+
     /// Open a new virtual connection on the session.
     ///
     /// Allocates a connection ID, sends `ConnectionOpen` to the peer, and

@@ -158,6 +158,9 @@ pub use vox_types::{
     // Channels
     channel,
     ensure_channel_retry_mode,
+    // Metadata helpers
+    metadata_get_str,
+    metadata_get_u64,
     observe_reply,
 };
 
