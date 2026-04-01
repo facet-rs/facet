@@ -52,6 +52,17 @@ existing lower-level APIs.
 We should not add arbitrary inherent methods to generated `*Client` types,
 because service methods can clash with any added method names.
 
+**Current state (to fix):** the macro already generates these inherent methods
+on every `*Client` type (`vox-macros-core/src/lib.rs`):
+
+- `fn new(caller: impl Caller) -> Self`
+- `fn with_middleware(self, middleware: impl ClientMiddleware) -> Self`
+- `async fn closed(&self)`
+- `fn is_connected(&self) -> bool`
+
+Any service that defines methods with these names will collide. These must be
+moved behind the `VoxSessionCarrier` trait / free functions described below.
+
 Use trait + helper function:
 
 ```rust

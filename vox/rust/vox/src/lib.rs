@@ -86,11 +86,23 @@
     not(target_arch = "wasm32")
 ))]
 pub async fn connect<Client: From<DriverCaller>>(addr: &str) -> Result<Client, SessionError> {
-    let addr = addr.strip_prefix("tcp://").unwrap_or(addr);
-    let (client, _session) = initiator(vox_stream::tcp_connector(addr), TransportMode::Bare)
-        .establish::<Client>(())
-        .await?;
-    Ok(client)
+    let (scheme, host) = match addr.split_once("://") {
+        Some((scheme, host)) => (scheme, host),
+        None => ("tcp", addr),
+    };
+
+    match scheme {
+        "tcp" => {
+            let (client, _session) =
+                initiator(vox_stream::tcp_connector(host), TransportMode::Bare)
+                    .establish::<Client>(())
+                    .await?;
+            Ok(client)
+        }
+        _ => Err(SessionError::Protocol(
+            format!("unsupported transport scheme: {scheme:?}").into(),
+        )),
+    }
 }
 
 mod client_logging;
