@@ -95,6 +95,7 @@ mod unix_demo {
     }
 
     pub fn main_unix() -> Result<()> {
+        tracing_subscriber::fmt::init();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

@@ -303,14 +303,6 @@ impl AuditClient {
                 .with_middleware(audit_service_descriptor(), middleware),
         }
     }
-    #[doc = r" Resolve when the underlying connection closes."]
-    pub async fn closed(&self) {
-        ::vox::Caller::closed(&self.caller).await;
-    }
-    #[doc = r" Return whether the underlying connection is still considered connected."]
-    pub fn is_connected(&self) -> bool {
-        ::vox::Caller::is_connected(&self.caller)
-    }
     pub async fn record(
         &self,
         payload: String,
@@ -447,6 +439,11 @@ impl AuditClient {
             Ok(ret) => Ok(ret),
             Err(err) => Err(err),
         }
+    }
+}
+impl ::vox::VoxClient for AuditClient {
+    fn __vox_caller(&self) -> &::vox::ErasedCaller {
+        &self.caller
     }
 }
 impl From<::vox::DriverCaller> for AuditClient {

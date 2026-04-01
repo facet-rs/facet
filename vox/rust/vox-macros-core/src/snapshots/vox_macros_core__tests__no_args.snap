@@ -208,14 +208,6 @@ impl PingClient {
                 .with_middleware(ping_service_descriptor(), middleware),
         }
     }
-    #[doc = r" Resolve when the underlying connection closes."]
-    pub async fn closed(&self) {
-        ::vox::Caller::closed(&self.caller).await;
-    }
-    #[doc = r" Return whether the underlying connection is still considered connected."]
-    pub fn is_connected(&self) -> bool {
-        ::vox::Caller::is_connected(&self.caller)
-    }
     pub async fn ping(&self) -> Result<u64, ::vox::VoxError> {
         let method_id = ping_service_descriptor().methods[0usize].id;
         let args = ();
@@ -281,6 +273,11 @@ impl PingClient {
             Ok(ret) => Ok(ret),
             Err(err) => Err(err),
         }
+    }
+}
+impl ::vox::VoxClient for PingClient {
+    fn __vox_caller(&self) -> &::vox::ErasedCaller {
+        &self.caller
     }
 }
 impl From<::vox::DriverCaller> for PingClient {

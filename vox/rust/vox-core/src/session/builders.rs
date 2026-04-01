@@ -341,7 +341,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
             metadata: vec![],
             on_connection: None,
             keepalive: None,
-            resumable: true,
+            resumable: false,
             operation_store: None,
             spawn_fn: default_spawn_fn(),
         }
@@ -1112,7 +1112,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
             metadata: vec![],
             on_connection: None,
             keepalive: None,
-            resumable: true,
+            resumable: false,
             session_registry: None,
             operation_store: None,
             spawn_fn: default_spawn_fn(),

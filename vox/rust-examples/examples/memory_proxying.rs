@@ -1,4 +1,4 @@
-use eyre::{Result, WrapErr, eyre};
+use eyre::{Result, eyre};
 use vox::{
     AcceptedConnection, ConnectionAcceptor, ConnectionId, ConnectionSettings, Driver, DriverCaller,
     Metadata, MetadataEntry, MetadataFlags, MetadataValue, Parity, SessionHandle,
@@ -138,16 +138,9 @@ fn error_metadata(message: &'static str) -> Metadata<'static> {
     }]
 }
 
-fn main() -> Result<()> {
-    println!("[demo] memory_proxying: starting runtime");
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .wrap_err("building Tokio runtime")?;
-    rt.block_on(run_demo())
-}
-
-async fn run_demo() -> Result<()> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
     let (host_a_link, guest_a_link) = vox::memory_link_pair(64);
     let (host_b_link, guest_b_link) = vox::memory_link_pair(64);
 

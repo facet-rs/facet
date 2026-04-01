@@ -214,16 +214,9 @@ where
     }
 }
 
-fn main() -> Result<()> {
-    println!("[demo] stable_conduit_reconnect: starting runtime");
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .wrap_err("building Tokio runtime")?;
-    rt.block_on(run_demo())
-}
-
-async fn run_demo() -> Result<()> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
     let (client_link_1, server_link_1, kill_switch_1) = killable_memory_link_pair(64);
     let (client_link_2, server_link_2, _kill_switch_2) = killable_memory_link_pair(64);
 

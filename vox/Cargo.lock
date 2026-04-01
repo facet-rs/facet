@@ -2383,6 +2383,7 @@ dependencies = [
  "shm-primitives",
  "tempfile",
  "tokio",
+ "tracing-subscriber",
  "vox",
 ]
 

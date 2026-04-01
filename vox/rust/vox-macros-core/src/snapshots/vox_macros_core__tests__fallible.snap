@@ -217,14 +217,6 @@ impl CalcClient {
                 .with_middleware(calc_service_descriptor(), middleware),
         }
     }
-    #[doc = r" Resolve when the underlying connection closes."]
-    pub async fn closed(&self) {
-        ::vox::Caller::closed(&self.caller).await;
-    }
-    #[doc = r" Return whether the underlying connection is still considered connected."]
-    pub fn is_connected(&self) -> bool {
-        ::vox::Caller::is_connected(&self.caller)
-    }
     pub async fn div(&self, a: f64, b: f64) -> Result<f64, ::vox::VoxError<DivError>> {
         let method_id = calc_service_descriptor().methods[0usize].id;
         let args = (a, b);
@@ -278,6 +270,11 @@ impl CalcClient {
             Ok(ret) => Ok(ret),
             Err(err) => Err(err),
         }
+    }
+}
+impl ::vox::VoxClient for CalcClient {
+    fn __vox_caller(&self) -> &::vox::ErasedCaller {
+        &self.caller
     }
 }
 impl From<::vox::DriverCaller> for CalcClient {

@@ -153,6 +153,33 @@ Desired direction:
 - server lifetime should be explicit (shutdown/error), not accidental caller drop
 - root and virtual liveness semantics should be documented clearly
 
+## Resumable-By-Default Footgun
+
+**Current state:** `SessionSourceInitiatorBuilder` and
+`SessionTransportAcceptorBuilder` both default `resumable: true`
+(`builders.rs` lines 344 and 1115).
+
+This means that when a TCP connection drops, the session enters a
+"disconnected, waiting to resume" loop instead of shutting down. The
+`closed()` signal on the peer's caller never fires because the session
+never actually marks the connection as closed — it's waiting for a
+reconnection that will never come.
+
+Any server that does the natural thing (wait for `closed()` to know
+when the client disconnected) will hang forever.
+
+**The compounding problem:**
+
+1. `resumable: true` by default → session enters resume-wait on disconnect
+2. No recoverer or session registry configured → nobody will ever send
+   a resume, so the wait is infinite
+3. `closed()` on the peer's caller depends on the session signaling
+   closure, which never happens because of (1)
+
+**Desired direction:** `resumable` should default to `false`. Users who
+actually want resumability must opt in with `.resumable()` (and should
+also provide a recoverer or session registry).
+
 ## Migration Approach
 
 1. Add `connect(...).await?` happy path returning typed client via inference

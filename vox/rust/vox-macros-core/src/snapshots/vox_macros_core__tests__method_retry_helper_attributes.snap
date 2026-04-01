@@ -278,14 +278,6 @@ impl BillingClient {
                 .with_middleware(billing_service_descriptor(), middleware),
         }
     }
-    #[doc = r" Resolve when the underlying connection closes."]
-    pub async fn closed(&self) {
-        ::vox::Caller::closed(&self.caller).await;
-    }
-    #[doc = r" Return whether the underlying connection is still considered connected."]
-    pub fn is_connected(&self) -> bool {
-        ::vox::Caller::is_connected(&self.caller)
-    }
     pub async fn get_balance(&self, account: String) -> Result<u64, ::vox::VoxError> {
         let method_id = billing_service_descriptor().methods[0usize].id;
         let args = (account,);
@@ -413,6 +405,11 @@ impl BillingClient {
             Ok(ret) => Ok(ret),
             Err(err) => Err(err),
         }
+    }
+}
+impl ::vox::VoxClient for BillingClient {
+    fn __vox_caller(&self) -> &::vox::ErasedCaller {
+        &self.caller
     }
 }
 impl From<::vox::DriverCaller> for BillingClient {

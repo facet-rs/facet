@@ -46,16 +46,9 @@ impl WordLab for WordLabService {
     }
 }
 
-fn main() -> Result<()> {
-    println!("[demo] borrowed_and_channels: starting runtime");
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .wrap_err("building Tokio runtime")?;
-    rt.block_on(run_demo())
-}
-
-async fn run_demo() -> Result<()> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
     println!("[demo] binding TCP listener");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
