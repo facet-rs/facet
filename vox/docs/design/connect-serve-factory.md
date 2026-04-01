@@ -211,26 +211,33 @@ feature entirely.
 5. Add root metadata support so root and virtual selection are symmetric
 6. Keep existing builders as lower-level escape hatch during migration
 
-## SHM Transport in `connect()`
+## SHM Transport in `connect()` ✅
 
-The SHM bootstrap protocol (in `shm-primitives/src/bootstrap.rs`) is:
+**Done.** The SHM bootstrap protocol (in `shm-primitives/src/bootstrap.rs`)
+now sends 4 FDs (doorbell, segment, mmap_rx, mmap_tx) over SCM_RIGHTS,
+eliminating the need for FD inheritance. The SID field was removed from
+the wire format (it was vixen-specific). Magic renamed from RSH0/RSP0
+to VSH1/VSP1.
 
-1. Guest connects to a Unix control socket
-2. Guest sends a bootstrap request frame (magic + SID bytes)
-3. Host validates, reserves a peer slot, sends back response frame + FDs
-   (doorbell, segment, mmap control) via SCM_RIGHTS
-4. Guest attaches to segment, claims peer slot, builds `ShmLink`
+`ShmLinkSource` (in `vox-shm/src/bootstrap.rs`) performs the full
+guest-side bootstrap on each `next_link()` call:
 
-For `connect("shm:///path/to/control.sock")`, we need a `ShmLinkSource`
-that does steps 1-4 on each `next_link()` call.
+1. Connect to Unix control socket
+2. Send 4-byte magic (`VSH1`)
+3. Receive response + 4 FDs
+4. Attach segment, claim peer slot, build `ShmLink`
 
-The SID field in the bootstrap request is application-level — vixen uses
-it to match sessions, but the wire protocol treats it as opaque bytes.
-For `connect()`, the SID handling needs to be clarified: the current
-bootstrap code in vixen may be legacy. The SID could be empty, derived
-from the socket path, or passed as a parameter.
+Usage: `vox::connect("shm:///path/to/control.sock")`
 
-**Status**: Not yet implemented. Needs SID story clarified first.
+## Connect Timeout
+
+`vox::connect()` currently has no overall timeout. The individual
+transports have their own timeouts (TCP has configurable resolve/connect
+timeouts), but the vox handshake that follows can stall indefinitely.
+
+**Desired direction:** `connect()` should accept an optional timeout
+(or have a sensible default) that covers the entire operation: transport
+setup + vox handshake.
 
 ## Open Questions
 
@@ -239,4 +246,3 @@ from the socket path, or passed as a parameter.
 - Whether factory creation can be fallible with structured rejection metadata
 - Whether factory should be async trait, closure, or both
 - How to stage behavior changes for root caller-drop semantics safely
-- SHM bootstrap SID: what should `connect()` send? Empty? Socket-path-derived? Caller-provided?
