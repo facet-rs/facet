@@ -801,6 +801,7 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
     let client_name = format_ident!("{}Client", parsed.name());
     let descriptor_fn_name = format_ident!("{}_service_descriptor", parsed.name().to_snake_case());
     let service_name = parsed.name();
+    let service_name_str = service_name.to_string();
 
     let client_doc = format!(
         "Client for the `{service_name}` service.\n\n\
@@ -847,6 +848,8 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
         }
 
         impl #vox::FromVoxSession for #client_name {
+            const SERVICE_NAME: Option<&'static str> = Some(#service_name_str);
+
             fn from_vox_session(
                 caller: #vox::Caller,
                 session: Option<#vox::SessionHandle>,

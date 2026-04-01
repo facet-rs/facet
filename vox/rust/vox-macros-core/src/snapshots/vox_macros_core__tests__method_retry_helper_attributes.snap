@@ -413,6 +413,7 @@ impl BillingClient {
     }
 }
 impl ::vox::FromVoxSession for BillingClient {
+    const SERVICE_NAME: Option<&'static str> = Some("Billing");
     fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
         Self { caller, session }
     }

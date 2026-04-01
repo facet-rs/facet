@@ -296,6 +296,7 @@ impl TextSvcClient {
     }
 }
 impl ::vox::FromVoxSession for TextSvcClient {
+    const SERVICE_NAME: Option<&'static str> = Some("TextSvc");
     fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
         Self { caller, session }
     }

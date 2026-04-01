@@ -278,6 +278,7 @@ impl CalcClient {
     }
 }
 impl ::vox::FromVoxSession for CalcClient {
+    const SERVICE_NAME: Option<&'static str> = Some("Calc");
     fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
         Self { caller, session }
     }

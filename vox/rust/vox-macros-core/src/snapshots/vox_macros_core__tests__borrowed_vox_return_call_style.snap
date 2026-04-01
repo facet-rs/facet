@@ -292,6 +292,7 @@ impl HasherClient {
     }
 }
 impl ::vox::FromVoxSession for HasherClient {
+    const SERVICE_NAME: Option<&'static str> = Some("Hasher");
     fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
         Self { caller, session }
     }

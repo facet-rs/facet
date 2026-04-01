@@ -25,6 +25,20 @@ use super::{
 };
 use crate::{Driver, DriverReplySink, FromVoxSession};
 
+/// Well-known metadata key for service name routing.
+pub const VOX_SERVICE_METADATA_KEY: &str = "vox-service";
+
+/// Inject `vox-service` metadata from `Client::SERVICE_NAME` if present.
+fn inject_service_metadata<Client: FromVoxSession>(metadata: &mut Metadata<'_>) {
+    if let Some(name) = Client::SERVICE_NAME {
+        metadata.push(vox_types::MetadataEntry {
+            key: VOX_SERVICE_METADATA_KEY.into(),
+            value: vox_types::MetadataValue::String(name.into()),
+            flags: vox_types::MetadataFlags::NONE,
+        });
+    }
+}
+
 /// A pinned, boxed session future. On non-WASM this is `Send + 'static`;
 /// on WASM it's `'static` only (no `Send` requirement).
 #[cfg(not(target_arch = "wasm32"))]
@@ -434,7 +448,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
         } = self;
         let SessionConfig {
             root_settings,
-            metadata,
+            mut metadata,
             on_connection,
             keepalive,
             resumable,
@@ -442,6 +456,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
             operation_store,
             spawn_fn,
         } = config;
+        inject_service_metadata::<Client>(&mut metadata);
 
         match mode {
             TransportMode::Bare => {
@@ -616,7 +631,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         let Self { link, mode, config } = self;
         let SessionConfig {
             root_settings,
-            metadata,
+            mut metadata,
             on_connection,
             keepalive,
             resumable,
@@ -624,6 +639,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
             operation_store,
             spawn_fn,
         } = config;
+        inject_service_metadata::<Client>(&mut metadata);
         match mode {
             TransportMode::Bare => {
                 let link = initiate_transport(link, TransportMode::Bare)
@@ -676,7 +692,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         let Self { link, mode, config } = self;
         let SessionConfig {
             root_settings,
-            metadata,
+            mut metadata,
             on_connection,
             keepalive,
             resumable,
@@ -684,6 +700,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
             operation_store,
             spawn_fn,
         } = config;
+        inject_service_metadata::<Client>(&mut metadata);
         match mode {
             TransportMode::Bare => {
                 let link = initiate_transport(link, TransportMode::Bare)

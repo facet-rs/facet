@@ -732,6 +732,10 @@ impl Caller {
 /// and an optional session handle. Root connections pass `Some(handle)`;
 /// virtual connections pass `None`.
 pub trait FromVoxSession {
+    /// The service name for this client, used for automatic `vox-service` metadata.
+    /// Generated clients return `Some("ServiceName")`. `NoopClient` returns `None`.
+    const SERVICE_NAME: Option<&'static str> = None;
+
     fn from_vox_session(
         caller: Caller,
         session_handle: Option<crate::session::SessionHandle>,
