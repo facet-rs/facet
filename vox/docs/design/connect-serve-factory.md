@@ -219,19 +219,24 @@ feature entirely.
 2. ✅ `SessionHandle` stored in client
 3. ✅ `resumable` defaults to `false`
 4. ✅ SHM bootstrap: removed SID, 4 FDs, `ShmLinkSource`
-5. 🔧 **IN PROGRESS:** Concrete `Caller` type, public fields on clients
-   - Kill: `Caller` trait, `ErasedCaller`, `MiddlewareCaller`,
-     `VoxClient`, `HasSessionHandle`, `FromVoxSession`
-   - Kill: `vox::closed()`, `vox::is_connected()`, `vox::session_handle()`
-   - Kill: three fake-caller test helpers (`AlwaysCancelledCaller`,
-     `RecordingCaller`, `NoopCaller`) — rewrite with real sessions
-   - Result: `client.caller.closed().await`, `client.session`
-6. Typed virtual connection helpers
-7. Server factory API with `ConnectionContext`
-8. Root metadata support
-9. Facade re-export hygiene
-10. Connect timeout
-11. Keep existing builders as lower-level escape hatch
+5. ✅ Concrete `Caller` type, public fields on clients
+   - Killed: `Caller` trait, `ErasedCaller`, `ErasedCallerDyn`,
+     `MiddlewareCaller`, `VoxClient`, `HasSessionHandle`, old `NoopCaller`
+   - Killed: `vox::closed()`, `vox::is_connected()`, `vox::session_handle()`
+   - `Caller` is a concrete struct in `vox-core` wrapping `Arc<DriverCaller>`
+   - Generated clients: `pub caller: Caller`, `pub session: Option<SessionHandle>`
+   - `NoopClient` for liveness-only connections
+   - `FromVoxSession` simplified: takes `Caller` instead of `DriverCaller`
+   - Driver tests ported to `vox/tests/` using `#[vox::service]` generated clients
+   - Internal tests use `caller.driver()` escape hatch for raw protocol testing
+6. ✅ `establish()` returns `Client` directly (not `(Client, SessionHandle)`)
+7. ✅ `SessionConfig` struct deduplicates shared fields across 5 builder types
+8. Typed virtual connection helpers
+9. Server factory API with `ConnectionContext`
+10. Root metadata support
+11. Facade re-export hygiene
+12. Connect timeout
+13. Keep existing builders as lower-level escape hatch
 
 ## SHM Transport in `connect()` ✅
 
