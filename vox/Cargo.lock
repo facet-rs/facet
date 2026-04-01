@@ -3473,6 +3473,7 @@ dependencies = [
  "vox-shm",
  "vox-stream",
  "vox-types",
+ "vox-websocket",
 ]
 
 [[package]]

@@ -1,7 +1,25 @@
-//! Vox — Rust-native RPC where traits are the schema.
+//! vox — RPC with channels, virtual connections, and some backwards compatibility.
 //!
-//! This is the facade crate. It re-exports everything needed by both
-//! hand-written code and `#[vox::service]` macro-generated code.
+//! Vox services are Rust traits:
+//!
+//! ```
+//! #[vox::service]
+//! trait Hello {
+//!   // `&self` is the only supported receiver
+//!   fn say_hello(&self) -> String;
+//! }
+//! ```
+//!
+//! A Vox connection is between two peers. Since those two peers are in practice
+//! talking over something like a TCP connection, a Unix domain socket, a named
+//! pipe on Windows, an in-memory transport, a web socket connection, or any
+//! other number of transports, we have to like one of them is usually the
+//! initiator, and the other is the acceptor.
+//!
+//! However, once a connection is established, calls can flow in both
+//! directions: both peers have a "client" for the service that they requested,
+//! and they can both specify a handler, which services calls made by the remote
+//! peer.
 
 mod client_logging;
 pub mod schema_deser;
@@ -118,6 +136,7 @@ pub use vox_core::*;
 /// - `transport-tcp`
 /// - `transport-local`
 /// - `transport-shm`
+/// - `transport-websocket`
 pub mod transport {
     /// TCP byte-stream transport (`vox-stream`).
     #[cfg(feature = "transport-tcp")]
@@ -139,6 +158,15 @@ pub mod transport {
     #[cfg(feature = "transport-shm")]
     pub mod shm {
         pub use vox_shm::*;
+    }
+
+    /// WebSocket transport (`vox-websocket`).
+    ///
+    /// On native targets this is backed by tokio/tungstenite; on wasm targets
+    /// it is backed by `web_sys::WebSocket`.
+    #[cfg(feature = "transport-websocket")]
+    pub mod websocket {
+        pub use vox_websocket::*;
     }
 }
 
