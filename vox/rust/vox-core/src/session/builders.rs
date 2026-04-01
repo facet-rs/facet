@@ -181,53 +181,80 @@ pub enum SessionAcceptOutcome<Client> {
     Resumed,
 }
 
+/// Shared configuration for all session builders.
+pub struct SessionConfig<'a> {
+    pub root_settings: ConnectionSettings,
+    pub metadata: Metadata<'a>,
+    pub on_connection: Option<Box<dyn ConnectionAcceptor>>,
+    pub keepalive: Option<SessionKeepaliveConfig>,
+    pub resumable: bool,
+    pub session_registry: Option<SessionRegistry>,
+    pub operation_store: Option<Arc<dyn OperationStore>>,
+    pub spawn_fn: SpawnFn,
+}
+
+impl SessionConfig<'_> {
+    fn with_settings(root_settings: ConnectionSettings) -> Self {
+        Self {
+            root_settings,
+            metadata: vec![],
+            on_connection: None,
+            keepalive: None,
+            resumable: true,
+            session_registry: None,
+            operation_store: None,
+            spawn_fn: default_spawn_fn(),
+        }
+    }
+}
+
+impl Default for SessionConfig<'_> {
+    fn default() -> Self {
+        Self::with_settings(ConnectionSettings {
+            parity: Parity::Odd,
+            max_concurrent_requests: 64,
+        })
+    }
+}
+
 pub struct SessionInitiatorBuilder<'a, C> {
     conduit: C,
     handshake_result: HandshakeResult,
-    root_settings: ConnectionSettings,
-    metadata: Metadata<'a>,
-    on_connection: Option<Box<dyn ConnectionAcceptor>>,
-    keepalive: Option<SessionKeepaliveConfig>,
-    resumable: bool,
+    config: SessionConfig<'a>,
     recoverer: Option<Box<dyn ConduitRecoverer>>,
-    operation_store: Option<Arc<dyn OperationStore>>,
-    spawn_fn: SpawnFn,
 }
 
 impl<'a, C> SessionInitiatorBuilder<'a, C> {
     fn new(conduit: C, handshake_result: HandshakeResult) -> Self {
         let root_settings = handshake_result.our_settings.clone();
+        let mut config = SessionConfig::with_settings(root_settings);
+        // Conduit builders default to non-resumable — callers opt in with .resumable()
+        config.resumable = false;
         Self {
             conduit,
             handshake_result,
-            root_settings,
-            metadata: vec![],
-            on_connection: None,
-            keepalive: None,
-            resumable: false,
+            config,
             recoverer: None,
-            operation_store: None,
-            spawn_fn: default_spawn_fn(),
         }
     }
 
     pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
-        self.on_connection = Some(Box::new(acceptor));
+        self.config.on_connection = Some(Box::new(acceptor));
         self
     }
 
     pub fn keepalive(mut self, keepalive: SessionKeepaliveConfig) -> Self {
-        self.keepalive = Some(keepalive);
+        self.config.keepalive = Some(keepalive);
         self
     }
 
     pub fn resumable(mut self) -> Self {
-        self.resumable = true;
+        self.config.resumable = true;
         self
     }
 
     pub fn operation_store(mut self, operation_store: Arc<dyn OperationStore>) -> Self {
-        self.operation_store = Some(operation_store);
+        self.config.operation_store = Some(operation_store);
         self
     }
 
@@ -235,7 +262,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
     /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + Send + 'static) -> Self {
-        self.spawn_fn = Box::new(f);
+        self.config.spawn_fn = Box::new(f);
         self
     }
 
@@ -243,7 +270,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
     /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
     #[cfg(target_arch = "wasm32")]
     pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + 'static) -> Self {
-        self.spawn_fn = Box::new(f);
+        self.config.spawn_fn = Box::new(f);
         self
     }
 
@@ -264,15 +291,19 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
         let Self {
             conduit,
             handshake_result,
+            config,
+            recoverer,
+        } = self;
+        let SessionConfig {
             root_settings,
             metadata: _metadata,
             on_connection,
             keepalive,
             resumable,
-            recoverer,
+            session_registry: _session_registry,
             operation_store,
             spawn_fn,
-        } = self;
+        } = config;
         validate_negotiated_root_settings(&root_settings, &handshake_result)?;
         let (tx, rx) = conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
@@ -322,13 +353,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
 pub struct SessionSourceInitiatorBuilder<'a, S> {
     source: S,
     mode: TransportMode,
-    root_settings: ConnectionSettings,
-    metadata: Metadata<'a>,
-    on_connection: Option<Box<dyn ConnectionAcceptor>>,
-    keepalive: Option<SessionKeepaliveConfig>,
-    resumable: bool,
-    operation_store: Option<Arc<dyn OperationStore>>,
-    spawn_fn: SpawnFn,
+    config: SessionConfig<'a>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -337,68 +362,59 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
         Self {
             source,
             mode,
-            root_settings: ConnectionSettings {
-                parity: Parity::Odd,
-                max_concurrent_requests: 64,
-            },
-            metadata: vec![],
-            on_connection: None,
-            keepalive: None,
-            resumable: false,
-            operation_store: None,
-            spawn_fn: default_spawn_fn(),
+            config: SessionConfig::default(),
         }
     }
 
     pub fn parity(mut self, parity: Parity) -> Self {
-        self.root_settings.parity = parity;
+        self.config.root_settings.parity = parity;
         self
     }
 
     pub fn root_settings(mut self, settings: ConnectionSettings) -> Self {
-        self.root_settings = settings;
+        self.config.root_settings = settings;
         self
     }
 
     pub fn max_concurrent_requests(mut self, max_concurrent_requests: u32) -> Self {
-        self.root_settings.max_concurrent_requests = max_concurrent_requests;
+        self.config.root_settings.max_concurrent_requests = max_concurrent_requests;
         self
     }
 
     pub fn metadata(mut self, metadata: Metadata<'a>) -> Self {
-        self.metadata = metadata;
+        self.config.metadata = metadata;
         self
     }
 
     pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
-        self.on_connection = Some(Box::new(acceptor));
+        self.config.on_connection = Some(Box::new(acceptor));
         self
     }
 
     pub fn keepalive(mut self, keepalive: SessionKeepaliveConfig) -> Self {
-        self.keepalive = Some(keepalive);
+        self.config.keepalive = Some(keepalive);
         self
     }
 
     pub fn resumable(mut self) -> Self {
-        self.resumable = true;
+        self.config.resumable = true;
         self
     }
 
     pub fn operation_store(mut self, operation_store: Arc<dyn OperationStore>) -> Self {
-        self.operation_store = Some(operation_store);
+        self.config.operation_store = Some(operation_store);
         self
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + Send + 'static) -> Self {
-        self.spawn_fn = Box::new(f);
+        self.config.spawn_fn = Box::new(f);
         self
     }
 
     #[cfg(target_arch = "wasm32")]
     pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + 'static) -> Self {
-        self.spawn_fn = Box::new(f);
+        self.config.spawn_fn = Box::new(f);
         self
     }
 
@@ -416,14 +432,18 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
         let Self {
             mut source,
             mode,
+            config,
+        } = self;
+        let SessionConfig {
             root_settings,
             metadata,
             on_connection,
             keepalive,
             resumable,
+            session_registry: _session_registry,
             operation_store,
             spawn_fn,
-        } = self;
+        } = config;
 
         match mode {
             TransportMode::Bare => {
@@ -518,13 +538,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
 pub struct SessionTransportInitiatorBuilder<'a, L> {
     link: L,
     mode: TransportMode,
-    root_settings: ConnectionSettings,
-    metadata: Metadata<'a>,
-    on_connection: Option<Box<dyn ConnectionAcceptor>>,
-    keepalive: Option<SessionKeepaliveConfig>,
-    resumable: bool,
-    operation_store: Option<Arc<dyn OperationStore>>,
-    spawn_fn: SpawnFn,
+    config: SessionConfig<'a>,
 }
 
 impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
@@ -532,68 +546,59 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         Self {
             link,
             mode,
-            root_settings: ConnectionSettings {
-                parity: Parity::Odd,
-                max_concurrent_requests: 64,
-            },
-            metadata: vec![],
-            on_connection: None,
-            keepalive: None,
-            resumable: false,
-            operation_store: None,
-            spawn_fn: default_spawn_fn(),
+            config: SessionConfig::default(),
         }
     }
 
     pub fn parity(mut self, parity: Parity) -> Self {
-        self.root_settings.parity = parity;
+        self.config.root_settings.parity = parity;
         self
     }
 
     pub fn root_settings(mut self, settings: ConnectionSettings) -> Self {
-        self.root_settings = settings;
+        self.config.root_settings = settings;
         self
     }
 
     pub fn max_concurrent_requests(mut self, max_concurrent_requests: u32) -> Self {
-        self.root_settings.max_concurrent_requests = max_concurrent_requests;
+        self.config.root_settings.max_concurrent_requests = max_concurrent_requests;
         self
     }
 
     pub fn metadata(mut self, metadata: Metadata<'a>) -> Self {
-        self.metadata = metadata;
+        self.config.metadata = metadata;
         self
     }
 
     pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
-        self.on_connection = Some(Box::new(acceptor));
+        self.config.on_connection = Some(Box::new(acceptor));
         self
     }
 
     pub fn keepalive(mut self, keepalive: SessionKeepaliveConfig) -> Self {
-        self.keepalive = Some(keepalive);
+        self.config.keepalive = Some(keepalive);
         self
     }
 
     pub fn resumable(mut self) -> Self {
-        self.resumable = true;
+        self.config.resumable = true;
         self
     }
 
     pub fn operation_store(mut self, operation_store: Arc<dyn OperationStore>) -> Self {
-        self.operation_store = Some(operation_store);
+        self.config.operation_store = Some(operation_store);
         self
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + Send + 'static) -> Self {
-        self.spawn_fn = Box::new(f);
+        self.config.spawn_fn = Box::new(f);
         self
     }
 
     #[cfg(target_arch = "wasm32")]
     pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + 'static) -> Self {
-        self.spawn_fn = Box::new(f);
+        self.config.spawn_fn = Box::new(f);
         self
     }
 
@@ -608,17 +613,17 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
-        let Self {
-            link,
-            mode,
+        let Self { link, mode, config } = self;
+        let SessionConfig {
             root_settings,
             metadata,
             on_connection,
             keepalive,
             resumable,
+            session_registry: _session_registry,
             operation_store,
             spawn_fn,
-        } = self;
+        } = config;
         match mode {
             TransportMode::Bare => {
                 let link = initiate_transport(link, TransportMode::Bare)
@@ -668,17 +673,17 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
-        let Self {
-            link,
-            mode,
+        let Self { link, mode, config } = self;
+        let SessionConfig {
             root_settings,
             metadata,
             on_connection,
             keepalive,
             resumable,
+            session_registry: _session_registry,
             operation_store,
             spawn_fn,
-        } = self;
+        } = config;
         match mode {
             TransportMode::Bare => {
                 let link = initiate_transport(link, TransportMode::Bare)
@@ -797,7 +802,6 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     fn apply_common_parts<C>(
         mut builder: SessionInitiatorBuilder<'a, C>,
         root_settings: ConnectionSettings,
@@ -809,14 +813,14 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         operation_store: Option<Arc<dyn OperationStore>>,
         spawn_fn: SpawnFn,
     ) -> SessionInitiatorBuilder<'a, C> {
-        builder.root_settings = root_settings;
-        builder.metadata = metadata;
-        builder.on_connection = on_connection;
-        builder.keepalive = keepalive;
-        builder.resumable = resumable;
+        builder.config.root_settings = root_settings;
+        builder.config.metadata = metadata;
+        builder.config.on_connection = on_connection;
+        builder.config.keepalive = keepalive;
+        builder.config.resumable = resumable;
         builder.recoverer = recoverer;
-        builder.operation_store = operation_store;
-        builder.spawn_fn = spawn_fn;
+        builder.config.operation_store = operation_store;
+        builder.config.spawn_fn = spawn_fn;
         builder
     }
 }
@@ -922,55 +926,44 @@ where
 pub struct SessionAcceptorBuilder<'a, C> {
     conduit: C,
     handshake_result: HandshakeResult,
-    root_settings: ConnectionSettings,
-    metadata: Metadata<'a>,
-    on_connection: Option<Box<dyn ConnectionAcceptor>>,
-    keepalive: Option<SessionKeepaliveConfig>,
-    resumable: bool,
-    session_registry: Option<SessionRegistry>,
-    operation_store: Option<Arc<dyn OperationStore>>,
-    spawn_fn: SpawnFn,
+    config: SessionConfig<'a>,
 }
 
 impl<'a, C> SessionAcceptorBuilder<'a, C> {
     fn new(conduit: C, handshake_result: HandshakeResult) -> Self {
         let root_settings = handshake_result.our_settings.clone();
+        let mut config = SessionConfig::with_settings(root_settings);
+        // Conduit builders default to non-resumable — callers opt in with .resumable()
+        config.resumable = false;
         Self {
             conduit,
             handshake_result,
-            root_settings,
-            metadata: vec![],
-            on_connection: None,
-            keepalive: None,
-            resumable: false,
-            session_registry: None,
-            operation_store: None,
-            spawn_fn: default_spawn_fn(),
+            config,
         }
     }
 
     pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
-        self.on_connection = Some(Box::new(acceptor));
+        self.config.on_connection = Some(Box::new(acceptor));
         self
     }
 
     pub fn keepalive(mut self, keepalive: SessionKeepaliveConfig) -> Self {
-        self.keepalive = Some(keepalive);
+        self.config.keepalive = Some(keepalive);
         self
     }
 
     pub fn resumable(mut self) -> Self {
-        self.resumable = true;
+        self.config.resumable = true;
         self
     }
 
     pub fn session_registry(mut self, session_registry: SessionRegistry) -> Self {
-        self.session_registry = Some(session_registry);
+        self.config.session_registry = Some(session_registry);
         self
     }
 
     pub fn operation_store(mut self, operation_store: Arc<dyn OperationStore>) -> Self {
-        self.operation_store = Some(operation_store);
+        self.config.operation_store = Some(operation_store);
         self
     }
 
@@ -978,7 +971,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
     /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + Send + 'static) -> Self {
-        self.spawn_fn = Box::new(f);
+        self.config.spawn_fn = Box::new(f);
         self
     }
 
@@ -986,7 +979,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
     /// Defaults to `tokio::spawn` on non-WASM and `wasm_bindgen_futures::spawn_local` on WASM.
     #[cfg(target_arch = "wasm32")]
     pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + 'static) -> Self {
-        self.spawn_fn = Box::new(f);
+        self.config.spawn_fn = Box::new(f);
         self
     }
 
@@ -1004,6 +997,9 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         let Self {
             conduit,
             handshake_result,
+            config,
+        } = self;
+        let SessionConfig {
             root_settings,
             metadata: _metadata,
             on_connection,
@@ -1012,7 +1008,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             session_registry,
             operation_store,
             spawn_fn,
-        } = self;
+        } = config;
         validate_negotiated_root_settings(&root_settings, &handshake_result)?;
         let (tx, rx) = conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
@@ -1075,7 +1071,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         // before the conduit is created. If the peer sent a resume key in the Hello
         // that matches a known session, we resume. Otherwise, we establish.
         if let (Some(registry), Some(resume_key)) = (
-            &self.session_registry,
+            &self.config.session_registry,
             self.handshake_result.peer_resume_key,
         ) && let Some(handle) = registry.get(&resume_key)
         {
@@ -1097,83 +1093,69 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
 
 pub struct SessionTransportAcceptorBuilder<'a, L: Link> {
     link: L,
-    root_settings: ConnectionSettings,
-    metadata: Metadata<'a>,
-    on_connection: Option<Box<dyn ConnectionAcceptor>>,
-    keepalive: Option<SessionKeepaliveConfig>,
-    resumable: bool,
-    session_registry: Option<SessionRegistry>,
-    operation_store: Option<Arc<dyn OperationStore>>,
-    spawn_fn: SpawnFn,
+    config: SessionConfig<'a>,
 }
 
 impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     fn new(link: L) -> Self {
         Self {
             link,
-            root_settings: ConnectionSettings {
+            config: SessionConfig::with_settings(ConnectionSettings {
                 parity: Parity::Even,
                 max_concurrent_requests: 64,
-            },
-            metadata: vec![],
-            on_connection: None,
-            keepalive: None,
-            resumable: false,
-            session_registry: None,
-            operation_store: None,
-            spawn_fn: default_spawn_fn(),
+            }),
         }
     }
 
     pub fn root_settings(mut self, settings: ConnectionSettings) -> Self {
-        self.root_settings = settings;
+        self.config.root_settings = settings;
         self
     }
 
     pub fn max_concurrent_requests(mut self, max_concurrent_requests: u32) -> Self {
-        self.root_settings.max_concurrent_requests = max_concurrent_requests;
+        self.config.root_settings.max_concurrent_requests = max_concurrent_requests;
         self
     }
 
     pub fn metadata(mut self, metadata: Metadata<'a>) -> Self {
-        self.metadata = metadata;
+        self.config.metadata = metadata;
         self
     }
 
     pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
-        self.on_connection = Some(Box::new(acceptor));
+        self.config.on_connection = Some(Box::new(acceptor));
         self
     }
 
     pub fn keepalive(mut self, keepalive: SessionKeepaliveConfig) -> Self {
-        self.keepalive = Some(keepalive);
+        self.config.keepalive = Some(keepalive);
         self
     }
 
     pub fn resumable(mut self) -> Self {
-        self.resumable = true;
+        self.config.resumable = true;
         self
     }
 
     pub fn session_registry(mut self, session_registry: SessionRegistry) -> Self {
-        self.session_registry = Some(session_registry);
+        self.config.session_registry = Some(session_registry);
         self
     }
 
     pub fn operation_store(mut self, operation_store: Arc<dyn OperationStore>) -> Self {
-        self.operation_store = Some(operation_store);
+        self.config.operation_store = Some(operation_store);
         self
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + Send + 'static) -> Self {
-        self.spawn_fn = Box::new(f);
+        self.config.spawn_fn = Box::new(f);
         self
     }
 
     #[cfg(target_arch = "wasm32")]
     pub fn spawn_fn(mut self, f: impl FnOnce(BoxSessionFuture) + 'static) -> Self {
-        self.spawn_fn = Box::new(f);
+        self.config.spawn_fn = Box::new(f);
         self
     }
 
@@ -1189,8 +1171,8 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
-        let Self {
-            link,
+        let Self { link, config } = self;
+        let SessionConfig {
             root_settings,
             metadata,
             on_connection,
@@ -1199,7 +1181,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
             session_registry,
             operation_store,
             spawn_fn,
-        } = self;
+        } = config;
         let (mode, mut link) = accept_transport(link)
             .await
             .map_err(session_error_from_transport)?;
@@ -1265,8 +1247,8 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
-        let Self {
-            link,
+        let Self { link, config } = self;
+        let SessionConfig {
             root_settings,
             metadata,
             on_connection,
@@ -1275,7 +1257,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
             session_registry,
             operation_store,
             spawn_fn,
-        } = self;
+        } = config;
         let (mode, mut link) = accept_transport(link)
             .await
             .map_err(session_error_from_transport)?;
@@ -1339,8 +1321,8 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
-        let Self {
-            link,
+        let Self { link, config } = self;
+        let SessionConfig {
             root_settings,
             metadata,
             on_connection,
@@ -1349,7 +1331,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
             session_registry,
             operation_store,
             spawn_fn,
-        } = self;
+        } = config;
         let (mode, mut link) = accept_transport(link)
             .await
             .map_err(session_error_from_transport)?;
@@ -1402,8 +1384,8 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
-        let Self {
-            link,
+        let Self { link, config } = self;
+        let SessionConfig {
             root_settings,
             metadata,
             on_connection,
@@ -1412,7 +1394,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
             session_registry,
             operation_store,
             spawn_fn,
-        } = self;
+        } = config;
         let (mode, mut link) = accept_transport(link)
             .await
             .map_err(session_error_from_transport)?;
@@ -1517,7 +1499,6 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     fn apply_common_parts<C>(
         mut builder: SessionAcceptorBuilder<'a, C>,
         root_settings: ConnectionSettings,
@@ -1529,14 +1510,14 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         operation_store: Option<Arc<dyn OperationStore>>,
         spawn_fn: SpawnFn,
     ) -> SessionAcceptorBuilder<'a, C> {
-        builder.root_settings = root_settings;
-        builder.metadata = metadata;
-        builder.on_connection = on_connection;
-        builder.keepalive = keepalive;
-        builder.resumable = resumable;
-        builder.session_registry = session_registry;
-        builder.operation_store = operation_store;
-        builder.spawn_fn = spawn_fn;
+        builder.config.root_settings = root_settings;
+        builder.config.metadata = metadata;
+        builder.config.on_connection = on_connection;
+        builder.config.keepalive = keepalive;
+        builder.config.resumable = resumable;
+        builder.config.session_registry = session_registry;
+        builder.config.operation_store = operation_store;
+        builder.config.spawn_fn = spawn_fn;
         builder
     }
 }
