@@ -5,8 +5,6 @@
 //! framing.
 
 use std::io;
-#[cfg(not(target_arch = "wasm32"))]
-use std::net::SocketAddr;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::sync::mpsc;
@@ -45,22 +43,31 @@ impl StreamLink<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub struct TcpConnector {
-    addr: SocketAddr,
+pub struct TcpLinkSource {
+    addr: String,
     nodelay: bool,
+    resolve_timeout: std::time::Duration,
+    connect_timeout: std::time::Duration,
+}
+
+/// Default DNS resolution timeout.
+const DEFAULT_RESOLVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Default TCP connect timeout.
+const DEFAULT_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn tcp_link_source(addr: impl Into<String>) -> TcpLinkSource {
+    TcpLinkSource::new(addr)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn tcp_link_source(addr: SocketAddr) -> TcpConnector {
-    TcpConnector::new(addr)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl TcpConnector {
-    pub fn new(addr: SocketAddr) -> Self {
+impl TcpLinkSource {
+    pub fn new(addr: impl Into<String>) -> Self {
         Self {
-            addr,
+            addr: addr.into(),
             nodelay: true,
+            resolve_timeout: DEFAULT_RESOLVE_TIMEOUT,
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
         }
     }
 
@@ -68,14 +75,41 @@ impl TcpConnector {
         self.nodelay = nodelay;
         self
     }
+
+    pub fn resolve_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.resolve_timeout = timeout;
+        self
+    }
+
+    pub fn connect_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.connect_timeout = timeout;
+        self
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl LinkSource for TcpConnector {
+impl LinkSource for TcpLinkSource {
     type Link = StreamLink<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>;
 
     async fn next_link(&mut self) -> io::Result<Attachment<Self::Link>> {
-        let stream = tokio::net::TcpStream::connect(&self.addr).await?;
+        let addr = self.addr.clone();
+        let resolve_fut = tokio::task::spawn_blocking(move || {
+            use std::net::ToSocketAddrs;
+            addr.to_socket_addrs()?.next().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::AddrNotAvailable, "no addresses found")
+            })
+        });
+        let resolved = tokio::time::timeout(self.resolve_timeout, resolve_fut)
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "DNS resolution timed out"))?
+            .map_err(io::Error::other)??;
+
+        let stream = tokio::time::timeout(
+            self.connect_timeout,
+            tokio::net::TcpStream::connect(resolved),
+        )
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "TCP connect timed out"))??;
         stream.set_nodelay(self.nodelay)?;
         Ok(Attachment::initiator(StreamLink::tcp(stream)))
     }

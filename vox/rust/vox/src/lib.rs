@@ -183,7 +183,7 @@ pub mod transport {
     /// TCP byte-stream transport (`vox-stream`).
     #[cfg(feature = "transport-tcp")]
     pub mod tcp {
-        pub use vox_stream::{StreamLink, TcpConnector, tcp_link_source};
+        pub use vox_stream::{StreamLink, TcpLinkSource, tcp_link_source};
     }
 
     /// Local IPC transport (`vox-stream`): Unix sockets / Windows named pipes.

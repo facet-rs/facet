@@ -34,17 +34,7 @@ pub async fn connect<Client: FromVoxSession>(
 
     match scheme.as_str() {
         #[cfg(feature = "transport-tcp")]
-        "tcp" => {
-            use std::net::ToSocketAddrs;
-            let addr = host
-                .to_socket_addrs()
-                .map_err(|e| SessionError::Protocol(format!("invalid TCP address {host:?}: {e}")))?
-                .next()
-                .ok_or_else(|| {
-                    SessionError::Protocol(format!("no addresses found for {host:?}"))
-                })?;
-            connect_bare(vox_stream::tcp_link_source(addr)).await
-        }
+        "tcp" => connect_bare(vox_stream::tcp_link_source(host)).await,
         #[cfg(feature = "transport-local")]
         "local" => connect_bare(vox_stream::local_link_source(host)).await,
         #[cfg(feature = "transport-websocket")]
