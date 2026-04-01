@@ -44,7 +44,7 @@ pub fn append_retry_support_metadata(metadata: &mut Metadata<'_>) {
         return;
     }
     metadata.push(MetadataEntry {
-        key: RETRY_SUPPORT_METADATA_KEY,
+        key: RETRY_SUPPORT_METADATA_KEY.into(),
         value: MetadataValue::U64(RETRY_SUPPORT_VERSION),
         flags: MetadataFlags::NONE,
     });
@@ -53,7 +53,7 @@ pub fn append_retry_support_metadata(metadata: &mut Metadata<'_>) {
 pub fn metadata_supports_retry(metadata: &[MetadataEntry<'_>]) -> bool {
     metadata.iter().any(|entry| {
         entry.key == RETRY_SUPPORT_METADATA_KEY
-            && matches!(entry.value, MetadataValue::U64(RETRY_SUPPORT_VERSION))
+            && matches!(&entry.value, MetadataValue::U64(v) if *v == RETRY_SUPPORT_VERSION)
     })
 }
 
@@ -62,8 +62,8 @@ pub fn metadata_operation_id(metadata: &[MetadataEntry<'_>]) -> Option<Operation
         if entry.key != OPERATION_ID_METADATA_KEY {
             return None;
         }
-        match entry.value {
-            MetadataValue::U64(value) => Some(OperationId(value)),
+        match &entry.value {
+            MetadataValue::U64(value) => Some(OperationId(*value)),
             _ => None,
         }
     })
@@ -74,7 +74,7 @@ pub fn ensure_operation_id(metadata: &mut Metadata<'_>, operation_id: OperationI
         return;
     }
     metadata.push(MetadataEntry {
-        key: OPERATION_ID_METADATA_KEY,
+        key: OPERATION_ID_METADATA_KEY.into(),
         value: MetadataValue::U64(operation_id.0),
         flags: MetadataFlags::NONE,
     });
@@ -87,7 +87,7 @@ pub fn metadata_channel_retry_mode(metadata: &[MetadataEntry<'_>]) -> ChannelRet
             if entry.key != CHANNEL_RETRY_MODE_METADATA_KEY {
                 return None;
             }
-            match entry.value {
+            match &entry.value {
                 MetadataValue::U64(1) => Some(ChannelRetryMode::NonIdem),
                 MetadataValue::U64(2) => Some(ChannelRetryMode::Idem),
                 _ => Some(ChannelRetryMode::None),
@@ -107,7 +107,7 @@ pub fn ensure_channel_retry_mode(metadata: &mut Metadata<'_>, mode: ChannelRetry
         return;
     }
     metadata.push(MetadataEntry {
-        key: CHANNEL_RETRY_MODE_METADATA_KEY,
+        key: CHANNEL_RETRY_MODE_METADATA_KEY.into(),
         value: MetadataValue::U64(mode as u64),
         flags: MetadataFlags::NONE,
     });

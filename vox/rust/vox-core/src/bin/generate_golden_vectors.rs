@@ -34,17 +34,17 @@ fn encode_message(message: &Message<'_>) -> Vec<u8> {
 fn sample_metadata() -> Metadata<'static> {
     vec![
         MetadataEntry {
-            key: "trace-id",
-            value: MetadataValue::String("abc123"),
+            key: "trace-id".into(),
+            value: MetadataValue::String("abc123".into()),
             flags: MetadataFlags::NONE,
         },
         MetadataEntry {
-            key: "auth",
-            value: MetadataValue::Bytes(&[0xDE, 0xAD, 0xBE, 0xEF]),
+            key: "auth".into(),
+            value: MetadataValue::Bytes((&[0xDE, 0xAD, 0xBE, 0xEF][..]).into()),
             flags: MetadataFlags::SENSITIVE | MetadataFlags::NO_PROPAGATE,
         },
         MetadataEntry {
-            key: "attempt",
+            key: "attempt".into(),
             value: MetadataValue::U64(2),
             flags: MetadataFlags::NONE,
         },

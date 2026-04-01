@@ -93,7 +93,7 @@ impl ClientMiddlewareProbe for ClientMiddlewareProbeService {
         cx.metadata()
             .iter()
             .find(|entry| entry.key == "x-client-value")
-            .and_then(|entry| match entry.value {
+            .and_then(|entry| match &entry.value {
                 vox::MetadataValue::String(value) => Some(value.to_string()),
                 _ => None,
             })

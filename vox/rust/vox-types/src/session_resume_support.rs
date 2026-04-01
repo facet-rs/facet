@@ -7,8 +7,8 @@ pub fn append_session_resume_key_metadata<'a>(
     key: &'a SessionResumeKey,
 ) {
     metadata.push(MetadataEntry {
-        key: SESSION_RESUME_KEY_METADATA_KEY,
-        value: MetadataValue::Bytes(&key.0),
+        key: SESSION_RESUME_KEY_METADATA_KEY.into(),
+        value: MetadataValue::Bytes(key.0[..].into()),
         flags: MetadataFlags::NONE,
     });
 }
@@ -20,7 +20,7 @@ pub fn metadata_session_resume_key(
         if entry.key != SESSION_RESUME_KEY_METADATA_KEY {
             return None;
         }
-        match entry.value {
+        match &entry.value {
             MetadataValue::Bytes(bytes) if bytes.len() == 16 => {
                 let mut key = [0u8; 16];
                 key.copy_from_slice(bytes);

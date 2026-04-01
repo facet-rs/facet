@@ -142,8 +142,8 @@ fn send_host_message(segment: &Segment, peer_id: shm_primitives::PeerId, message
 
 fn sample_metadata<'a>() -> Metadata<'a> {
     vec![MetadataEntry {
-        key: "trace-id",
-        value: MetadataValue::String("rust-trace"),
+        key: "trace-id".into(),
+        value: MetadataValue::String("rust-trace".into()),
         flags: MetadataFlags::NONE,
     }]
 }

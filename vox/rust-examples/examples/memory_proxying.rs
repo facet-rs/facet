@@ -116,24 +116,24 @@ fn requested_service<'a>(metadata: &'a [MetadataEntry<'a>]) -> Option<&'a str> {
     metadata
         .iter()
         .find(|entry| entry.key == "service")
-        .and_then(|entry| match entry.value {
-            MetadataValue::String(value) => Some(value),
+        .and_then(|entry| match &entry.value {
+            MetadataValue::String(value) => Some(value.as_ref()),
             _ => None,
         })
 }
 
 fn service_metadata(service: &'static str) -> Metadata<'static> {
     vec![MetadataEntry {
-        key: "service",
-        value: MetadataValue::String(service),
+        key: "service".into(),
+        value: MetadataValue::String(service.into()),
         flags: MetadataFlags::NONE,
     }]
 }
 
 fn error_metadata(message: &'static str) -> Metadata<'static> {
     vec![MetadataEntry {
-        key: "error",
-        value: MetadataValue::String(message),
+        key: "error".into(),
+        value: MetadataValue::String(message.into()),
         flags: MetadataFlags::NONE,
     }]
 }

@@ -85,8 +85,8 @@ impl<'call, 'state> ClientRequest<'call, 'state> {
         // MiddlewareCaller::call. It won't be dropped until after `call` is consumed.
         let value: &'call str = unsafe { &*((&**stored) as *const str) };
         self.call.metadata.push(MetadataEntry {
-            key,
-            value: MetadataValue::String(value),
+            key: key.into(),
+            value: MetadataValue::String(value.into()),
             flags,
         });
     }
@@ -104,15 +104,15 @@ impl<'call, 'state> ClientRequest<'call, 'state> {
         // SAFETY: same reasoning as push_string_metadata above.
         let value: &'call [u8] = unsafe { &*((&**stored) as *const [u8]) };
         self.call.metadata.push(MetadataEntry {
-            key,
-            value: MetadataValue::Bytes(value),
+            key: key.into(),
+            value: MetadataValue::Bytes(value.into()),
             flags,
         });
     }
 
     pub fn push_u64_metadata(&mut self, key: &'static str, value: u64, flags: MetadataFlags) {
         self.call.metadata.push(MetadataEntry {
-            key,
+            key: key.into(),
             value: MetadataValue::U64(value),
             flags,
         });
@@ -177,12 +177,12 @@ mod tests {
 
         assert_eq!(request.metadata().len(), 3);
         assert!(matches!(
-            request.metadata()[0].value,
-            crate::MetadataValue::String("value")
+            &request.metadata()[0].value,
+            crate::MetadataValue::String(s) if s == "value"
         ));
         assert!(matches!(
-            request.metadata()[1].value,
-            crate::MetadataValue::Bytes(bytes) if bytes == [1, 2, 3]
+            &request.metadata()[1].value,
+            crate::MetadataValue::Bytes(bytes) if bytes.as_ref() == [1, 2, 3]
         ));
         assert!(matches!(
             request.metadata()[2].value,

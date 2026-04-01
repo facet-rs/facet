@@ -235,17 +235,17 @@ mod tests {
     fn metadata_debug_redacts_sensitive_values() {
         let metadata = vec![
             MetadataEntry {
-                key: "authorization",
-                value: MetadataValue::String("Bearer secret"),
+                key: "authorization".into(),
+                value: MetadataValue::String("Bearer secret".into()),
                 flags: MetadataFlags::SENSITIVE,
             },
             MetadataEntry {
-                key: "blob",
-                value: MetadataValue::Bytes(&[1, 2, 3]),
+                key: "blob".into(),
+                value: MetadataValue::Bytes((&[1, 2, 3][..]).into()),
                 flags: MetadataFlags::NONE,
             },
             MetadataEntry {
-                key: "attempt",
+                key: "attempt".into(),
                 value: MetadataValue::U64(2),
                 flags: MetadataFlags::NONE,
             },
@@ -256,14 +256,14 @@ mod tests {
             "[MetadataEntry { key: \"authorization\", value: \"[REDACTED]\", flags: MetadataFlags(1) }, MetadataEntry { key: \"blob\", value: <3 bytes>, flags: MetadataFlags(0) }, MetadataEntry { key: \"attempt\", value: 2, flags: MetadataFlags(0) }]"
         );
 
-        let bytes = MetadataValue::Bytes(&[0; 4]);
+        let bytes = MetadataValue::Bytes((&[0; 4][..]).into());
         assert_eq!(format!("{:?}", MetadataValueDebug(&bytes)), "<4 bytes>");
         assert_eq!(
             format!(
                 "{:?}",
                 MetadataEntryDebug(&MetadataEntry {
-                    key: "plain",
-                    value: MetadataValue::String("value"),
+                    key: "plain".into(),
+                    value: MetadataValue::String("value".into()),
                     flags: MetadataFlags::NONE,
                 })
             ),
@@ -296,12 +296,12 @@ mod tests {
 
         let metadata = vec![
             MetadataEntry {
-                key: "authorization",
-                value: MetadataValue::String("Bearer secret"),
+                key: "authorization".into(),
+                value: MetadataValue::String("Bearer secret".into()),
                 flags: MetadataFlags::SENSITIVE,
             },
             MetadataEntry {
-                key: "attempt",
+                key: "attempt".into(),
                 value: MetadataValue::U64(2),
                 flags: MetadataFlags::NONE,
             },
@@ -312,8 +312,8 @@ mod tests {
         let response_wire: Result<i32, crate::VoxError<std::convert::Infallible>> = Ok(42);
         let response = crate::RequestResponse {
             metadata: vec![MetadataEntry {
-                key: "etag",
-                value: MetadataValue::String("v1"),
+                key: "etag".into(),
+                value: MetadataValue::String("v1".into()),
                 flags: MetadataFlags::NONE,
             }],
             ret: crate::Payload::outgoing(&response_wire),

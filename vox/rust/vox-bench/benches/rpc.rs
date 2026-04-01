@@ -625,15 +625,17 @@ mod serialize_bench {
                     args: Payload::outgoing(args),
                     metadata: vec![
                         MetadataEntry {
-                            key: "authorization",
+                            key: "authorization".into(),
                             value: MetadataValue::String(
-                                "Bearer eyJhbGciOiJIUzI1NiJ9.e30.ZRrHA1JJJW8opB1Qfp7QDm",
+                                "Bearer eyJhbGciOiJIUzI1NiJ9.e30.ZRrHA1JJJW8opB1Qfp7QDm".into(),
                             ),
                             flags: MetadataFlags::SENSITIVE,
                         },
                         MetadataEntry {
-                            key: "request-id",
-                            value: MetadataValue::String("550e8400-e29b-41d4-a716-446655440000"),
+                            key: "request-id".into(),
+                            value: MetadataValue::String(
+                                "550e8400-e29b-41d4-a716-446655440000".into(),
+                            ),
                             flags: MetadataFlags::NONE,
                         },
                     ],
@@ -753,14 +755,14 @@ mod serialize_bench {
                         method_id: MethodId(7),
                         metadata: vec![
                             MetadataEntry {
-                                key: "authorization",
+                                key: "authorization".into(),
                                 value: MetadataValue::String(
-                                    "Bearer eyJhbGciOiJIUzI1NiJ9.e30.ZRrHA1JJJW8opB1Qfp7QDm",
+                                    "Bearer eyJhbGciOiJIUzI1NiJ9.e30.ZRrHA1JJJW8opB1Qfp7QDm".into(),
                                 ),
                                 flags: MetadataFlags::SENSITIVE,
                             },
                             MetadataEntry {
-                                key: "attempt",
+                                key: "attempt".into(),
                                 value: MetadataValue::U64(3),
                                 flags: MetadataFlags::NONE,
                             },
@@ -1439,14 +1441,14 @@ mod serialize_bench {
                     method_id: MethodId(7),
                     metadata: vec![
                         MetadataEntry {
-                            key: "authorization",
+                            key: "authorization".into(),
                             value: MetadataValue::String(
-                                "Bearer eyJhbGciOiJIUzI1NiJ9.e30.ZRrHA1JJJW8opB1Qfp7QDm",
+                                "Bearer eyJhbGciOiJIUzI1NiJ9.e30.ZRrHA1JJJW8opB1Qfp7QDm".into(),
                             ),
                             flags: MetadataFlags::SENSITIVE,
                         },
                         MetadataEntry {
-                            key: "attempt",
+                            key: "attempt".into(),
                             value: MetadataValue::U64(3),
                             flags: MetadataFlags::NONE,
                         },
@@ -1470,14 +1472,14 @@ mod serialize_bench {
                     method_id: MethodId(7),
                     metadata: vec![
                         MetadataEntry {
-                            key: "authorization",
+                            key: "authorization".into(),
                             value: MetadataValue::String(
-                                "Bearer eyJhbGciOiJIUzI1NiJ9.e30.ZRrHA1JJJW8opB1Qfp7QDm",
+                                "Bearer eyJhbGciOiJIUzI1NiJ9.e30.ZRrHA1JJJW8opB1Qfp7QDm".into(),
                             ),
                             flags: MetadataFlags::SENSITIVE,
                         },
                         MetadataEntry {
-                            key: "attempt",
+                            key: "attempt".into(),
                             value: MetadataValue::U64(3),
                             flags: MetadataFlags::NONE,
                         },

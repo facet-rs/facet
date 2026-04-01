@@ -1,13 +1,17 @@
+use std::borrow::Cow;
+
 use facet::Facet;
 
 // r[impl rpc.metadata]
 // r[impl rpc.metadata.value]
 /// Metadata value.
+///
+/// Uses `Cow` so values can be borrowed (from wire data) or owned (runtime-constructed).
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub enum MetadataValue<'a> {
-    String(&'a str) = 0,
-    Bytes(&'a [u8]) = 1,
+    String(Cow<'a, str>) = 0,
+    Bytes(Cow<'a, [u8]>) = 1,
     U64(u64) = 2,
 }
 
@@ -67,9 +71,11 @@ impl std::ops::BitAndAssign for MetadataFlags {
 // r[impl rpc.metadata.keys]
 // r[impl rpc.metadata.duplicates]
 /// A single metadata entry with a key, value, and flags.
+///
+/// Uses `Cow` for the key so entries can be borrowed (from wire data) or owned.
 #[derive(Debug, Clone, PartialEq, Eq, Facet)]
 pub struct MetadataEntry<'a> {
-    pub key: &'a str,
+    pub key: Cow<'a, str>,
     pub value: MetadataValue<'a>,
     pub flags: MetadataFlags,
 }

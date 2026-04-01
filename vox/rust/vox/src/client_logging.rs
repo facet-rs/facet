@@ -163,13 +163,13 @@ mod tests {
     fn metadata_debug_redacts_sensitive_values() {
         let metadata = vec![
             MetadataEntry {
-                key: "authorization",
-                value: MetadataValue::String("Bearer secret"),
+                key: "authorization".into(),
+                value: MetadataValue::String("Bearer secret".into()),
                 flags: MetadataFlags::SENSITIVE,
             },
             MetadataEntry {
-                key: "blob",
-                value: MetadataValue::Bytes(&[1, 2, 3]),
+                key: "blob".into(),
+                value: MetadataValue::Bytes((&[1, 2, 3][..]).into()),
                 flags: MetadataFlags::NONE,
             },
         ];
@@ -242,12 +242,12 @@ mod tests {
                 method_id: MethodId(7),
                 metadata: vec![
                     MetadataEntry {
-                        key: "authorization",
-                        value: MetadataValue::String("Bearer secret"),
+                        key: "authorization".into(),
+                        value: MetadataValue::String("Bearer secret".into()),
                         flags: MetadataFlags::SENSITIVE,
                     },
                     MetadataEntry {
-                        key: "attempt",
+                        key: "attempt".into(),
                         value: MetadataValue::U64(2),
                         flags: MetadataFlags::NONE,
                     },
