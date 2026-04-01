@@ -111,7 +111,7 @@ async fn echo_call_across_shm_link() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .establish::<crate::NoopClient>(EchoHandler)
                 .await
                 .expect("server handshake failed");
@@ -120,7 +120,7 @@ async fn echo_call_across_shm_link() {
         .named("server_setup"),
     );
 
-    let (caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
+    let caller = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<crate::NoopClient>(())
         .await
         .expect("client handshake failed");
@@ -190,7 +190,7 @@ async fn echo_blob_stress_over_shm_link() {
 
     let server_task = moire::task::spawn(
         async move {
-            let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .establish::<crate::NoopClient>(BlobEchoHandler)
                 .await
                 .expect("server handshake failed");
@@ -199,7 +199,7 @@ async fn echo_blob_stress_over_shm_link() {
         .named("server_setup"),
     );
 
-    let (caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
+    let caller = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<crate::NoopClient>(())
         .await
         .expect("client handshake failed");

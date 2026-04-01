@@ -59,7 +59,7 @@ where
     <<S::Link as vox_types::Link>::Tx as vox_types::LinkTx>::Permit: vox_types::MaybeSend,
     <S::Link as vox_types::Link>::Rx: vox_types::MaybeSend + Send + 'static,
 {
-    let (client, _session) = initiator(source, TransportMode::Bare)
+    let client = initiator(source, TransportMode::Bare)
         .establish::<Client>(())
         .await?;
     Ok(client)

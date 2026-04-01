@@ -131,7 +131,7 @@ async fn main() -> Result<()> {
         println!("[server] waiting for client");
         let (socket, _) = listener.accept().await.expect("accept");
         println!("[server] client connected; establishing root session");
-        let (server_root_guard, _) = vox::acceptor_on(StreamLink::tcp(socket))
+        let server_root_guard = vox::acceptor_on(StreamLink::tcp(socket))
             .on_connection(CounterLabAcceptor)
             .establish::<vox::NoopClient>(())
             .await
@@ -145,11 +145,11 @@ async fn main() -> Result<()> {
     let socket = tokio::net::TcpStream::connect(addr)
         .await
         .wrap_err("connecting client socket")?;
-    let (_root_caller_guard, session_handle) =
-        vox::initiator_on(StreamLink::tcp(socket), vox::TransportMode::Bare)
-            .establish::<vox::NoopClient>(())
-            .await
-            .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;
+    let _root_caller_guard = vox::initiator_on(StreamLink::tcp(socket), vox::TransportMode::Bare)
+        .establish::<vox::NoopClient>(())
+        .await
+        .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;
+    let session_handle = _root_caller_guard.session.clone().unwrap();
     println!("[client] root session established");
     server_ready_rx
         .await

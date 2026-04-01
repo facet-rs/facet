@@ -39,8 +39,8 @@ async fn call_through_real_handshake() {
     )
     .expect("session establishment timed out");
 
-    let (_server_client, _server_handle) = server_result.expect("server failed");
-    let (client, _client_handle) = client_result.expect("client failed");
+    let _server_client = server_result.expect("server failed");
+    let client = client_result.expect("client failed");
 
     assert_eq!(client.echo(42).await.unwrap(), 42);
     assert_eq!(client.echo(0).await.unwrap(), 0);
@@ -64,8 +64,8 @@ async fn call_through_stable_conduit() {
     )
     .expect("session establishment timed out");
 
-    let (_server_client, _server_handle) = server_result.expect("server failed");
-    let (client, _client_handle) = client_result.expect("client failed");
+    let _server_client = server_result.expect("server failed");
+    let client = client_result.expect("client failed");
 
     assert_eq!(client.echo(42).await.unwrap(), 42);
     assert_eq!(client.echo(99).await.unwrap(), 99);
@@ -107,8 +107,8 @@ async fn multiple_methods_get_independent_schemas() {
     )
     .expect("session establishment timed out");
 
-    let (_server_client, _server_handle) = server_result.expect("server failed");
-    let (client, _client_handle) = client_result.expect("client failed");
+    let _server_client = server_result.expect("server failed");
+    let client = client_result.expect("client failed");
 
     assert_eq!(client.add(3, 5).await.unwrap(), 8);
     assert_eq!(client.mul(3, 5).await.unwrap(), 15);
@@ -139,11 +139,12 @@ async fn call_works_after_resume() {
     )
     .expect("session establishment timed out");
 
-    let (_server_client, _server_handle) = match server_result.expect("server failed") {
-        SessionAcceptOutcome::Established(c, h) => (c, h),
+    let _server_client = match server_result.expect("server failed") {
+        SessionAcceptOutcome::Established(c) => c,
         _ => panic!("expected Established"),
     };
-    let (client, client_session_handle) = client_result.expect("client failed");
+    let client = client_result.expect("client failed");
+    let client_session_handle = client.session.clone().unwrap();
 
     // Call succeeds on the initial connection
     assert_eq!(client.echo(1).await.unwrap(), 1);
@@ -223,11 +224,12 @@ async fn first_call_after_resume_without_prior_calls() {
     )
     .expect("session establishment timed out");
 
-    let (_server_client, _server_handle) = match server_result.expect("server failed") {
-        SessionAcceptOutcome::Established(c, h) => (c, h),
+    let _server_client = match server_result.expect("server failed") {
+        SessionAcceptOutcome::Established(c) => c,
         _ => panic!("expected Established"),
     };
-    let (client, client_session_handle) = client_result.expect("client failed");
+    let client = client_result.expect("client failed");
+    let client_session_handle = client.session.clone().unwrap();
 
     // Break immediately — no calls on the first connection
     client_break1.close().await;
@@ -338,11 +340,12 @@ async fn operation_replay_after_resume_has_schemas() {
     )
     .expect("session establishment timed out");
 
-    let (_server_client, _server_handle) = match server_result.expect("server failed") {
-        SessionAcceptOutcome::Established(c, h) => (c, h),
+    let _server_client = match server_result.expect("server failed") {
+        SessionAcceptOutcome::Established(c) => c,
         _ => panic!("expected Established"),
     };
-    let (client, client_session_handle) = client_result.expect("client failed");
+    let client = client_result.expect("client failed");
+    let client_session_handle = client.session.clone().unwrap();
 
     // Start a call — handler will block until we notify `proceed`
     let client2 = client.clone();

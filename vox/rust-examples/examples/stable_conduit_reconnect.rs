@@ -243,7 +243,7 @@ async fn main() -> Result<()> {
             parity: Parity::Even,
             max_concurrent_requests: 64,
         };
-        let (server_guard, _) = vox::acceptor_conduit(
+        let server_guard = vox::acceptor_conduit(
             server_conduit,
             HandshakeResult {
                 role: SessionRole::Acceptor,
@@ -270,7 +270,7 @@ async fn main() -> Result<()> {
         parity: Parity::Odd,
         max_concurrent_requests: 64,
     };
-    let (client, _) = vox::initiator_conduit(
+    let client = vox::initiator_conduit(
         client_conduit,
         HandshakeResult {
             role: SessionRole::Initiator,

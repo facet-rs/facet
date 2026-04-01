@@ -200,7 +200,7 @@ mod tests {
 
         // Server side: establish and immediately close
         let server = tokio::spawn(async move {
-            let (_caller, _sh) = crate::acceptor_on(link_b)
+            let _caller = crate::acceptor_on(link_b)
                 .establish::<crate::NoopClient>(())
                 .await
                 .expect("server establish");
@@ -209,7 +209,7 @@ mod tests {
         });
 
         // Client side: establish with the logging middleware
-        let (caller, _sh) = crate::initiator_on(link_a, crate::TransportMode::Bare)
+        let caller = crate::initiator_on(link_a, crate::TransportMode::Bare)
             .establish::<crate::NoopClient>(())
             .await
             .expect("client establish");

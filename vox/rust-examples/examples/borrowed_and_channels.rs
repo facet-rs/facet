@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
         println!("[server] waiting for client");
         let (socket, _) = listener.accept().await.expect("accept");
         println!("[server] client connected; establishing session");
-        let (server_caller_guard, _) = vox::acceptor_on(StreamLink::tcp(socket))
+        let server_caller_guard = vox::acceptor_on(StreamLink::tcp(socket))
             .establish::<WordLabClient>(WordLabDispatcher::new(WordLabService))
             .await
             .expect("server establish");
@@ -72,7 +72,7 @@ async fn main() -> Result<()> {
     let socket = tokio::net::TcpStream::connect(addr)
         .await
         .wrap_err("connecting client socket")?;
-    let (client, _) = vox::initiator_on(StreamLink::tcp(socket), vox::TransportMode::Bare)
+    let client = vox::initiator_on(StreamLink::tcp(socket), vox::TransportMode::Bare)
         .establish::<WordLabClient>(())
         .await
         .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;

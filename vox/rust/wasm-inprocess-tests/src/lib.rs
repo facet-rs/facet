@@ -257,7 +257,7 @@ pub fn start_acceptor(on_message: js_sys::Function) -> JsInProcessLink {
             .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
             .await
         {
-            Ok((_root_caller_guard, _sh)) => {
+            Ok(_root_caller_guard) => {
                 console_log!("In-process acceptor: session established");
                 // Keep the session alive
                 std::future::pending::<()>().await;

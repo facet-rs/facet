@@ -21,14 +21,14 @@ async fn call_through_cbor_handshake_reaches_handler() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
-        let (s, _sh) = vox::acceptor_on(server_link)
+        let s = vox::acceptor_on(server_link)
             .establish::<vox::NoopClient>(EchoDispatcher::new(EchoService))
             .await
             .expect("server establish");
         s
     });
 
-    let (client, _sh) = vox::initiator_on(client_link, vox::TransportMode::Bare)
+    let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
         .establish::<EchoClient>(())
         .await
         .expect("client establish");
@@ -44,14 +44,14 @@ async fn call_through_stable_conduit_reaches_handler() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
-        let (s, _sh) = vox::acceptor_on(server_link)
+        let s = vox::acceptor_on(server_link)
             .establish::<vox::NoopClient>(EchoDispatcher::new(EchoService))
             .await
             .expect("server establish");
         s
     });
 
-    let (client, _sh) = vox::initiator_on(client_link, vox::TransportMode::Stable)
+    let client = vox::initiator_on(client_link, vox::TransportMode::Stable)
         .establish::<EchoClient>(())
         .await
         .expect("client establish");
@@ -67,14 +67,14 @@ async fn multiple_calls_through_stable_conduit() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
-        let (s, _sh) = vox::acceptor_on(server_link)
+        let s = vox::acceptor_on(server_link)
             .establish::<vox::NoopClient>(EchoDispatcher::new(EchoService))
             .await
             .expect("server establish");
         s
     });
 
-    let (client, _sh) = vox::initiator_on(client_link, vox::TransportMode::Stable)
+    let client = vox::initiator_on(client_link, vox::TransportMode::Stable)
         .establish::<EchoClient>(())
         .await
         .expect("client establish");

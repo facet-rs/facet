@@ -25,7 +25,7 @@ async fn main() -> Result<()> {
     // Server: accept one connection using the existing lower-level API
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await?;
-        let (caller, _session) = vox::acceptor_on(StreamLink::tcp(stream))
+        let caller = vox::acceptor_on(StreamLink::tcp(stream))
             .establish::<HelloClient>(HelloDispatcher::new(HelloService))
             .await?;
         caller.caller.closed().await;

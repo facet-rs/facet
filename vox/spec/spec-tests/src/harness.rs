@@ -863,10 +863,11 @@ pub async fn accept_subject_ws(cmd: &str) -> Result<(TestbedClient, Child, Sessi
         .await
         .map_err(|e| format!("WebSocket upgrade: {e}"))?;
 
-    let (client, sh) = acceptor_on(ws)
+    let client = acceptor_on(ws)
         .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
         .await
         .map_err(|e| format!("handshake: {e}"))?;
+    let sh = client.session.clone().unwrap();
 
     Ok((client, child, sh))
 }
@@ -1157,7 +1158,7 @@ async fn run_subject_client_scenario_tcp(
             .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
             .await
         {
-            Ok((_client, _session)) => {
+            Ok(_client) => {
                 std::future::pending::<()>().await;
             }
             Err(e) => {
@@ -1223,7 +1224,7 @@ async fn run_subject_client_scenario_ws(
             .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
             .await
         {
-            Ok((_client, _session)) => {
+            Ok(_client) => {
                 std::future::pending::<()>().await;
             }
             Err(e) => {
@@ -1308,10 +1309,12 @@ pub async fn run_subject_client_scenario_resumable(
                 .establish_or_resume::<TestbedClient>(TestbedDispatcher::new(service.clone()))
                 .await
             {
-                Ok(SessionAcceptOutcome::Established(client, handle)) => {
+                Ok(SessionAcceptOutcome::Established(client)) => {
                     eprintln!("[harness] established subject client session");
+                    if let Some(sh) = client.session.clone() {
+                        retained_handles.push(sh);
+                    }
                     retained_clients.push(client);
-                    retained_handles.push(handle);
                     if let Some(tx) = first_accept_tx.take() {
                         let _ = tx.send(Ok(()));
                     }
@@ -1462,7 +1465,7 @@ where
             .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
             .await
             .map_err(|e| format!("server handshake: {e}"));
-        let (server_caller_guard, _sh) = match setup {
+        let server_caller_guard = match setup {
             Ok(parts) => parts,
             Err(err) => {
                 let _ = server_ready_tx.send(Err(err));
@@ -1493,7 +1496,7 @@ where
             tx: client_tx,
             rx: client_rx,
         });
-    let (client, _sh) = vox_core::initiator_conduit(client_conduit, client_handshake)
+    let client = vox_core::initiator_conduit(client_conduit, client_handshake)
         .establish::<TestbedClient>(NoopHandler)
         .await
         .map_err(|e| format!("client handshake: {e}"))?;
@@ -1558,10 +1561,11 @@ async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient, Child, SessionH
     };
     stream.set_nodelay(true).unwrap();
 
-    let (client, sh) = acceptor_transport(StreamLink::tcp(stream))
+    let client = acceptor_transport(StreamLink::tcp(stream))
         .establish::<TestbedClient>(NoopHandler)
         .await
         .map_err(|e| format!("handshake: {e}"))?;
+    let sh = client.session.clone().unwrap();
 
     Ok((client, child, sh))
 }
@@ -1608,7 +1612,7 @@ async fn accept_subject_tcp_resumable(cmd: &str) -> Result<ResumableSubjectHarne
                     .establish_or_resume::<TestbedClient>(NoopHandler)
                     .await
                 {
-                    Ok(SessionAcceptOutcome::Established(client, _handle)) => {
+                    Ok(SessionAcceptOutcome::Established(client)) => {
                         if let Some(tx) = first_client_tx.take() {
                             let _ = tx.send(Ok(client));
                         }
@@ -1825,10 +1829,11 @@ async fn accept_subject_shm_subject_is_guest(
         eprintln!("[harness] accept_doorbell ok");
     }
     eprintln!("[harness] handshake...");
-    let (client, sh) = acceptor_on(link)
+    let client = acceptor_on(link)
         .establish::<TestbedClient>(NoopHandler)
         .await
         .map_err(|e| format!("handshake: {e}"))?;
+    let sh = client.session.clone().unwrap();
     eprintln!("[harness] handshake ok");
 
     keep_tempdir_alive(dir);
@@ -1869,7 +1874,7 @@ async fn accept_subject_shm_subject_is_host(
     .await?;
     let pid = child.id().unwrap_or_default();
 
-    let setup_result: Result<(TestbedClient, SessionHandle), String> = async {
+    let setup_result: Result<TestbedClient, String> = async {
         eprintln!(
             "[subject:{pid}] waiting for subject-host bootstrap socket {}",
             control_sock_path.display()
@@ -2110,17 +2115,18 @@ async fn accept_subject_shm_subject_is_host(
             .map_err(|e| format!("guest_link_from_names: {e}"))?
         };
 
-        let (client, sh) = initiator_on(link, requested_transport_mode())
+        let client = initiator_on(link, requested_transport_mode())
             .establish::<TestbedClient>(NoopHandler)
             .await
             .map_err(|e| format!("handshake: {e}"))?;
 
-        Ok::<_, String>((client, sh))
+        Ok::<_, String>(client)
     }
     .await;
 
     match setup_result {
-        Ok((client, sh)) => {
+        Ok(client) => {
+            let sh = client.session.clone().unwrap();
             keep_tempdir_alive(dir);
             Ok((client, child, sh))
         }

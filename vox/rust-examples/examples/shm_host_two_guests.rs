@@ -145,7 +145,7 @@ mod unix_demo {
         println!("[host] launching guest: Adder");
         let mut adder_guest = spawn_guest(GuestService::Adder)?;
         println!("[host] guest Adder pid={}", adder_guest.process.child.id());
-        let (adder, _) = vox::acceptor_on_link(
+        let adder = vox::acceptor_on_link(
             adder_guest.link,
             vox::ConnectionSettings {
                 parity: vox::Parity::Even,
@@ -164,7 +164,7 @@ mod unix_demo {
             "[host] guest StringReverser pid={}",
             reverser_guest.process.child.id()
         );
-        let (reverser, _) = vox::acceptor_on_link(
+        let reverser = vox::acceptor_on_link(
             reverser_guest.link,
             vox::ConnectionSettings {
                 parity: vox::Parity::Even,
@@ -204,7 +204,7 @@ mod unix_demo {
 
         match service {
             GuestService::Adder => {
-                let (guard, _) = vox::initiator_on_link(
+                let guard = vox::initiator_on_link(
                     link,
                     vox::ConnectionSettings {
                         parity: vox::Parity::Odd,
@@ -221,7 +221,7 @@ mod unix_demo {
                 std::future::pending::<()>().await;
             }
             GuestService::StringReverser => {
-                let (guard, _) = vox::initiator_on_link(
+                let guard = vox::initiator_on_link(
                     link,
                     vox::ConnectionSettings {
                         parity: vox::Parity::Odd,

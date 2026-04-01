@@ -277,7 +277,7 @@ async fn main() {
             };
 
             match accepted {
-                SessionAcceptOutcome::Established(root_caller_guard, _sh) => {
+                SessionAcceptOutcome::Established(root_caller_guard) => {
                     eprintln!("Connection established with {}", peer);
                     let _root_caller_guard = root_caller_guard;
                     std::future::pending::<()>().await;

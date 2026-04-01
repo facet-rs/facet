@@ -58,7 +58,7 @@ mod vox_zerocopy_bench {
         let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
         let _server_task = moire::task::spawn(
             async move {
-                let (_caller, _sh) = acceptor_on(b)
+                let _caller = acceptor_on(b)
                     .establish::<NoopClient>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -68,7 +68,7 @@ mod vox_zerocopy_bench {
             .named("server_setup"),
         );
 
-        let (client, _sh) = initiator_on(a, TransportMode::Bare)
+        let client = initiator_on(a, TransportMode::Bare)
             .establish::<ZerocopyClient>(())
             .await
             .expect("client handshake failed");
@@ -122,7 +122,7 @@ mod vox_zerocopy_bench {
         let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
         let _server_task = moire::task::spawn(
             async move {
-                let (_caller, _sh) = acceptor_on(b)
+                let _caller = acceptor_on(b)
                     .establish::<NoopClient>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -132,7 +132,7 @@ mod vox_zerocopy_bench {
             .named("server_setup"),
         );
 
-        let (client, _sh) = initiator_on(a, TransportMode::Bare)
+        let client = initiator_on(a, TransportMode::Bare)
             .establish::<ZerocopyClient>(())
             .await
             .expect("client handshake failed");
@@ -151,7 +151,7 @@ mod vox_zerocopy_bench {
             async move {
                 let (stream, _) = listener.accept().await.unwrap();
                 stream.set_nodelay(true).unwrap();
-                let (_caller, _sh) = acceptor_on(StreamLink::tcp(stream))
+                let _caller = acceptor_on(StreamLink::tcp(stream))
                     .establish::<NoopClient>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -164,7 +164,7 @@ mod vox_zerocopy_bench {
         let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         stream.set_nodelay(true).unwrap();
 
-        let (client, _sh) = initiator_on(StreamLink::tcp(stream), TransportMode::Bare)
+        let client = initiator_on(StreamLink::tcp(stream), TransportMode::Bare)
             .establish::<ZerocopyClient>(())
             .await
             .expect("client handshake failed");
@@ -269,7 +269,7 @@ mod vox_bench {
         let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
         let _server_task = moire::task::spawn(
             async move {
-                let (_caller, _sh) = acceptor_on(b)
+                let _caller = acceptor_on(b)
                     .establish::<NoopClient>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -279,7 +279,7 @@ mod vox_bench {
             .named("server_setup"),
         );
 
-        let (client, _sh) = initiator_on(a, TransportMode::Bare)
+        let client = initiator_on(a, TransportMode::Bare)
             .establish::<BenchClient>(())
             .await
             .expect("client handshake failed");
@@ -387,7 +387,7 @@ mod vox_shm_bench {
         let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
         let _server_task = moire::task::spawn(
             async move {
-                let (_caller, _sh) = acceptor_on(b)
+                let _caller = acceptor_on(b)
                     .establish::<NoopClient>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -397,7 +397,7 @@ mod vox_shm_bench {
             .named("server_setup"),
         );
 
-        let (client, _sh) = initiator_on(a, TransportMode::Bare)
+        let client = initiator_on(a, TransportMode::Bare)
             .establish::<BenchClient>(())
             .await
             .expect("client handshake failed");
@@ -477,7 +477,7 @@ mod vox_tcp_bench {
             async move {
                 let (stream, _) = listener.accept().await.unwrap();
                 stream.set_nodelay(true).unwrap();
-                let (_caller, _sh) = acceptor_on(StreamLink::tcp(stream))
+                let _caller = acceptor_on(StreamLink::tcp(stream))
                     .establish::<NoopClient>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
@@ -490,7 +490,7 @@ mod vox_tcp_bench {
         let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         stream.set_nodelay(true).unwrap();
 
-        let (client, _sh) = initiator_on(StreamLink::tcp(stream), TransportMode::Bare)
+        let client = initiator_on(StreamLink::tcp(stream), TransportMode::Bare)
             .establish::<BenchClient>(())
             .await
             .expect("client handshake failed");

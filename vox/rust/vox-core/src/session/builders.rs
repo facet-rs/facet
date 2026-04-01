@@ -177,7 +177,7 @@ impl SessionRegistry {
 }
 
 pub enum SessionAcceptOutcome<Client> {
-    Established(Client, SessionHandle),
+    Established(Client),
     Resumed,
 }
 
@@ -281,7 +281,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
     pub async fn establish<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<(Client, SessionHandle), SessionError>
+    ) -> Result<Client, SessionError>
     where
         C: Conduit<Msg = MessageFamily> + 'static,
         C::Tx: MaybeSend + MaybeSync + 'static,
@@ -336,16 +336,14 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             Some(operation_store) => Driver::with_operation_store(handle, handler, operation_store),
             None => Driver::new(handle, handler),
         };
-        let client = Client::from_vox_session(
-            crate::Caller::new(driver.caller()),
-            Some(session_handle.clone()),
-        );
+        let client =
+            Client::from_vox_session(crate::Caller::new(driver.caller()), Some(session_handle));
         (spawn_fn)(Box::pin(async move { session.run().await }));
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move { driver.run().await });
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move { driver.run().await });
-        Ok((client, session_handle))
+        Ok(client)
     }
 }
 
@@ -421,7 +419,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
     pub async fn establish<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<(Client, SessionHandle), SessionError>
+    ) -> Result<Client, SessionError>
     where
         S: LinkSource,
         S::Link: Link + Send + 'static,
@@ -606,7 +604,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     pub async fn establish<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<(Client, SessionHandle), SessionError>
+    ) -> Result<Client, SessionError>
     where
         L: Link + Send + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
@@ -666,7 +664,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     pub async fn establish<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<(Client, SessionHandle), SessionError>
+    ) -> Result<Client, SessionError>
     where
         L: Link + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
@@ -719,7 +717,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         operation_store: Option<Arc<dyn OperationStore>>,
         spawn_fn: SpawnFn,
         handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<(Client, SessionHandle), SessionError>
+    ) -> Result<Client, SessionError>
     where
         L: Link + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
@@ -763,7 +761,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         operation_store: Option<Arc<dyn OperationStore>>,
         spawn_fn: SpawnFn,
         handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<(Client, SessionHandle), SessionError>
+    ) -> Result<Client, SessionError>
     where
         L: Link + Send + 'static,
         L::Tx: MaybeSend + MaybeSync + Send + 'static,
@@ -987,7 +985,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
     pub async fn establish<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<(Client, SessionHandle), SessionError>
+    ) -> Result<Client, SessionError>
     where
         C: Conduit<Msg = MessageFamily> + 'static,
         C::Tx: MaybeSend + MaybeSync + 'static,
@@ -1044,16 +1042,14 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             Some(operation_store) => Driver::with_operation_store(handle, handler, operation_store),
             None => Driver::new(handle, handler),
         };
-        let client = Client::from_vox_session(
-            crate::Caller::new(driver.caller()),
-            Some(session_handle.clone()),
-        );
+        let client =
+            Client::from_vox_session(crate::Caller::new(driver.caller()), Some(session_handle));
         (spawn_fn)(Box::pin(async move { session.run().await }));
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move { driver.run().await });
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move { driver.run().await });
-        Ok((client, session_handle))
+        Ok(client)
     }
 
     #[moire::instrument]
@@ -1086,8 +1082,8 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             return Ok(SessionAcceptOutcome::Resumed);
         }
 
-        let (client, session_handle) = self.establish(handler).await?;
-        Ok(SessionAcceptOutcome::Established(client, session_handle))
+        let client = self.establish(handler).await?;
+        Ok(SessionAcceptOutcome::Established(client))
     }
 }
 
@@ -1164,7 +1160,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     pub async fn establish<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<(Client, SessionHandle), SessionError>
+    ) -> Result<Client, SessionError>
     where
         L: Link + Send + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
@@ -1306,7 +1302,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                 handler,
             )
             .await
-            .map(|(client, handle)| SessionAcceptOutcome::Established(client, handle)),
+            .map(|client| SessionAcceptOutcome::Established(client)),
         }
     }
 
@@ -1314,7 +1310,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     pub async fn establish<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<(Client, SessionHandle), SessionError>
+    ) -> Result<Client, SessionError>
     where
         L: Link + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
@@ -1449,7 +1445,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         operation_store: Option<Arc<dyn OperationStore>>,
         spawn_fn: SpawnFn,
         handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<(Client, SessionHandle), SessionError>
+    ) -> Result<Client, SessionError>
     where
         L: Link + Send + 'static,
         L::Tx: MaybeSend + MaybeSync + Send + 'static,

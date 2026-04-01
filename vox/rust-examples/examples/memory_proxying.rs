@@ -146,7 +146,7 @@ async fn main() -> Result<()> {
 
     println!("[guest-b] starting root session");
     let guest_b_task = tokio::spawn(async move {
-        let (guest_b_root_guard, _) = vox::acceptor_on_link(
+        let guest_b_root_guard = vox::acceptor_on_link(
             guest_b_link,
             ConnectionSettings {
                 parity: Parity::Even,
@@ -164,7 +164,7 @@ async fn main() -> Result<()> {
     });
 
     println!("[host] establishing session to guest-b");
-    let (_host_root_to_b_guard, upstream_session_handle) = vox::initiator_on_link(
+    let _host_root_to_b_guard = vox::initiator_on_link(
         host_b_link,
         ConnectionSettings {
             parity: Parity::Odd,
@@ -176,6 +176,7 @@ async fn main() -> Result<()> {
     .establish::<vox::NoopClient>(())
     .await
     .map_err(|e| eyre!("host<->guest-b establish failed: {e:?}"))?;
+    let upstream_session_handle = _host_root_to_b_guard.session.clone().unwrap();
     println!("[host] host<->guest-b root session ready");
 
     println!("[host] starting root session for guest-a");
@@ -183,7 +184,7 @@ async fn main() -> Result<()> {
         upstream_session: upstream_session_handle,
     };
     let host_for_a_task = tokio::spawn(async move {
-        let (host_root_for_a_guard, _) = vox::acceptor_on_link(
+        let host_root_for_a_guard = vox::acceptor_on_link(
             host_a_link,
             ConnectionSettings {
                 parity: Parity::Even,
@@ -201,7 +202,7 @@ async fn main() -> Result<()> {
     });
 
     println!("[guest-a] establishing root session to host");
-    let (_guest_a_root_guard, guest_a_session_handle) = vox::initiator_on_link(
+    let _guest_a_root_guard = vox::initiator_on_link(
         guest_a_link,
         ConnectionSettings {
             parity: Parity::Odd,
@@ -213,6 +214,7 @@ async fn main() -> Result<()> {
     .establish::<vox::NoopClient>(())
     .await
     .map_err(|e| eyre!("guest-a<->host establish failed: {e:?}"))?;
+    let guest_a_session_handle = _guest_a_root_guard.session.clone().unwrap();
     println!("[guest-a] root session ready");
 
     println!("[guest-a] opening proxy vconn to host");

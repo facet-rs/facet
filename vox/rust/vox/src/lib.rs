@@ -46,7 +46,7 @@
 //! #     Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
 //! # });
 //! #
-//! let (client, _session) = initiator(tcp_connector(addr), TransportMode::Bare)
+//! let client = initiator(tcp_connector(addr), TransportMode::Bare)
 //!     .establish::<HelloClient>(())
 //!     .await?;
 //!

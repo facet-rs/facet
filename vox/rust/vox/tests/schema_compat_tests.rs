@@ -122,7 +122,7 @@ async fn v1_client_v2_server_fills_default() {
     let (client_conduit, server_conduit) = conduit_pair();
 
     let server_task = tokio::task::spawn(async move {
-        let (_server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
+        let _server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
             .establish::<point_v2::GeometryClient>(point_v2::GeometryDispatcher::new(
                 V2GeometryService,
             ))
@@ -131,7 +131,7 @@ async fn v1_client_v2_server_fills_default() {
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
+    let client = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<point_v1::GeometryClient>(())
         .await
         .expect("client handshake failed");
@@ -156,7 +156,7 @@ async fn v2_client_v1_server_skips_unknown_field() {
     let (client_conduit, server_conduit) = conduit_pair();
 
     let server_task = tokio::task::spawn(async move {
-        let (_server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
+        let _server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
             .establish::<point_v1::GeometryClient>(point_v1::GeometryDispatcher::new(
                 V1GeometryService,
             ))
@@ -165,7 +165,7 @@ async fn v2_client_v1_server_skips_unknown_field() {
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
+    let client = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<point_v2::GeometryClient>(())
         .await
         .expect("client handshake failed");
@@ -234,7 +234,7 @@ async fn reordered_fields_are_matched_by_name() {
     let (client_conduit, server_conduit) = conduit_pair();
 
     let server_task = tokio::task::spawn(async move {
-        let (_server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
+        let _server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
             .establish::<reordered_v1::PairServiceClient>(reordered_v1::PairServiceDispatcher::new(
                 PairEchoV1,
             ))
@@ -243,7 +243,7 @@ async fn reordered_fields_are_matched_by_name() {
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
+    let client = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<reordered_v2::PairServiceClient>(())
         .await
         .expect("client handshake failed");
@@ -318,7 +318,7 @@ async fn evolved_schema_combined_changes() {
     let (client_conduit, server_conduit) = conduit_pair();
 
     let server_task = tokio::task::spawn(async move {
-        let (_server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
+        let _server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
             .establish::<evolved_v1::ConfigServiceClient>(evolved_v1::ConfigServiceDispatcher::new(
                 ConfigServiceV1,
             ))
@@ -327,7 +327,7 @@ async fn evolved_schema_combined_changes() {
         std::future::pending::<()>().await;
     });
 
-    let (client, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
+    let client = initiator_conduit(client_conduit, test_initiator_handshake())
         .establish::<evolved_v2::ConfigServiceClient>(())
         .await
         .expect("client handshake failed");

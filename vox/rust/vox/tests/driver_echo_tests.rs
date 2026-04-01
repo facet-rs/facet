@@ -24,14 +24,14 @@ async fn echo_pair() -> (EchoClient, vox::NoopClient) {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
-        let (server, _sh) = vox::acceptor_on(server_link)
+        let server = vox::acceptor_on(server_link)
             .establish::<vox::NoopClient>(EchoDispatcher::new(EchoService))
             .await
             .expect("server establish");
         server
     });
 
-    let (client, _sh) = vox::initiator_on(client_link, vox::TransportMode::Bare)
+    let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
         .establish::<EchoClient>(())
         .await
         .expect("client establish");
@@ -66,7 +66,7 @@ async fn dropping_one_client_clone_keeps_session_alive() {
         tokio::sync::oneshot::channel::<tokio::task::JoinHandle<()>>();
 
     let server_task = tokio::spawn(async move {
-        let (server, _sh) = vox::acceptor_on(server_link)
+        let server = vox::acceptor_on(server_link)
             .spawn_fn(move |fut| {
                 let handle = tokio::spawn(fut);
                 let _ = server_session_tx.send(handle);
@@ -77,7 +77,7 @@ async fn dropping_one_client_clone_keeps_session_alive() {
         server
     });
 
-    let (client, _sh) = vox::initiator_on(client_link, vox::TransportMode::Bare)
+    let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
         .spawn_fn(move |fut| {
             let handle = tokio::spawn(fut);
             let _ = client_session_tx.send(handle);
@@ -121,7 +121,7 @@ async fn dropping_root_caller_shuts_down_session() {
         tokio::sync::oneshot::channel::<tokio::task::JoinHandle<()>>();
 
     let server_task = tokio::spawn(async move {
-        let (server, _sh) = vox::acceptor_on(server_link)
+        let server = vox::acceptor_on(server_link)
             .spawn_fn(move |fut| {
                 let handle = tokio::spawn(fut);
                 let _ = server_session_tx.send(handle);
@@ -132,7 +132,7 @@ async fn dropping_root_caller_shuts_down_session() {
         server
     });
 
-    let (client, _sh) = vox::initiator_on(client_link, vox::TransportMode::Bare)
+    let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
         .spawn_fn(move |fut| {
             let handle = tokio::spawn(fut);
             let _ = client_session_tx.send(handle);
@@ -171,7 +171,7 @@ async fn in_flight_call_returns_error_when_peer_closes() {
 
     // Server: establish then immediately drop to close connection.
     let server = tokio::spawn(async move {
-        let (server, _sh) = vox::acceptor_on(server_link)
+        let server = vox::acceptor_on(server_link)
             .establish::<vox::NoopClient>(EchoDispatcher::new(EchoService))
             .await
             .expect("server establish");
@@ -180,7 +180,7 @@ async fn in_flight_call_returns_error_when_peer_closes() {
         drop(server);
     });
 
-    let (client, _sh) = vox::initiator_on(client_link, vox::TransportMode::Bare)
+    let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
         .establish::<EchoClient>(())
         .await
         .expect("client establish");
