@@ -192,12 +192,14 @@ where
 #[derive(Clone)]
 pub struct PingClient {
     caller: ::vox::ErasedCaller,
+    session_handle: Option<::vox::SessionHandle>,
 }
 impl PingClient {
     #[doc = r" Create a new client wrapping the given caller."]
     pub fn new(caller: impl ::vox::Caller) -> Self {
         Self {
             caller: ::vox::ErasedCaller::new(caller),
+            session_handle: None,
         }
     }
     #[doc = r" Append a client middleware to this client."]
@@ -206,6 +208,7 @@ impl PingClient {
             caller: self
                 .caller
                 .with_middleware(ping_service_descriptor(), middleware),
+            session_handle: self.session_handle,
         }
     }
     pub async fn ping(&self) -> Result<u64, ::vox::VoxError> {
@@ -280,8 +283,19 @@ impl ::vox::VoxClient for PingClient {
         &self.caller
     }
 }
-impl From<::vox::DriverCaller> for PingClient {
-    fn from(caller: ::vox::DriverCaller) -> Self {
-        Self::new(caller)
+impl ::vox::HasSessionHandle for PingClient {
+    fn __vox_session_handle(&self) -> Option<&::vox::SessionHandle> {
+        self.session_handle.as_ref()
+    }
+}
+impl ::vox::FromVoxSession for PingClient {
+    fn from_vox_session(
+        caller: ::vox::DriverCaller,
+        session_handle: Option<::vox::SessionHandle>,
+    ) -> Self {
+        Self {
+            caller: ::vox::ErasedCaller::new(caller),
+            session_handle,
+        }
     }
 }

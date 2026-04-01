@@ -193,12 +193,14 @@ where
 #[derive(Clone)]
 pub struct AdderClient {
     caller: ::vox::ErasedCaller,
+    session_handle: Option<::vox::SessionHandle>,
 }
 impl AdderClient {
     #[doc = r" Create a new client wrapping the given caller."]
     pub fn new(caller: impl ::vox::Caller) -> Self {
         Self {
             caller: ::vox::ErasedCaller::new(caller),
+            session_handle: None,
         }
     }
     #[doc = r" Append a client middleware to this client."]
@@ -207,6 +209,7 @@ impl AdderClient {
             caller: self
                 .caller
                 .with_middleware(adder_service_descriptor(), middleware),
+            session_handle: self.session_handle,
         }
     }
     pub async fn add(&self, a: i32, b: i32) -> Result<i32, ::vox::VoxError> {
@@ -281,8 +284,19 @@ impl ::vox::VoxClient for AdderClient {
         &self.caller
     }
 }
-impl From<::vox::DriverCaller> for AdderClient {
-    fn from(caller: ::vox::DriverCaller) -> Self {
-        Self::new(caller)
+impl ::vox::HasSessionHandle for AdderClient {
+    fn __vox_session_handle(&self) -> Option<&::vox::SessionHandle> {
+        self.session_handle.as_ref()
+    }
+}
+impl ::vox::FromVoxSession for AdderClient {
+    fn from_vox_session(
+        caller: ::vox::DriverCaller,
+        session_handle: Option<::vox::SessionHandle>,
+    ) -> Self {
+        Self {
+            caller: ::vox::ErasedCaller::new(caller),
+            session_handle,
+        }
     }
 }

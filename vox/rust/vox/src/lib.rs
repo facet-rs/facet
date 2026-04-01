@@ -85,7 +85,7 @@
     feature = "transport-tcp",
     not(target_arch = "wasm32")
 ))]
-pub async fn connect<Client: From<DriverCaller>>(addr: &str) -> Result<Client, SessionError> {
+pub async fn connect<Client: FromVoxSession>(addr: &str) -> Result<Client, SessionError> {
     let (scheme, host) = match addr.split_once("://") {
         Some((scheme, host)) => (scheme, host),
         None => ("tcp", addr),

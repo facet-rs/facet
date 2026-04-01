@@ -229,7 +229,7 @@ async fn main() -> Result<()> {
     let proxy_conn_id = proxy_conn.connection_id();
 
     let mut proxy_driver = Driver::new(proxy_conn, ());
-    let proxy_client = MathTextClient::from(proxy_driver.caller());
+    let proxy_client = MathTextClient::new(proxy_driver.caller());
     let proxy_driver_task = tokio::spawn(async move { proxy_driver.run().await });
 
     println!("[guest-a] calling add via host proxy to guest-b");

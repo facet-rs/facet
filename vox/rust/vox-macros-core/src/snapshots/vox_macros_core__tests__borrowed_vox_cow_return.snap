@@ -197,12 +197,14 @@ where
 #[derive(Clone)]
 pub struct TextSvcClient {
     caller: ::vox::ErasedCaller,
+    session_handle: Option<::vox::SessionHandle>,
 }
 impl TextSvcClient {
     #[doc = r" Create a new client wrapping the given caller."]
     pub fn new(caller: impl ::vox::Caller) -> Self {
         Self {
             caller: ::vox::ErasedCaller::new(caller),
+            session_handle: None,
         }
     }
     #[doc = r" Append a client middleware to this client."]
@@ -211,6 +213,7 @@ impl TextSvcClient {
             caller: self
                 .caller
                 .with_middleware(text_svc_service_descriptor(), middleware),
+            session_handle: self.session_handle,
         }
     }
     pub async fn normalize(
@@ -295,8 +298,19 @@ impl ::vox::VoxClient for TextSvcClient {
         &self.caller
     }
 }
-impl From<::vox::DriverCaller> for TextSvcClient {
-    fn from(caller: ::vox::DriverCaller) -> Self {
-        Self::new(caller)
+impl ::vox::HasSessionHandle for TextSvcClient {
+    fn __vox_session_handle(&self) -> Option<&::vox::SessionHandle> {
+        self.session_handle.as_ref()
+    }
+}
+impl ::vox::FromVoxSession for TextSvcClient {
+    fn from_vox_session(
+        caller: ::vox::DriverCaller,
+        session_handle: Option<::vox::SessionHandle>,
+    ) -> Self {
+        Self {
+            caller: ::vox::ErasedCaller::new(caller),
+            session_handle,
+        }
     }
 }

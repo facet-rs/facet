@@ -23,7 +23,7 @@ use super::{
     CloseRequest, ConduitRecoverer, ConnectionAcceptor, OpenRequest, Session, SessionError,
     SessionHandle, SessionKeepaliveConfig,
 };
-use crate::{Driver, DriverCaller, DriverReplySink};
+use crate::{Driver, DriverReplySink, FromVoxSession};
 
 /// A pinned, boxed session future. On non-WASM this is `Send + 'static`;
 /// on WASM it's `'static` only (no `Send` requirement).
@@ -251,7 +251,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
     ///
     ///   - requiring (as an arg) a handler for the service the local peer will serve
     ///   - returning a caller for the service we expect the remote peer to serve
-    pub async fn establish<Client: From<DriverCaller>>(
+    pub async fn establish<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<(Client, SessionHandle), SessionError>
@@ -305,7 +305,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             Some(operation_store) => Driver::with_operation_store(handle, handler, operation_store),
             None => Driver::new(handle, handler),
         };
-        let client = Client::from(driver.caller());
+        let client = Client::from_vox_session(driver.caller(), Some(session_handle.clone()));
         (spawn_fn)(Box::pin(async move { session.run().await }));
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move { driver.run().await });
@@ -399,7 +399,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
         self
     }
 
-    pub async fn establish<Client: From<DriverCaller>>(
+    pub async fn establish<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<(Client, SessionHandle), SessionError>
@@ -595,7 +595,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn establish<Client: From<DriverCaller>>(
+    pub async fn establish<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<(Client, SessionHandle), SessionError>
@@ -655,7 +655,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub async fn establish<Client: From<DriverCaller>>(
+    pub async fn establish<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<(Client, SessionHandle), SessionError>
@@ -701,7 +701,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn finish_with_bare_parts<Client: From<DriverCaller>>(
+    async fn finish_with_bare_parts<Client: FromVoxSession>(
         mut link: SplitLink<L::Tx, L::Rx>,
         root_settings: ConnectionSettings,
         metadata: Metadata<'a>,
@@ -745,7 +745,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[allow(clippy::too_many_arguments)]
-    async fn finish_with_stable_parts<Client: From<DriverCaller>>(
+    async fn finish_with_stable_parts<Client: FromVoxSession>(
         mut link: SplitLink<L::Tx, L::Rx>,
         root_settings: ConnectionSettings,
         metadata: Metadata<'a>,
@@ -988,7 +988,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
     }
 
     #[moire::instrument]
-    pub async fn establish<Client: From<DriverCaller>>(
+    pub async fn establish<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<(Client, SessionHandle), SessionError>
@@ -1045,7 +1045,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             Some(operation_store) => Driver::with_operation_store(handle, handler, operation_store),
             None => Driver::new(handle, handler),
         };
-        let client = Client::from(driver.caller());
+        let client = Client::from_vox_session(driver.caller(), Some(session_handle.clone()));
         (spawn_fn)(Box::pin(async move { session.run().await }));
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move { driver.run().await });
@@ -1055,7 +1055,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
     }
 
     #[moire::instrument]
-    pub async fn establish_or_resume<Client: From<DriverCaller>>(
+    pub async fn establish_or_resume<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<SessionAcceptOutcome<Client>, SessionError>
@@ -1173,7 +1173,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
 
     #[moire::instrument]
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn establish<Client: From<DriverCaller>>(
+    pub async fn establish<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<(Client, SessionHandle), SessionError>
@@ -1249,7 +1249,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
 
     #[moire::instrument]
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn establish_or_resume<Client: From<DriverCaller>>(
+    pub async fn establish_or_resume<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<SessionAcceptOutcome<Client>, SessionError>
@@ -1323,7 +1323,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub async fn establish<Client: From<DriverCaller>>(
+    pub async fn establish<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<(Client, SessionHandle), SessionError>
@@ -1386,7 +1386,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub async fn establish_or_resume<Client: From<DriverCaller>>(
+    pub async fn establish_or_resume<Client: FromVoxSession>(
         self,
         handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<SessionAcceptOutcome<Client>, SessionError>
@@ -1450,7 +1450,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[allow(clippy::too_many_arguments)]
-    async fn finish_with_stable_parts<Client: From<DriverCaller>>(
+    async fn finish_with_stable_parts<Client: FromVoxSession>(
         mut link: SplitLink<L::Tx, L::Rx>,
         root_settings: ConnectionSettings,
         metadata: Metadata<'a>,

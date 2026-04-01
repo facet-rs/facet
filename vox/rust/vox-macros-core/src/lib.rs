@@ -819,6 +819,7 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
         #[derive(Clone)]
         pub struct #client_name {
             caller: #vox::ErasedCaller,
+            session_handle: Option<#vox::SessionHandle>,
         }
 
         impl #client_name {
@@ -826,6 +827,7 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
             pub fn new(caller: impl #vox::Caller) -> Self {
                 Self {
                     caller: #vox::ErasedCaller::new(caller),
+                    session_handle: None,
                 }
             }
 
@@ -835,6 +837,7 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
                     caller: self
                         .caller
                         .with_middleware(#descriptor_fn_name(), middleware),
+                    session_handle: self.session_handle,
                 }
             }
 
@@ -847,9 +850,21 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
             }
         }
 
-        impl From<#vox::DriverCaller> for #client_name {
-            fn from(caller: #vox::DriverCaller) -> Self {
-                Self::new(caller)
+        impl #vox::HasSessionHandle for #client_name {
+            fn __vox_session_handle(&self) -> Option<&#vox::SessionHandle> {
+                self.session_handle.as_ref()
+            }
+        }
+
+        impl #vox::FromVoxSession for #client_name {
+            fn from_vox_session(
+                caller: #vox::DriverCaller,
+                session_handle: Option<#vox::SessionHandle>,
+            ) -> Self {
+                Self {
+                    caller: #vox::ErasedCaller::new(caller),
+                    session_handle,
+                }
             }
         }
     }

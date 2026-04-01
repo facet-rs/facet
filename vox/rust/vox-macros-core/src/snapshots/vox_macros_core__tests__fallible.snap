@@ -201,12 +201,14 @@ where
 #[derive(Clone)]
 pub struct CalcClient {
     caller: ::vox::ErasedCaller,
+    session_handle: Option<::vox::SessionHandle>,
 }
 impl CalcClient {
     #[doc = r" Create a new client wrapping the given caller."]
     pub fn new(caller: impl ::vox::Caller) -> Self {
         Self {
             caller: ::vox::ErasedCaller::new(caller),
+            session_handle: None,
         }
     }
     #[doc = r" Append a client middleware to this client."]
@@ -215,6 +217,7 @@ impl CalcClient {
             caller: self
                 .caller
                 .with_middleware(calc_service_descriptor(), middleware),
+            session_handle: self.session_handle,
         }
     }
     pub async fn div(&self, a: f64, b: f64) -> Result<f64, ::vox::VoxError<DivError>> {
@@ -277,8 +280,19 @@ impl ::vox::VoxClient for CalcClient {
         &self.caller
     }
 }
-impl From<::vox::DriverCaller> for CalcClient {
-    fn from(caller: ::vox::DriverCaller) -> Self {
-        Self::new(caller)
+impl ::vox::HasSessionHandle for CalcClient {
+    fn __vox_session_handle(&self) -> Option<&::vox::SessionHandle> {
+        self.session_handle.as_ref()
+    }
+}
+impl ::vox::FromVoxSession for CalcClient {
+    fn from_vox_session(
+        caller: ::vox::DriverCaller,
+        session_handle: Option<::vox::SessionHandle>,
+    ) -> Self {
+        Self {
+            caller: ::vox::ErasedCaller::new(caller),
+            session_handle,
+        }
     }
 }

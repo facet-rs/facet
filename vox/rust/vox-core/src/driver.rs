@@ -619,6 +619,31 @@ impl ChannelSink for DriverChannelSink {
     }
 }
 
+/// Trait for constructing a typed client from a vox session.
+///
+/// Generated `*Client` types implement this to receive both the caller
+/// and an optional session handle. Root connections pass `Some(handle)`;
+/// virtual connections pass `None`.
+pub trait FromVoxSession {
+    fn from_vox_session(
+        caller: DriverCaller,
+        session_handle: Option<crate::session::SessionHandle>,
+    ) -> Self;
+}
+
+/// Access the session handle from a typed client.
+///
+/// Returns `Some` for root connection clients, `None` for virtual
+/// connection clients.
+pub fn session_handle(client: &impl HasSessionHandle) -> Option<&crate::session::SessionHandle> {
+    client.__vox_session_handle()
+}
+
+/// Implemented by generated clients to expose the optional session handle.
+pub trait HasSessionHandle {
+    fn __vox_session_handle(&self) -> Option<&crate::session::SessionHandle>;
+}
+
 /// Liveness-only handle for a connection root.
 ///
 /// Keeps the root connection alive but intentionally exposes no outbound RPC API.
@@ -626,8 +651,20 @@ impl ChannelSink for DriverChannelSink {
 #[derive(Clone)]
 pub struct NoopCaller(#[allow(dead_code)] DriverCaller);
 
-impl From<DriverCaller> for NoopCaller {
-    fn from(caller: DriverCaller) -> Self {
+impl FromVoxSession for DriverCaller {
+    fn from_vox_session(
+        caller: DriverCaller,
+        _session_handle: Option<crate::session::SessionHandle>,
+    ) -> Self {
+        caller
+    }
+}
+
+impl FromVoxSession for NoopCaller {
+    fn from_vox_session(
+        caller: DriverCaller,
+        _session_handle: Option<crate::session::SessionHandle>,
+    ) -> Self {
         Self(caller)
     }
 }

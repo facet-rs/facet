@@ -180,6 +180,28 @@ when the client disconnected) will hang forever.
 actually want resumability must opt in with `.resumable()` (and should
 also provide a recoverer or session registry).
 
+## Facade Crate Re-export Hygiene
+
+`rust/vox/src/lib.rs` currently does `pub use vox_core::*`, which dumps
+every public symbol from `vox-core` into the `vox` namespace. This
+includes internal types that shouldn't be part of the public API.
+
+The `runtime` cargo feature that gates this re-export is also
+questionable — it's in `default` features, so it's always on unless
+someone explicitly opts out, and anyone who only needs types can depend
+on `vox-types` directly.
+
+The result is that `docs.rs` for the `vox` crate shows a flat namespace
+with ~100 items mixing genuine public API (`connect`, `service`,
+`SessionHandle`) with internal machinery (`BareConduitPermit`,
+`DriverChannelSink`, `MessagePlan`, `ConnectionState`, `Session`,
+`recv_client_hello`, `exhausted_source`, etc). This makes the crate
+effectively undiscoverable.
+
+**Desired direction:** replace the glob re-export with an explicit,
+curated list of public API symbols. Consider removing the `runtime`
+feature entirely.
+
 ## Migration Approach
 
 1. Add `connect(...).await?` happy path returning typed client via inference

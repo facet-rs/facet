@@ -196,12 +196,14 @@ where
 #[derive(Clone)]
 pub struct NotifierClient {
     caller: ::vox::ErasedCaller,
+    session_handle: Option<::vox::SessionHandle>,
 }
 impl NotifierClient {
     #[doc = r" Create a new client wrapping the given caller."]
     pub fn new(caller: impl ::vox::Caller) -> Self {
         Self {
             caller: ::vox::ErasedCaller::new(caller),
+            session_handle: None,
         }
     }
     #[doc = r" Append a client middleware to this client."]
@@ -210,6 +212,7 @@ impl NotifierClient {
             caller: self
                 .caller
                 .with_middleware(notifier_service_descriptor(), middleware),
+            session_handle: self.session_handle,
         }
     }
     pub async fn notify(&self, msg: String) -> Result<(), ::vox::VoxError> {
@@ -284,8 +287,19 @@ impl ::vox::VoxClient for NotifierClient {
         &self.caller
     }
 }
-impl From<::vox::DriverCaller> for NotifierClient {
-    fn from(caller: ::vox::DriverCaller) -> Self {
-        Self::new(caller)
+impl ::vox::HasSessionHandle for NotifierClient {
+    fn __vox_session_handle(&self) -> Option<&::vox::SessionHandle> {
+        self.session_handle.as_ref()
+    }
+}
+impl ::vox::FromVoxSession for NotifierClient {
+    fn from_vox_session(
+        caller: ::vox::DriverCaller,
+        session_handle: Option<::vox::SessionHandle>,
+    ) -> Self {
+        Self {
+            caller: ::vox::ErasedCaller::new(caller),
+            session_handle,
+        }
     }
 }
