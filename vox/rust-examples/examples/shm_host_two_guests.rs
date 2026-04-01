@@ -17,7 +17,7 @@ mod unix_demo {
 
     use eyre::{Result, WrapErr, eyre};
     use shm_primitives::{FileCleanup, PeerId};
-    use vox::DriverCaller;
+    use vox::Caller;
     use vox::transport::shm::bootstrap::{decode_request, encode_request};
     use vox::transport::shm::guest_link_from_raw;
     use vox::transport::shm::varslot::SizeClassConfig;
@@ -213,7 +213,7 @@ mod unix_demo {
                 )
                 .await
                 .map_err(|e| eyre!("guest adder initiator_on_link failed: {e:?}"))?
-                .establish::<DriverCaller>(AdderDispatcher::new(AdderService))
+                .establish::<vox::NoopClient>(AdderDispatcher::new(AdderService))
                 .await
                 .map_err(|e| eyre!("guest adder handshake failed: {e:?}"))?;
                 println!("[guest:{pid}] serving Adder");
@@ -230,7 +230,7 @@ mod unix_demo {
                 )
                 .await
                 .map_err(|e| eyre!("guest reverser initiator_on_link failed: {e:?}"))?
-                .establish::<DriverCaller>(StringReverserDispatcher::new(StringReverserService))
+                .establish::<vox::NoopClient>(StringReverserDispatcher::new(StringReverserService))
                 .await
                 .map_err(|e| eyre!("guest reverser handshake failed: {e:?}"))?;
                 println!("[guest:{pid}] serving StringReverser");

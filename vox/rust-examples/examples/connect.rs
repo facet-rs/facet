@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
         let (caller, _session) = vox::acceptor_on(StreamLink::tcp(stream))
             .establish::<HelloClient>(HelloDispatcher::new(HelloService))
             .await?;
-        vox::closed(&caller).await;
+        caller.caller.closed().await;
 
         Ok::<(), eyre::Report>(())
     });

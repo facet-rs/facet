@@ -804,7 +804,7 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
 
     let client_doc = format!(
         "Client for the `{service_name}` service.\n\n\
-        Stores a type-erased [`Caller`]({vox}::Caller) implementation.",
+        Stores a [`Caller`]({vox}::Caller) and an optional [`SessionHandle`]({vox}::SessionHandle) as public fields.",
     );
 
     let client_methods: Vec<TokenStream2> = parsed
@@ -818,16 +818,18 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
         #[must_use = "Dropping this client may close the connection if it is the last caller."]
         #[derive(Clone)]
         pub struct #client_name {
-            caller: #vox::ErasedCaller,
-            session_handle: Option<#vox::SessionHandle>,
+            /// The underlying caller for making RPC calls.
+            pub caller: #vox::Caller,
+            /// The session handle, if this client is on a root connection.
+            pub session: Option<#vox::SessionHandle>,
         }
 
         impl #client_name {
             /// Create a new client wrapping the given caller.
-            pub fn new(caller: impl #vox::Caller) -> Self {
+            pub fn new(caller: #vox::Caller) -> Self {
                 Self {
-                    caller: #vox::ErasedCaller::new(caller),
-                    session_handle: None,
+                    caller,
+                    session: None,
                 }
             }
 
@@ -837,33 +839,21 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
                     caller: self
                         .caller
                         .with_middleware(#descriptor_fn_name(), middleware),
-                    session_handle: self.session_handle,
+                    session: self.session,
                 }
             }
 
             #(#client_methods)*
         }
 
-        impl #vox::VoxClient for #client_name {
-            fn __vox_caller(&self) -> &#vox::ErasedCaller {
-                &self.caller
-            }
-        }
-
-        impl #vox::HasSessionHandle for #client_name {
-            fn __vox_session_handle(&self) -> Option<&#vox::SessionHandle> {
-                self.session_handle.as_ref()
-            }
-        }
-
         impl #vox::FromVoxSession for #client_name {
             fn from_vox_session(
-                caller: #vox::DriverCaller,
-                session_handle: Option<#vox::SessionHandle>,
+                caller: #vox::Caller,
+                session: Option<#vox::SessionHandle>,
             ) -> Self {
                 Self {
-                    caller: #vox::ErasedCaller::new(caller),
-                    session_handle,
+                    caller,
+                    session,
                 }
             }
         }
@@ -982,7 +972,7 @@ fn generate_client_method(
                     metadata,
                     schemas: Default::default(),
                 };
-                let with_tracker = match #vox::Caller::call(&self.caller, req).await {
+                let with_tracker = match self.caller.call(req).await {
                     Ok(with_tracker) => with_tracker,
                     Err(e) => {
                         #finish_retry_bindings
@@ -1034,7 +1024,7 @@ fn generate_client_method(
                     metadata,
                     schemas: Default::default(),
                 };
-                let with_tracker = match #vox::Caller::call(&self.caller, req).await {
+                let with_tracker = match self.caller.call(req).await {
                     Ok(with_tracker) => with_tracker,
                     Err(e) => {
                         #finish_retry_bindings

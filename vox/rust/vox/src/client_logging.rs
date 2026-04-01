@@ -157,11 +157,7 @@ mod tests {
     };
 
     use super::{ClientLogging, ClientLoggingOptions, RedactedMetadata};
-    use crate::{
-        Caller, MetadataEntry, MetadataFlags, MetadataValue, MethodDescriptor, MethodId,
-        MiddlewareCaller, Payload, RequestCall, ServiceDescriptor, VoxError,
-    };
-    use vox_types::CallResult;
+    use crate::{MetadataEntry, MetadataFlags, MetadataValue, MethodDescriptor, MethodId};
 
     #[test]
     fn metadata_debug_redacts_sensitive_values() {
@@ -186,6 +182,8 @@ mod tests {
 
     #[tokio::test]
     async fn client_logging_emits_redacted_request_and_response_logs() {
+        use vox_core::testing::breakable_link_pair;
+
         let writer = SharedWriter::default();
         let subscriber = tracing_subscriber::registry().with(
             fmt::layer()
@@ -196,6 +194,29 @@ mod tests {
         );
         let _guard = tracing::subscriber::set_default(subscriber);
 
+        // Set up a real in-memory connection and immediately close the server
+        // side so the client caller returns SendFailed.
+        let (link_a, _break_a, link_b, break_b) = breakable_link_pair(16);
+
+        // Server side: establish and immediately close
+        let server = tokio::spawn(async move {
+            let (_caller, _sh) = crate::acceptor_on(link_b)
+                .establish::<crate::NoopClient>(())
+                .await
+                .expect("server establish");
+            // Close the link so the client gets an error on next call
+            break_b.close().await;
+        });
+
+        // Client side: establish with the logging middleware
+        let (caller, _sh) = crate::initiator_on(link_a, crate::TransportMode::Bare)
+            .establish::<crate::NoopClient>(())
+            .await
+            .expect("client establish");
+
+        server.await.expect("server task");
+
+        // Build a client with logging middleware
         static METHOD: MethodDescriptor = MethodDescriptor {
             id: MethodId(7),
             service_name: "Audit",
@@ -207,17 +228,17 @@ mod tests {
             doc: None,
         };
 
-        static SERVICE: ServiceDescriptor = ServiceDescriptor {
+        static SERVICE: crate::ServiceDescriptor = crate::ServiceDescriptor {
             service_name: "Audit",
             methods: &[&METHOD],
             doc: None,
         };
 
         let logging = ClientLogging::new(ClientLoggingOptions { log_metadata: true });
-        let caller =
-            MiddlewareCaller::new(AlwaysCancelledCaller, &SERVICE).with_middleware(logging);
+        let caller = caller.caller.with_middleware(&SERVICE, logging);
+
         let _ = caller
-            .call(RequestCall {
+            .call(crate::RequestCall {
                 method_id: MethodId(7),
                 metadata: vec![
                     MetadataEntry {
@@ -231,28 +252,36 @@ mod tests {
                         flags: MetadataFlags::NONE,
                     },
                 ],
-                args: Payload::PostcardBytes(&[]),
+                args: crate::Payload::PostcardBytes(&[]),
                 schemas: Default::default(),
             })
             .await;
 
         let output = writer.output();
-        assert!(output.contains("rpc request"));
-        assert!(output.contains("rpc response"));
-        assert!(output.contains("authorization"));
-        assert!(output.contains("[REDACTED]"));
-        assert!(!output.contains("Bearer secret"));
-        assert!(output.contains("attempt"));
-        assert!(output.contains("Cancelled"));
-    }
-
-    #[derive(Clone)]
-    struct AlwaysCancelledCaller;
-
-    impl Caller for AlwaysCancelledCaller {
-        async fn call<'a>(&'a self, _call: RequestCall<'a>) -> CallResult {
-            Err(VoxError::Cancelled)
-        }
+        assert!(
+            output.contains("rpc request"),
+            "expected 'rpc request' in output: {output}"
+        );
+        assert!(
+            output.contains("rpc response"),
+            "expected 'rpc response' in output: {output}"
+        );
+        assert!(
+            output.contains("authorization"),
+            "expected 'authorization' in output: {output}"
+        );
+        assert!(
+            output.contains("[REDACTED]"),
+            "expected '[REDACTED]' in output: {output}"
+        );
+        assert!(
+            !output.contains("Bearer secret"),
+            "expected no 'Bearer secret' in output: {output}"
+        );
+        assert!(
+            output.contains("attempt"),
+            "expected 'attempt' in output: {output}"
+        );
     }
 
     #[derive(Clone, Default)]

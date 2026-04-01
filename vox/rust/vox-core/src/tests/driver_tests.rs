@@ -7,12 +7,12 @@ use std::time::Duration;
 use moire::sync::mpsc;
 use moire::task::FutureExt;
 use vox_types::{
-    Backing, Caller, ChannelBinder, ChannelBody, ChannelClose, ChannelGrantCredit, ChannelId,
-    ChannelItem, ChannelMessage, ChannelSink, Conduit, ConduitRx, ConnectionSettings, Handler,
-    IncomingChannelMessage, Link, LinkRx, LinkTx, LinkTxPermit, Message, MessageFamily,
-    MessagePayload, Metadata, MethodId, Parity, Payload, ReplySink, RequestBody, RequestCall,
-    RequestCancel, RequestMessage, RequestResponse, RetryPolicy, SelfRef, Tx, VoxError, WriteSlot,
-    channel, ensure_operation_id, metadata_operation_id,
+    Backing, ChannelBody, ChannelClose, ChannelGrantCredit, ChannelId, ChannelItem, ChannelMessage,
+    ChannelSink, Conduit, ConduitRx, ConnectionSettings, Handler, IncomingChannelMessage, Link,
+    LinkRx, LinkTx, LinkTxPermit, Message, MessageFamily, MessagePayload, Metadata, MethodId,
+    Parity, Payload, ReplySink, RequestBody, RequestCall, RequestCancel, RequestMessage,
+    RequestResponse, RetryPolicy, SelfRef, Tx, VoxError, WriteSlot, channel, ensure_operation_id,
+    metadata_operation_id,
 };
 
 use vox_types::{HandshakeResult, SessionResumeKey, SessionRole};
@@ -24,7 +24,7 @@ use crate::session::{
 };
 use crate::{
     Attachment, BareConduit, Driver, DriverCaller, DriverReplySink, InMemoryOperationStore,
-    LinkSource, OperationStore, TransportMode, initiate_transport, memory_link_pair,
+    LinkSource, NoopClient, OperationStore, TransportMode, initiate_transport, memory_link_pair,
 };
 
 fn test_resume_key() -> SessionResumeKey {
@@ -589,7 +589,7 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
                     let handle = moire::task::spawn(fut.named("server_session"));
                     let _ = server_session_tx.send(handle);
                 })
-                .establish::<DriverCaller>(EchoHandler)
+                .establish::<NoopClient>(EchoHandler)
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -602,7 +602,7 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
             let handle = moire::task::spawn(fut.named("client_session"));
             let _ = client_session_tx.send(handle);
         })
-        .establish::<DriverCaller>(())
+        .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
 
@@ -681,7 +681,7 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(LocalEchoAcceptor)
-                .establish::<DriverCaller>(())
+                .establish::<NoopClient>(())
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -695,7 +695,7 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
                 let handle = moire::task::spawn(fut.named("client_session"));
                 let _ = client_session_tx.send(handle);
             })
-            .establish::<DriverCaller>(())
+            .establish::<NoopClient>(())
             .await
             .expect("client handshake failed");
 
@@ -760,7 +760,7 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<DriverCaller>(())
+                .establish::<NoopClient>(())
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -773,7 +773,7 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
             let handle = moire::task::spawn(fut.named("client_session"));
             let _ = client_session_tx.send(handle);
         })
-        .establish::<DriverCaller>(())
+        .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
 
@@ -860,7 +860,7 @@ async fn cancel_aborts_in_flight_handler() {
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<DriverCaller>(BlockingHandler {
+                .establish::<NoopClient>(BlockingHandler {
                     was_cancelled,
                     retry: RetryPolicy::VOLATILE,
                 })
@@ -874,7 +874,7 @@ async fn cancel_aborts_in_flight_handler() {
     // Set up client side. We need both the Caller (for sending the call) and
     // the raw sender (for sending the cancel message with the same request ID).
     let (caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<DriverCaller>(())
+        .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
     let client_sender = caller.connection_sender().clone();
@@ -954,7 +954,7 @@ async fn cancel_does_not_abort_persist_handler() {
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<DriverCaller>(PersistentReplyingHandler {
+                .establish::<NoopClient>(PersistentReplyingHandler {
                     was_cancelled,
                     release: release_server,
                 })
@@ -966,7 +966,7 @@ async fn cancel_does_not_abort_persist_handler() {
     );
 
     let (caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<DriverCaller>(())
+        .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
     let client_sender = caller.connection_sender().clone();
@@ -1027,7 +1027,7 @@ async fn caller_injects_operation_id_when_peer_supports_retry() {
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<DriverCaller>(OperationIdHandler)
+                .establish::<NoopClient>(OperationIdHandler)
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -1036,7 +1036,7 @@ async fn caller_injects_operation_id_when_peer_supports_retry() {
     );
 
     let (caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<DriverCaller>(())
+        .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
 
@@ -1070,7 +1070,7 @@ async fn builder_uses_custom_operation_store() {
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .operation_store(store)
-                .establish::<DriverCaller>(OperationIdHandler)
+                .establish::<NoopClient>(OperationIdHandler)
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -1079,7 +1079,7 @@ async fn builder_uses_custom_operation_store() {
     );
 
     let (caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<DriverCaller>(())
+        .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
 
@@ -1114,7 +1114,7 @@ async fn operation_replay_after_resume_delivers_sealed_outcome() {
             Duration::from_secs(2),
             acceptor_conduit(BareConduit::new(server_link1), test_acceptor_handshake())
                 .resumable()
-                .establish::<DriverCaller>(ReplayHandler {
+                .establish::<NoopClient>(ReplayHandler {
                     runs,
                     release: Arc::clone(&release),
                 }),
@@ -1123,7 +1123,7 @@ async fn operation_replay_after_resume_delivers_sealed_outcome() {
             Duration::from_secs(2),
             initiator_conduit(BareConduit::new(client_link1), test_initiator_handshake())
                 .resumable()
-                .establish::<DriverCaller>(()),
+                .establish::<NoopClient>(()),
         ),
     )
     .expect("initial session establishment timed out");
@@ -1221,7 +1221,7 @@ async fn duplicate_operation_id_on_same_connection_is_rejected() {
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<DriverCaller>(ReplayHandler {
+                .establish::<NoopClient>(ReplayHandler {
                     runs: Arc::new(AtomicUsize::new(0)),
                     release: release_server,
                 })
@@ -1233,7 +1233,7 @@ async fn duplicate_operation_id_on_same_connection_is_rejected() {
     );
 
     let (caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<DriverCaller>(())
+        .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
 
@@ -1359,11 +1359,11 @@ async fn call_through_cbor_handshake_reaches_handler() {
     let (server_result, client_result) = tokio::try_join!(
         tokio::time::timeout(
             Duration::from_secs(1),
-            acceptor_on(server_link).establish::<DriverCaller>(EchoHandler),
+            acceptor_on(server_link).establish::<NoopClient>(EchoHandler),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            initiator_on(client_link, TransportMode::Bare).establish::<DriverCaller>(()),
+            initiator_on(client_link, TransportMode::Bare).establish::<NoopClient>(()),
         ),
     )
     .expect("session establishment timed out");
@@ -1400,11 +1400,11 @@ async fn call_through_stable_conduit_reaches_handler() {
     let (server_result, client_result) = tokio::try_join!(
         tokio::time::timeout(
             Duration::from_secs(1),
-            acceptor_on(server_link).establish::<DriverCaller>(EchoHandler),
+            acceptor_on(server_link).establish::<NoopClient>(EchoHandler),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            initiator_on(client_link, TransportMode::Stable).establish::<DriverCaller>(()),
+            initiator_on(client_link, TransportMode::Stable).establish::<NoopClient>(()),
         ),
     )
     .expect("session establishment timed out");
@@ -1441,11 +1441,11 @@ async fn multiple_calls_through_stable_conduit() {
     let (server_result, client_result) = tokio::try_join!(
         tokio::time::timeout(
             Duration::from_secs(1),
-            acceptor_on(server_link).establish::<DriverCaller>(EchoHandler),
+            acceptor_on(server_link).establish::<NoopClient>(EchoHandler),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            initiator_on(client_link, TransportMode::Stable).establish::<DriverCaller>(()),
+            initiator_on(client_link, TransportMode::Stable).establish::<NoopClient>(()),
         ),
     )
     .expect("session establishment timed out");
@@ -1492,7 +1492,7 @@ async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
             Duration::from_secs(1),
             acceptor_conduit(server_conduit1, test_acceptor_handshake())
                 .resumable()
-                .establish::<DriverCaller>(ResumableReplyingHandler {
+                .establish::<NoopClient>(ResumableReplyingHandler {
                     started,
                     release: Arc::clone(&release),
                 }),
@@ -1501,7 +1501,7 @@ async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
             Duration::from_secs(1),
             initiator_conduit(client_conduit1, test_initiator_handshake())
                 .resumable()
-                .establish::<DriverCaller>(()),
+                .establish::<NoopClient>(()),
         ),
     )
     .expect("initial session establishment timed out");
@@ -1571,7 +1571,7 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
             Duration::from_secs(1),
             acceptor_on(server_link1)
                 .session_registry(registry.clone())
-                .establish_or_resume::<DriverCaller>(ResumableReplyingHandler {
+                .establish_or_resume::<NoopClient>(ResumableReplyingHandler {
                     started,
                     release: Arc::clone(&release),
                 }),
@@ -1580,7 +1580,7 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
             Duration::from_secs(1),
             initiator_on(client_link1, TransportMode::Bare)
                 .resumable()
-                .establish::<DriverCaller>(()),
+                .establish::<NoopClient>(()),
         ),
     )
     .expect("initial session establishment timed out");
@@ -1642,7 +1642,7 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
         },
         acceptor_on(server_link2)
             .session_registry(registry.clone())
-            .establish_or_resume::<DriverCaller>(ResumableReplyingHandler {
+            .establish_or_resume::<NoopClient>(ResumableReplyingHandler {
                 started: Arc::new(tokio::sync::Notify::new()),
                 release: Arc::clone(&release),
             }),
@@ -1695,14 +1695,14 @@ async fn resumable_source_initiator_keeps_pending_call_alive_across_auto_resume(
             Duration::from_secs(1),
             acceptor_on(server_link1)
                 .session_registry(registry.clone())
-                .establish_or_resume::<DriverCaller>(ResumableReplyingHandler {
+                .establish_or_resume::<NoopClient>(ResumableReplyingHandler {
                     started,
                     release: Arc::clone(&release),
                 }),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            crate::initiator(source, TransportMode::Bare).establish::<DriverCaller>(()),
+            crate::initiator(source, TransportMode::Bare).establish::<NoopClient>(()),
         ),
     )
     .expect("initial session establishment timed out");
@@ -1739,7 +1739,7 @@ async fn resumable_source_initiator_keeps_pending_call_alive_across_auto_resume(
         Duration::from_secs(1),
         acceptor_on(server_link2)
             .session_registry(registry.clone())
-            .establish_or_resume::<DriverCaller>(ResumableReplyingHandler {
+            .establish_or_resume::<NoopClient>(ResumableReplyingHandler {
                 started: Arc::new(tokio::sync::Notify::new()),
                 release: Arc::clone(&release),
             }),
@@ -1794,14 +1794,14 @@ async fn resumable_source_initiator_falls_back_to_fresh_session_when_resume_key_
             Duration::from_secs(1),
             acceptor_on(server_link1)
                 .session_registry(initial_registry.clone())
-                .establish_or_resume::<DriverCaller>(ResumableReplyingHandler {
+                .establish_or_resume::<NoopClient>(ResumableReplyingHandler {
                     started,
                     release: Arc::clone(&release),
                 }),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            crate::initiator(source, TransportMode::Bare).establish::<DriverCaller>(()),
+            crate::initiator(source, TransportMode::Bare).establish::<NoopClient>(()),
         ),
     )
     .expect("initial session establishment timed out");
@@ -1841,7 +1841,7 @@ async fn resumable_source_initiator_falls_back_to_fresh_session_when_resume_key_
         Duration::from_secs(1),
         acceptor_on(server_link2)
             .session_registry(restarted_registry.clone())
-            .establish_or_resume::<DriverCaller>(ResumableReplyingHandler {
+            .establish_or_resume::<NoopClient>(ResumableReplyingHandler {
                 started: restarted_started,
                 release: Arc::clone(&release),
             }),
@@ -1894,7 +1894,7 @@ async fn resumable_session_reruns_released_idem_call_after_manual_resume() {
             Duration::from_secs(1),
             acceptor_conduit(server_conduit1, test_acceptor_handshake())
                 .resumable()
-                .establish::<DriverCaller>(RetryAfterResumeHandler {
+                .establish::<NoopClient>(RetryAfterResumeHandler {
                     retry: RetryPolicy::IDEM,
                     runs: Arc::clone(&runs),
                     first_started,
@@ -1905,7 +1905,7 @@ async fn resumable_session_reruns_released_idem_call_after_manual_resume() {
             Duration::from_secs(1),
             initiator_conduit(client_conduit1, test_initiator_handshake())
                 .resumable()
-                .establish::<DriverCaller>(()),
+                .establish::<NoopClient>(()),
         ),
     )
     .expect("initial session establishment timed out");
@@ -1978,7 +1978,7 @@ async fn resumable_session_returns_indeterminate_for_released_non_idem_call_afte
             Duration::from_secs(1),
             acceptor_conduit(server_conduit1, test_acceptor_handshake())
                 .resumable()
-                .establish::<DriverCaller>(RetryAfterResumeHandler {
+                .establish::<NoopClient>(RetryAfterResumeHandler {
                     retry: RetryPolicy::VOLATILE,
                     runs: Arc::clone(&runs),
                     first_started,
@@ -1989,7 +1989,7 @@ async fn resumable_session_returns_indeterminate_for_released_non_idem_call_afte
             Duration::from_secs(1),
             initiator_conduit(client_conduit1, test_initiator_handshake())
                 .resumable()
-                .establish::<DriverCaller>(()),
+                .establish::<NoopClient>(()),
         ),
     )
     .expect("initial session establishment timed out");
@@ -2061,7 +2061,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
                     let handle = moire::task::spawn(fut);
                     let _ = session_tx.send(handle);
                 })
-                .establish::<DriverCaller>(BlockingHandler {
+                .establish::<NoopClient>(BlockingHandler {
                     was_cancelled,
                     retry: RetryPolicy::VOLATILE,
                 })
@@ -2073,7 +2073,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
     );
 
     let (caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<DriverCaller>(())
+        .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
 
@@ -2131,7 +2131,7 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<DriverCaller>(BlockingHandler {
+                .establish::<NoopClient>(BlockingHandler {
                     was_cancelled: Arc::new(AtomicBool::new(false)),
                     retry: RetryPolicy::VOLATILE,
                 })
@@ -2147,7 +2147,7 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
             ping_interval: std::time::Duration::from_millis(20),
             pong_timeout: std::time::Duration::from_millis(50),
         })
-        .establish::<DriverCaller>(())
+        .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
 
@@ -2196,7 +2196,7 @@ async fn dropping_root_caller_shuts_down_session() {
                     let handle = moire::task::spawn(fut.named("server_session"));
                     let _ = server_session_tx.send(handle);
                 })
-                .establish::<DriverCaller>(EchoHandler)
+                .establish::<NoopClient>(EchoHandler)
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -2209,7 +2209,7 @@ async fn dropping_root_caller_shuts_down_session() {
             let handle = moire::task::spawn(fut.named("client_session"));
             let _ = client_session_tx.send(handle);
         })
-        .establish::<DriverCaller>(())
+        .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
 
@@ -2284,7 +2284,7 @@ async fn open_virtual_connection_and_call() {
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(EchoAcceptor)
-                .establish::<DriverCaller>(())
+                .establish::<NoopClient>(())
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -2294,7 +2294,7 @@ async fn open_virtual_connection_and_call() {
 
     let (_client_caller_guard, session_handle) =
         initiator_conduit(client_conduit, test_initiator_handshake())
-            .establish::<DriverCaller>(())
+            .establish::<NoopClient>(())
             .await
             .expect("client handshake failed");
 
@@ -2348,7 +2348,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(EchoAcceptor)
-                .establish::<DriverCaller>(EchoHandler)
+                .establish::<NoopClient>(EchoHandler)
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -2358,7 +2358,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
 
     let (root_caller, session_handle) =
         initiator_conduit(client_conduit, test_initiator_handshake())
-            .establish::<DriverCaller>(())
+            .establish::<NoopClient>(())
             .await
             .expect("client handshake failed");
 
@@ -2445,7 +2445,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
                 },
             )
             .on_connection(EchoAcceptor)
-            .establish::<DriverCaller>(())
+            .establish::<NoopClient>(())
             .await
             .expect("server handshake failed");
             server_caller
@@ -2472,7 +2472,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
             peer_schema: vec![],
         },
     )
-    .establish::<DriverCaller>(())
+    .establish::<NoopClient>(())
     .await
     .expect("client handshake failed");
 
@@ -2522,7 +2522,7 @@ async fn acceptor_builder_customization_supports_opening_connections() {
                 },
             )
             .on_connection(EchoAcceptor)
-            .establish::<DriverCaller>(())
+            .establish::<NoopClient>(())
             .await
             .expect("initiator handshake failed");
             initiator_caller
@@ -2549,7 +2549,7 @@ async fn acceptor_builder_customization_supports_opening_connections() {
             peer_schema: vec![],
         },
     )
-    .establish::<DriverCaller>(())
+    .establish::<NoopClient>(())
     .await
     .expect("acceptor handshake failed");
 
@@ -2582,7 +2582,7 @@ async fn reject_virtual_connection() {
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(RejectAcceptor)
-                .establish::<DriverCaller>(())
+                .establish::<NoopClient>(())
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -2592,7 +2592,7 @@ async fn reject_virtual_connection() {
 
     let (_client_caller_guard, session_handle) =
         initiator_conduit(client_conduit, test_initiator_handshake())
-            .establish::<DriverCaller>(())
+            .establish::<NoopClient>(())
             .await
             .expect("client handshake failed");
 
@@ -2623,7 +2623,7 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<DriverCaller>(())
+                .establish::<NoopClient>(())
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -2633,7 +2633,7 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
 
     let (_client_caller_guard, session_handle) =
         initiator_conduit(client_conduit, test_initiator_handshake())
-            .establish::<DriverCaller>(())
+            .establish::<NoopClient>(())
             .await
             .expect("client handshake failed");
 
@@ -2663,7 +2663,7 @@ async fn close_root_connection_is_rejected() {
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<DriverCaller>(EchoHandler)
+                .establish::<NoopClient>(EchoHandler)
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -2673,7 +2673,7 @@ async fn close_root_connection_is_rejected() {
 
     let (_client_caller_guard, session_handle) =
         initiator_conduit(client_conduit, test_initiator_handshake())
-            .establish::<DriverCaller>(())
+            .establish::<NoopClient>(())
             .await
             .expect("client handshake failed");
 
@@ -2696,7 +2696,7 @@ async fn close_unknown_virtual_connection_is_rejected() {
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<DriverCaller>(EchoHandler)
+                .establish::<NoopClient>(EchoHandler)
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -2706,7 +2706,7 @@ async fn close_unknown_virtual_connection_is_rejected() {
 
     let (_client_caller_guard, session_handle) =
         initiator_conduit(client_conduit, test_initiator_handshake())
-            .establish::<DriverCaller>(())
+            .establish::<NoopClient>(())
             .await
             .expect("client handshake failed");
 
@@ -2773,7 +2773,7 @@ async fn close_virtual_connection() {
                 .on_connection(TrackingAcceptor {
                     exited: server_driver_exited,
                 })
-                .establish::<DriverCaller>(())
+                .establish::<NoopClient>(())
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -2783,7 +2783,7 @@ async fn close_virtual_connection() {
 
     let (_client_caller_guard, session_handle) =
         initiator_conduit(client_conduit, test_initiator_handshake())
-            .establish::<DriverCaller>(())
+            .establish::<NoopClient>(())
             .await
             .expect("client handshake failed");
 
@@ -2906,7 +2906,7 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
                 .on_connection(TrackingAcceptor {
                     exited: server_driver_exited,
                 })
-                .establish::<DriverCaller>(())
+                .establish::<NoopClient>(())
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -2916,7 +2916,7 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
 
     let (_client_caller_guard, session_handle) =
         initiator_conduit(client_conduit, test_initiator_handshake())
-            .establish::<DriverCaller>(())
+            .establish::<NoopClient>(())
             .await
             .expect("client handshake failed");
 
@@ -2978,7 +2978,7 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(EchoAcceptor)
-                .establish::<DriverCaller>(())
+                .establish::<NoopClient>(())
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -2988,7 +2988,7 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
 
     let (_client_caller_guard, session_handle) =
         initiator_conduit(client_conduit, test_initiator_handshake())
-            .establish::<DriverCaller>(())
+            .establish::<NoopClient>(())
             .await
             .expect("client handshake failed");
 
@@ -3036,7 +3036,7 @@ async fn echo_call_across_memory_link() {
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<DriverCaller>(EchoHandler)
+                .establish::<NoopClient>(EchoHandler)
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -3046,7 +3046,7 @@ async fn echo_call_across_memory_link() {
 
     // Set up client side (runs concurrently with server_task above).
     let (caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<DriverCaller>(())
+        .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
 
@@ -3080,7 +3080,7 @@ async fn buffers_inbound_channel_items_until_rx_is_registered() {
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<DriverCaller>(())
+                .establish::<NoopClient>(())
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -3089,7 +3089,7 @@ async fn buffers_inbound_channel_items_until_rx_is_registered() {
     );
 
     let (client_caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<DriverCaller>(())
+        .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
     let client_sender = client_caller.connection_sender().clone();
@@ -3134,7 +3134,7 @@ async fn grant_credit_unblocks_driver_created_tx_channel() {
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<DriverCaller>(())
+                .establish::<NoopClient>(())
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -3143,7 +3143,7 @@ async fn grant_credit_unblocks_driver_created_tx_channel() {
     );
 
     let (client_caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<DriverCaller>(())
+        .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
     let client_sender = client_caller.connection_sender().clone();
@@ -3195,7 +3195,7 @@ async fn buffered_close_before_registration_keeps_channel_terminal() {
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<DriverCaller>(())
+                .establish::<NoopClient>(())
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -3204,7 +3204,7 @@ async fn buffered_close_before_registration_keeps_channel_terminal() {
     );
 
     let (client_caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<DriverCaller>(())
+        .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
     let client_sender = client_caller.connection_sender().clone();
@@ -3261,7 +3261,7 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<DriverCaller>(EchoHandler)
+                .establish::<NoopClient>(EchoHandler)
                 .await
                 .expect("server handshake failed");
             (server_caller.connection_sender().clone(), server_caller)
@@ -3270,7 +3270,7 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
     );
 
     let (caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<DriverCaller>(())
+        .establish::<NoopClient>(())
         .await
         .expect("client handshake failed");
 
@@ -3377,7 +3377,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
         async move {
             let (guard, _) = acceptor_conduit(guest_b_conduit, test_acceptor_handshake())
                 .on_connection(GuestBAcceptor)
-                .establish::<DriverCaller>(())
+                .establish::<NoopClient>(())
                 .await
                 .expect("guest-b establish");
             let _guard = guard;
@@ -3388,7 +3388,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
 
     let (_host_to_b_guard, host_to_b_session) =
         initiator_conduit(host_b_conduit, test_initiator_handshake())
-            .establish::<DriverCaller>(())
+            .establish::<NoopClient>(())
             .await
             .expect("host<->guest-b establish");
 
@@ -3398,7 +3398,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
                 .on_connection(ProxyHostAcceptor {
                     upstream_session: host_to_b_session,
                 })
-                .establish::<DriverCaller>(())
+                .establish::<NoopClient>(())
                 .await
                 .expect("host<->guest-a establish");
             let _guard = guard;
@@ -3409,7 +3409,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
 
     let (_guest_a_root_guard, guest_a_session) =
         initiator_conduit(guest_a_conduit, test_initiator_handshake())
-            .establish::<DriverCaller>(())
+            .establish::<NoopClient>(())
             .await
             .expect("guest-a<->host establish");
 

@@ -25,7 +25,7 @@ const ZEROCOPY_PAYLOAD_SIZES: &[usize] = &[
 
 mod vox_zerocopy_bench {
     use moire::task::FutureExt;
-    use vox_core::{NoopCaller, TransportMode, acceptor_on, initiator_on, memory_link_pair};
+    use vox_core::{NoopClient, TransportMode, acceptor_on, initiator_on, memory_link_pair};
     use vox_shm::varslot::SizeClassConfig;
     use vox_shm::{Segment, SegmentConfig, create_test_link_pair};
     use vox_stream::StreamLink;
@@ -59,7 +59,7 @@ mod vox_zerocopy_bench {
         let _server_task = moire::task::spawn(
             async move {
                 let (_caller, _sh) = acceptor_on(b)
-                    .establish::<NoopCaller>(ZerocopyDispatcher::new(Handler))
+                    .establish::<NoopClient>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
                 let _ = server_ready_tx.send(());
@@ -123,7 +123,7 @@ mod vox_zerocopy_bench {
         let _server_task = moire::task::spawn(
             async move {
                 let (_caller, _sh) = acceptor_on(b)
-                    .establish::<NoopCaller>(ZerocopyDispatcher::new(Handler))
+                    .establish::<NoopClient>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
                 let _ = server_ready_tx.send(());
@@ -152,7 +152,7 @@ mod vox_zerocopy_bench {
                 let (stream, _) = listener.accept().await.unwrap();
                 stream.set_nodelay(true).unwrap();
                 let (_caller, _sh) = acceptor_on(StreamLink::tcp(stream))
-                    .establish::<NoopCaller>(ZerocopyDispatcher::new(Handler))
+                    .establish::<NoopClient>(ZerocopyDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
                 let _ = server_ready_tx.send(());
@@ -234,7 +234,7 @@ define_zerocopy_transport_benches!(
 
 mod vox_bench {
     use moire::task::FutureExt;
-    use vox_core::{NoopCaller, TransportMode, acceptor_on, initiator_on, memory_link_pair};
+    use vox_core::{NoopClient, TransportMode, acceptor_on, initiator_on, memory_link_pair};
 
     #[vox::service]
     pub trait Bench {
@@ -270,7 +270,7 @@ mod vox_bench {
         let _server_task = moire::task::spawn(
             async move {
                 let (_caller, _sh) = acceptor_on(b)
-                    .establish::<NoopCaller>(BenchDispatcher::new(Handler))
+                    .establish::<NoopClient>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
                 let _ = server_ready_tx.send(());
@@ -342,7 +342,7 @@ mod vox_shm_bench {
     use std::sync::Arc;
 
     use moire::task::FutureExt;
-    use vox_core::{NoopCaller, TransportMode, acceptor_on, initiator_on};
+    use vox_core::{NoopClient, TransportMode, acceptor_on, initiator_on};
     use vox_shm::varslot::SizeClassConfig;
     use vox_shm::{Segment, SegmentConfig, create_test_link_pair};
 
@@ -388,7 +388,7 @@ mod vox_shm_bench {
         let _server_task = moire::task::spawn(
             async move {
                 let (_caller, _sh) = acceptor_on(b)
-                    .establish::<NoopCaller>(BenchDispatcher::new(Handler))
+                    .establish::<NoopClient>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
                 let _ = server_ready_tx.send(());
@@ -461,7 +461,7 @@ fn vox_shm_stream(bencher: divan::Bencher, n: usize) {
 
 mod vox_tcp_bench {
     use moire::task::FutureExt;
-    use vox_core::{NoopCaller, TransportMode, acceptor_on, initiator_on};
+    use vox_core::{NoopClient, TransportMode, acceptor_on, initiator_on};
     use vox_stream::StreamLink;
 
     use tokio::net::TcpListener;
@@ -478,7 +478,7 @@ mod vox_tcp_bench {
                 let (stream, _) = listener.accept().await.unwrap();
                 stream.set_nodelay(true).unwrap();
                 let (_caller, _sh) = acceptor_on(StreamLink::tcp(stream))
-                    .establish::<NoopCaller>(BenchDispatcher::new(Handler))
+                    .establish::<NoopClient>(BenchDispatcher::new(Handler))
                     .await
                     .expect("server handshake failed");
                 let _ = server_ready_tx.send(());

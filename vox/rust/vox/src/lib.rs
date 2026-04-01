@@ -92,7 +92,6 @@ pub use vox_types::{
     BoxMiddlewareFuture,
     // Traits
     Call,
-    Caller,
     // Descriptors
     ChannelId,
     ChannelRetryMode,
@@ -108,7 +107,6 @@ pub use vox_types::{
     // Types
     ConnectionId,
     ConnectionSettings,
-    ErasedCaller,
     Extensions,
     Handler,
     HandshakeResult,
@@ -125,7 +123,6 @@ pub use vox_types::{
     MetadataValue,
     MethodDescriptor,
     MethodId,
-    MiddlewareCaller,
     MsgFamily,
     OPERATION_ID_METADATA_KEY,
     Parity,
@@ -155,15 +152,12 @@ pub use vox_types::{
     // Channels
     Tx,
     TxError,
-    VoxClient,
     VoxError,
     WithTracker,
     WriteSlot,
     // Channels
     channel,
-    closed,
     ensure_channel_retry_mode,
-    is_connected,
     observe_reply,
 };
 

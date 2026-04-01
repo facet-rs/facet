@@ -305,7 +305,10 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             Some(operation_store) => Driver::with_operation_store(handle, handler, operation_store),
             None => Driver::new(handle, handler),
         };
-        let client = Client::from_vox_session(driver.caller(), Some(session_handle.clone()));
+        let client = Client::from_vox_session(
+            crate::Caller::new(driver.caller()),
+            Some(session_handle.clone()),
+        );
         (spawn_fn)(Box::pin(async move { session.run().await }));
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move { driver.run().await });
@@ -1045,7 +1048,10 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             Some(operation_store) => Driver::with_operation_store(handle, handler, operation_store),
             None => Driver::new(handle, handler),
         };
-        let client = Client::from_vox_session(driver.caller(), Some(session_handle.clone()));
+        let client = Client::from_vox_session(
+            crate::Caller::new(driver.caller()),
+            Some(session_handle.clone()),
+        );
         (spawn_fn)(Box::pin(async move { session.run().await }));
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move { driver.run().await });

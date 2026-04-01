@@ -133,7 +133,7 @@ async fn main() -> Result<()> {
         println!("[server] client connected; establishing root session");
         let (server_root_guard, _) = vox::acceptor_on(StreamLink::tcp(socket))
             .on_connection(CounterLabAcceptor)
-            .establish::<vox::DriverCaller>(())
+            .establish::<vox::NoopClient>(())
             .await
             .expect("server establish");
         let _ = server_ready_tx.send(());
@@ -147,7 +147,7 @@ async fn main() -> Result<()> {
         .wrap_err("connecting client socket")?;
     let (_root_caller_guard, session_handle) =
         vox::initiator_on(StreamLink::tcp(socket), vox::TransportMode::Bare)
-            .establish::<vox::DriverCaller>(())
+            .establish::<vox::NoopClient>(())
             .await
             .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;
     println!("[client] root session established");
@@ -167,7 +167,7 @@ async fn main() -> Result<()> {
         .map_err(|e| eyre!("open_connection(counter) failed: {e:?}"))?;
     let counter_conn_id = counter_conn.connection_id();
     let mut counter_driver = Driver::new(counter_conn, ());
-    let counter_client = CounterLabClient::new(counter_driver.caller());
+    let counter_client = CounterLabClient::new(vox::Caller::new(counter_driver.caller()));
     let counter_driver_task = tokio::spawn(async move { counter_driver.run().await });
 
     println!("[client] opening string virtual connection");
@@ -177,7 +177,7 @@ async fn main() -> Result<()> {
         .map_err(|e| eyre!("open_connection(string) failed: {e:?}"))?;
     let string_conn_id = string_conn.connection_id();
     let mut string_driver = Driver::new(string_conn, ());
-    let string_client = StringLabClient::new(string_driver.caller());
+    let string_client = StringLabClient::new(vox::Caller::new(string_driver.caller()));
     let string_driver_task = tokio::spawn(async move { string_driver.run().await });
 
     println!("[client] calling CounterLab::bump twice");

@@ -6,9 +6,9 @@ use std::sync::{
 
 use eyre::{Result, WrapErr, eyre};
 use vox::{
-    Attachment, Backing, ConnectionSettings, DriverCaller, HandshakeResult, Link, LinkRx,
-    LinkSource, LinkTx, MemoryLink, MemoryLinkRx, MemoryLinkRxError, MemoryLinkTx, MessageFamily,
-    Parity, Rx, SessionRole, StableConduit, Tx, channel, prepare_acceptor_attachment,
+    Attachment, Backing, Caller, ConnectionSettings, HandshakeResult, Link, LinkRx, LinkSource,
+    LinkTx, MemoryLink, MemoryLinkRx, MemoryLinkRxError, MemoryLinkTx, MessageFamily, Parity, Rx,
+    SessionRole, StableConduit, Tx, channel, prepare_acceptor_attachment,
 };
 
 #[vox::service]
@@ -259,7 +259,7 @@ async fn main() -> Result<()> {
                 peer_schema: vec![],
             },
         )
-        .establish::<DriverCaller>(StableLabDispatcher::new(StableLabService::new()))
+        .establish::<vox::NoopClient>(StableLabDispatcher::new(StableLabService::new()))
         .await
         .expect("server establish");
         let _server_guard = server_guard;

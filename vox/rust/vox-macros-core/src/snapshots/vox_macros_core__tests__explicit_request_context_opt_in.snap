@@ -282,19 +282,21 @@ where
             .await;
     }
 }
-#[doc = "Client for the `Audit` service.\n\nStores a type-erased [`Caller`](:: vox::Caller) implementation."]
+#[doc = "Client for the `Audit` service.\n\nStores a [`Caller`](:: vox::Caller) and an optional [`SessionHandle`](:: vox::SessionHandle) as public fields."]
 #[must_use = "Dropping this client may close the connection if it is the last caller."]
 #[derive(Clone)]
 pub struct AuditClient {
-    caller: ::vox::ErasedCaller,
-    session_handle: Option<::vox::SessionHandle>,
+    #[doc = r" The underlying caller for making RPC calls."]
+    pub caller: ::vox::Caller,
+    #[doc = r" The session handle, if this client is on a root connection."]
+    pub session: Option<::vox::SessionHandle>,
 }
 impl AuditClient {
     #[doc = r" Create a new client wrapping the given caller."]
-    pub fn new(caller: impl ::vox::Caller) -> Self {
+    pub fn new(caller: ::vox::Caller) -> Self {
         Self {
-            caller: ::vox::ErasedCaller::new(caller),
-            session_handle: None,
+            caller,
+            session: None,
         }
     }
     #[doc = r" Append a client middleware to this client."]
@@ -303,7 +305,7 @@ impl AuditClient {
             caller: self
                 .caller
                 .with_middleware(audit_service_descriptor(), middleware),
-            session_handle: self.session_handle,
+            session: self.session,
         }
     }
     pub async fn record(
@@ -320,7 +322,7 @@ impl AuditClient {
             metadata,
             schemas: Default::default(),
         };
-        let with_tracker = match ::vox::Caller::call(&self.caller, req).await {
+        let with_tracker = match self.caller.call(req).await {
             Ok(with_tracker) => with_tracker,
             Err(e) => {
                 return Err(match e {
@@ -388,7 +390,7 @@ impl AuditClient {
             metadata,
             schemas: Default::default(),
         };
-        let with_tracker = match ::vox::Caller::call(&self.caller, req).await {
+        let with_tracker = match self.caller.call(req).await {
             Ok(with_tracker) => with_tracker,
             Err(e) => {
                 return Err(match e {
@@ -444,24 +446,8 @@ impl AuditClient {
         }
     }
 }
-impl ::vox::VoxClient for AuditClient {
-    fn __vox_caller(&self) -> &::vox::ErasedCaller {
-        &self.caller
-    }
-}
-impl ::vox::HasSessionHandle for AuditClient {
-    fn __vox_session_handle(&self) -> Option<&::vox::SessionHandle> {
-        self.session_handle.as_ref()
-    }
-}
 impl ::vox::FromVoxSession for AuditClient {
-    fn from_vox_session(
-        caller: ::vox::DriverCaller,
-        session_handle: Option<::vox::SessionHandle>,
-    ) -> Self {
-        Self {
-            caller: ::vox::ErasedCaller::new(caller),
-            session_handle,
-        }
+    fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
+        Self { caller, session }
     }
 }

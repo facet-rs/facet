@@ -1,7 +1,7 @@
 use eyre::{Result, eyre};
 use vox::{
-    AcceptedConnection, ConnectionAcceptor, ConnectionId, ConnectionSettings, Driver, DriverCaller,
-    Metadata, MetadataEntry, MetadataFlags, MetadataValue, Parity, SessionHandle,
+    AcceptedConnection, ConnectionAcceptor, ConnectionId, ConnectionSettings, Driver, Metadata,
+    MetadataEntry, MetadataFlags, MetadataValue, NoopClient, Parity, SessionHandle,
 };
 
 const PROXY_SERVICE: &str = "math_text_proxy";
@@ -156,7 +156,7 @@ async fn main() -> Result<()> {
         .await
         .expect("guest-b acceptor_on_link")
         .on_connection(UpstreamAcceptor)
-        .establish::<DriverCaller>(())
+        .establish::<vox::NoopClient>(())
         .await
         .expect("guest-b establish");
         let _guest_b_root_guard = guest_b_root_guard;
@@ -173,7 +173,7 @@ async fn main() -> Result<()> {
     )
     .await
     .map_err(|e| eyre!("host<->guest-b initiator_on_link failed: {e:?}"))?
-    .establish::<DriverCaller>(())
+    .establish::<vox::NoopClient>(())
     .await
     .map_err(|e| eyre!("host<->guest-b establish failed: {e:?}"))?;
     println!("[host] host<->guest-b root session ready");
@@ -193,7 +193,7 @@ async fn main() -> Result<()> {
         .await
         .expect("host<->guest-a acceptor_on_link")
         .on_connection(proxy_acceptor)
-        .establish::<DriverCaller>(())
+        .establish::<vox::NoopClient>(())
         .await
         .expect("host<->guest-a establish");
         let _host_root_for_a_guard = host_root_for_a_guard;
@@ -210,7 +210,7 @@ async fn main() -> Result<()> {
     )
     .await
     .map_err(|e| eyre!("guest-a<->host initiator_on_link failed: {e:?}"))?
-    .establish::<DriverCaller>(())
+    .establish::<vox::NoopClient>(())
     .await
     .map_err(|e| eyre!("guest-a<->host establish failed: {e:?}"))?;
     println!("[guest-a] root session ready");
@@ -229,7 +229,7 @@ async fn main() -> Result<()> {
     let proxy_conn_id = proxy_conn.connection_id();
 
     let mut proxy_driver = Driver::new(proxy_conn, ());
-    let proxy_client = MathTextClient::new(proxy_driver.caller());
+    let proxy_client = MathTextClient::new(vox::Caller::new(proxy_driver.caller()));
     let proxy_driver_task = tokio::spawn(async move { proxy_driver.run().await });
 
     println!("[guest-a] calling add via host proxy to guest-b");

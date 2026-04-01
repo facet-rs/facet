@@ -5,12 +5,12 @@ use shm_primitives::FileCleanup;
 use vox_shm::varslot::SizeClassConfig;
 use vox_shm::{Segment, SegmentConfig, ShmLink, create_test_link_pair};
 use vox_types::{
-    Caller, ConnectionSettings, Handler, HandshakeResult, MessageFamily, MethodId, Parity, Payload,
+    ConnectionSettings, Handler, HandshakeResult, MessageFamily, MethodId, Parity, Payload,
     ReplySink, RequestCall, RequestResponse, SelfRef, SessionRole,
 };
 
 use crate::session::{acceptor_conduit, initiator_conduit};
-use crate::{BareConduit, DriverCaller, DriverReplySink};
+use crate::{BareConduit, DriverReplySink};
 
 fn test_acceptor_handshake() -> HandshakeResult {
     HandshakeResult {
@@ -112,7 +112,7 @@ async fn echo_call_across_shm_link() {
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<DriverCaller>(EchoHandler)
+                .establish::<crate::NoopClient>(EchoHandler)
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -121,7 +121,7 @@ async fn echo_call_across_shm_link() {
     );
 
     let (caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<DriverCaller>(())
+        .establish::<crate::NoopClient>(())
         .await
         .expect("client handshake failed");
 
@@ -190,7 +190,7 @@ async fn echo_blob_stress_over_shm_link() {
     let server_task = moire::task::spawn(
         async move {
             let (server_caller, _sh) = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<DriverCaller>(BlobEchoHandler)
+                .establish::<crate::NoopClient>(BlobEchoHandler)
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -199,7 +199,7 @@ async fn echo_blob_stress_over_shm_link() {
     );
 
     let (caller, _sh) = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<DriverCaller>(())
+        .establish::<crate::NoopClient>(())
         .await
         .expect("client handshake failed");
 

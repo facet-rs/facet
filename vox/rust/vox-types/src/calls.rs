@@ -1,9 +1,8 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::pin::Pin;
 
 use crate::{
-    ClientCallOutcome, ClientContext, ClientMiddleware, ClientRequest, ConnectionId, Extensions,
-    MaybeSend, MaybeSendFuture, MaybeSync, Metadata, RequestCall, RequestId, RequestResponse,
-    SelfRef, ServiceDescriptor, VoxError,
+    ConnectionId, MaybeSend, MaybeSendFuture, MaybeSync, Metadata, RequestId, RequestResponse,
+    SelfRef, VoxError,
 };
 
 /// A boxed future that is `Send` on native targets and `!Send` on wasm32.
@@ -225,174 +224,8 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
 /// The dispatch impl decodes the args, routes by [`crate::MethodId`], and
 /// invokes the appropriate typed [`Call`]-based method on the concrete server type.
 ///
-/// Generated clients hold an [`ErasedCaller`] and use it to start API-level
-/// calls. The caller serializes the outgoing [`RequestCall`] (with borrowed
-/// args), registers a pending response slot for that request attempt, and
-/// awaits the response from the peer.
-pub trait Caller: Clone + MaybeSend + MaybeSync + 'static {
-    /// Start one outgoing request attempt for an API-level call and wait for
-    /// its response.
-    ///
-    /// Returns the wire-level response paired with the `SchemaRecvTracker` that
-    /// was active when the response was received, for schema-aware
-    /// deserialization.
-    fn call<'a>(
-        &'a self,
-        call: RequestCall<'a>,
-    ) -> impl Future<Output = CallResult> + MaybeSend + 'a;
-
-    /// Resolve when the underlying connection closes.
-    ///
-    /// Runtime-backed callers can override this to expose connection liveness.
-    /// The default implementation never resolves.
-    fn closed(&self) -> BoxFut<'_, ()> {
-        Box::pin(std::future::pending())
-    }
-
-    /// Return whether the underlying connection is still considered connected.
-    ///
-    /// Runtime-backed callers can override this to provide eager liveness
-    /// checks. The default implementation assumes the connection is live.
-    fn is_connected(&self) -> bool {
-        true
-    }
-
-    /// Return a channel binder for binding Tx/Rx handles in args before sending.
-    ///
-    /// Returns `None` by default. The driver's `Caller` implementation
-    /// overrides this to provide actual channel binding.
-    fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
-        None
-    }
-}
-
-trait ErasedCallerDyn: MaybeSend + MaybeSync + 'static {
-    fn call<'a>(&'a self, call: RequestCall<'a>) -> BoxFut<'a, CallResult>;
-
-    fn closed(&self) -> BoxFut<'_, ()>;
-
-    fn is_connected(&self) -> bool;
-
-    fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder>;
-}
-
-impl<C: Caller> ErasedCallerDyn for C {
-    fn call<'a>(&'a self, call: RequestCall<'a>) -> BoxFut<'a, CallResult> {
-        Box::pin(Caller::call(self, call))
-    }
-
-    fn closed(&self) -> BoxFut<'_, ()> {
-        Caller::closed(self)
-    }
-
-    fn is_connected(&self) -> bool {
-        Caller::is_connected(self)
-    }
-
-    fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
-        Caller::channel_binder(self)
-    }
-}
-
-/// Type-erased [`Caller`] wrapper used by generated clients.
-#[derive(Clone)]
-pub struct ErasedCaller {
-    inner: Arc<dyn ErasedCallerDyn>,
-    service: Option<&'static ServiceDescriptor>,
-    middlewares: Vec<Arc<dyn ClientMiddleware>>,
-}
-
-impl ErasedCaller {
-    pub fn new<C: Caller>(caller: C) -> Self {
-        Self {
-            inner: Arc::new(caller),
-            service: None,
-            middlewares: vec![],
-        }
-    }
-
-    pub fn with_middleware(
-        mut self,
-        service: &'static ServiceDescriptor,
-        middleware: impl ClientMiddleware,
-    ) -> Self {
-        if let Some(existing_service) = self.service {
-            assert_eq!(
-                existing_service.service_name, service.service_name,
-                "ErasedCaller middleware service mismatch"
-            );
-        } else {
-            self.service = Some(service);
-        }
-        self.middlewares.push(Arc::new(middleware));
-        self
-    }
-}
-
-impl Caller for ErasedCaller {
-    async fn call<'a>(&'a self, mut call: RequestCall<'a>) -> CallResult {
-        let Some(service) = self.service else {
-            return self.inner.call(call).await;
-        };
-
-        let extensions = Extensions::new();
-        let method = service.by_id(call.method_id);
-        let context = ClientContext::new(method, call.method_id, &extensions);
-        let mut owned_metadata = crate::client_middleware::OwnedMetadata::default();
-
-        if !self.middlewares.is_empty() {
-            for middleware in &self.middlewares {
-                let mut request = ClientRequest::new(&mut call, &mut owned_metadata);
-                middleware.pre(&context, &mut request).await;
-            }
-        }
-
-        let result = self.inner.call(call).await;
-        if !self.middlewares.is_empty() {
-            let outcome = match &result {
-                Ok(_) => ClientCallOutcome::Response,
-                Err(error) => ClientCallOutcome::Error(error),
-            };
-            for middleware in self.middlewares.iter().rev() {
-                middleware.post(&context, outcome).await;
-            }
-        }
-        result
-    }
-
-    fn closed(&self) -> BoxFut<'_, ()> {
-        self.inner.closed()
-    }
-
-    fn is_connected(&self) -> bool {
-        self.inner.is_connected()
-    }
-
-    fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
-        self.inner.channel_binder()
-    }
-}
-
-/// Implemented by generated `*Client` types to expose the underlying caller
-/// without polluting the service method namespace with inherent methods.
-///
-/// Use the free functions [`vox::closed`] and [`vox::is_connected`] instead of
-/// calling methods on this trait directly.
-pub trait VoxClient {
-    /// Access the underlying erased caller. The double-underscore name is
-    /// intentional — callers should use the free-function helpers instead.
-    fn __vox_caller(&self) -> &ErasedCaller;
-}
-
-/// Resolve when the underlying connection of a vox client closes.
-pub async fn closed(client: &impl VoxClient) {
-    Caller::closed(client.__vox_caller()).await;
-}
-
-/// Return whether the underlying connection of a vox client is still alive.
-pub fn is_connected(client: &impl VoxClient) -> bool {
-    Caller::is_connected(client.__vox_caller())
-}
+/// Generated clients hold a `Caller` (from `vox-core`) as a public field
+/// and use it to start API-level calls.
 
 pub trait Handler<R: ReplySink>: MaybeSend + MaybeSync + 'static {
     /// Return the static retry policy for a method ID served by this handler.
@@ -497,7 +330,7 @@ mod tests {
 
     use crate::{MaybeSend, Metadata, Payload, RequestCall, RequestResponse};
 
-    use super::{Call, CallResult, Caller, Handler, ReplySink, ResponseParts};
+    use super::{Call, Handler, ReplySink, ResponseParts};
 
     struct RecordingCall<T, E> {
         observed: Arc<Mutex<Option<Result<T, E>>>>,
@@ -532,15 +365,6 @@ mod tests {
                 .lock()
                 .expect("payload-kind mutex poisoned");
             *saw_outgoing = matches!(response.ret, Payload::Value { .. });
-        }
-    }
-
-    #[derive(Clone)]
-    struct NoopCaller;
-
-    impl Caller for NoopCaller {
-        async fn call<'a>(&'a self, _call: RequestCall<'a>) -> CallResult {
-            unreachable!("NoopCaller::call is not used by this test")
         }
     }
 
@@ -679,12 +503,6 @@ mod tests {
             metadata: Metadata::default(),
         };
         assert_eq!(*parts, 42);
-    }
-
-    #[test]
-    fn default_channel_binder_accessor_for_caller_returns_none() {
-        let caller = NoopCaller;
-        assert!(caller.channel_binder().is_none());
     }
 
     #[test]

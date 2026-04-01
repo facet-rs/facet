@@ -18,9 +18,9 @@ impl Hello for HelloService {
 async fn run_server(listener: tokio::net::TcpListener) -> Result<()> {
     let (stream, _) = listener.accept().await?;
     let (_caller, _session) = vox::acceptor_on(StreamLink::tcp(stream))
-        .establish::<vox::DriverCaller>(HelloDispatcher::new(HelloService))
+        .establish::<vox::NoopClient>(HelloDispatcher::new(HelloService))
         .await?;
-    vox::closed(&_caller).await;
+    _caller.caller.closed().await;
     Ok(())
 }
 

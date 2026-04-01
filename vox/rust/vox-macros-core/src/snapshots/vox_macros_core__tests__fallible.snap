@@ -196,19 +196,21 @@ where
             .await;
     }
 }
-#[doc = "Client for the `Calc` service.\n\nStores a type-erased [`Caller`](:: vox::Caller) implementation."]
+#[doc = "Client for the `Calc` service.\n\nStores a [`Caller`](:: vox::Caller) and an optional [`SessionHandle`](:: vox::SessionHandle) as public fields."]
 #[must_use = "Dropping this client may close the connection if it is the last caller."]
 #[derive(Clone)]
 pub struct CalcClient {
-    caller: ::vox::ErasedCaller,
-    session_handle: Option<::vox::SessionHandle>,
+    #[doc = r" The underlying caller for making RPC calls."]
+    pub caller: ::vox::Caller,
+    #[doc = r" The session handle, if this client is on a root connection."]
+    pub session: Option<::vox::SessionHandle>,
 }
 impl CalcClient {
     #[doc = r" Create a new client wrapping the given caller."]
-    pub fn new(caller: impl ::vox::Caller) -> Self {
+    pub fn new(caller: ::vox::Caller) -> Self {
         Self {
-            caller: ::vox::ErasedCaller::new(caller),
-            session_handle: None,
+            caller,
+            session: None,
         }
     }
     #[doc = r" Append a client middleware to this client."]
@@ -217,7 +219,7 @@ impl CalcClient {
             caller: self
                 .caller
                 .with_middleware(calc_service_descriptor(), middleware),
-            session_handle: self.session_handle,
+            session: self.session,
         }
     }
     pub async fn div(&self, a: f64, b: f64) -> Result<f64, ::vox::VoxError<DivError>> {
@@ -231,7 +233,7 @@ impl CalcClient {
             metadata,
             schemas: Default::default(),
         };
-        let with_tracker = match ::vox::Caller::call(&self.caller, req).await {
+        let with_tracker = match self.caller.call(req).await {
             Ok(with_tracker) => with_tracker,
             Err(e) => {
                 return Err(match e {
@@ -275,24 +277,8 @@ impl CalcClient {
         }
     }
 }
-impl ::vox::VoxClient for CalcClient {
-    fn __vox_caller(&self) -> &::vox::ErasedCaller {
-        &self.caller
-    }
-}
-impl ::vox::HasSessionHandle for CalcClient {
-    fn __vox_session_handle(&self) -> Option<&::vox::SessionHandle> {
-        self.session_handle.as_ref()
-    }
-}
 impl ::vox::FromVoxSession for CalcClient {
-    fn from_vox_session(
-        caller: ::vox::DriverCaller,
-        session_handle: Option<::vox::SessionHandle>,
-    ) -> Self {
-        Self {
-            caller: ::vox::ErasedCaller::new(caller),
-            session_handle,
-        }
+    fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
+        Self { caller, session }
     }
 }

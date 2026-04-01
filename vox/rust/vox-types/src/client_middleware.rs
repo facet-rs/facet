@@ -1,9 +1,7 @@
-use std::sync::Arc;
-
 use crate::server_middleware::BoxMiddlewareFuture;
 use crate::{
-    BoxFut, CallResult, Caller, Extensions, Metadata, MetadataEntry, MetadataFlags, MetadataValue,
-    MethodDescriptor, MethodId, RequestCall, ServiceDescriptor, VoxError,
+    Extensions, Metadata, MetadataEntry, MetadataFlags, MetadataValue, MethodDescriptor, MethodId,
+    RequestCall, VoxError,
 };
 
 /// Borrowed per-call context exposed to client middleware.
@@ -50,7 +48,7 @@ pub struct ClientRequest<'call, 'state> {
 }
 
 impl<'call, 'state> ClientRequest<'call, 'state> {
-    pub(crate) fn new(
+    pub fn new(
         call: &'state mut RequestCall<'call>,
         owned_metadata: &'state mut OwnedMetadata,
     ) -> Self {
@@ -122,7 +120,7 @@ impl<'call, 'state> ClientRequest<'call, 'state> {
 }
 
 #[derive(Default)]
-pub(crate) struct OwnedMetadata {
+pub struct OwnedMetadata {
     strings: Vec<Box<str>>,
     bytes: Vec<Box<[u8]>>,
 }
@@ -157,82 +155,11 @@ pub trait ClientMiddleware: Send + Sync + 'static {
     }
 }
 
-#[derive(Clone)]
-pub struct MiddlewareCaller<C> {
-    caller: C,
-    service: &'static ServiceDescriptor,
-    middlewares: Vec<Arc<dyn ClientMiddleware>>,
-}
-
-impl<C> MiddlewareCaller<C> {
-    pub fn new(caller: C, service: &'static ServiceDescriptor) -> Self {
-        Self {
-            caller,
-            service,
-            middlewares: vec![],
-        }
-    }
-
-    pub fn with_middleware(mut self, middleware: impl ClientMiddleware) -> Self {
-        self.middlewares.push(Arc::new(middleware));
-        self
-    }
-}
-
-impl<C> Caller for MiddlewareCaller<C>
-where
-    C: Caller,
-{
-    async fn call<'a>(&'a self, mut call: RequestCall<'a>) -> CallResult {
-        let extensions = Extensions::new();
-        let method = self.service.by_id(call.method_id);
-        let context = ClientContext::new(method, call.method_id, &extensions);
-        let mut owned_metadata = OwnedMetadata::default();
-        if !self.middlewares.is_empty() {
-            for middleware in &self.middlewares {
-                let mut request = ClientRequest::new(&mut call, &mut owned_metadata);
-                middleware.pre(&context, &mut request).await;
-            }
-        }
-
-        let result = self.caller.call(call).await;
-        if !self.middlewares.is_empty() {
-            let outcome = match &result {
-                Ok(_) => ClientCallOutcome::Response,
-                Err(error) => ClientCallOutcome::Error(error),
-            };
-            for middleware in self.middlewares.iter().rev() {
-                middleware.post(&context, outcome).await;
-            }
-        }
-        result
-    }
-
-    fn closed(&self) -> BoxFut<'_, ()> {
-        self.caller.closed()
-    }
-
-    fn is_connected(&self) -> bool {
-        self.caller.is_connected()
-    }
-
-    fn channel_binder(&self) -> Option<&dyn crate::ChannelBinder> {
-        self.caller.channel_binder()
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use crate::Payload;
 
-    use crate::{Backing, Payload};
-
-    use super::{
-        BoxMiddlewareFuture, ClientCallOutcome, ClientContext, ClientMiddleware, ClientRequest,
-        MetadataFlags, MethodDescriptor, MethodId, MiddlewareCaller, OwnedMetadata, RequestCall,
-    };
-    use crate::{CallResult, Caller};
-    use crate::{RequestResponse, SelfRef};
+    use super::{ClientRequest, MetadataFlags, MethodId, OwnedMetadata, RequestCall};
 
     #[test]
     fn client_request_can_add_owned_metadata() {
@@ -261,112 +188,5 @@ mod tests {
             request.metadata()[2].value,
             crate::MetadataValue::U64(7)
         ));
-    }
-
-    #[derive(Clone)]
-    struct RecordingCaller {
-        seen_metadata: Arc<Mutex<Vec<String>>>,
-    }
-
-    impl Caller for RecordingCaller {
-        async fn call<'a>(&'a self, call: RequestCall<'a>) -> CallResult {
-            let seen = call
-                .metadata
-                .iter()
-                .map(|entry| match entry.value {
-                    crate::MetadataValue::String(value) => format!("{}={value}", entry.key),
-                    crate::MetadataValue::Bytes(bytes) => {
-                        format!("{}=<{} bytes>", entry.key, bytes.len())
-                    }
-                    crate::MetadataValue::U64(value) => format!("{}={value}", entry.key),
-                })
-                .collect::<Vec<_>>();
-            *self
-                .seen_metadata
-                .lock()
-                .expect("seen metadata mutex poisoned") = seen;
-
-            Ok(crate::WithTracker {
-                value: SelfRef::owning(
-                    Backing::Boxed(Box::<[u8]>::default()),
-                    RequestResponse {
-                        metadata: vec![],
-                        ret: Payload::PostcardBytes(&[]),
-                        schemas: Default::default(),
-                    },
-                ),
-                tracker: std::sync::Arc::new(crate::SchemaRecvTracker::new()),
-            })
-        }
-    }
-
-    #[derive(Clone)]
-    struct InjectMetadata;
-
-    impl ClientMiddleware for InjectMetadata {
-        fn pre<'a, 'call>(
-            &'a self,
-            context: &'a ClientContext<'a>,
-            request: &'a mut ClientRequest<'call, 'a>,
-        ) -> BoxMiddlewareFuture<'a> {
-            Box::pin(async move {
-                context.extensions().insert(41_u32);
-                request.push_string_metadata("x-test", "value".to_string(), MetadataFlags::NONE);
-            })
-        }
-
-        fn post<'a>(
-            &'a self,
-            context: &'a ClientContext<'a>,
-            outcome: ClientCallOutcome<'a>,
-        ) -> BoxMiddlewareFuture<'a> {
-            Box::pin(async move {
-                assert_eq!(context.extensions().get_cloned::<u32>(), Some(41));
-                assert!(outcome.is_ok());
-            })
-        }
-    }
-
-    #[tokio::test]
-    async fn middleware_caller_runs_hooks_and_mutates_metadata() {
-        static METHOD: MethodDescriptor = MethodDescriptor {
-            id: MethodId(7),
-            service_name: "Audit",
-            method_name: "record",
-            args_shape: <() as facet::Facet<'static>>::SHAPE,
-            args: &[],
-            return_shape: <() as facet::Facet<'static>>::SHAPE,
-            retry: crate::RetryPolicy::VOLATILE,
-            doc: None,
-        };
-        static SERVICE: crate::ServiceDescriptor = crate::ServiceDescriptor {
-            service_name: "Audit",
-            methods: &[&METHOD],
-            doc: None,
-        };
-
-        let seen_metadata = Arc::new(Mutex::new(Vec::new()));
-        let caller = MiddlewareCaller::new(
-            RecordingCaller {
-                seen_metadata: Arc::clone(&seen_metadata),
-            },
-            &SERVICE,
-        )
-        .with_middleware(InjectMetadata);
-
-        let response: CallResult = caller
-            .call(RequestCall {
-                method_id: MethodId(7),
-                metadata: vec![],
-                args: Payload::PostcardBytes(&[]),
-                schemas: Default::default(),
-            })
-            .await;
-
-        assert!(response.is_ok());
-        assert_eq!(
-            *seen_metadata.lock().expect("seen metadata mutex poisoned"),
-            vec!["x-test=value".to_string()]
-        );
     }
 }

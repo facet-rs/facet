@@ -12,7 +12,7 @@ use tokio::sync::watch;
 
 use moire::task::FutureExt as _;
 use vox_types::{
-    BoxFut, CallResult, Caller, ChannelBinder, ChannelBody, ChannelClose, ChannelCreditReplenisher,
+    CallResult, ChannelBinder, ChannelBody, ChannelClose, ChannelCreditReplenisher,
     ChannelCreditReplenisherHandle, ChannelId, ChannelItem, ChannelLivenessHandle, ChannelMessage,
     ChannelRetryMode, ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage,
     Payload, ReplySink, RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse,
@@ -619,6 +619,113 @@ impl ChannelSink for DriverChannelSink {
     }
 }
 
+/// Concrete caller type wrapping a [`DriverCaller`] with optional middleware.
+///
+/// This is the primary type for making outbound RPC calls. Generated `*Client`
+/// types store a `Caller` as a public field. Use `with_middleware()` to add
+/// client middleware to the call chain.
+#[must_use = "Dropping this caller may close the connection if it is the last caller."]
+#[derive(Clone)]
+pub struct Caller {
+    inner: Arc<DriverCaller>,
+    service: Option<&'static vox_types::ServiceDescriptor>,
+    middlewares: Vec<Arc<dyn vox_types::ClientMiddleware>>,
+}
+
+impl Caller {
+    /// Create a new `Caller` wrapping a [`DriverCaller`].
+    pub fn new(driver: DriverCaller) -> Self {
+        Self {
+            inner: Arc::new(driver),
+            service: None,
+            middlewares: vec![],
+        }
+    }
+
+    /// Access the underlying [`DriverCaller`] for low-level operations.
+    #[cfg(test)]
+    pub(crate) fn driver(&self) -> &DriverCaller {
+        &self.inner
+    }
+
+    /// Append a client middleware to this caller's chain.
+    pub fn with_middleware(
+        mut self,
+        service: &'static vox_types::ServiceDescriptor,
+        middleware: impl vox_types::ClientMiddleware,
+    ) -> Self {
+        if let Some(existing_service) = self.service {
+            assert_eq!(
+                existing_service.service_name, service.service_name,
+                "Caller middleware service mismatch"
+            );
+        } else {
+            self.service = Some(service);
+        }
+        self.middlewares.push(Arc::new(middleware));
+        self
+    }
+
+    /// Start one outgoing request attempt and wait for its response,
+    /// running any registered middleware around the call.
+    pub async fn call(&self, mut call: RequestCall<'_>) -> CallResult {
+        use vox_types::{
+            ClientCallOutcome, ClientContext, ClientRequest, Extensions, OwnedMetadata,
+        };
+
+        let Some(service) = self.service else {
+            return self.inner.call_inner(call).await;
+        };
+
+        let extensions = Extensions::new();
+        let method = service.by_id(call.method_id);
+        let context = ClientContext::new(method, call.method_id, &extensions);
+        let mut owned_metadata = OwnedMetadata::default();
+
+        if !self.middlewares.is_empty() {
+            for middleware in &self.middlewares {
+                let mut request = ClientRequest::new(&mut call, &mut owned_metadata);
+                middleware.pre(&context, &mut request).await;
+            }
+        }
+
+        let result = self.inner.call_inner(call).await;
+        if !self.middlewares.is_empty() {
+            let outcome = match &result {
+                Ok(_) => ClientCallOutcome::Response,
+                Err(error) => ClientCallOutcome::Error(error),
+            };
+            for middleware in self.middlewares.iter().rev() {
+                middleware.post(&context, outcome).await;
+            }
+        }
+        result
+    }
+
+    /// Resolve when the underlying connection closes.
+    pub async fn closed(&self) {
+        if *self.inner.closed_rx.borrow() {
+            return;
+        }
+        let mut rx = self.inner.closed_rx.clone();
+        while rx.changed().await.is_ok() {
+            if *rx.borrow() {
+                return;
+            }
+        }
+    }
+
+    /// Return whether the underlying connection is still considered connected.
+    pub fn is_connected(&self) -> bool {
+        !*self.inner.closed_rx.borrow()
+    }
+
+    /// Return a channel binder for binding Tx/Rx handles in args before sending.
+    pub fn channel_binder(&self) -> Option<&dyn ChannelBinder> {
+        Some(self.inner.as_ref())
+    }
+}
+
 /// Trait for constructing a typed client from a vox session.
 ///
 /// Generated `*Client` types implement this to receive both the caller
@@ -626,46 +733,27 @@ impl ChannelSink for DriverChannelSink {
 /// virtual connections pass `None`.
 pub trait FromVoxSession {
     fn from_vox_session(
-        caller: DriverCaller,
+        caller: Caller,
         session_handle: Option<crate::session::SessionHandle>,
     ) -> Self;
 }
 
-/// Access the session handle from a typed client.
-///
-/// Returns `Some` for root connection clients, `None` for virtual
-/// connection clients.
-pub fn session_handle(client: &impl HasSessionHandle) -> Option<&crate::session::SessionHandle> {
-    client.__vox_session_handle()
-}
-
-/// Implemented by generated clients to expose the optional session handle.
-pub trait HasSessionHandle {
-    fn __vox_session_handle(&self) -> Option<&crate::session::SessionHandle>;
-}
-
-/// Liveness-only handle for a connection root.
+/// Liveness-only client for a connection root.
 ///
 /// Keeps the root connection alive but intentionally exposes no outbound RPC API.
-#[must_use = "Dropping NoopCaller may close the connection if it is the last caller."]
+/// Use this as the type parameter to `establish()` when you don't need a typed client.
+#[must_use = "Dropping NoopClient may close the connection if it is the last caller."]
 #[derive(Clone)]
-pub struct NoopCaller(#[allow(dead_code)] DriverCaller);
-
-impl FromVoxSession for DriverCaller {
-    fn from_vox_session(
-        caller: DriverCaller,
-        _session_handle: Option<crate::session::SessionHandle>,
-    ) -> Self {
-        caller
-    }
+pub struct NoopClient {
+    /// The underlying caller keeping the connection alive.
+    pub caller: Caller,
+    /// The session handle, if this client is on a root connection.
+    pub session: Option<crate::session::SessionHandle>,
 }
 
-impl FromVoxSession for NoopCaller {
-    fn from_vox_session(
-        caller: DriverCaller,
-        _session_handle: Option<crate::session::SessionHandle>,
-    ) -> Self {
-        Self(caller)
+impl FromVoxSession for NoopClient {
+    fn from_vox_session(caller: Caller, session: Option<crate::session::SessionHandle>) -> Self {
+        Self { caller, session }
     }
 }
 
@@ -807,7 +895,7 @@ impl ChannelBinder for DriverChannelBinder {
     }
 }
 
-/// Implements [`Caller`]: allocates a request ID, registers a response slot,
+/// Allocates a request ID, registers a response slot,
 /// sends one request attempt through the connection, and awaits the
 /// corresponding response.
 #[derive(Clone)]
@@ -903,8 +991,9 @@ impl ChannelBinder for DriverCaller {
     }
 }
 
-impl Caller for DriverCaller {
-    async fn call<'a>(&'a self, mut call: RequestCall<'a>) -> CallResult {
+impl DriverCaller {
+    /// Internal: perform a single outbound RPC call attempt (no middleware).
+    async fn call_inner(&self, mut call: RequestCall<'_>) -> CallResult {
         if self.peer_supports_retry {
             let operation_id = OperationId(
                 self.shared
@@ -1030,28 +1119,6 @@ impl Caller for DriverCaller {
             value: response,
             tracker: response_schemas,
         })
-    }
-
-    fn closed(&self) -> BoxFut<'_, ()> {
-        Box::pin(async move {
-            if *self.closed_rx.borrow() {
-                return;
-            }
-            let mut rx = self.closed_rx.clone();
-            while rx.changed().await.is_ok() {
-                if *rx.borrow() {
-                    return;
-                }
-            }
-        })
-    }
-
-    fn is_connected(&self) -> bool {
-        !*self.closed_rx.borrow()
-    }
-
-    fn channel_binder(&self) -> Option<&dyn ChannelBinder> {
-        Some(self)
     }
 }
 
