@@ -232,7 +232,7 @@ impl<'a> ServerResponse<'a> {
     pub fn new(response: &'a RequestResponse<'a>) -> Self {
         let payload = match &response.ret {
             Payload::Value { ptr, shape, .. } => {
-                let peek = unsafe { Peek::unchecked_new(*ptr, *shape) };
+                let peek = unsafe { Peek::unchecked_new(*ptr, shape) };
                 ServerResponsePayload::Value(peek)
             }
             Payload::PostcardBytes(bytes) => ServerResponsePayload::PostcardBytes(bytes),

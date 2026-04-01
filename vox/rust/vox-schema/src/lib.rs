@@ -34,7 +34,7 @@ impl CycleSchemaIndex {
     }
 
     /// Return the current index and advance to the next one.
-    pub fn next(&mut self) -> Self {
+    pub fn next_index(&mut self) -> Self {
         let current = *self;
         self.0 += 1;
         current

@@ -664,7 +664,7 @@ impl ExtractCtx {
         if let Some(&id) = self.assigned.get(&key) {
             return id;
         }
-        let id = MixedId::Temp(self.next_id.next());
+        let id = MixedId::Temp(self.next_id.next_index());
         self.assigned.insert(key, id);
         id
     }

@@ -780,11 +780,11 @@ async fn spawn_subject_cmd_with_env(
     // If it crashes immediately (non-zero exit), surface that early.
     // A fast successful exit (code 0) is fine - the test just completed quickly.
     tokio::time::sleep(Duration::from_millis(10)).await;
-    if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-        if !status.success() {
-            eprintln!("[subject:{pid}] crashed immediately: {status}");
-            return Err(format!("subject crashed immediately with {status}"));
-        }
+    if let Some(status) = child.try_wait().map_err(|e| e.to_string())?
+        && !status.success()
+    {
+        eprintln!("[subject:{pid}] crashed immediately: {status}");
+        return Err(format!("subject crashed immediately with {status}"));
     }
 
     Ok(child)

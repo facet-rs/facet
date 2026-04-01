@@ -2,7 +2,7 @@ use facet::Facet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use tokio::sync::{Notify, mpsc};
+use tokio::sync::Notify;
 use vox_types::{
     Backing, ChannelClose, ChannelItem, ChannelReset, ChannelSink, Conduit, ConduitRx, ConduitTx,
     ConduitTxPermit, IncomingChannelMessage, Metadata, MsgFamily, Payload, Rx, RxError, SelfRef,
@@ -356,7 +356,7 @@ async fn tx_send_accepts_borrowed_payloads() {
 #[tokio::test]
 async fn rx_recv_decodes_channel_items() {
     let mut rx = Rx::<u32>::unbound();
-    let (tx_items, rx_items) = mpsc::channel(4);
+    let (tx_items, rx_items) = moire::sync::mpsc::channel("vox_core.tests.rx_recv_items", 4);
     rx.bind(rx_items);
 
     let payload_bytes = vox_postcard::to_vec(&42_u32).expect("serialize channel item");
@@ -390,7 +390,7 @@ async fn rx_recv_decodes_channel_items() {
 #[tokio::test]
 async fn rx_recv_signals_reset() {
     let mut rx = Rx::<u32>::unbound();
-    let (tx_items, rx_items) = mpsc::channel(4);
+    let (tx_items, rx_items) = moire::sync::mpsc::channel("vox_core.tests.rx_recv_reset", 4);
     rx.bind(rx_items);
 
     let reset = ChannelReset {

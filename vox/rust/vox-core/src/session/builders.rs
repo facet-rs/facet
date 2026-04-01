@@ -15,7 +15,7 @@ use vox_types::{
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{Attachment, LinkSource, StableConduit};
 use crate::{
-    BareConduit, IntoConduit, NoopCaller, OperationStore, TransportMode, accept_transport,
+    BareConduit, IntoConduit, OperationStore, TransportMode, accept_transport,
     handshake_as_acceptor, handshake_as_initiator, initiate_transport,
 };
 
@@ -1090,18 +1090,17 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         if let (Some(registry), Some(resume_key)) = (
             &self.session_registry,
             self.handshake_result.peer_resume_key,
-        ) {
-            if let Some(handle) = registry.get(&resume_key) {
-                let (tx, rx) = self.conduit.split();
-                if let Err(error) = handle
-                    .resume_parts(Arc::new(tx), Box::new(rx), self.handshake_result)
-                    .await
-                {
-                    registry.remove(&resume_key);
-                    return Err(error);
-                }
-                return Ok(SessionAcceptOutcome::Resumed);
+        ) && let Some(handle) = registry.get(&resume_key)
+        {
+            let (tx, rx) = self.conduit.split();
+            if let Err(error) = handle
+                .resume_parts(Arc::new(tx), Box::new(rx), self.handshake_result)
+                .await
+            {
+                registry.remove(&resume_key);
+                return Err(error);
             }
+            return Ok(SessionAcceptOutcome::Resumed);
         }
 
         let (client, session_handle) = self.establish(handler).await?;

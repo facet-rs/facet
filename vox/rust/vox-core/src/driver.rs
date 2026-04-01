@@ -310,11 +310,10 @@ impl Drop for CallerDropGuard {
 #[cfg(test)]
 mod tests {
     use super::{DriverChannelCreditReplenisher, DriverLocalControl};
-    use tokio::sync::mpsc::error::TryRecvError;
     use vox_types::{ChannelCreditReplenisher, ChannelId};
 
-    #[test]
-    fn replenisher_batches_at_half_the_initial_window() {
+    #[tokio::test]
+    async fn replenisher_batches_at_half_the_initial_window() {
         let (tx, mut rx) = moire::sync::mpsc::unbounded_channel("test.replenisher");
         let replenisher = DriverChannelCreditReplenisher::new(ChannelId(7), 16, tx);
 
@@ -322,15 +321,17 @@ mod tests {
             replenisher.on_item_consumed();
         }
         assert!(
-            matches!(rx.try_recv(), Err(TryRecvError::Empty)),
+            tokio::time::timeout(std::time::Duration::from_millis(20), rx.recv())
+                .await
+                .is_err(),
             "should not emit credit before reaching the batch threshold"
         );
 
         replenisher.on_item_consumed();
-        let Ok(DriverLocalControl::GrantCredit {
+        let Some(DriverLocalControl::GrantCredit {
             channel_id,
             additional,
-        }) = rx.try_recv()
+        }) = rx.recv().await
         else {
             panic!("expected batched credit grant");
         };
@@ -338,16 +339,16 @@ mod tests {
         assert_eq!(additional, 8);
     }
 
-    #[test]
-    fn replenisher_grants_one_by_one_for_single_credit_windows() {
+    #[tokio::test]
+    async fn replenisher_grants_one_by_one_for_single_credit_windows() {
         let (tx, mut rx) = moire::sync::mpsc::unbounded_channel("test.replenisher.single");
         let replenisher = DriverChannelCreditReplenisher::new(ChannelId(9), 1, tx);
 
         replenisher.on_item_consumed();
-        let Ok(DriverLocalControl::GrantCredit {
+        let Some(DriverLocalControl::GrantCredit {
             channel_id,
             additional,
-        }) = rx.try_recv()
+        }) = rx.recv().await
         else {
             panic!("expected immediate credit grant");
         };
@@ -1122,7 +1123,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
     }
 
     fn abort_channel_handlers(&mut self) {
-        for (_req_id, in_flight) in &self.in_flight_handlers {
+        for in_flight in self.in_flight_handlers.values() {
             if in_flight.has_channels {
                 if let Some(operation_id) = in_flight.operation_id {
                     self.shared.operations.remove(operation_id);
