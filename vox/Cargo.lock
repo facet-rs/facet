@@ -3689,6 +3689,7 @@ dependencies = [
  "js-sys",
  "tokio",
  "tokio-tungstenite",
+ "vox-core",
  "vox-types",
  "wasm-bindgen",
  "web-sys",

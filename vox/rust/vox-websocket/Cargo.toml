@@ -23,6 +23,7 @@ vox-types.workspace = true
 tokio = { workspace = true, features = ["net", "rt", "sync"] }
 tokio-tungstenite.workspace = true
 futures-util.workspace = true
+vox-core.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true

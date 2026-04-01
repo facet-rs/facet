@@ -35,16 +35,23 @@ pub async fn connect<Client: FromVoxSession>(
     match scheme.as_str() {
         #[cfg(feature = "transport-tcp")]
         "tcp" => {
-            let addr: std::net::SocketAddr = host.parse().map_err(|e| {
-                SessionError::Protocol(format!("invalid TCP address {host:?}: {e}"))
-            })?;
+            use std::net::ToSocketAddrs;
+            let addr = host
+                .to_socket_addrs()
+                .map_err(|e| SessionError::Protocol(format!("invalid TCP address {host:?}: {e}")))?
+                .next()
+                .ok_or_else(|| {
+                    SessionError::Protocol(format!("no addresses found for {host:?}"))
+                })?;
             connect_bare(vox_stream::tcp_link_source(addr)).await
         }
         #[cfg(feature = "transport-local")]
         "local" => connect_bare(vox_stream::local_link_source(host)).await,
-        "ws" | "wss" => Err(SessionError::Protocol(
-            "WebSocket transport is not yet supported by connect()".into(),
-        )),
+        #[cfg(feature = "transport-websocket")]
+        "ws" | "wss" => {
+            let url = format!("{scheme}://{host}");
+            connect_bare(vox_websocket::ws_link_source(url)).await
+        }
         "shm" => Err(SessionError::Protocol(
             "shared-memory transport is not yet supported by connect()".into(),
         )),

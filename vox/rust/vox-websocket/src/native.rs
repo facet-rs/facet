@@ -43,6 +43,38 @@ where
     }
 }
 
+impl WsLink<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+    /// Connect to a WebSocket server at the given URL.
+    pub async fn connect(url: &str) -> Result<Self, io::Error> {
+        let (ws, _response) = tokio_tungstenite::connect_async(url)
+            .await
+            .map_err(|e| io::Error::other(e.to_string()))?;
+        Ok(Self::new(ws))
+    }
+}
+
+/// A [`LinkSource`](vox_core::LinkSource) that connects to a WebSocket URL.
+///
+/// Each call to `next_link` opens a fresh WebSocket connection, supporting
+/// reconnection via stable conduits.
+pub struct WsLinkSource {
+    url: String,
+}
+
+/// Create a [`WsLinkSource`] for the given WebSocket URL.
+pub fn ws_link_source(url: impl Into<String>) -> WsLinkSource {
+    WsLinkSource { url: url.into() }
+}
+
+impl vox_core::LinkSource for WsLinkSource {
+    type Link = WsLink<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+    async fn next_link(&mut self) -> io::Result<vox_core::Attachment<Self::Link>> {
+        let link = WsLink::connect(&self.url).await?;
+        Ok(vox_core::Attachment::initiator(link))
+    }
+}
+
 impl<S> Link for WsLink<S>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
