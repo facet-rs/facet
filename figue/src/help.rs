@@ -6,6 +6,7 @@
 use crate::missing::normalize_program_name;
 use crate::schema::{ArgLevelSchema, ArgSchema, Schema, Subcommand};
 use facet_core::Facet;
+use heck::ToKebabCase;
 use owo_colors::OwoColorize;
 use owo_colors::Stream::Stdout;
 use std::string::String;
@@ -310,7 +311,7 @@ fn write_arg_help(out: &mut String, arg: &ArgSchema) {
     } else {
         out.push_str(&format!(
             "{}",
-            format!("--{name}").if_supports_color(Stdout, |text| text.green())
+            format!("--{}", name.to_kebab_case()).if_supports_color(Stdout, |text| text.green())
         ));
 
         // Show value placeholder for non-bool, non-counted types
