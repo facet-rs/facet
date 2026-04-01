@@ -16,6 +16,7 @@ mod unix_demo {
     };
 
     use eyre::{Result, WrapErr, eyre};
+    use shm_primitives::bootstrap::BootstrapStatus;
     use shm_primitives::{FileCleanup, PeerId};
     use vox::Caller;
     use vox::transport::shm::bootstrap::{decode_request, encode_request};
