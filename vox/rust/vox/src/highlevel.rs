@@ -4,7 +4,7 @@ use vox_core::{FromVoxSession, LinkSource, SessionError, TransportMode, initiato
 ///
 /// The address string determines the transport:
 ///
-/// - `tcp://host:port` — TCP stream transport
+/// - `tcp://host:port` or bare `host:port` — TCP stream transport
 /// - `local://path` — Unix socket / Windows named pipe
 /// - `ws://host:port/path` — WebSocket transport
 /// - `shm://name` — Shared-memory transport
@@ -18,19 +18,21 @@ use vox_core::{FromVoxSession, LinkSource, SessionError, TransportMode, initiato
 /// # }
 /// # #[tokio::main(flavor = "current_thread")]
 /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let client: HelloClient = vox::connect("tcp://127.0.0.1:9000").await?;
+/// let client: HelloClient = vox::connect("127.0.0.1:9000").await?;
 /// let reply = client.say_hello().await?;
 /// # Ok(())
 /// # }
 /// ```
-pub async fn connect<Client: FromVoxSession>(addr: &str) -> Result<Client, SessionError> {
-    let Some((scheme, host)) = addr.split_once("://") else {
-        return Err(SessionError::Protocol(format!(
-            "invalid address, expected scheme://host: {addr:?}"
-        )));
+pub async fn connect<Client: FromVoxSession>(
+    addr: impl std::fmt::Display,
+) -> Result<Client, SessionError> {
+    let addr = addr.to_string();
+    let (scheme, host) = match addr.split_once("://") {
+        Some((scheme, host)) => (scheme.to_string(), host.to_string()),
+        None => ("tcp".to_string(), addr),
     };
 
-    match scheme {
+    match scheme.as_str() {
         #[cfg(feature = "transport-tcp")]
         "tcp" => connect_bare(vox_stream::tcp_connector(host)).await,
         #[cfg(feature = "transport-local")]

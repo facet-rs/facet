@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
     });
 
     // Client: the new one-liner
-    let client: HelloClient = vox::connect(&format!("tcp://{addr}")).await?;
+    let client: HelloClient = vox::connect(addr).await?;
     let reply = client.say_hello("world".into()).await?;
     assert_eq!(reply, "Hello, world!");
     println!("{reply}");
