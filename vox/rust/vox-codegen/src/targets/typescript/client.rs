@@ -191,7 +191,7 @@ pub fn generate_client_impl(service: &ServiceDescriptor) -> String {
             out.push_str(&format!(
                 "        return {{ ok: true, value }} as {ret_ty};\n"
             ));
-            out.push_str("      } catch (e) {\n");
+            out.push_str("      } catch (e: any) {\n");
             out.push_str("        if (e instanceof RpcError && e.isUserError()) {\n");
             out.push_str(&format!(
                 "          return {{ ok: false, error: e.userError }} as {ret_ty};\n"

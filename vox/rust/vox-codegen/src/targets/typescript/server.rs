@@ -65,8 +65,13 @@ pub fn generate_dispatcher_class(service: &ServiceDescriptor) -> String {
         "export class {service_name}Dispatcher implements Dispatcher {{\n"
     ));
     out.push_str(&format!(
-        "  constructor(private readonly handler: {service_name}Handler) {{}}\n\n"
+        "  private readonly handler: {service_name}Handler;\n\n"
     ));
+    out.push_str(&format!(
+        "  constructor(handler: {service_name}Handler) {{\n"
+    ));
+    out.push_str("    this.handler = handler;\n");
+    out.push_str("  }\n\n");
 
     // getDescriptor()
     out.push_str("  getDescriptor(): ServiceDescriptor {\n");

@@ -464,4 +464,38 @@ mod tests {
             "canonical struct variants must preserve the literal field name `kind`:\n{generated}"
         );
     }
+
+    #[test]
+    fn generated_typescript_avoids_parameter_properties_and_types_catch_error() {
+        let divide = method_descriptor::<(u64, u64), Result<u64, String>>(
+            "StrictSvc",
+            "divide",
+            &["lhs", "rhs"],
+            None,
+        );
+        let methods = Box::leak(vec![divide].into_boxed_slice());
+        let service = ServiceDescriptor {
+            service_name: "StrictSvc",
+            methods,
+            doc: None,
+        };
+
+        let generated = generate_service(&service);
+        assert!(
+            !generated.contains("constructor(private readonly handler"),
+            "generated TypeScript must avoid constructor parameter properties:\n{generated}"
+        );
+        assert!(
+            generated.contains("private readonly handler: StrictSvcHandler;"),
+            "dispatcher must emit an explicit handler field:\n{generated}"
+        );
+        assert!(
+            generated.contains("constructor(handler: StrictSvcHandler)"),
+            "dispatcher constructor must use explicit assignment parameter:\n{generated}"
+        );
+        assert!(
+            generated.contains("catch (e: any)"),
+            "fallible client methods must type catch binding for strict TypeScript:\n{generated}"
+        );
+    }
 }
