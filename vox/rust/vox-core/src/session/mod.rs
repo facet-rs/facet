@@ -31,11 +31,26 @@ pub struct SessionKeepaliveConfig {
 
 /// Callback for accepting or rejecting inbound virtual connections.
 ///
-/// Registered on the session via the builder's `.on_connection()` method.
-/// Called synchronously from the session run loop when a peer sends
-/// `ConnectionOpen`. The acceptor returns either an `AcceptedConnection`
-/// (with settings, metadata, and a setup callback that spawns the driver)
-/// or rejection metadata.
+/// Handles incoming connections (both root and virtual).
+///
+/// Called when a peer opens a connection. The acceptor receives the peer's
+/// metadata (including `vox-service` for service routing) and returns either
+/// an [`AcceptedConnection`] or rejection metadata.
+///
+/// Implemented for closures automatically:
+///
+/// ```ignore
+/// .on_connection(|metadata: &[MetadataEntry]| {
+///     let service = vox::metadata_get_str(metadata, "vox-service")?;
+///     match service {
+///         "Echo" => Some(Box::new(|handle| {
+///             let mut driver = Driver::new(handle, EchoDispatcher::new(EchoService));
+///             tokio::spawn(async move { driver.run().await });
+///         }) as Box<dyn FnOnce(ConnectionHandle) + Send>),
+///         _ => None,
+///     }
+/// })
+/// ```
 // r[impl rpc.virtual-connection.accept]
 pub trait ConnectionAcceptor: Send + 'static {
     fn accept(
@@ -46,43 +61,10 @@ pub trait ConnectionAcceptor: Send + 'static {
     ) -> Result<AcceptedConnection, Metadata<'static>>;
 }
 
-/// A [`ConnectionAcceptor`] that delegates to a closure.
-///
-/// The closure receives the metadata and returns an optional setup function.
-/// If `None` is returned, the connection is rejected.
-///
-/// # Example
-///
-/// ```ignore
-/// use vox::ServiceFactory;
-///
-/// let factory = ServiceFactory::new(|metadata| {
-///     let service = vox::metadata_get_str(metadata, "vox-service")?;
-///     match service {
-///         "Echo" => Some(Box::new(move |handle| {
-///             let mut driver = Driver::new(handle, EchoDispatcher::new(EchoService));
-///             tokio::spawn(async move { driver.run().await });
-///         }) as Box<dyn FnOnce(ConnectionHandle) + Send>),
-///         _ => None,
-///     }
-/// });
-/// ```
-pub struct ServiceFactory<F> {
-    factory: F,
-}
-
-impl<F> ServiceFactory<F>
-where
-    F: Fn(&[vox_types::MetadataEntry]) -> Option<Box<dyn FnOnce(ConnectionHandle) + Send>>
-        + Send
-        + 'static,
-{
-    pub fn new(factory: F) -> Self {
-        Self { factory }
-    }
-}
-
-impl<F> ConnectionAcceptor for ServiceFactory<F>
+/// Blanket impl: a closure `Fn(&[MetadataEntry]) -> Option<Box<dyn FnOnce(ConnectionHandle) + Send>>`
+/// is a `ConnectionAcceptor`. Returns `None` to reject, `Some(setup)` to accept.
+/// Settings are derived automatically (opposite parity, same max concurrent requests).
+impl<F> ConnectionAcceptor for F
 where
     F: Fn(&[vox_types::MetadataEntry]) -> Option<Box<dyn FnOnce(ConnectionHandle) + Send>>
         + Send
@@ -94,7 +76,7 @@ where
         peer_settings: &ConnectionSettings,
         metadata: &[vox_types::MetadataEntry],
     ) -> Result<AcceptedConnection, Metadata<'static>> {
-        match (self.factory)(metadata) {
+        match (self)(metadata) {
             Some(setup) => Ok(AcceptedConnection {
                 settings: ConnectionSettings {
                     parity: peer_settings.parity.other(),
