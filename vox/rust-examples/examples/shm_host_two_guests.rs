@@ -18,10 +18,10 @@ mod unix_demo {
     use eyre::{Result, WrapErr, eyre};
     use shm_primitives::{FileCleanup, PeerId};
     use vox::DriverCaller;
-    use vox_shm::bootstrap::{BootstrapStatus, decode_request, encode_request};
-    use vox_shm::guest_link_from_raw;
-    use vox_shm::varslot::SizeClassConfig;
-    use vox_shm::{HostHub, Segment, SegmentConfig, ShmLink};
+    use vox::transport::shm::bootstrap::{BootstrapStatus, decode_request, encode_request};
+    use vox::transport::shm::guest_link_from_raw;
+    use vox::transport::shm::varslot::SizeClassConfig;
+    use vox::transport::shm::{HostHub, Segment, SegmentConfig, ShmLink};
 
     #[vox::service]
     trait Adder {

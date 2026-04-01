@@ -10,9 +10,7 @@ publish = false
 
 [dependencies]
 eyre.workspace = true
-vox.workspace = true
-vox-shm.workspace = true
-vox-stream.workspace = true
+vox = { workspace = true, features = ["transport-tcp", "transport-shm"] }
 shm-primitives.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "net"] }

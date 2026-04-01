@@ -1,8 +1,8 @@
 use std::convert::Infallible;
 
 use eyre::{Result, WrapErr, eyre};
+use vox::transport::tcp::StreamLink;
 use vox::{Call, Rx, Tx, channel};
-use vox_stream::StreamLink;
 
 #[vox::service]
 trait WordLab {

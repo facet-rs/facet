@@ -4,11 +4,11 @@ use std::sync::{
 };
 
 use eyre::{Result, WrapErr, eyre};
+use vox::transport::tcp::StreamLink;
 use vox::{
     AcceptedConnection, ConnectionAcceptor, ConnectionId, ConnectionSettings, Driver, Metadata,
     MetadataEntry, MetadataFlags, MetadataValue, Parity,
 };
-use vox_stream::StreamLink;
 
 #[vox::service]
 trait CounterLab {
