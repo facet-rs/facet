@@ -80,11 +80,7 @@
 /// # Ok(())
 /// # }
 /// ```
-#[cfg(all(
-    feature = "runtime",
-    feature = "transport-tcp",
-    not(target_arch = "wasm32")
-))]
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
 pub async fn connect<Client: FromVoxSession>(addr: &str) -> Result<Client, SessionError> {
     let (scheme, host) = match addr.split_once("://") {
         Some((scheme, host)) => (scheme, host),
@@ -92,9 +88,18 @@ pub async fn connect<Client: FromVoxSession>(addr: &str) -> Result<Client, Sessi
     };
 
     match scheme {
+        #[cfg(feature = "transport-tcp")]
         "tcp" => {
             let (client, _session) =
                 initiator(vox_stream::tcp_connector(host), TransportMode::Bare)
+                    .establish::<Client>(())
+                    .await?;
+            Ok(client)
+        }
+        #[cfg(feature = "transport-local")]
+        "local" => {
+            let (client, _session) =
+                initiator(vox_stream::local_link_source(host), TransportMode::Bare)
                     .establish::<Client>(())
                     .await?;
             Ok(client)
