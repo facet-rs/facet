@@ -57,6 +57,42 @@
 //! # }
 //! ```
 
+/// Connect to a remote vox service, returning a typed client.
+///
+/// The address string determines the transport:
+///
+/// - `tcp://host:port` or `host:port` — TCP stream transport
+/// - `local://path` — Unix socket / Windows named pipe
+/// - `ws://host:port/path` — WebSocket transport
+/// - `shm://name` — Shared-memory transport
+///
+/// # Examples
+///
+/// ```no_run
+/// # #[vox::service]
+/// # trait Hello {
+/// #     async fn say_hello(&self) -> String;
+/// # }
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let client: HelloClient = vox::connect("127.0.0.1:9000").await?;
+/// let reply = client.say_hello().await?;
+/// # Ok(())
+/// # }
+/// ```
+#[cfg(all(
+    feature = "runtime",
+    feature = "transport-tcp",
+    not(target_arch = "wasm32")
+))]
+pub async fn connect<Client: From<DriverCaller>>(addr: &str) -> Result<Client, SessionError> {
+    let addr = addr.strip_prefix("tcp://").unwrap_or(addr);
+    let (client, _session) = initiator(vox_stream::tcp_connector(addr), TransportMode::Bare)
+        .establish::<Client>(())
+        .await?;
+    Ok(client)
+}
+
 mod client_logging;
 pub mod schema_deser;
 mod server_logging;

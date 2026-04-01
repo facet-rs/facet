@@ -247,25 +247,6 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
         self
     }
 
-    /// Establishes a session using a [`NoopCaller`] client.
-    ///
-    /// This is a convenience wrapper around [`Self::establish`] for cases where
-    /// the caller does not need a typed client and the provided handler is `()`.
-    ///
-    /// Returns the constructed [`NoopCaller`] together with the [`SessionHandle`]
-    /// for the newly established session.
-    pub async fn establish_call_only<Client: From<DriverCaller>>(
-        self,
-    ) -> Result<(Client, SessionHandle), SessionError>
-    where
-        C: Conduit<Msg = MessageFamily> + 'static,
-        C::Tx: MaybeSend + MaybeSync + 'static,
-        for<'p> <C::Tx as ConduitTx>::Permit<'p>: MaybeSend,
-        C::Rx: MaybeSend + 'static,
-    {
-        self.establish::<Client>(()).await
-    }
-
     /// Establish a session using the given settings, on the given link source, etc,
     ///
     ///   - requiring (as an arg) a handler for the service the local peer will serve
