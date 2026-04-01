@@ -244,6 +244,9 @@ pub struct Subcommand {
     /// Documentation for this subcommand.
     docs: Docs,
 
+    /// Optional short alias for this subcommand (e.g., `-d` for `daemon`).
+    short: Option<char>,
+
     /// Arguments for this subcommand level.
     args: ArgLevelSchema,
 
@@ -656,6 +659,11 @@ impl Subcommand {
     /// Get the arguments schema for this subcommand.
     pub fn args(&self) -> &ArgLevelSchema {
         &self.args
+    }
+
+    /// Get the short alias for this subcommand, if configured.
+    pub fn short(&self) -> Option<char> {
+        self.short
     }
 
     /// Check if this is a tuple variant with a flattened struct.

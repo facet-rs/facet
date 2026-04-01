@@ -128,6 +128,60 @@ fn test_subcommand_basic() {
     assert_eq!(args.command, Command::Build { release: false });
 }
 
+#[test]
+fn test_subcommand_short_alias() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Command {
+        Doctor,
+        #[facet(args::short = 'd')]
+        Daemon,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
+    let args: Args = figue::from_slice(&["d"]).unwrap();
+    assert_eq!(args.command, Command::Daemon);
+}
+
+#[test]
+fn test_subcommand_short_alias_only_when_not_a_flag() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum NestedCommand {
+        #[facet(args::short = 'd')]
+        Daemon,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct RepoArgs {
+        #[facet(args::subcommand)]
+        command: Option<NestedCommand>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Command {
+        Repo(RepoArgs),
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(args::named, args::short = 'd')]
+        debug: bool,
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
+    let args: Args = figue::from_slice(&["repo", "-d"]).unwrap();
+    assert!(args.debug);
+    assert_eq!(args.command, Command::Repo(RepoArgs { command: None }));
+}
+
 /// Test subcommand with kebab-case variant names
 #[test]
 fn test_subcommand_kebab_case() {

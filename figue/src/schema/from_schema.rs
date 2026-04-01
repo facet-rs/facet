@@ -540,6 +540,19 @@ fn short_from_field(field: &Field) -> Option<char> {
         })
 }
 
+fn short_from_variant(variant: &Variant) -> Option<char> {
+    variant
+        .get_attr(Some("args"), "short")
+        .and_then(|attr| attr.get_as::<Attr>())
+        .and_then(|attr| {
+            if let Attr::Short(c) = attr {
+                c.or_else(|| variant.effective_name().chars().next())
+            } else {
+                None
+            }
+        })
+}
+
 fn variant_fields_for_schema(variant: &Variant) -> &'static [Field] {
     let fields = variant.data.fields;
     if is_flattened_tuple_variant(variant) {
@@ -592,6 +605,7 @@ fn arg_level_from_fields_with_prefix(
     let mut seen_long: HashMap<String, SchemaErrorContext> = HashMap::new();
     let mut seen_short: HashMap<char, SchemaErrorContext> = HashMap::new();
     let mut seen_subcommands: HashMap<String, SchemaErrorContext> = HashMap::new();
+    let mut seen_subcommand_short: HashMap<char, SchemaErrorContext> = HashMap::new();
 
     let mut first_subcommand_field: Option<SchemaErrorContext> = None;
 
@@ -778,16 +792,40 @@ fn arg_level_from_fields_with_prefix(
                 // effective_name respects #[facet(rename = "...")], used for deserialization
                 let effective_name = variant.effective_name().to_string();
                 let docs = docs_from_lines(variant.doc);
+                let short = short_from_variant(variant);
                 let variant_fields = variant_fields_for_schema(variant);
                 let variant_ctx =
                     SchemaErrorContext::root(enum_shape).with_variant(cli_name.clone());
                 let args_schema = arg_level_from_fields(variant_fields, &variant_ctx)?;
                 let is_flattened_tuple = is_flattened_tuple_variant(variant);
 
+                if let Some(short) = short {
+                    if let Some(existing_ctx) = seen_subcommand_short.get(&short) {
+                        return Err(SchemaError::new(
+                            existing_ctx.clone(),
+                            format!("duplicate subcommand short alias `{short}`"),
+                        )
+                        .with_primary_label(format!("`{short}` first defined here"))
+                        .with_label(variant_ctx.clone(), "defined again here"));
+                    }
+                    if let Some(existing_ctx) = seen_subcommands.get(&short.to_string()) {
+                        return Err(SchemaError::new(
+                            existing_ctx.clone(),
+                            format!(
+                                "subcommand short alias `{short}` conflicts with existing subcommand name"
+                            ),
+                        )
+                        .with_primary_label("conflicting name defined here")
+                        .with_label(variant_ctx.clone(), "conflicting short alias defined here"));
+                    }
+                    seen_subcommand_short.insert(short, variant_ctx.clone());
+                }
+
                 let sub = Subcommand {
                     name: cli_name.clone(),
                     effective_name: effective_name.clone(),
                     docs,
+                    short,
                     args: args_schema,
                     is_flattened_tuple,
                     shape: enum_shape,

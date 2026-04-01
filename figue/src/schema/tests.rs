@@ -128,6 +128,50 @@ struct ConflictingShortFlags {
 }
 
 #[derive(Facet)]
+#[repr(u8)]
+enum SubcommandWithShort {
+    #[facet(args::short = 'd')]
+    Daemon,
+    Doctor,
+}
+
+#[derive(Facet)]
+struct ArgsWithSubcommandShort {
+    #[facet(args::subcommand)]
+    command: SubcommandWithShort,
+}
+
+#[derive(Facet)]
+#[repr(u8)]
+enum SubcommandShortConflictsWithFlagCommand {
+    #[facet(args::short = 'd')]
+    Daemon,
+}
+
+#[derive(Facet)]
+struct SubcommandShortConflictsWithFlag {
+    #[facet(args::named, args::short = 'd')]
+    debug: bool,
+    #[facet(args::subcommand)]
+    command: SubcommandShortConflictsWithFlagCommand,
+}
+
+#[derive(Facet)]
+#[repr(u8)]
+enum SubcommandShortConflictsCommand {
+    #[facet(args::short = 'd')]
+    Daemon,
+    #[facet(args::short = 'd')]
+    Doctor,
+}
+
+#[derive(Facet)]
+struct SubcommandShortConflicts {
+    #[facet(args::subcommand)]
+    command: SubcommandShortConflictsCommand,
+}
+
+#[derive(Facet)]
 struct BadConfigField {
     #[facet(args::config)]
     config: String,
@@ -187,6 +231,34 @@ fn snapshot_schema_conflicting_long_flags() {
 #[test]
 fn snapshot_schema_conflicting_short_flags() {
     assert_schema_snapshot!(Schema::from_shape(ConflictingShortFlags::SHAPE));
+}
+
+#[test]
+fn test_schema_subcommand_short_stored() {
+    let schema = Schema::from_shape(ArgsWithSubcommandShort::SHAPE).unwrap();
+    let daemon = schema
+        .args()
+        .subcommands()
+        .values()
+        .find(|sub| sub.cli_name() == "daemon")
+        .unwrap();
+    assert_eq!(daemon.short(), Some('d'));
+}
+
+#[test]
+fn test_schema_subcommand_short_conflicts_with_flag() {
+    Schema::from_shape(SubcommandShortConflictsWithFlag::SHAPE)
+        .expect("subcommand short alias 'd' should not conflict with flag short '-d'");
+}
+
+#[test]
+fn test_schema_subcommand_short_conflicts_with_subcommand_short() {
+    let result = Schema::from_shape(SubcommandShortConflicts::SHAPE);
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("duplicate subcommand short alias `d`"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
