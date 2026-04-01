@@ -47,35 +47,67 @@ let msg = client.say_hello().await?;
 explicitly deferred for now; advanced bidirectional cases continue using the
 existing lower-level APIs.
 
-## Generated Client: Session Access Without Name Clashes
+## Generated Client: Public Fields, No Traits
 
-We should not add arbitrary inherent methods to generated `*Client` types,
-because service methods can clash with any added method names.
+**Problem:** Generated clients need access to the caller (for connection
+lifecycle) and session handle (for virtual connections). Previous attempts
+used traits (`VoxClient`, `HasSessionHandle`, `VoxSessionCarrier`) and
+free functions (`vox::closed()`, `vox::session_handle()`). This created
+a mess: `DriverCaller` and generated clients used different traits,
+free functions only accepted one kind, and the whole thing was confusing.
 
-**Current state (to fix):** the macro already generates these inherent methods
-on every `*Client` type (`vox-macros-core/src/lib.rs`):
-
-- `fn new(caller: impl Caller) -> Self`
-- `fn with_middleware(self, middleware: impl ClientMiddleware) -> Self`
-- `async fn closed(&self)`
-- `fn is_connected(&self) -> bool`
-
-Any service that defines methods with these names will collide. These must be
-moved behind the `VoxSessionCarrier` trait / free functions described below.
-
-Use trait + helper function:
+**Solution:** Public fields. Fields don't clash with methods.
 
 ```rust
-pub trait VoxSessionCarrier {
-    fn __vox_session_handle(&self) -> &vox::SessionHandle;
-}
-
-pub fn session_handle<T: VoxSessionCarrier + ?Sized>(value: &T) -> &vox::SessionHandle {
-    value.__vox_session_handle()
+pub struct HelloClient {
+    pub caller: Caller,
+    pub session: Option<SessionHandle>,
+    // ... generated service methods
 }
 ```
 
-Generated clients implement `VoxSessionCarrier`.
+Usage:
+
+```rust
+client.caller.closed().await;       // wait for connection close
+client.caller.is_connected();       // check liveness
+client.session.as_ref();            // access session handle
+client.say_hello("world").await?;   // service method — no clash
+```
+
+This eliminates:
+- `VoxClient` trait
+- `HasSessionHandle` trait
+- `FromVoxSession` trait
+- `vox::closed()` free function
+- `vox::is_connected()` free function
+- `vox::session_handle()` free function
+
+### `Caller` as a concrete type
+
+`Caller` becomes a single concrete struct — no trait. Today there's a
+`Caller` trait implemented by `DriverCaller`, `ErasedCaller`, and
+`MiddlewareCaller`, but `DriverCaller` is the only real implementation.
+The others just wrap it.
+
+The new `Caller` struct owns the connection state directly (what
+`DriverCaller` has today) plus an optional middleware chain (what
+`ErasedCaller` adds). One type, inside and outside.
+
+Methods: `closed()`, `is_connected()`, `with_middleware()`, and the
+internal `call()` used by generated client methods.
+
+**Next steps:**
+
+1. Merge `DriverCaller` + `ErasedCaller` + middleware into one `Caller` struct
+2. Kill the `Caller` trait, `VoxClient`, `HasSessionHandle`, `FromVoxSession`
+3. Update macro: generated clients get `pub caller: Caller` and
+   `pub session: Option<SessionHandle>` fields
+4. Update `establish()` to construct clients with the new fields
+5. Update all examples and tests
+
+**Open:** naming — should it be `Caller`? Should `SessionHandle` remain
+separate or merge into `Caller`? To be decided after implementation.
 
 This avoids polluting the service method namespace while keeping advanced
 session operations available.

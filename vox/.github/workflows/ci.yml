@@ -75,20 +75,14 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Run borrowed/channels example
-        run: cargo run -p rust-examples --example borrowed_and_channels
-
-      - name: Run virtual-connections example
-        run: cargo run -p rust-examples --example virtual_connections
-
-      - name: Run memory proxying example
-        run: cargo run -p rust-examples --example memory_proxying
-
-      - name: Run SHM host-two-guests example
-        run: cargo run -p rust-examples --example shm_host_two_guests
-
-      - name: Run stable-conduit reconnect example
-        run: cargo run -p rust-examples --example stable_conduit_reconnect
+      - name: Run all examples
+        run: |
+          for example in rust-examples/examples/*.rs; do
+            name="$(basename "${example}" .rs)"
+            echo "::group::${name}"
+            cargo run -p rust-examples --example "${name}"
+            echo "::endgroup::"
+          done
 
   rust-miri:
     name: Rust / Miri
