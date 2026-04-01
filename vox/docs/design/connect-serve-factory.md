@@ -211,6 +211,27 @@ feature entirely.
 5. Add root metadata support so root and virtual selection are symmetric
 6. Keep existing builders as lower-level escape hatch during migration
 
+## SHM Transport in `connect()`
+
+The SHM bootstrap protocol (in `shm-primitives/src/bootstrap.rs`) is:
+
+1. Guest connects to a Unix control socket
+2. Guest sends a bootstrap request frame (magic + SID bytes)
+3. Host validates, reserves a peer slot, sends back response frame + FDs
+   (doorbell, segment, mmap control) via SCM_RIGHTS
+4. Guest attaches to segment, claims peer slot, builds `ShmLink`
+
+For `connect("shm:///path/to/control.sock")`, we need a `ShmLinkSource`
+that does steps 1-4 on each `next_link()` call.
+
+The SID field in the bootstrap request is application-level — vixen uses
+it to match sessions, but the wire protocol treats it as opaque bytes.
+For `connect()`, the SID handling needs to be clarified: the current
+bootstrap code in vixen may be legacy. The SID could be empty, derived
+from the socket path, or passed as a parameter.
+
+**Status**: Not yet implemented. Needs SID story clarified first.
+
 ## Open Questions
 
 - Exact wire format for root metadata (handshake extension vs separate open-like step)
@@ -218,3 +239,4 @@ feature entirely.
 - Whether factory creation can be fallible with structured rejection metadata
 - Whether factory should be async trait, closure, or both
 - How to stage behavior changes for root caller-drop semantics safely
+- SHM bootstrap SID: what should `connect()` send? Empty? Socket-path-derived? Caller-provided?
