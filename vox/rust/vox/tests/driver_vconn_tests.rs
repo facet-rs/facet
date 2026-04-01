@@ -38,10 +38,7 @@ impl ConnectionAcceptor for VconnEchoAcceptor {
                 max_concurrent_requests: 64,
             },
             metadata: vec![],
-            setup: Box::new(move |handle| {
-                let mut driver = Driver::new(handle, EchoDispatcher::new(EchoService));
-                tokio::spawn(async move { driver.run().await });
-            }),
+            handler: Box::new(EchoDispatcher::new(EchoService)),
         })
     }
 }
@@ -211,13 +208,9 @@ impl ConnectionAcceptor for CounterAcceptor {
                 max_concurrent_requests: 64,
             },
             metadata: vec![],
-            setup: Box::new(move |handle| {
-                let svc = CounterService {
-                    count: std::sync::Arc::new(AtomicU32::new(0)),
-                };
-                let mut driver = Driver::new(handle, CounterDispatcher::new(svc));
-                tokio::spawn(async move { driver.run().await });
-            }),
+            handler: Box::new(CounterDispatcher::new(CounterService {
+                count: std::sync::Arc::new(AtomicU32::new(0)),
+            })),
         })
     }
 }

@@ -72,22 +72,12 @@ impl ConnectionAcceptor for CounterLabAcceptor {
             Some("counter") => Ok(AcceptedConnection {
                 settings,
                 metadata: vec![],
-                setup: Box::new(|handle| {
-                    println!("[server] accepted vconn as CounterLab");
-                    let mut driver =
-                        Driver::new(handle, CounterLabDispatcher::new(CounterLabService::new()));
-                    tokio::spawn(async move { driver.run().await });
-                }),
+                handler: Box::new(CounterLabDispatcher::new(CounterLabService::new())),
             }),
             Some("string") => Ok(AcceptedConnection {
                 settings,
                 metadata: vec![],
-                setup: Box::new(|handle| {
-                    println!("[server] accepted vconn as StringLab");
-                    let mut driver =
-                        Driver::new(handle, StringLabDispatcher::new(StringLabService));
-                    tokio::spawn(async move { driver.run().await });
-                }),
+                handler: Box::new(StringLabDispatcher::new(StringLabService)),
             }),
             _ => Err(vec![MetadataEntry {
                 key: "error".into(),

@@ -13,6 +13,13 @@ use crate::{
     BareConduit, MemoryLink, TransportMode, accept_transport, initiate_transport, memory_link_pair,
 };
 
+mod credit_tests;
+mod driver_tests;
+mod resumable_tests;
+mod shm_driver_tests;
+pub(crate) mod utils;
+mod vconn_tests;
+
 struct StringFamily;
 
 impl MsgFamily for StringFamily {
@@ -408,10 +415,6 @@ async fn rx_recv_signals_reset() {
         "expected RxError::Reset"
     );
 }
-
-mod credit_tests;
-mod driver_tests;
-mod shm_driver_tests;
 
 #[test]
 fn test_deser_postcard_borrowed() {

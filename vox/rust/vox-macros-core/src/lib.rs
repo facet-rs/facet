@@ -611,20 +611,13 @@ fn generate_dispatcher(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream
                 peer_settings: &#vox::ConnectionSettings,
                 _metadata: &[#vox::MetadataEntry],
             ) -> ::core::result::Result<#vox::AcceptedConnection, #vox::Metadata<'static>> {
-                let handler = self.clone();
                 Ok(#vox::AcceptedConnection {
                     settings: #vox::ConnectionSettings {
                         parity: peer_settings.parity.other(),
                         max_concurrent_requests: peer_settings.max_concurrent_requests,
                     },
                     metadata: vec![],
-                    setup: Box::new(move |handle| {
-                        let mut driver = #vox::Driver::new(handle, handler);
-                        #[cfg(not(target_arch = "wasm32"))]
-                        ::tokio::spawn(async move { driver.run().await });
-                        #[cfg(target_arch = "wasm32")]
-                        ::wasm_bindgen_futures::spawn_local(async move { driver.run().await });
-                    }),
+                    handler: Box::new(self.clone()),
                 })
             }
         }

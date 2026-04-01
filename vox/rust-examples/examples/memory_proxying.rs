@@ -48,11 +48,7 @@ impl ConnectionAcceptor for UpstreamAcceptor {
                 max_concurrent_requests: 64,
             },
             metadata: vec![],
-            setup: Box::new(|handle| {
-                println!("[guest-b] accepted vconn as MathText upstream");
-                let mut driver = Driver::new(handle, MathTextDispatcher::new(UpstreamMathText));
-                tokio::spawn(async move { driver.run().await });
-            }),
+            handler: Box::new(MathTextDispatcher::new(UpstreamMathText)),
         })
     }
 }

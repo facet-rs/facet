@@ -34,10 +34,7 @@ impl ConnectionAcceptor for UpstreamEchoAcceptor {
                 max_concurrent_requests: 64,
             },
             metadata: vec![],
-            setup: Box::new(|handle| {
-                let mut driver = Driver::new(handle, EchoDispatcher::new(EchoService));
-                tokio::spawn(async move { driver.run().await });
-            }),
+            handler: Box::new(EchoDispatcher::new(EchoService)),
         })
     }
 }

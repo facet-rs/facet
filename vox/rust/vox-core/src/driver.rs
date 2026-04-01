@@ -12,11 +12,11 @@ use tokio::sync::watch;
 
 use moire::task::FutureExt as _;
 use vox_types::{
-    CallResult, ChannelBinder, ChannelBody, ChannelClose, ChannelCreditReplenisher,
+    BoxFut, CallResult, ChannelBinder, ChannelBody, ChannelClose, ChannelCreditReplenisher,
     ChannelCreditReplenisherHandle, ChannelId, ChannelItem, ChannelLivenessHandle, ChannelMessage,
     ChannelRetryMode, ChannelSink, CreditSink, Handler, IdAllocator, IncomingChannelMessage,
-    Payload, ReplySink, RequestBody, RequestCall, RequestId, RequestMessage, RequestResponse,
-    SelfRef, TxError, VoxError, ensure_operation_id, metadata_channel_retry_mode,
+    MaybeSend, MaybeSync, Payload, ReplySink, RequestBody, RequestCall, RequestId, RequestMessage,
+    RequestResponse, SelfRef, TxError, VoxError, ensure_operation_id, metadata_channel_retry_mode,
     metadata_operation_id,
 };
 
@@ -616,6 +616,80 @@ impl ChannelSink for DriverChannelSink {
             .send(DriverLocalControl::CloseChannel {
                 channel_id: self.channel_id,
             });
+    }
+}
+
+/// Object-safe version of [`Handler<DriverReplySink>`].
+///
+/// Boxes the future returned by `handle()` so the trait is dyn-safe.
+/// Implemented automatically for any `Handler<DriverReplySink>`.
+pub trait ErasedHandler: MaybeSend + MaybeSync + 'static {
+    fn retry_policy(&self, method_id: vox_types::MethodId) -> vox_types::RetryPolicy {
+        let _ = method_id;
+        vox_types::RetryPolicy::VOLATILE
+    }
+
+    fn args_have_channels(&self, method_id: vox_types::MethodId) -> bool {
+        let _ = method_id;
+        false
+    }
+
+    fn response_wire_shape(&self, method_id: vox_types::MethodId) -> Option<&'static facet::Shape> {
+        let _ = method_id;
+        None
+    }
+
+    fn handle_erased(
+        &self,
+        call: SelfRef<RequestCall<'static>>,
+        reply: DriverReplySink,
+        schemas: std::sync::Arc<vox_types::SchemaRecvTracker>,
+    ) -> BoxFut<'_, ()>;
+}
+
+impl<H: Handler<DriverReplySink>> ErasedHandler for H {
+    fn retry_policy(&self, method_id: vox_types::MethodId) -> vox_types::RetryPolicy {
+        Handler::retry_policy(self, method_id)
+    }
+
+    fn args_have_channels(&self, method_id: vox_types::MethodId) -> bool {
+        Handler::args_have_channels(self, method_id)
+    }
+
+    fn response_wire_shape(&self, method_id: vox_types::MethodId) -> Option<&'static facet::Shape> {
+        Handler::response_wire_shape(self, method_id)
+    }
+
+    fn handle_erased(
+        &self,
+        call: SelfRef<RequestCall<'static>>,
+        reply: DriverReplySink,
+        schemas: std::sync::Arc<vox_types::SchemaRecvTracker>,
+    ) -> BoxFut<'_, ()> {
+        Box::pin(Handler::handle(self, call, reply, schemas))
+    }
+}
+
+impl Handler<DriverReplySink> for Box<dyn ErasedHandler> {
+    fn retry_policy(&self, method_id: vox_types::MethodId) -> vox_types::RetryPolicy {
+        (**self).retry_policy(method_id)
+    }
+
+    fn args_have_channels(&self, method_id: vox_types::MethodId) -> bool {
+        (**self).args_have_channels(method_id)
+    }
+
+    fn response_wire_shape(&self, method_id: vox_types::MethodId) -> Option<&'static facet::Shape> {
+        (**self).response_wire_shape(method_id)
+    }
+
+    async fn handle(
+        &self,
+        call: SelfRef<RequestCall<'static>>,
+        reply: DriverReplySink,
+        schemas: std::sync::Arc<vox_types::SchemaRecvTracker>,
+    ) {
+        (**self).handle_erased(call, reply, schemas).await
     }
 }
 

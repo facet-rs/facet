@@ -61,14 +61,12 @@ pub trait ConnectionAcceptor: Send + 'static {
     ) -> Result<AcceptedConnection, Metadata<'static>>;
 }
 
-/// Blanket impl: a closure `Fn(&[MetadataEntry]) -> Option<Box<dyn FnOnce(ConnectionHandle) + Send>>`
-/// is a `ConnectionAcceptor`. Returns `None` to reject, `Some(setup)` to accept.
+/// Blanket impl: a closure `Fn(&[MetadataEntry]) -> Option<Box<dyn ErasedHandler>>`
+/// is a `ConnectionAcceptor`. Returns `None` to reject, `Some(handler)` to accept.
 /// Settings are derived automatically (opposite parity, same max concurrent requests).
 impl<F> ConnectionAcceptor for F
 where
-    F: Fn(&[vox_types::MetadataEntry]) -> Option<Box<dyn FnOnce(ConnectionHandle) + Send>>
-        + Send
-        + 'static,
+    F: Fn(&[vox_types::MetadataEntry]) -> Option<Box<dyn crate::ErasedHandler>> + Send + 'static,
 {
     fn accept(
         &self,
@@ -77,13 +75,13 @@ where
         metadata: &[vox_types::MetadataEntry],
     ) -> Result<AcceptedConnection, Metadata<'static>> {
         match (self)(metadata) {
-            Some(setup) => Ok(AcceptedConnection {
+            Some(handler) => Ok(AcceptedConnection {
                 settings: ConnectionSettings {
                     parity: peer_settings.parity.other(),
                     max_concurrent_requests: peer_settings.max_concurrent_requests,
                 },
                 metadata: vec![],
-                setup,
+                handler,
             }),
             None => Err(vec![]),
         }
@@ -96,8 +94,8 @@ pub struct AcceptedConnection {
     pub settings: ConnectionSettings,
     /// Metadata to send back in ConnectionAccept.
     pub metadata: Metadata<'static>,
-    /// Callback that receives the ConnectionHandle and spawns a Driver.
-    pub setup: Box<dyn FnOnce(ConnectionHandle) + Send>,
+    /// The handler for this connection.
+    pub handler: Box<dyn crate::ErasedHandler>,
 }
 
 /// `()` as an acceptor: accepts all connections with a no-op handler.
@@ -114,13 +112,7 @@ impl ConnectionAcceptor for () {
                 max_concurrent_requests: peer_settings.max_concurrent_requests,
             },
             metadata: vec![],
-            setup: Box::new(|handle| {
-                let mut driver = crate::Driver::new(handle, ());
-                #[cfg(not(target_arch = "wasm32"))]
-                tokio::spawn(async move { driver.run().await });
-                #[cfg(target_arch = "wasm32")]
-                wasm_bindgen_futures::spawn_local(async move { driver.run().await });
-            }),
+            handler: Box::new(()),
         })
     }
 }
@@ -1415,8 +1407,12 @@ impl Session {
                     )
                     .await;
 
-                // Let the acceptor set up its driver.
-                (accepted.setup)(handle);
+                // Spawn a driver for the accepted connection.
+                let mut driver = crate::Driver::new(handle, accepted.handler);
+                #[cfg(not(target_arch = "wasm32"))]
+                tokio::spawn(async move { driver.run().await });
+                #[cfg(target_arch = "wasm32")]
+                wasm_bindgen_futures::spawn_local(async move { driver.run().await });
             }
             Err(reject_metadata) => {
                 let _ = self
