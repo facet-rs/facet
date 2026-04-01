@@ -393,7 +393,7 @@ impl<'a> ParseContext<'a> {
         }
     }
 
-    fn parse_short_flag(&mut self, arg: &str, level: &ArgLevelSchema) {
+    fn parse_short_flag(&mut self, arg: &str, level: &'a ArgLevelSchema) {
         let flag_part = &arg[1..]; // strip "-"
 
         // Check for `-k=value` syntax (single short flag with equals)
@@ -493,7 +493,12 @@ impl<'a> ParseContext<'a> {
     }
 
     /// Parse a short flag with an inline value (e.g., -k=3)
-    fn parse_short_flag_with_value(&mut self, ch: char, value_str: &str, level: &ArgLevelSchema) {
+    fn parse_short_flag_with_value(
+        &mut self,
+        ch: char,
+        value_str: &str,
+        level: &'a ArgLevelSchema,
+    ) {
         let found = level.args().iter().find(|(_, schema)| {
             if let ArgKind::Named { short: Some(s), .. } = schema.kind() {
                 *s == ch
@@ -712,39 +717,51 @@ impl<'a> ParseContext<'a> {
 
         let arg = self.args[self.index];
 
-        // Find subcommand by comparing user input with kebab-case of effective_name
-        let subcommand = level
-            .subcommands()
-            .iter()
-            .find(|(name, _)| name.to_kebab_case() == arg);
+        // Find subcommand by long name (kebab-case) or short alias token ("d").
+        let subcommand = level.subcommands().iter().find(|(name, sub)| {
+            name.to_kebab_case() == arg
+                || sub
+                    .short()
+                    .is_some_and(|short| arg.chars().eq(core::iter::once(short)))
+        });
 
-        if let Some((_, subcommand)) = subcommand {
-            self.index += 1;
-            let fields = self.parse_subcommand_args(level, subcommand);
+        let Some((_, subcommand)) = subcommand else {
+            return false;
+        };
 
-            // For flattened tuple variants like `Install(#[facet(flatten)] InstallOptions)`,
-            // the fields are already flat (they came from the inner struct's schema).
-            // We do NOT wrap them in a "0" key - the deserializer handles the routing.
-            // See module-level docs for the ConfigValue model.
-            let _ = subcommand.is_flattened_tuple(); // Acknowledge the flag exists but don't use it here
+        self.consume_subcommand(level, field_name, subcommand, arg);
+        true
+    }
 
-            // Use the effective name for deserialization - facet-format expects
-            // the effective name (respecting `#[facet(rename = "...")]`), e.g., "rm" for a
-            // variant named `Remove` with `#[facet(rename = "rm")]`.
-            let enum_value = ConfigValue::Enum(Sourced {
-                value: EnumValue {
-                    variant: subcommand.effective_name().to_string(),
-                    fields,
-                },
-                span: None,
-                provenance: Some(Provenance::cli(arg, "")),
-            });
+    fn consume_subcommand(
+        &mut self,
+        level: &'a ArgLevelSchema,
+        field_name: &str,
+        subcommand: &'a Subcommand,
+        input_arg: &str,
+    ) {
+        self.index += 1;
+        let fields = self.parse_subcommand_args(level, subcommand);
 
-            self.result.insert(field_name.to_string(), enum_value);
-            return true;
-        }
+        // For flattened tuple variants like `Install(#[facet(flatten)] InstallOptions)`,
+        // the fields are already flat (they came from the inner struct's schema).
+        // We do NOT wrap them in a "0" key - the deserializer handles the routing.
+        // See module-level docs for the ConfigValue model.
+        let _ = subcommand.is_flattened_tuple(); // Acknowledge the flag exists but don't use it here
 
-        false
+        // Use the effective name for deserialization - facet-format expects
+        // the effective name (respecting `#[facet(rename = "...")]`), e.g., "rm" for a
+        // variant named `Remove` with `#[facet(rename = "rm")]`.
+        let enum_value = ConfigValue::Enum(Sourced {
+            value: EnumValue {
+                variant: subcommand.effective_name().to_string(),
+                fields,
+            },
+            span: None,
+            provenance: Some(Provenance::cli(input_arg, "")),
+        });
+
+        self.result.insert(field_name.to_string(), enum_value);
     }
 
     fn parse_subcommand_args(
