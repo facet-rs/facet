@@ -163,34 +163,60 @@ vox::serve(listener, |cx: &ConnectionContext| match cx.service_name() {
 }).await?;
 ```
 
-The same factory handles both root and virtual connections. The context
-tells you which kind it is if you need to branch:
+The same factory handles both root and virtual connections.
+
+### Everything is metadata
+
+The `vox-` prefix is already reserved for internal metadata keys:
+`vox-session-key`, `vox-retry-support`, `vox-operation-id`, etc.
+
+Service routing and transport info use the same mechanism:
+
+| Key | Value | Set by |
+|-----|-------|--------|
+| `vox-service` | Service name (e.g. `"Hello"`) | Client, automatically from type param |
+| `vox-transport` | Transport type (`"tcp"`, `"local"`, `"shm"`, `"ws"`) | Transport layer |
+| `vox-peer-addr` | Remote address (e.g. `"192.168.1.1:4000"`) | TCP/WS transport |
+| `vox-peer-pid` | Peer process ID | Unix socket transport |
+| `vox-connection-kind` | `"root"` or `"virtual"` | Session layer |
+
+The factory just reads metadata — no special enum for transport info,
+no separate `ConnectionContext` struct. It's all `Metadata`:
 
 ```rust
-struct ConnectionContext {
-    service_name: &str,
-    kind: ConnectionKind,
-    peer_settings: ConnectionSettings,
-    metadata: Metadata<'static>,   // additional user metadata beyond service name
-}
+vox::serve(listener, |metadata: &Metadata| {
+    let service = metadata.get_str("vox-service")?;
+    match service {
+        "Hello" => Some(HelloDispatcher::new(HelloService)),
+        "Chat" => Some(ChatDispatcher::new(ChatService)),
+        _ => None,
+    }
+}).await?;
+```
 
-enum ConnectionKind {
-    Root,
-    Virtual { id: ConnectionId },
-}
+If the factory needs transport details (for auth, logging, etc), it
+reads more metadata:
+
+```rust
+vox::serve(listener, |metadata: &Metadata| {
+    let service = metadata.get_str("vox-service")?;
+    let peer = metadata.get_str("vox-peer-addr").unwrap_or("unknown");
+    log::info!("new {service} connection from {peer}");
+    // ...
+}).await?;
 ```
 
 ### Why this replaces `ConnectionAcceptor`
 
 Today, `ConnectionAcceptor` is a trait that handles virtual connection
 setup. With the factory model, root and virtual connections go through
-the same routing. `ConnectionAcceptor` becomes unnecessary — the factory
-handles everything.
+the same routing — both just present metadata to the factory.
+`ConnectionAcceptor` becomes unnecessary.
 
-### What about extra metadata?
+### User metadata
 
-Service name is sent automatically. Users can still attach additional
-metadata for auth tokens, routing hints, etc:
+Service name and transport info are injected automatically. Users can
+still attach additional metadata for auth tokens, routing hints, etc:
 
 ```rust
 let chat: ChatClient = session
@@ -199,8 +225,8 @@ let chat: ChatClient = session
     .await?;
 ```
 
-The factory sees both the service name and any extra metadata in the
-`ConnectionContext`.
+The factory sees everything — `vox-*` internal metadata and user metadata
+together.
 
 ## Lifetime Footgun To Fix
 
@@ -297,8 +323,8 @@ setup + vox handshake.
 
 ## Open Questions
 
-- Wire format for service name in root handshake (metadata extension vs dedicated field)
 - Whether factory should be sync closure, async closure, or trait
 - Whether `session.open::<Client>()` needs a builder for settings/metadata or just takes args
 - How to stage behavior changes for root caller-drop semantics safely
 - Whether `ConnectionAcceptor` can be removed in one step or needs a deprecation period
+- Convenience helpers on `Metadata` for reading `vox-*` keys (e.g. `metadata.get_str(key)`)
