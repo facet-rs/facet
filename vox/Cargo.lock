@@ -3632,6 +3632,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "vox-core",
  "vox-postcard",
  "vox-types",
  "zerocopy",

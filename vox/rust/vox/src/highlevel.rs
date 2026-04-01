@@ -7,7 +7,7 @@ use vox_core::{FromVoxSession, LinkSource, SessionError, TransportMode, initiato
 /// - `tcp://host:port` or bare `host:port` — TCP stream transport
 /// - `local://path` — Unix socket / Windows named pipe
 /// - `ws://host:port/path` — WebSocket transport
-/// - `shm://name` — Shared-memory transport
+/// - `shm:///path/to/control.sock` — Shared-memory transport (Unix only)
 ///
 /// # Examples
 ///
@@ -42,9 +42,8 @@ pub async fn connect<Client: FromVoxSession>(
             let url = format!("{scheme}://{host}");
             connect_bare(vox_websocket::ws_link_source(url)).await
         }
-        "shm" => Err(SessionError::Protocol(
-            "shared-memory transport is not yet supported by connect()".into(),
-        )),
+        #[cfg(all(unix, feature = "transport-shm"))]
+        "shm" => connect_bare(vox_shm::bootstrap::shm_link_source(host)).await,
         _ => Err(SessionError::Protocol(format!(
             "unknown transport scheme: {scheme:?}"
         ))),

@@ -132,3 +132,83 @@ impl PreparedBootstrapPeer {
         )
     }
 }
+
+// ---------------------------------------------------------------------------
+// ShmLinkSource — guest-side bootstrap via control socket
+// ---------------------------------------------------------------------------
+
+/// A [`LinkSource`](vox_core::LinkSource) that bootstraps an SHM connection
+/// by connecting to a host's control socket.
+///
+/// Each call to `next_link` performs the full bootstrap handshake: connect to
+/// the Unix socket, send the request magic, receive FDs + segment path, attach
+/// the segment, and build an `ShmLink`.
+#[cfg(unix)]
+pub struct ShmLinkSource {
+    control_socket_path: String,
+}
+
+#[cfg(unix)]
+pub fn shm_link_source(control_socket_path: impl Into<String>) -> ShmLinkSource {
+    ShmLinkSource {
+        control_socket_path: control_socket_path.into(),
+    }
+}
+
+#[cfg(unix)]
+impl vox_core::LinkSource for ShmLinkSource {
+    type Link = crate::ShmLink;
+
+    async fn next_link(&mut self) -> io::Result<vox_core::Attachment<Self::Link>> {
+        let path = self.control_socket_path.clone();
+        let link = tokio::task::spawn_blocking(move || shm_bootstrap_guest(&path))
+            .await
+            .map_err(|e| io::Error::other(format!("bootstrap task panicked: {e}")))??;
+        Ok(vox_core::Attachment::initiator(link))
+    }
+}
+
+#[cfg(unix)]
+fn shm_bootstrap_guest(control_socket_path: &str) -> io::Result<crate::ShmLink> {
+    use std::io::Write;
+    use std::os::fd::{AsRawFd, IntoRawFd};
+    use std::path::Path;
+    use std::sync::Arc;
+
+    let request = encode_request();
+    let mut stream = std::os::unix::net::UnixStream::connect(control_socket_path)?;
+    stream.write_all(&request)?;
+
+    let received = shm_primitives::bootstrap::recv_response_unix(stream.as_raw_fd())
+        .map_err(|e| io::Error::other(format!("bootstrap response: {e}")))?;
+
+    if received.response.status != BootstrapStatus::Success {
+        return Err(io::Error::other(format!(
+            "bootstrap rejected: {}",
+            String::from_utf8_lossy(&received.response.payload)
+        )));
+    }
+
+    let fds = received
+        .fds
+        .ok_or_else(|| io::Error::other("missing bootstrap FDs"))?;
+
+    let hub_path = std::str::from_utf8(&received.response.payload)
+        .map_err(|e| io::Error::other(format!("bootstrap payload not UTF-8: {e}")))?;
+
+    let segment = Arc::new(
+        Segment::attach(Path::new(hub_path))
+            .map_err(|e| io::Error::other(format!("attach segment: {e}")))?,
+    );
+
+    let peer_id = PeerId::new(received.response.peer_id as u8).ok_or_else(|| {
+        io::Error::other(format!("invalid peer id {}", received.response.peer_id))
+    })?;
+
+    let doorbell_fd = fds.doorbell_fd.into_raw_fd();
+    let mmap_rx_fd = fds.mmap_rx_fd.into_raw_fd();
+    let mmap_tx_fd = fds.mmap_tx_fd.into_raw_fd();
+
+    // SAFETY: FDs came from SCM_RIGHTS and are owned by us.
+    unsafe { guest_link_from_raw(segment, peer_id, doorbell_fd, mmap_rx_fd, mmap_tx_fd, true) }
+}

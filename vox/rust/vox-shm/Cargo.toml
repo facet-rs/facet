@@ -30,6 +30,8 @@ tracing.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
+vox-core.workspace = true
 
 [target.'cfg(loom)'.dependencies]
 loom.workspace = true
