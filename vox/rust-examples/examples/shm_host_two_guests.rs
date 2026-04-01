@@ -18,7 +18,7 @@ mod unix_demo {
     use eyre::{Result, WrapErr, eyre};
     use shm_primitives::{FileCleanup, PeerId};
     use vox::DriverCaller;
-    use vox::transport::shm::bootstrap::{BootstrapStatus, decode_request, encode_request};
+    use vox::transport::shm::bootstrap::{decode_request, encode_request};
     use vox::transport::shm::guest_link_from_raw;
     use vox::transport::shm::varslot::SizeClassConfig;
     use vox::transport::shm::{HostHub, Segment, SegmentConfig, ShmLink};
@@ -304,21 +304,14 @@ mod unix_demo {
             .set_nonblocking(false)
             .wrap_err("setting bootstrap stream blocking")?;
 
-        let mut request_buf = [0_u8; 2048];
+        let mut request_buf = [0_u8; 64];
         let n = stream
             .read(&mut request_buf)
             .wrap_err("reading bootstrap request")?;
         if n == 0 {
             return Err(eyre!("bootstrap request EOF"));
         }
-        let request = decode_request(&request_buf[..n])
-            .map_err(|e| eyre!("decoding bootstrap request: {e}"))?;
-        if request.sid != sid.as_bytes() {
-            return Err(eyre!(
-                "bootstrap sid mismatch (expected `{sid}`, got `{}`)",
-                String::from_utf8_lossy(request.sid)
-            ));
-        }
+        decode_request(&request_buf[..n]).map_err(|e| eyre!("decoding bootstrap request: {e}"))?;
 
         prepared
             .send_success_unix(stream.as_raw_fd(), &segment)
@@ -390,8 +383,8 @@ mod unix_demo {
         connect_guest_link(&control_sock, &sid, mmap_tx_fd)
     }
 
-    fn connect_guest_link(control_sock: &str, sid: &str, mmap_tx_fd: i32) -> Result<ShmLink> {
-        let request = encode_request(sid.as_bytes()).map_err(|e| eyre!("encode request: {e}"))?;
+    fn connect_guest_link(control_sock: &str, _sid: &str, mmap_tx_fd: i32) -> Result<ShmLink> {
+        let request = encode_request();
 
         let mut stream = UnixStream::connect(control_sock)
             .map_err(|e| eyre!("connecting bootstrap socket {control_sock}: {e}"))?;

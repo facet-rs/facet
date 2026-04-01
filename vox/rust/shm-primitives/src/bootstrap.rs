@@ -4,15 +4,15 @@
 //! r[impl shm.bootstrap.request]
 //! r[impl shm.bootstrap.response]
 //! r[impl shm.bootstrap.status]
-//! r[impl shm.bootstrap.sid]
 
 use std::fmt;
 use std::io;
 
-pub const BOOTSTRAP_REQUEST_MAGIC: [u8; 4] = *b"RSH0";
-pub const BOOTSTRAP_RESPONSE_MAGIC: [u8; 4] = *b"RSP0";
+pub const BOOTSTRAP_REQUEST_MAGIC: [u8; 4] = *b"VSH1";
+pub const BOOTSTRAP_RESPONSE_MAGIC: [u8; 4] = *b"VSP1";
 
-pub const BOOTSTRAP_REQUEST_HEADER_LEN: usize = 6;
+/// The request is just the 4-byte magic. No payload.
+pub const BOOTSTRAP_REQUEST_LEN: usize = 4;
 pub const BOOTSTRAP_RESPONSE_HEADER_LEN: usize = 11;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,10 +34,10 @@ impl TryFrom<u8> for BootstrapStatus {
     }
 }
 
+/// A decoded bootstrap request. The request carries no payload — its
+/// presence on the control socket is the entire message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BootstrapRequestRef<'a> {
-    pub sid: &'a [u8],
-}
+pub struct BootstrapRequest;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BootstrapResponseRef<'a> {
@@ -66,7 +66,6 @@ pub enum BootstrapError {
         declared: usize,
         actual: usize,
     },
-    SidTooLong(usize),
     PayloadTooLong(usize),
     UnknownStatus(u8),
     InvalidErrorPeerId(u32),
@@ -96,7 +95,6 @@ impl fmt::Display for BootstrapError {
                 f,
                 "{context} length mismatch: declared {declared}, actual {actual}"
             ),
-            BootstrapError::SidTooLong(len) => write!(f, "sid too long for u16 length: {len}"),
             BootstrapError::PayloadTooLong(len) => {
                 write!(f, "payload too long for u16 length: {len}")
             }
@@ -133,18 +131,14 @@ impl From<io::Error> for BootstrapError {
     }
 }
 
-pub fn encode_request(sid: &[u8]) -> Result<Vec<u8>, BootstrapError> {
-    let sid_len_u16 =
-        u16::try_from(sid.len()).map_err(|_| BootstrapError::SidTooLong(sid.len()))?;
-    let mut out = Vec::with_capacity(BOOTSTRAP_REQUEST_HEADER_LEN + sid.len());
-    out.extend_from_slice(&BOOTSTRAP_REQUEST_MAGIC);
-    out.extend_from_slice(&sid_len_u16.to_le_bytes());
-    out.extend_from_slice(sid);
-    Ok(out)
+/// Encode a bootstrap request (just the magic bytes).
+pub fn encode_request() -> Vec<u8> {
+    BOOTSTRAP_REQUEST_MAGIC.to_vec()
 }
 
-pub fn decode_request(frame: &[u8]) -> Result<BootstrapRequestRef<'_>, BootstrapError> {
-    if frame.len() < BOOTSTRAP_REQUEST_HEADER_LEN {
+/// Decode a bootstrap request. Validates the magic bytes.
+pub fn decode_request(frame: &[u8]) -> Result<BootstrapRequest, BootstrapError> {
+    if frame.len() < BOOTSTRAP_REQUEST_LEN {
         return Err(BootstrapError::Truncated("bootstrap request"));
     }
 
@@ -158,19 +152,7 @@ pub fn decode_request(frame: &[u8]) -> Result<BootstrapRequestRef<'_>, Bootstrap
         });
     }
 
-    let sid_len = u16::from_le_bytes([frame[4], frame[5]]) as usize;
-    let expected_len = BOOTSTRAP_REQUEST_HEADER_LEN + sid_len;
-    if frame.len() != expected_len {
-        return Err(BootstrapError::LengthMismatch {
-            context: "bootstrap request",
-            declared: expected_len,
-            actual: frame.len(),
-        });
-    }
-
-    Ok(BootstrapRequestRef {
-        sid: &frame[BOOTSTRAP_REQUEST_HEADER_LEN..],
-    })
+    Ok(BootstrapRequest)
 }
 
 pub fn encode_response(
@@ -656,15 +638,13 @@ mod tests {
 
     #[test]
     fn request_roundtrip() {
-        let sid = b"session-123";
-        let frame = encode_request(sid).expect("encode request");
-        let req = decode_request(&frame).expect("decode request");
-        assert_eq!(req.sid, sid);
+        let frame = encode_request();
+        decode_request(&frame).expect("decode request");
     }
 
     #[test]
     fn request_rejects_bad_magic() {
-        let mut frame = encode_request(b"sid").expect("encode request");
+        let mut frame = encode_request();
         frame[0..4].copy_from_slice(b"NOPE");
         let err = decode_request(&frame).expect_err("must reject bad magic");
         assert!(matches!(err, BootstrapError::InvalidMagic { .. }));

@@ -7,8 +7,8 @@ use std::io;
 
 use shm_primitives::PeerId;
 pub use shm_primitives::bootstrap::{
-    BOOTSTRAP_REQUEST_HEADER_LEN, BOOTSTRAP_REQUEST_MAGIC, BOOTSTRAP_RESPONSE_HEADER_LEN,
-    BOOTSTRAP_RESPONSE_MAGIC, BootstrapError, BootstrapRequestRef, BootstrapResponseOwned,
+    BOOTSTRAP_REQUEST_LEN, BOOTSTRAP_REQUEST_MAGIC, BOOTSTRAP_RESPONSE_HEADER_LEN,
+    BOOTSTRAP_RESPONSE_MAGIC, BootstrapError, BootstrapRequest, BootstrapResponseOwned,
     BootstrapResponseRef, BootstrapStatus, decode_request, decode_response, encode_request,
     encode_response,
 };

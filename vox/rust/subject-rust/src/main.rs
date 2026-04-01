@@ -897,10 +897,8 @@ async fn run_client() -> Result<(), String> {
 async fn connect_and_serve_shm() -> Result<(), String> {
     let control_sock = std::env::var("SHM_CONTROL_SOCK")
         .map_err(|_| "SHM_CONTROL_SOCK env var not set".to_string())?;
-    let sid = std::env::var("SHM_SESSION_ID")
-        .map_err(|_| "SHM_SESSION_ID env var not set".to_string())?;
 
-    let request = encode_request(sid.as_bytes()).map_err(|e| format!("encode request: {e}"))?;
+    let request = encode_request();
 
     // Connect to the control socket, send the bootstrap request, and receive the
     // bootstrap response. The response carries fds on Unix and names on Windows.

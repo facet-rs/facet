@@ -1695,7 +1695,6 @@ async fn accept_subject_shm_subject_is_guest(
     let control_sock = vox_local::path_to_pipe_name(&control_sock_path);
 
     let (peer_tx, peer_rx) = oneshot::channel();
-    let sid_for_task = sid.clone();
     let segment_for_task = Arc::clone(&segment);
     tokio::spawn(async move {
         let result: Result<vox_shm::host::HostPeer, String> = async {
@@ -1711,15 +1710,8 @@ async fn accept_subject_shm_subject_is_guest(
             if n == 0 {
                 return Err("bootstrap request EOF".to_string());
             }
-            let request = decode_request(&request_buf[..n])
+            decode_request(&request_buf[..n])
                 .map_err(|e| format!("decode bootstrap request: {e}"))?;
-            let got_sid = String::from_utf8(request.sid.to_vec())
-                .map_err(|e| format!("sid not utf-8: {e}"))?;
-            if got_sid != sid_for_task {
-                return Err(format!(
-                    "sid mismatch: expected {sid_for_task}, got {got_sid}"
-                ));
-            }
 
             #[cfg(unix)]
             {
@@ -1991,7 +1983,7 @@ async fn accept_subject_shm_subject_is_host(
             }
         };
 
-        let request = encode_request(sid.as_bytes()).map_err(|e| format!("encode request: {e}"))?;
+        let request = encode_request();
 
         // Send the bootstrap request and receive the response.
         #[cfg(unix)]

@@ -16,7 +16,7 @@ use shm_primitives::MmapRegion;
 use shm_primitives::Region;
 use shm_primitives::bipbuf::{BIPBUF_HEADER_SIZE, BipBufHeader, BipBufRaw};
 use shm_primitives::bootstrap::{
-    self, BOOTSTRAP_REQUEST_HEADER_LEN, BOOTSTRAP_RESPONSE_HEADER_LEN, BootstrapStatus,
+    self, BOOTSTRAP_REQUEST_LEN, BOOTSTRAP_RESPONSE_HEADER_LEN, BootstrapStatus,
 };
 use shm_primitives::{SizeClassConfig, SlotRef, VarSlotPool};
 use std::io::ErrorKind;
@@ -570,41 +570,28 @@ pub struct VoxShmBootstrapResponseInfo {
     pub payload_len: u16,
 }
 
-/// Encode a bootstrap request frame (`RSH0` + sid length + sid bytes).
+/// Encode a bootstrap request frame (just the 4-byte magic `VSH1`).
 ///
 /// Returns:
 /// - 0: success
 /// - -1: invalid arguments
 /// - -2: output buffer too small
-/// - -3: encoding failure
 ///
 /// # Safety
 ///
-/// - `sid_ptr` must point to `sid_len` readable bytes.
 /// - `out_buf` must point to `out_buf_len` writable bytes.
 /// - `out_written` must be non-null and writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_shm_bootstrap_request_encode(
-    sid_ptr: *const u8,
-    sid_len: usize,
     out_buf: *mut u8,
     out_buf_len: usize,
     out_written: *mut usize,
 ) -> i32 {
-    if (sid_len > 0 && sid_ptr.is_null()) || out_buf.is_null() || out_written.is_null() {
+    if out_buf.is_null() || out_written.is_null() {
         return -1;
     }
 
-    let sid = if sid_len == 0 {
-        &[][..]
-    } else {
-        // SAFETY: validated by caller contract and null checks above.
-        unsafe { std::slice::from_raw_parts(sid_ptr, sid_len) }
-    };
-    let frame = match bootstrap::encode_request(sid) {
-        Ok(frame) => frame,
-        Err(_) => return -3,
-    };
+    let frame = bootstrap::encode_request();
 
     if frame.len() > out_buf_len {
         return -2;
@@ -618,7 +605,7 @@ pub unsafe extern "C" fn vox_shm_bootstrap_request_encode(
     0
 }
 
-/// Decode a bootstrap request frame and expose SID location in the input buffer.
+/// Decode a bootstrap request frame. Validates the magic bytes.
 ///
 /// Returns:
 /// - 0: success
@@ -628,16 +615,12 @@ pub unsafe extern "C" fn vox_shm_bootstrap_request_encode(
 /// # Safety
 ///
 /// - `buf_ptr` must point to `buf_len` readable bytes.
-/// - `out_sid_ptr` and `out_sid_len` must be non-null and writable.
-/// - `out_sid_ptr` points into `buf_ptr`; keep input alive while using it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_shm_bootstrap_request_decode(
     buf_ptr: *const u8,
     buf_len: usize,
-    out_sid_ptr: *mut *const u8,
-    out_sid_len: *mut u16,
 ) -> i32 {
-    if (buf_len > 0 && buf_ptr.is_null()) || out_sid_ptr.is_null() || out_sid_len.is_null() {
+    if buf_len > 0 && buf_ptr.is_null() {
         return -1;
     }
 
@@ -647,21 +630,10 @@ pub unsafe extern "C" fn vox_shm_bootstrap_request_decode(
         // SAFETY: validated by caller contract and null checks above.
         unsafe { std::slice::from_raw_parts(buf_ptr, buf_len) }
     };
-    let req = match bootstrap::decode_request(frame) {
-        Ok(req) => req,
-        Err(_) => return -2,
-    };
-
-    if req.sid.len() > u16::MAX as usize {
-        return -2;
+    match bootstrap::decode_request(frame) {
+        Ok(_) => 0,
+        Err(_) => -2,
     }
-
-    // SAFETY: output pointers are valid and writable.
-    unsafe {
-        *out_sid_ptr = req.sid.as_ptr();
-        *out_sid_len = req.sid.len() as u16;
-    }
-    0
 }
 
 /// Encode a bootstrap response frame (`RSP0` + status + peer + payload length + payload).
@@ -933,7 +905,7 @@ pub unsafe extern "C" fn vox_shm_bootstrap_response_recv_unix(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn vox_shm_bootstrap_request_header_size() -> u32 {
-    BOOTSTRAP_REQUEST_HEADER_LEN as u32
+    BOOTSTRAP_REQUEST_LEN as u32
 }
 
 #[unsafe(no_mangle)]
