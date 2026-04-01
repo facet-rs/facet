@@ -838,17 +838,13 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
                 }
             }
 
-            /// Resolve when the underlying connection closes.
-            pub async fn closed(&self) {
-                #vox::Caller::closed(&self.caller).await;
-            }
-
-            /// Return whether the underlying connection is still considered connected.
-            pub fn is_connected(&self) -> bool {
-                #vox::Caller::is_connected(&self.caller)
-            }
-
             #(#client_methods)*
+        }
+
+        impl #vox::VoxClient for #client_name {
+            fn __vox_caller(&self) -> &#vox::ErasedCaller {
+                &self.caller
+            }
         }
 
         impl From<#vox::DriverCaller> for #client_name {

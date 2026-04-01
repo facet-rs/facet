@@ -1,5 +1,5 @@
 use eyre::Result;
-use vox::{Caller, transport::tcp::StreamLink};
+use vox::transport::tcp::StreamLink;
 
 #[vox::service]
 trait Hello {
@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
         let (caller, _session) = vox::acceptor_on(StreamLink::tcp(stream))
             .establish::<HelloClient>(HelloDispatcher::new(HelloService))
             .await?;
-        caller.closed().await;
+        vox::closed(&caller).await;
 
         Ok::<(), eyre::Report>(())
     });

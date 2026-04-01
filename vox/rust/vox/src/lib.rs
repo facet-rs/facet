@@ -200,12 +200,15 @@ pub use vox_types::{
     // Channels
     Tx,
     TxError,
+    VoxClient,
     VoxError,
     WithTracker,
     WriteSlot,
     // Channels
     channel,
+    closed,
     ensure_channel_retry_mode,
+    is_connected,
     observe_reply,
 };
 

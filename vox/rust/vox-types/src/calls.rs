@@ -373,6 +373,27 @@ impl Caller for ErasedCaller {
     }
 }
 
+/// Implemented by generated `*Client` types to expose the underlying caller
+/// without polluting the service method namespace with inherent methods.
+///
+/// Use the free functions [`vox::closed`] and [`vox::is_connected`] instead of
+/// calling methods on this trait directly.
+pub trait VoxClient {
+    /// Access the underlying erased caller. The double-underscore name is
+    /// intentional — callers should use the free-function helpers instead.
+    fn __vox_caller(&self) -> &ErasedCaller;
+}
+
+/// Resolve when the underlying connection of a vox client closes.
+pub async fn closed(client: &impl VoxClient) {
+    Caller::closed(client.__vox_caller()).await;
+}
+
+/// Return whether the underlying connection of a vox client is still alive.
+pub fn is_connected(client: &impl VoxClient) -> bool {
+    Caller::is_connected(client.__vox_caller())
+}
+
 pub trait Handler<R: ReplySink>: MaybeSend + MaybeSync + 'static {
     /// Return the static retry policy for a method ID served by this handler.
     fn retry_policy(&self, _method_id: crate::MethodId) -> crate::RetryPolicy {
