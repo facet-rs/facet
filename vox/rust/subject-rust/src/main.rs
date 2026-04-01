@@ -904,11 +904,6 @@ async fn connect_and_serve_shm() -> Result<(), String> {
     // bootstrap response. The response carries fds on Unix and names on Windows.
     #[cfg(unix)]
     let link = {
-        let mmap_tx_fd: i32 = std::env::var("SHM_MMAP_TX_FD")
-            .map_err(|_| "SHM_MMAP_TX_FD env var not set".to_string())?
-            .parse()
-            .map_err(|e| format!("invalid SHM_MMAP_TX_FD: {e}"))?;
-
         let mut stream = std::os::unix::net::UnixStream::connect(&control_sock)
             .map_err(|e| format!("connect bootstrap socket: {e}"))?;
         std::io::Write::write_all(&mut stream, &request)
@@ -937,7 +932,8 @@ async fn connect_and_serve_shm() -> Result<(), String> {
 
         use std::os::fd::IntoRawFd;
         let doorbell_fd = fds.doorbell_fd.into_raw_fd();
-        let mmap_rx_fd = fds.mmap_control_fd.into_raw_fd();
+        let mmap_rx_fd = fds.mmap_rx_fd.into_raw_fd();
+        let mmap_tx_fd = fds.mmap_tx_fd.into_raw_fd();
 
         unsafe { guest_link_from_raw(segment, peer_id, doorbell_fd, mmap_rx_fd, mmap_tx_fd, true) }
             .map_err(|e| format!("guest_link_from_raw: {e}"))?

@@ -216,7 +216,8 @@ pub fn decode_response(frame: &[u8]) -> Result<BootstrapResponseRef<'_>, Bootstr
 pub struct BootstrapSuccessFds {
     pub doorbell_fd: std::os::fd::RawFd,
     pub segment_fd: std::os::fd::RawFd,
-    pub mmap_control_fd: std::os::fd::RawFd,
+    pub mmap_rx_fd: std::os::fd::RawFd,
+    pub mmap_tx_fd: std::os::fd::RawFd,
 }
 
 #[cfg(unix)]
@@ -224,7 +225,8 @@ pub struct BootstrapSuccessFds {
 pub struct BootstrapSuccessOwnedFds {
     pub doorbell_fd: std::os::fd::OwnedFd,
     pub segment_fd: std::os::fd::OwnedFd,
-    pub mmap_control_fd: std::os::fd::OwnedFd,
+    pub mmap_rx_fd: std::os::fd::OwnedFd,
+    pub mmap_tx_fd: std::os::fd::OwnedFd,
 }
 
 #[cfg(unix)]
@@ -301,7 +303,8 @@ pub fn send_response_unix(
         let fds = [
             success_fds.doorbell_fd,
             success_fds.segment_fd,
-            success_fds.mmap_control_fd,
+            success_fds.mmap_rx_fd,
+            success_fds.mmap_tx_fd,
         ];
         let fd_count = fds.len();
         let data_len = fd_count * std::mem::size_of::<std::os::fd::RawFd>();
@@ -410,7 +413,7 @@ pub fn recv_response_unix(
     };
 
     let cmsg_space =
-        unsafe { libc::CMSG_SPACE((3 * std::mem::size_of::<std::os::fd::RawFd>()) as u32) }
+        unsafe { libc::CMSG_SPACE((4 * std::mem::size_of::<std::os::fd::RawFd>()) as u32) }
             as usize;
     let mut control = vec![0_u8; cmsg_space];
 
@@ -453,7 +456,7 @@ pub fn recv_response_unix(
 
     match response.status {
         BootstrapStatus::Success => {
-            if raw_fds.len() != 3 {
+            if raw_fds.len() != 4 {
                 let fd_count = raw_fds.len();
                 close_raw_fds(raw_fds);
                 return Err(BootstrapError::InvalidFdCount(fd_count));
@@ -462,21 +465,22 @@ pub fn recv_response_unix(
             let mut iter = raw_fds.into_iter();
             let doorbell_raw = iter.next().expect("len checked");
             let segment_raw = iter.next().expect("len checked");
-            let mmap_raw = iter.next().expect("len checked");
+            let mmap_rx_raw = iter.next().expect("len checked");
+            let mmap_tx_raw = iter.next().expect("len checked");
 
             // SAFETY: FDs came from SCM_RIGHTS and are owned by receiver now.
             let doorbell_fd = unsafe { OwnedFd::from_raw_fd(doorbell_raw) };
-            // SAFETY: FDs came from SCM_RIGHTS and are owned by receiver now.
             let segment_fd = unsafe { OwnedFd::from_raw_fd(segment_raw) };
-            // SAFETY: FD came from SCM_RIGHTS and is owned by receiver now.
-            let mmap_control_fd = unsafe { OwnedFd::from_raw_fd(mmap_raw) };
+            let mmap_rx_fd = unsafe { OwnedFd::from_raw_fd(mmap_rx_raw) };
+            let mmap_tx_fd = unsafe { OwnedFd::from_raw_fd(mmap_tx_raw) };
 
             Ok(ReceivedBootstrapResponse {
                 response,
                 fds: Some(BootstrapSuccessOwnedFds {
                     doorbell_fd,
                     segment_fd,
-                    mmap_control_fd,
+                    mmap_rx_fd,
+                    mmap_tx_fd,
                 }),
             })
         }
@@ -692,18 +696,20 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn unix_response_roundtrip_with_three_fds() {
+    fn unix_response_roundtrip_with_four_fds() {
         use std::os::fd::AsRawFd;
 
         let (host, guest) = socketpair_dgram();
         let (db_a, db_b) = socketpair_dgram();
         let (seg_a, seg_b) = socketpair_dgram();
-        let (mm_a, mm_b) = socketpair_dgram();
+        let (mrx_a, mrx_b) = socketpair_dgram();
+        let (mtx_a, mtx_b) = socketpair_dgram();
 
         let send_fds = BootstrapSuccessFds {
             doorbell_fd: db_a.as_raw_fd(),
             segment_fd: seg_a.as_raw_fd(),
-            mmap_control_fd: mm_a.as_raw_fd(),
+            mmap_rx_fd: mrx_a.as_raw_fd(),
+            mmap_tx_fd: mtx_a.as_raw_fd(),
         };
 
         send_response_unix(
@@ -722,10 +728,11 @@ mod tests {
         let fds = got.fds.expect("success must include fds");
         assert!(fds.doorbell_fd.as_raw_fd() >= 0);
         assert!(fds.segment_fd.as_raw_fd() >= 0);
-        assert!(fds.mmap_control_fd.as_raw_fd() >= 0);
+        assert!(fds.mmap_rx_fd.as_raw_fd() >= 0);
+        assert!(fds.mmap_tx_fd.as_raw_fd() >= 0);
 
         // Keep originals alive through the test.
-        drop((db_b, seg_b, mm_b));
+        drop((db_b, seg_b, mrx_b, mtx_b));
     }
 
     #[cfg(unix)]

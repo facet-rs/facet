@@ -81,7 +81,8 @@ impl PreparedBootstrapPeer {
         let fds = shm_primitives::bootstrap::BootstrapSuccessFds {
             doorbell_fd: self.guest_ticket.doorbell.as_raw_fd(),
             segment_fd: segment.as_raw_fd(),
-            mmap_control_fd: self.guest_ticket.mmap_rx.as_raw_fd(),
+            mmap_rx_fd: self.guest_ticket.mmap_rx.as_raw_fd(),
+            mmap_tx_fd: self.guest_ticket.mmap_tx_fd,
         };
 
         shm_primitives::bootstrap::send_response_unix(

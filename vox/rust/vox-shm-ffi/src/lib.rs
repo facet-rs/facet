@@ -741,7 +741,7 @@ pub unsafe extern "C" fn vox_shm_bootstrap_response_decode(
 /// Send one bootstrap response on a Unix control socket.
 ///
 /// On success status (`0`), `doorbell_fd` and `segment_fd` are required and
-/// `mmap_control_fd` is also required. On error status (`1`), all fd
+/// `mmap_rx_fd` and `mmap_tx_fd` are also required. On error status (`1`), all fd
 /// parameters must be `-1`.
 ///
 /// Returns 0 on success, -1 on error.
@@ -760,7 +760,8 @@ pub unsafe extern "C" fn vox_shm_bootstrap_response_send_unix(
     payload_len: usize,
     doorbell_fd: i32,
     segment_fd: i32,
-    mmap_control_fd: i32,
+    mmap_rx_fd: i32,
+    mmap_tx_fd: i32,
 ) -> i32 {
     #[cfg(unix)]
     {
@@ -780,17 +781,18 @@ pub unsafe extern "C" fn vox_shm_bootstrap_response_send_unix(
         };
 
         let result = if status == BootstrapStatus::Success {
-            if doorbell_fd < 0 || segment_fd < 0 || mmap_control_fd < 0 {
+            if doorbell_fd < 0 || segment_fd < 0 || mmap_rx_fd < 0 || mmap_tx_fd < 0 {
                 return -1;
             }
             let fds = bootstrap::BootstrapSuccessFds {
                 doorbell_fd,
                 segment_fd,
-                mmap_control_fd,
+                mmap_rx_fd,
+                mmap_tx_fd,
             };
             bootstrap::send_response_unix(control_fd, status, peer_id, payload, Some(&fds))
         } else {
-            if doorbell_fd >= 0 || segment_fd >= 0 || mmap_control_fd >= 0 {
+            if doorbell_fd >= 0 || segment_fd >= 0 || mmap_rx_fd >= 0 || mmap_tx_fd >= 0 {
                 return -1;
             }
             bootstrap::send_response_unix(control_fd, status, peer_id, payload, None)
@@ -809,7 +811,8 @@ pub unsafe extern "C" fn vox_shm_bootstrap_response_send_unix(
             payload_len,
             doorbell_fd,
             segment_fd,
-            mmap_control_fd,
+            mmap_rx_fd,
+            mmap_tx_fd,
         );
         -1
     }
@@ -838,7 +841,8 @@ pub unsafe extern "C" fn vox_shm_bootstrap_response_recv_unix(
     out_info: *mut VoxShmBootstrapResponseInfo,
     out_doorbell_fd: *mut i32,
     out_segment_fd: *mut i32,
-    out_mmap_control_fd: *mut i32,
+    out_mmap_rx_fd: *mut i32,
+    out_mmap_tx_fd: *mut i32,
 ) -> i32 {
     #[cfg(unix)]
     {
@@ -847,7 +851,8 @@ pub unsafe extern "C" fn vox_shm_bootstrap_response_recv_unix(
             || out_info.is_null()
             || out_doorbell_fd.is_null()
             || out_segment_fd.is_null()
-            || out_mmap_control_fd.is_null()
+            || out_mmap_rx_fd.is_null()
+            || out_mmap_tx_fd.is_null()
         {
             return -1;
         }
@@ -873,7 +878,8 @@ pub unsafe extern "C" fn vox_shm_bootstrap_response_recv_unix(
             (*out_info).payload_len = received.response.payload.len() as u16;
             *out_doorbell_fd = -1;
             *out_segment_fd = -1;
-            *out_mmap_control_fd = -1;
+            *out_mmap_rx_fd = -1;
+            *out_mmap_tx_fd = -1;
         }
 
         if let Some(fds) = received.fds {
@@ -881,7 +887,8 @@ pub unsafe extern "C" fn vox_shm_bootstrap_response_recv_unix(
             unsafe {
                 *out_doorbell_fd = fds.doorbell_fd.into_raw_fd();
                 *out_segment_fd = fds.segment_fd.into_raw_fd();
-                *out_mmap_control_fd = fds.mmap_control_fd.into_raw_fd();
+                *out_mmap_rx_fd = fds.mmap_rx_fd.into_raw_fd();
+                *out_mmap_tx_fd = fds.mmap_tx_fd.into_raw_fd();
             }
         }
 
@@ -897,7 +904,8 @@ pub unsafe extern "C" fn vox_shm_bootstrap_response_recv_unix(
             out_info,
             out_doorbell_fd,
             out_segment_fd,
-            out_mmap_control_fd,
+            out_mmap_rx_fd,
+            out_mmap_tx_fd,
         );
         -1
     }

@@ -2026,12 +2026,8 @@ async fn accept_subject_shm_subject_is_host(
                 .ok_or_else(|| format!("invalid peer id {}", received.response.peer_id))?;
 
             let doorbell_fd = fds.doorbell_fd.into_raw_fd();
-            let mmap_rx_owned = fds.mmap_control_fd;
-            let mmap_tx_owned = mmap_rx_owned
-                .try_clone()
-                .map_err(|e| format!("clone mmap control fd: {e}"))?;
-            let mmap_rx_fd = mmap_rx_owned.into_raw_fd();
-            let mmap_tx_fd = mmap_tx_owned.into_raw_fd();
+            let mmap_rx_fd = fds.mmap_rx_fd.into_raw_fd();
+            let mmap_tx_fd = fds.mmap_tx_fd.into_raw_fd();
 
             unsafe {
                 guest_link_from_raw(segment, peer_id, doorbell_fd, mmap_rx_fd, mmap_tx_fd, true)

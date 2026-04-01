@@ -374,16 +374,10 @@ mod unix_demo {
     fn connect_guest_link_from_env() -> Result<ShmLink> {
         let control_sock =
             env::var("SHM_CONTROL_SOCK").map_err(|_| eyre!("SHM_CONTROL_SOCK env var not set"))?;
-        let sid =
-            env::var("SHM_SESSION_ID").map_err(|_| eyre!("SHM_SESSION_ID env var not set"))?;
-        let mmap_tx_fd: i32 = env::var("SHM_MMAP_TX_FD")
-            .map_err(|_| eyre!("SHM_MMAP_TX_FD env var not set"))?
-            .parse()
-            .map_err(|e| eyre!("invalid SHM_MMAP_TX_FD: {e}"))?;
-        connect_guest_link(&control_sock, &sid, mmap_tx_fd)
+        connect_guest_link(&control_sock)
     }
 
-    fn connect_guest_link(control_sock: &str, _sid: &str, mmap_tx_fd: i32) -> Result<ShmLink> {
+    fn connect_guest_link(control_sock: &str) -> Result<ShmLink> {
         let request = encode_request();
 
         let mut stream = UnixStream::connect(control_sock)
@@ -416,7 +410,8 @@ mod unix_demo {
             .ok_or_else(|| eyre!("invalid peer id {}", received.response.peer_id))?;
 
         let doorbell_fd = fds.doorbell_fd.into_raw_fd();
-        let mmap_rx_fd = fds.mmap_control_fd.into_raw_fd();
+        let mmap_rx_fd = fds.mmap_rx_fd.into_raw_fd();
+        let mmap_tx_fd = fds.mmap_tx_fd.into_raw_fd();
 
         unsafe { guest_link_from_raw(segment, peer_id, doorbell_fd, mmap_rx_fd, mmap_tx_fd, true) }
             .map_err(|e| eyre!("guest_link_from_raw: {e}"))
