@@ -82,6 +82,13 @@ struct CacheEntry {
 
 type CrateNames = BTreeMap<String, FoundCrate>;
 
+fn in_external_test_context() -> bool {
+    env::var_os("CARGO_TARGET_TMPDIR").is_some()
+        // rustdoc doctests compile code in an external harness crate.
+        || env::var_os("UNSTABLE_RUSTDOC_TEST_PATH").is_some()
+        || env::var_os("RUSTDOC_TEST_CRATE_NAME").is_some()
+}
+
 /// Find the crate name for the given `orig_name` in the current `Cargo.toml`.
 ///
 /// `orig_name` should be the original name of the searched crate (e.g., `"vox-session"`).
@@ -272,11 +279,11 @@ fn extract_crate_names(
 
     // Check if we're building the crate itself
     let root_pkg = package_name.map(|name| {
-        let cr = match env::var_os("CARGO_TARGET_TMPDIR") {
-            // We're running for a library/binary crate
-            None => FoundCrate::Itself,
-            // We're running for an integration test
-            Some(_) => FoundCrate::Name(sanitize_crate_name(name)),
+        let cr = if in_external_test_context() {
+            // Integration tests and rustdoc doctests compile as external harness crates.
+            FoundCrate::Name(sanitize_crate_name(name))
+        } else {
+            FoundCrate::Itself
         };
         (name.to_owned(), cr)
     });

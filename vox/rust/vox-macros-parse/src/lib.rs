@@ -106,8 +106,27 @@ unsynn! {
 
     pub struct RefSelf {
         pub _amp: unsynn::operator::names::And,
+        pub lifetime: Option<Cons<LifetimeTick, Ident>>,
         pub mutability: Option<KMut>,
         pub name: KSelfKw,
+    }
+
+    pub struct ValueSelf {
+        pub mutability: Option<KMut>,
+        pub name: KSelfKw,
+    }
+
+    pub struct TypedSelf {
+        pub mutability: Option<KMut>,
+        pub name: KSelfKw,
+        pub _colon: Colon,
+        pub ty: Type,
+    }
+
+    pub enum MethodReceiver {
+        Ref(RefSelf),
+        Typed(TypedSelf),
+        Value(ValueSelf),
     }
 
     pub struct MethodParam {
@@ -181,13 +200,13 @@ unsynn! {
     }
 
     pub struct MethodParams {
-        pub receiver: RefSelf,
+        pub receiver: MethodReceiver,
         pub rest: Optional<Cons<Comma, CommaDelimitedVec<MethodParam>>>,
     }
 
     pub struct ServiceMethod {
         pub attributes: Any<RawAttribute>,
-        pub _async: KAsync,
+        pub _async: Optional<KAsync>,
         pub _fn: KFn,
         pub name: Ident,
         pub generics: Optional<GenericParams>,
@@ -435,14 +454,42 @@ impl ServiceMethod {
             .unwrap_or_else(unit_type)
     }
 
+    pub fn receiver_kind(&self) -> ReceiverKind {
+        match &self.params.content.receiver {
+            MethodReceiver::Ref(RefSelf {
+                mutability: Some(_),
+                ..
+            }) => ReceiverKind::RefMutSelf,
+            MethodReceiver::Ref(_) => ReceiverKind::RefSelf,
+            MethodReceiver::Value(ValueSelf {
+                mutability: Some(_),
+                ..
+            }) => ReceiverKind::MutSelfValue,
+            MethodReceiver::Value(_) => ReceiverKind::SelfValue,
+            MethodReceiver::Typed(TypedSelf {
+                mutability: Some(_),
+                ..
+            }) => ReceiverKind::MutTypedSelf,
+            MethodReceiver::Typed(_) => ReceiverKind::TypedSelf,
+        }
+    }
+
     /// Check if receiver is &mut self (not allowed for service methods).
     pub fn is_mut_receiver(&self) -> bool {
-        self.params.content.receiver.mutability.is_some()
+        matches!(
+            self.receiver_kind(),
+            ReceiverKind::RefMutSelf | ReceiverKind::MutSelfValue
+        )
     }
 
     /// Check if method has generics.
     pub fn has_generics(&self) -> bool {
         !self.generics.is_empty()
+    }
+
+    /// Check if method is declared with the async keyword.
+    pub fn is_async(&self) -> bool {
+        !self._async.is_empty()
     }
 
     /// Check whether this method explicitly opts into request context injection.
@@ -459,6 +506,16 @@ impl ServiceMethod {
     pub fn is_persist(&self) -> bool {
         has_attr_helper(&self.attributes, &["vox"], "persist")
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReceiverKind {
+    RefSelf,
+    RefMutSelf,
+    SelfValue,
+    MutSelfValue,
+    TypedSelf,
+    MutTypedSelf,
 }
 
 // ============================================================================
@@ -653,6 +710,72 @@ mod tests {
         let method = trait_def.methods().next().expect("method");
         assert!(method.has_generics());
         assert!(method.is_mut_receiver());
+    }
+
+    #[test]
+    fn method_helpers_detect_async_keyword_presence() {
+        let trait_def = parse(
+            r#"
+            trait Svc {
+                fn plain(&self) -> u32;
+                async fn async_one(&self) -> u32;
+            }
+            "#,
+        );
+        let mut methods = trait_def.methods();
+        assert!(!methods.next().expect("plain method").is_async());
+        assert!(methods.next().expect("async method").is_async());
+    }
+
+    #[test]
+    fn method_helpers_detect_receiver_kinds() {
+        let trait_def = parse(
+            r#"
+            trait Svc {
+                async fn by_ref(&self) -> u32;
+                async fn by_ref_lifetime(&'a self) -> u32;
+                async fn by_mut_ref(&mut self) -> u32;
+                async fn by_mut_ref_lifetime(&'a mut self) -> u32;
+                async fn by_value(self) -> u32;
+                async fn by_mut_value(mut self) -> u32;
+                async fn by_typed(self: Box<Self>) -> u32;
+                async fn by_mut_typed(mut self: Box<Self>) -> u32;
+            }
+            "#,
+        );
+        let mut methods = trait_def.methods();
+        assert_eq!(
+            methods.next().expect("by_ref").receiver_kind(),
+            ReceiverKind::RefSelf
+        );
+        assert_eq!(
+            methods.next().expect("by_ref_lifetime").receiver_kind(),
+            ReceiverKind::RefSelf
+        );
+        assert_eq!(
+            methods.next().expect("by_mut_ref").receiver_kind(),
+            ReceiverKind::RefMutSelf
+        );
+        assert_eq!(
+            methods.next().expect("by_mut_ref_lifetime").receiver_kind(),
+            ReceiverKind::RefMutSelf
+        );
+        assert_eq!(
+            methods.next().expect("by_value").receiver_kind(),
+            ReceiverKind::SelfValue
+        );
+        assert_eq!(
+            methods.next().expect("by_mut_value").receiver_kind(),
+            ReceiverKind::MutSelfValue
+        );
+        assert_eq!(
+            methods.next().expect("by_typed").receiver_kind(),
+            ReceiverKind::TypedSelf
+        );
+        assert_eq!(
+            methods.next().expect("by_mut_typed").receiver_kind(),
+            ReceiverKind::MutTypedSelf
+        );
     }
 
     #[test]

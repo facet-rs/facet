@@ -5,8 +5,7 @@
 //! ```
 //! #[vox::service]
 //! trait Hello {
-//!   // `&self` is the only supported receiver
-//!   fn say_hello(&self) -> String;
+//!   async fn say_hello(&self) -> String;
 //! }
 //! ```
 //!

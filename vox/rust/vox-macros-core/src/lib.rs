@@ -125,6 +125,117 @@ pub fn generate_service(parsed: &ServiceTrait, vox: &TokenStream2) -> Result<Tok
     // r[impl rpc.channel.placement]
     // Validate: channels are only allowed in method args.
     for method in parsed.methods() {
+        match method.receiver_kind() {
+            ReceiverKind::RefSelf => {}
+            ReceiverKind::RefMutSelf => {
+                let span = method
+                    .params
+                    .content
+                    .receiver
+                    .to_token_stream()
+                    .into_iter()
+                    .next()
+                    .map(|tt| tt.span())
+                    .unwrap_or_else(proc_macro2::Span::call_site);
+                return Err(Error::new(
+                    span,
+                    format!(
+                        "method `{}` receiver must be `&self`; `&mut self` is not supported in #[vox::service] traits",
+                        method.name()
+                    ),
+                ));
+            }
+            ReceiverKind::SelfValue => {
+                let span = method
+                    .params
+                    .content
+                    .receiver
+                    .to_token_stream()
+                    .into_iter()
+                    .next()
+                    .map(|tt| tt.span())
+                    .unwrap_or_else(proc_macro2::Span::call_site);
+                return Err(Error::new(
+                    span,
+                    format!(
+                        "method `{}` receiver must be `&self`; `self` is not supported in #[vox::service] traits",
+                        method.name()
+                    ),
+                ));
+            }
+            ReceiverKind::MutSelfValue => {
+                let span = method
+                    .params
+                    .content
+                    .receiver
+                    .to_token_stream()
+                    .into_iter()
+                    .next()
+                    .map(|tt| tt.span())
+                    .unwrap_or_else(proc_macro2::Span::call_site);
+                return Err(Error::new(
+                    span,
+                    format!(
+                        "method `{}` receiver must be `&self`; `mut self` is not supported in #[vox::service] traits",
+                        method.name()
+                    ),
+                ));
+            }
+            ReceiverKind::TypedSelf => {
+                let span = method
+                    .params
+                    .content
+                    .receiver
+                    .to_token_stream()
+                    .into_iter()
+                    .next()
+                    .map(|tt| tt.span())
+                    .unwrap_or_else(proc_macro2::Span::call_site);
+                return Err(Error::new(
+                    span,
+                    format!(
+                        "method `{}` receiver must be `&self`; typed receivers like `self: Type` are not supported in #[vox::service] traits",
+                        method.name()
+                    ),
+                ));
+            }
+            ReceiverKind::MutTypedSelf => {
+                let span = method
+                    .params
+                    .content
+                    .receiver
+                    .to_token_stream()
+                    .into_iter()
+                    .next()
+                    .map(|tt| tt.span())
+                    .unwrap_or_else(proc_macro2::Span::call_site);
+                return Err(Error::new(
+                    span,
+                    format!(
+                        "method `{}` receiver must be `&self`; typed receivers like `mut self: Type` are not supported in #[vox::service] traits",
+                        method.name()
+                    ),
+                ));
+            }
+        }
+
+        if !method.is_async() {
+            let span = method
+                .name
+                .to_token_stream()
+                .into_iter()
+                .next()
+                .map(|tt| tt.span())
+                .unwrap_or_else(proc_macro2::Span::call_site);
+            return Err(Error::new(
+                span,
+                format!(
+                    "method `{}` must be declared `async fn` in a #[vox::service] trait",
+                    method.name()
+                ),
+            ));
+        }
+
         let return_type = method.return_type();
         if return_type.contains_channel() {
             return Err(Error::new(
@@ -1066,6 +1177,76 @@ mod tests {
         assert_eq!(
             err.message,
             "method `stream` has Channel (Tx/Rx) in return type - channels are only allowed in method arguments"
+        );
+    }
+
+    #[test]
+    fn rejects_non_async_methods() {
+        let parsed = vox_macros_parse::parse_trait(&quote! {
+            trait Svc { fn ping(&self) -> u32; }
+        })
+        .unwrap();
+        let vox = quote! { ::vox };
+        let err = crate::generate_service(&parsed, &vox).unwrap_err();
+        assert_eq!(
+            err.message,
+            "method `ping` must be declared `async fn` in a #[vox::service] trait"
+        );
+    }
+
+    #[test]
+    fn rejects_mut_ref_receiver() {
+        let parsed = vox_macros_parse::parse_trait(&quote! {
+            trait Svc { async fn ping(&mut self) -> u32; }
+        })
+        .unwrap();
+        let vox = quote! { ::vox };
+        let err = crate::generate_service(&parsed, &vox).unwrap_err();
+        assert_eq!(
+            err.message,
+            "method `ping` receiver must be `&self`; `&mut self` is not supported in #[vox::service] traits"
+        );
+    }
+
+    #[test]
+    fn rejects_value_receiver() {
+        let parsed = vox_macros_parse::parse_trait(&quote! {
+            trait Svc { async fn ping(self) -> u32; }
+        })
+        .unwrap();
+        let vox = quote! { ::vox };
+        let err = crate::generate_service(&parsed, &vox).unwrap_err();
+        assert_eq!(
+            err.message,
+            "method `ping` receiver must be `&self`; `self` is not supported in #[vox::service] traits"
+        );
+    }
+
+    #[test]
+    fn rejects_mut_value_receiver() {
+        let parsed = vox_macros_parse::parse_trait(&quote! {
+            trait Svc { async fn ping(mut self) -> u32; }
+        })
+        .unwrap();
+        let vox = quote! { ::vox };
+        let err = crate::generate_service(&parsed, &vox).unwrap_err();
+        assert_eq!(
+            err.message,
+            "method `ping` receiver must be `&self`; `mut self` is not supported in #[vox::service] traits"
+        );
+    }
+
+    #[test]
+    fn rejects_typed_self_receiver() {
+        let parsed = vox_macros_parse::parse_trait(&quote! {
+            trait Svc { async fn ping(self: Box<Self>) -> u32; }
+        })
+        .unwrap();
+        let vox = quote! { ::vox };
+        let err = crate::generate_service(&parsed, &vox).unwrap_err();
+        assert_eq!(
+            err.message,
+            "method `ping` receiver must be `&self`; typed receivers like `self: Type` are not supported in #[vox::service] traits"
         );
     }
 
