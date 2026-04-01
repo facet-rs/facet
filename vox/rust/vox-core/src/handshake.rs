@@ -92,6 +92,7 @@ pub async fn handshake_as_initiator<Tx: LinkTx, Rx: LinkRx>(
     settings: ConnectionSettings,
     supports_retry: bool,
     resume_key: Option<&SessionResumeKey>,
+    metadata: vox_types::Metadata<'static>,
 ) -> Result<HandshakeResult, HandshakeError> {
     let our_schema = message_schema();
 
@@ -101,6 +102,7 @@ pub async fn handshake_as_initiator<Tx: LinkTx, Rx: LinkRx>(
         message_payload_schema: our_schema.clone(),
         supports_retry,
         resume_key: resume_key.map(ResumeKeyBytes::from_key),
+        metadata,
     };
 
     // Step 1: Send Hello
@@ -133,6 +135,7 @@ pub async fn handshake_as_initiator<Tx: LinkTx, Rx: LinkRx>(
         peer_resume_key: None, // initiator doesn't receive a peer resume key
         our_schema,
         peer_schema: hy.message_payload_schema,
+        peer_metadata: hy.metadata,
     })
 }
 
@@ -151,6 +154,7 @@ pub async fn handshake_as_acceptor<Tx: LinkTx, Rx: LinkRx>(
     supports_retry: bool,
     resumable: bool,
     expected_resume_key: Option<&SessionResumeKey>,
+    metadata: vox_types::Metadata<'static>,
 ) -> Result<HandshakeResult, HandshakeError> {
     // Step 1: Receive Hello
     let hello = match recv_handshake(rx).await? {
@@ -198,6 +202,7 @@ pub async fn handshake_as_acceptor<Tx: LinkTx, Rx: LinkRx>(
         message_payload_schema: our_schema.clone(),
         supports_retry,
         resume_key: our_resume_key.as_ref().map(ResumeKeyBytes::from_key),
+        metadata,
     };
     send_handshake(tx, &HandshakeMessage::HelloYourself(hy)).await?;
 
@@ -220,6 +225,7 @@ pub async fn handshake_as_acceptor<Tx: LinkTx, Rx: LinkRx>(
         peer_resume_key,
         our_schema,
         peer_schema: hello.message_payload_schema,
+        peer_metadata: hello.metadata,
     })
 }
 

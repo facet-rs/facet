@@ -80,6 +80,36 @@ pub struct MetadataEntry<'a> {
     pub flags: MetadataFlags,
 }
 
+impl<'a> MetadataValue<'a> {
+    /// Convert to a `'static` lifetime by cloning any borrowed data.
+    pub fn into_owned(self) -> MetadataValue<'static> {
+        match self {
+            MetadataValue::String(s) => MetadataValue::String(Cow::Owned(s.into_owned())),
+            MetadataValue::Bytes(b) => MetadataValue::Bytes(Cow::Owned(b.into_owned())),
+            MetadataValue::U64(n) => MetadataValue::U64(n),
+        }
+    }
+}
+
+impl<'a> MetadataEntry<'a> {
+    /// Convert to a `'static` lifetime by cloning any borrowed data.
+    pub fn into_owned(self) -> MetadataEntry<'static> {
+        MetadataEntry {
+            key: Cow::Owned(self.key.into_owned()),
+            value: self.value.into_owned(),
+            flags: self.flags,
+        }
+    }
+}
+
 // r[impl rpc.metadata.unknown]
 /// A list of metadata entries.
 pub type Metadata<'a> = Vec<MetadataEntry<'a>>;
+
+/// Convert a `Metadata<'a>` to `Metadata<'static>` by cloning any borrowed data.
+pub fn metadata_into_owned(metadata: Metadata<'_>) -> Metadata<'static> {
+    metadata
+        .into_iter()
+        .map(MetadataEntry::into_owned)
+        .collect()
+}

@@ -170,6 +170,7 @@ async fn call_works_after_resume() {
                 },
                 true,
                 client_session_handle.resume_key(),
+                vec![],
             )
             .await
             .expect("handshake");
@@ -252,6 +253,7 @@ async fn first_call_after_resume_without_prior_calls() {
                 },
                 true,
                 client_session_handle.resume_key(),
+                vec![],
             )
             .await
             .expect("handshake");
@@ -380,6 +382,7 @@ async fn operation_replay_after_resume_has_schemas() {
                 },
                 true,
                 client_session_handle.resume_key(),
+                vec![],
             )
             .await
             .expect("handshake");

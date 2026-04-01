@@ -257,6 +257,7 @@ async fn main() -> Result<()> {
                 peer_resume_key: None,
                 our_schema: vec![],
                 peer_schema: vec![],
+                peer_metadata: vec![],
             },
         )
         .establish::<vox::NoopClient>(StableLabDispatcher::new(StableLabService::new()))
@@ -284,6 +285,7 @@ async fn main() -> Result<()> {
             peer_resume_key: None,
             our_schema: vec![],
             peer_schema: vec![],
+            peer_metadata: vec![],
         },
     )
     .establish::<StableLabClient>(())

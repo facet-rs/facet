@@ -1964,6 +1964,7 @@ mod tests {
             peer_resume_key: None,
             our_schema: vec![],
             peer_schema: vec![],
+            peer_metadata: vec![],
         }
     }
 

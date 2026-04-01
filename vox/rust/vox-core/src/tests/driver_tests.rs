@@ -47,6 +47,7 @@ fn test_acceptor_handshake() -> HandshakeResult {
         peer_resume_key: None,
         our_schema: vec![],
         peer_schema: vec![],
+        peer_metadata: vec![],
     }
 }
 
@@ -66,6 +67,7 @@ fn test_initiator_handshake() -> HandshakeResult {
         peer_resume_key: None,
         our_schema: vec![],
         peer_schema: vec![],
+        peer_metadata: vec![],
     }
 }
 
@@ -1343,6 +1345,7 @@ fn message_plan_from_identical_schemas_round_trips() {
         peer_resume_key: None,
         our_schema: schemas.clone(),
         peer_schema: schemas,
+        peer_metadata: vec![],
     };
     let plan = crate::MessagePlan::from_handshake(&handshake_result)
         .expect("should build message plan from identical schemas");
@@ -1646,6 +1649,7 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
                 },
                 true,
                 client_session_handle.resume_key(),
+                vec![],
             )
             .await
             .expect("client CBOR handshake should succeed");
@@ -2468,6 +2472,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
                     peer_resume_key: None,
                     our_schema: vec![],
                     peer_schema: vec![],
+                    peer_metadata: vec![],
                 },
             )
             .on_connection(EchoAcceptor)
@@ -2496,6 +2501,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
             peer_resume_key: None,
             our_schema: vec![],
             peer_schema: vec![],
+            peer_metadata: vec![],
         },
     )
     .establish::<NoopClient>(())
@@ -2546,6 +2552,7 @@ async fn acceptor_builder_customization_supports_opening_connections() {
                     peer_resume_key: None,
                     our_schema: vec![],
                     peer_schema: vec![],
+                    peer_metadata: vec![],
                 },
             )
             .on_connection(EchoAcceptor)
@@ -2574,6 +2581,7 @@ async fn acceptor_builder_customization_supports_opening_connections() {
             peer_resume_key: None,
             our_schema: vec![],
             peer_schema: vec![],
+            peer_metadata: vec![],
         },
     )
     .establish::<NoopClient>(())

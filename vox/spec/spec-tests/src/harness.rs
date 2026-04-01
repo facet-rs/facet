@@ -1446,6 +1446,7 @@ where
             true,
             false,
             None,
+            vec![],
         )
         .await
         .map_err(|e| format!("server CBOR handshake: {e}"));
@@ -1488,6 +1489,7 @@ where
         },
         true,
         None,
+        vec![],
     )
     .await
     .map_err(|e| format!("client CBOR handshake: {e}"))?;

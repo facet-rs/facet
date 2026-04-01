@@ -28,6 +28,7 @@ fn test_acceptor_handshake() -> HandshakeResult {
         peer_resume_key: None,
         our_schema: vec![],
         peer_schema: vec![],
+        peer_metadata: vec![],
     }
 }
 
@@ -47,6 +48,7 @@ fn test_initiator_handshake() -> HandshakeResult {
         peer_resume_key: None,
         our_schema: vec![],
         peer_schema: vec![],
+        peer_metadata: vec![],
     }
 }
 

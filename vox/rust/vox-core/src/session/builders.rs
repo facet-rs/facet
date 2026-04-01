@@ -9,7 +9,7 @@ use std::{
 use moire::sync::mpsc;
 use vox_types::{
     Conduit, ConduitTx, ConnectionSettings, Handler, HandshakeResult, Link, MaybeSend, MaybeSync,
-    MessageFamily, Metadata, Parity, SessionResumeKey, SplitLink,
+    MessageFamily, Metadata, Parity, SessionResumeKey, SplitLink, metadata_into_owned,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -89,7 +89,7 @@ where
     L::Rx: MaybeSend + 'static,
 {
     let (tx, mut rx) = link.split();
-    let handshake_result = handshake_as_initiator(&tx, &mut rx, settings, true, None)
+    let handshake_result = handshake_as_initiator(&tx, &mut rx, settings, true, None, vec![])
         .await
         .map_err(session_error_from_handshake)?;
     let message_plan =
@@ -114,7 +114,7 @@ where
     L::Rx: MaybeSend + 'static,
 {
     let (tx, mut rx) = link.split();
-    let handshake_result = handshake_as_acceptor(&tx, &mut rx, settings, true, false, None)
+    let handshake_result = handshake_as_acceptor(&tx, &mut rx, settings, true, false, None, vec![])
         .await
         .map_err(session_error_from_handshake)?;
     let message_plan =
@@ -455,6 +455,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
                     root_settings.clone(),
                     true,
                     None,
+                    metadata_into_owned(metadata.clone()),
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
@@ -495,6 +496,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
                     root_settings.clone(),
                     true,
                     None,
+                    metadata_into_owned(metadata.clone()),
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
@@ -724,10 +726,16 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
-        let handshake_result =
-            handshake_as_initiator(&link.tx, &mut link.rx, root_settings.clone(), true, None)
-                .await
-                .map_err(session_error_from_handshake)?;
+        let handshake_result = handshake_as_initiator(
+            &link.tx,
+            &mut link.rx,
+            root_settings.clone(),
+            true,
+            None,
+            metadata_into_owned(metadata.clone()),
+        )
+        .await
+        .map_err(session_error_from_handshake)?;
         let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
             .map_err(SessionError::Protocol)?;
         let builder = SessionInitiatorBuilder::new(
@@ -768,10 +776,16 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         for<'p> <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + Send + 'static,
     {
-        let handshake_result =
-            handshake_as_initiator(&link.tx, &mut link.rx, root_settings.clone(), true, None)
-                .await
-                .map_err(session_error_from_handshake)?;
+        let handshake_result = handshake_as_initiator(
+            &link.tx,
+            &mut link.rx,
+            root_settings.clone(),
+            true,
+            None,
+            metadata_into_owned(metadata.clone()),
+        )
+        .await
+        .map_err(session_error_from_handshake)?;
         let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
             .map_err(SessionError::Protocol)?;
         let conduit = StableConduit::<MessageFamily, _>::with_first_link(
@@ -865,6 +879,7 @@ where
                         self.settings.clone(),
                         true,
                         selected_resume_key,
+                        vec![],
                     )
                     .await
                     .map_err(session_error_from_handshake)?;
@@ -1190,6 +1205,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                     true,
                     resumable,
                     None,
+                    metadata_into_owned(metadata.clone()),
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
@@ -1266,6 +1282,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                     true,
                     resumable,
                     None,
+                    metadata_into_owned(metadata.clone()),
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
@@ -1340,6 +1357,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                     true,
                     resumable,
                     None,
+                    metadata_into_owned(metadata.clone()),
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
@@ -1403,6 +1421,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                     true,
                     resumable,
                     None,
+                    metadata_into_owned(metadata.clone()),
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
@@ -1459,6 +1478,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
             true,
             resumable,
             None,
+            metadata_into_owned(metadata.clone()),
         )
         .await
         .map_err(session_error_from_handshake)?;
