@@ -112,6 +112,41 @@ pub use vox_types::{
 #[cfg(feature = "runtime")]
 pub use vox_core::*;
 
+/// Transport implementations re-exported by the facade crate.
+///
+/// Enable with cargo features:
+/// - `transport-tcp`
+/// - `transport-local`
+/// - `transport-shm`
+#[cfg(any(
+    feature = "transport-tcp",
+    feature = "transport-local",
+    feature = "transport-shm"
+))]
+pub mod transport {
+    /// TCP byte-stream transport (`vox-stream`).
+    #[cfg(feature = "transport-tcp")]
+    pub mod tcp {
+        pub use vox_stream::{StreamLink, TcpConnector, tcp_connector};
+    }
+
+    /// Local IPC transport (`vox-stream`): Unix sockets / Windows named pipes.
+    #[cfg(feature = "transport-local")]
+    pub mod local {
+        pub use vox_stream::{
+            LocalLink, LocalLinkAcceptor, LocalLinkSource, LocalListener, LocalServerStream,
+            LocalStream, connect, endpoint_exists, local_link_source, path_to_pipe_name,
+            remove_endpoint,
+        };
+    }
+
+    /// Shared-memory transport (`vox-shm`).
+    #[cfg(feature = "transport-shm")]
+    pub mod shm {
+        pub use vox_shm::*;
+    }
+}
+
 // Channel binding via thread-local binder during deserialization
 pub use vox_types::channel::with_channel_binder;
 

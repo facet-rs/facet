@@ -20,11 +20,17 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [features]
 default = ["runtime"]
 runtime = ["dep:vox-core"]
+transport-tcp = ["dep:vox-stream"]
+transport-local = ["dep:vox-stream"]
+transport-shm = ["dep:vox-shm"]
+transport-all = ["transport-tcp", "transport-local", "transport-shm"]
 
 [dependencies]
 vox-types.workspace = true
 vox-service-macros.workspace = true
 vox-core = { workspace = true, optional = true }
+vox-stream = { workspace = true, optional = true }
+vox-shm = { workspace = true, optional = true }
 facet.workspace = true
 facet-pretty.workspace = true
 facet-reflect.workspace = true
@@ -33,9 +39,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
-vox-stream = { path = "../vox-stream" }
 vox-core = { path = "../vox-core" }
 shm-primitives = { path = "../shm-primitives" }
-vox-shm = { path = "../vox-shm" }
 tempfile.workspace = true
 tracing-subscriber.workspace = true
