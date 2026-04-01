@@ -38,7 +38,7 @@ impl ConnectionAcceptor for VconnEchoAcceptor {
                 max_concurrent_requests: 64,
             },
             metadata: vec![],
-            handler: Box::new(EchoDispatcher::new(EchoService)),
+            setup: vox::ConnectionSetup::Handler(Box::new(EchoDispatcher::new(EchoService))),
         })
     }
 }
@@ -208,9 +208,11 @@ impl ConnectionAcceptor for CounterAcceptor {
                 max_concurrent_requests: 64,
             },
             metadata: vec![],
-            handler: Box::new(CounterDispatcher::new(CounterService {
-                count: std::sync::Arc::new(AtomicU32::new(0)),
-            })),
+            setup: vox::ConnectionSetup::Handler(Box::new(CounterDispatcher::new(
+                CounterService {
+                    count: std::sync::Arc::new(AtomicU32::new(0)),
+                },
+            ))),
         })
     }
 }

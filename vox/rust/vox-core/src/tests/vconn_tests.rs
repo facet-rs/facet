@@ -1,3 +1,30 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Duration;
+
+use moire::sync::mpsc;
+use moire::task::FutureExt;
+use vox_types::{
+    Backing, ChannelBinder, ChannelBody, ChannelClose, ChannelGrantCredit, ChannelId, ChannelItem,
+    ChannelMessage, ChannelSink, Conduit, ConduitRx, ConnectionSettings, Handler,
+    IncomingChannelMessage, Link, LinkRx, LinkTx, LinkTxPermit, Message, MessageFamily,
+    MessagePayload, Metadata, MethodId, Parity, Payload, ReplySink, RequestBody, RequestCall,
+    RequestCancel, RequestMessage, RequestResponse, RetryPolicy, SelfRef, Tx, VoxError, WriteSlot,
+    channel, ensure_operation_id, metadata_operation_id,
+};
+use vox_types::{HandshakeResult, SessionResumeKey, SessionRole};
+
+use super::utils::*;
+use crate::session::{
+    AcceptedConnection, ConnectionAcceptor, ConnectionHandle, ConnectionMessage, ConnectionSetup,
+    SessionAcceptOutcome, SessionError, SessionHandle, SessionKeepaliveConfig, SessionRegistry,
+    acceptor_conduit, acceptor_on, initiator_conduit, initiator_on, proxy_connections,
+};
+use crate::{
+    Attachment, BareConduit, Caller, Driver, DriverCaller, DriverReplySink, InMemoryOperationStore,
+    LinkSource, NoopClient, OperationStore, TransportMode, initiate_transport, memory_link_pair,
+};
+
 // r[verify rpc.virtual-connection.open]
 // r[verify rpc.virtual-connection.accept]
 // r[verify connection.open]
@@ -209,7 +236,7 @@ async fn close_virtual_connection() {
                     max_concurrent_requests: 64,
                 },
                 metadata: vec![],
-                setup: Box::new(move |handle| {
+                setup: ConnectionSetup::Setup(Box::new(move |handle| {
                     let mut driver = Driver::new(handle, EchoHandler);
                     moire::task::spawn(
                         async move {
@@ -218,7 +245,7 @@ async fn close_virtual_connection() {
                         }
                         .named("vconn_server_driver"),
                     );
-                }),
+                })),
             })
         }
     }
@@ -342,7 +369,7 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
                     max_concurrent_requests: 64,
                 },
                 metadata: vec![],
-                setup: Box::new(move |handle| {
+                setup: ConnectionSetup::Setup(Box::new(move |handle| {
                     let mut driver = Driver::new(handle, EchoHandler);
                     moire::task::spawn(
                         async move {
@@ -351,7 +378,7 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
                         }
                         .named("vconn_server_driver"),
                     );
-                }),
+                })),
             })
         }
     }
@@ -508,7 +535,7 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
                     max_concurrent_requests: 64,
                 },
                 metadata: vec![],
-                handler: Box::new(EchoHandler),
+                setup: ConnectionSetup::Handler(Box::new(EchoHandler)),
             })
         }
     }

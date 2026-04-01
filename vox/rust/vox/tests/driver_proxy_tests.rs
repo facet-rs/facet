@@ -1,8 +1,8 @@
 //! Tests for proxy_connections — transparent call forwarding between sessions.
 
 use vox::{
-    AcceptedConnection, ConnectionAcceptor, ConnectionSettings, Driver, Metadata, Parity,
-    SessionHandle, memory_link_pair, proxy_connections,
+    AcceptedConnection, ConnectionAcceptor, ConnectionSettings, ConnectionSetup, Driver, Metadata,
+    Parity, SessionHandle, memory_link_pair, proxy_connections,
 };
 
 #[vox::service]
@@ -34,7 +34,7 @@ impl ConnectionAcceptor for UpstreamEchoAcceptor {
                 max_concurrent_requests: 64,
             },
             metadata: vec![],
-            handler: Box::new(EchoDispatcher::new(EchoService)),
+            setup: ConnectionSetup::Handler(Box::new(EchoDispatcher::new(EchoService))),
         })
     }
 }
@@ -57,7 +57,7 @@ impl ConnectionAcceptor for ProxyAcceptor {
                 max_concurrent_requests: 64,
             },
             metadata: vec![],
-            setup: Box::new(move |incoming| {
+            setup: ConnectionSetup::Setup(Box::new(move |incoming| {
                 tokio::spawn(async move {
                     let upstream = upstream_session
                         .open_connection(
@@ -71,7 +71,7 @@ impl ConnectionAcceptor for ProxyAcceptor {
                         .expect("open upstream connection");
                     proxy_connections(incoming, upstream).await;
                 });
-            }),
+            })),
         })
     }
 }

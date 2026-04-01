@@ -17,10 +17,11 @@ use vox_types::{
 
 use vox_types::{HandshakeResult, SessionResumeKey, SessionRole};
 
+use super::utils::*;
 use crate::session::{
-    AcceptedConnection, ConnectionAcceptor, ConnectionMessage, SessionAcceptOutcome, SessionError,
-    SessionHandle, SessionKeepaliveConfig, SessionRegistry, acceptor_conduit, acceptor_on,
-    initiator_conduit, initiator_on, proxy_connections,
+    AcceptedConnection, ConnectionAcceptor, ConnectionMessage, ConnectionSetup,
+    SessionAcceptOutcome, SessionError, SessionHandle, SessionKeepaliveConfig, SessionRegistry,
+    acceptor_conduit, acceptor_on, initiator_conduit, initiator_on, proxy_connections,
 };
 use crate::{
     Attachment, BareConduit, Driver, DriverCaller, DriverReplySink, InMemoryOperationStore,
@@ -1031,43 +1032,6 @@ async fn dropping_root_caller_shuts_down_session() {
 // ---------------------------------------------------------------------------
 
 /// An acceptor that spawns an EchoHandler driver on each accepted connection.
-struct EchoAcceptor;
-
-impl ConnectionAcceptor for EchoAcceptor {
-    fn accept(
-        &self,
-        _conn_id: vox_types::ConnectionId,
-        peer_settings: &ConnectionSettings,
-        _metadata: &[vox_types::MetadataEntry],
-    ) -> Result<AcceptedConnection, Metadata<'static>> {
-        let peer_parity = peer_settings.parity;
-        Ok(AcceptedConnection {
-            settings: ConnectionSettings {
-                parity: peer_parity.other(),
-                max_concurrent_requests: 64,
-            },
-            metadata: vec![],
-            setup: Box::new(move |handle| {
-                let mut driver = Driver::new(handle, EchoHandler);
-                moire::task::spawn(async move { driver.run().await }.named("vconn_server_driver"));
-            }),
-        })
-    }
-}
-
-/// An acceptor that rejects every connection.
-struct RejectAcceptor;
-
-impl ConnectionAcceptor for RejectAcceptor {
-    fn accept(
-        &self,
-        _conn_id: vox_types::ConnectionId,
-        _peer_settings: &ConnectionSettings,
-        _metadata: &[vox_types::MetadataEntry],
-    ) -> Result<AcceptedConnection, Metadata<'static>> {
-        Err(vec![])
-    }
-}
 
 /// Regression test: schema recv tracker must be per-connection.
 /// If it were per-session, the second call (on the virtual connection) would
@@ -1657,10 +1621,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
                     max_concurrent_requests: 64,
                 },
                 metadata: vec![],
-                setup: Box::new(|handle| {
-                    let mut driver = Driver::new(handle, EchoHandler);
-                    moire::task::spawn(async move { driver.run().await }.named("guest_b_vconn"));
-                }),
+                setup: ConnectionSetup::Handler(Box::new(EchoHandler)),
             })
         }
     }
@@ -1682,7 +1643,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
                     max_concurrent_requests: 64,
                 },
                 metadata: vec![],
-                setup: Box::new(move |incoming| {
+                setup: ConnectionSetup::Setup(Box::new(move |incoming| {
                     moire::task::spawn(
                         async move {
                             let upstream = upstream_session
@@ -1699,7 +1660,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
                         }
                         .named("host_proxy_vconn"),
                     );
-                }),
+                })),
             })
         }
     }

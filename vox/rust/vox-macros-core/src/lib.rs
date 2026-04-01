@@ -617,7 +617,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream
                         max_concurrent_requests: peer_settings.max_concurrent_requests,
                     },
                     metadata: vec![],
-                    handler: Box::new(self.clone()),
+                    setup: #vox::ConnectionSetup::Handler(Box::new(self.clone())),
                 })
             }
         }

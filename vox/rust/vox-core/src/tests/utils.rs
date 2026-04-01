@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -6,9 +7,10 @@ use std::sync::{
 use facet::Facet;
 use moire::sync::mpsc;
 use vox_types::{
-    Conduit, ConduitRx, ConnectionSettings, Handler, HandshakeResult, LinkTx, LinkTxPermit,
-    MessageFamily, MethodId, Parity, Payload, ReplySink, RequestCall, RequestResponse, RetryPolicy,
-    SelfRef, SessionResumeKey, SessionRole, WriteSlot,
+    Backing, Conduit, ConduitRx, ConnectionSettings, Handler, HandshakeResult, Link, LinkRx,
+    LinkTx, LinkTxPermit, Message, MessageFamily, MessagePayload, MethodId, Parity, Payload,
+    ReplySink, RequestCall, RequestResponse, RetryPolicy, SelfRef, SessionResumeKey, SessionRole,
+    Tx, WriteSlot, metadata_operation_id,
 };
 
 use crate::{
@@ -16,11 +18,11 @@ use crate::{
     memory_link_pair,
 };
 
-fn test_resume_key() -> SessionResumeKey {
+pub(crate) fn test_resume_key() -> SessionResumeKey {
     SessionResumeKey([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
 }
 
-fn test_acceptor_handshake() -> HandshakeResult {
+pub(crate) fn test_acceptor_handshake() -> HandshakeResult {
     HandshakeResult {
         role: SessionRole::Acceptor,
         our_settings: ConnectionSettings {
@@ -40,7 +42,7 @@ fn test_acceptor_handshake() -> HandshakeResult {
     }
 }
 
-fn test_initiator_handshake() -> HandshakeResult {
+pub(crate) fn test_initiator_handshake() -> HandshakeResult {
     HandshakeResult {
         role: SessionRole::Initiator,
         our_settings: ConnectionSettings {
@@ -60,24 +62,26 @@ fn test_initiator_handshake() -> HandshakeResult {
     }
 }
 
-type MessageConduit = BareConduit<MessageFamily, crate::MemoryLink>;
+pub(crate) type MessageConduit = BareConduit<MessageFamily, crate::MemoryLink>;
 
-fn message_conduit_pair() -> (MessageConduit, MessageConduit) {
+pub(crate) fn message_conduit_pair() -> (MessageConduit, MessageConduit) {
     let (a, b) = memory_link_pair(64);
     (BareConduit::new(a), BareConduit::new(b))
 }
 
-struct BreakableLink {
+pub(crate) struct BreakableLink {
     tx: mpsc::Sender<Option<Vec<u8>>>,
     rx: mpsc::Receiver<Option<Vec<u8>>>,
 }
 
 #[derive(Clone)]
-struct BreakHandle {
+pub(crate) struct BreakHandle {
     tx: mpsc::Sender<Option<Vec<u8>>>,
 }
 
-fn breakable_link_pair(buffer: usize) -> (BreakableLink, BreakHandle, BreakableLink, BreakHandle) {
+pub(crate) fn breakable_link_pair(
+    buffer: usize,
+) -> (BreakableLink, BreakHandle, BreakableLink, BreakHandle) {
     let (tx_a, rx_b) = mpsc::channel("breakable_link.a→b", buffer);
     let (tx_b, rx_a) = mpsc::channel("breakable_link.b→a", buffer);
 
@@ -93,7 +97,7 @@ fn breakable_link_pair(buffer: usize) -> (BreakableLink, BreakHandle, BreakableL
 }
 
 impl BreakHandle {
-    async fn close(&self) {
+    pub(crate) async fn close(&self) {
         let _ = self.tx.send(None).await;
     }
 }
@@ -111,11 +115,11 @@ impl Link for BreakableLink {
 }
 
 #[derive(Clone)]
-struct BreakableLinkTx {
+pub(crate) struct BreakableLinkTx {
     tx: mpsc::Sender<Option<Vec<u8>>>,
 }
 
-struct BreakableLinkTxPermit {
+pub(crate) struct BreakableLinkTxPermit {
     permit: mpsc::OwnedPermit<Option<Vec<u8>>>,
 }
 
@@ -135,7 +139,7 @@ impl LinkTx for BreakableLinkTx {
     }
 }
 
-struct BreakableWriteSlot {
+pub(crate) struct BreakableWriteSlot {
     buf: Vec<u8>,
     permit: mpsc::OwnedPermit<Option<Vec<u8>>>,
 }
@@ -161,12 +165,12 @@ impl WriteSlot for BreakableWriteSlot {
     }
 }
 
-struct BreakableLinkRx {
+pub(crate) struct BreakableLinkRx {
     rx: mpsc::Receiver<Option<Vec<u8>>>,
 }
 
 #[derive(Debug)]
-struct BreakableLinkRxError;
+pub(crate) struct BreakableLinkRxError;
 
 impl std::fmt::Display for BreakableLinkRxError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -187,12 +191,12 @@ impl LinkRx for BreakableLinkRx {
     }
 }
 
-struct TestLinkSource {
+pub(crate) struct TestLinkSource {
     attachments: VecDeque<Attachment<BreakableLink>>,
 }
 
 impl TestLinkSource {
-    fn new(attachments: impl IntoIterator<Item = Attachment<BreakableLink>>) -> Self {
+    pub(crate) fn new(attachments: impl IntoIterator<Item = Attachment<BreakableLink>>) -> Self {
         Self {
             attachments: attachments.into_iter().collect(),
         }
@@ -213,12 +217,12 @@ impl LinkSource for TestLinkSource {
 }
 
 /// Conduit wrapper used by keepalive tests: drops inbound Pong messages.
-struct DropPongConduit<C> {
+pub(crate) struct DropPongConduit<C> {
     inner: C,
 }
 
 impl<C> DropPongConduit<C> {
-    fn new(inner: C) -> Self {
+    pub(crate) fn new(inner: C) -> Self {
         Self { inner }
     }
 }
@@ -250,7 +254,7 @@ where
     }
 }
 
-struct DropPongRx<Rx> {
+pub(crate) struct DropPongRx<Rx> {
     inner: Rx,
 }
 
@@ -275,7 +279,7 @@ where
 }
 
 /// A handler that echoes back the raw args payload as the response.
-struct EchoHandler;
+pub(crate) struct EchoHandler;
 
 impl Handler<DriverReplySink> for EchoHandler {
     async fn handle(
@@ -302,9 +306,9 @@ impl Handler<DriverReplySink> for EchoHandler {
 
 /// A handler that blocks forever until its task is cancelled.
 /// Tracks whether cancellation occurred via a drop guard.
-struct BlockingHandler {
-    was_cancelled: Arc<AtomicBool>,
-    retry: RetryPolicy,
+pub(crate) struct BlockingHandler {
+    pub(crate) was_cancelled: Arc<AtomicBool>,
+    pub(crate) retry: RetryPolicy,
 }
 
 impl Handler<DriverReplySink> for BlockingHandler {
@@ -334,24 +338,24 @@ impl Handler<DriverReplySink> for BlockingHandler {
     }
 }
 
-struct PersistentReplyingHandler {
-    was_cancelled: Arc<AtomicBool>,
-    release: Arc<tokio::sync::Notify>,
+pub(crate) struct PersistentReplyingHandler {
+    pub(crate) was_cancelled: Arc<AtomicBool>,
+    pub(crate) release: Arc<tokio::sync::Notify>,
 }
 
-struct ResumableReplyingHandler {
-    started: Arc<tokio::sync::Notify>,
-    release: Arc<tokio::sync::Notify>,
+pub(crate) struct ResumableReplyingHandler {
+    pub(crate) started: Arc<tokio::sync::Notify>,
+    pub(crate) release: Arc<tokio::sync::Notify>,
 }
 
-struct RetryAfterResumeHandler {
-    retry: RetryPolicy,
-    runs: Arc<AtomicUsize>,
-    first_started: Arc<tokio::sync::Notify>,
-    drop_first: Arc<tokio::sync::Notify>,
+pub(crate) struct RetryAfterResumeHandler {
+    pub(crate) retry: RetryPolicy,
+    pub(crate) runs: Arc<AtomicUsize>,
+    pub(crate) first_started: Arc<tokio::sync::Notify>,
+    pub(crate) drop_first: Arc<tokio::sync::Notify>,
 }
 
-struct OperationIdHandler;
+pub(crate) struct OperationIdHandler;
 
 impl Handler<DriverReplySink> for OperationIdHandler {
     async fn handle(
@@ -371,18 +375,18 @@ impl Handler<DriverReplySink> for OperationIdHandler {
     }
 }
 
-struct ReplayHandler {
-    runs: Arc<std::sync::atomic::AtomicUsize>,
-    release: Arc<tokio::sync::Notify>,
+pub(crate) struct ReplayHandler {
+    pub(crate) runs: Arc<std::sync::atomic::AtomicUsize>,
+    pub(crate) release: Arc<tokio::sync::Notify>,
 }
 
-struct CountingOperationStore {
+pub(crate) struct CountingOperationStore {
     inner: InMemoryOperationStore,
-    admits: AtomicUsize,
+    pub(crate) admits: AtomicUsize,
 }
 
 impl CountingOperationStore {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             inner: InMemoryOperationStore::default(),
             admits: AtomicUsize::new(0),
@@ -558,7 +562,44 @@ impl Handler<DriverReplySink> for RetryAfterResumeHandler {
     }
 }
 
+use crate::session::{AcceptedConnection, ConnectionAcceptor, ConnectionSetup};
+
+pub(crate) struct EchoAcceptor;
+
+impl ConnectionAcceptor for EchoAcceptor {
+    fn accept(
+        &self,
+        _conn_id: vox_types::ConnectionId,
+        peer_settings: &ConnectionSettings,
+        _metadata: &[vox_types::MetadataEntry],
+    ) -> Result<AcceptedConnection, vox_types::Metadata<'static>> {
+        let peer_parity = peer_settings.parity;
+        Ok(AcceptedConnection {
+            settings: ConnectionSettings {
+                parity: peer_parity.other(),
+                max_concurrent_requests: 64,
+            },
+            metadata: vec![],
+            setup: ConnectionSetup::Handler(Box::new(EchoHandler)),
+        })
+    }
+}
+
+/// An acceptor that rejects every connection.
+pub(crate) struct RejectAcceptor;
+
+impl ConnectionAcceptor for RejectAcceptor {
+    fn accept(
+        &self,
+        _conn_id: vox_types::ConnectionId,
+        _peer_settings: &ConnectionSettings,
+        _metadata: &[vox_types::MetadataEntry],
+    ) -> Result<AcceptedConnection, vox_types::Metadata<'static>> {
+        Err(vec![])
+    }
+}
+
 #[derive(Facet)]
-struct SubscribeArgs {
-    updates: Tx<u32>,
+pub(crate) struct SubscribeArgs {
+    pub(crate) updates: Tx<u32>,
 }

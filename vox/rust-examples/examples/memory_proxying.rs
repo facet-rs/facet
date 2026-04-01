@@ -48,7 +48,9 @@ impl ConnectionAcceptor for UpstreamAcceptor {
                 max_concurrent_requests: 64,
             },
             metadata: vec![],
-            handler: Box::new(MathTextDispatcher::new(UpstreamMathText)),
+            setup: vox::ConnectionSetup::Handler(Box::new(MathTextDispatcher::new(
+                UpstreamMathText,
+            ))),
         })
     }
 }
@@ -78,7 +80,7 @@ impl ConnectionAcceptor for ProxyAcceptor {
                 max_concurrent_requests: 64,
             },
             metadata: vec![],
-            setup: Box::new(move |incoming_handle| {
+            setup: vox::ConnectionSetup::Setup(Box::new(move |incoming_handle| {
                 tokio::spawn(async move {
                     println!(
                         "[host] guest-a opened proxy vconn; opening upstream vconn to guest-b"
@@ -103,7 +105,7 @@ impl ConnectionAcceptor for ProxyAcceptor {
                         }
                     }
                 });
-            }),
+            })),
         })
     }
 }

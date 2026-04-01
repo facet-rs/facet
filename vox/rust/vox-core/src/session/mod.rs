@@ -81,11 +81,19 @@ where
                     max_concurrent_requests: peer_settings.max_concurrent_requests,
                 },
                 metadata: vec![],
-                handler,
+                setup: ConnectionSetup::Handler(handler),
             }),
             None => Err(vec![]),
         }
     }
+}
+
+/// What to do with an accepted connection.
+pub enum ConnectionSetup {
+    /// Run a Driver with this handler (the common case).
+    Handler(Box<dyn crate::ErasedHandler>),
+    /// Raw setup: receives the ConnectionHandle directly (for proxying, etc).
+    Setup(Box<dyn FnOnce(ConnectionHandle) + Send>),
 }
 
 /// Result of accepting a virtual connection.
@@ -94,8 +102,8 @@ pub struct AcceptedConnection {
     pub settings: ConnectionSettings,
     /// Metadata to send back in ConnectionAccept.
     pub metadata: Metadata<'static>,
-    /// The handler for this connection.
-    pub handler: Box<dyn crate::ErasedHandler>,
+    /// How to handle this connection.
+    pub setup: ConnectionSetup,
 }
 
 /// `()` as an acceptor: accepts all connections with a no-op handler.
@@ -112,7 +120,7 @@ impl ConnectionAcceptor for () {
                 max_concurrent_requests: peer_settings.max_concurrent_requests,
             },
             metadata: vec![],
-            handler: Box::new(()),
+            setup: ConnectionSetup::Handler(Box::new(())),
         })
     }
 }
@@ -1407,12 +1415,19 @@ impl Session {
                     )
                     .await;
 
-                // Spawn a driver for the accepted connection.
-                let mut driver = crate::Driver::new(handle, accepted.handler);
-                #[cfg(not(target_arch = "wasm32"))]
-                tokio::spawn(async move { driver.run().await });
-                #[cfg(target_arch = "wasm32")]
-                wasm_bindgen_futures::spawn_local(async move { driver.run().await });
+                // Spawn a driver or run custom setup for the accepted connection.
+                match accepted.setup {
+                    ConnectionSetup::Handler(handler) => {
+                        let mut driver = crate::Driver::new(handle, handler);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        tokio::spawn(async move { driver.run().await });
+                        #[cfg(target_arch = "wasm32")]
+                        wasm_bindgen_futures::spawn_local(async move { driver.run().await });
+                    }
+                    ConnectionSetup::Setup(f) => {
+                        f(handle);
+                    }
+                }
             }
             Err(reject_metadata) => {
                 let _ = self

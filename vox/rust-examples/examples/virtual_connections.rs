@@ -72,12 +72,16 @@ impl ConnectionAcceptor for CounterLabAcceptor {
             Some("counter") => Ok(AcceptedConnection {
                 settings,
                 metadata: vec![],
-                handler: Box::new(CounterLabDispatcher::new(CounterLabService::new())),
+                setup: vox::ConnectionSetup::Handler(Box::new(CounterLabDispatcher::new(
+                    CounterLabService::new(),
+                ))),
             }),
             Some("string") => Ok(AcceptedConnection {
                 settings,
                 metadata: vec![],
-                handler: Box::new(StringLabDispatcher::new(StringLabService)),
+                setup: vox::ConnectionSetup::Handler(Box::new(StringLabDispatcher::new(
+                    StringLabService,
+                ))),
             }),
             _ => Err(vec![MetadataEntry {
                 key: "error".into(),

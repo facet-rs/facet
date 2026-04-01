@@ -5,56 +5,16 @@ use shm_primitives::FileCleanup;
 use vox_shm::varslot::SizeClassConfig;
 use vox_shm::{Segment, SegmentConfig, ShmLink, create_test_link_pair};
 use vox_types::{
-    ConnectionSettings, Handler, HandshakeResult, MessageFamily, MethodId, Parity, Payload,
-    ReplySink, RequestCall, RequestResponse, SelfRef, SessionRole,
+    Handler, MessageFamily, MethodId, Payload, ReplySink, RequestCall, RequestResponse, SelfRef,
 };
 
+use super::utils::*;
 use crate::session::{acceptor_conduit, initiator_conduit};
 use crate::{BareConduit, DriverReplySink};
 
-fn test_acceptor_handshake() -> HandshakeResult {
-    HandshakeResult {
-        role: SessionRole::Acceptor,
-        our_settings: ConnectionSettings {
-            parity: Parity::Even,
-            max_concurrent_requests: 64,
-        },
-        peer_settings: ConnectionSettings {
-            parity: Parity::Odd,
-            max_concurrent_requests: 64,
-        },
-        peer_supports_retry: true,
-        session_resume_key: None,
-        peer_resume_key: None,
-        our_schema: vec![],
-        peer_schema: vec![],
-        peer_metadata: vec![],
-    }
-}
+type ShmConduit = BareConduit<MessageFamily, ShmLink>;
 
-fn test_initiator_handshake() -> HandshakeResult {
-    HandshakeResult {
-        role: SessionRole::Initiator,
-        our_settings: ConnectionSettings {
-            parity: Parity::Odd,
-            max_concurrent_requests: 64,
-        },
-        peer_settings: ConnectionSettings {
-            parity: Parity::Even,
-            max_concurrent_requests: 64,
-        },
-        peer_supports_retry: true,
-        session_resume_key: None,
-        peer_resume_key: None,
-        our_schema: vec![],
-        peer_schema: vec![],
-        peer_metadata: vec![],
-    }
-}
-
-type MessageConduit = BareConduit<MessageFamily, ShmLink>;
-
-async fn message_conduit_pair() -> (MessageConduit, MessageConduit, tempfile::TempDir) {
+async fn shm_conduit_pair() -> (ShmConduit, ShmConduit, tempfile::TempDir) {
     let classes = [SizeClassConfig {
         slot_size: 4096,
         slot_count: 16,
@@ -82,34 +42,9 @@ async fn message_conduit_pair() -> (MessageConduit, MessageConduit, tempfile::Te
     (BareConduit::new(a), BareConduit::new(b), dir)
 }
 
-struct EchoHandler;
-
-impl Handler<DriverReplySink> for EchoHandler {
-    async fn handle(
-        &self,
-        call: SelfRef<RequestCall<'static>>,
-        reply: DriverReplySink,
-        _schemas: std::sync::Arc<vox_types::SchemaRecvTracker>,
-    ) {
-        let args_bytes = match &call.args {
-            Payload::PostcardBytes(bytes) => *bytes,
-            _ => panic!("expected incoming payload"),
-        };
-
-        let result: u32 = vox_postcard::from_slice(args_bytes).expect("deserialize args");
-        reply
-            .send_reply(RequestResponse {
-                ret: Payload::outgoing(&result),
-                schemas: Default::default(),
-                metadata: Default::default(),
-            })
-            .await;
-    }
-}
-
 #[tokio::test]
 async fn echo_call_across_shm_link() {
-    let (client_conduit, server_conduit, _dir) = message_conduit_pair().await;
+    let (client_conduit, server_conduit, _dir) = shm_conduit_pair().await;
 
     let server_task = moire::task::spawn(
         async move {
@@ -188,7 +123,7 @@ impl Handler<DriverReplySink> for BlobEchoHandler {
 
 #[tokio::test]
 async fn echo_blob_stress_over_shm_link() {
-    let (client_conduit, server_conduit, _dir) = message_conduit_pair().await;
+    let (client_conduit, server_conduit, _dir) = shm_conduit_pair().await;
 
     let server_task = moire::task::spawn(
         async move {
