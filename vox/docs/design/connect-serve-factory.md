@@ -124,56 +124,83 @@ let sub: ChatClient = client.session.unwrap()
 
 The common path remains tiny; advanced flows remain explicit.
 
-## Proposed Server API Direction
+## Service Routing: Automatic Service Name Metadata
 
-Current API mostly requires passing a root handler directly to `establish`.
-For better ergonomics and consistency, move toward a per-connection factory.
+**Key insight:** the client already knows which service it wants (it's the
+type parameter). The service name should be sent automatically as metadata,
+and the server should route based on it.
 
-High-level idea:
+### Client side
+
+Generated clients know their service name from the `ServiceDescriptor`.
+When `connect::<FooClient>(addr)` or `session.open::<FooClient>()` is
+called, the service name (`"Foo"`) is sent automatically:
+
+- **Root connections:** service name sent as handshake metadata
+- **Virtual connections:** service name sent as `ConnectionOpen` metadata
 
 ```rust
-vox::serve(listener)
-    .factory(my_factory)
+// Root — sends "Hello" as service name automatically
+let client: HelloClient = vox::connect(addr).await?;
+
+// Virtual — sends "Chat" as service name automatically
+let chat: ChatClient = client.session.unwrap().open::<ChatClient>().await?;
+```
+
+This requires a trait on generated clients that exposes the service name.
+`FromVoxSession` could carry this, or a separate `VoxService` trait.
+
+### Server side
+
+A factory closure receives a `ConnectionContext` with the requested
+service name and returns the appropriate dispatcher:
+
+```rust
+vox::serve(listener, |cx: &ConnectionContext| match cx.service_name() {
+    "Hello" => Some(HelloDispatcher::new(HelloService)),
+    "Chat" => Some(ChatDispatcher::new(ChatService)),
+    _ => None, // reject unknown services
+}).await?;
+```
+
+The same factory handles both root and virtual connections. The context
+tells you which kind it is if you need to branch:
+
+```rust
+struct ConnectionContext {
+    service_name: &str,
+    kind: ConnectionKind,
+    peer_settings: ConnectionSettings,
+    metadata: Metadata<'static>,   // additional user metadata beyond service name
+}
+
+enum ConnectionKind {
+    Root,
+    Virtual { id: ConnectionId },
+}
+```
+
+### Why this replaces `ConnectionAcceptor`
+
+Today, `ConnectionAcceptor` is a trait that handles virtual connection
+setup. With the factory model, root and virtual connections go through
+the same routing. `ConnectionAcceptor` becomes unnecessary — the factory
+handles everything.
+
+### What about extra metadata?
+
+Service name is sent automatically. Users can still attach additional
+metadata for auth tokens, routing hints, etc:
+
+```rust
+let chat: ChatClient = session
+    .open::<ChatClient>()
+    .metadata(vec![auth_token_entry])
     .await?;
 ```
 
-Where the factory receives per-connection context and returns a handler/dispatcher.
-
-## Unified Factory Context (Root + Virtual)
-
-We want the same selection mechanism for root and virtual connections.
-
-Sketch:
-
-```rust
-enum ConnectionKind {
-    Root,
-    Virtual {
-        id: vox::ConnectionId,
-        open_metadata: vox::Metadata<'static>,
-        peer_settings: vox::ConnectionSettings,
-    },
-}
-
-struct ConnectionContext {
-    kind: ConnectionKind,
-    link_info: LinkInfo, // tcp/local/shm/ws specific details
-    peer_settings: vox::ConnectionSettings,
-    metadata: vox::Metadata<'static>, // root or virtual open metadata
-}
-```
-
-Factory sees one context shape and can branch only when needed.
-
-## Important Gap To Close: Root Metadata
-
-Today, virtual connections have explicit metadata via `ConnectionOpen.metadata`.
-Root connection does not currently have an equivalent metadata channel in the
-handshake, and builder-level root `.metadata(...)` is currently not wired through
-to handshake/session establishment.
-
-To support a truly uniform factory model, root connection metadata must become
-first-class (or be replaced with a clearly defined equivalent).
+The factory sees both the service name and any extra metadata in the
+`ConnectionContext`.
 
 ## Lifetime Footgun To Fix
 
@@ -231,12 +258,14 @@ feature entirely.
    - Internal tests use `caller.driver()` escape hatch for raw protocol testing
 6. ✅ `establish()` returns `Client` directly (not `(Client, SessionHandle)`)
 7. ✅ `SessionConfig` struct deduplicates shared fields across 5 builder types
-8. Typed virtual connection helpers
-9. Server factory API with `ConnectionContext`
-10. Root metadata support
-11. Facade re-export hygiene
-12. Connect timeout
-13. Keep existing builders as lower-level escape hatch
+8. Service routing: automatic service name metadata + server factory
+   - Client sends service name automatically (from type parameter)
+   - `session.open::<FooClient>()` for typed virtual connections
+   - Server factory receives `ConnectionContext` with service name
+   - Same factory handles root and virtual connections
+   - Replaces `ConnectionAcceptor`
+9. Facade re-export hygiene
+10. Connect timeout
 
 ## SHM Transport in `connect()` ✅
 
@@ -268,8 +297,8 @@ setup + vox handshake.
 
 ## Open Questions
 
-- Exact wire format for root metadata (handshake extension vs separate open-like step)
-- Exact `LinkInfo` shape across TCP/local/SHM/websocket
-- Whether factory creation can be fallible with structured rejection metadata
-- Whether factory should be async trait, closure, or both
+- Wire format for service name in root handshake (metadata extension vs dedicated field)
+- Whether factory should be sync closure, async closure, or trait
+- Whether `session.open::<Client>()` needs a builder for settings/metadata or just takes args
 - How to stage behavior changes for root caller-drop semantics safely
+- Whether `ConnectionAcceptor` can be removed in one step or needs a deprecation period
