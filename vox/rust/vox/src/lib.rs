@@ -9,16 +9,53 @@
 //! }
 //! ```
 //!
-//! A Vox connection is between two peers. Since those two peers are in practice
-//! talking over something like a TCP connection, a Unix domain socket, a named
-//! pipe on Windows, an in-memory transport, a web socket connection, or any
-//! other number of transports, we have to like one of them is usually the
-//! initiator, and the other is the acceptor.
+//! And the basic idea is that you should be able to connect to any number of
+//! transports to call those methods:
 //!
-//! However, once a connection is established, calls can flow in both
-//! directions: both peers have a "client" for the service that they requested,
-//! and they can both specify a handler, which services calls made by the remote
-//! peer.
+//! ```no_run
+//! use vox::transport::tcp::tcp_connector;
+//! use vox::{TransportMode, initiator};
+//! # use tokio::net::TcpListener;
+//! # use vox::transport::tcp::StreamLink;
+//! # use vox::acceptor_on;
+//!
+//! # #[vox::service]
+//! # trait Hello {
+//! #     async fn say_hello(&self) -> String;
+//! # }
+//! #
+//! # #[derive(Clone)]
+//! # struct HelloService;
+//! #
+//! # impl Hello for HelloService {
+//! #     async fn say_hello(&self) -> String {
+//! #         "hello".to_string()
+//! #     }
+//! # }
+//! #
+//! # #[tokio::main(flavor = "current_thread")]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let addr = "127.0.0.1:50051";
+//! # let listener = TcpListener::bind(addr).await?;
+//! #
+//! # let server = tokio::spawn(async move {
+//! #     let (stream, _) = listener.accept().await?;
+//! #     let (_server_caller, _server_session) = acceptor_on(StreamLink::tcp(stream))
+//! #         .establish::<HelloClient>(HelloDispatcher::new(HelloService))
+//! #         .await?;
+//! #     Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+//! # });
+//! #
+//! let (client, _session) = initiator(tcp_connector(addr), TransportMode::Bare)
+//!     .establish::<HelloClient>(())
+//!     .await?;
+//!
+//! let reply = client.say_hello().await?;
+//! assert_eq!(reply, "hello");
+//! # server.await.expect("server task panicked").expect("server failed");
+//! # Ok(())
+//! # }
+//! ```
 
 mod client_logging;
 pub mod schema_deser;
