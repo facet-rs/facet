@@ -83,13 +83,14 @@ async fn reject_virtual_connection() {
         async move {
             acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(crate::session::acceptor_fn(
-                    |request: &ConnectionRequest, connection: PendingConnection| {
-                        if request.is_root() {
+                    |request: &ConnectionRequest, connection: PendingConnection| match request
+                        .service()
+                    {
+                        "Noop" => {
                             connection.handle_with(EchoHandler);
                             Ok(())
-                        } else {
-                            Err(vec![])
                         }
+                        _ => Err(vec![]),
                     },
                 ))
                 .establish::<NoopClient>()

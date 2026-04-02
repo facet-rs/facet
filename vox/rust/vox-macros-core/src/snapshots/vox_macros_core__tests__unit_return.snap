@@ -285,7 +285,7 @@ impl NotifierClient {
     }
 }
 impl ::vox::FromVoxSession for NotifierClient {
-    const SERVICE_NAME: Option<&'static str> = Some("Notifier");
+    const SERVICE_NAME: &'static str = "Notifier";
     fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
         Self { caller, session }
     }

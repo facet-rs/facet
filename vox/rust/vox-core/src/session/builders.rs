@@ -28,15 +28,13 @@ use crate::FromVoxSession;
 /// Well-known metadata key for service name routing.
 pub const VOX_SERVICE_METADATA_KEY: &str = "vox-service";
 
-/// Inject `vox-service` metadata from `Client::SERVICE_NAME` if present.
+/// Inject `vox-service` metadata from `Client::SERVICE_NAME`.
 fn inject_service_metadata<Client: FromVoxSession>(metadata: &mut Metadata<'_>) {
-    if let Some(name) = Client::SERVICE_NAME {
-        metadata.push(vox_types::MetadataEntry {
-            key: VOX_SERVICE_METADATA_KEY.into(),
-            value: vox_types::MetadataValue::String(name.into()),
-            flags: vox_types::MetadataFlags::NONE,
-        });
-    }
+    metadata.push(vox_types::MetadataEntry {
+        key: VOX_SERVICE_METADATA_KEY.into(),
+        value: vox_types::MetadataValue::String(Client::SERVICE_NAME.into()),
+        flags: vox_types::MetadataFlags::NONE,
+    });
 }
 
 /// A pinned, boxed session future. On non-WASM this is `Send + 'static`;
@@ -359,7 +357,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             config.operation_store,
         );
         peer_metadata.push(vox_types::MetadataEntry::str("vox-connection-kind", "root"));
-        let request = super::ConnectionRequest::new(&peer_metadata);
+        let request = super::ConnectionRequest::new(&peer_metadata)?;
         acceptor
             .accept(&request, pending)
             .map_err(SessionError::Rejected)?;
@@ -1019,6 +1017,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         };
         if let (Some(registry), Some(key)) = (&config.session_registry, resume_key) {
             registry.insert(key, session_handle.clone());
+            session.registered_in_registry = true;
         }
         // Route the root connection through the acceptor.
         let caller_slot = Arc::new(std::sync::Mutex::new(None::<crate::Caller>));
@@ -1028,7 +1027,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             config.operation_store,
         );
         peer_metadata.push(vox_types::MetadataEntry::str("vox-connection-kind", "root"));
-        let request = super::ConnectionRequest::new(&peer_metadata);
+        let request = super::ConnectionRequest::new(&peer_metadata)?;
         acceptor
             .accept(&request, pending)
             .map_err(SessionError::Rejected)?;

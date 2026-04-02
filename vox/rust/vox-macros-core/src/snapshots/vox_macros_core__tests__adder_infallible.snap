@@ -282,7 +282,7 @@ impl AdderClient {
     }
 }
 impl ::vox::FromVoxSession for AdderClient {
-    const SERVICE_NAME: Option<&'static str> = Some("Adder");
+    const SERVICE_NAME: &'static str = "Adder";
     fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
         Self { caller, session }
     }

@@ -339,3 +339,20 @@ pub struct MessageFamily;
 impl crate::MsgFamily for MessageFamily {
     type Msg<'a> = Message<'a>;
 }
+
+// SAFETY: all types below are covariant in their lifetime parameter
+// (they contain only Cow<'a, str>, Vec<MetadataEntry<'a>>, etc.).
+crate::impl_reborrow!(
+    Message,
+    RequestMessage,
+    RequestCall,
+    RequestResponse,
+    ConnectionOpen,
+    ConnectionAccept,
+    ConnectionReject,
+    ConnectionClose,
+    ChannelMessage,
+    ChannelItem,
+    ChannelClose,
+    ChannelReset,
+);

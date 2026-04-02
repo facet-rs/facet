@@ -447,7 +447,7 @@ impl AuditClient {
     }
 }
 impl ::vox::FromVoxSession for AuditClient {
-    const SERVICE_NAME: Option<&'static str> = Some("Audit");
+    const SERVICE_NAME: &'static str = "Audit";
     fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
         Self { caller, session }
     }

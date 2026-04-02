@@ -169,20 +169,64 @@ impl<T: 'static> SelfRef<T> {
     }
 }
 
-impl<T: 'static> core::ops::Deref for SelfRef<T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        &self.value
+/// Trait for types that can be reborrowed with a shorter lifetime.
+///
+/// This is the key to `SelfRef` soundness: types stored inside `SelfRef`
+/// use a fake `'static` lifetime. `Reborrow` lets `get()` return a
+/// reference with the lifetime shortened to match the borrow, preventing
+/// the fake `'static` from leaking out.
+///
+/// Analogous to `yoke::Yokeable`.
+///
+/// # Safety
+///
+/// The implementing type must be **covariant** in its lifetime parameter,
+/// and `Self` and `Ref<'a>` must have identical memory layout for all `'a`.
+pub unsafe trait Reborrow: 'static {
+    /// The same type with a (possibly shorter) lifetime.
+    type Ref<'a>;
+}
+
+impl<T: Reborrow> SelfRef<T> {
+    /// Access the inner value with the lifetime properly shortened.
+    ///
+    /// Returns `&'a T::Ref<'a>` instead of `&'a T` — the inner lifetime
+    /// is tied to the borrow, so borrowed data cannot escape the `SelfRef`.
+    pub fn get(&self) -> &T::Ref<'_> {
+        // SAFETY: T is covariant in its lifetime (guaranteed by `unsafe trait
+        // Reborrow`), `T` and `T::Ref<'a>` have the same layout, and
+        // `'static: 'a` always holds.
+        unsafe { core::mem::transmute::<&T, &T::Ref<'_>>(&self.value) }
     }
 }
 
-// No `into_inner()` — T may borrow from backing. Use Deref instead.
+// No `into_inner()` — T may borrow from backing.
+// No `Deref` — would leak the fake `'static` lifetime. See `Reborrow` docs.
 // No `DerefMut` — mutating T could invalidate borrowed references.
+
+/// Implement [`Reborrow`] for a list of types that are covariant in a single
+/// lifetime parameter.
+///
+/// # Safety
+///
+/// All listed types must be covariant in their lifetime parameter and
+/// `Foo<'static>` must have the same layout as `Foo<'a>` for all `'a`.
+#[macro_export]
+macro_rules! impl_reborrow {
+    ($($ty:ident),* $(,)?) => {
+        $(
+            // SAFETY: caller asserts covariance and layout compatibility.
+            unsafe impl $crate::Reborrow for $ty<'static> {
+                type Ref<'a> = $ty<'a>;
+            }
+        )*
+    };
+}
 
 /// Pattern-match on a field of a `SelfRef<T>`, projecting to `SelfRef<VariantInner>`
 /// in each arm body.
 ///
-/// Uses `Deref` to peek at the discriminant without consuming, then `.map()` to
+/// Uses `.get()` to peek at the discriminant without consuming, then `.map()` to
 /// project into the taken arm. The `unreachable!()` in each map closure is genuinely
 /// unreachable because the `matches!` guard ensures only the correct variant reaches it.
 ///
@@ -205,7 +249,7 @@ macro_rules! selfref_match {
     ) => {{
         let __sref = $selfref;
         $(
-            if ::core::matches!(&__sref.$field, $first$(::$rest)*(_)) {
+            if ::core::matches!(&__sref.get().$field, $first$(::$rest)*(_)) {
                 #[allow(unused_variables)]
                 let $binding = __sref.map(|__v| match __v.$field {
                     $first$(::$rest)*(__inner) => __inner,

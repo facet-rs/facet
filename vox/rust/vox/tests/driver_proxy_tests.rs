@@ -26,7 +26,7 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
         request: &vox::ConnectionRequest,
         connection: vox::PendingConnection,
     ) -> Result<(), Metadata<'static>> {
-        if request.is_root() {
+        if request.service() == "Noop" {
             connection.handle_with(());
             return Ok(());
         }

@@ -173,13 +173,12 @@ async fn reject_virtual_connection() {
     let server = tokio::spawn(async move {
         vox::acceptor_on(server_link)
             .on_connection(vox::acceptor_fn(
-                |req: &vox::ConnectionRequest, conn: vox::PendingConnection| {
-                    if req.is_root() {
+                |req: &vox::ConnectionRequest, conn: vox::PendingConnection| match req.service() {
+                    "Noop" => {
                         conn.handle_with(());
                         Ok(())
-                    } else {
-                        Err(vec![])
                     }
+                    _ => Err(vec![]),
                 },
             ))
             .establish::<vox::NoopClient>()

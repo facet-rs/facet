@@ -808,7 +808,7 @@ impl Caller {
 pub trait FromVoxSession {
     /// The service name for this client, used for automatic `vox-service` metadata.
     /// Generated clients return `Some("ServiceName")`. `NoopClient` returns `None`.
-    const SERVICE_NAME: Option<&'static str> = None;
+    const SERVICE_NAME: &'static str;
 
     fn from_vox_session(
         caller: Caller,
@@ -830,6 +830,8 @@ pub struct NoopClient {
 }
 
 impl FromVoxSession for NoopClient {
+    const SERVICE_NAME: &'static str = "Noop";
+
     fn from_vox_session(caller: Caller, session: Option<crate::session::SessionHandle>) -> Self {
         Self { caller, session }
     }

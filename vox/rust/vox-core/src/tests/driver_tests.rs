@@ -1608,7 +1608,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
             request: &ConnectionRequest,
             connection: PendingConnection,
         ) -> Result<(), Metadata<'static>> {
-            if request.is_root() {
+            if request.service() == "Noop" {
                 connection.handle_with(());
                 return Ok(());
             }

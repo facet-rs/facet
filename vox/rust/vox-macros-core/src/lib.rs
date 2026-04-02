@@ -850,7 +850,7 @@ fn generate_client(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream2 {
         }
 
         impl #vox::FromVoxSession for #client_name {
-            const SERVICE_NAME: Option<&'static str> = Some(#service_name_str);
+            const SERVICE_NAME: &'static str = #service_name_str;
 
             fn from_vox_session(
                 caller: #vox::Caller,

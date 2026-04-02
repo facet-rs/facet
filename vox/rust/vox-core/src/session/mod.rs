@@ -29,27 +29,28 @@ pub struct SessionKeepaliveConfig {
 // Connection acceptor trait
 // ---------------------------------------------------------------------------
 
-/// Callback for accepting or rejecting inbound virtual connections.
-///
-/// Handles incoming connections (both root and virtual).
-///
-/// Called when a peer opens a connection. The acceptor receives the peer's
-/// metadata (including `vox-service` for service routing) and returns either
-/// an [`AcceptedConnection`] or rejection metadata.
-///
 /// Metadata wrapper with typed getters for well-known `vox-*` keys.
+///
+/// Passed to [`ConnectionAcceptor::accept`] when a peer opens a connection.
 pub struct ConnectionRequest<'a> {
     metadata: &'a [vox_types::MetadataEntry<'a>],
+    service: &'a str,
 }
 
 impl<'a> ConnectionRequest<'a> {
-    pub fn new(metadata: &'a [vox_types::MetadataEntry<'a>]) -> Self {
-        Self { metadata }
+    /// Build a connection request from metadata.
+    ///
+    /// Returns an error if the required `vox-service` metadata key is missing.
+    pub fn new(metadata: &'a [vox_types::MetadataEntry<'a>]) -> Result<Self, SessionError> {
+        let service = vox_types::metadata_get_str(metadata, "vox-service").ok_or_else(|| {
+            SessionError::Protocol("missing required vox-service metadata".into())
+        })?;
+        Ok(Self { metadata, service })
     }
 
     /// The requested service name (`vox-service` metadata key).
-    pub fn service(&self) -> Option<&str> {
-        vox_types::metadata_get_str(self.metadata, "vox-service")
+    pub fn service(&self) -> &str {
+        self.service
     }
 
     /// The transport type (`vox-transport` metadata key).
@@ -321,14 +322,11 @@ impl SessionHandle {
         use crate::{Caller, Driver};
         use vox_types::{MetadataEntry, MetadataFlags, MetadataValue};
 
-        let mut metadata: Metadata<'static> = vec![];
-        if let Some(name) = Client::SERVICE_NAME {
-            metadata.push(MetadataEntry {
-                key: crate::session::builders::VOX_SERVICE_METADATA_KEY.into(),
-                value: MetadataValue::String(name.into()),
-                flags: MetadataFlags::NONE,
-            });
-        }
+        let metadata: Metadata<'static> = vec![MetadataEntry {
+            key: crate::session::builders::VOX_SERVICE_METADATA_KEY.into(),
+            value: MetadataValue::String(Client::SERVICE_NAME.into()),
+            flags: MetadataFlags::NONE,
+        }];
         let handle = self.open_connection(settings, metadata).await?;
         let mut driver = Driver::new(handle, ());
         let caller = Caller::new(driver.caller());
@@ -493,6 +491,9 @@ pub struct Session {
     resume_notifier: watch::Sender<u64>,
     recoverer: Option<Box<dyn ConduitRecoverer>>,
     recovery_timeout: Option<Duration>,
+    /// Whether this session was registered in a `SessionRegistry`, meaning
+    /// an external acceptor could route a reconnecting client to resume it.
+    registered_in_registry: bool,
 }
 
 #[derive(Debug)]
@@ -782,6 +783,8 @@ pub(crate) enum ConnectionMessage<'payload> {
     Channel(ChannelMessage<'payload>),
 }
 
+vox_types::impl_reborrow!(ConnectionMessage);
+
 /// A message routed to a driver, carrying the `SchemaRecvTracker` that was
 /// current when the session received it. This ensures each message uses the
 /// correct tracker even across reconnections.
@@ -964,6 +967,7 @@ impl Session {
             resume_notifier,
             recoverer,
             recovery_timeout,
+            registered_in_registry: false,
         }
     }
 
@@ -1145,6 +1149,12 @@ impl Session {
                 }
                 Err(_) => return false,
             }
+        }
+
+        // No recoverer — only wait for external resume if a session registry
+        // is configured (meaning someone could route a reconnecting client here).
+        if !self.registered_in_registry {
+            return false;
         }
 
         loop {
@@ -1537,7 +1547,32 @@ impl Session {
             "vox-connection-kind",
             "virtual",
         ));
-        let request = ConnectionRequest::new(&metadata);
+        let request = match ConnectionRequest::new(&metadata) {
+            Ok(r) => r,
+            Err(e) => {
+                trace!(%conn_id, %e, "rejecting virtual connection");
+                self.conns.remove(&conn_id);
+                let _ = self
+                    .sess_core
+                    .send(
+                        Message {
+                            connection_id: conn_id,
+                            payload: MessagePayload::ConnectionReject(
+                                vox_types::ConnectionReject {
+                                    metadata: vec![vox_types::MetadataEntry::str(
+                                        "error",
+                                        e.to_string(),
+                                    )],
+                                },
+                            ),
+                        },
+                        None,
+                        None,
+                    )
+                    .await;
+                return;
+            }
+        };
         let pending = PendingConnection::new(handle);
         let acceptor = self.on_connection.as_ref().unwrap();
         trace!(%conn_id, "calling acceptor for virtual connection");
@@ -1621,7 +1656,9 @@ impl Session {
         match slot {
             Some(ConnectionSlot::PendingOutbound(mut pending)) => {
                 if let Some(tx) = pending.result_tx.take() {
-                    let _ = tx.send(Err(SessionError::Rejected(reject.metadata.to_vec())));
+                    let _ = tx.send(Err(SessionError::Rejected(vox_types::metadata_into_owned(
+                        reject.metadata.to_vec(),
+                    ))));
                 }
             }
             Some(other) => {

@@ -24,14 +24,17 @@ fn upstream_acceptor(
     request: &vox::ConnectionRequest,
     connection: vox::PendingConnection,
 ) -> Result<(), Metadata<'static>> {
-    if request.service() != Some("MathText") {
-        return Err(vec![MetadataEntry::str(
-            "error",
-            "unknown or missing service metadata for upstream guest",
-        )]);
+    match request.service() {
+        "Noop" => {
+            connection.handle_with(());
+            Ok(())
+        }
+        "MathText" => {
+            connection.handle_with(MathTextDispatcher::new(UpstreamMathText));
+            Ok(())
+        }
+        _ => Err(vec![MetadataEntry::str("error", "unknown service")]),
     }
-    connection.handle_with(MathTextDispatcher::new(UpstreamMathText));
-    Ok(())
 }
 
 #[derive(Clone)]
@@ -45,15 +48,15 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
         request: &vox::ConnectionRequest,
         connection: vox::PendingConnection,
     ) -> Result<(), Metadata<'static>> {
-        if request.is_root() {
-            connection.handle_with(());
-            return Ok(());
-        }
-        if request.service() != Some("MathText") {
-            return Err(vec![MetadataEntry::str(
-                "error",
-                "unknown or missing service metadata for proxy host",
-            )]);
+        match request.service() {
+            "Noop" => {
+                connection.handle_with(());
+                return Ok(());
+            }
+            "MathText" => {}
+            _ => {
+                return Err(vec![MetadataEntry::str("error", "unknown service")]);
+            }
         }
 
         let upstream_session = self.upstream_session.clone();

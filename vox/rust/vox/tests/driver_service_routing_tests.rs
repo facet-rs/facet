@@ -43,7 +43,7 @@ async fn root_connect_sends_vox_service_and_factory_sees_it() {
         move |request: &vox::ConnectionRequest,
               connection: vox::PendingConnection|
               -> Result<(), vox::Metadata<'static>> {
-            *seen_service.lock().unwrap() = request.service().map(String::from);
+            *seen_service.lock().unwrap() = Some(request.service().to_string());
             connection.handle_with(EchoDispatcher::new(EchoService));
             Ok(())
         }
@@ -91,16 +91,15 @@ async fn service_factory_routes_virtual_connections() {
          connection: vox::PendingConnection|
          -> Result<(), vox::Metadata<'static>> {
             match request.service() {
-                Some("Echo") => {
+                "Echo" => {
                     connection.handle_with(EchoDispatcher::new(EchoService));
                     Ok(())
                 }
-                Some("Adder") => {
+                "Adder" => {
                     connection.handle_with(AdderDispatcher::new(AdderService));
                     Ok(())
                 }
-                None => {
-                    // Root connection — no service metadata. Accept with no-op handler.
+                "Noop" => {
                     connection.handle_with(());
                     Ok(())
                 }
@@ -159,12 +158,11 @@ async fn service_factory_rejects_unknown_service() {
          connection: vox::PendingConnection|
          -> Result<(), vox::Metadata<'static>> {
             match request.service() {
-                Some("Echo") => {
+                "Echo" => {
                     connection.handle_with(EchoDispatcher::new(EchoService));
                     Ok(())
                 }
-                None => {
-                    // Root connection — accept with no-op handler.
+                "Noop" => {
                     connection.handle_with(());
                     Ok(())
                 }

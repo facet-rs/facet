@@ -293,7 +293,7 @@ impl StreamerClient {
     }
 }
 impl ::vox::FromVoxSession for StreamerClient {
-    const SERVICE_NAME: Option<&'static str> = Some("Streamer");
+    const SERVICE_NAME: &'static str = "Streamer";
     fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
         Self { caller, session }
     }

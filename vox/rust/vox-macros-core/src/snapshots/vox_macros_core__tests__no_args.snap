@@ -281,7 +281,7 @@ impl PingClient {
     }
 }
 impl ::vox::FromVoxSession for PingClient {
-    const SERVICE_NAME: Option<&'static str> = Some("Ping");
+    const SERVICE_NAME: &'static str = "Ping";
     fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
         Self { caller, session }
     }

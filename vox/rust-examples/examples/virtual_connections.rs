@@ -55,18 +55,19 @@ fn lab_acceptor(
     connection: vox::PendingConnection,
 ) -> Result<(), Metadata<'static>> {
     match request.service() {
-        Some("CounterLab") => {
+        "Noop" => {
+            connection.handle_with(());
+            Ok(())
+        }
+        "CounterLab" => {
             connection.handle_with(CounterLabDispatcher::new(CounterLabService::new()));
             Ok(())
         }
-        Some("StringLab") => {
+        "StringLab" => {
             connection.handle_with(StringLabDispatcher::new(StringLabService));
             Ok(())
         }
-        _ => Err(vec![MetadataEntry::str(
-            "error",
-            "unknown or missing service metadata",
-        )]),
+        _ => Err(vec![MetadataEntry::str("error", "unknown service")]),
     }
 }
 
