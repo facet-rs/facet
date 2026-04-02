@@ -46,3 +46,4 @@ vox-core = { path = "../vox-core" }
 shm-primitives = { path = "../shm-primitives" }
 tempfile.workspace = true
 tracing-subscriber.workspace = true
+vox-shm = { path = "../vox-shm" }

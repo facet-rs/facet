@@ -107,7 +107,7 @@ async fn send_recv_single() {
 
     let received = server_rx.recv().await.unwrap().unwrap();
     let received = received.get();
-    assert_eq!(&*received, "hello");
+    assert_eq!(&**received, "hello");
 }
 
 #[tokio::test]
@@ -124,7 +124,7 @@ async fn send_recv_multiple_in_order() {
     for i in 0..10 {
         let received = server_rx.recv().await.unwrap().unwrap();
         let received = received.get();
-        assert_eq!(&*received, &format!("msg-{i}"));
+        assert_eq!(&**received, &format!("msg-{i}"));
     }
 }
 
@@ -139,14 +139,14 @@ async fn bidirectional() {
 
     let received = server_rx.recv().await.unwrap().unwrap();
     let received = received.get();
-    assert_eq!(&*received, "from-client");
+    assert_eq!(&**received, "from-client");
 
     let permit = server_tx.reserve().await.unwrap();
     permit.send("from-server".to_string()).unwrap();
 
     let received = client_rx.recv().await.unwrap().unwrap();
     let received = received.get();
-    assert_eq!(&*received, "from-server");
+    assert_eq!(&**received, "from-server");
 }
 
 #[tokio::test]
