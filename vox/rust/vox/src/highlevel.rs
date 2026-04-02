@@ -56,17 +56,16 @@ pub async fn connect<Client: FromVoxSession>(
     }
 }
 
-/// Serve a vox service, accepting connections in a loop.
+/// Serve a vox service by address string, accepting connections in a loop.
 ///
-/// The address string determines the transport (same schemes as `connect()`).
-/// The acceptor handles both root and virtual connections.
+/// The address string determines the transport (same schemes as [`connect()`]):
+///
+/// - `tcp://host:port` or bare `host:port` — TCP stream transport
 ///
 /// This function runs forever (or until an I/O error occurs). Each incoming
 /// connection is handled in a spawned task.
 ///
 /// # Examples
-///
-/// Single service:
 ///
 /// ```no_run
 /// # #[vox::service]
@@ -84,20 +83,31 @@ pub async fn connect<Client: FromVoxSession>(
 /// # Ok(())
 /// # }
 /// ```
-///
-/// Multi-service factory:
-///
-/// ```ignore
-/// vox::serve("0.0.0.0:9000", vox::acceptor_fn(|req, conn| {
-///     match req.service() {
-///         Some("Hello") => { conn.handle_with(HelloDispatcher::new(HelloService)); Ok(()) }
-///         Some("Chat") => { conn.handle_with(ChatDispatcher::new(ChatService)); Ok(()) }
-///         None => { conn.handle_with(()); Ok(()) } // root connection
-///         _ => Err(vec![]),
-///     }
-/// })).await?;
-/// ```
-/// A listener that accepts incoming connections for [`serve()`].
+pub async fn serve(
+    addr: impl std::fmt::Display,
+    acceptor: impl ConnectionAcceptor,
+) -> Result<(), SessionError> {
+    let addr = addr.to_string();
+    let (scheme, host) = match addr.split_once("://") {
+        Some((scheme, host)) => (scheme.to_string(), host.to_string()),
+        None => ("tcp".to_string(), addr),
+    };
+
+    match scheme.as_str() {
+        #[cfg(feature = "transport-tcp")]
+        "tcp" => {
+            let listener = tokio::net::TcpListener::bind(&host)
+                .await
+                .map_err(SessionError::Io)?;
+            serve_listener(listener, acceptor).await
+        }
+        _ => Err(SessionError::Protocol(format!(
+            "unknown or unsupported transport scheme for serve: {scheme:?}"
+        ))),
+    }
+}
+
+/// A listener that accepts incoming connections for [`serve_listener()`].
 pub trait VoxListener: Send + 'static {
     /// The link type produced by this listener.
     type Link: vox_types::Link + Send + 'static;
@@ -126,7 +136,7 @@ impl VoxListener for vox_stream::LocalLinkAcceptor {
     }
 }
 
-/// Serve a vox service, accepting connections in a loop.
+/// Serve a vox service on a pre-bound listener.
 ///
 /// Takes a [`VoxListener`] (e.g. `TcpListener`) and a [`ConnectionAcceptor`].
 /// Each incoming connection is handled in a spawned task. Runs until an I/O
@@ -147,11 +157,14 @@ impl VoxListener for vox_stream::LocalLinkAcceptor {
 /// # #[tokio::main(flavor = "current_thread")]
 /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let listener = tokio::net::TcpListener::bind("0.0.0.0:9000").await?;
-/// vox::serve(listener, HelloDispatcher::new(HelloService)).await?;
+/// vox::serve_listener(listener, HelloDispatcher::new(HelloService)).await?;
 /// # Ok(())
 /// # }
 /// ```
-pub async fn serve<L>(listener: L, acceptor: impl ConnectionAcceptor) -> Result<(), SessionError>
+pub async fn serve_listener<L>(
+    listener: L,
+    acceptor: impl ConnectionAcceptor,
+) -> Result<(), SessionError>
 where
     L: VoxListener,
     <L::Link as vox_types::Link>::Tx: vox_types::MaybeSend + vox_types::MaybeSync + Send + 'static,

@@ -57,8 +57,7 @@
 //! # }
 //! # #[tokio::main(flavor = "current_thread")]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let listener = tokio::net::TcpListener::bind("0.0.0.0:9000").await?;
-//! vox::serve(listener, HelloDispatcher::new(HelloService)).await?;
+//! vox::serve("0.0.0.0:9000", HelloDispatcher::new(HelloService)).await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -66,10 +65,10 @@
 //! For multi-service routing, use [`acceptor_fn()`]:
 //!
 //! ```ignore
-//! vox::serve(listener, vox::acceptor_fn(|req, conn| {
+//! vox::serve("0.0.0.0:9000", vox::acceptor_fn(|req, conn| {
 //!     match req.service() {
-//!         Some("Hello") => { conn.handle_with(HelloDispatcher::new(HelloService)); Ok(()) }
-//!         Some("Chat") => { conn.handle_with(ChatDispatcher::new(ChatService)); Ok(()) }
+//!         "Hello" => { conn.handle_with(HelloDispatcher::new(HelloService)); Ok(()) }
+//!         "Chat" => { conn.handle_with(ChatDispatcher::new(ChatService)); Ok(()) }
 //!         _ => Err(vec![]),
 //!     }
 //! })).await?;

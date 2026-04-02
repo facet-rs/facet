@@ -22,7 +22,7 @@ async fn serve_and_connect() {
     let addr = listener.local_addr().expect("local_addr");
 
     let server = tokio::spawn(async move {
-        vox::serve(listener, EchoDispatcher::new(EchoService))
+        vox::serve_listener(listener, EchoDispatcher::new(EchoService))
             .await
             .expect("serve");
     });
