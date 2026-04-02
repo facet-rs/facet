@@ -309,13 +309,17 @@ feature entirely.
     - Root and virtual connections go through the same acceptor
     - `establish()` no longer takes a `handler` parameter
     - `proxy_connections()` returns `Result`, checks parity mismatch
-12. `vox::serve(addr, acceptor)` — symmetric to `vox::connect()`
-    - Listens, accepts connections in a loop, spawns sessions
-    - Single-service: `vox::serve(addr, EchoDispatcher::new(EchoService))`
-    - Multi-service factory: `vox::serve(addr, |req| match req.service() { ... })`
+12. ✅ `vox::serve(listener, acceptor)` — symmetric to `vox::connect()`
+    - `VoxListener` trait implemented for `TcpListener`, `LocalLinkAcceptor`
+    - Accepts connections in a loop, spawns sessions
+    - Single-service: `vox::serve(listener, EchoDispatcher::new(EchoService))`
+    - Multi-service factory: `vox::serve(listener, acceptor_fn(|req, conn| { ... }))`
 13. Facade re-export hygiene + crate documentation
     - Replace `pub use vox_core::*` with curated list
     - Document public API
+14. Multi-listener support
+    - Serve on multiple transports simultaneously (e.g. TCP + Unix socket + SHM)
+    - Compose multiple `VoxListener`s into one
 
 ## SHM Transport in `connect()` ✅
 
