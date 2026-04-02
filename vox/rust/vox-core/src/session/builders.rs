@@ -8,7 +8,7 @@ use std::{
 
 use moire::sync::mpsc;
 use vox_types::{
-    Conduit, ConduitTx, ConnectionSettings, Handler, HandshakeResult, Link, MaybeSend, MaybeSync,
+    Conduit, ConduitTx, ConnectionSettings, HandshakeResult, Link, MaybeSend, MaybeSync,
     MessageFamily, Metadata, Parity, SessionResumeKey, SplitLink, metadata_into_owned,
 };
 
@@ -23,7 +23,7 @@ use super::{
     CloseRequest, ConduitRecoverer, ConnectionAcceptor, OpenRequest, Session, SessionError,
     SessionHandle, SessionKeepaliveConfig,
 };
-use crate::{Driver, DriverReplySink, FromVoxSession};
+use crate::FromVoxSession;
 
 /// Well-known metadata key for service name routing.
 pub const VOX_SERVICE_METADATA_KEY: &str = "vox-service";

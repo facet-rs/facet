@@ -584,19 +584,6 @@ impl ConnectionAcceptor for EchoAcceptor {
     }
 }
 
-/// An acceptor that rejects every connection.
-pub(crate) struct RejectAcceptor;
-
-impl ConnectionAcceptor for RejectAcceptor {
-    fn accept(
-        &self,
-        _request: &ConnectionRequest,
-        _connection: PendingConnection,
-    ) -> Result<(), vox_types::Metadata<'static>> {
-        Err(vec![])
-    }
-}
-
 #[derive(Facet)]
 pub(crate) struct SubscribeArgs {
     pub(crate) updates: Tx<u32>,

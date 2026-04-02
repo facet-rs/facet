@@ -1,29 +1,14 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
-
-use moire::sync::mpsc;
 use moire::task::FutureExt;
 use vox_types::{
-    Backing, ChannelBinder, ChannelBody, ChannelClose, ChannelGrantCredit, ChannelId, ChannelItem,
-    ChannelMessage, ChannelSink, Conduit, ConduitRx, ConnectionSettings, Handler,
-    IncomingChannelMessage, Link, LinkRx, LinkTx, LinkTxPermit, Message, MessageFamily,
-    MessagePayload, Metadata, MethodId, Parity, Payload, ReplySink, RequestBody, RequestCall,
-    RequestCancel, RequestMessage, RequestResponse, RetryPolicy, SelfRef, Tx, VoxError, WriteSlot,
-    channel, ensure_operation_id, metadata_operation_id,
+    ChannelBinder, ConnectionSettings, Metadata, MethodId, Parity, Payload, RequestCall,
 };
-use vox_types::{HandshakeResult, SessionResumeKey, SessionRole};
 
 use super::utils::*;
 use crate::session::{
-    ConnectionAcceptor, ConnectionHandle, ConnectionMessage, ConnectionRequest, PendingConnection,
-    SessionAcceptOutcome, SessionError, SessionHandle, SessionKeepaliveConfig, SessionRegistry,
-    acceptor_conduit, acceptor_on, initiator_conduit, initiator_on, proxy_connections,
+    ConnectionAcceptor, ConnectionRequest, PendingConnection, SessionError, acceptor_conduit,
+    initiator_conduit,
 };
-use crate::{
-    Attachment, BareConduit, Caller, Driver, DriverCaller, DriverReplySink, InMemoryOperationStore,
-    LinkSource, NoopClient, OperationStore, TransportMode, initiate_transport, memory_link_pair,
-};
+use crate::{Driver, NoopClient};
 
 // r[verify rpc.virtual-connection.open]
 // r[verify rpc.virtual-connection.accept]
@@ -35,12 +20,11 @@ async fn open_virtual_connection_and_call() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(EchoAcceptor)
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -97,7 +81,7 @@ async fn reject_virtual_connection() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(crate::session::acceptor_fn(
                     |request: &ConnectionRequest, connection: PendingConnection| {
                         if request.is_root() {
@@ -110,8 +94,7 @@ async fn reject_virtual_connection() {
                 ))
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -148,11 +131,10 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -190,12 +172,11 @@ async fn close_unknown_virtual_connection_is_rejected() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(EchoHandler)
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -227,12 +208,11 @@ async fn close_virtual_connection() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(EchoAcceptor)
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -307,12 +287,11 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(EchoAcceptor)
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -367,12 +346,11 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(EchoAcceptor)
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -442,12 +420,11 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(LocalEchoAcceptor)
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );

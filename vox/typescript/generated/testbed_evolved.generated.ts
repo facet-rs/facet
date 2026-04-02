@@ -194,7 +194,11 @@ export interface TestbedHandler {
 
 // Dispatcher for Testbed
 export class TestbedDispatcher implements Dispatcher {
-  constructor(private readonly handler: TestbedHandler) {}
+  private readonly handler: TestbedHandler;
+
+  constructor(handler: TestbedHandler) {
+    this.handler = handler;
+  }
 
   getDescriptor(): ServiceDescriptor {
     return testbed_descriptor;

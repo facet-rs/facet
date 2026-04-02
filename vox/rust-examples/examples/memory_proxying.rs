@@ -1,11 +1,5 @@
 use eyre::{Result, eyre};
-use vox::{
-    ConnectionSettings, Driver, Metadata, MetadataEntry, MetadataFlags, MetadataValue, NoopClient,
-    Parity, SessionHandle,
-};
-
-const PROXY_SERVICE: &str = "math_text_proxy";
-const UPSTREAM_SERVICE: &str = "math_text_upstream";
+use vox::{ConnectionSettings, Metadata, MetadataEntry, Parity, SessionHandle};
 
 #[vox::service]
 trait MathText {
@@ -30,10 +24,11 @@ fn upstream_acceptor(
     request: &vox::ConnectionRequest,
     connection: vox::PendingConnection,
 ) -> Result<(), Metadata<'static>> {
-    if request.service() != Some(UPSTREAM_SERVICE) {
-        return Err(error_metadata(
+    if request.service() != Some("MathText") {
+        return Err(vec![MetadataEntry::str(
+            "error",
             "unknown or missing service metadata for upstream guest",
-        ));
+        )]);
     }
     connection.handle_with(MathTextDispatcher::new(UpstreamMathText));
     Ok(())
@@ -54,10 +49,11 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
             connection.handle_with(());
             return Ok(());
         }
-        if request.service() != Some(PROXY_SERVICE) {
-            return Err(error_metadata(
+        if request.service() != Some("MathText") {
+            return Err(vec![MetadataEntry::str(
+                "error",
                 "unknown or missing service metadata for proxy host",
-            ));
+            )]);
         }
 
         let upstream_session = self.upstream_session.clone();
@@ -70,7 +66,10 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
                         parity: Parity::Odd,
                         max_concurrent_requests: 64,
                     },
-                    service_metadata(UPSTREAM_SERVICE),
+                    vec![MetadataEntry::str(
+                        vox::VOX_SERVICE_METADATA_KEY,
+                        "MathText",
+                    )],
                 )
                 .await
             {
@@ -86,32 +85,6 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
         });
         Ok(())
     }
-}
-
-fn requested_service<'a>(metadata: &'a [MetadataEntry<'a>]) -> Option<&'a str> {
-    metadata
-        .iter()
-        .find(|entry| entry.key == "service")
-        .and_then(|entry| match &entry.value {
-            MetadataValue::String(value) => Some(value.as_ref()),
-            _ => None,
-        })
-}
-
-fn service_metadata(service: &'static str) -> Metadata<'static> {
-    vec![MetadataEntry {
-        key: "service".into(),
-        value: MetadataValue::String(service.into()),
-        flags: MetadataFlags::NONE,
-    }]
-}
-
-fn error_metadata(message: &'static str) -> Metadata<'static> {
-    vec![MetadataEntry {
-        key: "error".into(),
-        value: MetadataValue::String(message.into()),
-        flags: MetadataFlags::NONE,
-    }]
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -194,21 +167,13 @@ async fn main() -> Result<()> {
     println!("[guest-a] root session ready");
 
     println!("[guest-a] opening proxy vconn to host");
-    let proxy_conn = guest_a_session_handle
-        .open_connection(
-            ConnectionSettings {
-                parity: Parity::Odd,
-                max_concurrent_requests: 64,
-            },
-            service_metadata(PROXY_SERVICE),
-        )
+    let proxy_client: MathTextClient = guest_a_session_handle
+        .open(ConnectionSettings {
+            parity: Parity::Odd,
+            max_concurrent_requests: 64,
+        })
         .await
         .map_err(|e| eyre!("guest-a open proxy vconn failed: {e:?}"))?;
-    let proxy_conn_id = proxy_conn.connection_id();
-
-    let mut proxy_driver = Driver::new(proxy_conn, ());
-    let proxy_client = MathTextClient::new(vox::Caller::new(proxy_driver.caller()));
-    let proxy_driver_task = tokio::spawn(async move { proxy_driver.run().await });
 
     println!("[guest-a] calling add via host proxy to guest-b");
     let added = proxy_client
@@ -226,12 +191,6 @@ async fn main() -> Result<()> {
     println!("[guest-a] reverse(\"stressed\") -> {reversed}");
     assert_eq!(reversed, "desserts");
 
-    guest_a_session_handle
-        .close_connection(proxy_conn_id, vec![])
-        .await
-        .map_err(|e| eyre!("closing proxy vconn failed: {e:?}"))?;
-
-    proxy_driver_task.abort();
     guest_b_task.abort();
     host_for_a_task.abort();
     println!("[demo] memory_proxying: complete");

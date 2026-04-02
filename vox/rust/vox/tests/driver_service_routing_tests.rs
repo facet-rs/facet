@@ -50,12 +50,11 @@ async fn root_connect_sends_vox_service_and_factory_sees_it() {
     });
 
     let server = tokio::spawn(async move {
-        let s = vox::acceptor_on(server_link)
+        vox::acceptor_on(server_link)
             .on_connection(factory)
             .establish::<vox::NoopClient>()
             .await
-            .expect("server establish");
-        s
+            .expect("server establish")
     });
 
     let root = vox::initiator_on(client_link, vox::TransportMode::Bare)
@@ -111,12 +110,11 @@ async fn service_factory_routes_virtual_connections() {
     );
 
     let server = tokio::spawn(async move {
-        let s = vox::acceptor_on(server_link)
+        vox::acceptor_on(server_link)
             .on_connection(factory)
             .establish::<vox::NoopClient>()
             .await
-            .expect("server establish");
-        s
+            .expect("server establish")
     });
 
     let root = vox::initiator_on(client_link, vox::TransportMode::Bare)
@@ -176,12 +174,11 @@ async fn service_factory_rejects_unknown_service() {
     );
 
     let server = tokio::spawn(async move {
-        let s = vox::acceptor_on(server_link)
+        vox::acceptor_on(server_link)
             .on_connection(factory)
             .establish::<vox::NoopClient>()
             .await
-            .expect("server establish");
-        s
+            .expect("server establish")
     });
 
     let root = vox::initiator_on(client_link, vox::TransportMode::Bare)

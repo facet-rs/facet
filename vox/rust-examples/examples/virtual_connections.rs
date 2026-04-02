@@ -5,9 +5,7 @@ use std::sync::{
 
 use eyre::{Result, WrapErr, eyre};
 use vox::transport::tcp::StreamLink;
-use vox::{
-    ConnectionSettings, Driver, Metadata, MetadataEntry, MetadataFlags, MetadataValue, Parity,
-};
+use vox::{ConnectionSettings, Metadata, MetadataEntry, Parity};
 
 #[vox::service]
 trait CounterLab {
@@ -57,11 +55,11 @@ fn lab_acceptor(
     connection: vox::PendingConnection,
 ) -> Result<(), Metadata<'static>> {
     match request.service() {
-        Some("counter") => {
+        Some("CounterLab") => {
             connection.handle_with(CounterLabDispatcher::new(CounterLabService::new()));
             Ok(())
         }
-        Some("string") => {
+        Some("StringLab") => {
             connection.handle_with(StringLabDispatcher::new(StringLabService));
             Ok(())
         }
@@ -70,24 +68,6 @@ fn lab_acceptor(
             "unknown or missing service metadata",
         )]),
     }
-}
-
-fn requested_service<'a>(metadata: &'a [MetadataEntry<'a>]) -> Option<&'a str> {
-    metadata
-        .iter()
-        .find(|entry| entry.key == "service")
-        .and_then(|entry| match &entry.value {
-            MetadataValue::String(value) => Some(value.as_ref()),
-            _ => None,
-        })
-}
-
-fn service_metadata(service: &'static str) -> Metadata<'static> {
-    vec![MetadataEntry {
-        key: "service".into(),
-        value: MetadataValue::String(service.into()),
-        flags: MetadataFlags::NONE,
-    }]
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -135,24 +115,16 @@ async fn main() -> Result<()> {
     };
 
     println!("[client] opening counter virtual connection");
-    let counter_conn = session_handle
-        .open_connection(settings.clone(), service_metadata("counter"))
+    let counter_client: CounterLabClient = session_handle
+        .open(settings.clone())
         .await
-        .map_err(|e| eyre!("open_connection(counter) failed: {e:?}"))?;
-    let counter_conn_id = counter_conn.connection_id();
-    let mut counter_driver = Driver::new(counter_conn, ());
-    let counter_client = CounterLabClient::new(vox::Caller::new(counter_driver.caller()));
-    let counter_driver_task = tokio::spawn(async move { counter_driver.run().await });
+        .map_err(|e| eyre!("open(CounterLab) failed: {e:?}"))?;
 
     println!("[client] opening string virtual connection");
-    let string_conn = session_handle
-        .open_connection(settings, service_metadata("string"))
+    let string_client: StringLabClient = session_handle
+        .open(settings)
         .await
-        .map_err(|e| eyre!("open_connection(string) failed: {e:?}"))?;
-    let string_conn_id = string_conn.connection_id();
-    let mut string_driver = Driver::new(string_conn, ());
-    let string_client = StringLabClient::new(vox::Caller::new(string_driver.caller()));
-    let string_driver_task = tokio::spawn(async move { string_driver.run().await });
+        .map_err(|e| eyre!("open(StringLab) failed: {e:?}"))?;
 
     println!("[client] calling CounterLab::bump twice");
     assert_eq!(
@@ -191,18 +163,7 @@ async fn main() -> Result<()> {
     );
     println!("[client] StringLab::shout -> BETA");
 
-    println!("[client] closing virtual connections");
-    session_handle
-        .close_connection(counter_conn_id, vec![])
-        .await
-        .map_err(|e| eyre!("close_connection(counter) failed: {e:?}"))?;
-    session_handle
-        .close_connection(string_conn_id, vec![])
-        .await
-        .map_err(|e| eyre!("close_connection(string) failed: {e:?}"))?;
-
-    counter_driver_task.abort();
-    string_driver_task.abort();
+    println!("[client] closing session");
     server_task.abort();
     println!("[demo] virtual_connections: complete");
 

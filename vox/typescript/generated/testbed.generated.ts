@@ -403,7 +403,7 @@ export class TestbedClient implements TestbedCaller {
         sendSchemas,
       });
       return { ok: true, value } as { ok: true; value: bigint } | { ok: false; error: MathError };
-    } catch (e) {
+    } catch (e: any) {
       if (e instanceof RpcError && e.isUserError()) {
         return { ok: false, error: e.userError } as { ok: true; value: bigint } | { ok: false; error: MathError };
       }
@@ -429,7 +429,7 @@ export class TestbedClient implements TestbedCaller {
         sendSchemas,
       });
       return { ok: true, value } as { ok: true; value: Person } | { ok: false; error: LookupError };
-    } catch (e) {
+    } catch (e: any) {
       if (e instanceof RpcError && e.isUserError()) {
         return { ok: false, error: e.userError } as { ok: true; value: Person } | { ok: false; error: LookupError };
       }
@@ -1049,7 +1049,11 @@ export interface TestbedHandler {
 
 // Dispatcher for Testbed
 export class TestbedDispatcher implements Dispatcher {
-  constructor(private readonly handler: TestbedHandler) {}
+  private readonly handler: TestbedHandler;
+
+  constructor(handler: TestbedHandler) {
+    this.handler = handler;
+  }
 
   getDescriptor(): ServiceDescriptor {
     return testbed_descriptor;

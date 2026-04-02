@@ -319,7 +319,7 @@ impl SessionHandle {
         settings: ConnectionSettings,
     ) -> Result<Client, SessionError> {
         use crate::{Caller, Driver};
-        use vox_types::{Handler, MetadataEntry, MetadataFlags, MetadataValue};
+        use vox_types::{MetadataEntry, MetadataFlags, MetadataValue};
 
         let mut metadata: Metadata<'static> = vec![];
         if let Some(name) = Client::SERVICE_NAME {
@@ -1532,8 +1532,7 @@ impl Session {
         );
 
         // Let the acceptor decide the connection's fate.
-        let mut metadata: Vec<vox_types::MetadataEntry<'_>> =
-            open.metadata.iter().cloned().collect();
+        let mut metadata: Vec<vox_types::MetadataEntry<'_>> = open.metadata.to_vec();
         metadata.push(vox_types::MetadataEntry::str(
             "vox-connection-kind",
             "virtual",

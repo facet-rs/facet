@@ -48,12 +48,11 @@ async fn echo_call_across_shm_link() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(EchoHandler)
                 .establish::<crate::NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -129,12 +128,11 @@ async fn echo_blob_stress_over_shm_link() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(BlobEchoHandler)
                 .establish::<crate::NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );

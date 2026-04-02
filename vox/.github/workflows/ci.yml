@@ -15,6 +15,7 @@ jobs:
   rust-lint:
     name: Rust / Lint
     runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
@@ -30,6 +31,7 @@ jobs:
   rust-tests:
     name: Rust / Tests
     runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
 
@@ -48,6 +50,7 @@ jobs:
   rust-doc:
     name: Rust / Documentation
     runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
@@ -66,6 +69,7 @@ jobs:
   rust-examples:
     name: Rust / Examples
     runs-on: depot-ubuntu-24.04-4
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
@@ -87,6 +91,7 @@ jobs:
   rust-miri:
     name: Rust / Miri
     runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
 
@@ -113,6 +118,7 @@ jobs:
   rust-loom:
     name: Rust / Loom
     runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
 
@@ -133,6 +139,7 @@ jobs:
   rust-conformance:
     name: Conformance / Rust
     runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
@@ -173,6 +180,7 @@ jobs:
   generated-bindings:
     name: Generated / Bindings Sync
     runs-on: depot-ubuntu-24.04-4
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
@@ -198,6 +206,7 @@ jobs:
   typescript-conformance:
     name: Conformance / TypeScript
     runs-on: depot-ubuntu-24.04-4
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
@@ -257,6 +266,7 @@ jobs:
   swift-conformance:
     name: Conformance / Swift
     runs-on: depot-macos-15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
@@ -310,6 +320,7 @@ jobs:
   swift-linux:
     name: Conformance / Swift (Linux)
     runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
@@ -349,6 +360,7 @@ jobs:
   rust-wasm:
     name: Rust / WebAssembly
     runs-on: depot-ubuntu-24.04-4
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
@@ -369,6 +381,7 @@ jobs:
   wasm-browser-tests:
     name: Browser / Rust-Wasm
     runs-on: depot-ubuntu-24.04-4
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
@@ -408,6 +421,7 @@ jobs:
   rust-windows:
     name: Rust / Windows
     runs-on: depot-windows-2025-32
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 

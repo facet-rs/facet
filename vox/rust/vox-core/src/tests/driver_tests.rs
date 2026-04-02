@@ -1,32 +1,24 @@
 use facet::Facet;
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
-use moire::sync::mpsc;
 use moire::task::FutureExt;
 use vox_types::{
-    Backing, ChannelBinder, ChannelBody, ChannelClose, ChannelGrantCredit, ChannelId, ChannelItem,
-    ChannelMessage, ChannelSink, Conduit, ConduitRx, ConnectionSettings, Handler,
-    IncomingChannelMessage, Link, LinkRx, LinkTx, LinkTxPermit, Message, MessageFamily,
-    MessagePayload, Metadata, MethodId, Parity, Payload, ReplySink, RequestBody, RequestCall,
-    RequestCancel, RequestMessage, RequestResponse, RetryPolicy, SelfRef, Tx, VoxError, WriteSlot,
-    channel, ensure_operation_id, metadata_operation_id,
+    Backing, ChannelBody, ChannelClose, ChannelGrantCredit, ChannelId, ChannelItem, ChannelMessage,
+    ChannelSink, ConnectionSettings, HandshakeResult, IncomingChannelMessage, Message,
+    MessagePayload, Metadata, MethodId, Parity, Payload, RequestBody, RequestCall, RequestCancel,
+    RequestMessage, RequestResponse, RetryPolicy, SelfRef, SessionRole, VoxError, channel,
+    ensure_operation_id,
 };
-
-use vox_types::{HandshakeResult, SessionResumeKey, SessionRole};
 
 use super::utils::*;
 use crate::session::{
-    ConnectionAcceptor, ConnectionMessage, ConnectionRequest, PendingConnection,
-    SessionAcceptOutcome, SessionError, SessionHandle, SessionKeepaliveConfig, SessionRegistry,
-    acceptor_conduit, acceptor_on, initiator_conduit, initiator_on, proxy_connections,
+    ConnectionAcceptor, ConnectionMessage, ConnectionRequest, PendingConnection, SessionError,
+    SessionHandle, SessionKeepaliveConfig, acceptor_conduit, acceptor_on, initiator_conduit,
+    initiator_on, proxy_connections,
 };
-use crate::{
-    Attachment, BareConduit, Driver, DriverCaller, DriverReplySink, InMemoryOperationStore,
-    LinkSource, NoopClient, OperationStore, TransportMode, initiate_transport, memory_link_pair,
-};
+use crate::{BareConduit, Driver, NoopClient, TransportMode, memory_link_pair};
 
 // r[verify rpc.caller.liveness.refcounted]
 #[tokio::test]
@@ -40,7 +32,7 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .spawn_fn(move |fut| {
                     let handle = moire::task::spawn(fut.named("server_session"));
                     let _ = server_session_tx.send(handle);
@@ -48,8 +40,7 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
                 .on_connection(EchoHandler)
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -110,11 +101,10 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -214,15 +204,14 @@ async fn cancel_aborts_in_flight_handler() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(BlockingHandler {
                     was_cancelled,
                     retry: RetryPolicy::VOLATILE,
                 })
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -310,15 +299,14 @@ async fn cancel_does_not_abort_persist_handler() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(PersistentReplyingHandler {
                     was_cancelled,
                     release: release_server,
                 })
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -385,12 +373,11 @@ async fn caller_injects_operation_id_when_peer_supports_retry() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(OperationIdHandler)
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -429,13 +416,12 @@ async fn builder_uses_custom_operation_store() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .operation_store(store)
                 .on_connection(OperationIdHandler)
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -588,15 +574,14 @@ async fn duplicate_operation_id_on_same_connection_is_rejected() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(ReplayHandler {
                     runs: Arc::new(AtomicUsize::new(0)),
                     release: release_server,
                 })
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -864,7 +849,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
     let (session_tx, session_rx) = tokio::sync::oneshot::channel::<moire::task::JoinHandle<()>>();
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .spawn_fn(move |fut| {
                     let handle = moire::task::spawn(fut);
                     let _ = session_tx.send(handle);
@@ -875,8 +860,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
                 })
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -940,15 +924,14 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(BlockingHandler {
                     was_cancelled: Arc::new(AtomicBool::new(false)),
                     retry: RetryPolicy::VOLATILE,
                 })
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -1003,7 +986,7 @@ async fn dropping_root_caller_shuts_down_session() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .spawn_fn(move |fut| {
                     let handle = moire::task::spawn(fut.named("server_session"));
                     let _ = server_session_tx.send(handle);
@@ -1011,8 +994,7 @@ async fn dropping_root_caller_shuts_down_session() {
                 .on_connection(EchoHandler)
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -1047,8 +1029,6 @@ async fn dropping_root_caller_shuts_down_session() {
 // Virtual connection tests
 // ---------------------------------------------------------------------------
 
-/// An acceptor that spawns an EchoHandler driver on each accepted connection.
-
 /// Regression test: schema recv tracker must be per-connection.
 /// If it were per-session, the second call (on the virtual connection) would
 /// fail because the response schemas overlap with the root connection's.
@@ -1058,13 +1038,12 @@ async fn schema_tracker_is_per_connection_not_per_session() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(EchoAcceptor)
                 .on_connection(EchoHandler)
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -1139,7 +1118,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(
+            acceptor_conduit(
                 server_conduit,
                 HandshakeResult {
                     role: SessionRole::Acceptor,
@@ -1162,8 +1141,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
             .on_connection(EchoAcceptor)
             .establish::<NoopClient>()
             .await
-            .expect("server handshake failed");
-            server_caller
+            .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -1219,7 +1197,7 @@ async fn acceptor_builder_customization_supports_opening_connections() {
 
     let initiator_task = moire::task::spawn(
         async move {
-            let initiator_caller = initiator_conduit(
+            initiator_conduit(
                 client_conduit,
                 HandshakeResult {
                     role: SessionRole::Initiator,
@@ -1242,8 +1220,7 @@ async fn acceptor_builder_customization_supports_opening_connections() {
             .on_connection(EchoAcceptor)
             .establish::<NoopClient>()
             .await
-            .expect("initiator handshake failed");
-            initiator_caller
+            .expect("initiator handshake failed")
         }
         .named("initiator_setup"),
     );
@@ -1300,12 +1277,11 @@ async fn close_root_connection_is_rejected() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(EchoHandler)
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -1335,12 +1311,11 @@ async fn echo_call_across_memory_link() {
     // settings before either can proceed.
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(EchoHandler)
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -1381,11 +1356,10 @@ async fn buffers_inbound_channel_items_until_rx_is_registered() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -1439,11 +1413,10 @@ async fn grant_credit_unblocks_driver_created_tx_channel() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );
@@ -1500,11 +1473,10 @@ async fn buffered_close_before_registration_keeps_channel_terminal() {
 
     let server_task = moire::task::spawn(
         async move {
-            let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
+            acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .establish::<NoopClient>()
                 .await
-                .expect("server handshake failed");
-            server_caller
+                .expect("server handshake failed")
         }
         .named("server_setup"),
     );

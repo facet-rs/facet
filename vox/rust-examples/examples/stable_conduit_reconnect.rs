@@ -6,8 +6,8 @@ use std::sync::{
 
 use eyre::{Result, WrapErr, eyre};
 use vox::{
-    Attachment, Backing, Caller, ConnectionSettings, HandshakeResult, Link, LinkRx, LinkSource,
-    LinkTx, MemoryLink, MemoryLinkRx, MemoryLinkRxError, MemoryLinkTx, MessageFamily, Parity, Rx,
+    Attachment, Backing, ConnectionSettings, HandshakeResult, Link, LinkRx, LinkSource, LinkTx,
+    MemoryLink, MemoryLinkRx, MemoryLinkRxError, MemoryLinkTx, MessageFamily, Parity, Rx,
     SessionRole, StableConduit, Tx, channel, prepare_acceptor_attachment,
 };
 

@@ -21,12 +21,11 @@ async fn call_through_cbor_handshake_reaches_handler() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
-        let s = vox::acceptor_on(server_link)
+        vox::acceptor_on(server_link)
             .on_connection(EchoDispatcher::new(EchoService))
             .establish::<vox::NoopClient>()
             .await
-            .expect("server establish");
-        s
+            .expect("server establish")
     });
 
     let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
@@ -45,12 +44,11 @@ async fn call_through_stable_conduit_reaches_handler() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
-        let s = vox::acceptor_on(server_link)
+        vox::acceptor_on(server_link)
             .on_connection(EchoDispatcher::new(EchoService))
             .establish::<vox::NoopClient>()
             .await
-            .expect("server establish");
-        s
+            .expect("server establish")
     });
 
     let client = vox::initiator_on(client_link, vox::TransportMode::Stable)
@@ -69,12 +67,11 @@ async fn multiple_calls_through_stable_conduit() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
-        let s = vox::acceptor_on(server_link)
+        vox::acceptor_on(server_link)
             .on_connection(EchoDispatcher::new(EchoService))
             .establish::<vox::NoopClient>()
             .await
-            .expect("server establish");
-        s
+            .expect("server establish")
     });
 
     let client = vox::initiator_on(client_link, vox::TransportMode::Stable)

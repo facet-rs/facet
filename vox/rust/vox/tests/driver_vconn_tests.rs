@@ -3,7 +3,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use vox::{ConnectionSettings, Driver, Metadata, Parity, SessionHandle, memory_link_pair};
+use vox::{ConnectionSettings, Driver, Parity, SessionHandle, memory_link_pair};
 
 #[vox::service]
 trait Echo {
@@ -20,12 +20,11 @@ impl Echo for EchoService {
 }
 
 async fn vconn_server(server_link: impl vox::Link + Send + 'static) -> vox::NoopClient {
-    let server = vox::acceptor_on(server_link)
+    vox::acceptor_on(server_link)
         .on_connection(EchoDispatcher::new(EchoService))
         .establish::<vox::NoopClient>()
         .await
-        .expect("server establish");
-    server
+        .expect("server establish")
 }
 
 async fn open_echo_vconn(session: &SessionHandle) -> EchoClient {
@@ -125,12 +124,11 @@ async fn schema_tracker_is_per_connection_not_per_session() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
-        let s = vox::acceptor_on(server_link)
+        vox::acceptor_on(server_link)
             .on_connection(EchoDispatcher::new(EchoService))
             .establish::<vox::NoopClient>()
             .await
-            .expect("server establish");
-        s
+            .expect("server establish")
     });
 
     let root = vox::initiator_on(client_link, vox::TransportMode::Bare)
@@ -168,24 +166,12 @@ impl Counter for CounterService {
     }
 }
 
-struct RejectAcceptor;
-
-impl vox::ConnectionAcceptor for RejectAcceptor {
-    fn accept(
-        &self,
-        _request: &vox::ConnectionRequest,
-        _connection: vox::PendingConnection,
-    ) -> Result<(), Metadata<'static>> {
-        Err(vec![])
-    }
-}
-
 #[tokio::test]
 async fn reject_virtual_connection() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
-        let s = vox::acceptor_on(server_link)
+        vox::acceptor_on(server_link)
             .on_connection(vox::acceptor_fn(
                 |req: &vox::ConnectionRequest, conn: vox::PendingConnection| {
                     if req.is_root() {
@@ -198,8 +184,7 @@ async fn reject_virtual_connection() {
             ))
             .establish::<vox::NoopClient>()
             .await
-            .expect("server establish");
-        s
+            .expect("server establish")
     });
 
     let _root = vox::initiator_on(client_link, vox::TransportMode::Bare)
@@ -230,11 +215,10 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
 
     // Server with NO on_connection acceptor.
     let server = tokio::spawn(async move {
-        let s = vox::acceptor_on(server_link)
+        vox::acceptor_on(server_link)
             .establish::<vox::NoopClient>()
             .await
-            .expect("server establish");
-        s
+            .expect("server establish")
     });
 
     let _root = vox::initiator_on(client_link, vox::TransportMode::Bare)
@@ -264,14 +248,13 @@ async fn close_virtual_connection() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
-        let s = vox::acceptor_on(server_link)
+        vox::acceptor_on(server_link)
             .on_connection(CounterDispatcher::new(CounterService {
                 count: std::sync::Arc::new(AtomicU32::new(0)),
             }))
             .establish::<vox::NoopClient>()
             .await
-            .expect("server establish");
-        s
+            .expect("server establish")
     });
 
     let _root = vox::initiator_on(client_link, vox::TransportMode::Bare)
@@ -319,11 +302,10 @@ async fn close_root_connection_is_rejected() {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
-        let s = vox::acceptor_on(server_link)
+        vox::acceptor_on(server_link)
             .establish::<vox::NoopClient>()
             .await
-            .expect("server establish");
-        s
+            .expect("server establish")
     });
 
     let _root = vox::initiator_on(client_link, vox::TransportMode::Bare)

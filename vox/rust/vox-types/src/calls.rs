@@ -223,7 +223,6 @@ pub trait ReplySink: MaybeSend + MaybeSync + 'static {
 ///
 /// Generated clients hold a `Caller` (from `vox-core`) as a public field
 /// and use it to start API-level calls.
-
 pub trait Handler<R: ReplySink>: MaybeSend + MaybeSync + 'static {
     /// Return the static retry policy for a method ID served by this handler.
     fn retry_policy(&self, _method_id: MethodId) -> crate::RetryPolicy {

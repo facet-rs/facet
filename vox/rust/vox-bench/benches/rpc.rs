@@ -59,7 +59,8 @@ mod vox_zerocopy_bench {
         let _server_task = moire::task::spawn(
             async move {
                 let _caller = acceptor_on(b)
-                    .on_connection(ZerocopyDispatcher::new(Handler).establish::<NoopClient>())
+                    .on_connection(ZerocopyDispatcher::new(Handler))
+                    .establish::<NoopClient>()
                     .await
                     .expect("server handshake failed");
                 let _ = server_ready_tx.send(());
@@ -123,7 +124,8 @@ mod vox_zerocopy_bench {
         let _server_task = moire::task::spawn(
             async move {
                 let _caller = acceptor_on(b)
-                    .on_connection(ZerocopyDispatcher::new(Handler).establish::<NoopClient>())
+                    .on_connection(ZerocopyDispatcher::new(Handler))
+                    .establish::<NoopClient>()
                     .await
                     .expect("server handshake failed");
                 let _ = server_ready_tx.send(());
@@ -152,7 +154,8 @@ mod vox_zerocopy_bench {
                 let (stream, _) = listener.accept().await.unwrap();
                 stream.set_nodelay(true).unwrap();
                 let _caller = acceptor_on(StreamLink::tcp(stream))
-                    .on_connection(ZerocopyDispatcher::new(Handler).establish::<NoopClient>())
+                    .on_connection(ZerocopyDispatcher::new(Handler))
+                    .establish::<NoopClient>()
                     .await
                     .expect("server handshake failed");
                 let _ = server_ready_tx.send(());
@@ -270,7 +273,8 @@ mod vox_bench {
         let _server_task = moire::task::spawn(
             async move {
                 let _caller = acceptor_on(b)
-                    .on_connection(BenchDispatcher::new(Handler).establish::<NoopClient>())
+                    .on_connection(BenchDispatcher::new(Handler))
+                    .establish::<NoopClient>()
                     .await
                     .expect("server handshake failed");
                 let _ = server_ready_tx.send(());
@@ -388,7 +392,8 @@ mod vox_shm_bench {
         let _server_task = moire::task::spawn(
             async move {
                 let _caller = acceptor_on(b)
-                    .on_connection(BenchDispatcher::new(Handler).establish::<NoopClient>())
+                    .on_connection(BenchDispatcher::new(Handler))
+                    .establish::<NoopClient>()
                     .await
                     .expect("server handshake failed");
                 let _ = server_ready_tx.send(());
@@ -478,7 +483,8 @@ mod vox_tcp_bench {
                 let (stream, _) = listener.accept().await.unwrap();
                 stream.set_nodelay(true).unwrap();
                 let _caller = acceptor_on(StreamLink::tcp(stream))
-                    .on_connection(BenchDispatcher::new(Handler).establish::<NoopClient>())
+                    .on_connection(BenchDispatcher::new(Handler))
+                    .establish::<NoopClient>()
                     .await
                     .expect("server handshake failed");
                 let _ = server_ready_tx.send(());

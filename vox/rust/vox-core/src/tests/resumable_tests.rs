@@ -1,29 +1,18 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use moire::sync::mpsc;
 use moire::task::FutureExt;
 use vox_types::{
-    Backing, ChannelBinder, ChannelBody, ChannelClose, ChannelGrantCredit, ChannelId, ChannelItem,
-    ChannelMessage, ChannelSink, Conduit, ConduitRx, ConnectionSettings, Handler,
-    IncomingChannelMessage, Link, LinkRx, LinkTx, LinkTxPermit, Message, MessageFamily,
-    MessagePayload, Metadata, MethodId, Parity, Payload, ReplySink, RequestBody, RequestCall,
-    RequestCancel, RequestMessage, RequestResponse, RetryPolicy, SelfRef, Tx, VoxError, WriteSlot,
-    channel, ensure_operation_id, metadata_operation_id,
+    ConnectionSettings, MethodId, Parity, Payload, RequestCall, RetryPolicy, VoxError,
 };
-use vox_types::{HandshakeResult, SessionResumeKey, SessionRole};
 
 use super::utils::*;
 use crate::session::{
-    ConnectionAcceptor, ConnectionHandle, ConnectionMessage, SessionAcceptOutcome, SessionError,
-    SessionHandle, SessionKeepaliveConfig, SessionRegistry, acceptor_conduit, acceptor_on,
-    initiator_conduit, initiator_on, proxy_connections,
+    SessionAcceptOutcome, SessionRegistry, acceptor_conduit, acceptor_on, initiator_conduit,
+    initiator_on,
 };
-use crate::{
-    Attachment, BareConduit, Caller, Driver, DriverCaller, DriverReplySink, InMemoryOperationStore,
-    LinkSource, NoopClient, OperationStore, TransportMode, initiate_transport, memory_link_pair,
-};
+use crate::{Attachment, BareConduit, NoopClient, TransportMode, initiate_transport};
 
 #[tokio::test]
 async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {

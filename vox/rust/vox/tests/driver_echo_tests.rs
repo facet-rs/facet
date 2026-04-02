@@ -24,12 +24,11 @@ async fn echo_pair() -> (EchoClient, vox::NoopClient) {
     let (client_link, server_link) = memory_link_pair(16);
 
     let server = tokio::spawn(async move {
-        let server = vox::acceptor_on(server_link)
+        vox::acceptor_on(server_link)
             .on_connection(EchoDispatcher::new(EchoService))
             .establish::<vox::NoopClient>()
             .await
-            .expect("server establish");
-        server
+            .expect("server establish")
     });
 
     let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
@@ -67,7 +66,7 @@ async fn dropping_one_client_clone_keeps_session_alive() {
         tokio::sync::oneshot::channel::<tokio::task::JoinHandle<()>>();
 
     let server_task = tokio::spawn(async move {
-        let server = vox::acceptor_on(server_link)
+        vox::acceptor_on(server_link)
             .spawn_fn(move |fut| {
                 let handle = tokio::spawn(fut);
                 let _ = server_session_tx.send(handle);
@@ -75,8 +74,7 @@ async fn dropping_one_client_clone_keeps_session_alive() {
             .on_connection(EchoDispatcher::new(EchoService))
             .establish::<vox::NoopClient>()
             .await
-            .expect("server establish");
-        server
+            .expect("server establish")
     });
 
     let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
@@ -123,7 +121,7 @@ async fn dropping_root_caller_shuts_down_session() {
         tokio::sync::oneshot::channel::<tokio::task::JoinHandle<()>>();
 
     let server_task = tokio::spawn(async move {
-        let server = vox::acceptor_on(server_link)
+        vox::acceptor_on(server_link)
             .spawn_fn(move |fut| {
                 let handle = tokio::spawn(fut);
                 let _ = server_session_tx.send(handle);
@@ -131,8 +129,7 @@ async fn dropping_root_caller_shuts_down_session() {
             .on_connection(EchoDispatcher::new(EchoService))
             .establish::<vox::NoopClient>()
             .await
-            .expect("server establish");
-        server
+            .expect("server establish")
     });
 
     let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
