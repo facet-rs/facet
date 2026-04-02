@@ -141,6 +141,43 @@ func writeRawFrame(channel: Channel, bytes: [UInt8]) async throws {
     try await channel.writeAndFlush(buffer)
 }
 
+func connectLink(unixPath: String) async throws -> NIOFrameLink {
+    let frameLimit = FrameLimit(defaultMaxFrameBytes)
+    let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+
+    var rawContinuation: AsyncStream<Result<[UInt8], Error>>.Continuation!
+    let rawStream = AsyncStream<Result<[UInt8], Error>> { continuation in
+        rawContinuation = continuation
+    }
+    let rawHandler = RawFrameStreamHandler(continuation: rawContinuation!)
+
+    let bootstrap = ClientBootstrap(group: group)
+        .channelInitializer { channel in
+            do {
+                try channel.pipeline.syncOperations.addHandler(
+                    ByteToMessageHandler(LengthPrefixDecoder(frameLimit: frameLimit))
+                )
+                try channel.pipeline.syncOperations.addHandler(rawHandler)
+                return channel.eventLoop.makeSucceededVoidFuture()
+            } catch {
+                return channel.eventLoop.makeFailedFuture(error)
+            }
+        }
+
+    do {
+        let channel = try await bootstrap.connect(unixDomainSocketPath: unixPath).get()
+        return NIOFrameLink(
+            channel: channel,
+            frameLimit: frameLimit,
+            inboundStream: rawStream,
+            owningGroup: group
+        )
+    } catch {
+        try? await group.shutdownGracefully()
+        throw error
+    }
+}
+
 func connectLink(host: String, port: Int) async throws -> NIOFrameLink {
     let frameLimit = FrameLimit(defaultMaxFrameBytes)
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)

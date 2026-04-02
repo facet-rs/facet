@@ -31,6 +31,63 @@ public struct TcpConnector: SessionConnector, LinkSource, Sendable {
     }
 }
 
+public struct UnixConnector: SessionConnector, LinkSource, Sendable {
+    public let path: String
+    public let transport: TransportConduitKind
+
+    public init(path: String, transport: TransportConduitKind = .bare) {
+        self.path = path
+        self.transport = transport
+    }
+
+    public func bare() -> Self {
+        Self(path: path, transport: .bare)
+    }
+
+    public func stable() -> Self {
+        Self(path: path, transport: .stable)
+    }
+
+    public func nextLink() async throws -> LinkAttachment {
+        LinkAttachment.initiator(try await connectLink(unixPath: path))
+    }
+
+    public func openAttachment() async throws -> LinkAttachment {
+        try await TransportedLinkSource(source: self, conduit: transport).nextLink()
+    }
+}
+
+public func connect(unixPath: String, conduit: TransportConduitKind = .bare) async throws -> any Conduit {
+    try await connect(
+        unixPath: unixPath,
+        conduit: conduit,
+        prologueTimeoutNs: defaultTransportPrologueTimeoutNs
+    )
+}
+
+func connect(
+    unixPath: String,
+    conduit: TransportConduitKind = .bare,
+    prologueTimeoutNs: UInt64
+) async throws -> any Conduit {
+    let connector = UnixConnector(path: unixPath, transport: conduit)
+    if conduit == .bare {
+        let attachment = try await TimedTransportedLinkSource(
+            source: connector,
+            conduit: conduit,
+            timeoutNs: prologueTimeoutNs
+        ).nextLink()
+        return BareConduit(link: attachment.link)
+    }
+
+    let source = TimedTransportedLinkSource(
+        source: connector,
+        conduit: conduit,
+        timeoutNs: prologueTimeoutNs
+    )
+    return try await StableConduit.connect(source: source)
+}
+
 public func connect(host: String, port: Int, conduit: TransportConduitKind = .bare) async throws -> any Conduit {
     try await connect(
         host: host,
