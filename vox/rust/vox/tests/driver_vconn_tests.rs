@@ -127,7 +127,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
     let server = tokio::spawn(async move {
         let s = vox::acceptor_on(server_link)
             .on_connection(EchoDispatcher::new(EchoService))
-            .on_connection(EchoDispatcher::new(EchoService).establish::<vox::NoopClient>())
+            .establish::<vox::NoopClient>()
             .await
             .expect("server establish");
         s

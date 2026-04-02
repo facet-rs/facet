@@ -41,10 +41,11 @@ async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
             Duration::from_secs(1),
             acceptor_conduit(server_conduit1, test_acceptor_handshake())
                 .resumable()
-                .establish::<NoopClient>(ResumableReplyingHandler {
+                .on_connection(ResumableReplyingHandler {
                     started,
                     release: Arc::clone(&release),
-                }),
+                })
+                .establish::<NoopClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -122,10 +123,11 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
             Duration::from_secs(1),
             acceptor_on(server_link1)
                 .session_registry(registry.clone())
-                .establish_or_resume::<NoopClient>(ResumableReplyingHandler {
+                .on_connection(ResumableReplyingHandler {
                     started,
                     release: Arc::clone(&release),
-                }),
+                })
+                .establish_or_resume::<NoopClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -195,10 +197,11 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
         },
         acceptor_on(server_link2)
             .session_registry(registry.clone())
-            .establish_or_resume::<NoopClient>(ResumableReplyingHandler {
+            .on_connection(ResumableReplyingHandler {
                 started: Arc::new(tokio::sync::Notify::new()),
                 release: Arc::clone(&release),
-            }),
+            })
+            .establish_or_resume::<NoopClient>(),
     );
     resume_result.expect("client session resume should succeed");
     match server_accept_result.expect("server accept should succeed") {
@@ -248,10 +251,11 @@ async fn resumable_source_initiator_keeps_pending_call_alive_across_auto_resume(
             Duration::from_secs(1),
             acceptor_on(server_link1)
                 .session_registry(registry.clone())
-                .establish_or_resume::<NoopClient>(ResumableReplyingHandler {
+                .on_connection(ResumableReplyingHandler {
                     started,
                     release: Arc::clone(&release),
-                }),
+                })
+                .establish_or_resume::<NoopClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -293,10 +297,11 @@ async fn resumable_source_initiator_keeps_pending_call_alive_across_auto_resume(
         Duration::from_secs(1),
         acceptor_on(server_link2)
             .session_registry(registry.clone())
-            .establish_or_resume::<NoopClient>(ResumableReplyingHandler {
+            .on_connection(ResumableReplyingHandler {
                 started: Arc::new(tokio::sync::Notify::new()),
                 release: Arc::clone(&release),
-            }),
+            })
+            .establish_or_resume::<NoopClient>(),
     )
     .await
     .expect("timed out waiting for source-driven resume");
@@ -348,10 +353,11 @@ async fn resumable_source_initiator_falls_back_to_fresh_session_when_resume_key_
             Duration::from_secs(1),
             acceptor_on(server_link1)
                 .session_registry(initial_registry.clone())
-                .establish_or_resume::<NoopClient>(ResumableReplyingHandler {
+                .on_connection(ResumableReplyingHandler {
                     started,
                     release: Arc::clone(&release),
-                }),
+                })
+                .establish_or_resume::<NoopClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -396,10 +402,11 @@ async fn resumable_source_initiator_falls_back_to_fresh_session_when_resume_key_
         Duration::from_secs(1),
         acceptor_on(server_link2)
             .session_registry(restarted_registry.clone())
-            .establish_or_resume::<NoopClient>(ResumableReplyingHandler {
+            .on_connection(ResumableReplyingHandler {
                 started: restarted_started,
                 release: Arc::clone(&release),
-            }),
+            })
+            .establish_or_resume::<NoopClient>(),
     )
     .await
     .expect("timed out waiting for fallback reconnection");
@@ -448,12 +455,13 @@ async fn resumable_session_reruns_released_idem_call_after_manual_resume() {
             Duration::from_secs(1),
             acceptor_conduit(server_conduit1, test_acceptor_handshake())
                 .resumable()
-                .establish::<NoopClient>(RetryAfterResumeHandler {
+                .on_connection(RetryAfterResumeHandler {
                     retry: RetryPolicy::IDEM,
                     runs: Arc::clone(&runs),
                     first_started,
                     drop_first: Arc::clone(&drop_first),
-                }),
+                })
+                .establish::<NoopClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -534,12 +542,13 @@ async fn resumable_session_returns_indeterminate_for_released_non_idem_call_afte
             Duration::from_secs(1),
             acceptor_conduit(server_conduit1, test_acceptor_handshake())
                 .resumable()
-                .establish::<NoopClient>(RetryAfterResumeHandler {
+                .on_connection(RetryAfterResumeHandler {
                     retry: RetryPolicy::VOLATILE,
                     runs: Arc::clone(&runs),
                     first_started,
                     drop_first: Arc::clone(&drop_first),
-                }),
+                })
+                .establish::<NoopClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),

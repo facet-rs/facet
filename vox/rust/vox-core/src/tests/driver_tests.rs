@@ -215,10 +215,11 @@ async fn cancel_aborts_in_flight_handler() {
     let server_task = moire::task::spawn(
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<NoopClient>(BlockingHandler {
+                .on_connection(BlockingHandler {
                     was_cancelled,
                     retry: RetryPolicy::VOLATILE,
                 })
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -310,10 +311,11 @@ async fn cancel_does_not_abort_persist_handler() {
     let server_task = moire::task::spawn(
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<NoopClient>(PersistentReplyingHandler {
+                .on_connection(PersistentReplyingHandler {
                     was_cancelled,
                     release: release_server,
                 })
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -475,10 +477,11 @@ async fn operation_replay_after_resume_delivers_sealed_outcome() {
             Duration::from_secs(2),
             acceptor_conduit(BareConduit::new(server_link1), test_acceptor_handshake())
                 .resumable()
-                .establish::<NoopClient>(ReplayHandler {
+                .on_connection(ReplayHandler {
                     runs,
                     release: Arc::clone(&release),
-                }),
+                })
+                .establish::<NoopClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(2),
@@ -586,10 +589,11 @@ async fn duplicate_operation_id_on_same_connection_is_rejected() {
     let server_task = moire::task::spawn(
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<NoopClient>(ReplayHandler {
+                .on_connection(ReplayHandler {
                     runs: Arc::new(AtomicUsize::new(0)),
                     release: release_server,
                 })
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -865,10 +869,11 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
                     let handle = moire::task::spawn(fut);
                     let _ = session_tx.send(handle);
                 })
-                .establish::<NoopClient>(BlockingHandler {
+                .on_connection(BlockingHandler {
                     was_cancelled,
                     retry: RetryPolicy::VOLATILE,
                 })
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -936,10 +941,11 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
     let server_task = moire::task::spawn(
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<NoopClient>(BlockingHandler {
+                .on_connection(BlockingHandler {
                     was_cancelled: Arc::new(AtomicBool::new(false)),
                     retry: RetryPolicy::VOLATILE,
                 })
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller

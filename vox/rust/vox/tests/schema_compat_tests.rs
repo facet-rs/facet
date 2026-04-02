@@ -125,9 +125,8 @@ async fn v1_client_v2_server_fills_default() {
 
     let server_task = tokio::task::spawn(async move {
         let _server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .establish::<point_v2::GeometryClient>(point_v2::GeometryDispatcher::new(
-                V2GeometryService,
-            ))
+            .on_connection(point_v2::GeometryDispatcher::new(V2GeometryService))
+            .establish::<point_v2::GeometryClient>()
             .await
             .expect("server handshake failed");
         std::future::pending::<()>().await;
@@ -159,9 +158,8 @@ async fn v2_client_v1_server_skips_unknown_field() {
 
     let server_task = tokio::task::spawn(async move {
         let _server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .establish::<point_v1::GeometryClient>(point_v1::GeometryDispatcher::new(
-                V1GeometryService,
-            ))
+            .on_connection(point_v1::GeometryDispatcher::new(V1GeometryService))
+            .establish::<point_v1::GeometryClient>()
             .await
             .expect("server handshake failed");
         std::future::pending::<()>().await;
@@ -237,9 +235,8 @@ async fn reordered_fields_are_matched_by_name() {
 
     let server_task = tokio::task::spawn(async move {
         let _server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .establish::<reordered_v1::PairServiceClient>(reordered_v1::PairServiceDispatcher::new(
-                PairEchoV1,
-            ))
+            .on_connection(reordered_v1::PairServiceDispatcher::new(PairEchoV1))
+            .establish::<reordered_v1::PairServiceClient>()
             .await
             .expect("server handshake failed");
         std::future::pending::<()>().await;
@@ -321,9 +318,8 @@ async fn evolved_schema_combined_changes() {
 
     let server_task = tokio::task::spawn(async move {
         let _server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .establish::<evolved_v1::ConfigServiceClient>(evolved_v1::ConfigServiceDispatcher::new(
-                ConfigServiceV1,
-            ))
+            .on_connection(evolved_v1::ConfigServiceDispatcher::new(ConfigServiceV1))
+            .establish::<evolved_v1::ConfigServiceClient>()
             .await
             .expect("server handshake failed");
         std::future::pending::<()>().await;

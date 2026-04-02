@@ -41,8 +41,8 @@
 //! # let server = tokio::spawn(async move {
 //! #     let (stream, _) = listener.accept().await?;
 //! #     let (_server_caller, _server_session) = acceptor_on(StreamLink::tcp(stream))
-//! #         .on_connection(HelloDispatcher::new(HelloService)
-            .establish::<HelloClient>())
+//! #         .on_connection(HelloDispatcher::new(HelloService))
+//! #         .establish::<HelloClient>()
 //! #         .await?;
 //! #     Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
 //! # });

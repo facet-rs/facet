@@ -266,7 +266,8 @@ async fn main() {
 
             let accepted = match acceptor_transport(ws_link)
                 .session_registry((*registry).clone())
-                .establish_or_resume::<TestbedClient>(TestbedDispatcher::new(TestbedService))
+                .on_connection(TestbedDispatcher::new(TestbedService))
+                .establish_or_resume::<TestbedClient>()
                 .await
             {
                 Ok(v) => v,

@@ -26,7 +26,8 @@ async fn main() -> Result<()> {
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await?;
         let caller = vox::acceptor_on(StreamLink::tcp(stream))
-            .on_connection(HelloDispatcher::new(HelloService).establish::<HelloClient>())
+            .on_connection(HelloDispatcher::new(HelloService))
+            .establish::<HelloClient>()
             .await?;
         caller.caller.closed().await;
 

@@ -1519,7 +1519,6 @@ impl Session {
         let acceptor = self.on_connection.as_ref().unwrap();
         match acceptor.accept(&request, pending) {
             Ok(()) => {
-                // Send ConnectionAccept to the peer.
                 let _ = self
                     .sess_core
                     .send(

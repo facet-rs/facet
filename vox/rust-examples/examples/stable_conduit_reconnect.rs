@@ -260,9 +260,8 @@ async fn main() -> Result<()> {
                 peer_metadata: vec![],
             },
         )
-        .on_connection(StableLabDispatcher::new(
-            StableLabService::new().establish::<vox::NoopClient>(),
-        ))
+        .on_connection(StableLabDispatcher::new(StableLabService::new()))
+        .establish::<vox::NoopClient>()
         .await
         .expect("server establish");
         let _server_guard = server_guard;

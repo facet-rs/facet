@@ -317,7 +317,8 @@ async fn listen_and_serve() -> Result<(), String> {
     stream.set_nodelay(true).ok();
 
     let _client = acceptor_on(vox_stream::StreamLink::tcp(stream))
-        .on_connection(TestbedDispatcher::new(TestbedService).establish::<TestbedClient>())
+        .on_connection(TestbedDispatcher::new(TestbedService))
+        .establish::<TestbedClient>()
         .await
         .map_err(|e| format!("handshake: {e}"))?;
 
@@ -330,7 +331,8 @@ async fn connect_and_serve() -> Result<(), String> {
     info!("connecting to {addr}");
 
     let root_caller_guard = initiator(tcp_link_source(addr), requested_transport_mode())
-        .on_connection(TestbedDispatcher::new(TestbedService).establish::<TestbedClient>())
+        .on_connection(TestbedDispatcher::new(TestbedService))
+        .establish::<TestbedClient>()
         .await
         .map_err(|e| format!("handshake failed: {e}"))?;
 
@@ -347,7 +349,8 @@ async fn run_client() -> Result<(), String> {
     info!("client mode: connecting to {addr}, scenario={scenario}");
 
     let client = initiator(tcp_link_source(addr), requested_transport_mode())
-        .on_connection(TestbedDispatcher::new(TestbedService).establish::<TestbedClient>())
+        .on_connection(TestbedDispatcher::new(TestbedService))
+        .establish::<TestbedClient>()
         .await
         .map_err(|e| format!("handshake failed: {e}"))?;
 
@@ -1011,7 +1014,8 @@ async fn connect_and_serve_shm() -> Result<(), String> {
     };
 
     let root_caller_guard = initiator_on(link, requested_transport_mode())
-        .on_connection(TestbedDispatcher::new(TestbedService).establish::<TestbedClient>())
+        .on_connection(TestbedDispatcher::new(TestbedService))
+        .establish::<TestbedClient>()
         .await
         .map_err(|e| format!("handshake failed: {e}"))?;
 

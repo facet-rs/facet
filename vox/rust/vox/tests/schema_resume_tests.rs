@@ -31,7 +31,8 @@ async fn call_through_real_handshake() {
         tokio::time::timeout(
             Duration::from_secs(1),
             acceptor_on(server_link)
-                .on_connection(EchoDispatcher::new(EchoService).establish::<EchoClient>()),
+                .on_connection(EchoDispatcher::new(EchoService))
+                .establish::<EchoClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -57,7 +58,8 @@ async fn call_through_stable_conduit() {
         tokio::time::timeout(
             Duration::from_secs(1),
             acceptor_on(server_link)
-                .on_connection(EchoDispatcher::new(EchoService).establish::<EchoClient>()),
+                .on_connection(EchoDispatcher::new(EchoService))
+                .establish::<EchoClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -99,9 +101,9 @@ async fn multiple_methods_get_independent_schemas() {
     let (server_result, client_result) = tokio::try_join!(
         tokio::time::timeout(
             Duration::from_secs(1),
-            acceptor_on(server_link).on_connection(
-                MultiMethodDispatcher::new(MultiMethodService).establish::<MultiMethodClient>()
-            ),
+            acceptor_on(server_link)
+                .on_connection(MultiMethodDispatcher::new(MultiMethodService))
+                .establish::<MultiMethodClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -131,7 +133,8 @@ async fn call_works_after_resume() {
             Duration::from_secs(1),
             acceptor_on(server_link1)
                 .session_registry(registry.clone())
-                .establish_or_resume::<EchoClient>(EchoDispatcher::new(EchoService)),
+                .on_connection(EchoDispatcher::new(EchoService))
+                .establish_or_resume::<EchoClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -190,7 +193,8 @@ async fn call_works_after_resume() {
             Duration::from_secs(1),
             acceptor_on(server_link2)
                 .session_registry(registry.clone())
-                .establish_or_resume::<EchoClient>(EchoDispatcher::new(EchoService)),
+                .on_connection(EchoDispatcher::new(EchoService))
+                .establish_or_resume::<EchoClient>(),
         ),
     );
     resume_result.expect("resume should succeed");
@@ -217,7 +221,8 @@ async fn first_call_after_resume_without_prior_calls() {
             Duration::from_secs(1),
             acceptor_on(server_link1)
                 .session_registry(registry.clone())
-                .establish_or_resume::<EchoClient>(EchoDispatcher::new(EchoService)),
+                .on_connection(EchoDispatcher::new(EchoService))
+                .establish_or_resume::<EchoClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -273,7 +278,8 @@ async fn first_call_after_resume_without_prior_calls() {
             Duration::from_secs(1),
             acceptor_on(server_link2)
                 .session_registry(registry.clone())
-                .establish_or_resume::<EchoClient>(EchoDispatcher::new(EchoService)),
+                .on_connection(EchoDispatcher::new(EchoService))
+                .establish_or_resume::<EchoClient>(),
         ),
     );
     resume_result.expect("resume should succeed");
@@ -332,9 +338,8 @@ async fn operation_replay_after_resume_has_schemas() {
             Duration::from_secs(1),
             acceptor_on(server_link1)
                 .session_registry(registry.clone())
-                .establish_or_resume::<PersistEchoClient>(PersistEchoDispatcher::new(
-                    service.clone()
-                )),
+                .on_connection(PersistEchoDispatcher::new(service.clone()))
+                .establish_or_resume::<PersistEchoClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -402,7 +407,8 @@ async fn operation_replay_after_resume_has_schemas() {
             Duration::from_secs(1),
             acceptor_on(server_link2)
                 .session_registry(registry.clone())
-                .establish_or_resume::<PersistEchoClient>(PersistEchoDispatcher::new(service)),
+                .on_connection(PersistEchoDispatcher::new(service))
+                .establish_or_resume::<PersistEchoClient>(),
         ),
     );
     resume_result.expect("resume should succeed");

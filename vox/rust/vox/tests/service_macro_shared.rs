@@ -374,7 +374,8 @@ pub async fn run_adder_end_to_end<L>(
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
         let server_caller_guard = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .on_connection(AdderDispatcher::new(MyAdder).establish::<AdderClient>())
+            .on_connection(AdderDispatcher::new(MyAdder))
+            .establish::<AdderClient>()
             .await
             .expect("server handshake failed");
         let _ = server_ready_tx.send(());
@@ -408,9 +409,8 @@ pub async fn run_request_context_end_to_end<L>(
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
         let server_caller_guard = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .on_connection(
-                ContextProbeDispatcher::new(ContextProbeService).establish::<ContextProbeClient>(),
-            )
+            .on_connection(ContextProbeDispatcher::new(ContextProbeService))
+            .establish::<ContextProbeClient>()
             .await
             .expect("server handshake failed");
         let _ = server_ready_tx.send(());
@@ -464,7 +464,8 @@ pub async fn run_server_middleware_end_to_end<L>(
             .with_middleware(first)
             .with_middleware(second);
         let server_caller_guard = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .establish::<MiddlewareProbeClient>(dispatcher)
+            .on_connection(dispatcher)
+            .establish::<MiddlewareProbeClient>()
             .await
             .expect("server handshake failed");
         let _ = server_ready_tx.send(());
@@ -520,7 +521,8 @@ pub async fn run_server_request_peek_end_to_end<L>(
             seen: Arc::clone(&server_seen),
         });
         let server_caller_guard = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .establish::<AdderClient>(dispatcher)
+            .on_connection(dispatcher)
+            .establish::<AdderClient>()
             .await
             .expect("server handshake failed");
         let _ = server_ready_tx.send(());
@@ -569,7 +571,8 @@ pub async fn run_server_response_peek_end_to_end<L>(
                 seen: Arc::clone(&server_seen),
             });
         let server_caller_guard = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .establish::<AdderClient>(dispatcher)
+            .on_connection(dispatcher)
+            .establish::<AdderClient>()
             .await
             .expect("server handshake failed");
         let _ = server_ready_tx.send(());
@@ -613,9 +616,10 @@ pub async fn run_client_middleware_end_to_end<L>(
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
         let server_caller_guard = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .establish::<ClientMiddlewareProbeClient>(ClientMiddlewareProbeDispatcher::new(
+            .on_connection(ClientMiddlewareProbeDispatcher::new(
                 ClientMiddlewareProbeService,
             ))
+            .establish::<ClientMiddlewareProbeClient>()
             .await
             .expect("server handshake failed");
         let _ = server_ready_tx.send(());
@@ -673,9 +677,10 @@ pub async fn run_borrowed_return_survives_teardown_over_generated_client<L>(
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
         let server_caller_guard = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .establish::<BorrowedPayloadProbeClient>(BorrowedPayloadProbeDispatcher::new(
+            .on_connection(BorrowedPayloadProbeDispatcher::new(
                 BorrowedPayloadProbeService::new(),
             ))
+            .establish::<BorrowedPayloadProbeClient>()
             .await
             .expect("server handshake failed");
         let _ = server_ready_tx.send(());

@@ -133,6 +133,7 @@ impl SubjectSpec {
     }
 }
 
+#[derive(Clone)]
 struct NoopHandler;
 
 impl vox_types::Handler<DriverReplySink> for NoopHandler {
@@ -864,9 +865,8 @@ pub async fn accept_subject_ws(cmd: &str) -> Result<(TestbedClient, Child, Sessi
         .map_err(|e| format!("WebSocket upgrade: {e}"))?;
 
     let client = acceptor_on(ws)
-        .on_connection(TestbedDispatcher::new(
-            TestbedService::new().establish::<TestbedClient>(),
-        ))
+        .on_connection(TestbedDispatcher::new(TestbedService::new()))
+        .establish::<TestbedClient>()
         .await
         .map_err(|e| format!("handshake: {e}"))?;
     let sh = client.session.clone().unwrap();
@@ -1157,9 +1157,8 @@ async fn run_subject_client_scenario_tcp(
         };
         stream.set_nodelay(true).ok();
         match acceptor_on(StreamLink::tcp(stream))
-            .on_connection(TestbedDispatcher::new(
-                TestbedService::new().establish::<TestbedClient>(),
-            ))
+            .on_connection(TestbedDispatcher::new(TestbedService::new()))
+            .establish::<TestbedClient>()
             .await
         {
             Ok(_client) => {
@@ -1225,9 +1224,8 @@ async fn run_subject_client_scenario_ws(
             }
         };
         match acceptor_on(ws)
-            .on_connection(TestbedDispatcher::new(
-                TestbedService::new().establish::<TestbedClient>(),
-            ))
+            .on_connection(TestbedDispatcher::new(TestbedService::new()))
+            .establish::<TestbedClient>()
             .await
         {
             Ok(_client) => {
@@ -1312,7 +1310,8 @@ pub async fn run_subject_client_scenario_resumable(
 
             match acceptor_on(session_link)
                 .session_registry(registry.clone())
-                .establish_or_resume::<TestbedClient>(TestbedDispatcher::new(service.clone()))
+                .on_connection(TestbedDispatcher::new(service.clone()))
+                .establish_or_resume::<TestbedClient>()
                 .await
             {
                 Ok(SessionAcceptOutcome::Established(client)) => {
@@ -1469,9 +1468,8 @@ where
                 rx,
             });
         let setup = acceptor_conduit(server_conduit, handshake_result)
-            .on_connection(TestbedDispatcher::new(
-                TestbedService::new().establish::<TestbedClient>(),
-            ))
+            .on_connection(TestbedDispatcher::new(TestbedService::new()))
+            .establish::<TestbedClient>()
             .await
             .map_err(|e| format!("server handshake: {e}"));
         let server_caller_guard = match setup {
@@ -1621,7 +1619,8 @@ async fn accept_subject_tcp_resumable(cmd: &str) -> Result<ResumableSubjectHarne
 
                 match acceptor_on(session_link)
                     .session_registry(registry.clone())
-                    .establish_or_resume::<TestbedClient>(NoopHandler)
+                    .on_connection(NoopHandler)
+                    .establish_or_resume::<TestbedClient>()
                     .await
                 {
                     Ok(SessionAcceptOutcome::Established(client)) => {

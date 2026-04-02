@@ -22,7 +22,8 @@ async fn call_through_cbor_handshake_reaches_handler() {
 
     let server = tokio::spawn(async move {
         let s = vox::acceptor_on(server_link)
-            .on_connection(EchoDispatcher::new(EchoService).establish::<vox::NoopClient>())
+            .on_connection(EchoDispatcher::new(EchoService))
+            .establish::<vox::NoopClient>()
             .await
             .expect("server establish");
         s
@@ -45,7 +46,8 @@ async fn call_through_stable_conduit_reaches_handler() {
 
     let server = tokio::spawn(async move {
         let s = vox::acceptor_on(server_link)
-            .on_connection(EchoDispatcher::new(EchoService).establish::<vox::NoopClient>())
+            .on_connection(EchoDispatcher::new(EchoService))
+            .establish::<vox::NoopClient>()
             .await
             .expect("server establish");
         s
@@ -68,7 +70,8 @@ async fn multiple_calls_through_stable_conduit() {
 
     let server = tokio::spawn(async move {
         let s = vox::acceptor_on(server_link)
-            .on_connection(EchoDispatcher::new(EchoService).establish::<vox::NoopClient>())
+            .on_connection(EchoDispatcher::new(EchoService))
+            .establish::<vox::NoopClient>()
             .await
             .expect("server establish");
         s

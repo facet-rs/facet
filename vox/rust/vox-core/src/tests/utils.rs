@@ -307,6 +307,7 @@ impl Handler<DriverReplySink> for EchoHandler {
 
 /// A handler that blocks forever until its task is cancelled.
 /// Tracks whether cancellation occurred via a drop guard.
+#[derive(Clone)]
 pub(crate) struct BlockingHandler {
     pub(crate) was_cancelled: Arc<AtomicBool>,
     pub(crate) retry: RetryPolicy,
@@ -339,16 +340,19 @@ impl Handler<DriverReplySink> for BlockingHandler {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct PersistentReplyingHandler {
     pub(crate) was_cancelled: Arc<AtomicBool>,
     pub(crate) release: Arc<tokio::sync::Notify>,
 }
 
+#[derive(Clone)]
 pub(crate) struct ResumableReplyingHandler {
     pub(crate) started: Arc<tokio::sync::Notify>,
     pub(crate) release: Arc<tokio::sync::Notify>,
 }
 
+#[derive(Clone)]
 pub(crate) struct RetryAfterResumeHandler {
     pub(crate) retry: RetryPolicy,
     pub(crate) runs: Arc<AtomicUsize>,
@@ -377,6 +381,7 @@ impl Handler<DriverReplySink> for OperationIdHandler {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct ReplayHandler {
     pub(crate) runs: Arc<std::sync::atomic::AtomicUsize>,
     pub(crate) release: Arc<tokio::sync::Notify>,

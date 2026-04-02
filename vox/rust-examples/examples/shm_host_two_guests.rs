@@ -214,7 +214,8 @@ mod unix_demo {
                 )
                 .await
                 .map_err(|e| eyre!("guest adder initiator_on_link failed: {e:?}"))?
-                .on_connection(AdderDispatcher::new(AdderService).establish::<vox::NoopClient>())
+                .on_connection(AdderDispatcher::new(AdderService))
+                .establish::<vox::NoopClient>()
                 .await
                 .map_err(|e| eyre!("guest adder handshake failed: {e:?}"))?;
                 println!("[guest:{pid}] serving Adder");
@@ -231,10 +232,8 @@ mod unix_demo {
                 )
                 .await
                 .map_err(|e| eyre!("guest reverser initiator_on_link failed: {e:?}"))?
-                .on_connection(
-                    StringReverserDispatcher::new(StringReverserService)
-                        .establish::<vox::NoopClient>(),
-                )
+                .on_connection(StringReverserDispatcher::new(StringReverserService))
+                .establish::<vox::NoopClient>()
                 .await
                 .map_err(|e| eyre!("guest reverser handshake failed: {e:?}"))?;
                 println!("[guest:{pid}] serving StringReverser");

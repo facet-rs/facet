@@ -61,7 +61,8 @@ async fn main() -> Result<()> {
         let (socket, _) = listener.accept().await.expect("accept");
         println!("[server] client connected; establishing session");
         let server_caller_guard = vox::acceptor_on(StreamLink::tcp(socket))
-            .on_connection(WordLabDispatcher::new(WordLabService).establish::<WordLabClient>())
+            .on_connection(WordLabDispatcher::new(WordLabService))
+            .establish::<WordLabClient>()
             .await
             .expect("server establish");
         let _server_caller_guard = server_caller_guard;
