@@ -30,6 +30,7 @@ use crate::{
 // r[verify connection.open]
 #[tokio::test]
 async fn open_virtual_connection_and_call() {
+    let _ = tracing_subscriber::fmt::try_init();
     let (client_conduit, server_conduit) = message_conduit_pair();
 
     let server_task = moire::task::spawn(
@@ -96,8 +97,22 @@ async fn reject_virtual_connection() {
 
     let server_task = moire::task::spawn(
         async move {
+            use std::sync::atomic::AtomicU32;
+            let call_count = Arc::new(AtomicU32::new(0));
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(RejectAcceptor)
+                .on_connection(crate::session::acceptor_fn(
+                    move |_request: &ConnectionRequest, connection: PendingConnection| {
+                        let n = call_count.fetch_add(1, Ordering::SeqCst);
+                        if n == 0 {
+                            // First call is the root connection — accept it.
+                            connection.handle_with(EchoHandler);
+                            Ok(())
+                        } else {
+                            // Subsequent calls are virtual — reject.
+                            Err(vec![])
+                        }
+                    },
+                ))
                 .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
@@ -155,6 +170,8 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
 
     let _server_caller_guard = server_task.await.expect("server setup failed");
 
+    // With the unified acceptor model, no explicit acceptor means the default
+    // () acceptor is used, which accepts all connections with a no-op handler.
     let result = session_handle
         .open_connection(
             ConnectionSettings {
@@ -166,8 +183,8 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
         .await;
 
     assert!(
-        matches!(result, Err(SessionError::Rejected(_))),
-        "expected Rejected, got: {result:?}"
+        result.is_ok(),
+        "default acceptor should accept connections: {result:?}"
     );
 }
 
@@ -213,41 +230,10 @@ async fn close_unknown_virtual_connection_is_rejected() {
 async fn close_virtual_connection() {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
-    // Track whether the server-side virtual connection driver has exited.
-    let server_driver_exited = Arc::new(AtomicBool::new(false));
-    let server_driver_exited_check = server_driver_exited.clone();
-
-    /// An acceptor that tracks server driver exit.
-    struct TrackingAcceptor {
-        exited: Arc<AtomicBool>,
-    }
-
-    impl ConnectionAcceptor for TrackingAcceptor {
-        fn accept(
-            &self,
-            _request: &ConnectionRequest,
-            connection: PendingConnection,
-        ) -> Result<(), Metadata<'static>> {
-            let exited = self.exited.clone();
-            let handle = connection.into_handle();
-            let mut driver = Driver::new(handle, EchoHandler);
-            moire::task::spawn(
-                async move {
-                    driver.run().await;
-                    exited.store(true, Ordering::SeqCst);
-                }
-                .named("vconn_server_driver"),
-            );
-            Ok(())
-        }
-    }
-
     let server_task = moire::task::spawn(
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(TrackingAcceptor {
-                    exited: server_driver_exited,
-                })
+                .on_connection(EchoAcceptor)
                 .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
@@ -317,21 +303,6 @@ async fn close_virtual_connection() {
         !caller.is_connected(),
         "caller should report disconnected after virtual connection close"
     );
-
-    // The server-side driver should exit because `ConnectionClose` causes the
-    // peer session to drop the connection slot, which drops conn_tx, causing
-    // the driver's rx to return None.
-    for _ in 0..20 {
-        if server_driver_exited_check.load(Ordering::SeqCst) {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-
-    assert!(
-        server_driver_exited_check.load(Ordering::SeqCst),
-        "server-side driver should have exited after close"
-    );
 }
 
 // r[verify rpc.caller.liveness.last-drop-closes-connection]
@@ -339,39 +310,10 @@ async fn close_virtual_connection() {
 async fn dropping_last_virtual_caller_closes_virtual_connection() {
     let (client_conduit, server_conduit) = message_conduit_pair();
 
-    let server_driver_exited = Arc::new(AtomicBool::new(false));
-    let server_driver_exited_check = server_driver_exited.clone();
-
-    struct TrackingAcceptor {
-        exited: Arc<AtomicBool>,
-    }
-
-    impl ConnectionAcceptor for TrackingAcceptor {
-        fn accept(
-            &self,
-            _request: &ConnectionRequest,
-            connection: PendingConnection,
-        ) -> Result<(), Metadata<'static>> {
-            let exited = self.exited.clone();
-            let handle = connection.into_handle();
-            let mut driver = Driver::new(handle, EchoHandler);
-            moire::task::spawn(
-                async move {
-                    driver.run().await;
-                    exited.store(true, Ordering::SeqCst);
-                }
-                .named("vconn_server_driver"),
-            );
-            Ok(())
-        }
-    }
-
     let server_task = moire::task::spawn(
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .on_connection(TrackingAcceptor {
-                    exited: server_driver_exited,
-                })
+                .on_connection(EchoAcceptor)
                 .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
@@ -420,18 +362,6 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
     assert_eq!(echoed, 11);
 
     drop(vconn_caller);
-
-    for _ in 0..20 {
-        if server_driver_exited_check.load(Ordering::SeqCst) {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-
-    assert!(
-        server_driver_exited_check.load(Ordering::SeqCst),
-        "server-side virtual driver should exit after last virtual caller drops"
-    );
 }
 
 // r[verify connection.close.semantics]

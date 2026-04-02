@@ -362,11 +362,10 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
         acceptor
             .accept(&request, pending)
             .map_err(SessionError::Rejected)?;
-        let caller = caller_slot
-            .lock()
-            .unwrap()
-            .take()
-            .expect("acceptor must call handle_with for root connections");
+        let caller =
+            caller_slot.lock().unwrap().take().expect(
+                "root connection acceptor must call handle_with (not into_handle or proxy_to)",
+            );
         let client = Client::from_vox_session(caller, Some(session_handle));
         (config.spawn_fn)(Box::pin(async move { session.run().await }));
         Ok(client)
@@ -1031,11 +1030,10 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         acceptor
             .accept(&request, pending)
             .map_err(SessionError::Rejected)?;
-        let caller = caller_slot
-            .lock()
-            .unwrap()
-            .take()
-            .expect("acceptor must call handle_with for root connections");
+        let caller =
+            caller_slot.lock().unwrap().take().expect(
+                "root connection acceptor must call handle_with (not into_handle or proxy_to)",
+            );
         let client = Client::from_vox_session(caller, Some(session_handle));
         (config.spawn_fn)(Box::pin(async move { session.run().await }));
         Ok(client)

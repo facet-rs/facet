@@ -184,13 +184,27 @@ impl vox::ConnectionAcceptor for RejectAcceptor {
 async fn reject_virtual_connection() {
     let (client_link, server_link) = memory_link_pair(16);
 
-    let server = tokio::spawn(async move {
-        let s = vox::acceptor_on(server_link)
-            .on_connection(RejectAcceptor)
-            .establish::<vox::NoopClient>()
-            .await
-            .expect("server establish");
-        s
+    let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let server = tokio::spawn({
+        let call_count = call_count.clone();
+        async move {
+            let s = vox::acceptor_on(server_link)
+                .on_connection(vox::acceptor_fn(
+                    move |_req: &vox::ConnectionRequest, conn: vox::PendingConnection| {
+                        let n = call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        if n == 0 {
+                            conn.handle_with(());
+                            Ok(())
+                        } else {
+                            Err(vec![])
+                        }
+                    },
+                ))
+                .establish::<vox::NoopClient>()
+                .await
+                .expect("server establish");
+            s
+        }
     });
 
     let _root = vox::initiator_on(client_link, vox::TransportMode::Bare)
@@ -247,7 +261,7 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
         )
         .await;
 
-    assert!(result.is_err(), "should be rejected without acceptor");
+    assert!(result.is_ok(), "default acceptor should accept connections");
 }
 
 #[tokio::test]

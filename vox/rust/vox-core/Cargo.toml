@@ -46,3 +46,4 @@ shm-primitives = { path = "../shm-primitives" }
 vox-shm = { path = "../vox-shm" }
 tempfile.workspace = true
 facet-testhelpers.workspace = true
+tracing-subscriber = { workspace = true }

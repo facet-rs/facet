@@ -118,16 +118,22 @@ impl PendingConnection {
             .handle
             .take()
             .expect("PendingConnection already consumed");
+        let conn_id = handle.connection_id();
+        trace!(%conn_id, "PendingConnection::handle_with: creating driver");
         let mut driver = match self.operation_store.take() {
             Some(store) => crate::Driver::with_operation_store(handle, handler, store),
             None => crate::Driver::new(handle, handler),
         };
-        let caller = crate::Caller::new(driver.caller());
         if let Some(slot) = &self.caller_slot {
+            let caller = crate::Caller::new(driver.caller());
             *slot.lock().unwrap() = Some(caller);
         }
         #[cfg(not(target_arch = "wasm32"))]
-        tokio::spawn(async move { driver.run().await });
+        tokio::spawn(async move {
+            trace!(%conn_id, "PendingConnection driver starting");
+            driver.run().await;
+            trace!(%conn_id, "PendingConnection driver exited");
+        });
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move { driver.run().await });
     }
@@ -159,9 +165,10 @@ impl PendingConnection {
 impl Drop for PendingConnection {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
-            // Connection was not consumed — close it.
+            let conn_id = handle.connection_id();
+            warn!(%conn_id, "PendingConnection dropped without being consumed — closing connection");
             if let Some(tx) = handle.control_tx.as_ref() {
-                let _ = send_drop_control(tx, DropControlRequest::Close(handle.connection_id()));
+                let _ = send_drop_control(tx, DropControlRequest::Close(conn_id));
             }
         }
     }
@@ -1001,6 +1008,7 @@ impl Session {
         };
 
         let parity = local_settings.parity;
+        trace!(%conn_id, "make_connection_handle: inserting slot into conns");
         self.conns.insert(
             conn_id,
             ConnectionSlot::Active(ConnectionState {
@@ -1517,8 +1525,10 @@ impl Session {
         let request = ConnectionRequest::new(&open.metadata);
         let pending = PendingConnection::new(handle);
         let acceptor = self.on_connection.as_ref().unwrap();
+        trace!(%conn_id, "calling acceptor for virtual connection");
         match acceptor.accept(&request, pending) {
             Ok(()) => {
+                trace!(%conn_id, "acceptor accepted virtual connection, sending ConnectionAccept");
                 let _ = self
                     .sess_core
                     .send(
@@ -1538,6 +1548,7 @@ impl Session {
             }
             Err(reject_metadata) => {
                 // Clean up the connection slot we created.
+                trace!(%conn_id, "acceptor rejected, removing conn slot");
                 self.conns.remove(&conn_id);
                 let _ = self
                     .sess_core
@@ -1729,6 +1740,7 @@ impl Session {
     }
 
     fn remove_connection(&mut self, conn_id: &ConnectionId) -> Option<ConnectionSlot> {
+        trace!(%conn_id, "remove_connection called");
         let slot = self.conns.remove(conn_id);
         if let Some(ConnectionSlot::Active(state)) = &slot {
             let _ = state.closed_tx.send(true);
@@ -1737,6 +1749,7 @@ impl Session {
     }
 
     fn close_all_connections(&mut self) {
+        trace!(role = ?self.role, count = self.conns.len(), "close_all_connections");
         vox_types::dlog!(
             "[session {:?}] close_all_connections: {} slots",
             self.role,

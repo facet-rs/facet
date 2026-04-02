@@ -3534,6 +3534,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "vox-postcard",
  "vox-shm",
  "vox-types",

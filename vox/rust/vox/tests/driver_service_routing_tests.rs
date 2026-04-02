@@ -100,6 +100,11 @@ async fn service_factory_routes_virtual_connections() {
                     connection.handle_with(AdderDispatcher::new(AdderService));
                     Ok(())
                 }
+                None => {
+                    // Root connection — no service metadata. Accept with no-op handler.
+                    connection.handle_with(());
+                    Ok(())
+                }
                 _ => Err(vec![]),
             }
         },
@@ -158,6 +163,11 @@ async fn service_factory_rejects_unknown_service() {
             match request.service() {
                 Some("Echo") => {
                     connection.handle_with(EchoDispatcher::new(EchoService));
+                    Ok(())
+                }
+                None => {
+                    // Root connection — accept with no-op handler.
+                    connection.handle_with(());
                     Ok(())
                 }
                 _ => Err(vec![]),

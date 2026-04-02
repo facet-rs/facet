@@ -1629,6 +1629,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
 
     struct ProxyHostAcceptor {
         upstream_session: SessionHandle,
+        is_root: std::sync::atomic::AtomicBool,
     }
     impl ConnectionAcceptor for ProxyHostAcceptor {
         fn accept(
@@ -1636,6 +1637,15 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
             _request: &ConnectionRequest,
             connection: PendingConnection,
         ) -> Result<(), Metadata<'static>> {
+            if self
+                .is_root
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                // Root connection — just accept with no-op handler.
+                connection.handle_with(());
+                return Ok(());
+            }
+            // Virtual connections — proxy to upstream.
             let upstream_session = self.upstream_session.clone();
             let incoming = connection.into_handle();
             moire::task::spawn(
@@ -1682,6 +1692,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
             let guard = acceptor_conduit(host_a_conduit, test_acceptor_handshake())
                 .on_connection(ProxyHostAcceptor {
                     upstream_session: host_to_b_session,
+                    is_root: std::sync::atomic::AtomicBool::new(true),
                 })
                 .establish::<NoopClient>()
                 .await
