@@ -82,6 +82,9 @@ quote = "1"
 syn = { version = "2", features = ["full"] }
 tokio = { version = "1", features = ["sync", "rt", "time", "macros", "io-util"] }
 tokio-tungstenite = "0.26"
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2"
 libc = "0.2.180"
 tempfile = "3.23"
 xshell = "0.2"
