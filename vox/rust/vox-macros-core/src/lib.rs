@@ -64,21 +64,21 @@ pub fn vox_crate() -> TokenStream2 {
 ///
 /// This is used for descriptor hashing and client borrowed-return decode paths, where
 /// we need a concrete `'static` shape type independent of method-local lifetimes.
-fn to_static_type_tokens(ty: &Type) -> TokenStream2 {
+fn to_type_tokens(ty: &Type, lifetime: &TokenStream2) -> TokenStream2 {
     match ty {
         Type::Reference(TypeRef { mutable, inner, .. }) => {
-            let inner = to_static_type_tokens(inner);
+            let inner = to_type_tokens(inner, lifetime);
             if mutable.is_some() {
-                quote! { &'static mut #inner }
+                quote! { &#lifetime mut #inner }
             } else {
-                quote! { &'static #inner }
+                quote! { &#lifetime #inner }
             }
         }
         Type::Tuple(TypeTuple(group)) => {
             let elems: Vec<TokenStream2> = group
                 .content
                 .iter()
-                .map(|entry| to_static_type_tokens(&entry.value))
+                .map(|entry| to_type_tokens(&entry.value, lifetime))
                 .collect();
             match elems.len() {
                 0 => quote! { () },
@@ -94,14 +94,22 @@ fn to_static_type_tokens(ty: &Type) -> TokenStream2 {
             let args: Vec<TokenStream2> = args
                 .iter()
                 .map(|entry| match &entry.value {
-                    GenericArgument::Lifetime(_) => quote! { 'static },
-                    GenericArgument::Type(inner) => to_static_type_tokens(inner),
+                    GenericArgument::Lifetime(_) => quote! { #lifetime },
+                    GenericArgument::Type(inner) => to_type_tokens(inner, lifetime),
                 })
                 .collect();
             quote! { #path < #(#args),* > }
         }
         Type::Path(path) => path.to_token_stream(),
     }
+}
+
+fn to_static_type_tokens(ty: &Type) -> TokenStream2 {
+    to_type_tokens(ty, &quote! { 'static })
+}
+
+fn to_borrowed_type_tokens(ty: &Type) -> TokenStream2 {
+    to_type_tokens(ty, &quote! { '_ })
 }
 
 fn type_is_tx(ty: &Type) -> bool {
@@ -616,10 +624,11 @@ fn generate_dispatch_arm(
     let idx = method_index;
     let wants_context = method.wants_context();
 
-    // Build args tuple type for deserialization
+    // Build args tuple type for deserialization — uses borrowed lifetimes since
+    // the deserialized args borrow from the SelfRef's backing via request_call.
     let arg_types: Vec<TokenStream2> = method
         .args()
-        .map(|a| to_static_type_tokens(&a.ty))
+        .map(|a| to_borrowed_type_tokens(&a.ty))
         .collect();
     let args_tuple_type = match arg_types.len() {
         0 => quote! { () },
@@ -755,22 +764,14 @@ fn generate_dispatch_arm(
 
     quote! {
         if method_id == #descriptor_fn_name().methods[#idx].id {
-            // Channel binding happens during deserialization via thread-local binder.
-            let deser_result = if let Some(binder) = reply.channel_binder() {
-                #vox::with_channel_binder(binder, || {
-                    #vox::schema_deser::schema_deserialize_args_borrowed::<#args_tuple_type>(
-                        args_bytes,
-                        method_id,
-                        &schemas,
-                    )
-                })
-            } else {
-                #vox::schema_deser::schema_deserialize_args_borrowed::<#args_tuple_type>(
-                    args_bytes,
-                    method_id,
-                    &schemas,
-                )
-            };
+            // Channel binding: set guard so Tx<T>/Rx<T> deser binds through the binder.
+            let _binder_guard = reply.channel_binder().map(#vox::set_channel_binder);
+            let deser_result: ::core::result::Result<#args_tuple_type, _> = #vox::schema_deser::schema_deserialize_args_borrowed(
+                args_bytes,
+                method_id,
+                &schemas,
+            );
+            drop(_binder_guard);
             #args_let = match deser_result {
                 Ok(v) => v,
                 Err(e) => {

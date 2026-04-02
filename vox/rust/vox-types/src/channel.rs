@@ -26,16 +26,40 @@ std::thread_local! {
 /// Any `Tx<T>` or `Rx<T>` deserialized (via `TryFrom<ChannelId>`) during `f`
 /// will be bound through this binder.
 pub fn with_channel_binder<R>(binder: &dyn ChannelBinder, f: impl FnOnce() -> R) -> R {
-    // SAFETY: we restore the previous value (always None in practice) on exit,
-    // so the binder reference doesn't escape the closure's lifetime.
+    let _guard = set_channel_binder(binder);
+    f()
+}
+
+/// Set the thread-local channel binder, returning a guard that restores
+/// the previous value on drop.
+///
+/// Prefer this over [`with_channel_binder`] when the code that runs under
+/// the binder needs to return borrowed data (closures can't return borrows
+/// from captures).
+pub fn set_channel_binder(binder: &dyn ChannelBinder) -> ChannelBinderGuard<'_> {
+    // SAFETY: we restore the previous value on drop (via ChannelBinderGuard),
+    // so the binder reference doesn't escape the guard's lifetime.
     #[allow(unsafe_code)]
     let static_ref: &'static dyn ChannelBinder = unsafe { std::mem::transmute(binder) };
-    CHANNEL_BINDER.with(|cell| {
-        let prev = cell.borrow_mut().replace(static_ref);
-        let result = f();
-        *cell.borrow_mut() = prev;
-        result
-    })
+    let prev = CHANNEL_BINDER.with(|cell| cell.borrow_mut().replace(static_ref));
+    ChannelBinderGuard {
+        prev,
+        _lifetime: std::marker::PhantomData,
+    }
+}
+
+/// RAII guard that restores the previous thread-local channel binder on drop.
+pub struct ChannelBinderGuard<'a> {
+    prev: Option<&'static dyn ChannelBinder>,
+    _lifetime: std::marker::PhantomData<&'a dyn ChannelBinder>,
+}
+
+impl Drop for ChannelBinderGuard<'_> {
+    fn drop(&mut self) {
+        CHANNEL_BINDER.with(|cell| {
+            *cell.borrow_mut() = self.prev.take();
+        });
+    }
 }
 
 // r[impl rpc.channel.pair]
