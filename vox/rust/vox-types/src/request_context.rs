@@ -9,7 +9,7 @@ use crate::{ConnectionId, Extensions, MetadataEntry, MethodDescriptor, RequestId
 #[derive(Clone, Copy, Debug)]
 pub struct RequestContext<'a> {
     method: &'static MethodDescriptor,
-    metadata: &'a [MetadataEntry<'static>],
+    metadata: &'a [MetadataEntry<'a>],
     request_id: Option<RequestId>,
     connection_id: Option<ConnectionId>,
     extensions: &'a Extensions,
@@ -24,7 +24,7 @@ impl<'a> RequestContext<'a> {
     /// Create a new borrowed request context with middleware extensions.
     pub fn with_extensions(
         method: &'static MethodDescriptor,
-        metadata: &'a [MetadataEntry<'static>],
+        metadata: &'a [MetadataEntry<'a>],
         extensions: &'a Extensions,
     ) -> Self {
         Self::with_transport(method, metadata, None, None, extensions)
@@ -33,7 +33,7 @@ impl<'a> RequestContext<'a> {
     /// Create a new borrowed request context with transport identifiers.
     pub fn with_transport(
         method: &'static MethodDescriptor,
-        metadata: &'a [MetadataEntry<'static>],
+        metadata: &'a [MetadataEntry<'a>],
         request_id: Option<RequestId>,
         connection_id: Option<ConnectionId>,
         extensions: &'a Extensions,
@@ -53,7 +53,7 @@ impl<'a> RequestContext<'a> {
     }
 
     /// Request metadata borrowed from the inbound call.
-    pub fn metadata(&self) -> &'a [MetadataEntry<'static>] {
+    pub fn metadata(&self) -> &'a [MetadataEntry<'a>] {
         self.metadata
     }
 

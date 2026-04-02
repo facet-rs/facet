@@ -32,6 +32,7 @@ impl WordLab for WordLabService {
     async fn transform(&self, prefix: &str, mut input: Rx<String>, output: Tx<String>) -> u32 {
         let mut count = 0;
         while let Ok(Some(item)) = input.recv().await {
+            let item = item.get();
             if output
                 .send(format!("{prefix}:{}", item.as_str()))
                 .await
@@ -141,6 +142,7 @@ async fn main() -> Result<()> {
         .await
         .wrap_err("receiving from output_rx")?
     {
+        let item = item.get();
         println!("[client/recv] <- {}", item.as_str());
         got.push(item.to_string());
     }

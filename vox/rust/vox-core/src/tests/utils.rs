@@ -270,7 +270,8 @@ where
             let Some(msg) = self.inner.recv().await? else {
                 return Ok(None);
             };
-            if matches!(&msg.payload, MessagePayload::Pong(_)) {
+            let msg_ref = msg.get();
+            if matches!(&msg_ref.payload, MessagePayload::Pong(_)) {
                 continue;
             }
             return Ok(Some(msg));
@@ -289,6 +290,7 @@ impl Handler<DriverReplySink> for EchoHandler {
         reply: DriverReplySink,
         _schemas: std::sync::Arc<vox_types::SchemaRecvTracker>,
     ) {
+        let call = call.get();
         let args_bytes = match &call.args {
             Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
@@ -370,6 +372,7 @@ impl Handler<DriverReplySink> for OperationIdHandler {
         reply: DriverReplySink,
         _schemas: std::sync::Arc<vox_types::SchemaRecvTracker>,
     ) {
+        let call = call.get();
         let operation_id = metadata_operation_id(&call.metadata).expect("operation id metadata");
         reply
             .send_reply(RequestResponse {
@@ -447,6 +450,7 @@ impl Handler<DriverReplySink> for ReplayHandler {
     ) {
         self.runs.fetch_add(1, Ordering::SeqCst);
         self.release.notified().await;
+        let call = call.get();
         let args_bytes = match &call.args {
             Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
@@ -521,6 +525,7 @@ impl Handler<DriverReplySink> for ResumableReplyingHandler {
         self.started.notify_waiters();
         self.release.notified().await;
 
+        let call = call.get();
         let args_bytes = match &call.args {
             Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
@@ -554,6 +559,7 @@ impl Handler<DriverReplySink> for RetryAfterResumeHandler {
             return;
         }
 
+        let call = call.get();
         let args_bytes = match &call.args {
             Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload"),

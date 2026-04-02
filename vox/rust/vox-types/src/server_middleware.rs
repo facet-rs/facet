@@ -143,7 +143,7 @@ impl<'a> ServerRequest<'a> {
     }
 
     /// Request metadata borrowed from the inbound call.
-    pub fn metadata(&self) -> &'a [crate::MetadataEntry<'static>] {
+    pub fn metadata(&self) -> &'a [crate::MetadataEntry<'a>] {
         self.context.metadata()
     }
 

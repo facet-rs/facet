@@ -85,6 +85,7 @@ async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
         .await
         .expect("call task join")
         .expect("call should succeed after session resume");
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
@@ -206,6 +207,7 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
         .await
         .expect("call task join")
         .expect("call should succeed after registry-driven session resume");
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
@@ -307,6 +309,7 @@ async fn resumable_source_initiator_keeps_pending_call_alive_across_auto_resume(
         .await
         .expect("call task join")
         .expect("call should succeed after source-driven auto-resume");
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
@@ -413,6 +416,7 @@ async fn resumable_source_initiator_falls_back_to_fresh_session_when_resume_key_
         .await
         .expect("call task join")
         .expect("call should succeed after fallback reconnection");
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
@@ -500,6 +504,7 @@ async fn resumable_session_reruns_released_idem_call_after_manual_resume() {
         .await
         .expect("call task join")
         .expect("idem call should succeed after retry");
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
@@ -587,6 +592,7 @@ async fn resumable_session_returns_indeterminate_for_released_non_idem_call_afte
         .await
         .expect("call task join")
         .expect("runtime should return a response envelope");
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
@@ -642,6 +648,7 @@ async fn recovery_timeout_gives_up_after_deadline() {
         })
         .await
         .expect("call should succeed");
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected postcard bytes"),

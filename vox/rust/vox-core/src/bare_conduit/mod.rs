@@ -266,7 +266,7 @@ mod tests {
                 other => panic!("expected String, got {:?}", other),
             }
         } else {
-            panic!("expected ConnectionReject, got {:?}", received.payload);
+            panic!("expected ConnectionReject, got {:?}", msg.payload);
         }
     }
 }

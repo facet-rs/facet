@@ -66,6 +66,7 @@ async fn open_virtual_connection_and_call() {
         .await
         .expect("call should succeed");
 
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
@@ -259,6 +260,7 @@ async fn close_virtual_connection() {
         .await
         .expect("call should succeed before close");
 
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
@@ -329,6 +331,7 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
         })
         .await
         .expect("call should succeed before dropping virtual caller");
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
@@ -474,6 +477,7 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
         })
         .await
         .expect("virtual connection should still be usable after root caller drop");
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),

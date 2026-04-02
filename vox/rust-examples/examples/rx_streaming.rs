@@ -24,6 +24,7 @@ impl NumberLab for NumberLabService {
     async fn sum(&self, mut numbers: Rx<i64>) -> i64 {
         let mut total: i64 = 0;
         while let Ok(Some(n)) = numbers.recv().await {
+            let n = n.get();
             total += *n;
         }
         total
@@ -96,6 +97,7 @@ async fn main() -> Result<()> {
         .map_err(|e| eyre!("squares failed: {e:?}"))?;
     let mut squares = Vec::new();
     while let Some(val) = output_rx.recv().await.wrap_err("recv")? {
+        let val = val.get();
         println!("[client/recv] <- {}", *val);
         squares.push(*val);
     }

@@ -520,8 +520,9 @@ fn generate_dispatcher(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream
     } else {
         // r[impl rpc.unknown-method]
         quote! {
-            let method_id = call.method_id;
-            let args_bytes = match &call.args {
+            let request_call = call.get();
+            let method_id = request_call.method_id;
+            let args_bytes = match &request_call.args {
                 #vox::Payload::PostcardBytes(bytes) => bytes,
                 _ => {
                     reply.send_error(#vox::VoxError::<::core::convert::Infallible>::InvalidPayload("args not PostcardBytes".into())).await;
@@ -668,7 +669,7 @@ fn generate_dispatch_arm(
             let extensions = #vox::Extensions::new();
             let context = #vox::RequestContext::with_transport(
                 #descriptor_fn_name().methods[#idx],
-                &call.metadata,
+                &request_call.metadata,
                 reply.request_id(),
                 reply.connection_id(),
                 &extensions,
@@ -1046,6 +1047,7 @@ fn generate_client_method(
                     }
                 };
                 let #vox::WithTracker { value: response, tracker: schema_tracker } = with_tracker;
+                let response = response.get();
                 let ret_bytes = match &response.ret {
                     #vox::Payload::PostcardBytes(bytes) => bytes,
                     _ => return Err(#vox::VoxError::<#err_ty>::InvalidPayload("response not PostcardBytes".into())),
