@@ -30,6 +30,7 @@ pub mod segment;
 pub mod varslot;
 
 pub use segment::{AttachError, Segment, SegmentConfig, SegmentLayout};
+pub use shm_primitives::FileCleanup;
 pub use varslot::{SizeClassConfig, SlotRef, VarSlotPool};
 
 pub use host::create_test_link_pair;
