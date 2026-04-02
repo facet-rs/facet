@@ -706,5 +706,6 @@ pub async fn run_borrowed_return_survives_teardown_over_generated_client<L>(
     server_task.abort();
     let _ = server_task.await;
 
+    let payload = payload.get();
     assert_eq!(&*payload, &expected);
 }

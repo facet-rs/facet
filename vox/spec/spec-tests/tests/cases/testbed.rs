@@ -714,6 +714,7 @@ pub fn run_rpc_channeling_large_stream(spec: SubjectSpec) {
         let recv = spec_tests::harness::spawn_loud(async move {
             let mut received = Vec::new();
             while let Ok(Some(v)) = rx.recv().await {
+                let v = v.get();
                 received.push(*v);
             }
             received

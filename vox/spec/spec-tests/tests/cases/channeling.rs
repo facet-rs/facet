@@ -46,6 +46,7 @@ pub fn run_channeling_generate_server_to_client(spec: SubjectSpec) {
         let recv = spawn_loud(async move {
             let mut received = Vec::new();
             while let Ok(Some(n)) = rx.recv().await {
+                let n = n.get();
                 received.push(*n);
             }
             received
@@ -88,6 +89,7 @@ pub fn run_channeling_transform_bidirectional(spec: SubjectSpec) {
         let recv = spawn_loud(async move {
             let mut received = Vec::new();
             while let Ok(Some(s)) = output_rx.recv().await {
+                let s = s.get();
                 received.push(s.clone());
             }
             received

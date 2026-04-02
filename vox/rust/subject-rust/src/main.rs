@@ -85,6 +85,7 @@ impl Testbed for TestbedService {
         info!("sum called");
         let mut total: i64 = 0;
         while let Ok(Some(n)) = numbers.recv().await {
+            let n = n.get();
             debug!(n = *n, total, "received number");
             total += *n as i64;
         }
@@ -114,6 +115,7 @@ impl Testbed for TestbedService {
     async fn transform(&self, mut input: Rx<String>, output: Tx<String>) {
         info!("transform called");
         while let Ok(Some(s)) = input.recv().await {
+            let s = s.get();
             debug!(s = ?*s, "transforming");
             let _ = output.send(s.clone()).await;
         }
@@ -196,6 +198,7 @@ impl Testbed for TestbedService {
     async fn sum_large(&self, mut numbers: Rx<i32>) -> i64 {
         let mut total: i64 = 0;
         while let Ok(Some(n)) = numbers.recv().await {
+            let n = n.get();
             total += *n as i64;
         }
         total
@@ -658,6 +661,7 @@ async fn run_client() -> Result<(), String> {
             let recv_task = tokio::spawn(async move {
                 let mut received = Vec::new();
                 while let Ok(Some(v)) = rx.recv().await {
+                    let v = v.get();
                     received.push(*v);
                 }
                 received
@@ -713,6 +717,7 @@ async fn run_client() -> Result<(), String> {
             let recv_task = tokio::spawn(async move {
                 let mut received = Vec::new();
                 while let Ok(Some(s)) = output_rx.recv().await {
+                    let s = s.get();
                     received.push(s.clone());
                 }
                 received
@@ -802,6 +807,7 @@ async fn run_client() -> Result<(), String> {
                 loop {
                     match rx.recv().await {
                         Ok(Some(n)) => {
+                            let n = n.get();
                             info!(value = *n, "channel_retry_idem recv");
                             received.push(*n);
                         }
@@ -852,6 +858,7 @@ async fn run_client() -> Result<(), String> {
             let recv = tokio::spawn(async move {
                 let mut received = Vec::new();
                 while let Ok(Some(n)) = rx.recv().await {
+                    let n = n.get();
                     received.push(*n);
                 }
                 received

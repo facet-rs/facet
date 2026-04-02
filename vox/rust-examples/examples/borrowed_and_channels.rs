@@ -104,6 +104,8 @@ async fn main() -> Result<()> {
         .classify("watermelon".to_string())
         .await
         .map_err(|e| eyre!("classify(\"watermelon\") failed: {e:?}"))?;
+    let short = short.get();
+    let long = long.get();
     assert_eq!(*short, "short");
     assert_eq!(*long, "long");
     println!("[client] classify returned short={} long={}", *short, *long);

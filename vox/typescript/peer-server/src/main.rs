@@ -71,6 +71,7 @@ impl Testbed for TestbedService {
     async fn sum(&self, mut numbers: Rx<i32>) -> i64 {
         let mut total: i64 = 0;
         while let Ok(Some(n)) = numbers.recv().await {
+            let n = n.get();
             total += *n as i64;
         }
         total
@@ -90,7 +91,8 @@ impl Testbed for TestbedService {
 
     async fn transform(&self, mut input: Rx<String>, output: Tx<String>) {
         while let Ok(Some(s)) = input.recv().await {
-            let _ = output.send((*s).clone()).await;
+            let s = s.get();
+            let _ = output.send(s.clone()).await;
         }
         let _ = output.close(Default::default()).await;
     }
@@ -195,6 +197,7 @@ impl Testbed for TestbedService {
     async fn sum_large(&self, mut numbers: Rx<i32>) -> i64 {
         let mut total: i64 = 0;
         while let Ok(Some(n)) = numbers.recv().await {
+            let n = n.get();
             total += *n as i64;
         }
         total
