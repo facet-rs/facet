@@ -1,62 +1,101 @@
-//! vox — RPC with channels, virtual connections, and some backwards compatibility.
+//! vox — type-safe RPC with channels, virtual connections, and automatic schema evolution.
 //!
-//! Vox services are Rust traits:
+//! # Defining a service
+//!
+//! Services are ordinary Rust traits annotated with [`#[vox::service]`](macro@service):
 //!
 //! ```
 //! #[vox::service]
 //! trait Hello {
-//!   async fn say_hello(&self) -> String;
+//!     async fn say_hello(&self) -> String;
 //! }
 //! ```
 //!
-//! And the basic idea is that you should be able to connect to any number of
-//! transports to call those methods:
+//! The macro generates a `HelloClient` (typed caller), a `HelloDispatcher`
+//! (request router), and serialization glue. You implement the trait on a
+//! struct and hand it to a dispatcher.
+//!
+//! # Connecting
+//!
+//! [`connect()`] is the fastest path to calling a remote service:
 //!
 //! ```no_run
-//! use vox::transport::tcp::tcp_connector;
-//! use vox::{TransportMode, initiator};
-//! # use tokio::net::TcpListener;
-//! # use vox::transport::tcp::StreamLink;
-//! # use vox::acceptor_on;
-//!
 //! # #[vox::service]
 //! # trait Hello {
 //! #     async fn say_hello(&self) -> String;
 //! # }
-//! #
-//! # #[derive(Clone)]
-//! # struct HelloService;
-//! #
-//! # impl Hello for HelloService {
-//! #     async fn say_hello(&self) -> String {
-//! #         "hello".to_string()
-//! #     }
-//! # }
-//! #
 //! # #[tokio::main(flavor = "current_thread")]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let addr = "127.0.0.1:50051";
-//! # let listener = TcpListener::bind(addr).await?;
-//! #
-//! # let server = tokio::spawn(async move {
-//! #     let (stream, _) = listener.accept().await?;
-//! #     let (_server_caller, _server_session) = acceptor_on(StreamLink::tcp(stream))
-//! #         .on_connection(HelloDispatcher::new(HelloService))
-//! #         .establish::<HelloClient>()
-//! #         .await?;
-//! #     Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
-//! # });
-//! #
-//! let client = initiator(tcp_connector(addr), TransportMode::Bare)
-//!     .establish::<HelloClient>()
-//!     .await?;
-//!
+//! let client: HelloClient = vox::connect("127.0.0.1:9000").await?;
 //! let reply = client.say_hello().await?;
-//! assert_eq!(reply, "hello");
-//! # server.await.expect("server task panicked").expect("server failed");
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! The address string selects the transport:
+//!
+//! | Scheme | Transport |
+//! |--------|-----------|
+//! | `tcp://host:port` (or bare `host:port`) | TCP stream |
+//! | `local://path` | Unix socket / Windows named pipe |
+//! | `ws://host:port/path` | WebSocket |
+//! | `shm:///path/to/control.sock` | Shared memory (Unix) |
+//!
+//! # Serving
+//!
+//! [`serve()`] accepts connections in a loop:
+//!
+//! ```no_run
+//! # #[vox::service]
+//! # trait Hello {
+//! #     async fn say_hello(&self) -> String;
+//! # }
+//! # #[derive(Clone)]
+//! # struct HelloService;
+//! # impl Hello for HelloService {
+//! #     async fn say_hello(&self) -> String { "hi".into() }
+//! # }
+//! # #[tokio::main(flavor = "current_thread")]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let listener = tokio::net::TcpListener::bind("0.0.0.0:9000").await?;
+//! vox::serve(listener, HelloDispatcher::new(HelloService)).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! For multi-service routing, use [`acceptor_fn()`]:
+//!
+//! ```ignore
+//! vox::serve(listener, vox::acceptor_fn(|req, conn| {
+//!     match req.service() {
+//!         Some("Hello") => { conn.handle_with(HelloDispatcher::new(HelloService)); Ok(()) }
+//!         Some("Chat") => { conn.handle_with(ChatDispatcher::new(ChatService)); Ok(()) }
+//!         _ => Err(vec![]),
+//!     }
+//! })).await?;
+//! ```
+//!
+//! # Generated clients
+//!
+//! Generated clients expose public fields for connection lifecycle:
+//!
+//! ```ignore
+//! client.caller.closed().await;     // wait for disconnect
+//! client.caller.is_connected();     // check liveness
+//! client.session.as_ref();          // access session handle (virtual connections)
+//! client.say_hello().await?;        // service method — no name clash
+//! ```
+//!
+//! # Lower-level APIs
+//!
+//! For advanced use (custom transports, in-memory testing, virtual connections),
+//! use the builder APIs directly:
+//!
+//! - [`initiator_on()`] / [`acceptor_on()`] — establish over a raw [`Link`]
+//! - [`memory_link_pair()`] — in-process link pair for testing
+//! - [`Driver`] — run inbound RPC on a connection handle
+//! - [`SessionHandle`] — open/close virtual connections
+//! - [`proxy_connections()`] — bridge two connection handles
 
 mod highlevel;
 pub use highlevel::*;
@@ -165,10 +204,78 @@ pub use vox_types::{
     observe_reply,
 };
 
-// Re-export runtime/session primitives from `vox-core`.
-// This keeps user-facing setup to `vox` + a transport crate.
+// ── vox-core: curated public API ──────────────────────────────────────
+
+// Session establishment — builder entry points
 #[cfg(feature = "runtime")]
-pub use vox_core::*;
+pub use vox_core::{
+    acceptor_conduit, acceptor_on, acceptor_transport, initiator, initiator_conduit, initiator_on,
+    initiator_transport,
+};
+
+// Convenience helpers that do handshake + builder in one call
+#[cfg(feature = "runtime")]
+pub use vox_core::{acceptor_on_link, initiator_on_link};
+
+// Session types
+#[cfg(feature = "runtime")]
+pub use vox_core::{
+    ConnectionHandle, ConnectionRequest, ConnectionState, PendingConnection, Session,
+    SessionAcceptOutcome, SessionConfig, SessionError, SessionHandle, SessionKeepaliveConfig,
+    SessionRegistry,
+};
+
+// Connection acceptor
+#[cfg(feature = "runtime")]
+pub use vox_core::{AcceptorFn, ConnectionAcceptor, acceptor_fn, proxy_connections};
+
+// Session builders (for advanced customization)
+#[cfg(feature = "runtime")]
+pub use vox_core::{
+    BoxSessionFuture, SessionAcceptorBuilder, SessionInitiatorBuilder,
+    SessionSourceInitiatorBuilder, SessionTransportAcceptorBuilder,
+    SessionTransportInitiatorBuilder, VOX_SERVICE_METADATA_KEY,
+};
+
+// Driver — runs inbound RPC on a connection handle
+#[cfg(feature = "runtime")]
+pub use vox_core::{
+    Caller, Driver, DriverCaller, DriverChannelSink, DriverReplySink, ErasedHandler,
+    FromVoxSession, NoopClient,
+};
+
+// Conduit types
+#[cfg(feature = "runtime")]
+pub use vox_core::{BareConduit, BareConduitError, IntoConduit, MessagePlan};
+
+// Stable conduit + reconnection (not available on wasm)
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+pub use vox_core::{
+    Attachment, LinkSource, SingleAttachmentSource, SplitLink, StableConduit, StableConduitError,
+    prepare_acceptor_attachment, recv_client_hello, single_attachment_source, single_link_source,
+};
+
+// In-memory links for testing (not available on wasm)
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+pub use vox_core::{
+    MemoryLink, MemoryLinkRx, MemoryLinkRxError, MemoryLinkTx, MemoryLinkTxPermit, memory_link_pair,
+};
+
+// Handshake (low-level)
+#[cfg(feature = "runtime")]
+pub use vox_core::{HandshakeError, handshake_as_acceptor, handshake_as_initiator};
+
+// Transport prologue (low-level)
+#[cfg(feature = "runtime")]
+pub use vox_core::{accept_transport, initiate_transport};
+
+// Operation store (exactly-once delivery)
+#[cfg(feature = "runtime")]
+pub use vox_core::{InMemoryOperationStore, OperationState, OperationStore, SealedResponse};
+
+// Dynamic conduit traits (object-safe)
+#[cfg(feature = "runtime")]
+pub use vox_core::{DynConduitRx, DynConduitTx};
 
 /// Transport implementations re-exported by the facade crate.
 ///

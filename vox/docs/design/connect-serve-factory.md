@@ -314,9 +314,11 @@ feature entirely.
     - Accepts connections in a loop, spawns sessions
     - Single-service: `vox::serve(listener, EchoDispatcher::new(EchoService))`
     - Multi-service factory: `vox::serve(listener, acceptor_fn(|req, conn| { ... }))`
-13. Facade re-export hygiene + crate documentation
-    - Replace `pub use vox_core::*` with curated list
-    - Document public API
+13. ✅ Facade re-export hygiene + crate documentation
+    - Replaced `pub use vox_core::*` with curated, grouped explicit re-exports
+    - Rewrote crate-level doc comment with `connect()` / `serve()` examples
+    - Organized vox-core re-exports by category: session builders, connection management,
+      driver/caller, conduits, stable conduit, memory links, handshake, transport, operations
 14. Multi-listener support
     - Serve on multiple transports simultaneously (e.g. TCP + Unix socket + SHM)
     - Compose multiple `VoxListener`s into one
