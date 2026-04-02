@@ -1,7 +1,11 @@
+use std::sync::Arc;
+
 use facet::Facet;
 use vox_postcard::error::DeserializeError;
 use vox_postcard::plan::{PlanInput, SchemaSet, TranslationPlan, build_plan};
-use vox_types::{BindingDirection, MethodId, Schema, SchemaRecvTracker, TypeRef, extract_schemas};
+use vox_types::{
+    BindingDirection, MethodId, PlanCacheKey, Schema, SchemaRecvTracker, TypeRef, extract_schemas,
+};
 
 /// Deserialize args from a request (caller → callee direction).
 // r[impl schema.exchange.required]
@@ -48,6 +52,28 @@ struct ResolvedPlan {
 }
 
 fn resolve_plan<'facet, T: Facet<'facet>>(
+    method_id: MethodId,
+    direction: BindingDirection,
+    tracker: &SchemaRecvTracker,
+) -> Result<Arc<ResolvedPlan>, DeserializeError> {
+    let cache_key = PlanCacheKey {
+        method_id,
+        direction,
+        local_shape: T::SHAPE as *const _ as usize,
+    };
+
+    // Fast path: check cache.
+    if let Some(cached) = tracker.get_cached_plan::<ResolvedPlan>(&cache_key) {
+        return Ok(cached);
+    }
+
+    // Slow path: build the plan.
+    let resolved = Arc::new(build_resolved_plan::<T>(method_id, direction, tracker)?);
+    tracker.insert_cached_plan(cache_key, Arc::clone(&resolved));
+    Ok(resolved)
+}
+
+fn build_resolved_plan<'facet, T: Facet<'facet>>(
     method_id: MethodId,
     direction: BindingDirection,
     tracker: &SchemaRecvTracker,

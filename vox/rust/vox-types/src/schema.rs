@@ -304,6 +304,18 @@ pub struct SchemaRecvTracker {
     received_args_bindings: Mutex<HashMap<MethodId, TypeRef>>,
     /// Response bindings received: method_id → root TypeRef for response.
     received_response_bindings: Mutex<HashMap<MethodId, TypeRef>>,
+    /// Type-erased plan cache. Keyed by (method, direction, local Shape ptr).
+    /// Populated by higher-level crates (e.g. vox) that know the concrete plan type.
+    plan_cache: Mutex<HashMap<PlanCacheKey, Box<dyn std::any::Any + Send + Sync>>>,
+}
+
+/// Cache key for resolved translation plans.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PlanCacheKey {
+    pub method_id: MethodId,
+    pub direction: BindingDirection,
+    /// Pointer to the local `&'static Shape`, used as a type identity.
+    pub local_shape: usize,
 }
 
 /// Error returned when recording received schemas detects a protocol violation.
@@ -330,6 +342,7 @@ impl SchemaRecvTracker {
             received: Mutex::new(HashMap::new()),
             received_args_bindings: Mutex::new(HashMap::new()),
             received_response_bindings: Mutex::new(HashMap::new()),
+            plan_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -401,6 +414,24 @@ impl SchemaRecvTracker {
     /// Get a snapshot of the received schema registry for building translation plans.
     pub fn received_registry(&self) -> SchemaRegistry {
         self.received.lock().unwrap().clone()
+    }
+
+    /// Look up a cached plan by key, downcasting to `T`.
+    pub fn get_cached_plan<T: Send + Sync + 'static>(
+        &self,
+        key: &PlanCacheKey,
+    ) -> Option<std::sync::Arc<T>> {
+        let cache = self.plan_cache.lock().unwrap();
+        cache.get(key)?.downcast_ref::<std::sync::Arc<T>>().cloned()
+    }
+
+    /// Insert a plan into the cache.
+    pub fn insert_cached_plan<T: Send + Sync + 'static>(
+        &self,
+        key: PlanCacheKey,
+        plan: std::sync::Arc<T>,
+    ) {
+        self.plan_cache.lock().unwrap().insert(key, Box::new(plan));
     }
 }
 
