@@ -3,10 +3,10 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 use vox_core::{
-    BareConduit, SessionAcceptOutcome, SessionRegistry, TransportMode, acceptor_on,
-    initiate_transport, initiator_on, memory_link_pair, testing::breakable_link_pair,
+    Attachment, SessionAcceptOutcome, SessionRegistry, TransportMode, acceptor_on, initiator,
+    initiator_on, memory_link_pair, testing::TestLinkSource, testing::breakable_link_pair,
 };
-use vox_types::{ConnectionSettings, MetadataEntry, Parity};
+use vox_types::MetadataEntry;
 
 #[vox::service]
 trait Echo {
@@ -126,8 +126,15 @@ async fn multiple_methods_get_independent_schemas() {
 async fn call_works_after_resume() {
     let registry = SessionRegistry::default();
 
-    // First connection
+    // Two links for auto-reconnect using a source-based initiator.
     let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
+    let (client_link2, _client_break2, server_link2, _server_break2) = breakable_link_pair(64);
+
+    let source = TestLinkSource::new([
+        Attachment::initiator(client_link1),
+        Attachment::initiator(client_link2),
+    ]);
+
     let (server_result, client_result) = tokio::try_join!(
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -139,9 +146,7 @@ async fn call_works_after_resume() {
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            initiator_on(client_link1, TransportMode::Bare)
-                .resumable()
-                .establish::<EchoClient>(),
+            initiator(source, TransportMode::Bare).establish::<EchoClient>(),
         ),
     )
     .expect("session establishment timed out");
@@ -151,7 +156,6 @@ async fn call_works_after_resume() {
         _ => panic!("expected Established"),
     };
     let client = client_result.expect("client failed");
-    let client_session_handle = client.session.clone().unwrap();
 
     // Call succeeds on the initial connection
     assert_eq!(client.echo(1).await.unwrap(), 1);
@@ -161,46 +165,16 @@ async fn call_works_after_resume() {
     server_break1.close().await;
     tokio::time::sleep(Duration::from_millis(25)).await;
 
-    // Resume: new links, new handshake
-    let (client_link2, _client_break2, server_link2, _server_break2) = breakable_link_pair(64);
-    let (resume_result, server_accept_result) = tokio::join!(
-        async {
-            let mut resumed_link = initiate_transport(client_link2, TransportMode::Bare)
-                .await
-                .expect("transport");
-            let handshake_result = vox_core::handshake_as_initiator(
-                &resumed_link.tx,
-                &mut resumed_link.rx,
-                ConnectionSettings {
-                    parity: Parity::Odd,
-                    max_concurrent_requests: 64,
-                },
-                true,
-                client_session_handle.resume_key(),
-                vec![MetadataEntry::str("vox-service", "Echo")],
-            )
-            .await
-            .expect("handshake");
-            let message_plan =
-                vox_core::MessagePlan::from_handshake(&handshake_result).expect("message plan");
-            client_session_handle
-                .resume(
-                    BareConduit::with_message_plan(resumed_link, message_plan),
-                    handshake_result,
-                )
-                .await
-        },
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            acceptor_on(server_link2)
-                .session_registry(registry.clone())
-                .on_connection(EchoDispatcher::new(EchoService))
-                .metadata(vec![MetadataEntry::str("vox-service", "Echo")])
-                .establish_or_resume::<EchoClient>(),
-        ),
-    );
-    resume_result.expect("resume should succeed");
-    let server_accept_result = server_accept_result.expect("server accept timed out");
+    let server_accept_result = tokio::time::timeout(
+        Duration::from_secs(1),
+        acceptor_on(server_link2)
+            .session_registry(registry.clone())
+            .on_connection(EchoDispatcher::new(EchoService))
+            .metadata(vec![MetadataEntry::str("vox-service", "Echo")])
+            .establish_or_resume::<EchoClient>(),
+    )
+    .await
+    .expect("server accept timed out");
     match server_accept_result.expect("server accept failed") {
         SessionAcceptOutcome::Resumed => {}
         _ => panic!("expected Resumed"),
@@ -218,6 +192,13 @@ async fn first_call_after_resume_without_prior_calls() {
 
     // First connection — no calls
     let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
+    let (client_link2, _client_break2, server_link2, _server_break2) = breakable_link_pair(64);
+
+    let source = TestLinkSource::new([
+        Attachment::initiator(client_link1),
+        Attachment::initiator(client_link2),
+    ]);
+
     let (server_result, client_result) = tokio::try_join!(
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -229,9 +210,7 @@ async fn first_call_after_resume_without_prior_calls() {
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            initiator_on(client_link1, TransportMode::Bare)
-                .resumable()
-                .establish::<EchoClient>(),
+            initiator(source, TransportMode::Bare).establish::<EchoClient>(),
         ),
     )
     .expect("session establishment timed out");
@@ -241,53 +220,22 @@ async fn first_call_after_resume_without_prior_calls() {
         _ => panic!("expected Established"),
     };
     let client = client_result.expect("client failed");
-    let client_session_handle = client.session.clone().unwrap();
 
     // Break immediately — no calls on the first connection
     client_break1.close().await;
     server_break1.close().await;
     tokio::time::sleep(Duration::from_millis(25)).await;
 
-    // Resume
-    let (client_link2, _client_break2, server_link2, _server_break2) = breakable_link_pair(64);
-    let (resume_result, server_accept_result) = tokio::join!(
-        async {
-            let mut resumed_link = initiate_transport(client_link2, TransportMode::Bare)
-                .await
-                .expect("transport");
-            let handshake_result = vox_core::handshake_as_initiator(
-                &resumed_link.tx,
-                &mut resumed_link.rx,
-                ConnectionSettings {
-                    parity: Parity::Odd,
-                    max_concurrent_requests: 64,
-                },
-                true,
-                client_session_handle.resume_key(),
-                vec![MetadataEntry::str("vox-service", "Echo")],
-            )
-            .await
-            .expect("handshake");
-            let message_plan =
-                vox_core::MessagePlan::from_handshake(&handshake_result).expect("message plan");
-            client_session_handle
-                .resume(
-                    BareConduit::with_message_plan(resumed_link, message_plan),
-                    handshake_result,
-                )
-                .await
-        },
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            acceptor_on(server_link2)
-                .session_registry(registry.clone())
-                .on_connection(EchoDispatcher::new(EchoService))
-                .metadata(vec![MetadataEntry::str("vox-service", "Echo")])
-                .establish_or_resume::<EchoClient>(),
-        ),
-    );
-    resume_result.expect("resume should succeed");
-    let server_accept_result = server_accept_result.expect("server accept timed out");
+    let server_accept_result = tokio::time::timeout(
+        Duration::from_secs(1),
+        acceptor_on(server_link2)
+            .session_registry(registry.clone())
+            .on_connection(EchoDispatcher::new(EchoService))
+            .metadata(vec![MetadataEntry::str("vox-service", "Echo")])
+            .establish_or_resume::<EchoClient>(),
+    )
+    .await
+    .expect("server accept timed out");
     match server_accept_result.expect("server accept failed") {
         SessionAcceptOutcome::Resumed => {}
         _ => panic!("expected Resumed"),
@@ -335,8 +283,14 @@ async fn operation_replay_after_resume_has_schemas() {
         proceed: proceed.clone(),
     };
 
-    // First connection
     let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
+    let (client_link2, _client_break2, server_link2, _server_break2) = breakable_link_pair(64);
+
+    let source = TestLinkSource::new([
+        Attachment::initiator(client_link1),
+        Attachment::initiator(client_link2),
+    ]);
+
     let (server_result, client_result) = tokio::try_join!(
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -348,9 +302,7 @@ async fn operation_replay_after_resume_has_schemas() {
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            initiator_on(client_link1, TransportMode::Bare)
-                .resumable()
-                .establish::<PersistEchoClient>(),
+            initiator(source, TransportMode::Bare).establish::<PersistEchoClient>(),
         ),
     )
     .expect("session establishment timed out");
@@ -360,7 +312,6 @@ async fn operation_replay_after_resume_has_schemas() {
         _ => panic!("expected Established"),
     };
     let client = client_result.expect("client failed");
-    let client_session_handle = client.session.clone().unwrap();
 
     // Start a call — handler will block until we notify `proceed`
     let client2 = client.clone();
@@ -379,46 +330,16 @@ async fn operation_replay_after_resume_has_schemas() {
     proceed.notify_one();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // Resume
-    let (client_link2, _client_break2, server_link2, _server_break2) = breakable_link_pair(64);
-    let (resume_result, server_accept_result) = tokio::join!(
-        async {
-            let mut resumed_link = initiate_transport(client_link2, TransportMode::Bare)
-                .await
-                .expect("transport");
-            let handshake_result = vox_core::handshake_as_initiator(
-                &resumed_link.tx,
-                &mut resumed_link.rx,
-                ConnectionSettings {
-                    parity: Parity::Odd,
-                    max_concurrent_requests: 64,
-                },
-                true,
-                client_session_handle.resume_key(),
-                vec![MetadataEntry::str("vox-service", "PersistEcho")],
-            )
-            .await
-            .expect("handshake");
-            let message_plan =
-                vox_core::MessagePlan::from_handshake(&handshake_result).expect("message plan");
-            client_session_handle
-                .resume(
-                    BareConduit::with_message_plan(resumed_link, message_plan),
-                    handshake_result,
-                )
-                .await
-        },
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            acceptor_on(server_link2)
-                .session_registry(registry.clone())
-                .on_connection(PersistEchoDispatcher::new(service))
-                .metadata(vec![MetadataEntry::str("vox-service", "PersistEcho")])
-                .establish_or_resume::<PersistEchoClient>(),
-        ),
-    );
-    resume_result.expect("resume should succeed");
-    let server_accept_result = server_accept_result.expect("server accept timed out");
+    let server_accept_result = tokio::time::timeout(
+        Duration::from_secs(1),
+        acceptor_on(server_link2)
+            .session_registry(registry.clone())
+            .on_connection(PersistEchoDispatcher::new(service))
+            .metadata(vec![MetadataEntry::str("vox-service", "PersistEcho")])
+            .establish_or_resume::<PersistEchoClient>(),
+    )
+    .await
+    .expect("server accept timed out");
     match server_accept_result.expect("server accept failed") {
         SessionAcceptOutcome::Resumed => {}
         _ => panic!("expected Resumed"),
