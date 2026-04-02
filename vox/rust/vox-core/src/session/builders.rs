@@ -205,6 +205,8 @@ pub struct SessionConfig<'a> {
     pub session_registry: Option<SessionRegistry>,
     pub operation_store: Option<Arc<dyn OperationStore>>,
     pub spawn_fn: SpawnFn,
+    pub connect_timeout: Option<std::time::Duration>,
+    pub recovery_timeout: Option<std::time::Duration>,
 }
 
 impl SessionConfig<'_> {
@@ -218,6 +220,8 @@ impl SessionConfig<'_> {
             session_registry: None,
             operation_store: None,
             spawn_fn: default_spawn_fn(),
+            connect_timeout: None,
+            recovery_timeout: None,
         }
     }
 }
@@ -259,6 +263,16 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
 
     pub fn keepalive(mut self, keepalive: SessionKeepaliveConfig) -> Self {
         self.config.keepalive = Some(keepalive);
+        self
+    }
+
+    pub fn connect_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.config.connect_timeout = Some(timeout);
+        self
+    }
+
+    pub fn recovery_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.config.recovery_timeout = Some(timeout);
         self
     }
 
@@ -308,17 +322,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             config,
             recoverer,
         } = self;
-        let SessionConfig {
-            root_settings,
-            metadata: _metadata,
-            on_connection,
-            keepalive,
-            resumable,
-            session_registry: _session_registry,
-            operation_store,
-            spawn_fn,
-        } = config;
-        validate_negotiated_root_settings(&root_settings, &handshake_result)?;
+        validate_negotiated_root_settings(&config.root_settings, &handshake_result)?;
         let (tx, rx) = conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
@@ -327,15 +331,16 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
         let mut session = Session::pre_handshake(
             tx,
             rx,
-            on_connection,
+            config.on_connection,
             open_rx,
             close_rx,
             resume_rx,
             control_tx.clone(),
             control_rx,
-            keepalive,
-            resumable,
+            config.keepalive,
+            config.resumable,
             recoverer,
+            config.recovery_timeout,
         );
         let handle = session.establish_from_handshake(handshake_result)?;
         let resume_key = session.resume_key();
@@ -346,13 +351,13 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             control_tx,
             resume_key,
         };
-        let mut driver = match operation_store {
+        let mut driver = match config.operation_store {
             Some(operation_store) => Driver::with_operation_store(handle, handler, operation_store),
             None => Driver::new(handle, handler),
         };
         let client =
             Client::from_vox_session(crate::Caller::new(driver.caller()), Some(session_handle));
-        (spawn_fn)(Box::pin(async move { session.run().await }));
+        (config.spawn_fn)(Box::pin(async move { session.run().await }));
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move { driver.run().await });
         #[cfg(target_arch = "wasm32")]
@@ -408,6 +413,16 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
         self
     }
 
+    pub fn connect_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.config.connect_timeout = Some(timeout);
+        self
+    }
+
+    pub fn recovery_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.config.recovery_timeout = Some(timeout);
+        self
+    }
+
     pub fn resumable(mut self) -> Self {
         self.config.resumable = true;
         self
@@ -441,22 +456,33 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
         <<S::Link as Link>::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         <S::Link as Link>::Rx: MaybeSend + Send + 'static,
     {
+        let connect_timeout = self.config.connect_timeout;
+        let fut = self.establish_inner::<Client>(handler);
+        match connect_timeout {
+            Some(timeout) => tokio::time::timeout(timeout, fut)
+                .await
+                .map_err(|_| SessionError::ConnectTimeout)?,
+            None => fut.await,
+        }
+    }
+
+    async fn establish_inner<Client: FromVoxSession>(
+        self,
+        handler: impl Handler<DriverReplySink> + 'static,
+    ) -> Result<Client, SessionError>
+    where
+        S: LinkSource,
+        S::Link: Link + Send + 'static,
+        <S::Link as Link>::Tx: MaybeSend + MaybeSync + Send + 'static,
+        <<S::Link as Link>::Tx as vox_types::LinkTx>::Permit: MaybeSend,
+        <S::Link as Link>::Rx: MaybeSend + Send + 'static,
+    {
         let Self {
             mut source,
             mode,
-            config,
+            mut config,
         } = self;
-        let SessionConfig {
-            root_settings,
-            mut metadata,
-            on_connection,
-            keepalive,
-            resumable,
-            session_registry: _session_registry,
-            operation_store,
-            spawn_fn,
-        } = config;
-        inject_service_metadata::<Client>(&mut metadata);
+        inject_service_metadata::<Client>(&mut config.metadata);
 
         match mode {
             TransportMode::Bare => {
@@ -467,10 +493,10 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
                 let handshake_result = handshake_as_initiator(
                     &link.tx,
                     &mut link.rx,
-                    root_settings.clone(),
+                    config.root_settings.clone(),
                     true,
                     None,
-                    metadata_into_owned(metadata.clone()),
+                    metadata_into_owned(config.metadata.clone()),
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
@@ -482,25 +508,18 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
                 );
                 let recoverer = Box::new(BareSourceRecoverer {
                     source,
-                    settings: root_settings.clone(),
+                    settings: config.root_settings.clone(),
+                    connect_timeout: config.connect_timeout,
                 });
                 SessionTransportInitiatorBuilder::<S::Link>::apply_common_parts(
                     builder,
-                    root_settings,
-                    metadata,
-                    on_connection,
-                    keepalive,
-                    resumable,
+                    config,
                     Some(recoverer),
-                    operation_store,
-                    spawn_fn,
                 )
                 .establish(handler)
                 .await
             }
             TransportMode::Stable => {
-                // Get first link and do transport + CBOR handshake before
-                // handing to the stable conduit.
                 let attachment = source.next_link().await.map_err(SessionError::Io)?;
                 let mut link = initiate_transport(attachment.into_link(), TransportMode::Stable)
                     .await
@@ -508,10 +527,10 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
                 let handshake_result = handshake_as_initiator(
                     &link.tx,
                     &mut link.rx,
-                    root_settings.clone(),
+                    config.root_settings.clone(),
                     true,
                     None,
-                    metadata_into_owned(metadata.clone()),
+                    metadata_into_owned(config.metadata.clone()),
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
@@ -520,7 +539,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
                 let conduit = StableConduit::<MessageFamily, _>::with_first_link(
                     link.tx,
                     link.rx,
-                    None, // initiator side — no ClientHello
+                    None,
                     TransportedLinkSource {
                         source,
                         mode: TransportMode::Stable,
@@ -533,15 +552,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
                 .with_message_plan(message_plan);
                 let builder = SessionInitiatorBuilder::new(conduit, handshake_result);
                 SessionTransportInitiatorBuilder::<S::Link>::apply_common_parts(
-                    builder,
-                    root_settings,
-                    metadata,
-                    on_connection,
-                    keepalive,
-                    resumable,
-                    None,
-                    operation_store,
-                    spawn_fn,
+                    builder, config, None,
                 )
                 .establish(handler)
                 .await
@@ -595,6 +606,16 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         self
     }
 
+    pub fn connect_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.config.connect_timeout = Some(timeout);
+        self
+    }
+
+    pub fn recovery_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.config.recovery_timeout = Some(timeout);
+        self
+    }
+
     pub fn resumable(mut self) -> Self {
         self.config.resumable = true;
         self
@@ -628,52 +649,45 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
-        let Self { link, mode, config } = self;
-        let SessionConfig {
-            root_settings,
-            mut metadata,
-            on_connection,
-            keepalive,
-            resumable,
-            session_registry: _session_registry,
-            operation_store,
-            spawn_fn,
-        } = config;
-        inject_service_metadata::<Client>(&mut metadata);
+        let connect_timeout = self.config.connect_timeout;
+        let fut = self.establish_inner::<Client>(handler);
+        match connect_timeout {
+            Some(timeout) => tokio::time::timeout(timeout, fut)
+                .await
+                .map_err(|_| SessionError::ConnectTimeout)?,
+            None => fut.await,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn establish_inner<Client: FromVoxSession>(
+        self,
+        handler: impl Handler<DriverReplySink> + 'static,
+    ) -> Result<Client, SessionError>
+    where
+        L: Link + Send + 'static,
+        L::Tx: MaybeSend + MaybeSync + 'static,
+        <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
+        L::Rx: MaybeSend + 'static,
+    {
+        let Self {
+            link,
+            mode,
+            mut config,
+        } = self;
+        inject_service_metadata::<Client>(&mut config.metadata);
         match mode {
             TransportMode::Bare => {
                 let link = initiate_transport(link, TransportMode::Bare)
                     .await
                     .map_err(session_error_from_transport)?;
-                Self::finish_with_bare_parts(
-                    link,
-                    root_settings,
-                    metadata,
-                    on_connection,
-                    keepalive,
-                    resumable,
-                    operation_store,
-                    spawn_fn,
-                    handler,
-                )
-                .await
+                Self::finish_with_bare_parts(link, config, handler).await
             }
             TransportMode::Stable => {
                 let link = initiate_transport(link, TransportMode::Stable)
                     .await
                     .map_err(session_error_from_transport)?;
-                Self::finish_with_stable_parts(
-                    link,
-                    root_settings,
-                    metadata,
-                    on_connection,
-                    keepalive,
-                    resumable,
-                    operation_store,
-                    spawn_fn,
-                    handler,
-                )
-                .await
+                Self::finish_with_stable_parts(link, config, handler).await
             }
         }
     }
@@ -689,35 +703,18 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
-        let Self { link, mode, config } = self;
-        let SessionConfig {
-            root_settings,
-            mut metadata,
-            on_connection,
-            keepalive,
-            resumable,
-            session_registry: _session_registry,
-            operation_store,
-            spawn_fn,
-        } = config;
-        inject_service_metadata::<Client>(&mut metadata);
+        let Self {
+            link,
+            mode,
+            mut config,
+        } = self;
+        inject_service_metadata::<Client>(&mut config.metadata);
         match mode {
             TransportMode::Bare => {
                 let link = initiate_transport(link, TransportMode::Bare)
                     .await
                     .map_err(session_error_from_transport)?;
-                Self::finish_with_bare_parts(
-                    link,
-                    root_settings,
-                    metadata,
-                    on_connection,
-                    keepalive,
-                    resumable,
-                    operation_store,
-                    spawn_fn,
-                    handler,
-                )
-                .await
+                Self::finish_with_bare_parts(link, config, handler).await
             }
             TransportMode::Stable => Err(SessionError::Protocol(
                 "stable conduit transport selection is unsupported on wasm".into(),
@@ -725,16 +722,9 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn finish_with_bare_parts<Client: FromVoxSession>(
         mut link: SplitLink<L::Tx, L::Rx>,
-        root_settings: ConnectionSettings,
-        metadata: Metadata<'a>,
-        on_connection: Option<Box<dyn ConnectionAcceptor>>,
-        keepalive: Option<SessionKeepaliveConfig>,
-        resumable: bool,
-        operation_store: Option<Arc<dyn OperationStore>>,
-        spawn_fn: SpawnFn,
+        config: SessionConfig<'a>,
         handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<Client, SessionError>
     where
@@ -746,10 +736,10 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         let handshake_result = handshake_as_initiator(
             &link.tx,
             &mut link.rx,
-            root_settings.clone(),
+            config.root_settings.clone(),
             true,
             None,
-            metadata_into_owned(metadata.clone()),
+            metadata_into_owned(config.metadata.clone()),
         )
         .await
         .map_err(session_error_from_handshake)?;
@@ -759,32 +749,15 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
             BareConduit::with_message_plan(link, message_plan),
             handshake_result,
         );
-        Self::apply_common_parts(
-            builder,
-            root_settings,
-            metadata,
-            on_connection,
-            keepalive,
-            resumable,
-            None,
-            operation_store,
-            spawn_fn,
-        )
-        .establish(handler)
-        .await
+        Self::apply_common_parts(builder, config, None)
+            .establish(handler)
+            .await
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[allow(clippy::too_many_arguments)]
     async fn finish_with_stable_parts<Client: FromVoxSession>(
         mut link: SplitLink<L::Tx, L::Rx>,
-        root_settings: ConnectionSettings,
-        metadata: Metadata<'a>,
-        on_connection: Option<Box<dyn ConnectionAcceptor>>,
-        keepalive: Option<SessionKeepaliveConfig>,
-        resumable: bool,
-        operation_store: Option<Arc<dyn OperationStore>>,
-        spawn_fn: SpawnFn,
+        config: SessionConfig<'a>,
         handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<Client, SessionError>
     where
@@ -796,10 +769,10 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         let handshake_result = handshake_as_initiator(
             &link.tx,
             &mut link.rx,
-            root_settings.clone(),
+            config.root_settings.clone(),
             true,
             None,
-            metadata_into_owned(metadata.clone()),
+            metadata_into_owned(config.metadata.clone()),
         )
         .await
         .map_err(session_error_from_handshake)?;
@@ -815,41 +788,19 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         .map_err(|e| SessionError::Protocol(format!("stable conduit setup failed: {e}")))?
         .with_message_plan(message_plan);
         let builder = SessionInitiatorBuilder::new(conduit, handshake_result);
-        Self::apply_common_parts(
-            builder,
-            root_settings,
-            metadata,
-            on_connection,
-            keepalive,
-            resumable,
-            None,
-            operation_store,
-            spawn_fn,
-        )
-        .establish(handler)
-        .await
+        Self::apply_common_parts(builder, config, None)
+            .establish(handler)
+            .await
     }
 
     #[allow(clippy::too_many_arguments)]
     fn apply_common_parts<C>(
         mut builder: SessionInitiatorBuilder<'a, C>,
-        root_settings: ConnectionSettings,
-        metadata: Metadata<'a>,
-        on_connection: Option<Box<dyn ConnectionAcceptor>>,
-        keepalive: Option<SessionKeepaliveConfig>,
-        resumable: bool,
+        config: SessionConfig<'a>,
         recoverer: Option<Box<dyn ConduitRecoverer>>,
-        operation_store: Option<Arc<dyn OperationStore>>,
-        spawn_fn: SpawnFn,
     ) -> SessionInitiatorBuilder<'a, C> {
-        builder.config.root_settings = root_settings;
-        builder.config.metadata = metadata;
-        builder.config.on_connection = on_connection;
-        builder.config.keepalive = keepalive;
-        builder.config.resumable = resumable;
+        builder.config = config;
         builder.recoverer = recoverer;
-        builder.config.operation_store = operation_store;
-        builder.config.spawn_fn = spawn_fn;
         builder
     }
 }
@@ -858,6 +809,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
 struct BareSourceRecoverer<S> {
     source: S,
     settings: ConnectionSettings,
+    connect_timeout: Option<Duration>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -885,7 +837,7 @@ where
             loop {
                 let selected_resume_key = if use_resume_key { resume_key } else { None };
 
-                let result: Result<super::RecoveredConduit, SessionError> = async {
+                let attempt = async {
                     let attachment = self.source.next_link().await.map_err(SessionError::Io)?;
                     let mut link = initiate_transport(attachment.into_link(), TransportMode::Bare)
                         .await
@@ -907,8 +859,15 @@ where
                         rx: Box::new(rx) as Box<dyn crate::DynConduitRx>,
                         handshake: handshake_result,
                     })
-                }
-                .await;
+                };
+
+                let result = match self.connect_timeout {
+                    Some(timeout) => match tokio::time::timeout(timeout, attempt).await {
+                        Ok(r) => r,
+                        Err(_) => Err(SessionError::ConnectTimeout),
+                    },
+                    None => attempt.await,
+                };
 
                 if let Ok(conduit) = result {
                     return Ok(conduit);
@@ -982,6 +941,16 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         self
     }
 
+    pub fn connect_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.config.connect_timeout = Some(timeout);
+        self
+    }
+
+    pub fn recovery_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.config.recovery_timeout = Some(timeout);
+        self
+    }
+
     pub fn resumable(mut self) -> Self {
         self.config.resumable = true;
         self
@@ -1029,17 +998,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             handshake_result,
             config,
         } = self;
-        let SessionConfig {
-            root_settings,
-            metadata: _metadata,
-            on_connection,
-            keepalive,
-            resumable,
-            session_registry,
-            operation_store,
-            spawn_fn,
-        } = config;
-        validate_negotiated_root_settings(&root_settings, &handshake_result)?;
+        validate_negotiated_root_settings(&config.root_settings, &handshake_result)?;
         let (tx, rx) = conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
@@ -1048,15 +1007,16 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         let mut session = Session::pre_handshake(
             tx,
             rx,
-            on_connection,
+            config.on_connection,
             open_rx,
             close_rx,
             resume_rx,
             control_tx.clone(),
             control_rx,
-            keepalive,
-            resumable,
+            config.keepalive,
+            config.resumable,
             None,
+            config.recovery_timeout,
         );
         let handle = session.establish_from_handshake(handshake_result)?;
         let resume_key = session.resume_key();
@@ -1067,16 +1027,16 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             control_tx,
             resume_key,
         };
-        if let (Some(registry), Some(key)) = (&session_registry, resume_key) {
+        if let (Some(registry), Some(key)) = (&config.session_registry, resume_key) {
             registry.insert(key, session_handle.clone());
         }
-        let mut driver = match operation_store {
+        let mut driver = match config.operation_store {
             Some(operation_store) => Driver::with_operation_store(handle, handler, operation_store),
             None => Driver::new(handle, handler),
         };
         let client =
             Client::from_vox_session(crate::Caller::new(driver.caller()), Some(session_handle));
-        (spawn_fn)(Box::pin(async move { session.run().await }));
+        (config.spawn_fn)(Box::pin(async move { session.run().await }));
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move { driver.run().await });
         #[cfg(target_arch = "wasm32")]
@@ -1160,6 +1120,16 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         self
     }
 
+    pub fn connect_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.config.connect_timeout = Some(timeout);
+        self
+    }
+
+    pub fn recovery_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.config.recovery_timeout = Some(timeout);
+        self
+    }
+
     pub fn resumable(mut self) -> Self {
         self.config.resumable = true;
         self
@@ -1200,16 +1170,6 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         L::Rx: MaybeSend + 'static,
     {
         let Self { link, config } = self;
-        let SessionConfig {
-            root_settings,
-            metadata,
-            on_connection,
-            keepalive,
-            resumable,
-            session_registry,
-            operation_store,
-            spawn_fn,
-        } = config;
         let (mode, mut link) = accept_transport(link)
             .await
             .map_err(session_error_from_transport)?;
@@ -1218,11 +1178,11 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                 let handshake_result = handshake_as_acceptor(
                     &link.tx,
                     &mut link.rx,
-                    root_settings.clone(),
+                    config.root_settings.clone(),
                     true,
-                    resumable,
+                    config.resumable,
                     None,
-                    metadata_into_owned(metadata.clone()),
+                    metadata_into_owned(config.metadata.clone()),
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
@@ -1232,35 +1192,11 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                     BareConduit::with_message_plan(link, message_plan),
                     handshake_result,
                 );
-                Self::apply_common_parts(
-                    builder,
-                    root_settings,
-                    metadata,
-                    on_connection,
-                    keepalive,
-                    resumable,
-                    session_registry,
-                    operation_store,
-                    spawn_fn,
-                )
-                .establish(handler)
-                .await
+                Self::apply_common_parts(builder, config)
+                    .establish(handler)
+                    .await
             }
-            TransportMode::Stable => {
-                Self::finish_with_stable_parts(
-                    link,
-                    root_settings,
-                    metadata,
-                    on_connection,
-                    keepalive,
-                    resumable,
-                    session_registry,
-                    operation_store,
-                    spawn_fn,
-                    handler,
-                )
-                .await
-            }
+            TransportMode::Stable => Self::finish_with_stable_parts(link, config, handler).await,
         }
     }
 
@@ -1277,16 +1213,6 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         L::Rx: MaybeSend + 'static,
     {
         let Self { link, config } = self;
-        let SessionConfig {
-            root_settings,
-            metadata,
-            on_connection,
-            keepalive,
-            resumable,
-            session_registry,
-            operation_store,
-            spawn_fn,
-        } = config;
         let (mode, mut link) = accept_transport(link)
             .await
             .map_err(session_error_from_transport)?;
@@ -1295,11 +1221,11 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                 let handshake_result = handshake_as_acceptor(
                     &link.tx,
                     &mut link.rx,
-                    root_settings.clone(),
+                    config.root_settings.clone(),
                     true,
-                    resumable,
+                    config.resumable,
                     None,
-                    metadata_into_owned(metadata.clone()),
+                    metadata_into_owned(config.metadata.clone()),
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
@@ -1309,34 +1235,13 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                     BareConduit::with_message_plan(link, message_plan),
                     handshake_result,
                 );
-                Self::apply_common_parts(
-                    builder,
-                    root_settings,
-                    metadata,
-                    on_connection,
-                    keepalive,
-                    resumable,
-                    session_registry,
-                    operation_store,
-                    spawn_fn,
-                )
-                .establish_or_resume(handler)
-                .await
+                Self::apply_common_parts(builder, config)
+                    .establish_or_resume(handler)
+                    .await
             }
-            TransportMode::Stable => Self::finish_with_stable_parts(
-                link,
-                root_settings,
-                metadata,
-                on_connection,
-                keepalive,
-                resumable,
-                session_registry,
-                operation_store,
-                spawn_fn,
-                handler,
-            )
-            .await
-            .map(|client| SessionAcceptOutcome::Established(client)),
+            TransportMode::Stable => Self::finish_with_stable_parts(link, config, handler)
+                .await
+                .map(SessionAcceptOutcome::Established),
         }
     }
 
@@ -1352,16 +1257,6 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         L::Rx: MaybeSend + 'static,
     {
         let Self { link, config } = self;
-        let SessionConfig {
-            root_settings,
-            metadata,
-            on_connection,
-            keepalive,
-            resumable,
-            session_registry,
-            operation_store,
-            spawn_fn,
-        } = config;
         let (mode, mut link) = accept_transport(link)
             .await
             .map_err(session_error_from_transport)?;
@@ -1370,11 +1265,11 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                 let handshake_result = handshake_as_acceptor(
                     &link.tx,
                     &mut link.rx,
-                    root_settings.clone(),
+                    config.root_settings.clone(),
                     true,
-                    resumable,
+                    config.resumable,
                     None,
-                    metadata_into_owned(metadata.clone()),
+                    metadata_into_owned(config.metadata.clone()),
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
@@ -1384,19 +1279,9 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                     BareConduit::with_message_plan(link, message_plan),
                     handshake_result,
                 );
-                Self::apply_common_parts(
-                    builder,
-                    root_settings,
-                    metadata,
-                    on_connection,
-                    keepalive,
-                    resumable,
-                    session_registry,
-                    operation_store,
-                    spawn_fn,
-                )
-                .establish(handler)
-                .await
+                Self::apply_common_parts(builder, config)
+                    .establish(handler)
+                    .await
             }
             TransportMode::Stable => Err(SessionError::Protocol(
                 "stable conduit transport selection is unsupported on wasm".into(),
@@ -1416,16 +1301,6 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         L::Rx: MaybeSend + 'static,
     {
         let Self { link, config } = self;
-        let SessionConfig {
-            root_settings,
-            metadata,
-            on_connection,
-            keepalive,
-            resumable,
-            session_registry,
-            operation_store,
-            spawn_fn,
-        } = config;
         let (mode, mut link) = accept_transport(link)
             .await
             .map_err(session_error_from_transport)?;
@@ -1434,11 +1309,11 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                 let handshake_result = handshake_as_acceptor(
                     &link.tx,
                     &mut link.rx,
-                    root_settings.clone(),
+                    config.root_settings.clone(),
                     true,
-                    resumable,
+                    config.resumable,
                     None,
-                    metadata_into_owned(metadata.clone()),
+                    metadata_into_owned(config.metadata.clone()),
                 )
                 .await
                 .map_err(session_error_from_handshake)?;
@@ -1448,19 +1323,9 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                     BareConduit::with_message_plan(link, message_plan),
                     handshake_result,
                 );
-                Self::apply_common_parts(
-                    builder,
-                    root_settings,
-                    metadata,
-                    on_connection,
-                    keepalive,
-                    resumable,
-                    session_registry,
-                    operation_store,
-                    spawn_fn,
-                )
-                .establish_or_resume(handler)
-                .await
+                Self::apply_common_parts(builder, config)
+                    .establish_or_resume(handler)
+                    .await
             }
             TransportMode::Stable => Err(SessionError::Protocol(
                 "stable conduit transport selection is unsupported on wasm".into(),
@@ -1469,17 +1334,9 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    #[allow(clippy::too_many_arguments)]
     async fn finish_with_stable_parts<Client: FromVoxSession>(
         mut link: SplitLink<L::Tx, L::Rx>,
-        root_settings: ConnectionSettings,
-        metadata: Metadata<'a>,
-        on_connection: Option<Box<dyn ConnectionAcceptor>>,
-        keepalive: Option<SessionKeepaliveConfig>,
-        resumable: bool,
-        session_registry: Option<SessionRegistry>,
-        operation_store: Option<Arc<dyn OperationStore>>,
-        spawn_fn: SpawnFn,
+        config: SessionConfig<'a>,
         handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<Client, SessionError>
     where
@@ -1491,18 +1348,16 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         let handshake_result = handshake_as_acceptor(
             &link.tx,
             &mut link.rx,
-            root_settings.clone(),
+            config.root_settings.clone(),
             true,
-            resumable,
+            config.resumable,
             None,
-            metadata_into_owned(metadata.clone()),
+            metadata_into_owned(config.metadata.clone()),
         )
         .await
         .map_err(session_error_from_handshake)?;
         let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
             .map_err(SessionError::Protocol)?;
-        // Read the stable conduit's ClientHello — the initiator sends it
-        // after the CBOR session handshake completes.
         let client_hello = crate::stable_conduit::recv_client_hello(&mut link.rx)
             .await
             .map_err(|e| SessionError::Protocol(format!("stable conduit setup failed: {e}")))?;
@@ -1516,41 +1371,16 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         .map_err(|e| SessionError::Protocol(format!("stable conduit setup failed: {e}")))?
         .with_message_plan(message_plan);
         let builder = SessionAcceptorBuilder::new(conduit, handshake_result);
-        Self::apply_common_parts(
-            builder,
-            root_settings,
-            metadata,
-            on_connection,
-            keepalive,
-            resumable,
-            session_registry,
-            operation_store,
-            spawn_fn,
-        )
-        .establish(handler)
-        .await
+        Self::apply_common_parts(builder, config)
+            .establish(handler)
+            .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn apply_common_parts<C>(
         mut builder: SessionAcceptorBuilder<'a, C>,
-        root_settings: ConnectionSettings,
-        metadata: Metadata<'a>,
-        on_connection: Option<Box<dyn ConnectionAcceptor>>,
-        keepalive: Option<SessionKeepaliveConfig>,
-        resumable: bool,
-        session_registry: Option<SessionRegistry>,
-        operation_store: Option<Arc<dyn OperationStore>>,
-        spawn_fn: SpawnFn,
+        config: SessionConfig<'a>,
     ) -> SessionAcceptorBuilder<'a, C> {
-        builder.config.root_settings = root_settings;
-        builder.config.metadata = metadata;
-        builder.config.on_connection = on_connection;
-        builder.config.keepalive = keepalive;
-        builder.config.resumable = resumable;
-        builder.config.session_registry = session_registry;
-        builder.config.operation_store = operation_store;
-        builder.config.spawn_fn = spawn_fn;
+        builder.config = config;
         builder
     }
 }

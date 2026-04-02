@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use vox_core::{FromVoxSession, LinkSource, SessionError, TransportMode, initiator};
 
 /// Connect to a remote vox service, returning a typed client.
@@ -60,6 +62,7 @@ where
     <S::Link as vox_types::Link>::Rx: vox_types::MaybeSend + Send + 'static,
 {
     let client = initiator(source, TransportMode::Bare)
+        .connect_timeout(Duration::from_secs(5))
         .establish::<Client>(())
         .await?;
     Ok(client)

@@ -603,3 +603,67 @@ async fn resumable_session_returns_indeterminate_for_released_non_idem_call_afte
     client_break2.close().await;
     server_break2.close().await;
 }
+
+#[tokio::test]
+async fn recovery_timeout_gives_up_after_deadline() {
+    let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
+
+    // Source that only has one link — after break, next_link hangs forever.
+    let source = TestLinkSource::new([Attachment::initiator(client_link1)]);
+
+    let (server_established, client_established) = tokio::try_join!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            acceptor_on(server_link1).establish::<NoopClient>(EchoHandler),
+        ),
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            crate::initiator(source, TransportMode::Bare)
+                .resumable()
+                .recovery_timeout(Duration::from_millis(500))
+                .connect_timeout(Duration::from_millis(200))
+                .establish::<NoopClient>(()),
+        ),
+    )
+    .expect("initial establishment timed out");
+
+    let _server = server_established.expect("server establish");
+    let client = client_established.expect("client establish");
+
+    // Make a call to verify the session works.
+    let args: u32 = 42;
+    let response = client
+        .caller
+        .call(RequestCall {
+            method_id: MethodId(1),
+            args: Payload::outgoing(&args),
+            schemas: Default::default(),
+            metadata: Default::default(),
+        })
+        .await
+        .expect("call should succeed");
+    let ret_bytes = match &response.ret {
+        Payload::PostcardBytes(bytes) => *bytes,
+        _ => panic!("expected postcard bytes"),
+    };
+    let result: u32 = vox_postcard::from_slice(ret_bytes).expect("deserialize");
+    assert_eq!(result, 42);
+
+    // Break the link — the server is gone forever.
+    client_break1.close().await;
+    server_break1.close().await;
+
+    // The recovery should give up after ~500ms.
+    let start = std::time::Instant::now();
+    client.caller.closed().await;
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "recovery should have given up, but took {elapsed:?}"
+    );
+    assert!(
+        elapsed >= Duration::from_millis(400),
+        "recovery gave up too quickly: {elapsed:?}"
+    );
+}

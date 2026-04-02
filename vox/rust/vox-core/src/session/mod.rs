@@ -379,6 +379,7 @@ pub struct Session {
     keepalive: Option<SessionKeepaliveConfig>,
     resume_notifier: watch::Sender<u64>,
     recoverer: Option<Box<dyn ConduitRecoverer>>,
+    recovery_timeout: Option<Duration>,
 }
 
 #[derive(Debug)]
@@ -770,6 +771,7 @@ pub enum SessionError {
     Protocol(String),
     Rejected(Metadata<'static>),
     NotResumable,
+    ConnectTimeout,
 }
 
 impl std::fmt::Display for SessionError {
@@ -779,6 +781,7 @@ impl std::fmt::Display for SessionError {
             Self::Protocol(msg) => write!(f, "protocol error: {msg}"),
             Self::Rejected(_) => write!(f, "connection rejected"),
             Self::NotResumable => write!(f, "session is not resumable"),
+            Self::ConnectTimeout => write!(f, "connect timeout"),
         }
     }
 }
@@ -799,6 +802,7 @@ impl Session {
         keepalive: Option<SessionKeepaliveConfig>,
         resumable: bool,
         recoverer: Option<Box<dyn ConduitRecoverer>>,
+        recovery_timeout: Option<Duration>,
     ) -> Self
     where
         Tx: ConduitTx<Msg = MessageFamily> + MaybeSend + MaybeSync + 'static,
@@ -837,6 +841,7 @@ impl Session {
             keepalive,
             resume_notifier,
             recoverer,
+            recovery_timeout,
         }
     }
 
@@ -993,10 +998,15 @@ impl Session {
         }
 
         if let Some(recoverer) = self.recoverer.as_mut() {
-            match recoverer
-                .next_conduit(self.session_resume_key.as_ref())
-                .await
-            {
+            let recovery_fut = recoverer.next_conduit(self.session_resume_key.as_ref());
+            let recovery_result = match self.recovery_timeout {
+                Some(timeout) => match tokio::time::timeout(timeout, recovery_fut).await {
+                    Ok(r) => r,
+                    Err(_) => return false,
+                },
+                None => recovery_fut.await,
+            };
+            match recovery_result {
                 Ok(recovered) => {
                     let result =
                         self.resume_from_handshake(recovered.tx, recovered.rx, recovered.handshake);
@@ -2058,6 +2068,7 @@ mod tests {
         let (control_tx, control_rx) = mpsc::unbounded_channel("session.control.test");
         Session::pre_handshake(
             tx, rx, None, open_rx, close_rx, resume_rx, control_tx, control_rx, None, false, None,
+            None,
         )
     }
 

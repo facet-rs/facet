@@ -285,13 +285,34 @@ feature entirely.
 6. ✅ `establish()` returns `Client` directly (not `(Client, SessionHandle)`)
 7. ✅ `SessionConfig` struct deduplicates shared fields across 5 builder types
 8. Service routing: automatic service name metadata + server factory
-   - Client sends service name automatically (from type parameter)
-   - `session.open::<FooClient>()` for typed virtual connections
-   - Server factory receives `ConnectionContext` with service name
-   - Same factory handles root and virtual connections
-   - Replaces `ConnectionAcceptor`
-9. Facade re-export hygiene
-10. Connect timeout
+   - ✅ Client sends service name automatically (from type parameter)
+   - ✅ `session.open::<FooClient>()` for typed virtual connections
+   - ✅ `ConnectionAcceptor` blanket impl for closures and dispatchers
+   - ✅ `ErasedHandler` trait for object-safe boxed handlers
+   - ✅ `vox-service` metadata auto-injected, `metadata_get_str`/`metadata_get_u64` helpers
+   - Remaining: unify root + virtual through single `ConnectionAcceptor`
+9. Metadata ergonomics
+   - `MetadataEntry::str(key, value)`, `MetadataEntry::u64(key, value)` constructors
+   - `Metadata::build().str(k, v).u64(k, v).done()` builder
+10. ✅ Connect timeout
+    - `connect_timeout`: per-attempt timeout (default 5s in `vox::connect()`)
+    - `recovery_timeout`: total recovery window before giving up
+    - `SessionConfig` refactored — helpers pass config as whole struct, not individual fields
+11. Simplify `ConnectionAcceptor` + `ConnectionRequest`
+    - `ConnectionRequest` wraps metadata with typed getters
+      (`service()`, `transport()`, `peer_addr()`, `get_str()`)
+    - `ConnectionAcceptor::accept(&self, req: &ConnectionRequest)
+       -> Result<Box<dyn ErasedHandler>, Metadata<'static>>`
+    - Remove `AcceptedConnection`, `ConnectionSetup` — settings derived automatically
+    - Root and virtual connections go through the same acceptor
+    - `establish()` drops the `handler` parameter
+12. `vox::serve(addr, acceptor)` — symmetric to `vox::connect()`
+    - Listens, accepts connections in a loop, spawns sessions
+    - Single-service: `vox::serve(addr, EchoDispatcher::new(EchoService))`
+    - Multi-service factory: `vox::serve(addr, |req| match req.service() { ... })`
+13. Facade re-export hygiene + crate documentation
+    - Replace `pub use vox_core::*` with curated list
+    - Document public API
 
 ## SHM Transport in `connect()` ✅
 
@@ -311,20 +332,20 @@ guest-side bootstrap on each `next_link()` call:
 
 Usage: `vox::connect("shm:///path/to/control.sock")`
 
-## Connect Timeout
+## Connect Timeout ✅
 
-`vox::connect()` currently has no overall timeout. The individual
-transports have their own timeouts (TCP has configurable resolve/connect
-timeouts), but the vox handshake that follows can stall indefinitely.
+**Done.** Two knobs:
 
-**Desired direction:** `connect()` should accept an optional timeout
-(or have a sensible default) that covers the entire operation: transport
-setup + vox handshake.
+- `connect_timeout`: bounds each individual connection attempt (transport
+  + handshake). Default 5s in `vox::connect()`. Applied to both initial
+  `establish()` and each reconnection attempt in `BareSourceRecoverer`.
+- `recovery_timeout`: bounds total recovery time after a link breaks. If
+  the session can't reconnect within this window, it gives up and the
+  session dies. No default (unlimited retries unless set).
+
+`SessionConfig` refactored: helpers pass config as a whole struct instead
+of destructuring into 8+ individual fields.
 
 ## Open Questions
 
-- Whether factory should be sync closure, async closure, or trait
-- Whether `session.open::<Client>()` needs a builder for settings/metadata or just takes args
 - How to stage behavior changes for root caller-drop semantics safely
-- Whether `ConnectionAcceptor` can be removed in one step or needs a deprecation period
-- Convenience helpers on `Metadata` for reading `vox-*` keys (e.g. `metadata.get_str(key)`)
