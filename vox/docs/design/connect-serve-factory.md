@@ -284,28 +284,31 @@ feature entirely.
    - Internal tests use `caller.driver()` escape hatch for raw protocol testing
 6. ✅ `establish()` returns `Client` directly (not `(Client, SessionHandle)`)
 7. ✅ `SessionConfig` struct deduplicates shared fields across 5 builder types
-8. Service routing: automatic service name metadata + server factory
-   - ✅ Client sends service name automatically (from type parameter)
-   - ✅ `session.open::<FooClient>()` for typed virtual connections
-   - ✅ `ConnectionAcceptor` blanket impl for closures and dispatchers
-   - ✅ `ErasedHandler` trait for object-safe boxed handlers
-   - ✅ `vox-service` metadata auto-injected, `metadata_get_str`/`metadata_get_u64` helpers
-   - Remaining: unify root + virtual through single `ConnectionAcceptor`
-9. Metadata ergonomics
+8. ✅ Service routing: automatic service name metadata + server factory
+   - Client sends service name automatically (from type parameter)
+   - `session.open::<FooClient>()` for typed virtual connections
+   - `ErasedHandler` trait for object-safe boxed handlers
+   - `vox-service` metadata auto-injected, `metadata_get_str`/`metadata_get_u64` helpers
+   - `vox-connection-kind` metadata injected (`"root"` or `"virtual"`)
+9. ✅ Metadata ergonomics
    - `MetadataEntry::str(key, value)`, `MetadataEntry::u64(key, value)` constructors
-   - `Metadata::build().str(k, v).u64(k, v).done()` builder
+   - `MetadataBuilder` via `metadata_build().str(k, v).u64(k, v).done()`
 10. ✅ Connect timeout
     - `connect_timeout`: per-attempt timeout (default 5s in `vox::connect()`)
     - `recovery_timeout`: total recovery window before giving up
     - `SessionConfig` refactored — helpers pass config as whole struct, not individual fields
-11. Simplify `ConnectionAcceptor` + `ConnectionRequest`
+11. ✅ Unified `ConnectionAcceptor` + `PendingConnection`
     - `ConnectionRequest` wraps metadata with typed getters
-      (`service()`, `transport()`, `peer_addr()`, `get_str()`)
-    - `ConnectionAcceptor::accept(&self, req: &ConnectionRequest)
-       -> Result<Box<dyn ErasedHandler>, Metadata<'static>>`
-    - Remove `AcceptedConnection`, `ConnectionSetup` — settings derived automatically
+      (`service()`, `transport()`, `peer_addr()`, `is_root()`, `is_virtual()`)
+    - `ConnectionAcceptor::accept(&self, req: &ConnectionRequest, conn: PendingConnection)
+       -> Result<(), Metadata<'static>>`
+    - `PendingConnection`: `handle_with()`, `proxy_to()`, `into_handle()`
+    - Blanket impl: any `Handler<DriverReplySink> + Clone` is a `ConnectionAcceptor`
+    - `acceptor_fn()` wrapper for closure-based factories
+    - `AcceptedConnection`, `ConnectionSetup` removed
     - Root and virtual connections go through the same acceptor
-    - `establish()` drops the `handler` parameter
+    - `establish()` no longer takes a `handler` parameter
+    - `proxy_connections()` returns `Result`, checks parity mismatch
 12. `vox::serve(addr, acceptor)` — symmetric to `vox::connect()`
     - Listens, accepts connections in a loop, spawns sessions
     - Single-service: `vox::serve(addr, EchoDispatcher::new(EchoService))`
