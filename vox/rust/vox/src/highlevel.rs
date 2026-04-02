@@ -97,59 +97,80 @@ pub async fn connect<Client: FromVoxSession>(
 ///     }
 /// })).await?;
 /// ```
-pub async fn serve(
-    addr: impl std::fmt::Display,
-    acceptor: impl ConnectionAcceptor,
-) -> Result<(), SessionError> {
-    let addr = addr.to_string();
-    let (scheme, host) = match addr.split_once("://") {
-        Some((scheme, host)) => (scheme.to_string(), host.to_string()),
-        None => ("tcp".to_string(), addr),
-    };
+/// A listener that accepts incoming connections for [`serve()`].
+pub trait VoxListener: Send + 'static {
+    /// The link type produced by this listener.
+    type Link: vox_types::Link + Send + 'static;
 
-    let acceptor = Arc::new(acceptor);
+    /// Accept the next incoming connection.
+    fn accept(&self) -> impl std::future::Future<Output = std::io::Result<Self::Link>> + Send + '_;
+}
 
-    match scheme.as_str() {
-        #[cfg(feature = "transport-tcp")]
-        "tcp" => {
-            let listener = tokio::net::TcpListener::bind(&host)
-                .await
-                .map_err(SessionError::Io)?;
-            loop {
-                let (stream, _addr) = listener.accept().await.map_err(SessionError::Io)?;
-                let acceptor = acceptor.clone();
-                tokio::spawn(async move {
-                    let link = vox_stream::StreamLink::tcp(stream);
-                    let result = vox_core::acceptor_on(link)
-                        .on_connection(AcceptorRef(acceptor))
-                        .establish::<NoopClient>()
-                        .await;
-                    if let Ok(client) = result {
-                        client.caller.closed().await;
-                    }
-                });
+#[cfg(feature = "transport-tcp")]
+impl VoxListener for tokio::net::TcpListener {
+    type Link =
+        vox_stream::StreamLink<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>;
+
+    async fn accept(&self) -> std::io::Result<Self::Link> {
+        let (stream, _addr) = tokio::net::TcpListener::accept(self).await?;
+        Ok(vox_stream::StreamLink::tcp(stream))
+    }
+}
+
+#[cfg(feature = "transport-local")]
+impl VoxListener for vox_stream::LocalLinkAcceptor {
+    type Link = vox_stream::LocalLink;
+
+    async fn accept(&self) -> std::io::Result<Self::Link> {
+        vox_stream::LocalLinkAcceptor::accept(self).await
+    }
+}
+
+/// Serve a vox service, accepting connections in a loop.
+///
+/// Takes a [`VoxListener`] (e.g. `TcpListener`) and a [`ConnectionAcceptor`].
+/// Each incoming connection is handled in a spawned task. Runs until an I/O
+/// error occurs on the listener.
+///
+/// # Examples
+///
+/// ```no_run
+/// # #[vox::service]
+/// # trait Hello {
+/// #     async fn say_hello(&self) -> String;
+/// # }
+/// # #[derive(Clone)]
+/// # struct HelloService;
+/// # impl Hello for HelloService {
+/// #     async fn say_hello(&self) -> String { "hi".into() }
+/// # }
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let listener = tokio::net::TcpListener::bind("0.0.0.0:9000").await?;
+/// vox::serve(listener, HelloDispatcher::new(HelloService)).await?;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn serve<L>(listener: L, acceptor: impl ConnectionAcceptor) -> Result<(), SessionError>
+where
+    L: VoxListener,
+    <L::Link as vox_types::Link>::Tx: vox_types::MaybeSend + vox_types::MaybeSync + Send + 'static,
+    <<L::Link as vox_types::Link>::Tx as vox_types::LinkTx>::Permit: vox_types::MaybeSend,
+    <L::Link as vox_types::Link>::Rx: vox_types::MaybeSend + Send + 'static,
+{
+    let acceptor: Arc<dyn ConnectionAcceptor> = Arc::new(acceptor);
+    loop {
+        let link = listener.accept().await.map_err(SessionError::Io)?;
+        let acceptor = acceptor.clone();
+        tokio::spawn(async move {
+            let result = vox_core::acceptor_on(link)
+                .on_connection(AcceptorRef(acceptor))
+                .establish::<NoopClient>()
+                .await;
+            if let Ok(client) = result {
+                client.caller.closed().await;
             }
-        }
-        #[cfg(feature = "transport-local")]
-        "local" => {
-            let listener = vox_stream::LocalLinkAcceptor::bind(&host).map_err(SessionError::Io)?;
-            loop {
-                let link = listener.accept().await.map_err(SessionError::Io)?;
-                let acceptor = acceptor.clone();
-                tokio::spawn(async move {
-                    let result = vox_core::acceptor_on(link)
-                        .on_connection(AcceptorRef(acceptor))
-                        .establish::<NoopClient>()
-                        .await;
-                    if let Ok(client) = result {
-                        client.caller.closed().await;
-                    }
-                });
-            }
-        }
-        _ => Err(SessionError::Protocol(format!(
-            "unsupported transport scheme for serve: {scheme:?}"
-        ))),
+        });
     }
 }
 
