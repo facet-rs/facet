@@ -8,7 +8,7 @@ use moire::sync::mpsc;
 use tokio::sync::watch;
 use tracing::{trace, warn};
 use vox_types::{
-    BoxFut, ChannelMessage, Conduit, ConduitRx, ConduitTx, ConduitTxPermit, ConnectionAccept,
+    BoxFut, ChannelMessage, ConduitRx, ConduitTx, ConduitTxPermit, ConnectionAccept,
     ConnectionClose, ConnectionId, ConnectionOpen, ConnectionReject, ConnectionSettings, Handler,
     HandshakeResult, IdAllocator, MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload,
     Metadata, Parity, RequestBody, RequestId, RequestMessage, RequestResponse, SelfRef,
