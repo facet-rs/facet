@@ -118,7 +118,10 @@ fn build_resolved_plan<'facet, T: Facet<'facet>>(
 
     let local_extracted = extract_schemas(T::SHAPE)
         .map_err(|e| DeserializeError::protocol(&format!("schema extraction failed: {e}")))?;
-    let local = SchemaSet::from_root_and_schemas(local_extracted.root, local_extracted.schemas);
+    let local = SchemaSet::from_root_and_schemas(
+        local_extracted.root.clone(),
+        local_extracted.schemas.clone(),
+    );
 
     let plan = build_plan(&PlanInput {
         remote: &remote,

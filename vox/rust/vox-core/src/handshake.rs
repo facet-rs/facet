@@ -35,6 +35,7 @@ fn message_schema() -> Vec<Schema> {
     vox_types::extract_schemas(<vox_types::Message<'static> as facet::Facet<'static>>::SHAPE)
         .expect("schema extraction")
         .schemas
+        .clone()
 }
 
 /// Send a CBOR-encoded handshake message on a raw link.

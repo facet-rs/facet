@@ -658,128 +658,6 @@ fn vox_unix_stream(bencher: divan::Bencher, n: usize) {
 }
 
 // ============================================================================
-// Swift cross-language benchmarks
-// ============================================================================
-
-#[cfg(unix)]
-mod swift_bench {
-    use std::io::{BufRead, BufReader, Write};
-    use std::process::{Child, Command, Stdio};
-    use std::sync::OnceLock;
-    use tempfile::TempDir;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
-    use tokio::net::UnixStream;
-
-    pub struct SwiftServer {
-        _process: Child,
-        socket_path: String,
-        _temp_dir: TempDir,
-    }
-
-    impl SwiftServer {
-        pub fn start() -> Self {
-            let mut cmd = Command::new("swift");
-            cmd.arg("run")
-                .arg("--package-path")
-                .arg("../../swift/vox-runtime")
-                .arg("vox-bench-server")
-                .arg("unix")
-                .stdout(Stdio::piped())
-                .stderr(Stdio::inherit());
-
-            let mut process = cmd.spawn().expect("Failed to start Swift server");
-            let stdout = process.stdout.take().expect("No stdout");
-            let mut reader = BufReader::new(stdout);
-
-            let mut socket_path = String::new();
-            reader
-                .read_line(&mut socket_path)
-                .expect("Failed to read socket path");
-            socket_path = socket_path.trim().to_string();
-
-            eprintln!("Swift server started on {}", socket_path);
-
-            SwiftServer {
-                _process: process,
-                socket_path,
-                _temp_dir: TempDir::new().unwrap(),
-            }
-        }
-
-        pub fn socket_path(&self) -> &str {
-            &self.socket_path
-        }
-    }
-
-    impl Drop for SwiftServer {
-        fn drop(&mut self) {
-            let _ = std::process::Command::new("nc")
-                .arg("-U")
-                .arg(&self.socket_path)
-                .arg("-q0")
-                .stdin(Stdio::piped())
-                .spawn();
-        }
-    }
-
-    pub async fn ping_pong(server: &SwiftServer) {
-        let stream = UnixStream::connect(server.socket_path()).await.unwrap();
-        let (mut reader, mut writer) = stream.into_split();
-        let mut reader = TokioBufReader::new(reader);
-
-        writer.write_all(b"ping\n").await.unwrap();
-        writer.flush().await.unwrap();
-
-        let mut response = String::new();
-        reader.read_line(&mut response).await.unwrap();
-
-        assert_eq!(response.trim(), "pong");
-    }
-
-    pub async fn echo(server: &SwiftServer, data: &[u8]) -> Vec<u8> {
-        let stream = UnixStream::connect(server.socket_path()).await.unwrap();
-        let (mut reader, mut writer) = stream.into_split();
-        let mut reader = TokioBufReader::new(reader);
-
-        let payload = String::from_utf8_lossy(data);
-        writer
-            .write_all(format!("echo {}\n", payload).as_bytes())
-            .await
-            .unwrap();
-        writer.flush().await.unwrap();
-
-        let mut response = String::new();
-        reader.read_line(&mut response).await.unwrap();
-
-        response.trim().as_bytes()[5..].to_vec()
-    }
-}
-
-#[cfg(unix)]
-#[divan::bench]
-fn swift_unix_ping(bencher: divan::Bencher) {
-    let server = swift_bench::SwiftServer::start();
-    bencher.bench_local(|| {
-        TOKIO.block_on(async {
-            swift_bench::ping_pong(&server).await;
-        })
-    });
-}
-
-#[cfg(unix)]
-#[divan::bench(args = PAYLOAD_SIZES)]
-fn swift_unix_echo(bencher: divan::Bencher, n: usize) {
-    let server = swift_bench::SwiftServer::start();
-    let payload = vec![42u8; n];
-    bencher.bench_local(|| {
-        TOKIO.block_on(async {
-            let result = swift_bench::echo(&server, &payload).await;
-            divan::black_box(result.len());
-        })
-    });
-}
-
-// ============================================================================
 // serialization microbenchmark: scatter plan vs direct to_vec
 // ============================================================================
 // Swift cross-language benchmarks
@@ -1079,11 +957,16 @@ mod serialize_bench {
     pub static MESSAGE_PLAN: LazyLock<PlanResult> = LazyLock::new(|| {
         let remote_extracted =
             extract_schemas(<MessageFamily as MsgFamily>::shape()).expect("schema extraction");
-        let remote =
-            SchemaSet::from_root_and_schemas(remote_extracted.root, remote_extracted.schemas);
+        let remote = SchemaSet::from_root_and_schemas(
+            remote_extracted.root.clone(),
+            remote_extracted.schemas.clone(),
+        );
         let local_extracted =
             extract_schemas(<MessageFamily as MsgFamily>::shape()).expect("schema extraction");
-        let local = SchemaSet::from_root_and_schemas(local_extracted.root, local_extracted.schemas);
+        let local = SchemaSet::from_root_and_schemas(
+            local_extracted.root.clone(),
+            local_extracted.schemas.clone(),
+        );
         let plan = build_plan(&PlanInput {
             remote: &remote,
             local: &local,
@@ -1159,11 +1042,16 @@ mod serialize_bench {
     pub static PAYLOAD_PLAN: LazyLock<PlanResult> = LazyLock::new(|| {
         let remote_extracted = extract_schemas(<FastPathArgs<'static> as Facet<'static>>::SHAPE)
             .expect("schema extraction");
-        let remote =
-            SchemaSet::from_root_and_schemas(remote_extracted.root, remote_extracted.schemas);
+        let remote = SchemaSet::from_root_and_schemas(
+            remote_extracted.root.clone(),
+            remote_extracted.schemas.clone(),
+        );
         let local_extracted = extract_schemas(<FastPathArgs<'static> as Facet<'static>>::SHAPE)
             .expect("schema extraction");
-        let local = SchemaSet::from_root_and_schemas(local_extracted.root, local_extracted.schemas);
+        let local = SchemaSet::from_root_and_schemas(
+            local_extracted.root.clone(),
+            local_extracted.schemas.clone(),
+        );
         let plan = build_plan(&PlanInput {
             remote: &remote,
             local: &local,
@@ -1306,12 +1194,17 @@ mod serialize_bench {
         let remote_extracted =
             extract_schemas(<GnarlyBorrowedArgs<'static> as Facet<'static>>::SHAPE)
                 .expect("schema extraction");
-        let remote =
-            SchemaSet::from_root_and_schemas(remote_extracted.root, remote_extracted.schemas);
+        let remote = SchemaSet::from_root_and_schemas(
+            remote_extracted.root.clone(),
+            remote_extracted.schemas.clone(),
+        );
         let local_extracted =
             extract_schemas(<GnarlyBorrowedArgs<'static> as Facet<'static>>::SHAPE)
                 .expect("schema extraction");
-        let local = SchemaSet::from_root_and_schemas(local_extracted.root, local_extracted.schemas);
+        let local = SchemaSet::from_root_and_schemas(
+            local_extracted.root.clone(),
+            local_extracted.schemas.clone(),
+        );
         let plan = build_plan(&PlanInput {
             remote: &remote,
             local: &local,

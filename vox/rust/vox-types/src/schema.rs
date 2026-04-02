@@ -6,6 +6,8 @@
 
 pub use vox_schema::*;
 
+use std::sync::Arc;
+
 use facet::Facet;
 use facet_core::{DeclId, Def, ScalarType, Shape, StructKind, Type, UserType};
 use indexmap::IndexMap;
@@ -156,11 +158,6 @@ impl SchemaSendTracker {
         }
 
         // Slow path: extract, deduplicate, encode.
-        let already_sent = self.sent_schemas.clone();
-
-        // Extraction is intentionally fresh and pure here. Wire dedup happens
-        // on content hashes, not DeclId caching, to avoid aliasing structural
-        // roots like unary tuples across unrelated method shapes.
         let extracted = extract_schemas(shape)?;
 
         // Add all schemas to the persistent registry (for the operation store).
@@ -173,8 +170,9 @@ impl SchemaSendTracker {
         // Filter to only schemas not already sent on the wire.
         let unsent: Vec<Schema> = extracted
             .schemas
-            .into_iter()
-            .filter(|s| !already_sent.contains(&s.id))
+            .iter()
+            .filter(|s| !self.sent_schemas.contains(&s.id))
+            .cloned()
             .collect();
 
         // Track sent schemas.
@@ -184,7 +182,7 @@ impl SchemaSendTracker {
 
         let schema_payload = SchemaPayload {
             schemas: unsent,
-            root: extracted.root,
+            root: extracted.root.clone(),
         };
         dlog!(
             "[schema] send binding: method={:?} direction={:?} root={:?} schema_count={}",
@@ -215,7 +213,6 @@ impl SchemaSendTracker {
             return CborPayload::default();
         }
 
-        let already_sent = self.sent_schemas.clone();
         let mut all_schemas = Vec::new();
         let mut visited = HashSet::new();
         let mut queue = Vec::new();
@@ -241,7 +238,7 @@ impl SchemaSendTracker {
 
         let unsent: Vec<Schema> = all_schemas
             .into_iter()
-            .filter(|schema| !already_sent.contains(&schema.id))
+            .filter(|schema| !self.sent_schemas.contains(&schema.id))
             .collect();
 
         for schema in &unsent {
@@ -269,7 +266,7 @@ impl SchemaSendTracker {
     pub fn extract_schemas(
         &mut self,
         shape: &'static Shape,
-    ) -> Result<ExtractedSchemas, SchemaExtractError> {
+    ) -> Result<Arc<ExtractedSchemas>, SchemaExtractError> {
         self::extract_schemas(shape)
     }
 }
@@ -464,18 +461,18 @@ pub struct ExtractedSchemas {
 
 /// Extract schemas without a tracker (uses a temporary counter).
 /// Useful for tests and one-off schema extraction.
-pub fn extract_schemas(shape: &'static Shape) -> Result<ExtractedSchemas, SchemaExtractError> {
+pub fn extract_schemas(shape: &'static Shape) -> Result<Arc<ExtractedSchemas>, SchemaExtractError> {
     use std::sync::OnceLock;
 
-    static CACHE: OnceLock<Mutex<HashMap<&'static Shape, ExtractedSchemas>>> = OnceLock::new();
+    static CACHE: OnceLock<Mutex<HashMap<&'static Shape, Arc<ExtractedSchemas>>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 
     if let Some(cached) = cache.lock().unwrap().get(shape) {
-        return Ok(cached.clone());
+        return Ok(Arc::clone(cached));
     }
 
-    let result = extract_schemas_uncached(shape)?;
-    cache.lock().unwrap().insert(shape, result.clone());
+    let result = Arc::new(extract_schemas_uncached(shape)?);
+    cache.lock().unwrap().insert(shape, Arc::clone(&result));
     Ok(result)
 }
 
