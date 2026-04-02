@@ -33,6 +33,7 @@ import {
   channel,
   session,
   setVoxLogger,
+  voxServiceMetadata,
   type Tx,
   type Rx,
   type SessionConduitKind,
@@ -295,6 +296,7 @@ async function runServer() {
   console.error(`server mode: connecting to ${addr}, acceptConnections=${acceptConnections}`);
   const established = await session.initiator(makeConnector(addr), {
     transport: subjectConduit(),
+    metadata: voxServiceMetadata("Testbed"),
     onConnection: acceptConnections
       ? (connection) => {
           const driver = new Driver(
@@ -332,6 +334,7 @@ async function runClient() {
   // automatic reconnect and retry for idempotent/persist methods.
   const established = await session.initiator(makeConnector(addr), {
     transport: subjectConduit(),
+    metadata: voxServiceMetadata("Testbed"),
     resumable: true,
   });
   const client = new TestbedClient(established.rootConnection().caller());

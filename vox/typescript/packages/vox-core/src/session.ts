@@ -282,7 +282,7 @@ async function makeInitiatorEstablishedTransport(
   if (isLinkSource(transport)) {
     const attachment = await transport.nextLink();
     await requestTransportMode(attachment.link, conduitKind);
-    const handshake = await handshakeAsInitiator(attachment.link, localSettings, true, null);
+    const handshake = await handshakeAsInitiator(attachment.link, localSettings, true, null, options.metadata ?? []);
     const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
 
     if (conduitKind === "stable") {
@@ -321,6 +321,7 @@ async function makeInitiatorEstablishedTransport(
               localSettings,
               true,
               keyCell.value,
+              options.metadata ?? [],
             );
             // Update the key for the next reconnect.
             keyCell.value = newHandshake.sessionResumeKey;
@@ -391,7 +392,7 @@ async function makeInitiatorEstablishedTransport(
   }
 
   await requestTransportMode(transport, conduitKind);
-  const handshake = await handshakeAsInitiator(transport, localSettings, true, null);
+  const handshake = await handshakeAsInitiator(transport, localSettings, true, null, options.metadata ?? []);
   const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
   if (conduitKind === "stable") {
     const stableConduit = await StableConduit.connect(singleLinkSource(transport));
@@ -424,6 +425,7 @@ async function makeAcceptorEstablishedTransport(
     true,
     options.resumable ?? false,
     null,
+    options.metadata ?? [],
   );
   const messagePlan = buildMessageDecodePlan(handshake.peerMessageSchema);
 
@@ -1687,7 +1689,7 @@ export const session = {
       parity: { tag: "Odd" },
       max_concurrent_requests: options.maxConcurrentRequests ?? 64,
     };
-    const handshake = await handshakeAsInitiator(link, localSettings);
+    const handshake = await handshakeAsInitiator(link, localSettings, true, null, options.metadata ?? []);
     return Session.initiatorConduit(
       new BareConduit(link, buildMessageDecodePlan(handshake.peerMessageSchema)),
       handshake,
@@ -1703,7 +1705,7 @@ export const session = {
       parity: { tag: "Even" },
       max_concurrent_requests: options.maxConcurrentRequests ?? 64,
     };
-    const handshake = await handshakeAsAcceptor(link, localSettings);
+    const handshake = await handshakeAsAcceptor(link, localSettings, true, false, null, options.metadata ?? []);
     return Session.initiatorConduit(
       new BareConduit(link, buildMessageDecodePlan(handshake.peerMessageSchema)),
       handshake,

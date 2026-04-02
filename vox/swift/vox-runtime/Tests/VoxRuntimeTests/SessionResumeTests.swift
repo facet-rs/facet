@@ -227,7 +227,8 @@ struct SessionResumeTests {
                     connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
-                    resumeKey: .init(bytes: resumeKey)
+                    resumeKey: .init(bytes: resumeKey),
+                    metadata: []
                 ))
         )
 
@@ -265,7 +266,8 @@ struct SessionResumeTests {
                         connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
                         messagePayloadSchemaCbor: wireMessageSchemasCbor,
                         supportsRetry: true,
-                        resumeKey: .init(bytes: resumeKey)
+                        resumeKey: .init(bytes: resumeKey),
+                        metadata: []
                     ))
             )
             try await handle.resume(replacement)
@@ -288,7 +290,8 @@ struct SessionResumeTests {
                     connectionSettings: ConnectionSettings(parity: .odd, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
-                    resumeKey: nil
+                    resumeKey: nil,
+                    metadata: []
                 ))
         )
 
@@ -336,7 +339,8 @@ struct SessionResumeTests {
                         connectionSettings: ConnectionSettings(parity: .odd, maxConcurrentRequests: 64),
                         messagePayloadSchemaCbor: wireMessageSchemasCbor,
                         supportsRetry: true,
-                        resumeKey: .init(bytes: sessionResumeKey)
+                        resumeKey: .init(bytes: sessionResumeKey),
+                        metadata: []
                     ))
             )
 
@@ -364,7 +368,8 @@ struct SessionResumeTests {
                     connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
-                    resumeKey: .init(bytes: resumeKey)
+                    resumeKey: .init(bytes: resumeKey),
+                    metadata: []
                 ))
         )
         let replacement = ResumeScriptedLink(
@@ -373,7 +378,8 @@ struct SessionResumeTests {
                     connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
-                    resumeKey: .init(bytes: resumeKey)
+                    resumeKey: .init(bytes: resumeKey),
+                    metadata: []
                 ))
         )
         let connector = ResumeScriptedConnector([initial, replacement])

@@ -48,7 +48,8 @@ private actor ScriptedTransport: Link {
                 connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
                 messagePayloadSchemaCbor: wireMessageSchemasCbor,
                 supportsRetry: true,
-                resumeKey: nil
+                resumeKey: nil,
+                metadata: []
             ))
     ) {
         self.autoRespondRequestCount = autoRespondRequestCount
@@ -472,7 +473,8 @@ struct ConnectionFailureTests {
                     connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
-                    resumeKey: nil
+                    resumeKey: nil,
+                    metadata: []
                 )))
         let (handle, driver, _, _) = try await establishInitiator(
             conduit: transport,
@@ -518,7 +520,8 @@ struct ConnectionFailureTests {
                     connectionSettings: ConnectionSettings(parity: .odd, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
-                    resumeKey: nil
+                    resumeKey: nil,
+                    metadata: []
                 )))
         let probe = BlockingDispatchProbe()
         let (_, driver, _, _) = try await establishAcceptor(
@@ -594,7 +597,8 @@ struct ConnectionFailureTests {
                     connectionSettings: ConnectionSettings(parity: .odd, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
-                    resumeKey: nil
+                    resumeKey: nil,
+                    metadata: []
                 )))
         let (_, driver, _, _) = try await establishAcceptor(
             conduit: transport,

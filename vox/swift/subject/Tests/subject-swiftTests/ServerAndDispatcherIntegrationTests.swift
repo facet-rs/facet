@@ -203,7 +203,8 @@ private struct HandshakeHarness {
                     connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
-                    resumeKey: nil
+                    resumeKey: nil,
+                    metadata: []
                 )
             )
             try writeRawFrame(connFd, bytes: helloYourself.encodeCbor())

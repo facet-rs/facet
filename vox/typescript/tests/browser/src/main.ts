@@ -6,6 +6,7 @@
 import {
   channel,
   session,
+  voxServiceMetadata,
   type LinkAttachment,
   type LinkSource,
 } from "@bearcove/vox-core";
@@ -520,6 +521,7 @@ async function runReconnectTest(wsUrl: string): Promise<void> {
     const established = await session.initiator(source, {
       transport: "bare",
       resumable: true,
+      metadata: voxServiceMetadata("Testbed"),
     });
     const client = new TestbedClient(established.rootConnection().caller());
 

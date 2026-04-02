@@ -7,6 +7,7 @@ import init, { start_acceptor } from "../pkg/wasm_inprocess_tests.js";
 import { InProcessLink } from "@bearcove/vox-inprocess";
 import {
   session,
+  voxServiceMetadata,
 } from "@bearcove/vox-core";
 import type { TestbedClient } from "@bearcove/vox-generated/testbed.generated.ts";
 
@@ -340,7 +341,7 @@ async function runTests(): Promise<void> {
     });
 
     log("Establishing session as initiator...");
-    const established = await session.initiatorOn(link, { transport: "bare" });
+    const established = await session.initiatorOn(link, { transport: "bare", metadata: voxServiceMetadata("Testbed") });
 
     // Import the TestbedClient constructor dynamically to avoid circular issues
     const { TestbedClient } = await import(

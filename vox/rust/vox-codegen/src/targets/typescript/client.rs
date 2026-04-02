@@ -243,7 +243,10 @@ pub fn generate_connect_function(service: &ServiceDescriptor) -> String {
     out.push_str(&format!(
         "export async function connect{service_name}(\n  url: string,\n  options: SessionTransportOptions = {{}},\n): Promise<{service_name}Client> {{\n"
     ));
-    out.push_str("  const established = await session.initiator(wsConnector(url), options);\n");
+    out.push_str(&format!(
+        "  const established = await session.initiator(wsConnector(url), {{ ...options, metadata: voxServiceMetadata(\"{}\") }});\n",
+        service.service_name
+    ));
     out.push_str(&format!(
         "  return new {service_name}Client(established.rootConnection().caller());\n"
     ));

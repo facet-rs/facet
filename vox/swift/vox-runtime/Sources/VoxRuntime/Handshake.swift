@@ -29,15 +29,94 @@ public struct ResumeKeyBytes: Sendable, Equatable {
     }
 }
 
+// CBOR encoding/decoding for MetadataEntry in the handshake.
+// This is separate from the postcard wire encoding in Wire.swift.
+
+private func cborEncodeMetadataValue(_ value: MetadataValue) -> [UInt8] {
+    switch value {
+    case .string(let s):
+        return cborEncodeMapHeader(1) + cborEncodeText("String") + cborEncodeText(s)
+    case .bytes(let b):
+        return cborEncodeMapHeader(1) + cborEncodeText("Bytes") + cborEncodeBytes(b)
+    case .u64(let n):
+        return cborEncodeMapHeader(1) + cborEncodeText("U64") + cborEncodeUnsigned(n)
+    }
+}
+
+private func cborDecodeMetadataValue(_ bytes: [UInt8], offset: inout Int) throws -> MetadataValue {
+    let count = try cborReadMapHeader(bytes, offset: &offset)
+    guard count == 1 else {
+        throw CborError.invalidType("MetadataValue must be a single-entry map")
+    }
+    let tag = try cborReadText(bytes, offset: &offset)
+    switch tag {
+    case "String":
+        return .string(try cborReadText(bytes, offset: &offset))
+    case "Bytes":
+        return .bytes(try cborReadBytes(bytes, offset: &offset))
+    case "U64":
+        return .u64(try cborReadUnsigned(bytes, offset: &offset))
+    default:
+        throw CborError.invalidType("unknown MetadataValue variant \(tag)")
+    }
+}
+
+private func cborEncodeMetadataEntry(_ entry: MetadataEntry) -> [UInt8] {
+    cborEncodeMapHeader(3)
+        + cborEncodeText("key") + cborEncodeText(entry.key)
+        + cborEncodeText("value") + cborEncodeMetadataValue(entry.value)
+        + cborEncodeText("flags") + cborEncodeUnsigned(entry.flags)
+}
+
+private func cborDecodeMetadataEntry(_ bytes: [UInt8], offset: inout Int) throws -> MetadataEntry {
+    let count = try cborReadMapHeader(bytes, offset: &offset)
+    var key = ""
+    var value: MetadataValue = .string("")
+    var flags: UInt64 = 0
+    for _ in 0..<count {
+        let fieldKey = try cborReadText(bytes, offset: &offset)
+        switch fieldKey {
+        case "key":
+            key = try cborReadText(bytes, offset: &offset)
+        case "value":
+            value = try cborDecodeMetadataValue(bytes, offset: &offset)
+        case "flags":
+            flags = try cborReadUnsigned(bytes, offset: &offset)
+        default:
+            _ = try cborReadRawValue(bytes, offset: &offset)
+        }
+    }
+    return MetadataEntry(key: key, value: value, flags: flags)
+}
+
+private func cborEncodeMetadata(_ entries: [MetadataEntry]) -> [UInt8] {
+    var out = cborEncodeArrayHeader(entries.count)
+    for entry in entries {
+        out += cborEncodeMetadataEntry(entry)
+    }
+    return out
+}
+
+private func cborDecodeMetadata(_ bytes: [UInt8], offset: inout Int) throws -> [MetadataEntry] {
+    let count = try cborReadArrayHeader(bytes, offset: &offset)
+    var entries: [MetadataEntry] = []
+    entries.reserveCapacity(count)
+    for _ in 0..<count {
+        entries.append(try cborDecodeMetadataEntry(bytes, offset: &offset))
+    }
+    return entries
+}
+
 struct HandshakeHello: Sendable, Equatable {
     let parity: Parity
     let connectionSettings: ConnectionSettings
     let messagePayloadSchemaCbor: [UInt8]
     let supportsRetry: Bool
     let resumeKey: ResumeKeyBytes?
+    let metadata: [MetadataEntry]
 
     func encodeCbor() -> [UInt8] {
-        cborEncodeMapHeader(5)
+        cborEncodeMapHeader(6)
             + cborEncodeText("parity")
             + parity.encodeCbor()
             + cborEncodeText("connection_settings")
@@ -48,6 +127,8 @@ struct HandshakeHello: Sendable, Equatable {
             + cborEncodeBool(supportsRetry)
             + cborEncodeText("resume_key")
             + (resumeKey?.encodeCbor() ?? cborEncodeNull())
+            + cborEncodeText("metadata")
+            + cborEncodeMetadata(metadata)
     }
 
     static func decodeCbor(_ bytes: [UInt8], offset: inout Int) throws -> Self {
@@ -57,6 +138,7 @@ struct HandshakeHello: Sendable, Equatable {
         var messagePayloadSchemaCbor: [UInt8] = []
         var supportsRetry = false
         var resumeKey: ResumeKeyBytes?
+        var metadata: [MetadataEntry] = []
 
         for _ in 0..<count {
             let key = try cborReadText(bytes, offset: &offset)
@@ -76,6 +158,8 @@ struct HandshakeHello: Sendable, Equatable {
                 } else {
                     resumeKey = nil
                 }
+            case "metadata":
+                metadata = try cborDecodeMetadata(bytes, offset: &offset)
             default:
                 _ = try cborReadRawValue(bytes, offset: &offset)
             }
@@ -86,7 +170,8 @@ struct HandshakeHello: Sendable, Equatable {
             connectionSettings: connectionSettings,
             messagePayloadSchemaCbor: messagePayloadSchemaCbor,
             supportsRetry: supportsRetry,
-            resumeKey: resumeKey
+            resumeKey: resumeKey,
+            metadata: metadata
         )
     }
 }
@@ -96,9 +181,10 @@ struct HandshakeHelloYourself: Sendable, Equatable {
     let messagePayloadSchemaCbor: [UInt8]
     let supportsRetry: Bool
     let resumeKey: ResumeKeyBytes?
+    let metadata: [MetadataEntry]
 
     func encodeCbor() -> [UInt8] {
-        cborEncodeMapHeader(4)
+        cborEncodeMapHeader(5)
             + cborEncodeText("connection_settings")
             + connectionSettings.encodeCbor()
             + cborEncodeText("message_payload_schema")
@@ -107,6 +193,8 @@ struct HandshakeHelloYourself: Sendable, Equatable {
             + cborEncodeBool(supportsRetry)
             + cborEncodeText("resume_key")
             + (resumeKey?.encodeCbor() ?? cborEncodeNull())
+            + cborEncodeText("metadata")
+            + cborEncodeMetadata(metadata)
     }
 
     static func decodeCbor(_ bytes: [UInt8], offset: inout Int) throws -> Self {
@@ -115,6 +203,7 @@ struct HandshakeHelloYourself: Sendable, Equatable {
         var messagePayloadSchemaCbor: [UInt8] = []
         var supportsRetry = false
         var resumeKey: ResumeKeyBytes?
+        var metadata: [MetadataEntry] = []
 
         for _ in 0..<count {
             let key = try cborReadText(bytes, offset: &offset)
@@ -132,6 +221,8 @@ struct HandshakeHelloYourself: Sendable, Equatable {
                 } else {
                     resumeKey = nil
                 }
+            case "metadata":
+                metadata = try cborDecodeMetadata(bytes, offset: &offset)
             default:
                 _ = try cborReadRawValue(bytes, offset: &offset)
             }
@@ -141,7 +232,8 @@ struct HandshakeHelloYourself: Sendable, Equatable {
             connectionSettings: connectionSettings,
             messagePayloadSchemaCbor: messagePayloadSchemaCbor,
             supportsRetry: supportsRetry,
-            resumeKey: resumeKey
+            resumeKey: resumeKey,
+            metadata: metadata
         )
     }
 }

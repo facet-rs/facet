@@ -10,7 +10,7 @@ import type {
   SessionTransportOptions,
   VoxCall,
 } from "@bearcove/vox-core";
-import { session } from "@bearcove/vox-core";
+import { session, voxServiceMetadata } from "@bearcove/vox-core";
 import { wsConnector } from "@bearcove/vox-ws";
 
 // Named type definitions
@@ -178,7 +178,10 @@ export async function connectTestbed(
   url: string,
   options: SessionTransportOptions = {},
 ): Promise<TestbedClient> {
-  const established = await session.initiator(wsConnector(url), options);
+  const established = await session.initiator(wsConnector(url), {
+    ...options,
+    metadata: voxServiceMetadata("Testbed"),
+  });
   return new TestbedClient(established.rootConnection().caller());
 }
 

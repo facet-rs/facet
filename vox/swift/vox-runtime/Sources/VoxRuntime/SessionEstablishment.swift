@@ -37,7 +37,8 @@ func performInitiatorHandshake(
     maxPayloadSize: UInt32,
     maxConcurrentRequests: UInt32,
     resumable: Bool,
-    resumeKey: [UInt8]? = nil
+    resumeKey: [UInt8]? = nil,
+    metadata: [MetadataEntry] = []
 ) async throws -> SessionHandshakeResult {
     traceLog(.handshake, "initiator sending Hello resumable=\(resumable)")
     let ourSettings = ConnectionSettings(parity: .odd, maxConcurrentRequests: maxConcurrentRequests)
@@ -46,7 +47,8 @@ func performInitiatorHandshake(
         connectionSettings: ourSettings,
         messagePayloadSchemaCbor: wireMessageSchemasCbor,
         supportsRetry: true,
-        resumeKey: resumeKey.map(ResumeKeyBytes.init(bytes:))
+        resumeKey: resumeKey.map(ResumeKeyBytes.init(bytes:)),
+        metadata: metadata
     )
     try await sendHandshake(link, .hello(hello))
 
@@ -101,7 +103,8 @@ func performAcceptorHandshake(
     maxPayloadSize: UInt32,
     maxConcurrentRequests: UInt32,
     resumable: Bool,
-    expectedResumeKey: [UInt8]? = nil
+    expectedResumeKey: [UInt8]? = nil,
+    metadata: [MetadataEntry] = []
 ) async throws -> SessionHandshakeResult {
     let peerHello: HandshakeHello
     switch try await recvHandshake(link) {
@@ -133,7 +136,8 @@ func performAcceptorHandshake(
         connectionSettings: ourSettings,
         messagePayloadSchemaCbor: wireMessageSchemasCbor,
         supportsRetry: true,
-        resumeKey: sessionResumeKey.map(ResumeKeyBytes.init(bytes:))
+        resumeKey: sessionResumeKey.map(ResumeKeyBytes.init(bytes:)),
+        metadata: metadata
     )
     try await sendHandshake(link, .helloYourself(helloYourself))
     traceLog(.handshake, "acceptor sent HelloYourself resumable=\(sessionResumeKey != nil)")
@@ -257,14 +261,16 @@ public func establishInitiator(
     maxPayloadSize: UInt32? = nil,
     keepalive: DriverKeepaliveConfig? = nil,
     resumable: Bool = false,
-    recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil
+    recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
+    metadata: [MetadataEntry] = []
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
     let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
     let handshake = try await performInitiatorHandshake(
         link: attachment.link,
         maxPayloadSize: ourMaxPayload,
         maxConcurrentRequests: 64,
-        resumable: resumable
+        resumable: resumable,
+        metadata: metadata
     )
 
     let conduit = try await buildEstablishedConduit(
@@ -301,7 +307,8 @@ public func establishInitiator(
     maxPayloadSize: UInt32? = nil,
     keepalive: DriverKeepaliveConfig? = nil,
     resumable: Bool = false,
-    recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil
+    recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
+    metadata: [MetadataEntry] = []
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
     try await establishInitiator(
         attachment: .initiator(link),
@@ -311,7 +318,8 @@ public func establishInitiator(
         maxPayloadSize: maxPayloadSize,
         keepalive: keepalive,
         resumable: resumable,
-        recoverAttachment: recoverAttachment
+        recoverAttachment: recoverAttachment,
+        metadata: metadata
     )
 }
 
@@ -323,7 +331,8 @@ public func establishInitiator(
     maxPayloadSize: UInt32? = nil,
     keepalive: DriverKeepaliveConfig? = nil,
     resumable: Bool = false,
-    recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil
+    recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
+    metadata: [MetadataEntry] = []
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
     try await establishInitiator(
         link: conduit,
@@ -333,7 +342,8 @@ public func establishInitiator(
         maxPayloadSize: maxPayloadSize,
         keepalive: keepalive,
         resumable: resumable,
-        recoverAttachment: recoverAttachment
+        recoverAttachment: recoverAttachment,
+        metadata: metadata
     )
 }
 
@@ -344,14 +354,16 @@ public func establishAcceptor(
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,
     keepalive: DriverKeepaliveConfig? = nil,
-    resumable: Bool = false
+    resumable: Bool = false,
+    metadata: [MetadataEntry] = []
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
     let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
     let handshake = try await performAcceptorHandshake(
         link: attachment.link,
         maxPayloadSize: ourMaxPayload,
         maxConcurrentRequests: 64,
-        resumable: resumable
+        resumable: resumable,
+        metadata: metadata
     )
 
     let conduit = try await buildEstablishedConduit(
@@ -386,7 +398,8 @@ public func establishAcceptor(
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,
     keepalive: DriverKeepaliveConfig? = nil,
-    resumable: Bool = false
+    resumable: Bool = false,
+    metadata: [MetadataEntry] = []
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
     try await establishAcceptor(
         attachment: .init(link: link),
@@ -395,7 +408,8 @@ public func establishAcceptor(
         acceptConnections: acceptConnections,
         maxPayloadSize: maxPayloadSize,
         keepalive: keepalive,
-        resumable: resumable
+        resumable: resumable,
+        metadata: metadata
     )
 }
 
@@ -406,7 +420,8 @@ public func establishAcceptor(
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,
     keepalive: DriverKeepaliveConfig? = nil,
-    resumable: Bool = false
+    resumable: Bool = false,
+    metadata: [MetadataEntry] = []
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
     try await establishAcceptor(
         link: conduit,
@@ -415,6 +430,7 @@ public func establishAcceptor(
         acceptConnections: acceptConnections,
         maxPayloadSize: maxPayloadSize,
         keepalive: keepalive,
-        resumable: resumable
+        resumable: resumable,
+        metadata: metadata
     )
 }

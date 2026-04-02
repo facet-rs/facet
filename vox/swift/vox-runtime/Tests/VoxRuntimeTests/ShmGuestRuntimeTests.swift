@@ -333,7 +333,8 @@ private func establishShmInitiator(
                 connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
                 messagePayloadSchemaCbor: wireMessageSchemasCbor,
                 supportsRetry: true,
-                resumeKey: nil
+                resumeKey: nil,
+                metadata: []
             )
         ).encodeCbor(),
         to: hostToGuest,

@@ -113,7 +113,11 @@ fn generate_imports(service: &ServiceDescriptor, w: &mut CodeWriter<&mut String>
         "import type {{ Caller, MethodDescriptor, ServiceDescriptor, VoxCall, Dispatcher, RequestContext, SessionTransportOptions }} from \"@bearcove/vox-core\";"
     )
     .unwrap();
-    cw_writeln!(w, "import {{ session }} from \"@bearcove/vox-core\";").unwrap();
+    cw_writeln!(
+        w,
+        "import {{ session, voxServiceMetadata }} from \"@bearcove/vox-core\";"
+    )
+    .unwrap();
 
     // WebSocket transport for connect helper
     cw_writeln!(w, "import {{ wsConnector }} from \"@bearcove/vox-ws\";").unwrap();

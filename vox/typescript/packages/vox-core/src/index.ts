@@ -109,3 +109,10 @@ export {
   voxLogger,
   type VoxLogger,
 } from "./logger.ts";
+
+export {
+  type HandshakeResult,
+  type MetadataEntry,
+  type Metadata,
+  voxServiceMetadata,
+} from "./handshake.ts";

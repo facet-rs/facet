@@ -16,6 +16,7 @@ import type {
 import { TestbedDispatcher } from "@bearcove/vox-generated/testbed_evolved.generated.ts";
 import { setVoxLogger } from "@bearcove/vox-core";
 import { runSubjectServer } from "./harness.ts";
+import { voxServiceMetadata } from "@bearcove/vox-core";
 
 setVoxLogger({
   debug: (...args) => console.error(...args),
@@ -48,7 +49,7 @@ class EvolvedTestbedService implements TestbedHandler {
   }
 }
 
-runSubjectServer(() => new TestbedDispatcher(new EvolvedTestbedService())).catch((e) => {
+runSubjectServer(() => new TestbedDispatcher(new EvolvedTestbedService()), voxServiceMetadata("Testbed")).catch((e) => {
   console.error(e);
   process.exit(1);
 });

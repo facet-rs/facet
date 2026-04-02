@@ -1,9 +1,11 @@
 import type { Schema } from "@bearcove/vox-postcard";
-import type { ConnectionSettings, Parity } from "@bearcove/vox-wire";
+import type { ConnectionSettings, Parity, MetadataEntry, MetadataValue, Metadata } from "@bearcove/vox-wire";
 import { messageSchemasCbor } from "@bearcove/vox-wire";
 import { decodeCbor, type CborMap, type CborValue } from "./cbor.ts";
 import type { Link } from "./link.ts";
 import { normalizeSchemaList } from "./schema_cbor.ts";
+
+export type { MetadataEntry, Metadata };
 
 export interface HandshakeResult {
   localSettings: ConnectionSettings;
@@ -12,6 +14,7 @@ export interface HandshakeResult {
   sessionResumeKey: Uint8Array | null;
   peerResumeKey: Uint8Array | null;
   peerMessageSchema: Schema[];
+  peerMetadata: MetadataEntry[];
 }
 
 type HandshakeMessage =
@@ -26,6 +29,7 @@ interface HelloMessage {
   message_payload_schema: CborValue[];
   supports_retry: boolean;
   resume_key: Uint8Array | null;
+  metadata: Metadata;
 }
 
 interface HelloYourselfMessage {
@@ -33,6 +37,7 @@ interface HelloYourselfMessage {
   message_payload_schema: CborValue[];
   supports_retry: boolean;
   resume_key: Uint8Array | null;
+  metadata: Metadata;
 }
 
 function concatChunks(chunks: Uint8Array[]): Uint8Array {
@@ -137,10 +142,34 @@ function encodeResumeKey(resumeKey: Uint8Array | null): Uint8Array {
   return encodeMap([["bytes", encodeBytes(resumeKey)]]);
 }
 
+function encodeMetadataValue(value: MetadataValue): Uint8Array {
+  switch (value.tag) {
+    case "String":
+      return encodeMap([["String", encodeText(value.value)]]);
+    case "Bytes":
+      return encodeMap([["Bytes", encodeBytes(value.value)]]);
+    case "U64":
+      return encodeMap([["U64", encodeUint(value.value)]]);
+  }
+}
+
+function encodeMetadataEntry(entry: MetadataEntry): Uint8Array {
+  return encodeMap([
+    ["key", encodeText(entry.key)],
+    ["value", encodeMetadataValue(entry.value)],
+    ["flags", encodeUint(entry.flags)],
+  ]);
+}
+
+function encodeMetadata(entries: Metadata): Uint8Array {
+  return encodeArray(entries.map(encodeMetadataEntry));
+}
+
 function encodeHelloMessage(
   settings: ConnectionSettings,
   supportsRetry: boolean,
   resumeKey: Uint8Array | null,
+  metadata: MetadataEntry[],
 ): Uint8Array {
   return encodeMap([
     ["parity", encodeParity(settings.parity)],
@@ -148,6 +177,7 @@ function encodeHelloMessage(
     ["message_payload_schema", messageSchemasCbor],
     ["supports_retry", encodeBool(supportsRetry)],
     ["resume_key", encodeResumeKey(resumeKey)],
+    ["metadata", encodeMetadata(metadata)],
   ]);
 }
 
@@ -155,19 +185,21 @@ function encodeHelloYourselfMessage(
   settings: ConnectionSettings,
   supportsRetry: boolean,
   sessionResumeKey: Uint8Array | null,
+  metadata: MetadataEntry[],
 ): Uint8Array {
   return encodeMap([
     ["connection_settings", encodeConnectionSettings(settings)],
     ["message_payload_schema", messageSchemasCbor],
     ["supports_retry", encodeBool(supportsRetry)],
     ["resume_key", encodeResumeKey(sessionResumeKey)],
+    ["metadata", encodeMetadata(metadata)],
   ]);
 }
 
 function encodeHandshakeMessage(message: HandshakeMessage): Uint8Array {
   switch (message.tag) {
     case "Hello":
-      return encodeMap([["Hello", encodeHelloMessage(message.value.connection_settings, message.value.supports_retry, message.value.resume_key)]]);
+      return encodeMap([["Hello", encodeHelloMessage(message.value.connection_settings, message.value.supports_retry, message.value.resume_key, message.value.metadata)]]);
     case "HelloYourself":
       return encodeMap([
         [
@@ -176,6 +208,7 @@ function encodeHandshakeMessage(message: HandshakeMessage): Uint8Array {
             message.value.connection_settings,
             message.value.supports_retry,
             message.value.resume_key,
+            message.value.metadata,
           ),
         ],
       ]);
@@ -265,6 +298,53 @@ function parseResumeKey(value: CborValue): Uint8Array | null {
   return bytes.slice();
 }
 
+function parseMetadataValue(value: CborValue): MetadataValue {
+  const map = expectMap(value, "MetadataValue");
+  const keys = Object.keys(map);
+  if (keys.length !== 1) {
+    throw new Error(`expected MetadataValue enum map with 1 entry, got ${keys.length}`);
+  }
+  const tag = keys[0];
+  switch (tag) {
+    case "String":
+      return { tag: "String", value: expectString(map[tag], "MetadataValue.String") };
+    case "Bytes": {
+      const bytes = map[tag];
+      if (!(bytes instanceof Uint8Array)) {
+        throw new Error("expected byte string for MetadataValue.Bytes");
+      }
+      return { tag: "Bytes", value: bytes };
+    }
+    case "U64":
+      return { tag: "U64", value: expectBigintOrNumber(map[tag], "MetadataValue.U64") };
+    default:
+      throw new Error(`unknown MetadataValue variant ${tag}`);
+  }
+}
+
+function expectBigintOrNumber(value: CborValue, context: string): bigint {
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number") return BigInt(value);
+  throw new Error(`expected number or bigint for ${context}`);
+}
+
+function parseMetadataEntry(value: CborValue): MetadataEntry {
+  const map = expectMap(value, "MetadataEntry");
+  return {
+    key: expectString(map["key"], "MetadataEntry.key"),
+    value: parseMetadataValue(map["value"]),
+    flags: map["flags"] === undefined ? 0n : expectBigintOrNumber(map["flags"], "MetadataEntry.flags"),
+  };
+}
+
+function parseMetadata(value: CborValue): Metadata {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  const arr = expectArray(value, "metadata");
+  return arr.map(parseMetadataEntry);
+}
+
 function parseHello(value: CborValue): HelloMessage {
   const map = expectMap(value, "Hello");
   return {
@@ -277,6 +357,7 @@ function parseHello(value: CborValue): HelloMessage {
         : expectBool(map["supports_retry"], "Hello.supports_retry"),
     resume_key:
       map["resume_key"] === undefined ? null : parseResumeKey(map["resume_key"]),
+    metadata: parseMetadata(map["metadata"]),
   };
 }
 
@@ -294,6 +375,7 @@ function parseHelloYourself(value: CborValue): HelloYourselfMessage {
         : expectBool(map["supports_retry"], "HelloYourself.supports_retry"),
     resume_key:
       map["resume_key"] === undefined ? null : parseResumeKey(map["resume_key"]),
+    metadata: parseMetadata(map["metadata"]),
   };
 }
 
@@ -363,6 +445,7 @@ export async function handshakeAsInitiator(
   settings: ConnectionSettings,
   supportsRetry: boolean = true,
   resumeKey: Uint8Array | null = null,
+  metadata: Metadata = [],
 ): Promise<HandshakeResult> {
   await sendHandshake(link, {
     tag: "Hello",
@@ -372,6 +455,7 @@ export async function handshakeAsInitiator(
       message_payload_schema: [],
       supports_retry: supportsRetry,
       resume_key: resumeKey,
+      metadata,
     },
   });
 
@@ -392,6 +476,7 @@ export async function handshakeAsInitiator(
     sessionResumeKey: response.value.resume_key,
     peerResumeKey: null,
     peerMessageSchema: normalizeSchemaList(response.value.message_payload_schema),
+    peerMetadata: response.value.metadata,
   };
 }
 
@@ -401,6 +486,7 @@ export async function handshakeAsAcceptor(
   supportsRetry: boolean = true,
   resumable: boolean = false,
   expectedResumeKey: Uint8Array | null = null,
+  metadata: Metadata = [],
 ): Promise<HandshakeResult> {
   const first = await recvHandshake(link);
   if (first.tag !== "Hello") {
@@ -426,6 +512,7 @@ export async function handshakeAsAcceptor(
       message_payload_schema: [],
       supports_retry: supportsRetry,
       resume_key: sessionResumeKey,
+      metadata,
     },
   });
 
@@ -444,5 +531,10 @@ export async function handshakeAsAcceptor(
     sessionResumeKey,
     peerResumeKey: first.value.resume_key,
     peerMessageSchema: normalizeSchemaList(first.value.message_payload_schema),
+    peerMetadata: first.value.metadata,
   };
+}
+
+export function voxServiceMetadata(serviceName: string): Metadata {
+  return [{ key: "vox-service", value: { tag: "String", value: serviceName }, flags: 0n }];
 }
