@@ -50,6 +50,10 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
         request: &vox::ConnectionRequest,
         connection: vox::PendingConnection,
     ) -> Result<(), Metadata<'static>> {
+        if request.is_root() {
+            connection.handle_with(());
+            return Ok(());
+        }
         if request.service() != Some(PROXY_SERVICE) {
             return Err(error_metadata(
                 "unknown or missing service metadata for proxy host",

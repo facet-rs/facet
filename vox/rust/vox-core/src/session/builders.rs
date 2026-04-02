@@ -320,7 +320,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             recoverer,
         } = self;
         validate_negotiated_root_settings(&config.root_settings, &handshake_result)?;
-        let peer_metadata = std::mem::take(&mut handshake_result.peer_metadata);
+        let mut peer_metadata = std::mem::take(&mut handshake_result.peer_metadata);
         let (tx, rx) = conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
@@ -358,6 +358,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             caller_slot.clone(),
             config.operation_store,
         );
+        peer_metadata.push(vox_types::MetadataEntry::str("vox-connection-kind", "root"));
         let request = super::ConnectionRequest::new(&peer_metadata);
         acceptor
             .accept(&request, pending)
@@ -985,7 +986,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             config,
         } = self;
         validate_negotiated_root_settings(&config.root_settings, &handshake_result)?;
-        let peer_metadata = std::mem::take(&mut handshake_result.peer_metadata);
+        let mut peer_metadata = std::mem::take(&mut handshake_result.peer_metadata);
         let (tx, rx) = conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
@@ -1026,6 +1027,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             caller_slot.clone(),
             config.operation_store,
         );
+        peer_metadata.push(vox_types::MetadataEntry::str("vox-connection-kind", "root"));
         let request = super::ConnectionRequest::new(&peer_metadata);
         acceptor
             .accept(&request, pending)

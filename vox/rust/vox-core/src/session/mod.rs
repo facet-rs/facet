@@ -62,6 +62,16 @@ impl<'a> ConnectionRequest<'a> {
         vox_types::metadata_get_str(self.metadata, "vox-peer-addr")
     }
 
+    /// Whether this is a root or virtual connection.
+    pub fn is_root(&self) -> bool {
+        vox_types::metadata_get_str(self.metadata, "vox-connection-kind") == Some("root")
+    }
+
+    /// Whether this is a virtual connection.
+    pub fn is_virtual(&self) -> bool {
+        vox_types::metadata_get_str(self.metadata, "vox-connection-kind") == Some("virtual")
+    }
+
     /// Look up a string value by key.
     pub fn get_str(&self, key: &str) -> Option<&str> {
         vox_types::metadata_get_str(self.metadata, key)
@@ -1522,7 +1532,13 @@ impl Session {
         );
 
         // Let the acceptor decide the connection's fate.
-        let request = ConnectionRequest::new(&open.metadata);
+        let mut metadata: Vec<vox_types::MetadataEntry<'_>> =
+            open.metadata.iter().cloned().collect();
+        metadata.push(vox_types::MetadataEntry::str(
+            "vox-connection-kind",
+            "virtual",
+        ));
+        let request = ConnectionRequest::new(&metadata);
         let pending = PendingConnection::new(handle);
         let acceptor = self.on_connection.as_ref().unwrap();
         trace!(%conn_id, "calling acceptor for virtual connection");

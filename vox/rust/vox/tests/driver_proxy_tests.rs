@@ -18,19 +18,15 @@ impl Echo for EchoService {
 
 struct ProxyAcceptor {
     upstream_session: SessionHandle,
-    is_root: std::sync::atomic::AtomicBool,
 }
 
 impl vox::ConnectionAcceptor for ProxyAcceptor {
     fn accept(
         &self,
-        _request: &vox::ConnectionRequest,
+        request: &vox::ConnectionRequest,
         connection: vox::PendingConnection,
     ) -> Result<(), Metadata<'static>> {
-        if self
-            .is_root
-            .swap(false, std::sync::atomic::Ordering::SeqCst)
-        {
+        if request.is_root() {
             connection.handle_with(());
             return Ok(());
         }
@@ -83,7 +79,6 @@ async fn proxy_connections_forwards_calls() {
         let guard = vox::acceptor_on(host_a_link)
             .on_connection(ProxyAcceptor {
                 upstream_session: host_to_b_session,
-                is_root: std::sync::atomic::AtomicBool::new(true),
             })
             .establish::<vox::NoopClient>()
             .await

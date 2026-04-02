@@ -97,18 +97,13 @@ async fn reject_virtual_connection() {
 
     let server_task = moire::task::spawn(
         async move {
-            use std::sync::atomic::AtomicU32;
-            let call_count = Arc::new(AtomicU32::new(0));
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(crate::session::acceptor_fn(
-                    move |_request: &ConnectionRequest, connection: PendingConnection| {
-                        let n = call_count.fetch_add(1, Ordering::SeqCst);
-                        if n == 0 {
-                            // First call is the root connection — accept it.
+                    |request: &ConnectionRequest, connection: PendingConnection| {
+                        if request.is_root() {
                             connection.handle_with(EchoHandler);
                             Ok(())
                         } else {
-                            // Subsequent calls are virtual — reject.
                             Err(vec![])
                         }
                     },
