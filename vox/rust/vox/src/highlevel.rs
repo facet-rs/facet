@@ -6,6 +6,63 @@ use vox_core::{
     initiator,
 };
 
+/// Error returned by [`serve()`].
+#[derive(Debug)]
+pub enum ServeError {
+    /// I/O error (bind failure, etc.).
+    Io(std::io::Error),
+    /// Another healthy process is already serving on this address.
+    AddrInUse { addr: String },
+    /// Another process holds the lock but is not responding to connections.
+    /// It may be deadlocked or hung.
+    LockHeldUnhealthy { addr: String },
+    /// Unknown or unsupported transport scheme.
+    UnsupportedScheme { scheme: String },
+    /// Session-level error from the accept loop.
+    Session(SessionError),
+}
+
+impl std::fmt::Display for ServeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "io error: {e}"),
+            Self::AddrInUse { addr } => {
+                write!(f, "another healthy process is already serving on {addr}")
+            }
+            Self::LockHeldUnhealthy { addr } => write!(
+                f,
+                "another process holds the lock on {addr} but is not responding"
+            ),
+            Self::UnsupportedScheme { scheme } => {
+                write!(f, "unsupported transport scheme: {scheme:?}")
+            }
+            Self::Session(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for ServeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(e) => Some(e),
+            Self::Session(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for ServeError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl From<SessionError> for ServeError {
+    fn from(e: SessionError) -> Self {
+        Self::Session(e)
+    }
+}
+
 /// Connect to a remote vox service, returning a typed client.
 ///
 /// The address string determines the transport:
@@ -87,7 +144,7 @@ pub async fn connect<Client: FromVoxSession>(
 pub async fn serve(
     addr: impl std::fmt::Display,
     acceptor: impl ConnectionAcceptor,
-) -> Result<(), SessionError> {
+) -> Result<(), ServeError> {
     let addr = addr.to_string();
     let (scheme, host) = match addr.split_once("://") {
         Some((scheme, host)) => (scheme.to_string(), host.to_string()),
@@ -97,14 +154,12 @@ pub async fn serve(
     match scheme.as_str() {
         #[cfg(feature = "transport-tcp")]
         "tcp" => {
-            let listener = tokio::net::TcpListener::bind(&host)
-                .await
-                .map_err(SessionError::Io)?;
-            serve_listener(listener, acceptor).await
+            let listener = tokio::net::TcpListener::bind(&host).await?;
+            Ok(serve_listener(listener, acceptor).await?)
         }
         #[cfg(feature = "transport-local")]
         "local" => {
-            let lock = match vox_stream::try_local_lock(&host).map_err(SessionError::Io)? {
+            let lock = match vox_stream::try_local_lock(&host)? {
                 vox_stream::LocalLockOutcome::Acquired(lock) => {
                     // We own it — clean up stale socket.
                     let _ = std::fs::remove_file(&host);
@@ -120,35 +175,17 @@ pub async fn serve(
                             .await
                     })
                     .await;
-                    match health {
-                        Ok(Ok(_client)) => {
-                            // Existing server is healthy.
-                            return Err(SessionError::Io(std::io::Error::new(
-                                std::io::ErrorKind::AddrInUse,
-                                format!("another healthy process is serving on {host}"),
-                            )));
-                        }
-                        _ => {
-                            // Timed out or connection failed — server is hung/broken.
-                            // TODO: could forcibly take over here, but for now error out.
-                            return Err(SessionError::Io(std::io::Error::new(
-                                std::io::ErrorKind::AddrInUse,
-                                format!(
-                                    "another process holds the lock on {host} but is not responding"
-                                ),
-                            )));
-                        }
-                    }
+                    return match health {
+                        Ok(Ok(_client)) => Err(ServeError::AddrInUse { addr: host }),
+                        _ => Err(ServeError::LockHeldUnhealthy { addr: host }),
+                    };
                 }
             };
-            let listener = vox_stream::LocalLinkAcceptor::bind(&host).map_err(SessionError::Io)?;
-            // lock is held for the lifetime of serve_listener — released on drop.
+            let listener = vox_stream::LocalLinkAcceptor::bind(&host)?;
             let _lock = lock;
-            serve_listener(listener, acceptor).await
+            Ok(serve_listener(listener, acceptor).await?)
         }
-        _ => Err(SessionError::Protocol(format!(
-            "unknown or unsupported transport scheme for serve: {scheme:?}"
-        ))),
+        _ => Err(ServeError::UnsupportedScheme { scheme }),
     }
 }
 
