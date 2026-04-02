@@ -26,6 +26,9 @@ vox-core.workspace = true
 vox-types.workspace = true
 tokio = { workspace = true, features = ["net", "io-util", "io-std", "rt", "sync"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

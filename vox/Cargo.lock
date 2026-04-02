@@ -3652,6 +3652,7 @@ dependencies = [
 name = "vox-stream"
 version = "0.3.1"
 dependencies = [
+ "libc",
  "moire",
  "tempfile",
  "tokio",

@@ -531,7 +531,69 @@ pub struct LocalLinkAcceptor {
     pending: moire::sync::Mutex<tokio::net::windows::named_pipe::NamedPipeServer>,
 }
 
+/// A held file lock that keeps a [`LocalLinkAcceptor`] exclusively owned.
+///
+/// The lock is released when this guard is dropped (or the process exits/crashes).
+#[cfg(unix)]
+pub struct LocalListenerLock {
+    _file: std::fs::File,
+    lock_path: std::path::PathBuf,
+}
+
+#[cfg(unix)]
+impl Drop for LocalListenerLock {
+    fn drop(&mut self) {
+        // Best-effort cleanup of the lock file.
+        let _ = std::fs::remove_file(&self.lock_path);
+    }
+}
+
 impl LocalLinkAcceptor {
+    /// Bind to a local address with exclusive file locking.
+    ///
+    /// Acquires an exclusive flock on `{addr}.lock`. If the lock is already
+    /// held, another process is alive and serving — returns `AddrInUse`.
+    /// If acquired, removes any stale socket file and binds.
+    ///
+    /// The returned [`LocalListenerLock`] must be kept alive for the lifetime
+    /// of the server — dropping it releases the lock.
+    #[cfg(unix)]
+    pub fn bind_with_lock(addr: impl Into<String>) -> io::Result<(Self, LocalListenerLock)> {
+        use std::os::unix::io::AsRawFd;
+
+        let addr = addr.into();
+        let lock_path = std::path::PathBuf::from(format!("{addr}.lock"));
+
+        let lock_file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)?;
+
+        // Non-blocking exclusive lock.
+        let rc = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if rc != 0 {
+            let err = io::Error::last_os_error();
+            if err.kind() == io::ErrorKind::WouldBlock {
+                return Err(io::Error::new(
+                    io::ErrorKind::AddrInUse,
+                    format!("another process is serving on {addr}"),
+                ));
+            }
+            return Err(err);
+        }
+
+        // We hold the lock — remove stale socket if present.
+        let _ = std::fs::remove_file(&addr);
+
+        let acceptor = Self::bind(&addr)?;
+        let guard = LocalListenerLock {
+            _file: lock_file,
+            lock_path,
+        };
+        Ok((acceptor, guard))
+    }
+
     /// Bind to a local address.
     #[cfg(unix)]
     pub fn bind(addr: impl Into<String>) -> io::Result<Self> {

@@ -38,3 +38,52 @@ async fn serve_and_connect() {
 
     server.abort();
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn serve_local_with_lock() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let sock_path = dir.path().join("echo.sock");
+    let addr = format!("local://{}", sock_path.display());
+
+    let server = {
+        let addr = addr.clone();
+        tokio::spawn(async move {
+            vox::serve(&addr, EchoDispatcher::new(EchoService))
+                .await
+                .expect("serve");
+        })
+    };
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let client: EchoClient = vox::connect(&addr).await.expect("connect");
+    let result = client.echo(99).await.expect("echo");
+    assert_eq!(result, 99);
+
+    // A second bind should fail with AddrInUse while the first is alive.
+    let err = vox_stream::LocalLinkAcceptor::bind_with_lock(sock_path.to_str().unwrap())
+        .err()
+        .expect("second bind should fail");
+    assert_eq!(err.kind(), std::io::ErrorKind::AddrInUse);
+
+    server.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn serve_local_lock_released_after_drop() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let sock_path = dir.path().join("echo.sock");
+    let path_str = sock_path.to_str().unwrap();
+
+    // First bind succeeds.
+    let (acceptor, lock) =
+        vox_stream::LocalLinkAcceptor::bind_with_lock(path_str).expect("first bind");
+    drop(acceptor);
+    drop(lock);
+
+    // After dropping the lock, a second bind should succeed.
+    let (_acceptor2, _lock2) = vox_stream::LocalLinkAcceptor::bind_with_lock(path_str)
+        .expect("second bind after lock release");
+}

@@ -58,9 +58,10 @@ pub async fn connect<Client: FromVoxSession>(
 
 /// Serve a vox service by address string, accepting connections in a loop.
 ///
-/// The address string determines the transport (same schemes as [`connect()`]):
+/// The address string determines the transport:
 ///
 /// - `tcp://host:port` or bare `host:port` — TCP stream transport
+/// - `local://path` — Unix socket / Windows named pipe
 ///
 /// This function runs forever (or until an I/O error occurs). Each incoming
 /// connection is handled in a spawned task.
@@ -99,6 +100,13 @@ pub async fn serve(
             let listener = tokio::net::TcpListener::bind(&host)
                 .await
                 .map_err(SessionError::Io)?;
+            serve_listener(listener, acceptor).await
+        }
+        #[cfg(feature = "transport-local")]
+        "local" => {
+            let (listener, _lock) =
+                vox_stream::LocalLinkAcceptor::bind_with_lock(&host).map_err(SessionError::Io)?;
+            // _lock is held for the lifetime of serve_listener — released on drop.
             serve_listener(listener, acceptor).await
         }
         _ => Err(SessionError::Protocol(format!(
