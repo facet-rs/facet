@@ -119,6 +119,7 @@ pub async fn connect<Client: FromVoxSession>(
 ///
 /// - `tcp://host:port` or bare `host:port` — TCP stream transport
 /// - `local://path` — Unix socket / Windows named pipe
+/// - `ws://host:port` — WebSocket (accepts TCP, upgrades to WS)
 ///
 /// This function runs forever (or until an I/O error occurs). Each incoming
 /// connection is handled in a spawned task.
@@ -185,6 +186,11 @@ pub async fn serve(
             let _lock = lock;
             Ok(serve_listener(listener, acceptor).await?)
         }
+        #[cfg(feature = "transport-websocket")]
+        "ws" => {
+            let listener = WsListener::bind(&host).await?;
+            Ok(serve_listener(listener, acceptor).await?)
+        }
         _ => Err(ServeError::UnsupportedScheme { scheme }),
     }
 }
@@ -215,6 +221,98 @@ impl VoxListener for vox_stream::LocalLinkAcceptor {
 
     async fn accept(&self) -> std::io::Result<Self::Link> {
         vox_stream::LocalLinkAcceptor::accept(self).await
+    }
+}
+
+/// A [`VoxListener`] that accepts TCP connections and upgrades them to WebSocket.
+#[cfg(feature = "transport-websocket")]
+pub struct WsListener {
+    tcp: tokio::net::TcpListener,
+}
+
+#[cfg(feature = "transport-websocket")]
+impl WsListener {
+    /// Bind a WebSocket listener to the given TCP address.
+    pub async fn bind(addr: impl tokio::net::ToSocketAddrs) -> std::io::Result<Self> {
+        let tcp = tokio::net::TcpListener::bind(addr).await?;
+        Ok(Self { tcp })
+    }
+
+    /// Wrap an existing `TcpListener` as a WebSocket listener.
+    pub fn from_tcp(tcp: tokio::net::TcpListener) -> Self {
+        Self { tcp }
+    }
+}
+
+#[cfg(feature = "transport-websocket")]
+impl VoxListener for WsListener {
+    type Link = vox_websocket::WsLink<tokio::net::TcpStream>;
+
+    async fn accept(&self) -> std::io::Result<Self::Link> {
+        let (stream, _addr) = self.tcp.accept().await?;
+        vox_websocket::WsLink::server(stream).await
+    }
+}
+
+/// A [`VoxListener`] backed by a channel.
+///
+/// Use this when you control how connections arrive (e.g. from an axum
+/// WebSocket upgrade handler) and want to feed them into [`serve_listener()`].
+///
+/// # Example
+///
+/// ```ignore
+/// let (listener, sender) = vox::ChannelListener::new(16);
+///
+/// // In your axum handler, push upgraded links:
+/// sender.send(WsLink::new(ws_stream)).await;
+///
+/// // Serve from the channel:
+/// vox::serve_listener(listener, dispatcher).await?;
+/// ```
+pub struct ChannelListener<L> {
+    rx: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<L>>,
+}
+
+/// Sender half of a [`ChannelListener`].
+#[derive(Clone)]
+pub struct ChannelListenerSender<L> {
+    tx: tokio::sync::mpsc::Sender<L>,
+}
+
+impl<L: vox_types::Link + Send + 'static> ChannelListener<L> {
+    /// Create a new channel listener with the given buffer capacity.
+    pub fn new(buffer: usize) -> (Self, ChannelListenerSender<L>) {
+        let (tx, rx) = tokio::sync::mpsc::channel(buffer);
+        (
+            Self {
+                rx: tokio::sync::Mutex::new(rx),
+            },
+            ChannelListenerSender { tx },
+        )
+    }
+}
+
+impl<L: vox_types::Link + Send + 'static> ChannelListenerSender<L> {
+    /// Send a link to the listener.
+    pub async fn send(&self, link: L) -> Result<(), tokio::sync::mpsc::error::SendError<L>> {
+        self.tx.send(link).await
+    }
+}
+
+impl<L> VoxListener for ChannelListener<L>
+where
+    L: vox_types::Link + Send + 'static,
+{
+    type Link = L;
+
+    async fn accept(&self) -> std::io::Result<Self::Link> {
+        self.rx
+            .lock()
+            .await
+            .recv()
+            .await
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "channel closed"))
     }
 }
 

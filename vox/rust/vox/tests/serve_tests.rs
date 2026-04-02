@@ -70,6 +70,47 @@ async fn serve_local_with_lock() {
     server.abort();
 }
 
+#[cfg(feature = "transport-websocket")]
+#[tokio::test]
+async fn serve_websocket() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+
+    let server = tokio::spawn(async move {
+        vox::serve_listener(
+            vox::WsListener::from_tcp(listener),
+            EchoDispatcher::new(EchoService),
+        )
+        .await
+        .expect("serve");
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let client: EchoClient = vox::connect(format!("ws://{addr}")).await.expect("connect");
+    let result = client.echo(7).await.expect("echo");
+    assert_eq!(result, 7);
+
+    server.abort();
+}
+
+#[cfg(feature = "transport-websocket")]
+#[tokio::test]
+async fn serve_websocket_string() {
+    let server = tokio::spawn(async move {
+        vox::serve("ws://127.0.0.1:0", EchoDispatcher::new(EchoService))
+            .await
+            .expect("serve");
+    });
+
+    // Port 0 won't work with the string API since we can't discover the bound port.
+    // This test just verifies the code path compiles and starts. Abort immediately.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    server.abort();
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn serve_local_lock_released_after_drop() {
