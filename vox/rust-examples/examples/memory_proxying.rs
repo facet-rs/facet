@@ -1,7 +1,7 @@
 use eyre::{Result, eyre};
 use vox::{
-    AcceptedConnection, ConnectionAcceptor, ConnectionId, ConnectionSettings, Driver, Metadata,
-    MetadataEntry, MetadataFlags, MetadataValue, NoopClient, Parity, SessionHandle,
+    ConnectionSettings, Driver, Metadata, MetadataEntry, MetadataFlags, MetadataValue, NoopClient,
+    Parity, SessionHandle,
 };
 
 const PROXY_SERVICE: &str = "math_text_proxy";
@@ -26,33 +26,17 @@ impl MathText for UpstreamMathText {
     }
 }
 
-#[derive(Clone, Copy)]
-struct UpstreamAcceptor;
-
-impl ConnectionAcceptor for UpstreamAcceptor {
-    fn accept(
-        &self,
-        _conn_id: ConnectionId,
-        peer_settings: &ConnectionSettings,
-        metadata: &[MetadataEntry],
-    ) -> Result<AcceptedConnection, Metadata<'static>> {
-        if requested_service(metadata) != Some(UPSTREAM_SERVICE) {
-            return Err(error_metadata(
-                "unknown or missing service metadata for upstream guest",
-            ));
-        }
-
-        Ok(AcceptedConnection {
-            settings: ConnectionSettings {
-                parity: peer_settings.parity.other(),
-                max_concurrent_requests: 64,
-            },
-            metadata: vec![],
-            setup: vox::ConnectionSetup::Handler(Box::new(MathTextDispatcher::new(
-                UpstreamMathText,
-            ))),
-        })
+fn upstream_acceptor(
+    request: &vox::ConnectionRequest,
+    connection: vox::PendingConnection,
+) -> Result<(), Metadata<'static>> {
+    if request.service() != Some(UPSTREAM_SERVICE) {
+        return Err(error_metadata(
+            "unknown or missing service metadata for upstream guest",
+        ));
     }
+    connection.handle_with(MathTextDispatcher::new(UpstreamMathText));
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -60,53 +44,43 @@ struct ProxyAcceptor {
     upstream_session: SessionHandle,
 }
 
-impl ConnectionAcceptor for ProxyAcceptor {
+impl vox::ConnectionAcceptor for ProxyAcceptor {
     fn accept(
         &self,
-        _conn_id: ConnectionId,
-        peer_settings: &ConnectionSettings,
-        metadata: &[MetadataEntry],
-    ) -> Result<AcceptedConnection, Metadata<'static>> {
-        if requested_service(metadata) != Some(PROXY_SERVICE) {
+        request: &vox::ConnectionRequest,
+        connection: vox::PendingConnection,
+    ) -> Result<(), Metadata<'static>> {
+        if request.service() != Some(PROXY_SERVICE) {
             return Err(error_metadata(
                 "unknown or missing service metadata for proxy host",
             ));
         }
 
         let upstream_session = self.upstream_session.clone();
-        Ok(AcceptedConnection {
-            settings: ConnectionSettings {
-                parity: peer_settings.parity.other(),
-                max_concurrent_requests: 64,
-            },
-            metadata: vec![],
-            setup: vox::ConnectionSetup::Setup(Box::new(move |incoming_handle| {
-                tokio::spawn(async move {
-                    println!(
-                        "[host] guest-a opened proxy vconn; opening upstream vconn to guest-b"
-                    );
-                    match upstream_session
-                        .open_connection(
-                            ConnectionSettings {
-                                parity: Parity::Odd,
-                                max_concurrent_requests: 64,
-                            },
-                            service_metadata(UPSTREAM_SERVICE),
-                        )
-                        .await
-                    {
-                        Ok(upstream_conn) => {
-                            println!("[host] upstream vconn to guest-b is ready");
-                            vox::proxy_connections(incoming_handle, upstream_conn).await;
-                        }
-                        Err(err) => {
-                            let msg = format!("failed to open upstream vconn: {err:?}");
-                            eprintln!("[host] {msg}");
-                        }
-                    }
-                });
-            })),
-        })
+        let incoming_handle = connection.into_handle();
+        tokio::spawn(async move {
+            println!("[host] guest-a opened proxy vconn; opening upstream vconn to guest-b");
+            match upstream_session
+                .open_connection(
+                    ConnectionSettings {
+                        parity: Parity::Odd,
+                        max_concurrent_requests: 64,
+                    },
+                    service_metadata(UPSTREAM_SERVICE),
+                )
+                .await
+            {
+                Ok(upstream_conn) => {
+                    println!("[host] upstream vconn to guest-b is ready");
+                    let _ = vox::proxy_connections(incoming_handle, upstream_conn).await;
+                }
+                Err(err) => {
+                    let msg = format!("failed to open upstream vconn: {err:?}");
+                    eprintln!("[host] {msg}");
+                }
+            }
+        });
+        Ok(())
     }
 }
 
@@ -153,7 +127,7 @@ async fn main() -> Result<()> {
         )
         .await
         .expect("guest-b acceptor_on_link")
-        .on_connection(UpstreamAcceptor)
+        .on_connection(vox::acceptor_fn(upstream_acceptor))
         .establish::<vox::NoopClient>(())
         .await
         .expect("guest-b establish");

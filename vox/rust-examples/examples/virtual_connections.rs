@@ -6,8 +6,7 @@ use std::sync::{
 use eyre::{Result, WrapErr, eyre};
 use vox::transport::tcp::StreamLink;
 use vox::{
-    AcceptedConnection, ConnectionAcceptor, ConnectionId, ConnectionSettings, Driver, Metadata,
-    MetadataEntry, MetadataFlags, MetadataValue, Parity,
+    ConnectionSettings, Driver, Metadata, MetadataEntry, MetadataFlags, MetadataValue, Parity,
 };
 
 #[vox::service]
@@ -53,42 +52,23 @@ impl StringLab for StringLabService {
     }
 }
 
-struct CounterLabAcceptor;
-
-impl ConnectionAcceptor for CounterLabAcceptor {
-    fn accept(
-        &self,
-        _conn_id: ConnectionId,
-        peer_settings: &ConnectionSettings,
-        metadata: &[MetadataEntry],
-    ) -> Result<AcceptedConnection, Metadata<'static>> {
-        let peer_parity = peer_settings.parity;
-        let settings = ConnectionSettings {
-            parity: peer_parity.other(),
-            max_concurrent_requests: 64,
-        };
-
-        match requested_service(metadata) {
-            Some("counter") => Ok(AcceptedConnection {
-                settings,
-                metadata: vec![],
-                setup: vox::ConnectionSetup::Handler(Box::new(CounterLabDispatcher::new(
-                    CounterLabService::new(),
-                ))),
-            }),
-            Some("string") => Ok(AcceptedConnection {
-                settings,
-                metadata: vec![],
-                setup: vox::ConnectionSetup::Handler(Box::new(StringLabDispatcher::new(
-                    StringLabService,
-                ))),
-            }),
-            _ => Err(vec![MetadataEntry {
-                key: "error".into(),
-                value: MetadataValue::String("unknown or missing service metadata".into()),
-                flags: MetadataFlags::NONE,
-            }]),
+fn lab_acceptor(
+    request: &vox::ConnectionRequest,
+    connection: vox::PendingConnection,
+) -> Result<(), Metadata<'static>> {
+    match request.service() {
+        Some("counter") => {
+            connection.handle_with(CounterLabDispatcher::new(CounterLabService::new()));
+            Ok(())
         }
+        Some("string") => {
+            connection.handle_with(StringLabDispatcher::new(StringLabService));
+            Ok(())
+        }
+        _ => Err(vec![MetadataEntry::str(
+            "error",
+            "unknown or missing service metadata",
+        )]),
     }
 }
 
@@ -126,7 +106,7 @@ async fn main() -> Result<()> {
         let (socket, _) = listener.accept().await.expect("accept");
         println!("[server] client connected; establishing root session");
         let server_root_guard = vox::acceptor_on(StreamLink::tcp(socket))
-            .on_connection(CounterLabAcceptor)
+            .on_connection(vox::acceptor_fn(lab_acceptor))
             .establish::<vox::NoopClient>(())
             .await
             .expect("server establish");

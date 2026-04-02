@@ -192,26 +192,6 @@ where
             .await;
     }
 }
-impl<H> ::vox::ConnectionAcceptor for TextSvcDispatcher<H>
-where
-    H: TextSvc,
-{
-    fn accept(
-        &self,
-        _conn_id: ::vox::ConnectionId,
-        peer_settings: &::vox::ConnectionSettings,
-        _metadata: &[::vox::MetadataEntry],
-    ) -> ::core::result::Result<::vox::AcceptedConnection, ::vox::Metadata<'static>> {
-        Ok(::vox::AcceptedConnection {
-            settings: ::vox::ConnectionSettings {
-                parity: peer_settings.parity.other(),
-                max_concurrent_requests: peer_settings.max_concurrent_requests,
-            },
-            metadata: vec![],
-            setup: ::vox::ConnectionSetup::Handler(Box::new(self.clone())),
-        })
-    }
-}
 #[doc = "Client for the `TextSvc` service.\n\nStores a [`Caller`](:: vox::Caller) and an optional [`SessionHandle`](:: vox::SessionHandle) as public fields."]
 #[must_use = "Dropping this client may close the connection if it is the last caller."]
 #[derive(Clone)]

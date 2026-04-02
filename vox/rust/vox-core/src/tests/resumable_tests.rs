@@ -16,9 +16,9 @@ use vox_types::{HandshakeResult, SessionResumeKey, SessionRole};
 
 use super::utils::*;
 use crate::session::{
-    AcceptedConnection, ConnectionAcceptor, ConnectionHandle, ConnectionMessage,
-    SessionAcceptOutcome, SessionError, SessionHandle, SessionKeepaliveConfig, SessionRegistry,
-    acceptor_conduit, acceptor_on, initiator_conduit, initiator_on, proxy_connections,
+    ConnectionAcceptor, ConnectionHandle, ConnectionMessage, SessionAcceptOutcome, SessionError,
+    SessionHandle, SessionKeepaliveConfig, SessionRegistry, acceptor_conduit, acceptor_on,
+    initiator_conduit, initiator_on, proxy_connections,
 };
 use crate::{
     Attachment, BareConduit, Caller, Driver, DriverCaller, DriverReplySink, InMemoryOperationStore,

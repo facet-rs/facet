@@ -3,10 +3,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use vox::{
-    AcceptedConnection, ConnectionAcceptor, ConnectionSettings, Driver, Metadata, Parity,
-    SessionHandle, memory_link_pair,
-};
+use vox::{ConnectionSettings, Driver, Metadata, Parity, SessionHandle, memory_link_pair};
 
 #[vox::service]
 trait Echo {
@@ -22,30 +19,9 @@ impl Echo for EchoService {
     }
 }
 
-struct VconnEchoAcceptor;
-
-impl ConnectionAcceptor for VconnEchoAcceptor {
-    fn accept(
-        &self,
-        _conn_id: vox::ConnectionId,
-        peer_settings: &ConnectionSettings,
-        _metadata: &[vox::MetadataEntry],
-    ) -> Result<AcceptedConnection, Metadata<'static>> {
-        let peer_parity = peer_settings.parity;
-        Ok(AcceptedConnection {
-            settings: ConnectionSettings {
-                parity: peer_parity.other(),
-                max_concurrent_requests: 64,
-            },
-            metadata: vec![],
-            setup: vox::ConnectionSetup::Handler(Box::new(EchoDispatcher::new(EchoService))),
-        })
-    }
-}
-
 async fn vconn_server(server_link: impl vox::Link + Send + 'static) -> vox::NoopClient {
     let server = vox::acceptor_on(server_link)
-        .on_connection(VconnEchoAcceptor)
+        .on_connection(EchoDispatcher::new(EchoService))
         .establish::<vox::NoopClient>(())
         .await
         .expect("server establish");
@@ -150,7 +126,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
 
     let server = tokio::spawn(async move {
         let s = vox::acceptor_on(server_link)
-            .on_connection(VconnEchoAcceptor)
+            .on_connection(EchoDispatcher::new(EchoService))
             .establish::<vox::NoopClient>(EchoDispatcher::new(EchoService))
             .await
             .expect("server establish");
@@ -192,40 +168,14 @@ impl Counter for CounterService {
     }
 }
 
-struct CounterAcceptor;
-
-impl ConnectionAcceptor for CounterAcceptor {
-    fn accept(
-        &self,
-        _conn_id: vox::ConnectionId,
-        peer_settings: &ConnectionSettings,
-        _metadata: &[vox::MetadataEntry],
-    ) -> Result<AcceptedConnection, Metadata<'static>> {
-        let peer_parity = peer_settings.parity;
-        Ok(AcceptedConnection {
-            settings: ConnectionSettings {
-                parity: peer_parity.other(),
-                max_concurrent_requests: 64,
-            },
-            metadata: vec![],
-            setup: vox::ConnectionSetup::Handler(Box::new(CounterDispatcher::new(
-                CounterService {
-                    count: std::sync::Arc::new(AtomicU32::new(0)),
-                },
-            ))),
-        })
-    }
-}
-
 struct RejectAcceptor;
 
-impl ConnectionAcceptor for RejectAcceptor {
+impl vox::ConnectionAcceptor for RejectAcceptor {
     fn accept(
         &self,
-        _conn_id: vox::ConnectionId,
-        _peer_settings: &ConnectionSettings,
-        _metadata: &[vox::MetadataEntry],
-    ) -> Result<AcceptedConnection, Metadata<'static>> {
+        _request: &vox::ConnectionRequest,
+        _connection: vox::PendingConnection,
+    ) -> Result<(), Metadata<'static>> {
         Err(vec![])
     }
 }
@@ -306,7 +256,9 @@ async fn close_virtual_connection() {
 
     let server = tokio::spawn(async move {
         let s = vox::acceptor_on(server_link)
-            .on_connection(CounterAcceptor)
+            .on_connection(CounterDispatcher::new(CounterService {
+                count: std::sync::Arc::new(AtomicU32::new(0)),
+            }))
             .establish::<vox::NoopClient>(())
             .await
             .expect("server establish");

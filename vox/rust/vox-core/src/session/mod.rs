@@ -9,7 +9,7 @@ use tokio::sync::watch;
 use tracing::{trace, warn};
 use vox_types::{
     BoxFut, ChannelMessage, Conduit, ConduitRx, ConduitTx, ConduitTxPermit, ConnectionAccept,
-    ConnectionClose, ConnectionId, ConnectionOpen, ConnectionReject, ConnectionSettings,
+    ConnectionClose, ConnectionId, ConnectionOpen, ConnectionReject, ConnectionSettings, Handler,
     HandshakeResult, IdAllocator, MaybeSend, MaybeSync, Message, MessageFamily, MessagePayload,
     Metadata, Parity, RequestBody, RequestId, RequestMessage, RequestResponse, SelfRef,
     SessionResumeKey, SessionRole,
@@ -78,38 +78,117 @@ impl<'a> ConnectionRequest<'a> {
     }
 }
 
+/// A connection that has been opened but not yet accepted.
+///
+/// The acceptor receives this and decides its fate by calling one of:
+/// - `handle_with(handler)` — run a Driver with this handler (common case)
+/// - `proxy_to(other_handle)` — pipe messages to/from another connection
+/// - `into_handle()` — take the raw ConnectionHandle for custom use
+pub struct PendingConnection {
+    handle: Option<ConnectionHandle>,
+}
+
+impl PendingConnection {
+    fn new(handle: ConnectionHandle) -> Self {
+        Self {
+            handle: Some(handle),
+        }
+    }
+
+    /// Accept this connection and run a Driver with the given handler.
+    pub fn handle_with(mut self, handler: impl Handler<crate::DriverReplySink> + 'static) {
+        let handle = self
+            .handle
+            .take()
+            .expect("PendingConnection already consumed");
+        let mut driver = crate::Driver::new(handle, handler);
+        #[cfg(not(target_arch = "wasm32"))]
+        tokio::spawn(async move { driver.run().await });
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move { driver.run().await });
+    }
+
+    /// Accept this connection and proxy all traffic to/from another connection.
+    pub fn proxy_to(mut self, other: ConnectionHandle) {
+        let handle = self
+            .handle
+            .take()
+            .expect("PendingConnection already consumed");
+        #[cfg(not(target_arch = "wasm32"))]
+        tokio::spawn(async move {
+            let _ = proxy_connections(handle, other).await;
+        });
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = proxy_connections(handle, other).await;
+        });
+    }
+
+    /// Take the raw ConnectionHandle for custom use.
+    pub fn into_handle(mut self) -> ConnectionHandle {
+        self.handle
+            .take()
+            .expect("PendingConnection already consumed")
+    }
+}
+
+impl Drop for PendingConnection {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            // Connection was not consumed — close it.
+            if let Some(tx) = handle.control_tx.as_ref() {
+                let _ = send_drop_control(tx, DropControlRequest::Close(handle.connection_id()));
+            }
+        }
+    }
+}
+
 // r[impl rpc.virtual-connection.accept]
 pub trait ConnectionAcceptor: Send + 'static {
     fn accept(
         &self,
         request: &ConnectionRequest,
-    ) -> Result<Box<dyn crate::ErasedHandler>, Metadata<'static>>;
+        connection: PendingConnection,
+    ) -> Result<(), Metadata<'static>>;
 }
 
-/// Blanket impl: a closure that takes `&ConnectionRequest` and returns
-/// `Result<Box<dyn ErasedHandler>, Metadata>` is a `ConnectionAcceptor`.
-impl<F> ConnectionAcceptor for F
+/// Any `Handler<DriverReplySink>` is automatically a `ConnectionAcceptor`.
+impl<H> ConnectionAcceptor for H
 where
-    F: Fn(&ConnectionRequest) -> Result<Box<dyn crate::ErasedHandler>, Metadata<'static>>
-        + Send
-        + 'static,
+    H: Handler<crate::DriverReplySink> + Clone + Send + 'static,
+{
+    fn accept(
+        &self,
+        _request: &ConnectionRequest,
+        connection: PendingConnection,
+    ) -> Result<(), Metadata<'static>> {
+        connection.handle_with(self.clone());
+        Ok(())
+    }
+}
+
+/// Wrapper that turns a closure into a `ConnectionAcceptor`.
+pub struct AcceptorFn<F>(pub F);
+
+impl<F> ConnectionAcceptor for AcceptorFn<F>
+where
+    F: Fn(&ConnectionRequest, PendingConnection) -> Result<(), Metadata<'static>> + Send + 'static,
 {
     fn accept(
         &self,
         request: &ConnectionRequest,
-    ) -> Result<Box<dyn crate::ErasedHandler>, Metadata<'static>> {
-        (self)(request)
+        connection: PendingConnection,
+    ) -> Result<(), Metadata<'static>> {
+        (self.0)(request, connection)
     }
 }
 
-/// `()` as an acceptor: accepts all connections with a no-op handler.
-impl ConnectionAcceptor for () {
-    fn accept(
-        &self,
-        _request: &ConnectionRequest,
-    ) -> Result<Box<dyn crate::ErasedHandler>, Metadata<'static>> {
-        Ok(Box::new(()))
-    }
+/// Create a `ConnectionAcceptor` from a closure.
+pub fn acceptor_fn<F>(f: F) -> AcceptorFn<F>
+where
+    F: Fn(&ConnectionRequest, PendingConnection) -> Result<(), Metadata<'static>> + Send + 'static,
+{
+    AcceptorFn(f)
 }
 
 // ---------------------------------------------------------------------------
@@ -1374,42 +1453,42 @@ impl Session {
 
         // r[impl connection.open.rejection]
         // Call the acceptor callback. If none is registered, reject.
-        let acceptor = match &self.on_connection {
-            Some(a) => a,
-            None => {
-                let _ = self
-                    .sess_core
-                    .send(
-                        Message {
-                            connection_id: conn_id,
-                            payload: MessagePayload::ConnectionReject(
-                                vox_types::ConnectionReject { metadata: vec![] },
-                            ),
-                        },
-                        None,
-                        None,
-                    )
-                    .await;
-                return;
-            }
+        if self.on_connection.is_none() {
+            let _ = self
+                .sess_core
+                .send(
+                    Message {
+                        connection_id: conn_id,
+                        payload: MessagePayload::ConnectionReject(vox_types::ConnectionReject {
+                            metadata: vec![],
+                        }),
+                    },
+                    None,
+                    None,
+                )
+                .await;
+            return;
+        }
+
+        // Derive settings: opposite parity, same max concurrent requests.
+        let our_settings = ConnectionSettings {
+            parity: open.connection_settings.parity.other(),
+            max_concurrent_requests: open.connection_settings.max_concurrent_requests,
         };
 
+        // Create the connection handle and activate it.
+        let handle = self.make_connection_handle(
+            conn_id,
+            our_settings.clone(),
+            open.connection_settings.clone(),
+        );
+
+        // Let the acceptor decide the connection's fate.
         let request = ConnectionRequest::new(&open.metadata);
-        match acceptor.accept(&request) {
-            Ok(handler) => {
-                // Derive settings: opposite parity, same max concurrent requests.
-                let our_settings = ConnectionSettings {
-                    parity: open.connection_settings.parity.other(),
-                    max_concurrent_requests: open.connection_settings.max_concurrent_requests,
-                };
-
-                // Create the connection handle and activate it.
-                let handle = self.make_connection_handle(
-                    conn_id,
-                    our_settings.clone(),
-                    open.connection_settings.clone(),
-                );
-
+        let pending = PendingConnection::new(handle);
+        let acceptor = self.on_connection.as_ref().unwrap();
+        match acceptor.accept(&request, pending) {
+            Ok(()) => {
                 // Send ConnectionAccept to the peer.
                 let _ = self
                     .sess_core
@@ -1427,15 +1506,10 @@ impl Session {
                         None,
                     )
                     .await;
-
-                // Spawn a driver for the accepted connection.
-                let mut driver = crate::Driver::new(handle, handler);
-                #[cfg(not(target_arch = "wasm32"))]
-                tokio::spawn(async move { driver.run().await });
-                #[cfg(target_arch = "wasm32")]
-                wasm_bindgen_futures::spawn_local(async move { driver.run().await });
             }
             Err(reject_metadata) => {
+                // Clean up the connection slot we created.
+                self.conns.remove(&conn_id);
                 let _ = self
                     .sess_core
                     .send(

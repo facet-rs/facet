@@ -19,7 +19,7 @@ use vox_types::{HandshakeResult, SessionResumeKey, SessionRole};
 
 use super::utils::*;
 use crate::session::{
-    AcceptedConnection, ConnectionAcceptor, ConnectionMessage, ConnectionSetup,
+    ConnectionAcceptor, ConnectionMessage, ConnectionRequest, PendingConnection,
     SessionAcceptOutcome, SessionError, SessionHandle, SessionKeepaliveConfig, SessionRegistry,
     acceptor_conduit, acceptor_on, initiator_conduit, initiator_on, proxy_connections,
 };
@@ -1607,68 +1607,41 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
     let (host_a_conduit, guest_a_conduit) = message_conduit_pair();
     let (host_b_conduit, guest_b_conduit) = message_conduit_pair();
 
-    struct GuestBAcceptor;
-    impl ConnectionAcceptor for GuestBAcceptor {
-        fn accept(
-            &self,
-            _conn_id: vox_types::ConnectionId,
-            peer_settings: &ConnectionSettings,
-            _metadata: &[vox_types::MetadataEntry],
-        ) -> Result<AcceptedConnection, Metadata<'static>> {
-            Ok(AcceptedConnection {
-                settings: ConnectionSettings {
-                    parity: peer_settings.parity.other(),
-                    max_concurrent_requests: 64,
-                },
-                metadata: vec![],
-                setup: ConnectionSetup::Handler(Box::new(EchoHandler)),
-            })
-        }
-    }
-
     struct ProxyHostAcceptor {
         upstream_session: SessionHandle,
     }
     impl ConnectionAcceptor for ProxyHostAcceptor {
         fn accept(
             &self,
-            _conn_id: vox_types::ConnectionId,
-            peer_settings: &ConnectionSettings,
-            _metadata: &[vox_types::MetadataEntry],
-        ) -> Result<AcceptedConnection, Metadata<'static>> {
+            _request: &ConnectionRequest,
+            connection: PendingConnection,
+        ) -> Result<(), Metadata<'static>> {
             let upstream_session = self.upstream_session.clone();
-            Ok(AcceptedConnection {
-                settings: ConnectionSettings {
-                    parity: peer_settings.parity.other(),
-                    max_concurrent_requests: 64,
-                },
-                metadata: vec![],
-                setup: ConnectionSetup::Setup(Box::new(move |incoming| {
-                    moire::task::spawn(
-                        async move {
-                            let upstream = upstream_session
-                                .open_connection(
-                                    ConnectionSettings {
-                                        parity: Parity::Odd,
-                                        max_concurrent_requests: 64,
-                                    },
-                                    vec![],
-                                )
-                                .await
-                                .expect("host->guest-b open_connection");
-                            proxy_connections(incoming, upstream).await;
-                        }
-                        .named("host_proxy_vconn"),
-                    );
-                })),
-            })
+            let incoming = connection.into_handle();
+            moire::task::spawn(
+                async move {
+                    let upstream = upstream_session
+                        .open_connection(
+                            ConnectionSettings {
+                                parity: Parity::Odd,
+                                max_concurrent_requests: 64,
+                            },
+                            vec![],
+                        )
+                        .await
+                        .expect("host->guest-b open_connection");
+                    let _ = proxy_connections(incoming, upstream).await;
+                }
+                .named("host_proxy_vconn"),
+            );
+            Ok(())
         }
     }
 
     let guest_b_task = moire::task::spawn(
         async move {
             let guard = acceptor_conduit(guest_b_conduit, test_acceptor_handshake())
-                .on_connection(GuestBAcceptor)
+                .on_connection(EchoAcceptor)
                 .establish::<NoopClient>(())
                 .await
                 .expect("guest-b establish");

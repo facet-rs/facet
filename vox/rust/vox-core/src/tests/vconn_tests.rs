@@ -16,7 +16,7 @@ use vox_types::{HandshakeResult, SessionResumeKey, SessionRole};
 
 use super::utils::*;
 use crate::session::{
-    AcceptedConnection, ConnectionAcceptor, ConnectionHandle, ConnectionMessage, ConnectionSetup,
+    ConnectionAcceptor, ConnectionHandle, ConnectionMessage, ConnectionRequest, PendingConnection,
     SessionAcceptOutcome, SessionError, SessionHandle, SessionKeepaliveConfig, SessionRegistry,
     acceptor_conduit, acceptor_on, initiator_conduit, initiator_on, proxy_connections,
 };
@@ -224,29 +224,20 @@ async fn close_virtual_connection() {
     impl ConnectionAcceptor for TrackingAcceptor {
         fn accept(
             &self,
-            _conn_id: vox_types::ConnectionId,
-            peer_settings: &ConnectionSettings,
-            _metadata: &[vox_types::MetadataEntry],
-        ) -> Result<AcceptedConnection, Metadata<'static>> {
-            let peer_parity = peer_settings.parity;
+            _request: &ConnectionRequest,
+            connection: PendingConnection,
+        ) -> Result<(), Metadata<'static>> {
             let exited = self.exited.clone();
-            Ok(AcceptedConnection {
-                settings: ConnectionSettings {
-                    parity: peer_parity.other(),
-                    max_concurrent_requests: 64,
-                },
-                metadata: vec![],
-                setup: ConnectionSetup::Setup(Box::new(move |handle| {
-                    let mut driver = Driver::new(handle, EchoHandler);
-                    moire::task::spawn(
-                        async move {
-                            driver.run().await;
-                            exited.store(true, Ordering::SeqCst);
-                        }
-                        .named("vconn_server_driver"),
-                    );
-                })),
-            })
+            let handle = connection.into_handle();
+            let mut driver = Driver::new(handle, EchoHandler);
+            moire::task::spawn(
+                async move {
+                    driver.run().await;
+                    exited.store(true, Ordering::SeqCst);
+                }
+                .named("vconn_server_driver"),
+            );
+            Ok(())
         }
     }
 
@@ -357,29 +348,20 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
     impl ConnectionAcceptor for TrackingAcceptor {
         fn accept(
             &self,
-            _conn_id: vox_types::ConnectionId,
-            peer_settings: &ConnectionSettings,
-            _metadata: &[vox_types::MetadataEntry],
-        ) -> Result<AcceptedConnection, Metadata<'static>> {
-            let peer_parity = peer_settings.parity;
+            _request: &ConnectionRequest,
+            connection: PendingConnection,
+        ) -> Result<(), Metadata<'static>> {
             let exited = self.exited.clone();
-            Ok(AcceptedConnection {
-                settings: ConnectionSettings {
-                    parity: peer_parity.other(),
-                    max_concurrent_requests: 64,
-                },
-                metadata: vec![],
-                setup: ConnectionSetup::Setup(Box::new(move |handle| {
-                    let mut driver = Driver::new(handle, EchoHandler);
-                    moire::task::spawn(
-                        async move {
-                            driver.run().await;
-                            exited.store(true, Ordering::SeqCst);
-                        }
-                        .named("vconn_server_driver"),
-                    );
-                })),
-            })
+            let handle = connection.into_handle();
+            let mut driver = Driver::new(handle, EchoHandler);
+            moire::task::spawn(
+                async move {
+                    driver.run().await;
+                    exited.store(true, Ordering::SeqCst);
+                }
+                .named("vconn_server_driver"),
+            );
+            Ok(())
         }
     }
 
@@ -524,19 +506,11 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
     impl ConnectionAcceptor for LocalEchoAcceptor {
         fn accept(
             &self,
-            _conn_id: vox_types::ConnectionId,
-            peer_settings: &ConnectionSettings,
-            _metadata: &[vox_types::MetadataEntry],
-        ) -> Result<AcceptedConnection, Metadata<'static>> {
-            let peer_parity = peer_settings.parity;
-            Ok(AcceptedConnection {
-                settings: ConnectionSettings {
-                    parity: peer_parity.other(),
-                    max_concurrent_requests: 64,
-                },
-                metadata: vec![],
-                setup: ConnectionSetup::Handler(Box::new(EchoHandler)),
-            })
+            _request: &ConnectionRequest,
+            connection: PendingConnection,
+        ) -> Result<(), Metadata<'static>> {
+            connection.handle_with(EchoHandler);
+            Ok(())
         }
     }
 

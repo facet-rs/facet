@@ -562,26 +562,18 @@ impl Handler<DriverReplySink> for RetryAfterResumeHandler {
     }
 }
 
-use crate::session::{AcceptedConnection, ConnectionAcceptor, ConnectionSetup};
+use crate::session::{ConnectionAcceptor, ConnectionRequest, PendingConnection};
 
 pub(crate) struct EchoAcceptor;
 
 impl ConnectionAcceptor for EchoAcceptor {
     fn accept(
         &self,
-        _conn_id: vox_types::ConnectionId,
-        peer_settings: &ConnectionSettings,
-        _metadata: &[vox_types::MetadataEntry],
-    ) -> Result<AcceptedConnection, vox_types::Metadata<'static>> {
-        let peer_parity = peer_settings.parity;
-        Ok(AcceptedConnection {
-            settings: ConnectionSettings {
-                parity: peer_parity.other(),
-                max_concurrent_requests: 64,
-            },
-            metadata: vec![],
-            setup: ConnectionSetup::Handler(Box::new(EchoHandler)),
-        })
+        _request: &ConnectionRequest,
+        connection: PendingConnection,
+    ) -> Result<(), vox_types::Metadata<'static>> {
+        connection.handle_with(EchoHandler);
+        Ok(())
     }
 }
 
@@ -591,10 +583,9 @@ pub(crate) struct RejectAcceptor;
 impl ConnectionAcceptor for RejectAcceptor {
     fn accept(
         &self,
-        _conn_id: vox_types::ConnectionId,
-        _peer_settings: &ConnectionSettings,
-        _metadata: &[vox_types::MetadataEntry],
-    ) -> Result<AcceptedConnection, vox_types::Metadata<'static>> {
+        _request: &ConnectionRequest,
+        _connection: PendingConnection,
+    ) -> Result<(), vox_types::Metadata<'static>> {
         Err(vec![])
     }
 }

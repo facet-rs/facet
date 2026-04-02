@@ -1,6 +1,6 @@
 //! End-to-end tests for automatic service name routing via vox-service metadata.
 
-use vox::{ConnectionSettings, Parity, memory_link_pair, metadata_get_str};
+use vox::{ConnectionSettings, Parity, memory_link_pair};
 
 #[vox::service]
 trait Echo {
@@ -38,15 +38,16 @@ async fn root_connect_sends_vox_service_and_factory_sees_it() {
     let seen_service = Arc::new(Mutex::new(None::<String>));
 
     // Server uses a factory that records the service name it sees.
-    let factory = {
+    let factory = vox::acceptor_fn({
         let seen_service = seen_service.clone();
-        move |metadata: &[vox::MetadataEntry]| -> Option<Box<dyn vox::ErasedHandler>> {
-            let service = metadata_get_str(metadata, "vox-service");
-            *seen_service.lock().unwrap() = service.map(String::from);
-            // Accept and serve Echo regardless
-            Some(Box::new(EchoDispatcher::new(EchoService)))
+        move |request: &vox::ConnectionRequest,
+              connection: vox::PendingConnection|
+              -> Result<(), vox::Metadata<'static>> {
+            *seen_service.lock().unwrap() = request.service().map(String::from);
+            connection.handle_with(EchoDispatcher::new(EchoService));
+            Ok(())
         }
-    };
+    });
 
     let server = tokio::spawn(async move {
         let s = vox::acceptor_on(server_link)
@@ -86,14 +87,23 @@ async fn root_connect_sends_vox_service_and_factory_sees_it() {
 async fn service_factory_routes_virtual_connections() {
     let (client_link, server_link) = memory_link_pair(16);
 
-    let factory = |metadata: &[vox::MetadataEntry]| -> Option<Box<dyn vox::ErasedHandler>> {
-        let service = metadata_get_str(metadata, "vox-service")?;
-        match service {
-            "Echo" => Some(Box::new(EchoDispatcher::new(EchoService))),
-            "Adder" => Some(Box::new(AdderDispatcher::new(AdderService))),
-            _ => None,
-        }
-    };
+    let factory = vox::acceptor_fn(
+        |request: &vox::ConnectionRequest,
+         connection: vox::PendingConnection|
+         -> Result<(), vox::Metadata<'static>> {
+            match request.service() {
+                Some("Echo") => {
+                    connection.handle_with(EchoDispatcher::new(EchoService));
+                    Ok(())
+                }
+                Some("Adder") => {
+                    connection.handle_with(AdderDispatcher::new(AdderService));
+                    Ok(())
+                }
+                _ => Err(vec![]),
+            }
+        },
+    );
 
     let server = tokio::spawn(async move {
         let s = vox::acceptor_on(server_link)
@@ -141,13 +151,19 @@ async fn service_factory_routes_virtual_connections() {
 async fn service_factory_rejects_unknown_service() {
     let (client_link, server_link) = memory_link_pair(16);
 
-    let factory = |metadata: &[vox::MetadataEntry]| -> Option<Box<dyn vox::ErasedHandler>> {
-        let service = metadata_get_str(metadata, "vox-service")?;
-        match service {
-            "Echo" => Some(Box::new(EchoDispatcher::new(EchoService))),
-            _ => None,
-        }
-    };
+    let factory = vox::acceptor_fn(
+        |request: &vox::ConnectionRequest,
+         connection: vox::PendingConnection|
+         -> Result<(), vox::Metadata<'static>> {
+            match request.service() {
+                Some("Echo") => {
+                    connection.handle_with(EchoDispatcher::new(EchoService));
+                    Ok(())
+                }
+                _ => Err(vec![]),
+            }
+        },
+    );
 
     let server = tokio::spawn(async move {
         let s = vox::acceptor_on(server_link)

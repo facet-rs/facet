@@ -1,9 +1,6 @@
 //! Tests for proxy_connections — transparent call forwarding between sessions.
 
-use vox::{
-    AcceptedConnection, ConnectionAcceptor, ConnectionSettings, ConnectionSetup, Driver, Metadata,
-    Parity, SessionHandle, memory_link_pair, proxy_connections,
-};
+use vox::{ConnectionSettings, Driver, Metadata, Parity, SessionHandle, memory_link_pair};
 
 #[vox::service]
 trait Echo {
@@ -19,60 +16,32 @@ impl Echo for EchoService {
     }
 }
 
-struct UpstreamEchoAcceptor;
-
-impl ConnectionAcceptor for UpstreamEchoAcceptor {
-    fn accept(
-        &self,
-        _conn_id: vox::ConnectionId,
-        peer_settings: &ConnectionSettings,
-        _metadata: &[vox::MetadataEntry],
-    ) -> Result<AcceptedConnection, Metadata<'static>> {
-        Ok(AcceptedConnection {
-            settings: ConnectionSettings {
-                parity: peer_settings.parity.other(),
-                max_concurrent_requests: 64,
-            },
-            metadata: vec![],
-            setup: ConnectionSetup::Handler(Box::new(EchoDispatcher::new(EchoService))),
-        })
-    }
-}
-
 struct ProxyAcceptor {
     upstream_session: SessionHandle,
 }
 
-impl ConnectionAcceptor for ProxyAcceptor {
+impl vox::ConnectionAcceptor for ProxyAcceptor {
     fn accept(
         &self,
-        _conn_id: vox::ConnectionId,
-        peer_settings: &ConnectionSettings,
-        _metadata: &[vox::MetadataEntry],
-    ) -> Result<AcceptedConnection, Metadata<'static>> {
+        _request: &vox::ConnectionRequest,
+        connection: vox::PendingConnection,
+    ) -> Result<(), Metadata<'static>> {
         let upstream_session = self.upstream_session.clone();
-        Ok(AcceptedConnection {
-            settings: ConnectionSettings {
-                parity: peer_settings.parity.other(),
-                max_concurrent_requests: 64,
-            },
-            metadata: vec![],
-            setup: ConnectionSetup::Setup(Box::new(move |incoming| {
-                tokio::spawn(async move {
-                    let upstream = upstream_session
-                        .open_connection(
-                            ConnectionSettings {
-                                parity: Parity::Odd,
-                                max_concurrent_requests: 64,
-                            },
-                            vec![],
-                        )
-                        .await
-                        .expect("open upstream connection");
-                    proxy_connections(incoming, upstream).await;
-                });
-            })),
-        })
+        let incoming = connection.into_handle();
+        tokio::spawn(async move {
+            let upstream = upstream_session
+                .open_connection(
+                    ConnectionSettings {
+                        parity: Parity::Odd,
+                        max_concurrent_requests: 64,
+                    },
+                    vec![],
+                )
+                .await
+                .expect("open upstream connection");
+            let _ = vox::proxy_connections(incoming, upstream).await;
+        });
+        Ok(())
     }
 }
 
@@ -86,7 +55,7 @@ async fn proxy_connections_forwards_calls() {
     // guest-b: accepts virtual connections with EchoService
     let guest_b_task = tokio::spawn(async move {
         let guard = vox::acceptor_on(guest_b_link)
-            .on_connection(UpstreamEchoAcceptor)
+            .on_connection(EchoDispatcher::new(EchoService))
             .establish::<vox::NoopClient>(())
             .await
             .expect("guest-b establish");

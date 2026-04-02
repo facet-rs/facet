@@ -601,17 +601,7 @@ fn generate_dispatcher(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream
             }
         }
 
-        impl<H> #vox::ConnectionAcceptor for #dispatcher_name<H>
-        where
-            H: #trait_name,
-        {
-            fn accept(
-                &self,
-                _request: &#vox::ConnectionRequest,
-            ) -> ::core::result::Result<Box<dyn #vox::ErasedHandler>, #vox::Metadata<'static>> {
-                Ok(Box::new(self.clone()))
-            }
-        }
+        // ConnectionAcceptor is implemented via blanket impl on Handler<DriverReplySink>.
     }
 }
 
