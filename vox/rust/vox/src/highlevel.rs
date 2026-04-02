@@ -114,7 +114,7 @@ pub async fn connect<Client: FromVoxSession>(
 }
 
 /// Parse `host:port?key=val&key2=val2` into `("host:port", {key: val, ...})`.
-#[cfg(any(feature = "transport-websocket-tls", feature = "transport-shm"))]
+#[cfg(feature = "transport-websocket-tls")]
 fn parse_query_params(s: &str) -> (&str, std::collections::HashMap<String, std::path::PathBuf>) {
     match s.split_once('?') {
         None => (s, Default::default()),
