@@ -642,7 +642,8 @@ impl ConnectionSender {
         schemas: Arc<vox_types::SchemaRecvTracker>,
         msg: SelfRef<ConnectionMessage<'static>>,
     ) -> Result<(), ()> {
-        let payload = match &*msg {
+        let msg_ref = msg.get();
+        let payload = match msg_ref {
             ConnectionMessage::Request(request) => MessagePayload::RequestMessage(RequestMessage {
                 id: request.id,
                 body: forwarded_request_body(&request.body),
@@ -1232,7 +1233,31 @@ impl Session {
         msg: SelfRef<Message<'static>>,
         keepalive_runtime: &mut Option<KeepaliveRuntime>,
     ) {
-        let conn_id = msg.connection_id;
+        let msg_ref = msg.get();
+        let conn_id = msg_ref.connection_id;
+        match &msg_ref.payload {
+            MessagePayload::Ping(ping) => {
+                let _ = self
+                    .sess_core
+                    .send(
+                        Message {
+                            connection_id: conn_id,
+                            payload: MessagePayload::Pong(vox_types::Pong { nonce: ping.nonce }),
+                        },
+                        None,
+                        None,
+                    )
+                    .await;
+                return;
+            }
+            MessagePayload::Pong(pong) => {
+                if conn_id.is_root() {
+                    self.handle_keepalive_pong(pong.nonce, keepalive_runtime);
+                }
+                return;
+            }
+            _ => {}
+        }
         vox_types::selfref_match!(msg, payload {
             // r[impl connection.close.semantics]
             MessagePayload::ConnectionClose(_) => {
@@ -1257,25 +1282,26 @@ impl Session {
                 self.handle_inbound_reject(conn_id, reject);
             }
             MessagePayload::RequestMessage(r) => {
+                let r_ref = r.get();
                 vox_types::dlog!(
                     "[session {:?}] recv request: conn={:?} req={:?} body={} method={:?}",
                     self.role,
                     conn_id,
-                    r.id,
-                    match &r.body {
+                    r_ref.id,
+                    match &r_ref.body {
                         RequestBody::Call(_) => "Call",
                         RequestBody::Response(_) => "Response",
                         RequestBody::Cancel(_) => "Cancel",
                     },
-                    match &r.body {
+                    match &r_ref.body {
                         RequestBody::Call(call) => Some(call.method_id),
                         RequestBody::Response(_) | RequestBody::Cancel(_) => None,
                     }
                 );
                 // Record any inlined schemas from the incoming request before routing
-                let response_had_schema_payload = matches!(&r.body, RequestBody::Response(resp) if !resp.schemas.is_empty());
+                let response_had_schema_payload = matches!(&r_ref.body, RequestBody::Response(resp) if !resp.schemas.is_empty());
                 {
-                    let schemas_cbor = match &r.body {
+                    let schemas_cbor = match &r_ref.body {
                         RequestBody::Call(call) => Some(&call.schemas),
                         RequestBody::Response(resp) => Some(&resp.schemas),
                         _ => None,
@@ -1283,8 +1309,8 @@ impl Session {
                     vox_types::dlog!(
                         "[schema] recv ({:?}): req={:?} body={} schemas_len={:?}",
                         self.role,
-                        r.id,
-                        match &r.body {
+                        r_ref.id,
+                    match &r_ref.body {
                             RequestBody::Call(_) => "Call",
                             RequestBody::Response(_) => "Response",
                             RequestBody::Cancel(_) => "Cancel",
@@ -1300,14 +1326,14 @@ impl Session {
                     {
                         let payload = vox_types::SchemaPayload::from_cbor(&schemas_cbor.0)
                             .expect("inlined schemas must be valid CBOR");
-                        let (method_id, direction) = match &r.body {
+                        let (method_id, direction) = match &r_ref.body {
                             RequestBody::Call(call) => {
                                 (call.method_id, vox_types::BindingDirection::Args)
                             }
                             RequestBody::Response(_) => {
                                 let method_id = self
                                     .sess_core
-                                    .take_outgoing_call_method(conn_id, r.id)
+                                    .take_outgoing_call_method(conn_id, r_ref.id)
                                     .expect("response schemas require an inflight method binding");
                                 (method_id, vox_types::BindingDirection::Response)
                             }
@@ -1319,21 +1345,21 @@ impl Session {
                             .expect("received schemas must not contain duplicate type IDs");
                     }
                 }
-                if matches!(&r.body, RequestBody::Response(_)) && !response_had_schema_payload {
-                    let _ = self.sess_core.take_outgoing_call_method(conn_id, r.id);
+                if matches!(&r_ref.body, RequestBody::Response(_)) && !response_had_schema_payload {
+                    let _ = self.sess_core.take_outgoing_call_method(conn_id, r_ref.id);
                 }
                 // Record incoming calls so SessionCore::send() can look up
                 // the method_id when sending the response.
-                if let RequestBody::Call(call) = &r.body {
-                    self.sess_core.record_incoming_call(conn_id, r.id, call.method_id);
+                if let RequestBody::Call(call) = &r_ref.body {
+                    self.sess_core.record_incoming_call(conn_id, r_ref.id, call.method_id);
                 }
                 let state = match self.conns.get(&conn_id) {
                     Some(ConnectionSlot::Active(state)) => state,
                     _ => return,
                 };
                 let conn_tx = state.conn_tx.clone();
-                let request_id = r.id;
-                let body_kind = match &r.body {
+                let request_id = r_ref.id;
+                let body_kind = match &r_ref.body {
                     RequestBody::Call(_) => "Call",
                     RequestBody::Response(_) => "Response",
                     RequestBody::Cancel(_) => "Cancel",
@@ -1367,20 +1393,6 @@ impl Session {
                 if conn_tx.send(recv_msg).await.is_err() {
                     self.remove_connection(&conn_id);
                     self.maybe_request_shutdown_after_root_closed();
-                }
-            }
-            MessagePayload::Ping(ping) => {
-                let _ = self
-                    .sess_core
-                    .send(Message {
-                        connection_id: conn_id,
-                        payload: MessagePayload::Pong(vox_types::Pong { nonce: ping.nonce }),
-                    }, None, None)
-                    .await;
-            }
-            MessagePayload::Pong(pong) => {
-                if conn_id.is_root() {
-                    self.handle_keepalive_pong(pong.nonce, keepalive_runtime);
                 }
             }
             // ProtocolError: not valid post-handshake, drop.
@@ -1529,6 +1541,7 @@ impl Session {
         }
 
         // Derive settings: opposite parity, same max concurrent requests.
+        let open = open.get();
         let our_settings = ConnectionSettings {
             parity: open.connection_settings.parity.other(),
             max_concurrent_requests: open.connection_settings.max_concurrent_requests,
@@ -1624,6 +1637,7 @@ impl Session {
         conn_id: ConnectionId,
         accept: SelfRef<ConnectionAccept<'static>>,
     ) {
+        let accept = accept.get();
         let slot = self.remove_connection(&conn_id);
         match slot {
             Some(ConnectionSlot::PendingOutbound(mut pending)) => {
@@ -1652,6 +1666,7 @@ impl Session {
         conn_id: ConnectionId,
         reject: SelfRef<ConnectionReject<'static>>,
     ) {
+        let reject = reject.get();
         let slot = self.remove_connection(&conn_id);
         match slot {
             Some(ConnectionSlot::PendingOutbound(mut pending)) => {

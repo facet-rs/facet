@@ -1599,9 +1599,10 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
 
     fn handle_recv(&mut self, recv: crate::session::RecvMessage) {
         let crate::session::RecvMessage { schemas, msg } = recv;
-        let is_request = matches!(&*msg, ConnectionMessage::Request(_));
+        let msg_ref = msg.get();
+        let is_request = matches!(msg_ref, ConnectionMessage::Request(_));
         if is_request {
-            if let ConnectionMessage::Request(req) = &*msg {
+            if let ConnectionMessage::Request(req) = msg_ref {
                 vox_types::dlog!(
                     "[driver] handle_recv request: conn={:?} req={:?} body={} method={:?}",
                     self.sender.connection_id(),
@@ -1654,13 +1655,14 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
         msg: SelfRef<RequestMessage<'static>>,
         schemas: Arc<vox_types::SchemaRecvTracker>,
     ) {
-        let req_id = msg.id;
-        let is_call = matches!(&msg.body, RequestBody::Call(_));
-        let is_response = matches!(&msg.body, RequestBody::Response(_));
-        let is_cancel = matches!(&msg.body, RequestBody::Cancel(_));
+        let msg_ref = msg.get();
+        let req_id = msg_ref.id;
+        let is_call = matches!(&msg_ref.body, RequestBody::Call(_));
+        let is_response = matches!(&msg_ref.body, RequestBody::Response(_));
+        let is_cancel = matches!(&msg_ref.body, RequestBody::Cancel(_));
 
         if is_call {
-            let method_id = match &msg.body {
+            let method_id = match &msg_ref.body {
                 RequestBody::Call(call) => call.method_id,
                 _ => unreachable!(),
             };
@@ -1676,18 +1678,19 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                 RequestBody::Call(c) => c,
                 _ => unreachable!(),
             });
+            let call_ref = call.get();
             let handler = Arc::clone(&self.handler);
-            let retry = handler.retry_policy(call.method_id);
+            let retry = handler.retry_policy(call_ref.method_id);
             // Idempotent requests can be re-executed safely; skip operation tracking/storage.
-            let operation_id = metadata_operation_id(&call.metadata).filter(|_| !retry.idem);
-            let method_id = call.method_id;
+            let operation_id = metadata_operation_id(&call_ref.metadata).filter(|_| !retry.idem);
+            let method_id = call_ref.method_id;
 
             if let Some(operation_id) = operation_id {
                 // 1. Check live tracker (in-flight operations in this session)
                 let admit = self.live_operations.lock().admit(
                     operation_id,
-                    call.method_id,
-                    incoming_args_bytes(&call),
+                    call_ref.method_id,
+                    incoming_args_bytes(call_ref),
                     retry,
                     req_id,
                 );
@@ -1723,7 +1726,7 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
                         // Replay the sealed response.
                         if let Some(sealed) = self.shared.operations.get_sealed(operation_id) {
                             let sender = self.sender.clone();
-                            let method_id = call.method_id;
+                            let method_id = call_ref.method_id;
                             let operations = Arc::clone(&self.shared.operations);
                             // Remove from live tracker — we're replaying, not running a handler.
                             self.live_operations.lock().seal(operation_id);
@@ -1783,14 +1786,14 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
             let reply = DriverReplySink {
                 sender: Some(self.sender.clone()),
                 request_id: req_id,
-                method_id: call.method_id,
+                method_id: call_ref.method_id,
                 retry,
                 operation_id,
                 operations: operation_id.map(|_| Arc::clone(&self.shared.operations)),
                 live_operations: operation_id.map(|_| Arc::clone(&self.live_operations)),
                 binder: self.internal_binder(),
             };
-            let has_channels = handler.args_have_channels(call.method_id);
+            let has_channels = handler.args_have_channels(call_ref.method_id);
             let local_control_tx = self.local_control_tx.clone();
             let join_handle = moire::task::spawn(
                 async move {
@@ -1885,13 +1888,14 @@ impl<H: Handler<DriverReplySink>> Driver<H> {
     }
 
     fn handle_channel(&mut self, msg: SelfRef<ChannelMessage<'static>>) {
-        let chan_id = msg.id;
+        let msg_ref = msg.get();
+        let chan_id = msg_ref.id;
 
         // Look up the channel sender from the shared registry (handles registered
         // by both the driver and any DriverCaller that set up channels).
         let sender = self.shared.channel_senders.lock().get(&chan_id).cloned();
 
-        match &msg.body {
+        match &msg_ref.body {
             // r[impl rpc.channel.item]
             ChannelBody::Item(_item) => {
                 if let Some(tx) = &sender {

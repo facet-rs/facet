@@ -826,6 +826,7 @@ where
             // r[impl stable.seq.monotonic]
             // r[impl stable.ack.trim]
             let is_dup = {
+                let frame = frame.get();
                 let mut inner = self.shared.lock_inner()?;
 
                 if let Some(ack) = frame.ack {
@@ -845,6 +846,7 @@ where
 
             // Phase 4: deserialize the message from the payload bytes
             // using the message plan for schema-aware translation.
+            let frame = frame.get();
             let item_bytes = match &frame.item {
                 Payload::PostcardBytes(bytes) => bytes,
                 _ => unreachable!("deserialized Payload should always be Incoming"),
