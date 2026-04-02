@@ -1125,7 +1125,7 @@ mod tests {
             .await
             .expect("recv should succeed")
             .expect("expected item");
-        assert_eq!(*value, 123_u32);
+        assert_eq!(*value.get(), 123_u32);
         assert_eq!(replenisher.calls.load(Ordering::Acquire), 1);
     }
 
@@ -1158,7 +1158,7 @@ mod tests {
             .await
             .expect("recv should succeed")
             .expect("expected item");
-        assert_eq!(*value, 321_u32);
+        assert_eq!(*value.get(), 321_u32);
         assert_eq!(replenisher.calls.load(Ordering::Acquire), 1);
     }
 

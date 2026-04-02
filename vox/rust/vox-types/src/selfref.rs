@@ -204,6 +204,14 @@ impl<T: Reborrow> SelfRef<T> {
 // No `Deref` — would leak the fake `'static` lifetime. See `Reborrow` docs.
 // No `DerefMut` — mutating T could invalidate borrowed references.
 
+// SAFETY: these owned types have no lifetime parameter; Ref<'a> = Self is trivially sound.
+unsafe impl Reborrow for u32 {
+    type Ref<'a> = u32;
+}
+unsafe impl Reborrow for usize {
+    type Ref<'a> = usize;
+}
+
 /// Implement [`Reborrow`] for a list of types that are covariant in a single
 /// lifetime parameter.
 ///
@@ -270,6 +278,14 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    // SAFETY: test-only types with no lifetime parameter.
+    unsafe impl Reborrow for &'static [u8] {
+        type Ref<'a> = &'a [u8];
+    }
+    unsafe impl Reborrow for (u32, u8, u8) {
+        type Ref<'a> = (u32, u8, u8);
+    }
+
     struct TestSharedBacking {
         bytes: Vec<u8>,
         dropped: Arc<AtomicBool>,
@@ -305,7 +321,7 @@ mod tests {
         let backing = Backing::Boxed(Box::from([1_u8, 2, 3, 4]));
         let sref = SelfRef::try_new(backing, |bytes| Ok::<_, ()>(&bytes[1..3]))
             .expect("try_new should succeed");
-        assert_eq!(&**sref, &[2_u8, 3]);
+        assert_eq!(sref.get(), &[2_u8, 3]);
     }
 
     #[test]
@@ -325,14 +341,14 @@ mod tests {
         let len_ref = sref
             .try_map(|bytes| Ok::<_, ()>(bytes.len()))
             .expect("try_map should succeed");
-        assert_eq!(*len_ref, 5);
+        assert_eq!(*len_ref.get(), 5);
 
         let backing = Backing::Boxed(Box::from(*b"abcdef"));
         let sref = SelfRef::new(backing, |_| 10_u32);
         let repacked = sref
             .try_repack(|value, bytes| Ok::<_, ()>((value + 1, bytes[0], bytes[5])))
             .expect("try_repack should succeed");
-        assert_eq!(*repacked, (11_u32, b'a', b'f'));
+        assert_eq!(*repacked.get(), (11_u32, b'a', b'f'));
     }
 
     #[test]

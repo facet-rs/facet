@@ -220,22 +220,16 @@ mod tests {
     use super::*;
     use crate::memory_link_pair;
 
-    #[tokio::test]
-    async fn connection_reject_with_nonempty_metadata_round_trips() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
+    #[test]
+    fn connection_reject_with_nonempty_metadata_round_trips() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async { connection_reject_with_nonempty_metadata_inner().await });
+    }
 
-        let accept = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
-            stream.set_nodelay(true).unwrap();
-            vox_stream::StreamLink::tcp(stream)
-        });
-
-        let client_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-        client_stream.set_nodelay(true).unwrap();
-        let a = vox_stream::StreamLink::tcp(client_stream);
-        let b = accept.await.unwrap();
-
+    async fn connection_reject_with_nonempty_metadata_inner() {
+        let (a, b) = memory_link_pair(64);
         let a_conduit = BareConduit::<MessageFamily, _>::new(a);
         let b_conduit = BareConduit::<MessageFamily, _>::new(b);
         let (a_tx, _a_rx) = a_conduit.split();

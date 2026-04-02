@@ -554,14 +554,14 @@ pub(crate) struct ConnectionSender {
     failures: Arc<mpsc::UnboundedSender<(RequestId, FailureDisposition)>>,
 }
 
-fn forwarded_payload<'a>(payload: &'a vox_types::Payload<'static>) -> vox_types::Payload<'a> {
+fn forwarded_payload<'a>(payload: &'a vox_types::Payload<'a>) -> vox_types::Payload<'a> {
     let vox_types::Payload::PostcardBytes(bytes) = payload else {
         unreachable!("proxy forwarding expects decoded incoming payload bytes")
     };
     vox_types::Payload::PostcardBytes(bytes)
 }
 
-fn forwarded_request_body<'a>(body: &'a RequestBody<'static>) -> RequestBody<'a> {
+fn forwarded_request_body<'a>(body: &'a RequestBody<'a>) -> RequestBody<'a> {
     match body {
         RequestBody::Call(call) => RequestBody::Call(vox_types::RequestCall {
             method_id: call.method_id,
@@ -580,9 +580,7 @@ fn forwarded_request_body<'a>(body: &'a RequestBody<'static>) -> RequestBody<'a>
     }
 }
 
-fn forwarded_channel_body<'a>(
-    body: &'a vox_types::ChannelBody<'static>,
-) -> vox_types::ChannelBody<'a> {
+fn forwarded_channel_body<'a>(body: &'a vox_types::ChannelBody<'a>) -> vox_types::ChannelBody<'a> {
     match body {
         vox_types::ChannelBody::Item(item) => {
             vox_types::ChannelBody::Item(vox_types::ChannelItem {
