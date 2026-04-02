@@ -161,7 +161,7 @@ async fn close_signals_end() {
 
     let received = server_rx.recv().await.unwrap().unwrap();
     let received = received.get();
-    assert_eq!(&*received, "last");
+    assert_eq!(&**received, "last");
 
     let end = server_rx.recv().await.unwrap();
     assert!(end.is_none());
@@ -179,14 +179,14 @@ async fn interleaved_send_recv() {
 
         let received = server_rx.recv().await.unwrap().unwrap();
         let received = received.get();
-        assert_eq!(&*received, &format!("c2s-{i}"));
+        assert_eq!(&**received, &format!("c2s-{i}"));
 
         let permit = server_tx.reserve().await.unwrap();
         permit.send(format!("s2c-{i}")).unwrap();
 
         let received = client_rx.recv().await.unwrap().unwrap();
         let received = received.get();
-        assert_eq!(&*received, &format!("s2c-{i}"));
+        assert_eq!(&**received, &format!("s2c-{i}"));
     }
 }
 
