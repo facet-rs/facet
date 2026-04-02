@@ -1,6 +1,10 @@
+use std::sync::Arc;
 use std::time::Duration;
 
-use vox_core::{FromVoxSession, LinkSource, SessionError, TransportMode, initiator};
+use vox_core::{
+    ConnectionAcceptor, FromVoxSession, LinkSource, NoopClient, SessionError, TransportMode,
+    initiator,
+};
 
 /// Connect to a remote vox service, returning a typed client.
 ///
@@ -49,6 +53,116 @@ pub async fn connect<Client: FromVoxSession>(
         _ => Err(SessionError::Protocol(format!(
             "unknown transport scheme: {scheme:?}"
         ))),
+    }
+}
+
+/// Serve a vox service, accepting connections in a loop.
+///
+/// The address string determines the transport (same schemes as `connect()`).
+/// The acceptor handles both root and virtual connections.
+///
+/// This function runs forever (or until an I/O error occurs). Each incoming
+/// connection is handled in a spawned task.
+///
+/// # Examples
+///
+/// Single service:
+///
+/// ```no_run
+/// # #[vox::service]
+/// # trait Hello {
+/// #     async fn say_hello(&self) -> String;
+/// # }
+/// # #[derive(Clone)]
+/// # struct HelloService;
+/// # impl Hello for HelloService {
+/// #     async fn say_hello(&self) -> String { "hi".into() }
+/// # }
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// vox::serve("0.0.0.0:9000", HelloDispatcher::new(HelloService)).await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// Multi-service factory:
+///
+/// ```ignore
+/// vox::serve("0.0.0.0:9000", vox::acceptor_fn(|req, conn| {
+///     match req.service() {
+///         Some("Hello") => { conn.handle_with(HelloDispatcher::new(HelloService)); Ok(()) }
+///         Some("Chat") => { conn.handle_with(ChatDispatcher::new(ChatService)); Ok(()) }
+///         None => { conn.handle_with(()); Ok(()) } // root connection
+///         _ => Err(vec![]),
+///     }
+/// })).await?;
+/// ```
+pub async fn serve(
+    addr: impl std::fmt::Display,
+    acceptor: impl ConnectionAcceptor,
+) -> Result<(), SessionError> {
+    let addr = addr.to_string();
+    let (scheme, host) = match addr.split_once("://") {
+        Some((scheme, host)) => (scheme.to_string(), host.to_string()),
+        None => ("tcp".to_string(), addr),
+    };
+
+    let acceptor = Arc::new(acceptor);
+
+    match scheme.as_str() {
+        #[cfg(feature = "transport-tcp")]
+        "tcp" => {
+            let listener = tokio::net::TcpListener::bind(&host)
+                .await
+                .map_err(SessionError::Io)?;
+            loop {
+                let (stream, _addr) = listener.accept().await.map_err(SessionError::Io)?;
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    let link = vox_stream::StreamLink::tcp(stream);
+                    let result = vox_core::acceptor_on(link)
+                        .on_connection(AcceptorRef(acceptor))
+                        .establish::<NoopClient>()
+                        .await;
+                    if let Ok(client) = result {
+                        client.caller.closed().await;
+                    }
+                });
+            }
+        }
+        #[cfg(feature = "transport-local")]
+        "local" => {
+            let listener = vox_stream::LocalLinkAcceptor::bind(&host).map_err(SessionError::Io)?;
+            loop {
+                let link = listener.accept().await.map_err(SessionError::Io)?;
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    let result = vox_core::acceptor_on(link)
+                        .on_connection(AcceptorRef(acceptor))
+                        .establish::<NoopClient>()
+                        .await;
+                    if let Ok(client) = result {
+                        client.caller.closed().await;
+                    }
+                });
+            }
+        }
+        _ => Err(SessionError::Protocol(format!(
+            "unsupported transport scheme for serve: {scheme:?}"
+        ))),
+    }
+}
+
+/// Wrapper that implements `ConnectionAcceptor` by delegating to an `Arc<dyn ConnectionAcceptor>`.
+struct AcceptorRef(Arc<dyn ConnectionAcceptor>);
+
+impl ConnectionAcceptor for AcceptorRef {
+    fn accept(
+        &self,
+        request: &vox_core::ConnectionRequest,
+        connection: vox_core::PendingConnection,
+    ) -> Result<(), vox_types::Metadata<'static>> {
+        self.0.accept(request, connection)
     }
 }
 

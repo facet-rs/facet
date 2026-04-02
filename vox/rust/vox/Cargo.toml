@@ -38,6 +38,7 @@ facet-pretty.workspace = true
 facet-reflect.workspace = true
 vox-postcard.workspace = true
 tracing.workspace = true
+tokio = { workspace = true, features = ["net"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
