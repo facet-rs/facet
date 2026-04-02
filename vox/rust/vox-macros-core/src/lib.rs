@@ -607,18 +607,9 @@ fn generate_dispatcher(parsed: &ServiceTrait, vox: &TokenStream2) -> TokenStream
         {
             fn accept(
                 &self,
-                _conn_id: #vox::ConnectionId,
-                peer_settings: &#vox::ConnectionSettings,
-                _metadata: &[#vox::MetadataEntry],
-            ) -> ::core::result::Result<#vox::AcceptedConnection, #vox::Metadata<'static>> {
-                Ok(#vox::AcceptedConnection {
-                    settings: #vox::ConnectionSettings {
-                        parity: peer_settings.parity.other(),
-                        max_concurrent_requests: peer_settings.max_concurrent_requests,
-                    },
-                    metadata: vec![],
-                    setup: #vox::ConnectionSetup::Handler(Box::new(self.clone())),
-                })
+                _request: &#vox::ConnectionRequest,
+            ) -> ::core::result::Result<Box<dyn #vox::ErasedHandler>, #vox::Metadata<'static>> {
+                Ok(Box::new(self.clone()))
             }
         }
     }

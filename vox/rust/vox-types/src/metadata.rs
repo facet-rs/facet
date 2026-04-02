@@ -92,6 +92,39 @@ impl<'a> MetadataValue<'a> {
 }
 
 impl<'a> MetadataEntry<'a> {
+    /// Create a string metadata entry with no flags.
+    pub fn str(key: impl Into<Cow<'a, str>>, value: impl Into<Cow<'a, str>>) -> Self {
+        MetadataEntry {
+            key: key.into(),
+            value: MetadataValue::String(value.into()),
+            flags: MetadataFlags::NONE,
+        }
+    }
+
+    /// Create a u64 metadata entry with no flags.
+    pub fn u64(key: impl Into<Cow<'a, str>>, value: u64) -> Self {
+        MetadataEntry {
+            key: key.into(),
+            value: MetadataValue::U64(value),
+            flags: MetadataFlags::NONE,
+        }
+    }
+
+    /// Create a bytes metadata entry with no flags.
+    pub fn bytes(key: impl Into<Cow<'a, str>>, value: impl Into<Cow<'a, [u8]>>) -> Self {
+        MetadataEntry {
+            key: key.into(),
+            value: MetadataValue::Bytes(value.into()),
+            flags: MetadataFlags::NONE,
+        }
+    }
+
+    /// Set flags on this entry.
+    pub fn with_flags(mut self, flags: MetadataFlags) -> Self {
+        self.flags = flags;
+        self
+    }
+
     /// Convert to a `'static` lifetime by cloning any borrowed data.
     pub fn into_owned(self) -> MetadataEntry<'static> {
         MetadataEntry {
@@ -99,6 +132,43 @@ impl<'a> MetadataEntry<'a> {
             value: self.value.into_owned(),
             flags: self.flags,
         }
+    }
+}
+
+/// Builder for constructing a `Metadata` list.
+pub struct MetadataBuilder<'a> {
+    entries: Metadata<'a>,
+}
+
+impl<'a> MetadataBuilder<'a> {
+    /// Add a string entry.
+    pub fn str(mut self, key: impl Into<Cow<'a, str>>, value: impl Into<Cow<'a, str>>) -> Self {
+        self.entries.push(MetadataEntry::str(key, value));
+        self
+    }
+
+    /// Add a u64 entry.
+    pub fn u64(mut self, key: impl Into<Cow<'a, str>>, value: u64) -> Self {
+        self.entries.push(MetadataEntry::u64(key, value));
+        self
+    }
+
+    /// Add a bytes entry.
+    pub fn bytes(mut self, key: impl Into<Cow<'a, str>>, value: impl Into<Cow<'a, [u8]>>) -> Self {
+        self.entries.push(MetadataEntry::bytes(key, value));
+        self
+    }
+
+    /// Finish building and return the metadata list.
+    pub fn done(self) -> Metadata<'a> {
+        self.entries
+    }
+}
+
+/// Start building a metadata list.
+pub fn metadata_build<'a>() -> MetadataBuilder<'a> {
+    MetadataBuilder {
+        entries: Vec::new(),
     }
 }
 

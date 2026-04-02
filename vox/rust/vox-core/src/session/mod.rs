@@ -37,91 +37,78 @@ pub struct SessionKeepaliveConfig {
 /// metadata (including `vox-service` for service routing) and returns either
 /// an [`AcceptedConnection`] or rejection metadata.
 ///
-/// Implemented for closures automatically:
-///
-/// ```ignore
-/// .on_connection(|metadata: &[MetadataEntry]| {
-///     let service = vox::metadata_get_str(metadata, "vox-service")?;
-///     match service {
-///         "Echo" => Some(Box::new(|handle| {
-///             let mut driver = Driver::new(handle, EchoDispatcher::new(EchoService));
-///             tokio::spawn(async move { driver.run().await });
-///         }) as Box<dyn FnOnce(ConnectionHandle) + Send>),
-///         _ => None,
-///     }
-/// })
-/// ```
+/// Metadata wrapper with typed getters for well-known `vox-*` keys.
+pub struct ConnectionRequest<'a> {
+    metadata: &'a [vox_types::MetadataEntry<'a>],
+}
+
+impl<'a> ConnectionRequest<'a> {
+    pub fn new(metadata: &'a [vox_types::MetadataEntry<'a>]) -> Self {
+        Self { metadata }
+    }
+
+    /// The requested service name (`vox-service` metadata key).
+    pub fn service(&self) -> Option<&str> {
+        vox_types::metadata_get_str(self.metadata, "vox-service")
+    }
+
+    /// The transport type (`vox-transport` metadata key).
+    pub fn transport(&self) -> Option<&str> {
+        vox_types::metadata_get_str(self.metadata, "vox-transport")
+    }
+
+    /// The peer address (`vox-peer-addr` metadata key).
+    pub fn peer_addr(&self) -> Option<&str> {
+        vox_types::metadata_get_str(self.metadata, "vox-peer-addr")
+    }
+
+    /// Look up a string value by key.
+    pub fn get_str(&self, key: &str) -> Option<&str> {
+        vox_types::metadata_get_str(self.metadata, key)
+    }
+
+    /// Look up a u64 value by key.
+    pub fn get_u64(&self, key: &str) -> Option<u64> {
+        vox_types::metadata_get_u64(self.metadata, key)
+    }
+
+    /// Access the raw metadata entries.
+    pub fn metadata(&self) -> &[vox_types::MetadataEntry<'a>] {
+        self.metadata
+    }
+}
+
 // r[impl rpc.virtual-connection.accept]
 pub trait ConnectionAcceptor: Send + 'static {
     fn accept(
         &self,
-        conn_id: ConnectionId,
-        peer_settings: &ConnectionSettings,
-        metadata: &[vox_types::MetadataEntry],
-    ) -> Result<AcceptedConnection, Metadata<'static>>;
+        request: &ConnectionRequest,
+    ) -> Result<Box<dyn crate::ErasedHandler>, Metadata<'static>>;
 }
 
-/// Blanket impl: a closure `Fn(&[MetadataEntry]) -> Option<Box<dyn ErasedHandler>>`
-/// is a `ConnectionAcceptor`. Returns `None` to reject, `Some(handler)` to accept.
-/// Settings are derived automatically (opposite parity, same max concurrent requests).
+/// Blanket impl: a closure that takes `&ConnectionRequest` and returns
+/// `Result<Box<dyn ErasedHandler>, Metadata>` is a `ConnectionAcceptor`.
 impl<F> ConnectionAcceptor for F
 where
-    F: Fn(&[vox_types::MetadataEntry]) -> Option<Box<dyn crate::ErasedHandler>> + Send + 'static,
+    F: Fn(&ConnectionRequest) -> Result<Box<dyn crate::ErasedHandler>, Metadata<'static>>
+        + Send
+        + 'static,
 {
     fn accept(
         &self,
-        _conn_id: ConnectionId,
-        peer_settings: &ConnectionSettings,
-        metadata: &[vox_types::MetadataEntry],
-    ) -> Result<AcceptedConnection, Metadata<'static>> {
-        match (self)(metadata) {
-            Some(handler) => Ok(AcceptedConnection {
-                settings: ConnectionSettings {
-                    parity: peer_settings.parity.other(),
-                    max_concurrent_requests: peer_settings.max_concurrent_requests,
-                },
-                metadata: vec![],
-                setup: ConnectionSetup::Handler(handler),
-            }),
-            None => Err(vec![]),
-        }
+        request: &ConnectionRequest,
+    ) -> Result<Box<dyn crate::ErasedHandler>, Metadata<'static>> {
+        (self)(request)
     }
-}
-
-/// What to do with an accepted connection.
-pub enum ConnectionSetup {
-    /// Run a Driver with this handler (the common case).
-    Handler(Box<dyn crate::ErasedHandler>),
-    /// Raw setup: receives the ConnectionHandle directly (for proxying, etc).
-    Setup(Box<dyn FnOnce(ConnectionHandle) + Send>),
-}
-
-/// Result of accepting a virtual connection.
-pub struct AcceptedConnection {
-    /// Our settings for this connection.
-    pub settings: ConnectionSettings,
-    /// Metadata to send back in ConnectionAccept.
-    pub metadata: Metadata<'static>,
-    /// How to handle this connection.
-    pub setup: ConnectionSetup,
 }
 
 /// `()` as an acceptor: accepts all connections with a no-op handler.
 impl ConnectionAcceptor for () {
     fn accept(
         &self,
-        _conn_id: ConnectionId,
-        peer_settings: &ConnectionSettings,
-        _metadata: &[vox_types::MetadataEntry],
-    ) -> Result<AcceptedConnection, Metadata<'static>> {
-        Ok(AcceptedConnection {
-            settings: ConnectionSettings {
-                parity: peer_settings.parity.other(),
-                max_concurrent_requests: peer_settings.max_concurrent_requests,
-            },
-            metadata: vec![],
-            setup: ConnectionSetup::Handler(Box::new(())),
-        })
+        _request: &ConnectionRequest,
+    ) -> Result<Box<dyn crate::ErasedHandler>, Metadata<'static>> {
+        Ok(Box::new(()))
     }
 }
 
@@ -711,7 +698,15 @@ impl ConnectionHandle {
 /// This is a protocol-level bridge: it does not inspect service schemas or method IDs.
 /// It exits when either side closes or a forward send fails, then requests closure of
 /// both underlying connections.
-pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) {
+pub async fn proxy_connections(
+    left: ConnectionHandle,
+    right: ConnectionHandle,
+) -> Result<(), SessionError> {
+    if left.parity == right.parity {
+        return Err(SessionError::Protocol(
+            "proxy_connections requires opposite parities".into(),
+        ));
+    }
     let left_conn_id = left.connection_id();
     let right_conn_id = right.connection_id();
     let ConnectionHandle {
@@ -762,6 +757,7 @@ pub async fn proxy_connections(left: ConnectionHandle, right: ConnectionHandle) 
     if let Some(tx) = right_control_tx.as_ref() {
         let _ = send_drop_control(tx, DropControlRequest::Close(right_conn_id));
     }
+    Ok(())
 }
 
 /// Errors that can occur during session establishment or operation.
@@ -1398,12 +1394,19 @@ impl Session {
             }
         };
 
-        match acceptor.accept(conn_id, &open.connection_settings, &open.metadata) {
-            Ok(accepted) => {
+        let request = ConnectionRequest::new(&open.metadata);
+        match acceptor.accept(&request) {
+            Ok(handler) => {
+                // Derive settings: opposite parity, same max concurrent requests.
+                let our_settings = ConnectionSettings {
+                    parity: open.connection_settings.parity.other(),
+                    max_concurrent_requests: open.connection_settings.max_concurrent_requests,
+                };
+
                 // Create the connection handle and activate it.
                 let handle = self.make_connection_handle(
                     conn_id,
-                    accepted.settings.clone(),
+                    our_settings.clone(),
                     open.connection_settings.clone(),
                 );
 
@@ -1415,8 +1418,8 @@ impl Session {
                             connection_id: conn_id,
                             payload: MessagePayload::ConnectionAccept(
                                 vox_types::ConnectionAccept {
-                                    connection_settings: accepted.settings,
-                                    metadata: accepted.metadata,
+                                    connection_settings: our_settings,
+                                    metadata: vec![],
                                 },
                             ),
                         },
@@ -1425,19 +1428,12 @@ impl Session {
                     )
                     .await;
 
-                // Spawn a driver or run custom setup for the accepted connection.
-                match accepted.setup {
-                    ConnectionSetup::Handler(handler) => {
-                        let mut driver = crate::Driver::new(handle, handler);
-                        #[cfg(not(target_arch = "wasm32"))]
-                        tokio::spawn(async move { driver.run().await });
-                        #[cfg(target_arch = "wasm32")]
-                        wasm_bindgen_futures::spawn_local(async move { driver.run().await });
-                    }
-                    ConnectionSetup::Setup(f) => {
-                        f(handle);
-                    }
-                }
+                // Spawn a driver for the accepted connection.
+                let mut driver = crate::Driver::new(handle, handler);
+                #[cfg(not(target_arch = "wasm32"))]
+                tokio::spawn(async move { driver.run().await });
+                #[cfg(target_arch = "wasm32")]
+                wasm_bindgen_futures::spawn_local(async move { driver.run().await });
             }
             Err(reject_metadata) => {
                 let _ = self
