@@ -454,6 +454,7 @@ impl std::fmt::Debug for SchemaRecvTracker {
 }
 
 /// Result of schema extraction: the schemas and the root TypeRef.
+#[derive(Clone)]
 pub struct ExtractedSchemas {
     /// All schemas in dependency order (dependencies before dependents).
     pub schemas: Vec<Schema>,
@@ -465,6 +466,24 @@ pub struct ExtractedSchemas {
 /// Extract schemas without a tracker (uses a temporary counter).
 /// Useful for tests and one-off schema extraction.
 pub fn extract_schemas(shape: &'static Shape) -> Result<ExtractedSchemas, SchemaExtractError> {
+    use std::sync::OnceLock;
+
+    // Global cache: Shape pointer → extracted schemas.
+    // Safe because Shape is 'static and the result is deterministic.
+    static CACHE: OnceLock<Mutex<HashMap<usize, ExtractedSchemas>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    let key = shape as *const Shape as usize;
+    if let Some(cached) = cache.lock().unwrap().get(&key) {
+        return Ok(cached.clone());
+    }
+
+    let result = extract_schemas_uncached(shape)?;
+    cache.lock().unwrap().insert(key, result.clone());
+    Ok(result)
+}
+
+fn extract_schemas_uncached(shape: &'static Shape) -> Result<ExtractedSchemas, SchemaExtractError> {
     let mut ctx = ExtractCtx {
         next_id: CycleSchemaIndex::first(),
         schemas: IndexMap::new(),
