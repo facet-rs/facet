@@ -123,12 +123,12 @@ impl ServerCallOutcome {
 #[derive(Clone, Copy, Debug)]
 pub struct ServerRequest<'a> {
     context: RequestContext<'a>,
-    args: Peek<'a, 'static>,
+    args: Peek<'a, 'a>,
 }
 
 impl<'a> ServerRequest<'a> {
     /// Create a new middleware request view from a request context and decoded args.
-    pub const fn new(context: RequestContext<'a>, args: Peek<'a, 'static>) -> Self {
+    pub const fn new(context: RequestContext<'a>, args: Peek<'a, 'a>) -> Self {
         Self { context, args }
     }
 
@@ -163,7 +163,7 @@ impl<'a> ServerRequest<'a> {
     }
 
     /// Reflective view of the decoded argument tuple for this call.
-    pub const fn args(&self) -> Peek<'a, 'static> {
+    pub const fn args(&self) -> Peek<'a, 'a> {
         self.args
     }
 }

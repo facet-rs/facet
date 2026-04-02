@@ -71,7 +71,7 @@ impl ServerLogging {
             .with_minimal_option_names(true)
     }
 
-    fn format_payload(&self, payload: crate::Peek<'_, 'static>) -> String {
+    fn format_payload(&self, payload: crate::Peek<'_, '_>) -> String {
         self.payload_printer().format_peek(payload)
     }
 

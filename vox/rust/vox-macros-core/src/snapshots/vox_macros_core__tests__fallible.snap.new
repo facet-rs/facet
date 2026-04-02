@@ -1,0 +1,283 @@
+---
+source: rust/vox-macros-core/src/lib.rs
+assertion_line: 1127
+expression: "generate(quote!\n{\n    trait Calc\n    { async fn div(&self, a: f64, b: f64) -> Result<f64, DivError>; }\n})"
+---
+#[allow(non_snake_case, clippy::all)]
+pub fn calc_service_descriptor() -> &'static ::vox::session::ServiceDescriptor {
+    static DESCRIPTOR: std::sync::OnceLock<&'static ::vox::session::ServiceDescriptor> =
+        std::sync::OnceLock::new();
+    DESCRIPTOR.get_or_init(|| {
+        let methods: Vec<&'static ::vox::session::MethodDescriptor> =
+            vec![::vox::hash::method_descriptor_with_retry::<
+                (f64, f64),
+                Result<f64, DivError>,
+            >(
+                "Calc",
+                "div",
+                &["a", "b"],
+                None,
+                ::vox::RetryPolicy {
+                    persist: false,
+                    idem: false,
+                },
+            )];
+        Box::leak(Box::new(::vox::session::ServiceDescriptor {
+            service_name: "Calc",
+            methods: Box::leak(methods.into_boxed_slice()),
+            doc: None,
+        }))
+    })
+}
+pub trait Calc
+where
+    Self: Clone + ::vox::MaybeSend + ::vox::MaybeSync + 'static,
+{
+    fn div(
+        &self,
+        a: f64,
+        b: f64,
+    ) -> impl std::future::Future<Output = Result<f64, DivError>> + ::vox::MaybeSend;
+}
+#[doc = r" Dispatcher for this service."]
+#[doc = r""]
+#[doc = r" Wraps a handler and implements [`#vox::Handler`] by routing incoming"]
+#[doc = r" calls to the appropriate trait method by method ID."]
+#[derive(Clone)]
+pub struct CalcDispatcher<H> {
+    handler: H,
+    middlewares: Vec<::std::sync::Arc<dyn ::vox::ServerMiddleware>>,
+}
+impl<H> CalcDispatcher<H>
+where
+    H: Calc,
+{
+    #[doc = r" Create a new dispatcher wrapping the given handler."]
+    pub fn new(handler: H) -> Self {
+        Self {
+            handler,
+            middlewares: vec![],
+        }
+    }
+    #[doc = r" Append a server middleware to this dispatcher."]
+    pub fn with_middleware(mut self, middleware: impl ::vox::ServerMiddleware) -> Self {
+        self.middlewares.push(::std::sync::Arc::new(middleware));
+        self
+    }
+    async fn run_post_hooks(
+        &self,
+        context: &::vox::RequestContext<'_>,
+        outcome: ::vox::ServerCallOutcome,
+    ) {
+        for middleware in self.middlewares.iter().rev() {
+            middleware.post(context, outcome).await;
+        }
+    }
+}
+impl<H, R> ::vox::Handler<R> for CalcDispatcher<H>
+where
+    H: Calc,
+    R: ::vox::ReplySink,
+{
+    fn retry_policy(&self, method_id: ::vox::MethodId) -> ::vox::RetryPolicy {
+        if method_id == calc_service_descriptor().methods[0usize].id {
+            return ::vox::RetryPolicy {
+                persist: false,
+                idem: false,
+            };
+        }
+        ::vox::RetryPolicy::VOLATILE
+    }
+    fn args_have_channels(&self, method_id: ::vox::MethodId) -> bool {
+        if method_id == calc_service_descriptor().methods[0usize].id {
+            return ::vox::hash::shape_contains_channel(
+                calc_service_descriptor().methods[0usize].args_shape,
+            );
+        }
+        false
+    }
+    fn response_wire_shape(
+        &self,
+        method_id: ::vox::MethodId,
+    ) -> Option<&'static ::vox::facet::Shape> {
+        if method_id == calc_service_descriptor().methods[0usize].id {
+            return Some(
+                <Result<f64, ::vox::VoxError<DivError>> as ::vox::facet::Facet<'static>>::SHAPE,
+            );
+        }
+        None
+    }
+    async fn handle(
+        &self,
+        call: ::vox::SelfRef<::vox::RequestCall<'static>>,
+        reply: R,
+        schemas: ::std::sync::Arc<::vox::SchemaRecvTracker>,
+    ) {
+        let request_call = call.get();
+        let method_id = request_call.method_id;
+        let args_bytes = match &request_call.args {
+            ::vox::Payload::PostcardBytes(bytes) => bytes,
+            _ => {
+                reply
+                    .send_error(
+                        ::vox::VoxError::<::core::convert::Infallible>::InvalidPayload(
+                            "args not PostcardBytes".into(),
+                        ),
+                    )
+                    .await;
+                return;
+            }
+        };
+        if method_id == calc_service_descriptor().methods[0usize].id {
+            let _binder_guard = reply.channel_binder().map(::vox::set_channel_binder);
+            let deser_result: ::core::result::Result<(f64, f64), _> =
+                ::vox::schema_deser::schema_deserialize_args_borrowed(
+                    args_bytes, method_id, &schemas,
+                );
+            drop(_binder_guard);
+            let args: (f64, f64) = match deser_result {
+                Ok(v) => v,
+                Err(e) => {
+                    ::std::eprintln!(
+                        "[rpc] dispatch args decode failed: method={:?} error={}",
+                        method_id,
+                        e
+                    );
+                    reply
+                        .send_typed_error::<f64, ::core::convert::Infallible>(::vox::VoxError::<
+                            ::core::convert::Infallible,
+                        >::InvalidPayload(
+                            e.to_string()
+                        ))
+                        .await;
+                    return;
+                }
+            };
+            let extensions = ::vox::Extensions::new();
+            let context = ::vox::RequestContext::with_transport(
+                calc_service_descriptor().methods[0usize],
+                &request_call.metadata,
+                reply.request_id(),
+                reply.connection_id(),
+                &extensions,
+            );
+            if !self.middlewares.is_empty() {
+                for middleware in &self.middlewares {
+                    middleware
+                        .pre(::vox::ServerRequest::new(context, ::vox::Peek::new(&args)))
+                        .await;
+                }
+            }
+            let (a, b) = args;
+            let (reply, outcome_handle) = ::vox::observe_reply(
+                reply,
+                ::vox::ServerResponseContext::new(
+                    context.method(),
+                    context.request_id(),
+                    context.connection_id(),
+                    context.extensions().clone(),
+                ),
+                self.middlewares.clone(),
+            );
+            let result = self.handler.div(a, b).await;
+            let sink_call = ::vox::SinkCall::new(reply);
+            ::vox::Call::<'_, f64, DivError>::reply(sink_call, result).await;
+            if !self.middlewares.is_empty() {
+                self.run_post_hooks(&context, outcome_handle.outcome())
+                    .await;
+            }
+            return;
+        }
+        reply
+            .send_error(::vox::VoxError::<::core::convert::Infallible>::UnknownMethod)
+            .await;
+    }
+}
+#[doc = "Client for the `Calc` service.\n\nStores a [`Caller`](:: vox::Caller) and an optional [`SessionHandle`](:: vox::SessionHandle) as public fields."]
+#[must_use = "Dropping this client may close the connection if it is the last caller."]
+#[derive(Clone)]
+pub struct CalcClient {
+    #[doc = r" The underlying caller for making RPC calls."]
+    pub caller: ::vox::Caller,
+    #[doc = r" The session handle, if this client is on a root connection."]
+    pub session: Option<::vox::SessionHandle>,
+}
+impl CalcClient {
+    #[doc = r" Create a new client wrapping the given caller."]
+    pub fn new(caller: ::vox::Caller) -> Self {
+        Self {
+            caller,
+            session: None,
+        }
+    }
+    #[doc = r" Append a client middleware to this client."]
+    pub fn with_middleware(self, middleware: impl ::vox::ClientMiddleware) -> Self {
+        Self {
+            caller: self
+                .caller
+                .with_middleware(calc_service_descriptor(), middleware),
+            session: self.session,
+        }
+    }
+    pub async fn div(&self, a: f64, b: f64) -> Result<f64, ::vox::VoxError<DivError>> {
+        let method_id = calc_service_descriptor().methods[0usize].id;
+        let args = (a, b);
+        let mut metadata = Default::default();
+        ::vox::ensure_channel_retry_mode(&mut metadata, ::vox::ChannelRetryMode::None);
+        let req = ::vox::RequestCall {
+            method_id,
+            args: ::vox::Payload::outgoing(&args),
+            metadata,
+            schemas: Default::default(),
+        };
+        let with_tracker = match self.caller.call(req).await {
+            Ok(with_tracker) => with_tracker,
+            Err(e) => {
+                return Err(match e {
+                    ::vox::VoxError::UnknownMethod => ::vox::VoxError::<DivError>::UnknownMethod,
+                    ::vox::VoxError::InvalidPayload(msg) => {
+                        ::vox::VoxError::<DivError>::InvalidPayload(msg)
+                    }
+                    ::vox::VoxError::Cancelled => ::vox::VoxError::<DivError>::Cancelled,
+                    ::vox::VoxError::ConnectionClosed => {
+                        ::vox::VoxError::<DivError>::ConnectionClosed
+                    }
+                    ::vox::VoxError::SessionShutdown => {
+                        ::vox::VoxError::<DivError>::SessionShutdown
+                    }
+                    ::vox::VoxError::SendFailed => ::vox::VoxError::<DivError>::SendFailed,
+                    ::vox::VoxError::Indeterminate => ::vox::VoxError::<DivError>::Indeterminate,
+                    ::vox::VoxError::User(never) => match never {},
+                });
+            }
+        };
+        let ::vox::WithTracker {
+            value: response,
+            tracker: schema_tracker,
+        } = with_tracker;
+        let response = response.get();
+        let ret_bytes = match &response.ret {
+            ::vox::Payload::PostcardBytes(bytes) => bytes,
+            _ => {
+                return Err(::vox::VoxError::<DivError>::InvalidPayload(
+                    "response not PostcardBytes".into(),
+                ));
+            }
+        };
+        let result: Result<f64, ::vox::VoxError<DivError>> =
+            ::vox::schema_deser::schema_deserialize_response::<
+                Result<f64, ::vox::VoxError<DivError>>,
+            >(ret_bytes, method_id, &schema_tracker)
+            .map_err(|e| ::vox::VoxError::<DivError>::InvalidPayload(e.to_string()))?;
+        match result {
+            Ok(ret) => Ok(ret),
+            Err(err) => Err(err),
+        }
+    }
+}
+impl ::vox::FromVoxSession for CalcClient {
+    const SERVICE_NAME: &'static str = "Calc";
+    fn from_vox_session(caller: ::vox::Caller, session: Option<::vox::SessionHandle>) -> Self {
+        Self { caller, session }
+    }
+}
