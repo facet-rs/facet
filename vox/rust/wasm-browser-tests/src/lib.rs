@@ -89,7 +89,7 @@ pub async fn run_tests(ws_url: &str) -> TestResults {
     console_log!("Connected! Performing handshake...");
 
     let client = match initiator_on(link, TransportMode::Bare)
-        .establish::<TestbedClient>(())
+        .establish::<TestbedClient>()
         .await
     {
         Ok(result) => result,

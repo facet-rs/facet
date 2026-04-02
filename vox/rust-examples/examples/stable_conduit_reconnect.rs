@@ -260,7 +260,9 @@ async fn main() -> Result<()> {
                 peer_metadata: vec![],
             },
         )
-        .establish::<vox::NoopClient>(StableLabDispatcher::new(StableLabService::new()))
+        .on_connection(StableLabDispatcher::new(
+            StableLabService::new().establish::<vox::NoopClient>(),
+        ))
         .await
         .expect("server establish");
         let _server_guard = server_guard;
@@ -288,7 +290,7 @@ async fn main() -> Result<()> {
             peer_metadata: vec![],
         },
     )
-    .establish::<StableLabClient>(())
+    .establish::<StableLabClient>()
     .await
     .map_err(|e| eyre!("client establish failed: {e:?}"))?;
     println!("[demo] session established");

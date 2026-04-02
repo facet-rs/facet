@@ -30,11 +30,12 @@ async fn call_through_real_handshake() {
     let (server_result, client_result) = tokio::try_join!(
         tokio::time::timeout(
             Duration::from_secs(1),
-            acceptor_on(server_link).establish::<EchoClient>(EchoDispatcher::new(EchoService)),
+            acceptor_on(server_link)
+                .on_connection(EchoDispatcher::new(EchoService).establish::<EchoClient>()),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            initiator_on(client_link, TransportMode::Bare).establish::<EchoClient>(()),
+            initiator_on(client_link, TransportMode::Bare).establish::<EchoClient>(),
         ),
     )
     .expect("session establishment timed out");
@@ -55,11 +56,12 @@ async fn call_through_stable_conduit() {
     let (server_result, client_result) = tokio::try_join!(
         tokio::time::timeout(
             Duration::from_secs(1),
-            acceptor_on(server_link).establish::<EchoClient>(EchoDispatcher::new(EchoService)),
+            acceptor_on(server_link)
+                .on_connection(EchoDispatcher::new(EchoService).establish::<EchoClient>()),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            initiator_on(client_link, TransportMode::Stable).establish::<EchoClient>(()),
+            initiator_on(client_link, TransportMode::Stable).establish::<EchoClient>(),
         ),
     )
     .expect("session establishment timed out");
@@ -97,12 +99,13 @@ async fn multiple_methods_get_independent_schemas() {
     let (server_result, client_result) = tokio::try_join!(
         tokio::time::timeout(
             Duration::from_secs(1),
-            acceptor_on(server_link)
-                .establish::<MultiMethodClient>(MultiMethodDispatcher::new(MultiMethodService)),
+            acceptor_on(server_link).on_connection(
+                MultiMethodDispatcher::new(MultiMethodService).establish::<MultiMethodClient>()
+            ),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            initiator_on(client_link, TransportMode::Bare).establish::<MultiMethodClient>(()),
+            initiator_on(client_link, TransportMode::Bare).establish::<MultiMethodClient>(),
         ),
     )
     .expect("session establishment timed out");
@@ -134,7 +137,7 @@ async fn call_works_after_resume() {
             Duration::from_secs(1),
             initiator_on(client_link1, TransportMode::Bare)
                 .resumable()
-                .establish::<EchoClient>(()),
+                .establish::<EchoClient>(),
         ),
     )
     .expect("session establishment timed out");
@@ -220,7 +223,7 @@ async fn first_call_after_resume_without_prior_calls() {
             Duration::from_secs(1),
             initiator_on(client_link1, TransportMode::Bare)
                 .resumable()
-                .establish::<EchoClient>(()),
+                .establish::<EchoClient>(),
         ),
     )
     .expect("session establishment timed out");
@@ -337,7 +340,7 @@ async fn operation_replay_after_resume_has_schemas() {
             Duration::from_secs(1),
             initiator_on(client_link1, TransportMode::Bare)
                 .resumable()
-                .establish::<PersistEchoClient>(()),
+                .establish::<PersistEchoClient>(),
         ),
     )
     .expect("session establishment timed out");

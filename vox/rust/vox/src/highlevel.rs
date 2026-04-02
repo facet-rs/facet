@@ -63,7 +63,7 @@ where
 {
     let client = initiator(source, TransportMode::Bare)
         .connect_timeout(Duration::from_secs(5))
-        .establish::<Client>(())
+        .establish::<Client>()
         .await?;
     Ok(client)
 }

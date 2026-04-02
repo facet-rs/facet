@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
         println!("[server] client connected; establishing root session");
         let server_root_guard = vox::acceptor_on(StreamLink::tcp(socket))
             .on_connection(vox::acceptor_fn(lab_acceptor))
-            .establish::<vox::NoopClient>(())
+            .establish::<vox::NoopClient>()
             .await
             .expect("server establish");
         let _ = server_ready_tx.send(());
@@ -120,7 +120,7 @@ async fn main() -> Result<()> {
         .await
         .wrap_err("connecting client socket")?;
     let _root_caller_guard = vox::initiator_on(StreamLink::tcp(socket), vox::TransportMode::Bare)
-        .establish::<vox::NoopClient>(())
+        .establish::<vox::NoopClient>()
         .await
         .map_err(|e| eyre!("failed to establish initiator session: {e:?}"))?;
     let session_handle = _root_caller_guard.session.clone().unwrap();

@@ -65,14 +65,14 @@ async fn middleware_hooks_fire_in_order() {
 
     let server = tokio::spawn(async move {
         let s = vox::acceptor_on(server_link)
-            .establish::<vox::NoopClient>(EchoDispatcher::new(EchoService))
+            .on_connection(EchoDispatcher::new(EchoService).establish::<vox::NoopClient>())
             .await
             .expect("server establish");
         s
     });
 
     let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
-        .establish::<EchoClient>(())
+        .establish::<EchoClient>()
         .await
         .expect("client establish");
 
@@ -148,14 +148,16 @@ async fn middleware_can_inject_metadata() {
 
     let server = tokio::spawn(async move {
         let s = vox::acceptor_on(server_link)
-            .establish::<vox::NoopClient>(MetadataProbeDispatcher::new(MetadataProbeService))
+            .on_connection(
+                MetadataProbeDispatcher::new(MetadataProbeService).establish::<vox::NoopClient>(),
+            )
             .await
             .expect("server establish");
         s
     });
 
     let client = vox::initiator_on(client_link, vox::TransportMode::Bare)
-        .establish::<MetadataProbeClient>(())
+        .establish::<MetadataProbeClient>()
         .await
         .expect("client establish");
 

@@ -22,7 +22,7 @@ impl Echo for EchoService {
 async fn vconn_server(server_link: impl vox::Link + Send + 'static) -> vox::NoopClient {
     let server = vox::acceptor_on(server_link)
         .on_connection(EchoDispatcher::new(EchoService))
-        .establish::<vox::NoopClient>(())
+        .establish::<vox::NoopClient>()
         .await
         .expect("server establish");
     server
@@ -54,7 +54,7 @@ async fn open_virtual_connection_and_call() {
     let server = tokio::spawn(async move { vconn_server(server_link).await });
 
     let root = vox::initiator_on(client_link, vox::TransportMode::Bare)
-        .establish::<vox::NoopClient>(())
+        .establish::<vox::NoopClient>()
         .await
         .expect("client establish");
     let session = root.session.clone().unwrap();
@@ -84,7 +84,7 @@ async fn dropping_root_waits_for_virtual_connections() {
             let handle = tokio::spawn(fut);
             let _ = session_tx.send(handle);
         })
-        .establish::<vox::NoopClient>(())
+        .establish::<vox::NoopClient>()
         .await
         .expect("client establish");
     let session = root.session.clone().unwrap();
@@ -127,14 +127,14 @@ async fn schema_tracker_is_per_connection_not_per_session() {
     let server = tokio::spawn(async move {
         let s = vox::acceptor_on(server_link)
             .on_connection(EchoDispatcher::new(EchoService))
-            .establish::<vox::NoopClient>(EchoDispatcher::new(EchoService))
+            .on_connection(EchoDispatcher::new(EchoService).establish::<vox::NoopClient>())
             .await
             .expect("server establish");
         s
     });
 
     let root = vox::initiator_on(client_link, vox::TransportMode::Bare)
-        .establish::<EchoClient>(())
+        .establish::<EchoClient>()
         .await
         .expect("client establish");
     let session = root.session.clone().unwrap();
@@ -187,14 +187,14 @@ async fn reject_virtual_connection() {
     let server = tokio::spawn(async move {
         let s = vox::acceptor_on(server_link)
             .on_connection(RejectAcceptor)
-            .establish::<vox::NoopClient>(())
+            .establish::<vox::NoopClient>()
             .await
             .expect("server establish");
         s
     });
 
     let _root = vox::initiator_on(client_link, vox::TransportMode::Bare)
-        .establish::<vox::NoopClient>(())
+        .establish::<vox::NoopClient>()
         .await
         .expect("client establish");
     let session = _root.session.clone().unwrap();
@@ -222,14 +222,14 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
     // Server with NO on_connection acceptor.
     let server = tokio::spawn(async move {
         let s = vox::acceptor_on(server_link)
-            .establish::<vox::NoopClient>(())
+            .establish::<vox::NoopClient>()
             .await
             .expect("server establish");
         s
     });
 
     let _root = vox::initiator_on(client_link, vox::TransportMode::Bare)
-        .establish::<vox::NoopClient>(())
+        .establish::<vox::NoopClient>()
         .await
         .expect("client establish");
     let session = _root.session.clone().unwrap();
@@ -259,14 +259,14 @@ async fn close_virtual_connection() {
             .on_connection(CounterDispatcher::new(CounterService {
                 count: std::sync::Arc::new(AtomicU32::new(0)),
             }))
-            .establish::<vox::NoopClient>(())
+            .establish::<vox::NoopClient>()
             .await
             .expect("server establish");
         s
     });
 
     let _root = vox::initiator_on(client_link, vox::TransportMode::Bare)
-        .establish::<vox::NoopClient>(())
+        .establish::<vox::NoopClient>()
         .await
         .expect("client establish");
     let session = _root.session.clone().unwrap();
@@ -311,14 +311,14 @@ async fn close_root_connection_is_rejected() {
 
     let server = tokio::spawn(async move {
         let s = vox::acceptor_on(server_link)
-            .establish::<vox::NoopClient>(())
+            .establish::<vox::NoopClient>()
             .await
             .expect("server establish");
         s
     });
 
     let _root = vox::initiator_on(client_link, vox::TransportMode::Bare)
-        .establish::<vox::NoopClient>(())
+        .establish::<vox::NoopClient>()
         .await
         .expect("client establish");
     let session = _root.session.clone().unwrap();

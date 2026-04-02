@@ -50,7 +50,7 @@ async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
             Duration::from_secs(1),
             initiator_conduit(client_conduit1, test_initiator_handshake())
                 .resumable()
-                .establish::<NoopClient>(()),
+                .establish::<NoopClient>(),
         ),
     )
     .expect("initial session establishment timed out");
@@ -131,7 +131,7 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
             Duration::from_secs(1),
             initiator_on(client_link1, TransportMode::Bare)
                 .resumable()
-                .establish::<NoopClient>(()),
+                .establish::<NoopClient>(),
         ),
     )
     .expect("initial session establishment timed out");
@@ -255,7 +255,7 @@ async fn resumable_source_initiator_keeps_pending_call_alive_across_auto_resume(
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            crate::initiator(source, TransportMode::Bare).establish::<NoopClient>(()),
+            crate::initiator(source, TransportMode::Bare).establish::<NoopClient>(),
         ),
     )
     .expect("initial session establishment timed out");
@@ -355,7 +355,7 @@ async fn resumable_source_initiator_falls_back_to_fresh_session_when_resume_key_
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            crate::initiator(source, TransportMode::Bare).establish::<NoopClient>(()),
+            crate::initiator(source, TransportMode::Bare).establish::<NoopClient>(),
         ),
     )
     .expect("initial session establishment timed out");
@@ -459,7 +459,7 @@ async fn resumable_session_reruns_released_idem_call_after_manual_resume() {
             Duration::from_secs(1),
             initiator_conduit(client_conduit1, test_initiator_handshake())
                 .resumable()
-                .establish::<NoopClient>(()),
+                .establish::<NoopClient>(),
         ),
     )
     .expect("initial session establishment timed out");
@@ -545,7 +545,7 @@ async fn resumable_session_returns_indeterminate_for_released_non_idem_call_afte
             Duration::from_secs(1),
             initiator_conduit(client_conduit1, test_initiator_handshake())
                 .resumable()
-                .establish::<NoopClient>(()),
+                .establish::<NoopClient>(),
         ),
     )
     .expect("initial session establishment timed out");
@@ -614,7 +614,9 @@ async fn recovery_timeout_gives_up_after_deadline() {
     let (server_established, client_established) = tokio::try_join!(
         tokio::time::timeout(
             Duration::from_secs(1),
-            acceptor_on(server_link1).establish::<NoopClient>(EchoHandler),
+            acceptor_on(server_link1)
+                .on_connection(EchoHandler)
+                .establish::<NoopClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -622,7 +624,7 @@ async fn recovery_timeout_gives_up_after_deadline() {
                 .resumable()
                 .recovery_timeout(Duration::from_millis(500))
                 .connect_timeout(Duration::from_millis(200))
-                .establish::<NoopClient>(()),
+                .establish::<NoopClient>(),
         ),
     )
     .expect("initial establishment timed out");

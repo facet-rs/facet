@@ -36,7 +36,7 @@ async fn open_virtual_connection_and_call() {
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(EchoAcceptor)
-                .establish::<NoopClient>(())
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -45,7 +45,7 @@ async fn open_virtual_connection_and_call() {
     );
 
     let _client_caller_guard = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
     let session_handle = _client_caller_guard.session.clone().unwrap();
@@ -98,7 +98,7 @@ async fn reject_virtual_connection() {
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(RejectAcceptor)
-                .establish::<NoopClient>(())
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -107,7 +107,7 @@ async fn reject_virtual_connection() {
     );
 
     let _client_caller_guard = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
     let session_handle = _client_caller_guard.session.clone().unwrap();
@@ -139,7 +139,7 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
     let server_task = moire::task::spawn(
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<NoopClient>(())
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -148,7 +148,7 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
     );
 
     let _client_caller_guard = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
     let session_handle = _client_caller_guard.session.clone().unwrap();
@@ -179,7 +179,8 @@ async fn close_unknown_virtual_connection_is_rejected() {
     let server_task = moire::task::spawn(
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<NoopClient>(EchoHandler)
+                .on_connection(EchoHandler)
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -188,7 +189,7 @@ async fn close_unknown_virtual_connection_is_rejected() {
     );
 
     let _client_caller_guard = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
     let session_handle = _client_caller_guard.session.clone().unwrap();
@@ -247,7 +248,7 @@ async fn close_virtual_connection() {
                 .on_connection(TrackingAcceptor {
                     exited: server_driver_exited,
                 })
-                .establish::<NoopClient>(())
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -256,7 +257,7 @@ async fn close_virtual_connection() {
     );
 
     let _client_caller_guard = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
     let session_handle = _client_caller_guard.session.clone().unwrap();
@@ -371,7 +372,7 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
                 .on_connection(TrackingAcceptor {
                     exited: server_driver_exited,
                 })
-                .establish::<NoopClient>(())
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -380,7 +381,7 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
     );
 
     let _client_caller_guard = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
     let session_handle = _client_caller_guard.session.clone().unwrap();
@@ -443,7 +444,7 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(EchoAcceptor)
-                .establish::<NoopClient>(())
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -452,7 +453,7 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
     );
 
     let _client_caller_guard = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
     let session_handle = _client_caller_guard.session.clone().unwrap();
@@ -518,7 +519,7 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(LocalEchoAcceptor)
-                .establish::<NoopClient>(())
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -531,7 +532,7 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
             let handle = moire::task::spawn(fut.named("client_session"));
             let _ = client_session_tx.send(handle);
         })
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
     let session_handle = root_caller.session.clone().unwrap();

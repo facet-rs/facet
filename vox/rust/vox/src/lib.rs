@@ -41,13 +41,14 @@
 //! # let server = tokio::spawn(async move {
 //! #     let (stream, _) = listener.accept().await?;
 //! #     let (_server_caller, _server_session) = acceptor_on(StreamLink::tcp(stream))
-//! #         .establish::<HelloClient>(HelloDispatcher::new(HelloService))
+//! #         .on_connection(HelloDispatcher::new(HelloService)
+            .establish::<HelloClient>())
 //! #         .await?;
 //! #     Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
 //! # });
 //! #
 //! let client = initiator(tcp_connector(addr), TransportMode::Bare)
-//!     .establish::<HelloClient>(())
+//!     .establish::<HelloClient>()
 //!     .await?;
 //!
 //! let reply = client.say_hello().await?;

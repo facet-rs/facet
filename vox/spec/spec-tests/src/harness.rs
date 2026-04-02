@@ -864,7 +864,9 @@ pub async fn accept_subject_ws(cmd: &str) -> Result<(TestbedClient, Child, Sessi
         .map_err(|e| format!("WebSocket upgrade: {e}"))?;
 
     let client = acceptor_on(ws)
-        .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
+        .on_connection(TestbedDispatcher::new(
+            TestbedService::new().establish::<TestbedClient>(),
+        ))
         .await
         .map_err(|e| format!("handshake: {e}"))?;
     let sh = client.session.clone().unwrap();
@@ -1155,7 +1157,9 @@ async fn run_subject_client_scenario_tcp(
         };
         stream.set_nodelay(true).ok();
         match acceptor_on(StreamLink::tcp(stream))
-            .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
+            .on_connection(TestbedDispatcher::new(
+                TestbedService::new().establish::<TestbedClient>(),
+            ))
             .await
         {
             Ok(_client) => {
@@ -1221,7 +1225,9 @@ async fn run_subject_client_scenario_ws(
             }
         };
         match acceptor_on(ws)
-            .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
+            .on_connection(TestbedDispatcher::new(
+                TestbedService::new().establish::<TestbedClient>(),
+            ))
             .await
         {
             Ok(_client) => {
@@ -1463,7 +1469,9 @@ where
                 rx,
             });
         let setup = acceptor_conduit(server_conduit, handshake_result)
-            .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService::new()))
+            .on_connection(TestbedDispatcher::new(
+                TestbedService::new().establish::<TestbedClient>(),
+            ))
             .await
             .map_err(|e| format!("server handshake: {e}"));
         let server_caller_guard = match setup {
@@ -1499,7 +1507,8 @@ where
             rx: client_rx,
         });
     let client = vox_core::initiator_conduit(client_conduit, client_handshake)
-        .establish::<TestbedClient>(NoopHandler)
+        .on_connection(NoopHandler)
+        .establish::<TestbedClient>()
         .await
         .map_err(|e| format!("client handshake: {e}"))?;
 
@@ -1564,7 +1573,8 @@ async fn accept_subject_tcp(cmd: &str) -> Result<(TestbedClient, Child, SessionH
     stream.set_nodelay(true).unwrap();
 
     let client = acceptor_transport(StreamLink::tcp(stream))
-        .establish::<TestbedClient>(NoopHandler)
+        .on_connection(NoopHandler)
+        .establish::<TestbedClient>()
         .await
         .map_err(|e| format!("handshake: {e}"))?;
     let sh = client.session.clone().unwrap();
@@ -1832,7 +1842,8 @@ async fn accept_subject_shm_subject_is_guest(
     }
     eprintln!("[harness] handshake...");
     let client = acceptor_on(link)
-        .establish::<TestbedClient>(NoopHandler)
+        .on_connection(NoopHandler)
+        .establish::<TestbedClient>()
         .await
         .map_err(|e| format!("handshake: {e}"))?;
     let sh = client.session.clone().unwrap();
@@ -2118,7 +2129,8 @@ async fn accept_subject_shm_subject_is_host(
         };
 
         let client = initiator_on(link, requested_transport_mode())
-            .establish::<TestbedClient>(NoopHandler)
+            .on_connection(NoopHandler)
+            .establish::<TestbedClient>()
             .await
             .map_err(|e| format!("handshake: {e}"))?;
 

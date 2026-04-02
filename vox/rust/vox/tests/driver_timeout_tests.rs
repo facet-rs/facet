@@ -18,7 +18,7 @@ async fn connect_timeout_fires_when_server_never_responds() {
     let start = Instant::now();
     let result = vox::initiator_on(client_link, vox::TransportMode::Bare)
         .connect_timeout(Duration::from_millis(200))
-        .establish::<EchoClient>(())
+        .establish::<EchoClient>()
         .await;
 
     let elapsed = start.elapsed();

@@ -52,7 +52,9 @@ async fn main() -> Result<()> {
     let server_task = tokio::spawn(async move {
         let (socket, _) = listener.accept().await.expect("accept");
         let server_guard = vox::acceptor_on(StreamLink::tcp(socket))
-            .establish::<NumberLabClient>(NumberLabDispatcher::new(NumberLabService))
+            .on_connection(
+                NumberLabDispatcher::new(NumberLabService).establish::<NumberLabClient>(),
+            )
             .await
             .expect("server establish");
         let _server_guard = server_guard;
@@ -63,7 +65,7 @@ async fn main() -> Result<()> {
         .await
         .wrap_err("connecting")?;
     let client = vox::initiator_on(StreamLink::tcp(socket), vox::TransportMode::Bare)
-        .establish::<NumberLabClient>(())
+        .establish::<NumberLabClient>()
         .await
         .map_err(|e| eyre!("establish failed: {e:?}"))?;
     println!("[client] session established");

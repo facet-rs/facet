@@ -279,6 +279,7 @@ where
 }
 
 /// A handler that echoes back the raw args payload as the response.
+#[derive(Clone, Copy)]
 pub(crate) struct EchoHandler;
 
 impl Handler<DriverReplySink> for EchoHandler {
@@ -355,6 +356,7 @@ pub(crate) struct RetryAfterResumeHandler {
     pub(crate) drop_first: Arc<tokio::sync::Notify>,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct OperationIdHandler;
 
 impl Handler<DriverReplySink> for OperationIdHandler {

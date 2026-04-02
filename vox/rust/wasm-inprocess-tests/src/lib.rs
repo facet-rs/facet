@@ -254,7 +254,7 @@ pub fn start_acceptor(on_message: js_sys::Function) -> JsInProcessLink {
         console_log!("In-process acceptor: starting handshake...");
 
         match acceptor_on(link)
-            .establish::<TestbedClient>(TestbedDispatcher::new(TestbedService))
+            .on_connection(TestbedDispatcher::new(TestbedService).establish::<TestbedClient>())
             .await
         {
             Ok(_root_caller_guard) => {

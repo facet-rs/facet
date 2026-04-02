@@ -199,7 +199,7 @@ pub enum SessionAcceptOutcome<Client> {
 pub struct SessionConfig<'a> {
     pub root_settings: ConnectionSettings,
     pub metadata: Metadata<'a>,
-    pub on_connection: Option<Box<dyn ConnectionAcceptor>>,
+    pub on_connection: Option<Arc<dyn ConnectionAcceptor>>,
     pub keepalive: Option<SessionKeepaliveConfig>,
     pub resumable: bool,
     pub session_registry: Option<SessionRegistry>,
@@ -257,7 +257,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
     }
 
     pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
-        self.config.on_connection = Some(Box::new(acceptor));
+        self.config.on_connection = Some(Arc::new(acceptor));
         self
     }
 
@@ -306,10 +306,7 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
     ///
     ///   - requiring (as an arg) a handler for the service the local peer will serve
     ///   - returning a caller for the service we expect the remote peer to serve
-    pub async fn establish<Client: FromVoxSession>(
-        self,
-        handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<Client, SessionError>
+    pub async fn establish<Client: FromVoxSession>(self) -> Result<Client, SessionError>
     where
         C: Conduit<Msg = MessageFamily> + 'static,
         C::Tx: MaybeSend + MaybeSync + 'static,
@@ -318,20 +315,23 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
     {
         let Self {
             conduit,
-            handshake_result,
+            mut handshake_result,
             config,
             recoverer,
         } = self;
         validate_negotiated_root_settings(&config.root_settings, &handshake_result)?;
+        let peer_metadata = std::mem::take(&mut handshake_result.peer_metadata);
         let (tx, rx) = conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
         let (resume_tx, resume_rx) = mpsc::channel::<super::ResumeRequest>("session.resume", 1);
         let (control_tx, control_rx) = mpsc::unbounded_channel("session.control");
+        let acceptor: Arc<dyn ConnectionAcceptor> =
+            config.on_connection.unwrap_or_else(|| Arc::new(()));
         let mut session = Session::pre_handshake(
             tx,
             rx,
-            config.on_connection,
+            Some(acceptor.clone()),
             open_rx,
             close_rx,
             resume_rx,
@@ -351,17 +351,24 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             control_tx,
             resume_key,
         };
-        let mut driver = match config.operation_store {
-            Some(operation_store) => Driver::with_operation_store(handle, handler, operation_store),
-            None => Driver::new(handle, handler),
-        };
-        let client =
-            Client::from_vox_session(crate::Caller::new(driver.caller()), Some(session_handle));
+        // Route the root connection through the acceptor.
+        let caller_slot = Arc::new(std::sync::Mutex::new(None::<crate::Caller>));
+        let pending = super::PendingConnection::with_caller_slot(
+            handle,
+            caller_slot.clone(),
+            config.operation_store,
+        );
+        let request = super::ConnectionRequest::new(&peer_metadata);
+        acceptor
+            .accept(&request, pending)
+            .map_err(SessionError::Rejected)?;
+        let caller = caller_slot
+            .lock()
+            .unwrap()
+            .take()
+            .expect("acceptor must call handle_with for root connections");
+        let client = Client::from_vox_session(caller, Some(session_handle));
         (config.spawn_fn)(Box::pin(async move { session.run().await }));
-        #[cfg(not(target_arch = "wasm32"))]
-        tokio::spawn(async move { driver.run().await });
-        #[cfg(target_arch = "wasm32")]
-        wasm_bindgen_futures::spawn_local(async move { driver.run().await });
         Ok(client)
     }
 }
@@ -404,7 +411,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
     }
 
     pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
-        self.config.on_connection = Some(Box::new(acceptor));
+        self.config.on_connection = Some(Arc::new(acceptor));
         self
     }
 
@@ -445,10 +452,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
         self
     }
 
-    pub async fn establish<Client: FromVoxSession>(
-        self,
-        handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<Client, SessionError>
+    pub async fn establish<Client: FromVoxSession>(self) -> Result<Client, SessionError>
     where
         S: LinkSource,
         S::Link: Link + Send + 'static,
@@ -457,7 +461,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
         <S::Link as Link>::Rx: MaybeSend + Send + 'static,
     {
         let connect_timeout = self.config.connect_timeout;
-        let fut = self.establish_inner::<Client>(handler);
+        let fut = self.establish_inner::<Client>();
         match connect_timeout {
             Some(timeout) => tokio::time::timeout(timeout, fut)
                 .await
@@ -466,10 +470,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
         }
     }
 
-    async fn establish_inner<Client: FromVoxSession>(
-        self,
-        handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<Client, SessionError>
+    async fn establish_inner<Client: FromVoxSession>(self) -> Result<Client, SessionError>
     where
         S: LinkSource,
         S::Link: Link + Send + 'static,
@@ -516,7 +517,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
                     config,
                     Some(recoverer),
                 )
-                .establish(handler)
+                .establish()
                 .await
             }
             TransportMode::Stable => {
@@ -554,7 +555,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
                 SessionTransportInitiatorBuilder::<S::Link>::apply_common_parts(
                     builder, config, None,
                 )
-                .establish(handler)
+                .establish()
                 .await
             }
         }
@@ -597,7 +598,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     }
 
     pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
-        self.config.on_connection = Some(Box::new(acceptor));
+        self.config.on_connection = Some(Arc::new(acceptor));
         self
     }
 
@@ -639,10 +640,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn establish<Client: FromVoxSession>(
-        self,
-        handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<Client, SessionError>
+    pub async fn establish<Client: FromVoxSession>(self) -> Result<Client, SessionError>
     where
         L: Link + Send + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
@@ -650,7 +648,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         L::Rx: MaybeSend + 'static,
     {
         let connect_timeout = self.config.connect_timeout;
-        let fut = self.establish_inner::<Client>(handler);
+        let fut = self.establish_inner::<Client>();
         match connect_timeout {
             Some(timeout) => tokio::time::timeout(timeout, fut)
                 .await
@@ -660,10 +658,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    async fn establish_inner<Client: FromVoxSession>(
-        self,
-        handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<Client, SessionError>
+    async fn establish_inner<Client: FromVoxSession>(self) -> Result<Client, SessionError>
     where
         L: Link + Send + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
@@ -681,22 +676,19 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
                 let link = initiate_transport(link, TransportMode::Bare)
                     .await
                     .map_err(session_error_from_transport)?;
-                Self::finish_with_bare_parts(link, config, handler).await
+                Self::finish_with_bare_parts(link, config).await
             }
             TransportMode::Stable => {
                 let link = initiate_transport(link, TransportMode::Stable)
                     .await
                     .map_err(session_error_from_transport)?;
-                Self::finish_with_stable_parts(link, config, handler).await
+                Self::finish_with_stable_parts(link, config).await
             }
         }
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub async fn establish<Client: FromVoxSession>(
-        self,
-        handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<Client, SessionError>
+    pub async fn establish<Client: FromVoxSession>(self) -> Result<Client, SessionError>
     where
         L: Link + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
@@ -714,7 +706,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
                 let link = initiate_transport(link, TransportMode::Bare)
                     .await
                     .map_err(session_error_from_transport)?;
-                Self::finish_with_bare_parts(link, config, handler).await
+                Self::finish_with_bare_parts(link, config).await
             }
             TransportMode::Stable => Err(SessionError::Protocol(
                 "stable conduit transport selection is unsupported on wasm".into(),
@@ -725,7 +717,6 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     async fn finish_with_bare_parts<Client: FromVoxSession>(
         mut link: SplitLink<L::Tx, L::Rx>,
         config: SessionConfig<'a>,
-        handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<Client, SessionError>
     where
         L: Link + 'static,
@@ -750,7 +741,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
             handshake_result,
         );
         Self::apply_common_parts(builder, config, None)
-            .establish(handler)
+            .establish()
             .await
     }
 
@@ -758,7 +749,6 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     async fn finish_with_stable_parts<Client: FromVoxSession>(
         mut link: SplitLink<L::Tx, L::Rx>,
         config: SessionConfig<'a>,
-        handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<Client, SessionError>
     where
         L: Link + Send + 'static,
@@ -789,7 +779,7 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
         .with_message_plan(message_plan);
         let builder = SessionInitiatorBuilder::new(conduit, handshake_result);
         Self::apply_common_parts(builder, config, None)
-            .establish(handler)
+            .establish()
             .await
     }
 
@@ -932,7 +922,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
     }
 
     pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
-        self.config.on_connection = Some(Box::new(acceptor));
+        self.config.on_connection = Some(Arc::new(acceptor));
         self
     }
 
@@ -983,10 +973,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
     }
 
     #[moire::instrument]
-    pub async fn establish<Client: FromVoxSession>(
-        self,
-        handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<Client, SessionError>
+    pub async fn establish<Client: FromVoxSession>(self) -> Result<Client, SessionError>
     where
         C: Conduit<Msg = MessageFamily> + 'static,
         C::Tx: MaybeSend + MaybeSync + 'static,
@@ -995,19 +982,22 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
     {
         let Self {
             conduit,
-            handshake_result,
+            mut handshake_result,
             config,
         } = self;
         validate_negotiated_root_settings(&config.root_settings, &handshake_result)?;
+        let peer_metadata = std::mem::take(&mut handshake_result.peer_metadata);
         let (tx, rx) = conduit.split();
         let (open_tx, open_rx) = mpsc::channel::<OpenRequest>("session.open", 4);
         let (close_tx, close_rx) = mpsc::channel::<CloseRequest>("session.close", 4);
         let (resume_tx, resume_rx) = mpsc::channel::<super::ResumeRequest>("session.resume", 1);
         let (control_tx, control_rx) = mpsc::unbounded_channel("session.control");
+        let acceptor: Arc<dyn ConnectionAcceptor> =
+            config.on_connection.unwrap_or_else(|| Arc::new(()));
         let mut session = Session::pre_handshake(
             tx,
             rx,
-            config.on_connection,
+            Some(acceptor.clone()),
             open_rx,
             close_rx,
             resume_rx,
@@ -1030,24 +1020,30 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
         if let (Some(registry), Some(key)) = (&config.session_registry, resume_key) {
             registry.insert(key, session_handle.clone());
         }
-        let mut driver = match config.operation_store {
-            Some(operation_store) => Driver::with_operation_store(handle, handler, operation_store),
-            None => Driver::new(handle, handler),
-        };
-        let client =
-            Client::from_vox_session(crate::Caller::new(driver.caller()), Some(session_handle));
+        // Route the root connection through the acceptor.
+        let caller_slot = Arc::new(std::sync::Mutex::new(None::<crate::Caller>));
+        let pending = super::PendingConnection::with_caller_slot(
+            handle,
+            caller_slot.clone(),
+            config.operation_store,
+        );
+        let request = super::ConnectionRequest::new(&peer_metadata);
+        acceptor
+            .accept(&request, pending)
+            .map_err(SessionError::Rejected)?;
+        let caller = caller_slot
+            .lock()
+            .unwrap()
+            .take()
+            .expect("acceptor must call handle_with for root connections");
+        let client = Client::from_vox_session(caller, Some(session_handle));
         (config.spawn_fn)(Box::pin(async move { session.run().await }));
-        #[cfg(not(target_arch = "wasm32"))]
-        tokio::spawn(async move { driver.run().await });
-        #[cfg(target_arch = "wasm32")]
-        wasm_bindgen_futures::spawn_local(async move { driver.run().await });
         Ok(client)
     }
 
     #[moire::instrument]
     pub async fn establish_or_resume<Client: FromVoxSession>(
         self,
-        handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<SessionAcceptOutcome<Client>, SessionError>
     where
         C: Conduit<Msg = MessageFamily> + 'static,
@@ -1074,7 +1070,7 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             return Ok(SessionAcceptOutcome::Resumed);
         }
 
-        let client = self.establish(handler).await?;
+        let client = self.establish().await?;
         Ok(SessionAcceptOutcome::Established(client))
     }
 }
@@ -1111,7 +1107,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     }
 
     pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
-        self.config.on_connection = Some(Box::new(acceptor));
+        self.config.on_connection = Some(Arc::new(acceptor));
         self
     }
 
@@ -1159,10 +1155,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
 
     #[moire::instrument]
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn establish<Client: FromVoxSession>(
-        self,
-        handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<Client, SessionError>
+    pub async fn establish<Client: FromVoxSession>(self) -> Result<Client, SessionError>
     where
         L: Link + Send + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
@@ -1192,11 +1185,9 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                     BareConduit::with_message_plan(link, message_plan),
                     handshake_result,
                 );
-                Self::apply_common_parts(builder, config)
-                    .establish(handler)
-                    .await
+                Self::apply_common_parts(builder, config).establish().await
             }
-            TransportMode::Stable => Self::finish_with_stable_parts(link, config, handler).await,
+            TransportMode::Stable => Self::finish_with_stable_parts(link, config).await,
         }
     }
 
@@ -1204,7 +1195,6 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn establish_or_resume<Client: FromVoxSession>(
         self,
-        handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<SessionAcceptOutcome<Client>, SessionError>
     where
         L: Link + Send + 'static,
@@ -1236,20 +1226,17 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                     handshake_result,
                 );
                 Self::apply_common_parts(builder, config)
-                    .establish_or_resume(handler)
+                    .establish_or_resume()
                     .await
             }
-            TransportMode::Stable => Self::finish_with_stable_parts(link, config, handler)
+            TransportMode::Stable => Self::finish_with_stable_parts(link, config)
                 .await
                 .map(SessionAcceptOutcome::Established),
         }
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub async fn establish<Client: FromVoxSession>(
-        self,
-        handler: impl Handler<DriverReplySink> + 'static,
-    ) -> Result<Client, SessionError>
+    pub async fn establish<Client: FromVoxSession>(self) -> Result<Client, SessionError>
     where
         L: Link + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
@@ -1279,9 +1266,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                     BareConduit::with_message_plan(link, message_plan),
                     handshake_result,
                 );
-                Self::apply_common_parts(builder, config)
-                    .establish(handler)
-                    .await
+                Self::apply_common_parts(builder, config).establish().await
             }
             TransportMode::Stable => Err(SessionError::Protocol(
                 "stable conduit transport selection is unsupported on wasm".into(),
@@ -1292,7 +1277,6 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     #[cfg(target_arch = "wasm32")]
     pub async fn establish_or_resume<Client: FromVoxSession>(
         self,
-        handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<SessionAcceptOutcome<Client>, SessionError>
     where
         L: Link + 'static,
@@ -1324,7 +1308,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
                     handshake_result,
                 );
                 Self::apply_common_parts(builder, config)
-                    .establish_or_resume(handler)
+                    .establish_or_resume()
                     .await
             }
             TransportMode::Stable => Err(SessionError::Protocol(
@@ -1337,7 +1321,6 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     async fn finish_with_stable_parts<Client: FromVoxSession>(
         mut link: SplitLink<L::Tx, L::Rx>,
         config: SessionConfig<'a>,
-        handler: impl Handler<DriverReplySink> + 'static,
     ) -> Result<Client, SessionError>
     where
         L: Link + Send + 'static,
@@ -1371,9 +1354,7 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         .map_err(|e| SessionError::Protocol(format!("stable conduit setup failed: {e}")))?
         .with_message_plan(message_plan);
         let builder = SessionAcceptorBuilder::new(conduit, handshake_result);
-        Self::apply_common_parts(builder, config)
-            .establish(handler)
-            .await
+        Self::apply_common_parts(builder, config).establish().await
     }
 
     fn apply_common_parts<C>(

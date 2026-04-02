@@ -128,7 +128,7 @@ async fn main() -> Result<()> {
         .await
         .expect("guest-b acceptor_on_link")
         .on_connection(vox::acceptor_fn(upstream_acceptor))
-        .establish::<vox::NoopClient>(())
+        .establish::<vox::NoopClient>()
         .await
         .expect("guest-b establish");
         let _guest_b_root_guard = guest_b_root_guard;
@@ -145,7 +145,7 @@ async fn main() -> Result<()> {
     )
     .await
     .map_err(|e| eyre!("host<->guest-b initiator_on_link failed: {e:?}"))?
-    .establish::<vox::NoopClient>(())
+    .establish::<vox::NoopClient>()
     .await
     .map_err(|e| eyre!("host<->guest-b establish failed: {e:?}"))?;
     let upstream_session_handle = _host_root_to_b_guard.session.clone().unwrap();
@@ -166,7 +166,7 @@ async fn main() -> Result<()> {
         .await
         .expect("host<->guest-a acceptor_on_link")
         .on_connection(proxy_acceptor)
-        .establish::<vox::NoopClient>(())
+        .establish::<vox::NoopClient>()
         .await
         .expect("host<->guest-a establish");
         let _host_root_for_a_guard = host_root_for_a_guard;
@@ -183,7 +183,7 @@ async fn main() -> Result<()> {
     )
     .await
     .map_err(|e| eyre!("guest-a<->host initiator_on_link failed: {e:?}"))?
-    .establish::<vox::NoopClient>(())
+    .establish::<vox::NoopClient>()
     .await
     .map_err(|e| eyre!("guest-a<->host establish failed: {e:?}"))?;
     let guest_a_session_handle = _guest_a_root_guard.session.clone().unwrap();

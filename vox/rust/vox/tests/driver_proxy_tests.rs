@@ -56,7 +56,7 @@ async fn proxy_connections_forwards_calls() {
     let guest_b_task = tokio::spawn(async move {
         let guard = vox::acceptor_on(guest_b_link)
             .on_connection(EchoDispatcher::new(EchoService))
-            .establish::<vox::NoopClient>(())
+            .establish::<vox::NoopClient>()
             .await
             .expect("guest-b establish");
         let _guard = guard;
@@ -65,7 +65,7 @@ async fn proxy_connections_forwards_calls() {
 
     // host <-> guest-b root session
     let _host_to_b = vox::initiator_on(host_b_link, vox::TransportMode::Bare)
-        .establish::<vox::NoopClient>(())
+        .establish::<vox::NoopClient>()
         .await
         .expect("host<->guest-b establish");
     let host_to_b_session = _host_to_b.session.clone().unwrap();
@@ -76,7 +76,7 @@ async fn proxy_connections_forwards_calls() {
             .on_connection(ProxyAcceptor {
                 upstream_session: host_to_b_session,
             })
-            .establish::<vox::NoopClient>(())
+            .establish::<vox::NoopClient>()
             .await
             .expect("host<->guest-a establish");
         let _guard = guard;
@@ -85,7 +85,7 @@ async fn proxy_connections_forwards_calls() {
 
     // guest-a <-> host root session
     let _guest_a_root = vox::initiator_on(guest_a_link, vox::TransportMode::Bare)
-        .establish::<vox::NoopClient>(())
+        .establish::<vox::NoopClient>()
         .await
         .expect("guest-a establish");
     let guest_a_session = _guest_a_root.session.clone().unwrap();

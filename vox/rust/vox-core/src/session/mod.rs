@@ -86,12 +86,29 @@ impl<'a> ConnectionRequest<'a> {
 /// - `into_handle()` — take the raw ConnectionHandle for custom use
 pub struct PendingConnection {
     handle: Option<ConnectionHandle>,
+    caller_slot: Option<Arc<std::sync::Mutex<Option<crate::Caller>>>>,
+    operation_store: Option<Arc<dyn crate::OperationStore>>,
 }
 
 impl PendingConnection {
     fn new(handle: ConnectionHandle) -> Self {
         Self {
             handle: Some(handle),
+            caller_slot: None,
+            operation_store: None,
+        }
+    }
+
+    /// Create a PendingConnection that captures the Caller when handle_with is called.
+    fn with_caller_slot(
+        handle: ConnectionHandle,
+        caller_slot: Arc<std::sync::Mutex<Option<crate::Caller>>>,
+        operation_store: Option<Arc<dyn crate::OperationStore>>,
+    ) -> Self {
+        Self {
+            handle: Some(handle),
+            caller_slot: Some(caller_slot),
+            operation_store,
         }
     }
 
@@ -101,7 +118,14 @@ impl PendingConnection {
             .handle
             .take()
             .expect("PendingConnection already consumed");
-        let mut driver = crate::Driver::new(handle, handler);
+        let mut driver = match self.operation_store.take() {
+            Some(store) => crate::Driver::with_operation_store(handle, handler, store),
+            None => crate::Driver::new(handle, handler),
+        };
+        let caller = crate::Caller::new(driver.caller());
+        if let Some(slot) = &self.caller_slot {
+            *slot.lock().unwrap() = Some(caller);
+        }
         #[cfg(not(target_arch = "wasm32"))]
         tokio::spawn(async move { driver.run().await });
         #[cfg(target_arch = "wasm32")]
@@ -144,7 +168,7 @@ impl Drop for PendingConnection {
 }
 
 // r[impl rpc.virtual-connection.accept]
-pub trait ConnectionAcceptor: Send + 'static {
+pub trait ConnectionAcceptor: Send + Sync + 'static {
     fn accept(
         &self,
         request: &ConnectionRequest,
@@ -172,7 +196,10 @@ pub struct AcceptorFn<F>(pub F);
 
 impl<F> ConnectionAcceptor for AcceptorFn<F>
 where
-    F: Fn(&ConnectionRequest, PendingConnection) -> Result<(), Metadata<'static>> + Send + 'static,
+    F: Fn(&ConnectionRequest, PendingConnection) -> Result<(), Metadata<'static>>
+        + Send
+        + Sync
+        + 'static,
 {
     fn accept(
         &self,
@@ -186,7 +213,10 @@ where
 /// Create a `ConnectionAcceptor` from a closure.
 pub fn acceptor_fn<F>(f: F) -> AcceptorFn<F>
 where
-    F: Fn(&ConnectionRequest, PendingConnection) -> Result<(), Metadata<'static>> + Send + 'static,
+    F: Fn(&ConnectionRequest, PendingConnection) -> Result<(), Metadata<'static>>
+        + Send
+        + Sync
+        + 'static,
 {
     AcceptorFn(f)
 }
@@ -426,7 +456,7 @@ pub struct Session {
     conn_ids: IdAllocator<ConnectionId>,
 
     /// Callback for accepting inbound virtual connections.
-    on_connection: Option<Box<dyn ConnectionAcceptor>>,
+    on_connection: Option<Arc<dyn ConnectionAcceptor>>,
 
     /// Receiver for open requests from SessionHandle.
     open_rx: mpsc::Receiver<OpenRequest>,
@@ -868,7 +898,7 @@ impl Session {
     fn pre_handshake<Tx, Rx>(
         tx: Tx,
         rx: Rx,
-        on_connection: Option<Box<dyn ConnectionAcceptor>>,
+        on_connection: Option<Arc<dyn ConnectionAcceptor>>,
         open_rx: mpsc::Receiver<OpenRequest>,
         close_rx: mpsc::Receiver<CloseRequest>,
         resume_rx: mpsc::Receiver<ResumeRequest>,

@@ -134,7 +134,7 @@ async fn v1_client_v2_server_fills_default() {
     });
 
     let client = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<point_v1::GeometryClient>(())
+        .establish::<point_v1::GeometryClient>()
         .await
         .expect("client handshake failed");
 
@@ -168,7 +168,7 @@ async fn v2_client_v1_server_skips_unknown_field() {
     });
 
     let client = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<point_v2::GeometryClient>(())
+        .establish::<point_v2::GeometryClient>()
         .await
         .expect("client handshake failed");
 
@@ -246,7 +246,7 @@ async fn reordered_fields_are_matched_by_name() {
     });
 
     let client = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<reordered_v2::PairServiceClient>(())
+        .establish::<reordered_v2::PairServiceClient>()
         .await
         .expect("client handshake failed");
 
@@ -330,7 +330,7 @@ async fn evolved_schema_combined_changes() {
     });
 
     let client = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<evolved_v2::ConfigServiceClient>(())
+        .establish::<evolved_v2::ConfigServiceClient>()
         .await
         .expect("client handshake failed");
 

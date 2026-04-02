@@ -45,7 +45,8 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
                     let handle = moire::task::spawn(fut.named("server_session"));
                     let _ = server_session_tx.send(handle);
                 })
-                .establish::<NoopClient>(EchoHandler)
+                .on_connection(EchoHandler)
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -58,7 +59,7 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
             let handle = moire::task::spawn(fut.named("client_session"));
             let _ = client_session_tx.send(handle);
         })
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
 
@@ -110,7 +111,7 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
     let server_task = moire::task::spawn(
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<NoopClient>(())
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -123,7 +124,7 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
             let handle = moire::task::spawn(fut.named("client_session"));
             let _ = client_session_tx.send(handle);
         })
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
 
@@ -228,7 +229,7 @@ async fn cancel_aborts_in_flight_handler() {
     // Set up client side. We need both the Caller (for sending the call) and
     // the raw sender (for sending the cancel message with the same request ID).
     let caller = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
     let client_sender = caller.caller.driver().connection_sender().clone();
@@ -321,7 +322,7 @@ async fn cancel_does_not_abort_persist_handler() {
     );
 
     let caller = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
     let client_sender = caller.caller.driver().connection_sender().clone();
@@ -383,7 +384,8 @@ async fn caller_injects_operation_id_when_peer_supports_retry() {
     let server_task = moire::task::spawn(
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<NoopClient>(OperationIdHandler)
+                .on_connection(OperationIdHandler)
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -392,7 +394,7 @@ async fn caller_injects_operation_id_when_peer_supports_retry() {
     );
 
     let caller = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
 
@@ -427,7 +429,8 @@ async fn builder_uses_custom_operation_store() {
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .operation_store(store)
-                .establish::<NoopClient>(OperationIdHandler)
+                .on_connection(OperationIdHandler)
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -436,7 +439,7 @@ async fn builder_uses_custom_operation_store() {
     );
 
     let caller = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
 
@@ -481,7 +484,7 @@ async fn operation_replay_after_resume_delivers_sealed_outcome() {
             Duration::from_secs(2),
             initiator_conduit(BareConduit::new(client_link1), test_initiator_handshake())
                 .resumable()
-                .establish::<NoopClient>(()),
+                .establish::<NoopClient>(),
         ),
     )
     .expect("initial session establishment timed out");
@@ -595,7 +598,7 @@ async fn duplicate_operation_id_on_same_connection_is_rejected() {
     );
 
     let caller = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
 
@@ -724,11 +727,13 @@ async fn call_through_cbor_handshake_reaches_handler() {
     let (server_result, client_result) = tokio::try_join!(
         tokio::time::timeout(
             Duration::from_secs(1),
-            acceptor_on(server_link).establish::<NoopClient>(EchoHandler),
+            acceptor_on(server_link)
+                .on_connection(EchoHandler)
+                .establish::<NoopClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            initiator_on(client_link, TransportMode::Bare).establish::<NoopClient>(()),
+            initiator_on(client_link, TransportMode::Bare).establish::<NoopClient>(),
         ),
     )
     .expect("session establishment timed out");
@@ -765,11 +770,13 @@ async fn call_through_stable_conduit_reaches_handler() {
     let (server_result, client_result) = tokio::try_join!(
         tokio::time::timeout(
             Duration::from_secs(1),
-            acceptor_on(server_link).establish::<NoopClient>(EchoHandler),
+            acceptor_on(server_link)
+                .on_connection(EchoHandler)
+                .establish::<NoopClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            initiator_on(client_link, TransportMode::Stable).establish::<NoopClient>(()),
+            initiator_on(client_link, TransportMode::Stable).establish::<NoopClient>(),
         ),
     )
     .expect("session establishment timed out");
@@ -806,11 +813,13 @@ async fn multiple_calls_through_stable_conduit() {
     let (server_result, client_result) = tokio::try_join!(
         tokio::time::timeout(
             Duration::from_secs(1),
-            acceptor_on(server_link).establish::<NoopClient>(EchoHandler),
+            acceptor_on(server_link)
+                .on_connection(EchoHandler)
+                .establish::<NoopClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            initiator_on(client_link, TransportMode::Stable).establish::<NoopClient>(()),
+            initiator_on(client_link, TransportMode::Stable).establish::<NoopClient>(),
         ),
     )
     .expect("session establishment timed out");
@@ -868,7 +877,7 @@ async fn in_flight_call_returns_cancelled_when_peer_closes() {
     );
 
     let caller = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
 
@@ -943,7 +952,7 @@ async fn keepalive_timeout_returns_cancelled_when_pongs_are_missing() {
             ping_interval: std::time::Duration::from_millis(20),
             pong_timeout: std::time::Duration::from_millis(50),
         })
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
 
@@ -993,7 +1002,8 @@ async fn dropping_root_caller_shuts_down_session() {
                     let handle = moire::task::spawn(fut.named("server_session"));
                     let _ = server_session_tx.send(handle);
                 })
-                .establish::<NoopClient>(EchoHandler)
+                .on_connection(EchoHandler)
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -1006,7 +1016,7 @@ async fn dropping_root_caller_shuts_down_session() {
             let handle = moire::task::spawn(fut.named("client_session"));
             let _ = client_session_tx.send(handle);
         })
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
 
@@ -1044,7 +1054,8 @@ async fn schema_tracker_is_per_connection_not_per_session() {
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
                 .on_connection(EchoAcceptor)
-                .establish::<NoopClient>(EchoHandler)
+                .on_connection(EchoHandler)
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -1053,7 +1064,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
     );
 
     let root_caller = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
     let session_handle = root_caller.session.clone().unwrap();
@@ -1143,7 +1154,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
                 },
             )
             .on_connection(EchoAcceptor)
-            .establish::<NoopClient>(())
+            .establish::<NoopClient>()
             .await
             .expect("server handshake failed");
             server_caller
@@ -1171,7 +1182,7 @@ async fn initiator_builder_customization_controls_allocated_connection_parity() 
             peer_metadata: vec![],
         },
     )
-    .establish::<NoopClient>(())
+    .establish::<NoopClient>()
     .await
     .expect("client handshake failed");
     let session_handle = _client_caller_guard.session.clone().unwrap();
@@ -1223,7 +1234,7 @@ async fn acceptor_builder_customization_supports_opening_connections() {
                 },
             )
             .on_connection(EchoAcceptor)
-            .establish::<NoopClient>(())
+            .establish::<NoopClient>()
             .await
             .expect("initiator handshake failed");
             initiator_caller
@@ -1251,7 +1262,7 @@ async fn acceptor_builder_customization_supports_opening_connections() {
             peer_metadata: vec![],
         },
     )
-    .establish::<NoopClient>(())
+    .establish::<NoopClient>()
     .await
     .expect("acceptor handshake failed");
     let acceptor_session_handle = _acceptor_caller_guard.session.clone().unwrap();
@@ -1284,7 +1295,8 @@ async fn close_root_connection_is_rejected() {
     let server_task = moire::task::spawn(
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<NoopClient>(EchoHandler)
+                .on_connection(EchoHandler)
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -1293,7 +1305,7 @@ async fn close_root_connection_is_rejected() {
     );
 
     let _client_caller_guard = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
     let session_handle = _client_caller_guard.session.clone().unwrap();
@@ -1318,7 +1330,8 @@ async fn echo_call_across_memory_link() {
     let server_task = moire::task::spawn(
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<NoopClient>(EchoHandler)
+                .on_connection(EchoHandler)
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -1328,7 +1341,7 @@ async fn echo_call_across_memory_link() {
 
     // Set up client side (runs concurrently with server_task above).
     let caller = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
 
@@ -1363,7 +1376,7 @@ async fn buffers_inbound_channel_items_until_rx_is_registered() {
     let server_task = moire::task::spawn(
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<NoopClient>(())
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -1372,7 +1385,7 @@ async fn buffers_inbound_channel_items_until_rx_is_registered() {
     );
 
     let client_caller = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
     let client_sender = client_caller.caller.driver().connection_sender().clone();
@@ -1421,7 +1434,7 @@ async fn grant_credit_unblocks_driver_created_tx_channel() {
     let server_task = moire::task::spawn(
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<NoopClient>(())
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -1430,7 +1443,7 @@ async fn grant_credit_unblocks_driver_created_tx_channel() {
     );
 
     let client_caller = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
     let client_sender = client_caller.caller.driver().connection_sender().clone();
@@ -1482,7 +1495,7 @@ async fn buffered_close_before_registration_keeps_channel_terminal() {
     let server_task = moire::task::spawn(
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<NoopClient>(())
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             server_caller
@@ -1491,7 +1504,7 @@ async fn buffered_close_before_registration_keeps_channel_terminal() {
     );
 
     let client_caller = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
     let client_sender = client_caller.caller.driver().connection_sender().clone();
@@ -1552,7 +1565,8 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
     let server_task = moire::task::spawn(
         async move {
             let server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake())
-                .establish::<NoopClient>(EchoHandler)
+                .on_connection(EchoHandler)
+                .establish::<NoopClient>()
                 .await
                 .expect("server handshake failed");
             (
@@ -1564,7 +1578,7 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
     );
 
     let caller = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("client handshake failed");
 
@@ -1642,7 +1656,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
         async move {
             let guard = acceptor_conduit(guest_b_conduit, test_acceptor_handshake())
                 .on_connection(EchoAcceptor)
-                .establish::<NoopClient>(())
+                .establish::<NoopClient>()
                 .await
                 .expect("guest-b establish");
             let _guard = guard;
@@ -1652,7 +1666,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
     );
 
     let _host_to_b_guard = initiator_conduit(host_b_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("host<->guest-b establish");
     let host_to_b_session = _host_to_b_guard.session.clone().unwrap();
@@ -1663,7 +1677,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
                 .on_connection(ProxyHostAcceptor {
                     upstream_session: host_to_b_session,
                 })
-                .establish::<NoopClient>(())
+                .establish::<NoopClient>()
                 .await
                 .expect("host<->guest-a establish");
             let _guard = guard;
@@ -1673,7 +1687,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
     );
 
     let _guest_a_root_guard = initiator_conduit(guest_a_conduit, test_initiator_handshake())
-        .establish::<NoopClient>(())
+        .establish::<NoopClient>()
         .await
         .expect("guest-a<->host establish");
     let guest_a_session = _guest_a_root_guard.session.clone().unwrap();

@@ -2,13 +2,13 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use afl::fuzz;
-use vox::Call;
-use vox_core::{BareConduit, DriverReplySink, acceptor, initiator, memory_link_pair};
-use vox_types::{Handler, MessageFamily, RequestCall, SelfRef};
 use spec_proto::{
     Canvas, Color, Config, LookupError, MathError, Measurement, Message, Person, Point, Profile,
     Record, Rectangle, Shape, Status, Tag, Testbed, TestbedClient, TestbedDispatcher,
 };
+use vox::Call;
+use vox_core::{BareConduit, DriverReplySink, acceptor, initiator, memory_link_pair};
+use vox_types::{Handler, MessageFamily, RequestCall, SelfRef};
 
 struct NoopHandler;
 
@@ -247,7 +247,7 @@ async fn setup_client() -> Option<TestbedClient> {
 
     let server_task = tokio::spawn(async move {
         let Ok(((), _)) = acceptor(server_conduit)
-            .establish::<()>(TestbedDispatcher::new(FuzzService))
+            .on_connection(TestbedDispatcher::new(FuzzService).establish::<()>())
             .await
         else {
             return;
@@ -255,7 +255,8 @@ async fn setup_client() -> Option<TestbedClient> {
     });
 
     let Ok((client, _)) = initiator(client_conduit)
-        .establish::<TestbedClient>(NoopHandler)
+        .on_connection(NoopHandler)
+        .establish::<TestbedClient>()
         .await
     else {
         return None;
