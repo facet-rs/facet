@@ -59,7 +59,7 @@ fn resolve_plan<'facet, T: Facet<'facet>>(
     let cache_key = PlanCacheKey {
         method_id,
         direction,
-        local_shape: T::SHAPE as *const _ as usize,
+        local_shape: T::SHAPE,
     };
 
     // Fast path: check cache.

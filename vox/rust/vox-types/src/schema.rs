@@ -314,8 +314,7 @@ pub struct SchemaRecvTracker {
 pub struct PlanCacheKey {
     pub method_id: MethodId,
     pub direction: BindingDirection,
-    /// Pointer to the local `&'static Shape`, used as a type identity.
-    pub local_shape: usize,
+    pub local_shape: &'static Shape,
 }
 
 /// Error returned when recording received schemas detects a protocol violation.
@@ -468,18 +467,15 @@ pub struct ExtractedSchemas {
 pub fn extract_schemas(shape: &'static Shape) -> Result<ExtractedSchemas, SchemaExtractError> {
     use std::sync::OnceLock;
 
-    // Global cache: Shape pointer → extracted schemas.
-    // Safe because Shape is 'static and the result is deterministic.
-    static CACHE: OnceLock<Mutex<HashMap<usize, ExtractedSchemas>>> = OnceLock::new();
+    static CACHE: OnceLock<Mutex<HashMap<&'static Shape, ExtractedSchemas>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 
-    let key = shape as *const Shape as usize;
-    if let Some(cached) = cache.lock().unwrap().get(&key) {
+    if let Some(cached) = cache.lock().unwrap().get(shape) {
         return Ok(cached.clone());
     }
 
     let result = extract_schemas_uncached(shape)?;
-    cache.lock().unwrap().insert(key, result.clone());
+    cache.lock().unwrap().insert(shape, result.clone());
     Ok(result)
 }
 
