@@ -16,96 +16,16 @@ use crate::session::{
 use crate::{Attachment, BareConduit, NoopClient, TransportMode, initiate_transport};
 
 #[tokio::test]
-async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
-    let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
-    let client_conduit1 = BareConduit::new(client_link1);
-    let server_conduit1 = BareConduit::new(server_link1);
-
-    let registry = SessionRegistry::default();
-    let started = Arc::new(tokio::sync::Notify::new());
-    let started_for_wait = Arc::clone(&started);
-    let started_wait = started_for_wait.notified();
-    let release = Arc::new(tokio::sync::Notify::new());
-
-    let (server_established, client_established) = tokio::try_join!(
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            acceptor_conduit(server_conduit1, test_acceptor_handshake())
-                .resumable()
-                .session_registry(registry.clone())
-                .on_connection(ResumableReplyingHandler {
-                    started,
-                    release: Arc::clone(&release),
-                })
-                .establish::<NoopClient>(),
-        ),
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            initiator_conduit(client_conduit1, test_initiator_handshake())
-                .resumable()
-                .establish::<NoopClient>(),
-        ),
-    )
-    .expect("initial session establishment timed out");
-    let _server_caller = server_established.expect("server handshake failed");
-    let server_session_handle = _server_caller.session.clone().unwrap();
-    let caller = client_established.expect("client handshake failed");
-    let client_session_handle = caller.session.clone().unwrap();
-
-    let call_task = moire::task::spawn(
-        async move {
-            caller
-                .caller
-                .call(RequestCall {
-                    method_id: MethodId(1),
-                    args: Payload::outgoing(&55_u32),
-                    schemas: Default::default(),
-                    metadata: Default::default(),
-                })
-                .await
-        }
-        .named("resume_pending_call"),
-    );
-
-    tokio::time::timeout(Duration::from_secs(1), started_wait)
-        .await
-        .expect("timed out waiting for handler start");
-
-    client_break1.close().await;
-    server_break1.close().await;
-    tokio::time::sleep(Duration::from_millis(25)).await;
-
-    let (client_link2, client_break2, server_link2, server_break2) = breakable_link_pair(64);
-    tokio::try_join!(
-        client_session_handle.resume(BareConduit::new(client_link2), test_initiator_handshake()),
-        server_session_handle.resume(BareConduit::new(server_link2), test_acceptor_handshake()),
-    )
-    .expect("session resume should succeed");
-
-    release.notify_waiters();
-
-    let response = call_task
-        .await
-        .expect("call task join")
-        .expect("call should succeed after session resume");
-    let response = response.get();
-    let ret_bytes = match &response.ret {
-        Payload::PostcardBytes(bytes) => *bytes,
-        _ => panic!("expected incoming payload in response"),
-    };
-    let value: u32 = vox_postcard::from_slice(ret_bytes).expect("deserialize response");
-    assert_eq!(value, 55);
-
-    let _ = client_session_handle.shutdown();
-    let _ = server_session_handle.shutdown();
-    client_break2.close().await;
-    server_break2.close().await;
-}
-
-#[tokio::test]
 async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume() {
     let registry = SessionRegistry::default();
     let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
+    let (client_link2, client_break2, server_link2, server_break2) = breakable_link_pair(64);
+
+    let source = TestLinkSource::new([
+        Attachment::initiator(client_link1),
+        Attachment::initiator(client_link2),
+    ]);
+
     let started = Arc::new(tokio::sync::Notify::new());
     let started_for_wait = Arc::clone(&started);
     let started_wait = started_for_wait.notified();
@@ -125,9 +45,7 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
         ),
         tokio::time::timeout(
             Duration::from_secs(1),
-            initiator_on(client_link1, TransportMode::Bare)
-                .resumable()
-                .establish::<NoopClient>(),
+            crate::initiator(source, TransportMode::Bare).establish::<NoopClient>(),
         ),
     )
     .expect("initial session establishment timed out");
@@ -159,36 +77,9 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
 
     client_break1.close().await;
     server_break1.close().await;
-    tokio::time::sleep(Duration::from_millis(25)).await;
 
-    let (client_link2, client_break2, server_link2, server_break2) = breakable_link_pair(64);
-    let (resume_result, server_accept_result) = tokio::join!(
-        async {
-            let mut resumed_link = initiate_transport(client_link2, TransportMode::Bare)
-                .await
-                .expect("client transport prologue should succeed");
-            let handshake_result = crate::handshake_as_initiator(
-                &resumed_link.tx,
-                &mut resumed_link.rx,
-                ConnectionSettings {
-                    parity: Parity::Odd,
-                    max_concurrent_requests: 64,
-                },
-                true,
-                client_session_handle.resume_key(),
-                vec![MetadataEntry::str("vox-service", "Noop")],
-            )
-            .await
-            .expect("client CBOR handshake should succeed");
-            let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
-                .expect("message plan should build");
-            client_session_handle
-                .resume(
-                    BareConduit::with_message_plan(resumed_link, message_plan),
-                    handshake_result,
-                )
-                .await
-        },
+    let server_accept_result = tokio::time::timeout(
+        Duration::from_secs(1),
         acceptor_on(server_link2)
             .session_registry(registry.clone())
             .on_connection(ResumableReplyingHandler {
@@ -197,8 +88,9 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
             })
             .metadata(vec![MetadataEntry::str("vox-service", "Noop")])
             .establish_or_resume::<NoopClient>(),
-    );
-    resume_result.expect("client session resume should succeed");
+    )
+    .await
+    .expect("timed out waiting for resume");
     match server_accept_result.expect("server accept should succeed") {
         SessionAcceptOutcome::Resumed => {}
         SessionAcceptOutcome::Established(_) => {
@@ -440,186 +332,7 @@ async fn resumable_source_initiator_falls_back_to_fresh_session_when_resume_key_
     server_break2.close().await;
 }
 
-#[tokio::test]
-async fn resumable_session_reruns_released_idem_call_after_manual_resume() {
-    let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
-    let client_conduit1 = BareConduit::new(client_link1);
-    let server_conduit1 = BareConduit::new(server_link1);
-
-    let registry = SessionRegistry::default();
-    let first_started = Arc::new(tokio::sync::Notify::new());
-    let first_started_waiter = Arc::clone(&first_started);
-    let first_started_wait = first_started_waiter.notified();
-    let drop_first = Arc::new(tokio::sync::Notify::new());
-    let runs = Arc::new(AtomicUsize::new(0));
-
-    let (server_established, client_established) = tokio::try_join!(
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            acceptor_conduit(server_conduit1, test_acceptor_handshake())
-                .resumable()
-                .session_registry(registry.clone())
-                .on_connection(RetryAfterResumeHandler {
-                    retry: RetryPolicy::IDEM,
-                    runs: Arc::clone(&runs),
-                    first_started,
-                    drop_first: Arc::clone(&drop_first),
-                })
-                .establish::<NoopClient>(),
-        ),
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            initiator_conduit(client_conduit1, test_initiator_handshake())
-                .resumable()
-                .establish::<NoopClient>(),
-        ),
-    )
-    .expect("initial session establishment timed out");
-    let _server_caller = server_established.expect("server handshake failed");
-    let server_session_handle = _server_caller.session.clone().unwrap();
-    let caller = client_established.expect("client handshake failed");
-    let client_session_handle = caller.session.clone().unwrap();
-
-    let call_task = moire::task::spawn(
-        async move {
-            caller
-                .caller
-                .call(RequestCall {
-                    method_id: MethodId(1),
-                    args: Payload::outgoing(&77_u32),
-                    schemas: Default::default(),
-                    metadata: Default::default(),
-                })
-                .await
-        }
-        .named("resume_retry_idem"),
-    );
-
-    tokio::time::timeout(Duration::from_secs(1), first_started_wait)
-        .await
-        .expect("timed out waiting for first handler start");
-
-    client_break1.close().await;
-    server_break1.close().await;
-    drop_first.notify_waiters();
-    tokio::time::sleep(Duration::from_millis(25)).await;
-
-    let (client_link2, client_break2, server_link2, server_break2) = breakable_link_pair(64);
-    tokio::try_join!(
-        client_session_handle.resume(BareConduit::new(client_link2), test_initiator_handshake()),
-        server_session_handle.resume(BareConduit::new(server_link2), test_acceptor_handshake()),
-    )
-    .expect("session resume should succeed");
-
-    let response = call_task
-        .await
-        .expect("call task join")
-        .expect("idem call should succeed after retry");
-    let response = response.get();
-    let ret_bytes = match &response.ret {
-        Payload::PostcardBytes(bytes) => *bytes,
-        _ => panic!("expected incoming payload in response"),
-    };
-    let value: u32 = vox_postcard::from_slice(ret_bytes).expect("deserialize response");
-    assert_eq!(value, 77);
-    assert_eq!(runs.load(Ordering::SeqCst), 2);
-
-    let _ = client_session_handle.shutdown();
-    let _ = server_session_handle.shutdown();
-    client_break2.close().await;
-    server_break2.close().await;
-}
-
-#[tokio::test]
-async fn resumable_session_returns_indeterminate_for_released_non_idem_call_after_manual_resume() {
-    let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
-    let client_conduit1 = BareConduit::new(client_link1);
-    let server_conduit1 = BareConduit::new(server_link1);
-
-    let registry = SessionRegistry::default();
-    let first_started = Arc::new(tokio::sync::Notify::new());
-    let first_started_waiter = Arc::clone(&first_started);
-    let first_started_wait = first_started_waiter.notified();
-    let drop_first = Arc::new(tokio::sync::Notify::new());
-    let runs = Arc::new(AtomicUsize::new(0));
-
-    let (server_established, client_established) = tokio::try_join!(
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            acceptor_conduit(server_conduit1, test_acceptor_handshake())
-                .resumable()
-                .session_registry(registry.clone())
-                .on_connection(RetryAfterResumeHandler {
-                    retry: RetryPolicy::VOLATILE,
-                    runs: Arc::clone(&runs),
-                    first_started,
-                    drop_first: Arc::clone(&drop_first),
-                })
-                .establish::<NoopClient>(),
-        ),
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            initiator_conduit(client_conduit1, test_initiator_handshake())
-                .resumable()
-                .establish::<NoopClient>(),
-        ),
-    )
-    .expect("initial session establishment timed out");
-    let _server_caller = server_established.expect("server handshake failed");
-    let server_session_handle = _server_caller.session.clone().unwrap();
-    let caller = client_established.expect("client handshake failed");
-    let client_session_handle = caller.session.clone().unwrap();
-
-    let call_task = moire::task::spawn(
-        async move {
-            caller
-                .caller
-                .call(RequestCall {
-                    method_id: MethodId(1),
-                    args: Payload::outgoing(&88_u32),
-                    schemas: Default::default(),
-                    metadata: Default::default(),
-                })
-                .await
-        }
-        .named("resume_retry_non_idem"),
-    );
-
-    tokio::time::timeout(Duration::from_secs(1), first_started_wait)
-        .await
-        .expect("timed out waiting for first handler start");
-
-    client_break1.close().await;
-    server_break1.close().await;
-    drop_first.notify_waiters();
-    tokio::time::sleep(Duration::from_millis(25)).await;
-
-    let (client_link2, client_break2, server_link2, server_break2) = breakable_link_pair(64);
-    tokio::try_join!(
-        client_session_handle.resume(BareConduit::new(client_link2), test_initiator_handshake()),
-        server_session_handle.resume(BareConduit::new(server_link2), test_acceptor_handshake()),
-    )
-    .expect("session resume should succeed");
-
-    let response = call_task
-        .await
-        .expect("call task join")
-        .expect("runtime should return a response envelope");
-    let response = response.get();
-    let ret_bytes = match &response.ret {
-        Payload::PostcardBytes(bytes) => *bytes,
-        _ => panic!("expected incoming payload in response"),
-    };
-    let result: Result<u32, VoxError> =
-        vox_postcard::from_slice(ret_bytes).expect("deserialize response");
-    assert!(matches!(result, Err(VoxError::Indeterminate)));
-    assert_eq!(runs.load(Ordering::SeqCst), 1);
-
-    let _ = client_session_handle.shutdown();
-    let _ = server_session_handle.shutdown();
-    client_break2.close().await;
-    server_break2.close().await;
-}
+// Manual resume tests removed: recovery is via ConduitRecoverer or SessionRegistry.
 
 #[tokio::test]
 async fn recovery_timeout_gives_up_after_deadline() {

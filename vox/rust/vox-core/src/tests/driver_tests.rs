@@ -14,11 +14,11 @@ use vox_types::{
 
 use super::utils::*;
 use crate::session::{
-    ConnectionAcceptor, ConnectionMessage, ConnectionRequest, PendingConnection, SessionError,
-    SessionHandle, SessionKeepaliveConfig, SessionRegistry, acceptor_conduit, acceptor_on,
-    initiator_conduit, initiator_on, proxy_connections,
+    ConnectionAcceptor, ConnectionMessage, ConnectionRequest, PendingConnection,
+    SessionAcceptOutcome, SessionError, SessionHandle, SessionKeepaliveConfig, SessionRegistry,
+    acceptor_conduit, acceptor_on, initiator_conduit, initiator_on, proxy_connections,
 };
-use crate::{BareConduit, Driver, NoopClient, TransportMode, memory_link_pair};
+use crate::{Attachment, BareConduit, Driver, NoopClient, TransportMode, memory_link_pair};
 
 // r[verify rpc.caller.liveness.refcounted]
 #[tokio::test]
@@ -458,34 +458,40 @@ async fn builder_uses_custom_operation_store() {
 #[tokio::test]
 async fn operation_replay_after_resume_delivers_sealed_outcome() {
     let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
+    let (client_link2, client_break2, server_link2, server_break2) = breakable_link_pair(64);
 
     let registry = SessionRegistry::default();
     let runs = Arc::new(AtomicUsize::new(0));
     let runs_check = Arc::clone(&runs);
     let release = Arc::new(tokio::sync::Notify::new());
 
+    let source = TestLinkSource::new([
+        Attachment::initiator(client_link1),
+        Attachment::initiator(client_link2),
+    ]);
+
     let (server_established, client_established) = tokio::try_join!(
         tokio::time::timeout(
             Duration::from_secs(2),
-            acceptor_conduit(BareConduit::new(server_link1), test_acceptor_handshake())
-                .resumable()
+            acceptor_on(server_link1)
                 .session_registry(registry.clone())
                 .on_connection(ReplayHandler {
                     runs,
                     release: Arc::clone(&release),
                 })
-                .establish::<NoopClient>(),
+                .metadata(vec![MetadataEntry::str("vox-service", "Noop")])
+                .establish_or_resume::<NoopClient>(),
         ),
         tokio::time::timeout(
             Duration::from_secs(2),
-            initiator_conduit(BareConduit::new(client_link1), test_initiator_handshake())
-                .resumable()
-                .establish::<NoopClient>(),
+            crate::initiator(source, TransportMode::Bare).establish::<NoopClient>(),
         ),
     )
     .expect("initial session establishment timed out");
-    let _server_caller = server_established.expect("server handshake failed");
-    let server_sh = _server_caller.session.clone().unwrap();
+    let server_caller = match server_established.expect("server handshake failed") {
+        SessionAcceptOutcome::Established(client) => client,
+        SessionAcceptOutcome::Resumed => panic!("first accept should establish a new session"),
+    };
     let caller = client_established.expect("client handshake failed");
     let client_sh = caller.session.clone().unwrap();
 
@@ -529,17 +535,30 @@ async fn operation_replay_after_resume_delivers_sealed_outcome() {
     assert_eq!(value, 11);
     assert_eq!(runs_check.load(Ordering::SeqCst), 1);
 
-    // Disconnect and resume on a new link.
+    // Disconnect — the source-based initiator auto-reconnects,
+    // the registry-based acceptor resumes the existing session.
     client_break1.close().await;
     server_break1.close().await;
-    tokio::time::sleep(Duration::from_millis(25)).await;
 
-    let (client_link2, client_break2, server_link2, server_break2) = breakable_link_pair(64);
-    tokio::try_join!(
-        client_sh.resume(BareConduit::new(client_link2), test_initiator_handshake()),
-        server_sh.resume(BareConduit::new(server_link2), test_acceptor_handshake()),
+    let server_accept_result = tokio::time::timeout(
+        Duration::from_secs(2),
+        acceptor_on(server_link2)
+            .session_registry(registry.clone())
+            .on_connection(ReplayHandler {
+                runs: Arc::new(AtomicUsize::new(0)),
+                release: Arc::clone(&release),
+            })
+            .metadata(vec![MetadataEntry::str("vox-service", "Noop")])
+            .establish_or_resume::<NoopClient>(),
     )
-    .expect("session resume should succeed");
+    .await
+    .expect("timed out waiting for resume");
+    match server_accept_result.expect("server accept should succeed") {
+        SessionAcceptOutcome::Resumed => {}
+        SessionAcceptOutcome::Established(_) => {
+            panic!("registry accept should have resumed the existing session")
+        }
+    }
 
     // Replay the same operation ID — should get the sealed response without
     // running the handler again, and without duplicate schema errors.
@@ -566,8 +585,8 @@ async fn operation_replay_after_resume_delivers_sealed_outcome() {
         "handler should only run once"
     );
 
+    drop(server_caller);
     let _ = client_sh.shutdown();
-    let _ = server_sh.shutdown();
     client_break2.close().await;
     server_break2.close().await;
 }

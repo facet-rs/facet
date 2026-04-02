@@ -387,26 +387,6 @@ impl SessionHandle {
             .map_err(|_| SessionError::Protocol("session closed".into()))?
     }
 
-    /// Resume the session with a new conduit after a link break.
-    ///
-    /// This is the client-side resume path: the client reconnects and
-    /// provides a new conduit + handshake result.
-    pub async fn resume<I: crate::IntoConduit>(
-        &self,
-        into_conduit: I,
-        handshake_result: HandshakeResult,
-    ) -> Result<(), SessionError>
-    where
-        I::Conduit: Conduit<Msg = MessageFamily> + 'static,
-        <I::Conduit as Conduit>::Tx: MaybeSend + MaybeSync + 'static,
-        for<'p> <<I::Conduit as Conduit>::Tx as ConduitTx>::Permit<'p>: MaybeSend,
-        <I::Conduit as Conduit>::Rx: MaybeSend + 'static,
-    {
-        let (tx, rx) = into_conduit.into_conduit().split();
-        self.resume_parts(Arc::new(tx), Box::new(rx), handshake_result)
-            .await
-    }
-
     pub(crate) async fn resume_parts(
         &self,
         tx: Arc<dyn DynConduitTx>,
@@ -1123,9 +1103,11 @@ impl Session {
         &mut self,
         keepalive_runtime: &mut Option<KeepaliveRuntime>,
     ) -> bool {
-        if !self.resumable {
-            return false;
-        }
+        // Recovery strategy:
+        // 1. If we have a recoverer (client-side auto-reconnect), use it.
+        // 2. If we're registered in a SessionRegistry (server-side), wait
+        //    for the registry to route a reconnecting client to us.
+        // 3. Otherwise, the session is done.
 
         if let Some(recoverer) = self.recoverer.as_mut() {
             let recovery_fut = recoverer.next_conduit(self.session_resume_key.as_ref());
@@ -1152,6 +1134,10 @@ impl Session {
                 }
                 Err(_) => return false,
             }
+        }
+
+        if !self.registered_in_registry {
+            return false;
         }
 
         loop {

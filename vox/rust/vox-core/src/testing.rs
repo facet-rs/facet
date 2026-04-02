@@ -1,8 +1,12 @@
 //! Test utilities for vox-core. Publicly exported for use by integration
 //! tests in downstream crates.
 
+use std::collections::VecDeque;
+
 use moire::sync::mpsc;
 use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
+
+use crate::{Attachment, LinkSource};
 
 pub struct BreakableLink {
     tx: mpsc::Sender<Option<Vec<u8>>>,
@@ -123,5 +127,34 @@ impl LinkRx for BreakableLinkRx {
             Some(Some(bytes)) => Ok(Some(Backing::Boxed(bytes.into_boxed_slice()))),
             Some(None) | None => Ok(None),
         }
+    }
+}
+
+/// A [`LinkSource`] backed by a fixed list of pre-made links.
+///
+/// Each call to `next_link()` pops the next attachment. When exhausted,
+/// returns an error (which causes the recoverer to give up).
+pub struct TestLinkSource {
+    attachments: VecDeque<Attachment<BreakableLink>>,
+}
+
+impl TestLinkSource {
+    pub fn new(attachments: impl IntoIterator<Item = Attachment<BreakableLink>>) -> Self {
+        Self {
+            attachments: attachments.into_iter().collect(),
+        }
+    }
+}
+
+impl LinkSource for TestLinkSource {
+    type Link = BreakableLink;
+
+    async fn next_link(&mut self) -> std::io::Result<Attachment<Self::Link>> {
+        self.attachments.pop_front().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "test link source exhausted",
+            )
+        })
     }
 }
