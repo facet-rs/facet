@@ -104,9 +104,46 @@ pub async fn serve(
         }
         #[cfg(feature = "transport-local")]
         "local" => {
-            let (listener, _lock) =
-                vox_stream::LocalLinkAcceptor::bind_with_lock(&host).map_err(SessionError::Io)?;
-            // _lock is held for the lifetime of serve_listener — released on drop.
+            let lock = match vox_stream::try_local_lock(&host).map_err(SessionError::Io)? {
+                vox_stream::LocalLockOutcome::Acquired(lock) => {
+                    // We own it — clean up stale socket.
+                    let _ = std::fs::remove_file(&host);
+                    lock
+                }
+                vox_stream::LocalLockOutcome::Held => {
+                    // Another process holds the lock. Health-check: try connecting
+                    // and doing a handshake. If it responds, it's alive.
+                    let health = tokio::time::timeout(Duration::from_secs(5), async {
+                        let source = vox_stream::local_link_source(&host);
+                        initiator(source, TransportMode::Bare)
+                            .establish::<NoopClient>()
+                            .await
+                    })
+                    .await;
+                    match health {
+                        Ok(Ok(_client)) => {
+                            // Existing server is healthy.
+                            return Err(SessionError::Io(std::io::Error::new(
+                                std::io::ErrorKind::AddrInUse,
+                                format!("another healthy process is serving on {host}"),
+                            )));
+                        }
+                        _ => {
+                            // Timed out or connection failed — server is hung/broken.
+                            // TODO: could forcibly take over here, but for now error out.
+                            return Err(SessionError::Io(std::io::Error::new(
+                                std::io::ErrorKind::AddrInUse,
+                                format!(
+                                    "another process holds the lock on {host} but is not responding"
+                                ),
+                            )));
+                        }
+                    }
+                }
+            };
+            let listener = vox_stream::LocalLinkAcceptor::bind(&host).map_err(SessionError::Io)?;
+            // lock is held for the lifetime of serve_listener — released on drop.
+            let _lock = lock;
             serve_listener(listener, acceptor).await
         }
         _ => Err(SessionError::Protocol(format!(

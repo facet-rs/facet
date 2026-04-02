@@ -548,6 +548,47 @@ impl Drop for LocalListenerLock {
     }
 }
 
+/// Result of attempting to acquire a local listener lock.
+#[cfg(unix)]
+pub enum LocalLockOutcome {
+    /// Lock acquired — we own the socket path. Bind and serve.
+    Acquired(LocalListenerLock),
+    /// Lock held by another process. The socket path may have a live server.
+    /// Caller should health-check before giving up.
+    Held,
+}
+
+/// Try to acquire an exclusive flock on `{addr}.lock`.
+///
+/// Returns [`LocalLockOutcome::Acquired`] with a guard if we got the lock,
+/// or [`LocalLockOutcome::Held`] if another process holds it.
+#[cfg(unix)]
+pub fn try_local_lock(addr: &str) -> io::Result<LocalLockOutcome> {
+    use std::os::unix::io::AsRawFd;
+
+    let lock_path = std::path::PathBuf::from(format!("{addr}.lock"));
+
+    let lock_file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)?;
+
+    let rc = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if rc != 0 {
+        let err = io::Error::last_os_error();
+        if err.kind() == io::ErrorKind::WouldBlock {
+            return Ok(LocalLockOutcome::Held);
+        }
+        return Err(err);
+    }
+
+    Ok(LocalLockOutcome::Acquired(LocalListenerLock {
+        _file: lock_file,
+        lock_path,
+    }))
+}
+
 impl LocalLinkAcceptor {
     /// Bind to a local address with exclusive file locking.
     ///
@@ -555,43 +596,25 @@ impl LocalLinkAcceptor {
     /// held, another process is alive and serving — returns `AddrInUse`.
     /// If acquired, removes any stale socket file and binds.
     ///
+    /// For more control (e.g. health-checking the existing server), use
+    /// [`try_local_lock()`] directly.
+    ///
     /// The returned [`LocalListenerLock`] must be kept alive for the lifetime
     /// of the server — dropping it releases the lock.
     #[cfg(unix)]
     pub fn bind_with_lock(addr: impl Into<String>) -> io::Result<(Self, LocalListenerLock)> {
-        use std::os::unix::io::AsRawFd;
-
         let addr = addr.into();
-        let lock_path = std::path::PathBuf::from(format!("{addr}.lock"));
-
-        let lock_file = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(false)
-            .open(&lock_path)?;
-
-        // Non-blocking exclusive lock.
-        let rc = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if rc != 0 {
-            let err = io::Error::last_os_error();
-            if err.kind() == io::ErrorKind::WouldBlock {
-                return Err(io::Error::new(
-                    io::ErrorKind::AddrInUse,
-                    format!("another process is serving on {addr}"),
-                ));
+        match try_local_lock(&addr)? {
+            LocalLockOutcome::Acquired(lock) => {
+                let _ = std::fs::remove_file(&addr);
+                let acceptor = Self::bind(&addr)?;
+                Ok((acceptor, lock))
             }
-            return Err(err);
+            LocalLockOutcome::Held => Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                format!("another process is serving on {addr}"),
+            )),
         }
-
-        // We hold the lock — remove stale socket if present.
-        let _ = std::fs::remove_file(&addr);
-
-        let acceptor = Self::bind(&addr)?;
-        let guard = LocalListenerLock {
-            _file: lock_file,
-            lock_path,
-        };
-        Ok((acceptor, guard))
     }
 
     /// Bind to a local address.
