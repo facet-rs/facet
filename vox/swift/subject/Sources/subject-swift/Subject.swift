@@ -24,7 +24,6 @@ struct TestbedService: TestbedHandler {
     }
 
     func echo(message: String) async throws -> String {
-        log("echo called: \(message)")
         return message
     }
 
@@ -307,7 +306,59 @@ func sameShape(_ lhs: Shape, _ rhs: Shape) -> Bool {
 func runServer() async throws {
     let handler = TestbedService()
     let dispatcher = TestbedDispatcherAdapter(handler: handler)
-    try await Server().runSubject(dispatcher: dispatcher)
+    guard let addr = ProcessInfo.processInfo.environment["PEER_ADDR"] else {
+        log("PEER_ADDR not set")
+        throw SubjectError.missingEnv
+    }
+
+    let transport = subjectConduit()
+    let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] != "0"
+    log("server mode: connecting to \(addr), transport=\(transport), acceptConnections=\(acceptConnections)")
+
+    let rootMetadata: [MetadataEntry] = [
+        MetadataEntry(key: "vox-service", value: .string("Testbed"), flags: 0),
+        MetadataEntry(key: "vox-connection-kind", value: .string("root"), flags: 0),
+    ]
+    let connection: Connection
+    let driver: Driver
+    if addr.hasPrefix("local://") {
+        let path = String(addr.dropFirst("local://".count))
+        guard !path.isEmpty else {
+            log("invalid PEER_ADDR format")
+            throw SubjectError.invalidAddr
+        }
+        let connector = UnixConnector(path: path, transport: transport)
+        let attachment = try await connector.openAttachment()
+        (connection, driver, _, _) = try await establishInitiator(
+            attachment: attachment,
+            transport: transport,
+            dispatcher: dispatcher,
+            acceptConnections: acceptConnections,
+            resumable: false,
+            metadata: rootMetadata
+        )
+    } else {
+        let parts = addr.split(separator: ":")
+        guard parts.count == 2, let port = Int(parts[1]) else {
+            log("invalid PEER_ADDR format")
+            throw SubjectError.invalidAddr
+        }
+        let host = String(parts[0])
+        let connector = TcpConnector(host: host, port: port, transport: transport)
+        let attachment = try await connector.openAttachment()
+        (connection, driver, _, _) = try await establishInitiator(
+            attachment: attachment,
+            transport: transport,
+            dispatcher: dispatcher,
+            acceptConnections: acceptConnections,
+            resumable: false,
+            metadata: rootMetadata
+        )
+    }
+
+    let rootConnection = connection
+    _ = rootConnection
+    try await driver.run()
 }
 
 // MARK: - Client Mode
@@ -1161,13 +1212,24 @@ func runShmServer() async throws {
     let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] == "1"
     let handler = TestbedService()
     let dispatcher = TestbedDispatcherAdapter(handler: handler)
+    let rootMetadata: [MetadataEntry] = [
+        MetadataEntry(key: "vox-service", value: .string("Testbed"), flags: 0),
+        MetadataEntry(key: "vox-connection-kind", value: .string("root"), flags: 0),
+    ]
 
-    let (_, driver, _, _) = try await establishShmGuest(
+    try await performInitiatorTransportPrologue(
         transport: transport,
+        conduit: subjectConduit()
+    )
+    let attachment: LinkAttachment = .initiator(transport)
+    let (_, driver, _, _) = try await establishInitiator(
+        attachment: attachment,
+        transport: subjectConduit(),
         dispatcher: dispatcher,
-        role: .initiator,
-        conduit: subjectConduit(),
-        acceptConnections: acceptConnections
+        acceptConnections: acceptConnections,
+        maxPayloadSize: transport.negotiated.maxPayloadSize,
+        resumable: false,
+        metadata: rootMetadata
     )
     try await driver.run()
 }

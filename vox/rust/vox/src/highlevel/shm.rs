@@ -112,6 +112,7 @@ impl VoxListener for ShmListener {
             let mut buf = [0u8; vox_shm::bootstrap::BOOTSTRAP_REQUEST_LEN];
             use std::io::Read;
             let mut std_stream = stream.into_std()?;
+            std_stream.set_nonblocking(false)?;
             std_stream.read_exact(&mut buf)?;
             let _request = vox_shm::bootstrap::decode_request(&buf)
                 .map_err(|e| std::io::Error::other(format!("bad bootstrap request: {e}")))?;
