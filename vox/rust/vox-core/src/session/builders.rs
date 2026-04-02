@@ -1161,7 +1161,8 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
-        let Self { link, config } = self;
+        let Self { link, mut config } = self;
+        inject_service_metadata::<Client>(&mut config.metadata);
         let (mode, mut link) = accept_transport(link)
             .await
             .map_err(session_error_from_transport)?;
