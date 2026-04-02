@@ -6,7 +6,7 @@ use vox_core::{
     BareConduit, SessionAcceptOutcome, SessionRegistry, TransportMode, acceptor_on,
     initiate_transport, initiator_on, memory_link_pair, testing::breakable_link_pair,
 };
-use vox_types::{ConnectionSettings, Parity};
+use vox_types::{ConnectionSettings, MetadataEntry, Parity};
 
 #[vox::service]
 trait Echo {
@@ -134,6 +134,7 @@ async fn call_works_after_resume() {
             acceptor_on(server_link1)
                 .session_registry(registry.clone())
                 .on_connection(EchoDispatcher::new(EchoService))
+                .metadata(vec![MetadataEntry::str("vox-service", "Echo")])
                 .establish_or_resume::<EchoClient>(),
         ),
         tokio::time::timeout(
@@ -176,7 +177,7 @@ async fn call_works_after_resume() {
                 },
                 true,
                 client_session_handle.resume_key(),
-                vec![],
+                vec![MetadataEntry::str("vox-service", "Echo")],
             )
             .await
             .expect("handshake");
@@ -194,6 +195,7 @@ async fn call_works_after_resume() {
             acceptor_on(server_link2)
                 .session_registry(registry.clone())
                 .on_connection(EchoDispatcher::new(EchoService))
+                .metadata(vec![MetadataEntry::str("vox-service", "Echo")])
                 .establish_or_resume::<EchoClient>(),
         ),
     );
@@ -222,6 +224,7 @@ async fn first_call_after_resume_without_prior_calls() {
             acceptor_on(server_link1)
                 .session_registry(registry.clone())
                 .on_connection(EchoDispatcher::new(EchoService))
+                .metadata(vec![MetadataEntry::str("vox-service", "Echo")])
                 .establish_or_resume::<EchoClient>(),
         ),
         tokio::time::timeout(
@@ -261,7 +264,7 @@ async fn first_call_after_resume_without_prior_calls() {
                 },
                 true,
                 client_session_handle.resume_key(),
-                vec![],
+                vec![MetadataEntry::str("vox-service", "Echo")],
             )
             .await
             .expect("handshake");
@@ -279,6 +282,7 @@ async fn first_call_after_resume_without_prior_calls() {
             acceptor_on(server_link2)
                 .session_registry(registry.clone())
                 .on_connection(EchoDispatcher::new(EchoService))
+                .metadata(vec![MetadataEntry::str("vox-service", "Echo")])
                 .establish_or_resume::<EchoClient>(),
         ),
     );
@@ -339,6 +343,7 @@ async fn operation_replay_after_resume_has_schemas() {
             acceptor_on(server_link1)
                 .session_registry(registry.clone())
                 .on_connection(PersistEchoDispatcher::new(service.clone()))
+                .metadata(vec![MetadataEntry::str("vox-service", "PersistEcho")])
                 .establish_or_resume::<PersistEchoClient>(),
         ),
         tokio::time::timeout(
@@ -390,7 +395,7 @@ async fn operation_replay_after_resume_has_schemas() {
                 },
                 true,
                 client_session_handle.resume_key(),
-                vec![],
+                vec![MetadataEntry::str("vox-service", "PersistEcho")],
             )
             .await
             .expect("handshake");
@@ -408,6 +413,7 @@ async fn operation_replay_after_resume_has_schemas() {
             acceptor_on(server_link2)
                 .session_registry(registry.clone())
                 .on_connection(PersistEchoDispatcher::new(service))
+                .metadata(vec![MetadataEntry::str("vox-service", "PersistEcho")])
                 .establish_or_resume::<PersistEchoClient>(),
         ),
     );

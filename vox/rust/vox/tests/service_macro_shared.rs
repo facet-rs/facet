@@ -2,9 +2,9 @@ use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 
 use vox_core::{BareConduit, acceptor_conduit, initiator_conduit};
-use vox_types::{ConnectionSettings, HandshakeResult, Link, Parity, SessionRole};
+use vox_types::{ConnectionSettings, HandshakeResult, Link, MetadataEntry, Parity, SessionRole};
 
-fn test_acceptor_handshake() -> HandshakeResult {
+fn test_acceptor_handshake(service: &'static str) -> HandshakeResult {
     HandshakeResult {
         role: SessionRole::Acceptor,
         our_settings: ConnectionSettings {
@@ -20,11 +20,11 @@ fn test_acceptor_handshake() -> HandshakeResult {
         peer_resume_key: None,
         our_schema: vec![],
         peer_schema: vec![],
-        peer_metadata: vec![],
+        peer_metadata: vec![MetadataEntry::str("vox-service", service)],
     }
 }
 
-fn test_initiator_handshake() -> HandshakeResult {
+fn test_initiator_handshake(service: &'static str) -> HandshakeResult {
     HandshakeResult {
         role: SessionRole::Initiator,
         our_settings: ConnectionSettings {
@@ -40,7 +40,7 @@ fn test_initiator_handshake() -> HandshakeResult {
         peer_resume_key: None,
         our_schema: vec![],
         peer_schema: vec![],
-        peer_metadata: vec![],
+        peer_metadata: vec![MetadataEntry::str("vox-service", service)],
     }
 }
 
@@ -373,17 +373,18 @@ pub async fn run_adder_end_to_end<L>(
 
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
-        let server_caller_guard = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .on_connection(AdderDispatcher::new(MyAdder))
-            .establish::<AdderClient>()
-            .await
-            .expect("server handshake failed");
+        let server_caller_guard =
+            acceptor_conduit(server_conduit, test_acceptor_handshake("Adder"))
+                .on_connection(AdderDispatcher::new(MyAdder))
+                .establish::<AdderClient>()
+                .await
+                .expect("server handshake failed");
         let _ = server_ready_tx.send(());
         let _server_caller_guard = server_caller_guard;
         std::future::pending::<()>().await;
     });
 
-    let client = initiator_conduit(client_conduit, test_initiator_handshake())
+    let client = initiator_conduit(client_conduit, test_initiator_handshake("Adder"))
         .establish::<AdderClient>()
         .await
         .expect("client handshake failed");
@@ -408,17 +409,18 @@ pub async fn run_request_context_end_to_end<L>(
 
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
-        let server_caller_guard = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .on_connection(ContextProbeDispatcher::new(ContextProbeService))
-            .establish::<ContextProbeClient>()
-            .await
-            .expect("server handshake failed");
+        let server_caller_guard =
+            acceptor_conduit(server_conduit, test_acceptor_handshake("ContextProbe"))
+                .on_connection(ContextProbeDispatcher::new(ContextProbeService))
+                .establish::<ContextProbeClient>()
+                .await
+                .expect("server handshake failed");
         let _ = server_ready_tx.send(());
         let _server_caller_guard = server_caller_guard;
         std::future::pending::<()>().await;
     });
 
-    let client = initiator_conduit(client_conduit, test_initiator_handshake())
+    let client = initiator_conduit(client_conduit, test_initiator_handshake("ContextProbe"))
         .establish::<ContextProbeClient>()
         .await
         .expect("client handshake failed");
@@ -463,17 +465,18 @@ pub async fn run_server_middleware_end_to_end<L>(
         let dispatcher = MiddlewareProbeDispatcher::new(MiddlewareProbeService)
             .with_middleware(first)
             .with_middleware(second);
-        let server_caller_guard = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .on_connection(dispatcher)
-            .establish::<MiddlewareProbeClient>()
-            .await
-            .expect("server handshake failed");
+        let server_caller_guard =
+            acceptor_conduit(server_conduit, test_acceptor_handshake("MiddlewareProbe"))
+                .on_connection(dispatcher)
+                .establish::<MiddlewareProbeClient>()
+                .await
+                .expect("server handshake failed");
         let _ = server_ready_tx.send(());
         let _server_caller_guard = server_caller_guard;
         std::future::pending::<()>().await;
     });
 
-    let client = initiator_conduit(client_conduit, test_initiator_handshake())
+    let client = initiator_conduit(client_conduit, test_initiator_handshake("MiddlewareProbe"))
         .establish::<MiddlewareProbeClient>()
         .await
         .expect("client handshake failed");
@@ -520,17 +523,18 @@ pub async fn run_server_request_peek_end_to_end<L>(
         let dispatcher = AdderDispatcher::new(MyAdder).with_middleware(ArgsRecordingMiddleware {
             seen: Arc::clone(&server_seen),
         });
-        let server_caller_guard = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .on_connection(dispatcher)
-            .establish::<AdderClient>()
-            .await
-            .expect("server handshake failed");
+        let server_caller_guard =
+            acceptor_conduit(server_conduit, test_acceptor_handshake("Adder"))
+                .on_connection(dispatcher)
+                .establish::<AdderClient>()
+                .await
+                .expect("server handshake failed");
         let _ = server_ready_tx.send(());
         let _server_caller_guard = server_caller_guard;
         std::future::pending::<()>().await;
     });
 
-    let client = initiator_conduit(client_conduit, test_initiator_handshake())
+    let client = initiator_conduit(client_conduit, test_initiator_handshake("Adder"))
         .establish::<AdderClient>()
         .await
         .expect("client handshake failed");
@@ -570,17 +574,18 @@ pub async fn run_server_response_peek_end_to_end<L>(
             AdderDispatcher::new(MyAdder).with_middleware(ResponseRecordingMiddleware {
                 seen: Arc::clone(&server_seen),
             });
-        let server_caller_guard = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .on_connection(dispatcher)
-            .establish::<AdderClient>()
-            .await
-            .expect("server handshake failed");
+        let server_caller_guard =
+            acceptor_conduit(server_conduit, test_acceptor_handshake("Adder"))
+                .on_connection(dispatcher)
+                .establish::<AdderClient>()
+                .await
+                .expect("server handshake failed");
         let _ = server_ready_tx.send(());
         let _server_caller_guard = server_caller_guard;
         std::future::pending::<()>().await;
     });
 
-    let client = initiator_conduit(client_conduit, test_initiator_handshake())
+    let client = initiator_conduit(client_conduit, test_initiator_handshake("Adder"))
         .establish::<AdderClient>()
         .await
         .expect("client handshake failed");
@@ -615,22 +620,28 @@ pub async fn run_client_middleware_end_to_end<L>(
 
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
-        let server_caller_guard = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .on_connection(ClientMiddlewareProbeDispatcher::new(
-                ClientMiddlewareProbeService,
-            ))
-            .establish::<ClientMiddlewareProbeClient>()
-            .await
-            .expect("server handshake failed");
+        let server_caller_guard = acceptor_conduit(
+            server_conduit,
+            test_acceptor_handshake("ClientMiddlewareProbe"),
+        )
+        .on_connection(ClientMiddlewareProbeDispatcher::new(
+            ClientMiddlewareProbeService,
+        ))
+        .establish::<ClientMiddlewareProbeClient>()
+        .await
+        .expect("server handshake failed");
         let _ = server_ready_tx.send(());
         let _server_caller_guard = server_caller_guard;
         std::future::pending::<()>().await;
     });
 
-    let client = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<ClientMiddlewareProbeClient>()
-        .await
-        .expect("client handshake failed");
+    let client = initiator_conduit(
+        client_conduit,
+        test_initiator_handshake("ClientMiddlewareProbe"),
+    )
+    .establish::<ClientMiddlewareProbeClient>()
+    .await
+    .expect("client handshake failed");
 
     server_ready_rx.await.expect("server setup failed");
 
@@ -676,22 +687,28 @@ pub async fn run_borrowed_return_survives_teardown_over_generated_client<L>(
 
     let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
     let server_task = tokio::task::spawn(async move {
-        let server_caller_guard = acceptor_conduit(server_conduit, test_acceptor_handshake())
-            .on_connection(BorrowedPayloadProbeDispatcher::new(
-                BorrowedPayloadProbeService::new(),
-            ))
-            .establish::<BorrowedPayloadProbeClient>()
-            .await
-            .expect("server handshake failed");
+        let server_caller_guard = acceptor_conduit(
+            server_conduit,
+            test_acceptor_handshake("BorrowedPayloadProbe"),
+        )
+        .on_connection(BorrowedPayloadProbeDispatcher::new(
+            BorrowedPayloadProbeService::new(),
+        ))
+        .establish::<BorrowedPayloadProbeClient>()
+        .await
+        .expect("server handshake failed");
         let _ = server_ready_tx.send(());
         let _server_caller_guard = server_caller_guard;
         std::future::pending::<()>().await;
     });
 
-    let client = initiator_conduit(client_conduit, test_initiator_handshake())
-        .establish::<BorrowedPayloadProbeClient>()
-        .await
-        .expect("client handshake failed");
+    let client = initiator_conduit(
+        client_conduit,
+        test_initiator_handshake("BorrowedPayloadProbe"),
+    )
+    .establish::<BorrowedPayloadProbeClient>()
+    .await
+    .expect("client handshake failed");
     let client_session_handle = client.session.clone().unwrap();
 
     server_ready_rx.await.expect("server setup failed");

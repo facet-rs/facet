@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use moire::task::FutureExt;
 use vox_types::{
-    ConnectionSettings, MethodId, Parity, Payload, RequestCall, RetryPolicy, VoxError,
+    ConnectionSettings, MetadataEntry, MethodId, Parity, Payload, RequestCall, RetryPolicy,
+    VoxError,
 };
 
 use super::utils::*;
@@ -20,6 +21,7 @@ async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
     let client_conduit1 = BareConduit::new(client_link1);
     let server_conduit1 = BareConduit::new(server_link1);
 
+    let registry = SessionRegistry::default();
     let started = Arc::new(tokio::sync::Notify::new());
     let started_for_wait = Arc::clone(&started);
     let started_wait = started_for_wait.notified();
@@ -30,6 +32,7 @@ async fn resumable_session_keeps_pending_call_alive_across_manual_resume() {
             Duration::from_secs(1),
             acceptor_conduit(server_conduit1, test_acceptor_handshake())
                 .resumable()
+                .session_registry(registry.clone())
                 .on_connection(ResumableReplyingHandler {
                     started,
                     release: Arc::clone(&release),
@@ -117,6 +120,7 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
                     started,
                     release: Arc::clone(&release),
                 })
+                .metadata(vec![MetadataEntry::str("vox-service", "Noop")])
                 .establish_or_resume::<NoopClient>(),
         ),
         tokio::time::timeout(
@@ -172,7 +176,7 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
                 },
                 true,
                 client_session_handle.resume_key(),
-                vec![],
+                vec![MetadataEntry::str("vox-service", "Noop")],
             )
             .await
             .expect("client CBOR handshake should succeed");
@@ -191,6 +195,7 @@ async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume
                 started: Arc::new(tokio::sync::Notify::new()),
                 release: Arc::clone(&release),
             })
+            .metadata(vec![MetadataEntry::str("vox-service", "Noop")])
             .establish_or_resume::<NoopClient>(),
     );
     resume_result.expect("client session resume should succeed");
@@ -246,6 +251,7 @@ async fn resumable_source_initiator_keeps_pending_call_alive_across_auto_resume(
                     started,
                     release: Arc::clone(&release),
                 })
+                .metadata(vec![MetadataEntry::str("vox-service", "Noop")])
                 .establish_or_resume::<NoopClient>(),
         ),
         tokio::time::timeout(
@@ -292,6 +298,7 @@ async fn resumable_source_initiator_keeps_pending_call_alive_across_auto_resume(
                 started: Arc::new(tokio::sync::Notify::new()),
                 release: Arc::clone(&release),
             })
+            .metadata(vec![MetadataEntry::str("vox-service", "Noop")])
             .establish_or_resume::<NoopClient>(),
     )
     .await
@@ -349,6 +356,7 @@ async fn resumable_source_initiator_falls_back_to_fresh_session_when_resume_key_
                     started,
                     release: Arc::clone(&release),
                 })
+                .metadata(vec![MetadataEntry::str("vox-service", "Noop")])
                 .establish_or_resume::<NoopClient>(),
         ),
         tokio::time::timeout(
@@ -398,6 +406,7 @@ async fn resumable_source_initiator_falls_back_to_fresh_session_when_resume_key_
                 started: restarted_started,
                 release: Arc::clone(&release),
             })
+            .metadata(vec![MetadataEntry::str("vox-service", "Noop")])
             .establish_or_resume::<NoopClient>(),
     )
     .await

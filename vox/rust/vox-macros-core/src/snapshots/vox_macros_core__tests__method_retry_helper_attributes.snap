@@ -108,8 +108,9 @@ where
         reply: R,
         schemas: ::std::sync::Arc<::vox::SchemaRecvTracker>,
     ) {
-        let method_id = call.method_id;
-        let args_bytes = match &call.args {
+        let request_call = call.get();
+        let method_id = request_call.method_id;
+        let args_bytes = match &request_call.args {
             ::vox::Payload::PostcardBytes(bytes) => bytes,
             _ => {
                 reply
@@ -123,17 +124,12 @@ where
             }
         };
         if method_id == billing_service_descriptor().methods[0usize].id {
-            let deser_result = if let Some(binder) = reply.channel_binder() {
-                ::vox::with_channel_binder(binder, || {
-                    ::vox::schema_deser::schema_deserialize_args_borrowed::<(String,)>(
-                        args_bytes, method_id, &schemas,
-                    )
-                })
-            } else {
-                ::vox::schema_deser::schema_deserialize_args_borrowed::<(String,)>(
+            let _binder_guard = reply.channel_binder().map(::vox::set_channel_binder);
+            let deser_result: ::core::result::Result<(String,), _> =
+                ::vox::schema_deser::schema_deserialize_args_borrowed(
                     args_bytes, method_id, &schemas,
-                )
-            };
+                );
+            drop(_binder_guard);
             let args: (String,) = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
@@ -155,7 +151,7 @@ where
             let extensions = ::vox::Extensions::new();
             let context = ::vox::RequestContext::with_transport(
                 billing_service_descriptor().methods[0usize],
-                &call.metadata,
+                &request_call.metadata,
                 reply.request_id(),
                 reply.connection_id(),
                 &extensions,
@@ -188,17 +184,12 @@ where
             return;
         }
         if method_id == billing_service_descriptor().methods[1usize].id {
-            let deser_result = if let Some(binder) = reply.channel_binder() {
-                ::vox::with_channel_binder(binder, || {
-                    ::vox::schema_deser::schema_deserialize_args_borrowed::<(String, String)>(
-                        args_bytes, method_id, &schemas,
-                    )
-                })
-            } else {
-                ::vox::schema_deser::schema_deserialize_args_borrowed::<(String, String)>(
+            let _binder_guard = reply.channel_binder().map(::vox::set_channel_binder);
+            let deser_result: ::core::result::Result<(String, String), _> =
+                ::vox::schema_deser::schema_deserialize_args_borrowed(
                     args_bytes, method_id, &schemas,
-                )
-            };
+                );
+            drop(_binder_guard);
             let args: (String, String) = match deser_result {
                 Ok(v) => v,
                 Err(e) => {
@@ -220,7 +211,7 @@ where
             let extensions = ::vox::Extensions::new();
             let context = ::vox::RequestContext::with_transport(
                 billing_service_descriptor().methods[1usize],
-                &call.metadata,
+                &request_call.metadata,
                 reply.request_id(),
                 reply.connection_id(),
                 &extensions,
@@ -327,6 +318,7 @@ impl BillingClient {
             value: response,
             tracker: schema_tracker,
         } = with_tracker;
+        let response = response.get();
         let ret_bytes = match &response.ret {
             ::vox::Payload::PostcardBytes(bytes) => bytes,
             _ => {
@@ -393,6 +385,7 @@ impl BillingClient {
             value: response,
             tracker: schema_tracker,
         } = with_tracker;
+        let response = response.get();
         let ret_bytes = match &response.ret {
             ::vox::Payload::PostcardBytes(bytes) => bytes,
             _ => {

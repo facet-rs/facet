@@ -3,7 +3,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use vox::{ConnectionSettings, Driver, Parity, SessionHandle, memory_link_pair};
+use vox::{ConnectionSettings, Driver, MetadataEntry, Parity, SessionHandle, memory_link_pair};
 
 #[vox::service]
 trait Echo {
@@ -28,22 +28,13 @@ async fn vconn_server(server_link: impl vox::Link + Send + 'static) -> vox::Noop
 }
 
 async fn open_echo_vconn(session: &SessionHandle) -> EchoClient {
-    let vconn_handle = session
-        .open_connection(
-            ConnectionSettings {
-                parity: Parity::Odd,
-                max_concurrent_requests: 64,
-            },
-            vec![],
-        )
+    session
+        .open::<EchoClient>(ConnectionSettings {
+            parity: Parity::Odd,
+            max_concurrent_requests: 64,
+        })
         .await
-        .expect("open virtual connection");
-
-    let mut vconn_driver = Driver::new(vconn_handle, ());
-    let caller = vox::Caller::new(vconn_driver.caller());
-    tokio::spawn(async move { vconn_driver.run().await });
-
-    EchoClient::new(caller)
+        .expect("open virtual connection")
 }
 
 #[tokio::test]
@@ -201,7 +192,7 @@ async fn reject_virtual_connection() {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
             },
-            vec![],
+            vec![MetadataEntry::str("vox-service", "Unknown")],
         )
         .await;
 
@@ -235,7 +226,7 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
             },
-            vec![],
+            vec![MetadataEntry::str("vox-service", "Noop")],
         )
         .await;
 
@@ -271,7 +262,7 @@ async fn close_virtual_connection() {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
             },
-            vec![],
+            vec![MetadataEntry::str("vox-service", "Counter")],
         )
         .await
         .expect("open vconn");

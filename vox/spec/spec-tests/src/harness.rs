@@ -1454,7 +1454,7 @@ where
             true,
             false,
             None,
-            vec![],
+            vec![vox_types::MetadataEntry::str("vox-service", "Noop")],
         )
         .await
         .map_err(|e| format!("server CBOR handshake: {e}"));
@@ -1498,7 +1498,7 @@ where
         },
         true,
         None,
-        vec![],
+        vec![vox_types::MetadataEntry::str("vox-service", "Noop")],
     )
     .await
     .map_err(|e| format!("client CBOR handshake: {e}"))?;

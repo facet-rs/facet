@@ -1,6 +1,7 @@
 use moire::task::FutureExt;
 use vox_types::{
-    ChannelBinder, ConnectionSettings, Metadata, MethodId, Parity, Payload, RequestCall,
+    ChannelBinder, ConnectionSettings, Metadata, MetadataEntry, MethodId, Parity, Payload,
+    RequestCall,
 };
 
 use super::utils::*;
@@ -44,7 +45,7 @@ async fn open_virtual_connection_and_call() {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
             },
-            vec![],
+            vec![MetadataEntry::str("vox-service", "Echo")],
         )
         .await
         .expect("open virtual connection");
@@ -116,7 +117,7 @@ async fn reject_virtual_connection() {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
             },
-            vec![],
+            vec![MetadataEntry::str("vox-service", "Unknown")],
         )
         .await;
 
@@ -157,7 +158,7 @@ async fn open_virtual_connection_without_acceptor_is_rejected() {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
             },
-            vec![],
+            vec![MetadataEntry::str("vox-service", "Noop")],
         )
         .await;
 
@@ -234,7 +235,7 @@ async fn close_virtual_connection() {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
             },
-            vec![],
+            vec![MetadataEntry::str("vox-service", "Echo")],
         )
         .await
         .expect("open virtual connection");
@@ -313,7 +314,7 @@ async fn dropping_last_virtual_caller_closes_virtual_connection() {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
             },
-            vec![],
+            vec![MetadataEntry::str("vox-service", "Echo")],
         )
         .await
         .expect("open virtual connection");
@@ -373,7 +374,7 @@ async fn close_virtual_connection_closes_registered_rx_channels() {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
             },
-            vec![],
+            vec![MetadataEntry::str("vox-service", "Echo")],
         )
         .await
         .expect("open virtual connection");
@@ -452,7 +453,7 @@ async fn dropping_root_caller_waits_for_virtual_connections_before_session_shutd
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
             },
-            vec![],
+            vec![MetadataEntry::str("vox-service", "Echo")],
         )
         .await
         .expect("open virtual connection");

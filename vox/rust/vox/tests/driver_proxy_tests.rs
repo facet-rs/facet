@@ -1,6 +1,8 @@
 //! Tests for proxy_connections — transparent call forwarding between sessions.
 
-use vox::{ConnectionSettings, Driver, Metadata, Parity, SessionHandle, memory_link_pair};
+use vox::{
+    ConnectionSettings, Driver, Metadata, MetadataEntry, Parity, SessionHandle, memory_link_pair,
+};
 
 #[vox::service]
 trait Echo {
@@ -39,7 +41,7 @@ impl vox::ConnectionAcceptor for ProxyAcceptor {
                         parity: Parity::Odd,
                         max_concurrent_requests: 64,
                     },
-                    vec![],
+                    vec![MetadataEntry::str("vox-service", "Echo")],
                 )
                 .await
                 .expect("open upstream connection");
@@ -101,7 +103,7 @@ async fn proxy_connections_forwards_calls() {
                 parity: Parity::Odd,
                 max_concurrent_requests: 64,
             },
-            vec![],
+            vec![MetadataEntry::str("vox-service", "Echo")],
         )
         .await
         .expect("open proxy connection");
