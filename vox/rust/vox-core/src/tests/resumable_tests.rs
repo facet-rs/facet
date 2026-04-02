@@ -446,6 +446,7 @@ async fn resumable_session_reruns_released_idem_call_after_manual_resume() {
     let client_conduit1 = BareConduit::new(client_link1);
     let server_conduit1 = BareConduit::new(server_link1);
 
+    let registry = SessionRegistry::default();
     let first_started = Arc::new(tokio::sync::Notify::new());
     let first_started_waiter = Arc::clone(&first_started);
     let first_started_wait = first_started_waiter.notified();
@@ -457,6 +458,7 @@ async fn resumable_session_reruns_released_idem_call_after_manual_resume() {
             Duration::from_secs(1),
             acceptor_conduit(server_conduit1, test_acceptor_handshake())
                 .resumable()
+                .session_registry(registry.clone())
                 .on_connection(RetryAfterResumeHandler {
                     retry: RetryPolicy::IDEM,
                     runs: Arc::clone(&runs),
@@ -534,6 +536,7 @@ async fn resumable_session_returns_indeterminate_for_released_non_idem_call_afte
     let client_conduit1 = BareConduit::new(client_link1);
     let server_conduit1 = BareConduit::new(server_link1);
 
+    let registry = SessionRegistry::default();
     let first_started = Arc::new(tokio::sync::Notify::new());
     let first_started_waiter = Arc::clone(&first_started);
     let first_started_wait = first_started_waiter.notified();
@@ -545,6 +548,7 @@ async fn resumable_session_returns_indeterminate_for_released_non_idem_call_afte
             Duration::from_secs(1),
             acceptor_conduit(server_conduit1, test_acceptor_handshake())
                 .resumable()
+                .session_registry(registry.clone())
                 .on_connection(RetryAfterResumeHandler {
                     retry: RetryPolicy::VOLATILE,
                     runs: Arc::clone(&runs),

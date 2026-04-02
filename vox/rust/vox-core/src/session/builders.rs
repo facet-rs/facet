@@ -509,6 +509,7 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
                     source,
                     settings: config.root_settings.clone(),
                     connect_timeout: config.connect_timeout,
+                    metadata: metadata_into_owned(config.metadata.clone()),
                 });
                 SessionTransportInitiatorBuilder::<S::Link>::apply_common_parts(
                     builder,
@@ -798,6 +799,7 @@ struct BareSourceRecoverer<S> {
     source: S,
     settings: ConnectionSettings,
     connect_timeout: Option<Duration>,
+    metadata: Metadata<'static>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -836,7 +838,7 @@ where
                         self.settings.clone(),
                         true,
                         selected_resume_key,
-                        vec![],
+                        metadata_into_owned(self.metadata.clone()),
                     )
                     .await
                     .map_err(session_error_from_handshake)?;

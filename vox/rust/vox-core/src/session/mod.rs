@@ -387,6 +387,10 @@ impl SessionHandle {
             .map_err(|_| SessionError::Protocol("session closed".into()))?
     }
 
+    /// Resume the session with a new conduit after a link break.
+    ///
+    /// This is the client-side resume path: the client reconnects and
+    /// provides a new conduit + handshake result.
     pub async fn resume<I: crate::IntoConduit>(
         &self,
         into_conduit: I,
@@ -1148,12 +1152,6 @@ impl Session {
                 }
                 Err(_) => return false,
             }
-        }
-
-        // No recoverer — only wait for external resume if a session registry
-        // is configured (meaning someone could route a reconnecting client here).
-        if !self.registered_in_registry {
-            return false;
         }
 
         loop {

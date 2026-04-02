@@ -15,8 +15,8 @@ use vox_types::{
 use super::utils::*;
 use crate::session::{
     ConnectionAcceptor, ConnectionMessage, ConnectionRequest, PendingConnection, SessionError,
-    SessionHandle, SessionKeepaliveConfig, acceptor_conduit, acceptor_on, initiator_conduit,
-    initiator_on, proxy_connections,
+    SessionHandle, SessionKeepaliveConfig, SessionRegistry, acceptor_conduit, acceptor_on,
+    initiator_conduit, initiator_on, proxy_connections,
 };
 use crate::{BareConduit, Driver, NoopClient, TransportMode, memory_link_pair};
 
@@ -459,6 +459,7 @@ async fn builder_uses_custom_operation_store() {
 async fn operation_replay_after_resume_delivers_sealed_outcome() {
     let (client_link1, client_break1, server_link1, server_break1) = breakable_link_pair(64);
 
+    let registry = SessionRegistry::default();
     let runs = Arc::new(AtomicUsize::new(0));
     let runs_check = Arc::clone(&runs);
     let release = Arc::new(tokio::sync::Notify::new());
@@ -468,6 +469,7 @@ async fn operation_replay_after_resume_delivers_sealed_outcome() {
             Duration::from_secs(2),
             acceptor_conduit(BareConduit::new(server_link1), test_acceptor_handshake())
                 .resumable()
+                .session_registry(registry.clone())
                 .on_connection(ReplayHandler {
                     runs,
                     release: Arc::clone(&release),
