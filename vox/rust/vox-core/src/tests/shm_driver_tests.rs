@@ -76,6 +76,7 @@ async fn echo_call_across_shm_link() {
         .await
         .expect("call should succeed");
 
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
@@ -94,6 +95,7 @@ impl Handler<DriverReplySink> for BlobEchoHandler {
         reply: DriverReplySink,
         _schemas: std::sync::Arc<vox_types::SchemaRecvTracker>,
     ) {
+        let call = call.get();
         let args_bytes = match &call.args {
             Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
@@ -159,6 +161,7 @@ async fn echo_blob_stress_over_shm_link() {
             .await
             .expect("blob echo call should succeed");
 
+        let response = response.get();
         let ret_bytes = match &response.ret {
             Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload in response"),

@@ -106,6 +106,7 @@ async fn send_recv_single() {
     permit.send("hello".to_string()).unwrap();
 
     let received = server_rx.recv().await.unwrap().unwrap();
+    let received = received.get();
     assert_eq!(&*received, "hello");
 }
 
@@ -122,6 +123,7 @@ async fn send_recv_multiple_in_order() {
 
     for i in 0..10 {
         let received = server_rx.recv().await.unwrap().unwrap();
+        let received = received.get();
         assert_eq!(&*received, &format!("msg-{i}"));
     }
 }
@@ -136,12 +138,14 @@ async fn bidirectional() {
     permit.send("from-client".to_string()).unwrap();
 
     let received = server_rx.recv().await.unwrap().unwrap();
+    let received = received.get();
     assert_eq!(&*received, "from-client");
 
     let permit = server_tx.reserve().await.unwrap();
     permit.send("from-server".to_string()).unwrap();
 
     let received = client_rx.recv().await.unwrap().unwrap();
+    let received = received.get();
     assert_eq!(&*received, "from-server");
 }
 
@@ -156,6 +160,7 @@ async fn close_signals_end() {
     client_tx.close().await.unwrap();
 
     let received = server_rx.recv().await.unwrap().unwrap();
+    let received = received.get();
     assert_eq!(&*received, "last");
 
     let end = server_rx.recv().await.unwrap();
@@ -173,12 +178,14 @@ async fn interleaved_send_recv() {
         permit.send(format!("c2s-{i}")).unwrap();
 
         let received = server_rx.recv().await.unwrap().unwrap();
+        let received = received.get();
         assert_eq!(&*received, &format!("c2s-{i}"));
 
         let permit = server_tx.reserve().await.unwrap();
         permit.send(format!("s2c-{i}")).unwrap();
 
         let received = client_rx.recv().await.unwrap().unwrap();
+        let received = received.get();
         assert_eq!(&*received, &format!("s2c-{i}"));
     }
 }
@@ -380,7 +387,9 @@ async fn rx_recv_decodes_channel_items() {
         .expect("send item to rx");
 
     let received = rx.recv().await.expect("recv data");
-    assert_eq!(*received.unwrap(), 42);
+    let received = received.unwrap();
+    let received = received.get();
+    assert_eq!(*received, 42);
 
     let close = ChannelClose {
         metadata: Metadata::default(),
@@ -433,5 +442,6 @@ fn test_deser_postcard_borrowed() {
 
     // now deser with Backing
     let reply = crate::deserialize_postcard::<Reply>(backing).unwrap();
-    assert_eq!(reply.s, "IAMA borrowed string AMA")
+    let reply = reply.map(|reply| reply.s.to_string());
+    assert_eq!(reply.get(), "IAMA borrowed string AMA");
 }

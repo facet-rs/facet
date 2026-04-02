@@ -212,6 +212,66 @@ unsafe impl Reborrow for usize {
     type Ref<'a> = usize;
 }
 
+unsafe impl Reborrow for i8 {
+    type Ref<'a> = i8;
+}
+
+unsafe impl Reborrow for i16 {
+    type Ref<'a> = i16;
+}
+
+unsafe impl Reborrow for i32 {
+    type Ref<'a> = i32;
+}
+
+unsafe impl Reborrow for i64 {
+    type Ref<'a> = i64;
+}
+
+unsafe impl Reborrow for i128 {
+    type Ref<'a> = i128;
+}
+
+unsafe impl Reborrow for u8 {
+    type Ref<'a> = u8;
+}
+
+unsafe impl Reborrow for u16 {
+    type Ref<'a> = u16;
+}
+
+unsafe impl Reborrow for u64 {
+    type Ref<'a> = u64;
+}
+
+unsafe impl Reborrow for u128 {
+    type Ref<'a> = u128;
+}
+
+unsafe impl Reborrow for f32 {
+    type Ref<'a> = f32;
+}
+
+unsafe impl Reborrow for f64 {
+    type Ref<'a> = f64;
+}
+
+unsafe impl Reborrow for bool {
+    type Ref<'a> = bool;
+}
+
+unsafe impl Reborrow for char {
+    type Ref<'a> = char;
+}
+
+unsafe impl Reborrow for String {
+    type Ref<'a> = String;
+}
+
+unsafe impl Reborrow for &'static str {
+    type Ref<'a> = &'a str;
+}
+
 /// Implement [`Reborrow`] for a list of types that are covariant in a single
 /// lifetime parameter.
 ///

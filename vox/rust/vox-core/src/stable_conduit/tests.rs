@@ -236,6 +236,7 @@ async fn reconnect_replays_unacked_frames() {
     // Receive the ack frame from server1. This trims seq 0 from replay buffer,
     // leaving only seq 1 (beta) buffered.
     let msg = client_rx.recv().await.unwrap().unwrap();
+    let msg = msg.get();
     assert_eq!(&*msg, "ack-for-alpha");
 
     // server1 drops — recv triggers reconnect transparently.
@@ -310,7 +311,7 @@ async fn reconnect_no_replay_when_all_acked() {
         .unwrap();
 
     let msg = client_rx.recv().await.unwrap().unwrap();
-    assert_eq!(&*msg, "ack-both");
+    assert_eq!(&*msg.get(), "ack-both");
 
     // Reconnect happens transparently here.
     client_tx
@@ -350,10 +351,12 @@ async fn duplicate_frames_are_skipped() {
     let (_client_tx, mut client_rx) = client.split();
 
     let a = client_rx.recv().await.unwrap().unwrap();
+    let a = a.get();
     assert_eq!(&*a, "first");
 
     // The duplicate seq 0 is silently dropped, so next is "second".
     let b = client_rx.recv().await.unwrap().unwrap();
+    let b = b.get();
     assert_eq!(&*b, "second");
 
     server.await.unwrap();

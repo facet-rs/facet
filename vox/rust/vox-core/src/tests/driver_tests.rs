@@ -71,6 +71,7 @@ async fn dropping_one_root_caller_clone_keeps_session_alive_until_last_drop() {
         })
         .await
         .expect("call should still succeed while one root caller remains");
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
@@ -159,6 +160,7 @@ async fn dropping_root_caller_keeps_session_alive_while_bound_stream_rx_exists()
         .await
         .expect("stream should remain usable")
         .expect("channel should yield one item");
+    let received = received.get();
     assert_eq!(*received, 123);
 
     server_caller
@@ -262,6 +264,7 @@ async fn cancel_aborts_in_flight_handler() {
     // The call should resolve with an Err(Cancelled) in the wire Result envelope.
     let result = call_task.await.expect("call task join");
     let response = result.expect("call should receive a response");
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
@@ -359,6 +362,7 @@ async fn cancel_does_not_abort_persist_handler() {
         .expect("timed out waiting for persist handler to finish")
         .expect("call task join")
         .expect("persist call should still receive a response");
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
@@ -400,6 +404,7 @@ async fn caller_injects_operation_id_when_peer_supports_retry() {
         .await
         .expect("call should succeed");
 
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
@@ -513,6 +518,7 @@ async fn operation_replay_after_resume_delivers_sealed_outcome() {
         .await
         .expect("join")
         .expect("first call should succeed");
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
@@ -545,6 +551,7 @@ async fn operation_replay_after_resume_delivers_sealed_outcome() {
         })
         .await
         .expect("replay after resume should succeed");
+    let replayed = replayed.get();
     let ret_bytes = match &replayed.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
@@ -654,6 +661,7 @@ async fn duplicate_operation_id_on_same_connection_is_rejected() {
         .expect("second call should succeed");
 
     for response in [r1, r2] {
+        let response = response.get();
         let ret_bytes = match &response.ret {
             Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload"),
@@ -701,6 +709,7 @@ fn message_plan_from_identical_schemas_round_trips() {
     let decoded: SelfRef<Message<'static>> =
         crate::deserialize_postcard_with_plan(backing, &plan.plan, &plan.registry)
             .expect("should deserialize with identical-schema plan");
+    let decoded = decoded.get();
     assert_eq!(decoded.connection_id, vox_types::ConnectionId::ROOT);
     match &decoded.payload {
         MessagePayload::Ping(ping) => assert_eq!(ping.nonce, 42),
@@ -743,6 +752,7 @@ async fn call_through_cbor_handshake_reaches_handler() {
     .expect("call timed out")
     .expect("call should succeed");
 
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
@@ -786,6 +796,7 @@ async fn call_through_stable_conduit_reaches_handler() {
     .expect("call timed out")
     .expect("call should succeed");
 
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
@@ -830,6 +841,7 @@ async fn multiple_calls_through_stable_conduit() {
         .expect("call timed out")
         .expect("call should succeed");
 
+        let response = response.get();
         let ret_bytes = match &response.ret {
             Payload::PostcardBytes(bytes) => *bytes,
             _ => panic!("expected incoming payload in response"),
@@ -1068,6 +1080,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
         })
         .await
         .expect("root call should succeed");
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
@@ -1104,6 +1117,7 @@ async fn schema_tracker_is_per_connection_not_per_session() {
         })
         .await
         .expect("virtual connection call should succeed");
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
@@ -1342,6 +1356,7 @@ async fn echo_call_across_memory_link() {
         .expect("call should succeed");
 
     // The echo handler sends back the same bytes. Deserialize the response.
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload in response"),
@@ -1399,6 +1414,7 @@ async fn buffers_inbound_channel_items_until_rx_is_registered() {
     let IncomingChannelMessage::Item(item) = msg else {
         panic!("expected buffered item");
     };
+    let item = item.get();
     let bytes = match item.item {
         Payload::PostcardBytes(bytes) => bytes,
         _ => panic!("expected incoming payload"),
@@ -1586,6 +1602,7 @@ async fn unsolicited_response_id_is_ignored_and_does_not_break_calls() {
         .await
         .expect("call should still succeed after unsolicited response");
 
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
@@ -1702,6 +1719,7 @@ async fn proxy_connections_forwards_calls_without_service_specific_proxy_code() 
         })
         .await
         .expect("proxied call should succeed");
+    let response = response.get();
     let ret_bytes = match &response.ret {
         Payload::PostcardBytes(bytes) => *bytes,
         _ => panic!("expected incoming payload"),
