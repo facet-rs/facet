@@ -555,6 +555,109 @@ fn vox_tcp_stream(bencher: divan::Bencher, n: usize) {
 }
 
 // ============================================================================
+// vox-unix (Unix socket transport)
+// ============================================================================
+
+#[cfg(unix)]
+mod vox_unix_bench {
+    use moire::task::FutureExt;
+    use vox_core::{NoopClient, TransportMode, acceptor_on, initiator_on};
+    use vox_stream::StreamLink;
+
+    use super::vox_bench::{BenchClient, BenchDispatcher, Handler};
+
+    pub async fn setup() -> (BenchClient, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let sock_path = dir.path().join("bench.sock");
+        let listener = tokio::net::UnixListener::bind(&sock_path).unwrap();
+
+        let (server_ready_tx, server_ready_rx) = tokio::sync::oneshot::channel::<()>();
+        let _server_task = moire::task::spawn(
+            async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let (r, w) = stream.into_split();
+                let _caller = acceptor_on(StreamLink::new(
+                    Box::new(r) as Box<_>,
+                    Box::new(w) as Box<_>,
+                ))
+                .on_connection(BenchDispatcher::new(Handler))
+                .establish::<NoopClient>()
+                .await
+                .expect("server handshake failed");
+                let _ = server_ready_tx.send(());
+                std::future::pending::<()>().await;
+            }
+            .named("server_setup"),
+        );
+
+        let stream = tokio::net::UnixStream::connect(&sock_path).await.unwrap();
+        let (r, w) = stream.into_split();
+
+        let client = initiator_on(
+            StreamLink::new(Box::new(r) as Box<_>, Box::new(w) as Box<_>),
+            TransportMode::Bare,
+        )
+        .establish::<BenchClient>()
+        .await
+        .expect("client handshake failed");
+
+        server_ready_rx.await.expect("server setup failed");
+
+        (client, dir)
+    }
+}
+
+#[cfg(unix)]
+#[divan::bench]
+fn vox_unix_add(bencher: divan::Bencher) {
+    let (client, _dir) = TOKIO.block_on(vox_unix_bench::setup());
+    bencher.bench_local(|| {
+        TOKIO.block_on(async {
+            let resp = client.add(3, 5).await.expect("vox-unix add failed");
+            divan::black_box(resp);
+        })
+    });
+}
+
+#[cfg(unix)]
+#[divan::bench(args = PAYLOAD_SIZES)]
+fn vox_unix_echo(bencher: divan::Bencher, n: usize) {
+    let (client, _dir) = TOKIO.block_on(vox_unix_bench::setup());
+    let payload = vec![42u8; n];
+    bencher.bench_local(|| {
+        TOKIO.block_on(async {
+            let resp = client
+                .echo(payload.clone())
+                .await
+                .expect("vox-unix echo failed");
+            divan::black_box(resp.len());
+        })
+    });
+}
+
+#[cfg(unix)]
+#[divan::bench(args = STREAM_COUNTS)]
+fn vox_unix_stream(bencher: divan::Bencher, n: usize) {
+    let (client, _dir) = TOKIO.block_on(vox_unix_bench::setup());
+    bencher.bench_local(|| {
+        TOKIO.block_on(async {
+            let (tx, mut rx) = vox::channel::<i32>();
+            let call = client.generate(n as u32, tx);
+            let recv_task = tokio::spawn(async move {
+                let mut count = 0u32;
+                while let Ok(Some(_item)) = rx.recv().await {
+                    count += 1;
+                }
+                count
+            });
+            call.await.expect("vox-unix generate failed");
+            let count = recv_task.await.unwrap();
+            divan::black_box(count);
+        })
+    });
+}
+
+// ============================================================================
 // serialization microbenchmark: scatter plan vs direct to_vec
 // ============================================================================
 

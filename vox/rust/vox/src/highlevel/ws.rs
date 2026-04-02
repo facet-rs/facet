@@ -16,6 +16,11 @@ impl WsListener {
     pub fn from_tcp(tcp: tokio::net::TcpListener) -> Self {
         Self { tcp }
     }
+
+    /// Returns the local address this listener is bound to.
+    pub fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        self.tcp.local_addr()
+    }
 }
 
 impl VoxListener for WsListener {

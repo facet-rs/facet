@@ -18,19 +18,20 @@ impl Hello for HelloService {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
-    // Server
-    let server = tokio::spawn(async {
-        vox::serve("127.0.0.1:9000", HelloDispatcher::new(HelloService))
+    // Use port 0 via the lower-level WsListener for dynamic port allocation.
+    let listener = vox::WsListener::bind("127.0.0.1:0").await?;
+    let addr = format!("ws://{}", listener.local_addr()?);
+
+    let server = tokio::spawn(async move {
+        vox::serve_listener(listener, HelloDispatcher::new(HelloService))
             .await
             .unwrap();
     });
 
-    // Give server a moment to bind.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    // Client
-    let client: HelloClient = vox::connect("127.0.0.1:9000").await?;
-    let reply = client.say_hello("world".into()).await?;
+    let client: HelloClient = vox::connect(&addr).await?;
+    let reply = client.say_hello("websocket".into()).await?;
     println!("{reply}");
 
     drop(client);
