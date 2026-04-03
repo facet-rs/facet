@@ -6,9 +6,9 @@
 
 use std::io;
 
+use moire::sync::Mutex;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio::sync::oneshot;
 
 use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
 
@@ -154,43 +154,15 @@ where
     type Rx = StreamLinkRx<BufReader<R>>;
 
     fn split(self) -> (Self::Tx, Self::Rx) {
-        let (tx_chan, mut rx_chan) = mpsc::channel::<Vec<u8>>(1);
-        // Unbounded return channel for buffer recycling. Capacity is naturally
-        // bounded by the number of in-flight buffers (at most 2: one being
-        // written by the background task, one being filled by the next alloc).
-        let (buf_return_tx, buf_return_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        let mut writer = BufWriter::new(self.writer);
-
-        let writer_task = tokio::spawn(async move {
-            while let Some(mut bytes) = rx_chan.recv().await {
-                writer
-                    .write_all(&(bytes.len() as u32).to_le_bytes())
-                    .await?;
-                writer.write_all(&bytes).await?;
-                // Return buffer to pool for reuse.
-                bytes.clear();
-                let _ = buf_return_tx.send(bytes);
-                // Drain any already-queued messages before flushing,
-                // so bursts coalesce into fewer syscalls.
-                while let Ok(mut bytes) = rx_chan.try_recv() {
-                    writer
-                        .write_all(&(bytes.len() as u32).to_le_bytes())
-                        .await?;
-                    writer.write_all(&bytes).await?;
-                    bytes.clear();
-                    let _ = buf_return_tx.send(bytes);
-                }
-                writer.flush().await?;
-            }
-            writer.shutdown().await?;
-            Ok(())
-        });
-
         (
             StreamLinkTx {
-                tx: tx_chan,
-                buf_pool: std::sync::Mutex::new(buf_return_rx),
-                writer_task,
+                inner: Mutex::new(
+                    "stream-link-tx",
+                    TxInner {
+                        writer: BufWriter::new(Box::new(self.writer)),
+                        inflight: None,
+                    },
+                ),
             },
             StreamLinkRx {
                 reader: BufReader::new(self.reader),
@@ -203,47 +175,66 @@ where
 // Tx
 // ---------------------------------------------------------------------------
 
+type BoxWriter = Box<dyn AsyncWrite + Send + Unpin>;
+
+struct TxInner {
+    writer: BufWriter<BoxWriter>,
+    /// Receives the committed bytes from the previous [`StreamWriteSlot::commit`],
+    /// or `None` if the slot was dropped without committing.
+    inflight: Option<oneshot::Receiver<Vec<u8>>>,
+}
+
 /// Sending half of a [`StreamLink`].
-///
-/// Internally uses a bounded mpsc channel (capacity 1) to serialize writes
-/// and provide backpressure. A background task drains the channel and writes
-/// length-prefixed frames to the underlying stream.
 pub struct StreamLinkTx {
-    tx: mpsc::Sender<Vec<u8>>,
-    buf_pool: std::sync::Mutex<mpsc::UnboundedReceiver<Vec<u8>>>,
-    writer_task: JoinHandle<io::Result<()>>,
+    inner: Mutex<TxInner>,
 }
 
 /// Permit for sending one payload through a [`StreamLinkTx`].
 pub struct StreamLinkTxPermit {
-    permit: mpsc::OwnedPermit<Vec<u8>>,
-    recycled_buf: Option<Vec<u8>>,
+    tx: oneshot::Sender<Vec<u8>>,
 }
 
 /// Write slot for [`StreamLinkTx`].
 pub struct StreamWriteSlot {
     buf: Vec<u8>,
-    permit: mpsc::OwnedPermit<Vec<u8>>,
+    tx: oneshot::Sender<Vec<u8>>,
 }
 
 impl LinkTx for StreamLinkTx {
     type Permit = StreamLinkTxPermit;
 
     async fn reserve(&self) -> io::Result<Self::Permit> {
-        let permit = self.tx.clone().reserve_owned().await.map_err(|_| {
-            io::Error::new(io::ErrorKind::ConnectionReset, "stream writer task stopped")
-        })?;
-        // Try to grab a recycled buffer from the pool (non-blocking).
-        let recycled_buf = self.buf_pool.lock().unwrap().try_recv().ok();
-        Ok(StreamLinkTxPermit {
-            permit,
-            recycled_buf,
-        })
+        let mut inner = self.inner.lock().await;
+        // Flush bytes committed by the previous slot, if any.
+        if let Some(rx) = inner.inflight.take()
+            && let Ok(bytes) = rx.await
+        {
+            inner
+                .writer
+                .write_all(&(bytes.len() as u32).to_le_bytes())
+                .await?;
+            inner.writer.write_all(&bytes).await?;
+            inner.writer.flush().await?;
+        }
+        let (tx, rx) = oneshot::channel();
+        inner.inflight = Some(rx);
+        Ok(StreamLinkTxPermit { tx })
     }
 
     async fn close(self) -> io::Result<()> {
-        drop(self.tx);
-        self.writer_task.await.map_err(io::Error::other)?
+        let mut inner = self.inner.lock().await;
+        if let Some(rx) = inner.inflight.take()
+            && let Ok(bytes) = rx.await
+        {
+            inner
+                .writer
+                .write_all(&(bytes.len() as u32).to_le_bytes())
+                .await?;
+            inner.writer.write_all(&bytes).await?;
+        }
+        inner.writer.flush().await?;
+        inner.writer.shutdown().await?;
+        Ok(())
     }
 }
 
@@ -252,11 +243,9 @@ impl LinkTxPermit for StreamLinkTxPermit {
     type Slot = StreamWriteSlot;
 
     fn alloc(self, len: usize) -> io::Result<Self::Slot> {
-        let mut buf = self.recycled_buf.unwrap_or_default();
-        buf.resize(len, 0);
         Ok(StreamWriteSlot {
-            buf,
-            permit: self.permit,
+            buf: vec![0u8; len],
+            tx: self.tx,
         })
     }
 }
@@ -267,7 +256,8 @@ impl WriteSlot for StreamWriteSlot {
     }
 
     fn commit(self) {
-        drop(self.permit.send(self.buf));
+        // If the receiver is gone (StreamLinkTx dropped), that's fine.
+        let _ = self.tx.send(self.buf);
     }
 }
 
@@ -303,7 +293,6 @@ impl<R: AsyncRead + Send + Unpin + 'static> LinkRx for StreamLinkRx<R> {
 // ---------------------------------------------------------------------------
 
 type BoxReader = Box<dyn AsyncRead + Send + Unpin>;
-type BoxWriter = Box<dyn AsyncWrite + Send + Unpin>;
 
 /// Raw local IPC stream.
 #[cfg(unix)]

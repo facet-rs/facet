@@ -5,7 +5,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use eyre::{Context as _, Result};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -44,8 +44,7 @@ struct Config {
     calibration_measure_secs: f64,
     calibration_target_drop_min: f64,
     calibration_target_drop_max: f64,
-    calibration_max_probes: usize,
-    calibration_refine_steps: usize,
+    calibration_deadline_secs: f64,
     load_factors: Vec<f64>,
     transports: Vec<Transport>,
     server_impls: Vec<ServerImpl>,
@@ -241,9 +240,10 @@ fn parse_args() -> Result<Config> {
     let mut calibration_measure_secs = 0.2f64;
     let mut calibration_target_drop_min = 0.01f64;
     let mut calibration_target_drop_max = 0.05f64;
-    let mut calibration_max_probes = 5usize;
-    let mut calibration_refine_steps = 2usize;
-    let mut load_factors = vec![1.0, 1.5, 2.0, 3.0, 4.0];
+    let mut calibration_deadline_secs = 10.0f64;
+    let mut load_factors = vec![
+        0.1, 0.2, 0.35, 0.5, 0.65, 0.8, 1.0, 1.2, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0,
+    ];
     let mut transports = vec![Transport::Local, Transport::Shm];
     let mut server_impls = vec![ServerImpl::Swift, ServerImpl::Rust];
     let mut out = PathBuf::from("/tmp/shootout.json");
@@ -333,19 +333,12 @@ fn parse_args() -> Result<Config> {
                     .parse::<f64>()
                     .map_err(|e| eyre::eyre!("invalid --calibration-target-drop-max value: {e}"))?
             }
-            "--calibration-max-probes" => {
-                calibration_max_probes = args
+            "--calibration-deadline-secs" => {
+                calibration_deadline_secs = args
                     .next()
-                    .ok_or_else(|| eyre::eyre!("missing value for --calibration-max-probes"))?
-                    .parse::<usize>()
-                    .map_err(|e| eyre::eyre!("invalid --calibration-max-probes value: {e}"))?
-            }
-            "--calibration-refine-steps" => {
-                calibration_refine_steps = args
-                    .next()
-                    .ok_or_else(|| eyre::eyre!("missing value for --calibration-refine-steps"))?
-                    .parse::<usize>()
-                    .map_err(|e| eyre::eyre!("invalid --calibration-refine-steps value: {e}"))?
+                    .ok_or_else(|| eyre::eyre!("missing value for --calibration-deadline-secs"))?
+                    .parse::<f64>()
+                    .map_err(|e| eyre::eyre!("invalid --calibration-deadline-secs value: {e}"))?
             }
             "--load-factors" => {
                 load_factors = parse_csv_f64(
@@ -418,10 +411,8 @@ fn parse_args() -> Result<Config> {
     {
         return Err(eyre::eyre!("invalid calibration drop band"));
     }
-    if calibration_max_probes == 0 || calibration_refine_steps == 0 {
-        return Err(eyre::eyre!(
-            "calibration max probes/refine steps must be > 0"
-        ));
+    if calibration_deadline_secs <= 0.0 {
+        return Err(eyre::eyre!("--calibration-deadline-secs must be > 0"));
     }
 
     if quick {
@@ -435,8 +426,7 @@ fn parse_args() -> Result<Config> {
         calibration_measure_secs = 0.1;
         calibration_target_drop_min = 0.01;
         calibration_target_drop_max = 0.05;
-        calibration_max_probes = 2;
-        calibration_refine_steps = 1;
+        calibration_deadline_secs = 2.0;
         load_factors = vec![1.0];
         transports = vec![Transport::Local];
         server_impls = vec![ServerImpl::Swift];
@@ -453,8 +443,7 @@ fn parse_args() -> Result<Config> {
         calibration_measure_secs = 0.1;
         calibration_target_drop_min = 0.01;
         calibration_target_drop_max = 0.05;
-        calibration_max_probes = 3;
-        calibration_refine_steps = 1;
+        calibration_deadline_secs = 5.0;
         load_factors = vec![0.75, 1.0, 1.5, 2.0];
         transports = vec![Transport::Local];
         server_impls = vec![ServerImpl::Swift];
@@ -473,8 +462,7 @@ fn parse_args() -> Result<Config> {
         calibration_measure_secs,
         calibration_target_drop_min,
         calibration_target_drop_max,
-        calibration_max_probes,
-        calibration_refine_steps,
+        calibration_deadline_secs,
         load_factors,
         transports,
         server_impls,
@@ -505,8 +493,7 @@ options:\n\
   --calibration-measure-secs <n>\n\
   --calibration-target-drop-min <n>\n\
   --calibration-target-drop-max <n>\n\
-  --calibration-max-probes <n>\n\
-  --calibration-refine-steps <n>\n\
+  --calibration-deadline-secs <n>\n\
   --load-factors <csv>\n\
   --transports <local,shm>\n\
   --server-impls <swift,rust>\n\
@@ -657,7 +644,7 @@ fn copy_trial_logs(logs_dir: &Path, from_label: &str, to_label: &str) -> Result<
     Ok(())
 }
 
-fn run_trial(
+fn run_trial_once(
     root: &Path,
     label: &str,
     server_impl: ServerImpl,
@@ -738,6 +725,51 @@ fn run_trial(
         peak_rss_kib: parse_peak_rss_kib(&stderr),
         label: label.to_string(),
     })
+}
+
+fn run_trial(
+    root: &Path,
+    label: &str,
+    server_impl: ServerImpl,
+    transport: Transport,
+    payload_size: usize,
+    in_flight: usize,
+    offered_rps: usize,
+    warmup_secs: f64,
+    measure_secs: f64,
+    cfg: &Config,
+) -> Result<TrialRow> {
+    const MAX_RETRIES: usize = 2;
+    let mut last_err = None;
+    for attempt in 0..=MAX_RETRIES {
+        if attempt > 0 {
+            eprintln!(
+                "retrying trial {label} (attempt {}/{})",
+                attempt + 1,
+                MAX_RETRIES + 1
+            );
+            thread::sleep(Duration::from_millis(500));
+        }
+        match run_trial_once(
+            root,
+            label,
+            server_impl,
+            transport,
+            payload_size,
+            in_flight,
+            offered_rps,
+            warmup_secs,
+            measure_secs,
+            cfg,
+        ) {
+            Ok(row) => return Ok(row),
+            Err(err) => {
+                eprintln!("trial {label} attempt {} failed: {}", attempt + 1, err);
+                last_err = Some(err);
+            }
+        }
+    }
+    Err(last_err.unwrap())
 }
 
 fn drop_rate(row: &TrialRow) -> f64 {
@@ -824,16 +856,19 @@ fn calibrate_transport_open_loop(
 ) -> Result<(usize, TrialRow, BTreeMap<String, TrialRow>)> {
     let min_drop = cfg.calibration_target_drop_min;
     let max_drop = cfg.calibration_target_drop_max;
-    let mut offered = 100usize;
-    let max_offered = 200_000usize;
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs_f64(cfg.calibration_deadline_secs);
+    let mut offered = 10_000usize;
     let mut probes = Vec::<Probe>::new();
     let mut transport_trials = BTreeMap::<String, TrialRow>::new();
     let alias_label = make_calibration_label(server_impl, transport, payload_size, in_flight);
-    let mut step = 0usize;
     let mut low: Option<Probe> = None;
     let mut high: Option<Probe> = None;
 
-    while step < cfg.calibration_max_probes {
+    loop {
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
         pb.set_message(format!(
             "calibrating srv={} transport={} payload={} in_flight={} rps={}",
             server_impl_name(server_impl),
@@ -850,7 +885,7 @@ fn calibrate_transport_open_loop(
             payload_size,
             in_flight,
             offered,
-            &format!("scan{step}"),
+            &format!("probe{}", probes.len()),
         )?;
         let probe = Probe {
             offered_rps: offered,
@@ -858,15 +893,6 @@ fn calibrate_transport_open_loop(
         };
         let d = drop_rate(&probe.row);
         probes.push(probe.clone());
-        pb.inc(1);
-
-        if probe.row.bench.errors == 0 && d >= min_drop && d <= max_drop {
-            let mut row = probe.row.clone();
-            copy_trial_logs(&cfg.logs_dir, &row.label, &alias_label)?;
-            row.label = alias_label.clone();
-            transport_trials.insert(transport_name(transport).to_string(), row.clone());
-            return Ok((offered, row, transport_trials));
-        }
 
         if probe.row.bench.errors != 0 || d > max_drop {
             if high
@@ -874,79 +900,34 @@ fn calibrate_transport_open_loop(
                 .map(|p| offered < p.offered_rps)
                 .unwrap_or(true)
             {
-                high = Some(probe.clone());
+                high = Some(probe);
             }
-            if low.is_some() {
-                break;
-            }
-            let next = std::cmp::max(1, offered / 2);
-            if next == offered {
-                break;
-            }
-            offered = next;
-            step += 1;
-            continue;
-        }
-
-        if low
-            .as_ref()
-            .map(|p| offered > p.offered_rps)
-            .unwrap_or(true)
-        {
-            low = Some(probe.clone());
-        }
-        let next = std::cmp::min(max_offered, std::cmp::max(offered + 1, offered * 2));
-        if next == offered {
-            break;
-        }
-        offered = next;
-        step += 1;
-    }
-
-    for i in 0..cfg.calibration_refine_steps {
-        let (Some(low_probe), Some(high_probe)) = (low.clone(), high.clone()) else {
-            break;
-        };
-        if high_probe.offered_rps <= low_probe.offered_rps + 1 {
-            break;
-        }
-        let mid = (low_probe.offered_rps + high_probe.offered_rps) / 2;
-        pb.set_message(format!(
-            "refining srv={} transport={} payload={} in_flight={} rps={}",
-            server_impl_name(server_impl),
-            transport_name(transport),
-            payload_size,
-            in_flight,
-            mid
-        ));
-        let row = run_calibration_probe(
-            root,
-            cfg,
-            server_impl,
-            transport,
-            payload_size,
-            in_flight,
-            mid,
-            &format!("refine{i}"),
-        )?;
-        let probe = Probe {
-            offered_rps: mid,
-            row,
-        };
-        let d = drop_rate(&probe.row);
-        probes.push(probe.clone());
-        pb.inc(1);
-        if probe.row.bench.errors == 0 && d >= min_drop && d <= max_drop {
-            let mut row = probe.row.clone();
-            copy_trial_logs(&cfg.logs_dir, &row.label, &alias_label)?;
-            row.label = alias_label.clone();
-            transport_trials.insert(transport_name(transport).to_string(), row.clone());
-            return Ok((mid, row, transport_trials));
-        }
-        if probe.row.bench.errors != 0 || d > max_drop {
-            high = Some(probe);
         } else {
-            low = Some(probe);
+            if low
+                .as_ref()
+                .map(|p| offered > p.offered_rps)
+                .unwrap_or(true)
+            {
+                low = Some(probe);
+            }
+        }
+
+        // Converged?
+        if let (Some(lo), Some(hi)) = (&low, &high) {
+            if hi.offered_rps <= lo.offered_rps + 1 {
+                break;
+            }
+        }
+
+        offered = match (&low, &high) {
+            (Some(lo), Some(hi)) => (lo.offered_rps + hi.offered_rps) / 2,
+            (Some(lo), None) => lo.offered_rps.saturating_mul(2).min(1_000_000),
+            (None, Some(hi)) => hi.offered_rps / 2,
+            (None, None) => unreachable!("just ran a probe"),
+        };
+
+        if offered == 0 {
+            break;
         }
     }
 
@@ -974,10 +955,7 @@ fn planned_trials(cfg: &Config) -> usize {
     if let Some(sweep) = &cfg.sweep_rps {
         return cfg.blocks * combinations * sweep.len();
     }
-    let calibration_upper =
-        combinations * (cfg.calibration_max_probes + cfg.calibration_refine_steps);
-    let block_trials = cfg.blocks * combinations * cfg.load_factors.len();
-    calibration_upper + block_trials
+    cfg.blocks * combinations * cfg.load_factors.len()
 }
 
 fn content_type(path: &str) -> &'static str {

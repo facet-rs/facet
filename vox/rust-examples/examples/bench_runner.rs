@@ -252,9 +252,17 @@ fn remove_stale_socket(addr: &str) -> Result<()> {
     } else {
         return Ok(());
     };
-    if path.exists() {
-        std::fs::remove_file(&path)
-            .with_context(|| format!("failed to remove stale socket {}", path.display()))?;
+    let mut lock_name = path.as_os_str().to_owned();
+    lock_name.push(".lock");
+    let lock_path = PathBuf::from(lock_name);
+    let mut segment_name = path.as_os_str().to_owned();
+    segment_name.push(".segment");
+    let segment_path = PathBuf::from(segment_name);
+    for candidate in [&path, &lock_path, &segment_path] {
+        if candidate.exists() {
+            std::fs::remove_file(candidate)
+                .with_context(|| format!("failed to remove stale file {}", candidate.display()))?;
+        }
     }
     Ok(())
 }

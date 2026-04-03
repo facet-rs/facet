@@ -104,6 +104,20 @@ function buildSeries(rows, minCompletedForP99) {
         p50_us: pooledQuantile(pooled, 0.50),
         p99_us: hasCompletedSamples && completedTotal >= minCompletedForP99 ? pooledQuantile(pooled, 0.99) : null,
         p999_us: hasCompletedSamples && completedTotal >= minCompletedForP99 ? pooledQuantile(pooled, 0.999) : null,
+        p99_block_min: (() => {
+          const vals = trials.map((t) => {
+            const h = pooledHistogram([t]);
+            return h.total > 0 ? pooledQuantile(h, 0.99) : null;
+          }).filter((v) => v !== null);
+          return vals.length ? Math.min(...vals) : null;
+        })(),
+        p99_block_max: (() => {
+          const vals = trials.map((t) => {
+            const h = pooledHistogram([t]);
+            return h.total > 0 ? pooledQuantile(h, 0.99) : null;
+          }).filter((v) => v !== null);
+          return vals.length ? Math.max(...vals) : null;
+        })(),
         drop_rate_pct: mean(trials.map((t) => {
           const denom = (t.issued ?? 0) + (t.dropped ?? 0);
           return denom > 0 ? (t.dropped / denom) * 100 : 0;
@@ -122,248 +136,113 @@ function buildSeries(rows, minCompletedForP99) {
   return { series, tableRows };
 }
 
-function colorForIndex(index) {
-  const palette = [
-    '#4cc9f0', '#f72585', '#b5179e', '#7209b7', '#560bad', '#480ca8',
-    '#3a0ca3', '#3f37c9', '#4361ee', '#4895ef', '#06d6a0', '#ffd166',
-    '#ef476f', '#118ab2', '#8338ec', '#ff006e', '#fb5607',
-  ];
-  return palette[index % palette.length];
-}
-
-function cssVar(name) {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-}
-
-function makeSeriesLabel(series, suffix = '') {
-  return `${series.server_impl} ${series.transport}${suffix}`;
-}
-
-function seriesColor(series) {
-  return series.server_impl === 'rust' ? '#f72585' : '#4cc9f0';
-}
-
-function seriesSymbol(series) {
-  return series.transport === 'shm' ? 'diamond' : 'circle';
-}
-
-function seriesLineType(series) {
-  return series.transport === 'shm' ? 'dashed' : 'solid';
-}
-
-const mountedCharts = [];
-let resizeListenerInstalled = false;
-
-function makeEchartsSeries(series, valueFn, { suffix = '', dash = false, colorOffset = 0 } = {}) {
-  return series.map((s, index) => {
-    const color = seriesColor(s) ?? colorForIndex(index + colorOffset);
-    const data = s.points
-      .map((p) => {
-        const y = valueFn(p);
-        return Number.isFinite(y) ? [p.offered_rps, y] : null;
-      })
-      .filter(Boolean);
-    return {
-      name: makeSeriesLabel(s, suffix),
-      type: 'line',
-      data,
-      showSymbol: true,
-      symbol: seriesSymbol(s),
-      symbolSize: 6,
-      connectNulls: false,
-      lineStyle: {
-        color,
-        width: 2.5,
-        type: dash ? 'dashed' : seriesLineType(s),
-      },
-      itemStyle: {
-        color,
-      },
-      emphasis: {
-        focus: 'series',
-        blurScope: 'series',
-        lineStyle: {
-          width: 4,
-        },
-      },
-      legendHoverLink: true,
-    };
-  });
-}
-
-function makeMemorySeries(series) {
-  return series.map((s, index) => {
-    const color = seriesColor(s) ?? colorForIndex(index);
-    const data = s.points
-      .map((p) => {
-        if (!Number.isFinite(p.rss_mib)) {
-          return null;
-        }
-        return {
-          value: [p.offered_rps, p.rss_mib],
-        };
-      })
-      .filter(Boolean);
-    return {
-      name: makeSeriesLabel(s),
-      type: 'line',
-      data,
-      showSymbol: true,
-      symbol: seriesSymbol(s),
-      symbolSize: 6,
-      connectNulls: false,
-      lineStyle: {
-        color,
-        width: 2.5,
-        type: seriesLineType(s),
-      },
-      itemStyle: {
-        color,
-      },
-      emphasis: {
-        focus: 'series',
-        blurScope: 'series',
-        lineStyle: {
-          width: 4,
-        },
-      },
-      legendHoverLink: true,
-    };
-  });
-}
-
-function attachHoverFocus(chart) {
-  let activeName = null;
-
-  const clear = () => {
-    if (!activeName) return;
-    chart.dispatchAction({ type: 'downplay', seriesIndex: 'all' });
-    activeName = null;
-  };
-
-  chart.on('mouseover', (params) => {
-    const name = params.componentType === 'legend' ? params.name : params.seriesName;
-    if (!name || name === activeName) {
-      return;
-    }
-    chart.dispatchAction({ type: 'downplay', seriesIndex: 'all' });
-    chart.dispatchAction({ type: 'highlight', seriesName: name });
-    activeName = name;
-  });
-
-  chart.on('mouseout', (params) => {
-    if (params.componentType === 'legend' || params.componentType === 'series') {
-      clear();
-    }
-  });
-
-  chart.on('globalout', clear);
-}
-
-function mountChart(containerId, { series, yLabel, yFormat }) {
-  const container = document.getElementById(containerId);
-  if (!container) {
-    return;
+function seriesColor(s) {
+  if (s.server_impl === 'rust') {
+    return s.transport === 'shm' ? '#ff9f1c' : '#f72585';
+  } else {
+    return s.transport === 'shm' ? '#7209b7' : '#4cc9f0';
   }
-  if (!window.echarts) {
-    throw new Error('ECharts failed to load. Check the browser console and network access to the CDN.');
-  }
+}
 
-  const chart = window.echarts.init(container, null, { renderer: 'canvas' });
-  chart.setOption({
-    backgroundColor: 'transparent',
-    animationDuration: 200,
-    color: series.map((_, index) => colorForIndex(index)),
-    legend: {
-      type: 'plain',
-      show: true,
-      top: 8,
-      left: 16,
-      right: 16,
-      orient: 'horizontal',
-      selectedMode: false,
-      hoverLink: true,
-      itemWidth: 30,
-      itemHeight: 12,
-      itemGap: 16,
-      textStyle: { color: '#eef6fb', fontSize: 12 },
-      inactiveColor: 'rgba(255,255,255,0.38)',
-    },
-    grid: {
-      left: 70,
-      right: 112,
-      top: 88,
-      bottom: 36,
-      containLabel: true,
-    },
-    tooltip: {
-      trigger: 'item',
-      triggerOn: 'mousemove|click',
-      backgroundColor: 'rgba(12, 18, 24, 0.96)',
-      borderColor: 'rgba(255,255,255,0.12)',
-      textStyle: { color: cssVar('--text') || '#eef6fb' },
-      valueFormatter: (value) => yFormat(value),
-      formatter: (params) => {
-        const value = Array.isArray(params.value) ? params.value[1] : params.value;
-        const lines = [
-          `${params.seriesName}`,
-          `offered rps: ${params.value?.[0] ?? 'n/a'}`,
-          `${yLabel}: ${yFormat(value)}`,
-        ];
-        if (params.data && Object.prototype.hasOwnProperty.call(params.data, 'rss_mib')) {
-          lines.push(`rss (MiB): ${formatNumber(params.data.rss_mib, 1)}`);
-        }
-        return lines.join('<br/>');
-      },
-    },
-    xAxis: {
-      type: 'value',
-      name: 'offered rps',
-      nameLocation: 'middle',
-      nameGap: 28,
-      max: (extent) => {
-        const range = extent.max - extent.min;
-        const pad = Math.max(8, range * 0.08);
-        return extent.max + pad;
-      },
-      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.35)' } },
-      axisLabel: { color: cssVar('--muted') || '#99aebd' },
-      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } },
-    },
-    yAxis: {
-      type: 'value',
-      name: yLabel,
-      nameLocation: 'middle',
-      nameGap: 50,
-      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.35)' } },
-      axisLabel: {
-        color: cssVar('--muted') || '#99aebd',
-        formatter: (value) => yFormat(value),
-      },
-      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } },
-    },
-    series,
-  });
+function makeSeriesLabel(s) {
+  return `${s.server_impl} ${s.transport}`;
+}
 
-  attachHoverFocus(chart);
-  mountedCharts.push(chart);
+function hexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
 
-  if (!resizeListenerInstalled) {
-    resizeListenerInstalled = true;
-    window.addEventListener('resize', () => {
-      for (const mounted of mountedCharts) {
-        mounted.resize();
+function makePlotlyTraces(series, valueFn, { minFn, maxFn } = {}) {
+  const traces = [];
+  for (const s of series) {
+    const color = seriesColor(s);
+    const name = makeSeriesLabel(s);
+    const dash = s.transport === 'shm' ? 'dash' : 'solid';
+    const symbol = s.transport === 'shm' ? 'diamond' : 'circle';
+
+    const x = [], y = [], yMin = [], yMax = [];
+    for (const p of s.points) {
+      const val = valueFn(p);
+      if (!Number.isFinite(val)) continue;
+      x.push(p.offered_rps);
+      y.push(val);
+      if (minFn && maxFn) {
+        yMin.push(minFn(p) ?? val);
+        yMax.push(maxFn(p) ?? val);
       }
+    }
+
+    if (minFn && maxFn && x.length) {
+      traces.push({
+        x: [...x, ...x.slice().reverse()],
+        y: [...yMax, ...yMin.slice().reverse()],
+        fill: 'toself',
+        fillcolor: hexToRgba(color, 0.15),
+        line: { width: 0 },
+        mode: 'lines',
+        showlegend: false,
+        hoverinfo: 'skip',
+        name,
+      });
+    }
+
+    traces.push({
+      x, y,
+      name,
+      mode: 'lines+markers',
+      line: { color, dash, width: 2.5 },
+      marker: { symbol, size: 7, color },
     });
   }
+  return traces;
 }
 
-function renderLineChart(containerId, series, yLabel, yFormat) {
-  mountChart(containerId, {
-    series,
-    yLabel,
-    yFormat,
-  });
+const DARK_LAYOUT = {
+  paper_bgcolor: 'transparent',
+  plot_bgcolor: 'transparent',
+  font: {
+    color: '#eef6fb',
+    family: 'ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    size: 12,
+  },
+  legend: {
+    bgcolor: 'rgba(0,0,0,0)',
+    font: { color: '#eef6fb', size: 12 },
+    orientation: 'h',
+    x: 0,
+    y: 1.18,
+    xanchor: 'left',
+    yanchor: 'top',
+  },
+  margin: { l: 60, r: 20, t: 60, b: 50 },
+  hovermode: 'closest',
+};
+
+function axisStyle(title) {
+  return {
+    title: { text: title, font: { color: '#99aebd', size: 12 } },
+    gridcolor: 'rgba(255,255,255,0.08)',
+    linecolor: 'rgba(255,255,255,0.35)',
+    tickfont: { color: '#99aebd' },
+    zerolinecolor: 'rgba(255,255,255,0.15)',
+    rangemode: 'tozero',
+  };
+}
+
+function mountChart(containerId, traces, xLabel, yLabel) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  const layout = {
+    ...DARK_LAYOUT,
+    xaxis: axisStyle(xLabel),
+    yaxis: axisStyle(yLabel),
+  };
+
+  Plotly.newPlot(container, traces, layout, { responsive: true, displayModeBar: false });
 }
 
 function renderTable(rows) {
@@ -426,42 +305,22 @@ function renderApp(data, title) {
   document.title = title;
   document.getElementById('title').textContent = title;
   document.getElementById('subtitle').textContent = minCompletedForP99 > 0
-    ? `Loaded ${tableRows.length} open-loop rows from ${series.length} series. Hover a line or legend entry to focus it. p99/p999 are shown once a series reaches ${minCompletedForP99} completed samples.`
-    : `Loaded ${tableRows.length} open-loop rows from ${series.length} series and ${totalCompleted} completed samples. Hover a line or legend entry to focus it. p99/p999 are shown for any series with histogram data.`;
+    ? `Loaded ${tableRows.length} open-loop rows from ${series.length} series. p99/p999 are shown once a series reaches ${minCompletedForP99} completed samples.`
+    : `Loaded ${tableRows.length} open-loop rows from ${series.length} series and ${totalCompleted} completed samples. p99/p999 are shown for any series with histogram data.`;
   renderSummary(tableRows);
   renderTable(tableRows);
 
-  if (!window.echarts) {
+  if (!window.Plotly) {
     const status = document.getElementById('status');
-    status.textContent = 'ECharts failed to load. Check network access to the CDN.';
+    status.textContent = 'Plotly failed to load. Check network access to the CDN.';
     status.classList.add('error');
     return;
   }
 
-  renderLineChart(
-    'p99Plot',
-    makeEchartsSeries(series, (p) => p.p99_us),
-    'p99 latency (µs)',
-    (value) => formatNumber(value, 0),
-  );
-  renderLineChart(
-    'throughputPlot',
-    makeEchartsSeries(series, (p) => p.achieved_rps),
-    'achieved throughput (rps)',
-    (value) => formatNumber(value, 0),
-  );
-  renderLineChart(
-    'dropPlot',
-    makeEchartsSeries(series, (p) => p.drop_rate_pct),
-    'drop rate (%)',
-    (value) => formatNumber(value, 1),
-  );
-  renderLineChart(
-    'memoryPlot',
-    makeMemorySeries(series),
-    'memory (MiB)',
-    (value) => formatNumber(value, 1),
-  );
+  mountChart('p99Plot', makePlotlyTraces(series, (p) => p.p99_us, { minFn: (p) => p.p99_block_min, maxFn: (p) => p.p99_block_max }), 'offered rps', 'p99 latency (µs)');
+  mountChart('throughputPlot', makePlotlyTraces(series, (p) => p.achieved_rps), 'offered rps', 'achieved throughput (rps)');
+  mountChart('dropPlot', makePlotlyTraces(series, (p) => p.drop_rate_pct), 'offered rps', 'drop rate (%)');
+  mountChart('memoryPlot', makePlotlyTraces(series, (p) => p.rss_mib), 'offered rps', 'memory (MiB)');
 }
 
 async function main() {

@@ -23,6 +23,7 @@ runtime = ["dep:vox-core"]
 transport-tcp = ["dep:vox-stream"]
 transport-local = ["dep:vox-stream"]
 transport-shm = ["dep:vox-shm"]
+transport-ffi = ["dep:vox-ffi"]
 transport-websocket = ["dep:vox-websocket"]
 transport-websocket-tls = ["transport-websocket", "dep:tokio-rustls", "dep:rustls", "dep:rustls-pemfile"]
 transport-all = ["transport-tcp", "transport-local", "transport-shm", "transport-websocket"]
@@ -33,6 +34,7 @@ vox-service-macros.workspace = true
 vox-core = { workspace = true, optional = true }
 vox-stream = { workspace = true, optional = true }
 vox-shm = { workspace = true, optional = true }
+vox-ffi = { workspace = true, optional = true }
 vox-websocket = { workspace = true, optional = true }
 facet.workspace = true
 facet-pretty.workspace = true

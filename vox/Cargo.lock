@@ -3758,6 +3758,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "vox-core",
+ "vox-ffi",
  "vox-postcard",
  "vox-service-macros",
  "vox-shm",
@@ -3839,6 +3840,13 @@ dependencies = [
  "passfd",
  "tokio",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "vox-ffi"
+version = "0.3.1"
+dependencies = [
+ "vox-types",
 ]
 
 [[package]]
