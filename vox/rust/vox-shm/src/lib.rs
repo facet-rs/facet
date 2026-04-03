@@ -514,44 +514,90 @@ impl LinkTxPermit for ShmTxPermit {
         if len as u32 > max_varslot_payload {
             // r[impl shm.mmap.ordering]
             // Payload exceeds varslot — use mmap-ref path.
-            // Step 1: alloc delivers fd to peer (ordering: registry visible)
-            let mut registry = self
-                .shared
-                .mmap_registry
-                .lock()
-                .expect("mmap registry poisoned");
-            let alloc = registry
-                .alloc(len)
-                .map_err(|e| io::Error::other(format!("mmap alloc failed: {e}")))?;
-            return Ok(ShmWriteSlot {
-                shared: self.shared.clone(),
-                inner: ShmWriteSlotInner::MmapRef {
-                    alloc: Some(alloc),
-                    payload_len: len,
-                },
-            });
+            // Step 1: alloc delivers fd to peer (ordering: registry visible).
+            loop {
+                if self.tx_closed.load(Ordering::Acquire) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "shm tx is closed",
+                    ));
+                }
+                if self.shared.doorbell_dead.load(Ordering::Acquire) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "shm doorbell peer is closed",
+                    ));
+                }
+
+                let mut registry = self
+                    .shared
+                    .mmap_registry
+                    .lock()
+                    .expect("mmap registry poisoned");
+                match registry.alloc(len) {
+                    Ok(alloc) => {
+                        return Ok(ShmWriteSlot {
+                            shared: self.shared.clone(),
+                            inner: ShmWriteSlotInner::MmapRef {
+                                alloc: Some(alloc),
+                                payload_len: len,
+                            },
+                        });
+                    }
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                        ) =>
+                    {
+                        self.shared
+                            .stats
+                            .commit_retries
+                            .fetch_add(1, AtomicOrdering::Relaxed);
+                    }
+                    Err(error) => {
+                        return Err(io::Error::other(format!("mmap alloc failed: {error}")));
+                    }
+                }
+                drop(registry);
+                std::thread::yield_now();
+            }
         }
-        let slot_ref = self
-            .shared
-            .backend
-            .allocate_slot(needed_u32, self.shared.owner_peer)
-            .ok_or_else(|| {
+        let slot_ref = loop {
+            if self.tx_closed.load(Ordering::Acquire) {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "shm tx is closed",
+                ));
+            }
+            if self.shared.doorbell_dead.load(Ordering::Acquire) {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "shm doorbell peer is closed",
+                ));
+            }
+
+            if let Some(slot_ref) = self
+                .shared
+                .backend
+                .allocate_slot(needed_u32, self.shared.owner_peer)
+            {
+                break slot_ref;
+            }
+
+            self.shared
+                .stats
+                .varslot_exhausted
+                .fetch_add(1, AtomicOrdering::Relaxed);
+            if matches!(self.shared.doorbell.signal_now(), SignalResult::PeerDead) {
+                self.shared.doorbell_dead.store(true, Ordering::Release);
                 self.shared
                     .stats
-                    .varslot_exhausted
+                    .doorbell_peer_dead
                     .fetch_add(1, AtomicOrdering::Relaxed);
-                if matches!(self.shared.doorbell.signal_now(), SignalResult::PeerDead) {
-                    self.shared.doorbell_dead.store(true, Ordering::Release);
-                    self.shared
-                        .stats
-                        .doorbell_peer_dead
-                        .fetch_add(1, AtomicOrdering::Relaxed);
-                }
-                io::Error::new(
-                    io::ErrorKind::WouldBlock,
-                    "varslot exhausted; retry on next reserve/send cycle",
-                )
-            })?;
+            }
+            std::thread::yield_now();
+        };
 
         Ok(ShmWriteSlot {
             shared: self.shared.clone(),

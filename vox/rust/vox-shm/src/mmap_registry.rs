@@ -81,6 +81,8 @@ impl MmapRegistry {
     /// Creates a new mmap region if no existing slot has enough space.
     /// Delivers the fd to the peer if this is the first use of the slot.
     pub fn alloc(&mut self, len: usize) -> io::Result<MmapAllocation> {
+        let channel = &self.channel;
+
         // Try to find an existing slot with enough space
         for slot in &mut self.slots {
             if slot.offset + len <= slot.region.len() {
@@ -89,7 +91,8 @@ impl MmapRegistry {
 
                 // r[impl shm.mmap.attach.once]
                 if !slot.delivered {
-                    self.channel.send_region(
+                    send_region_with_backpressure(
+                        channel,
                         &slot.region,
                         &MmapAttachMessage {
                             map_id: slot.map_id,
@@ -124,7 +127,8 @@ impl MmapRegistry {
         let active_leases = Arc::new(AtomicU32::new(1));
 
         // Deliver fd to peer
-        self.channel.send_region(
+        send_region_with_backpressure(
+            channel,
             &region,
             &MmapAttachMessage {
                 map_id,
@@ -217,6 +221,27 @@ impl MmapChannelTx {
                 }
                 Ok(())
             }
+        }
+    }
+}
+
+fn send_region_with_backpressure(
+    channel: &MmapChannelTx,
+    region: &Arc<MmapRegion>,
+    msg: &MmapAttachMessage,
+) -> io::Result<()> {
+    loop {
+        match channel.send_region(region, msg) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) =>
+            {
+                std::thread::yield_now();
+            }
+            Err(error) => return Err(error),
         }
     }
 }
