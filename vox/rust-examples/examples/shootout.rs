@@ -32,6 +32,8 @@ enum ServerImpl {
 
 #[derive(Debug, Clone)]
 struct Config {
+    quick: bool,
+    short: bool,
     workload: Workload,
     payload_sizes: Vec<usize>,
     in_flights: Vec<usize>,
@@ -227,6 +229,8 @@ fn parse_csv_f64(value: &str, flag: &str) -> Result<Vec<f64>> {
 }
 
 fn parse_args() -> Result<Config> {
+    let mut quick = false;
+    let mut short = false;
     let mut workload = Workload::Gnarly;
     let mut payload_sizes = vec![1, 4, 16, 64, 256, 1024];
     let mut in_flights = vec![1, 16, 64];
@@ -250,6 +254,12 @@ fn parse_args() -> Result<Config> {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--quick" => {
+                quick = true;
+            }
+            "--short" => {
+                short = true;
+            }
             "--workload" => {
                 workload = parse_workload(
                     &args
@@ -410,7 +420,45 @@ fn parse_args() -> Result<Config> {
         ));
     }
 
+    if quick {
+        workload = Workload::Gnarly;
+        payload_sizes = vec![16];
+        in_flights = vec![1];
+        blocks = 1;
+        warmup_secs = 0.1;
+        measure_secs = 0.2;
+        calibration_warmup_secs = 0.05;
+        calibration_measure_secs = 0.1;
+        calibration_target_drop_min = 0.01;
+        calibration_target_drop_max = 0.05;
+        calibration_max_probes = 2;
+        calibration_refine_steps = 1;
+        load_factors = vec![1.0];
+        transports = vec![Transport::Local];
+        server_impls = vec![ServerImpl::Swift];
+    }
+
+    if short {
+        workload = Workload::Gnarly;
+        payload_sizes = vec![16, 64];
+        in_flights = vec![1];
+        blocks = 1;
+        warmup_secs = 0.1;
+        measure_secs = 0.2;
+        calibration_warmup_secs = 0.05;
+        calibration_measure_secs = 0.1;
+        calibration_target_drop_min = 0.01;
+        calibration_target_drop_max = 0.05;
+        calibration_max_probes = 3;
+        calibration_refine_steps = 1;
+        load_factors = vec![0.5, 1.0, 1.5];
+        transports = vec![Transport::Local];
+        server_impls = vec![ServerImpl::Swift];
+    }
+
     Ok(Config {
+        quick,
+        short,
         workload,
         payload_sizes,
         in_flights,
@@ -440,6 +488,8 @@ single-binary workflow:\n\
   1. run the benchmark and write JSON\n\
   2. optionally serve the report from the same binary with --serve-report\n\
 options:\n\
+  --quick              run a small smoke-test preset\n\
+  --short              run a slightly broader preset\n\
   --workload <echo|canvas|gnarly>\n\
   --payload-sizes <csv>\n\
   --in-flights <csv>\n\
@@ -460,6 +510,16 @@ options:\n\
   --serve-report       serve the static HTML/JS report after writing JSON\n\
   --bind <addr>        HTTP bind address for --serve-report"
     );
+}
+
+fn quick_summary(cfg: &Config) -> &'static str {
+    if cfg.quick {
+        "quick preset"
+    } else if cfg.short {
+        "short preset"
+    } else {
+        "custom matrix"
+    }
 }
 
 fn addr_for_transport(transport: Transport) -> &'static str {
@@ -500,7 +560,7 @@ fn make_trial_label(
     offered_rps: usize,
 ) -> String {
     format!(
-        "{prefix}-srv{}-{}-p{}-i{}-r{}",
+        "{prefix}-srv={}-transport={}-payload={}-in_flight={}-rps={}",
         server_impl_name(server_impl),
         transport_name(transport),
         payload_size,
@@ -516,7 +576,7 @@ fn make_calibration_label(
     in_flight: usize,
 ) -> String {
     format!(
-        "cal-srv{}-{}-p{}-i{}",
+        "cal-srv={}-transport={}-payload={}-in_flight={}",
         server_impl_name(server_impl),
         transport_name(transport),
         payload_size,
@@ -533,7 +593,7 @@ fn make_calibration_probe_label(
     suffix: &str,
 ) -> String {
     format!(
-        "calprobe-srv{}-{}-p{}-i{}-r{}-{}",
+        "calprobe-srv={}-transport={}-payload={}-in_flight={}-rps={}-phase={}",
         server_impl_name(server_impl),
         transport_name(transport),
         payload_size,
@@ -782,7 +842,7 @@ fn calibrate_transport_open_loop(
 
     while step < cfg.calibration_max_probes {
         pb.set_message(format!(
-            "calibrating {} {} p{} i{} r{}",
+            "calibrating srv={} transport={} payload={} in_flight={} rps={}",
             server_impl_name(server_impl),
             transport_name(transport),
             payload_size,
@@ -859,7 +919,7 @@ fn calibrate_transport_open_loop(
         }
         let mid = (low_probe.offered_rps + high_probe.offered_rps) / 2;
         pb.set_message(format!(
-            "refining {} {} p{} i{} r{}",
+            "refining srv={} transport={} payload={} in_flight={} rps={}",
             server_impl_name(server_impl),
             transport_name(transport),
             payload_size,
@@ -1087,7 +1147,10 @@ fn main() -> Result<()> {
         )?
         .progress_chars("=>-"),
     );
-    pb.set_message("building release binaries");
+    pb.set_message(format!(
+        "building release binaries ({})",
+        quick_summary(&cfg)
+    ));
     build_release_binaries(&root)?;
 
     let mut calibrations = Vec::<Calibration>::new();
@@ -1099,7 +1162,7 @@ fn main() -> Result<()> {
                 let mut transport_trials = BTreeMap::<String, TrialRow>::new();
                 for &transport in &cfg.transports {
                     pb.set_message(format!(
-                        "calibrating {} {} p{} i{}",
+                        "calibrating srv={} transport={} payload={} in_flight={}",
                         server_impl_name(server_impl),
                         transport_name(transport),
                         payload_size,
@@ -1190,7 +1253,7 @@ fn main() -> Result<()> {
         ) in conditions.into_iter().enumerate()
         {
             pb.set_message(format!(
-                "block {} trial {} {} {} p{} i{} r{}",
+                "block={} trial={} srv={} transport={} payload={} in_flight={} rps={}",
                 block,
                 order_idx + 1,
                 server_impl_name(server_impl),
