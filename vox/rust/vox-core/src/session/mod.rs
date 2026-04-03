@@ -149,6 +149,36 @@ impl PendingConnection {
         wasm_bindgen_futures::spawn_local(async move { driver.run().await });
     }
 
+    /// Accept this connection, run a Driver, and return a typed client for the peer.
+    pub fn handle_with_client<C: crate::FromVoxSession>(
+        mut self,
+        handler: impl Handler<crate::DriverReplySink> + 'static,
+    ) -> C {
+        let handle = self
+            .handle
+            .take()
+            .expect("PendingConnection already consumed");
+        let conn_id = handle.connection_id();
+        trace!(%conn_id, "PendingConnection::handle_with_client: creating driver");
+        let mut driver = match self.operation_store.take() {
+            Some(store) => crate::Driver::with_operation_store(handle, handler, store),
+            None => crate::Driver::new(handle, handler),
+        };
+        let caller = crate::Caller::new(driver.caller());
+        if let Some(slot) = &self.caller_slot {
+            *slot.lock().unwrap() = Some(caller.clone());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        tokio::spawn(async move {
+            trace!(%conn_id, "PendingConnection driver starting");
+            driver.run().await;
+            trace!(%conn_id, "PendingConnection driver exited");
+        });
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move { driver.run().await });
+        C::from_vox_session(caller, None)
+    }
+
     /// Accept this connection and proxy all traffic to/from another connection.
     pub fn proxy_to(mut self, other: ConnectionHandle) {
         let handle = self

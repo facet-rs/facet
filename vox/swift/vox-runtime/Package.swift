@@ -18,7 +18,7 @@ let package = Package(
         .executable(name: "shm-guest-client", targets: ["shm-guest-client"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.92.0")
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.92.0"),
     ],
     targets: [
         .target(
