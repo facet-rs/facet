@@ -174,6 +174,7 @@ fn shm_bootstrap_guest(control_socket_path: &str) -> io::Result<crate::ShmLink> 
     use std::os::fd::{AsRawFd, IntoRawFd};
     use std::path::Path;
     use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
     let request = encode_request();
     let mut stream = std::os::unix::net::UnixStream::connect(control_socket_path)?;
@@ -196,10 +197,34 @@ fn shm_bootstrap_guest(control_socket_path: &str) -> io::Result<crate::ShmLink> 
     let hub_path = std::str::from_utf8(&received.response.payload)
         .map_err(|e| io::Error::other(format!("bootstrap payload not UTF-8: {e}")))?;
 
-    let segment = Arc::new(
-        Segment::attach(Path::new(hub_path))
-            .map_err(|e| io::Error::other(format!("attach segment: {e}")))?,
-    );
+    let segment = match Segment::attach_fd(fds.segment_fd) {
+        Ok(segment) => segment,
+        Err(fd_err) => {
+            // Fallback for hosts that provide a path before/without a usable segment fd.
+            let deadline = Instant::now() + Duration::from_millis(750);
+            let mut last_path_err = None;
+            let mut attached = None;
+            while Instant::now() < deadline {
+                match Segment::attach(Path::new(hub_path)) {
+                    Ok(segment) => {
+                        attached = Some(segment);
+                        break;
+                    }
+                    Err(err) => {
+                        last_path_err = Some(err.to_string());
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            }
+            attached.ok_or_else(|| {
+                io::Error::other(format!(
+                    "attach segment failed (fd: {fd_err}; path: {})",
+                    last_path_err.unwrap_or_else(|| "unknown path attach error".to_string())
+                ))
+            })?
+        }
+    };
+    let segment = Arc::new(segment);
 
     let peer_id = PeerId::new(received.response.peer_id as u8).ok_or_else(|| {
         io::Error::other(format!("invalid peer id {}", received.response.peer_id))

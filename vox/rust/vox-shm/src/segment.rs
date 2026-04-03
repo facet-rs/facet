@@ -7,6 +7,8 @@
 //! r[impl shm.architecture]
 
 use std::io;
+#[cfg(unix)]
+use std::os::fd::OwnedFd;
 use std::path::Path;
 
 use shm_primitives::{
@@ -204,6 +206,28 @@ impl Segment {
     /// r[impl shm.guest.attach]
     pub fn attach(path: &Path) -> Result<Self, AttachError> {
         let mmap = MmapRegion::attach(path)?;
+        Self::from_mmap(mmap)
+    }
+
+    #[cfg(unix)]
+    pub fn attach_fd(fd: OwnedFd) -> Result<Self, AttachError> {
+        // Derive map length from the passed segment FD itself.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        let rc = unsafe { libc::fstat(std::os::fd::AsRawFd::as_raw_fd(&fd), &mut st) };
+        if rc != 0 {
+            return Err(AttachError::Io(io::Error::last_os_error()));
+        }
+        if st.st_size <= 0 {
+            return Err(AttachError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "segment fd size is zero",
+            )));
+        }
+        let mmap = MmapRegion::attach_fd(fd, st.st_size as usize)?;
+        Self::from_mmap(mmap)
+    }
+
+    fn from_mmap(mmap: MmapRegion) -> Result<Self, AttachError> {
         let region = mmap.region();
 
         // Validate the header.

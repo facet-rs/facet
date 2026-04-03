@@ -145,12 +145,10 @@ function subjectCmdForServerImpl(serverImpl) {
 }
 
 function subjectModeFor(serverImpl, transport) {
-  if (serverImpl === 'rust' && transport === 'shm') return 'shm-server';
   return 'server';
 }
 
 function supportsPair(serverImpl, transport) {
-  if (serverImpl === 'rust' && transport === 'shm') return false;
   return true;
 }
 

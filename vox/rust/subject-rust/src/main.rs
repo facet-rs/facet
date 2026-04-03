@@ -20,6 +20,24 @@ use vox_shm::guest_link_from_names;
 #[cfg(unix)]
 use vox_shm::guest_link_from_raw;
 
+fn attach_segment_with_retry(path: &std::path::Path) -> Result<Segment, String> {
+    let deadline = std::time::Instant::now() + Duration::from_millis(500);
+    let mut last_err = None;
+    loop {
+        match Segment::attach(path) {
+            Ok(segment) => return Ok(segment),
+            Err(err) => {
+                last_err = Some(err.to_string());
+                if std::time::Instant::now() >= deadline {
+                    let detail = last_err.unwrap_or_else(|| "unknown error".to_string());
+                    return Err(format!("attach segment at {}: {detail}", path.display()));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 struct TestbedService;
 
@@ -958,10 +976,8 @@ async fn connect_and_serve_shm() -> Result<(), String> {
             .ok_or_else(|| "missing bootstrap success fds".to_string())?;
         let hub_path = std::str::from_utf8(&received.response.payload)
             .map_err(|e| format!("bootstrap payload is not utf-8 path: {e}"))?;
-        let segment = std::sync::Arc::new(
-            Segment::attach(std::path::Path::new(hub_path))
-                .map_err(|e| format!("attach segment at {hub_path}: {e}"))?,
-        );
+        let segment =
+            std::sync::Arc::new(attach_segment_with_retry(std::path::Path::new(hub_path))?);
         let peer_id = shm_primitives::PeerId::new(received.response.peer_id as u8)
             .ok_or_else(|| format!("invalid peer id {}", received.response.peer_id))?;
 
@@ -1027,10 +1043,9 @@ async fn connect_and_serve_shm() -> Result<(), String> {
 
         let names = BootstrapSuccessNames::decode(response_ref.payload)
             .map_err(|e| format!("decode bootstrap names: {e}"))?;
-        let segment = std::sync::Arc::new(
-            Segment::attach(std::path::Path::new(&names.segment_path))
-                .map_err(|e| format!("attach segment at {}: {e}", names.segment_path))?,
-        );
+        let segment = std::sync::Arc::new(attach_segment_with_retry(std::path::Path::new(
+            &names.segment_path,
+        ))?);
         let peer_id = shm_primitives::PeerId::new(response_ref.peer_id as u8)
             .ok_or_else(|| format!("invalid peer id {}", response_ref.peer_id))?;
 

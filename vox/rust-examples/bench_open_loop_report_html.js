@@ -13,12 +13,21 @@ function parseArgs(argv) {
     input: null,
     output: '/tmp/open-loop-report.html',
     title: 'Vox open-loop benchmark report',
+    inFlights: null,
   };
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--input') out.input = argv[++i];
     else if (arg === '--output') out.output = argv[++i];
     else if (arg === '--title') out.title = argv[++i];
+    else if (arg === '--in-flights') {
+      out.inFlights = new Set(
+        argv[++i]
+          .split(',')
+          .map((s) => Number.parseInt(s.trim(), 10))
+          .filter((n) => Number.isFinite(n) && n > 0),
+      );
+    }
     else if (arg === '--help' || arg === '-h') usage(0);
     else {
       console.error(`unknown arg: ${arg}`);
@@ -46,7 +55,10 @@ function groupBy(rows, keyFn) {
 function main() {
   const args = parseArgs(process.argv);
   const input = JSON.parse(fs.readFileSync(args.input, 'utf8'));
-  const rows = Array.isArray(input) ? input : input.rows;
+  const allRows = Array.isArray(input) ? input : input.rows;
+  const rows = args.inFlights
+    ? allRows.filter((r) => args.inFlights.has(Number(r.in_flight)))
+    : allRows;
   const grouped = groupBy(rows, (r) => `${r.server_impl ?? 'swift'}|${r.transport}|${r.payload_size}|${r.in_flight}`);
   const series = [];
   const tableRows = [];
@@ -190,16 +202,38 @@ function main() {
   <script>
     const series = ${JSON.stringify(series)};
     const rows = ${JSON.stringify(tableRows)};
-    const palette = { local: '#f7b955', shm: '#51d0c8' };
-    const dashes = { 1: 'solid', 16: 'dot', 64: 'dash', 256: 'dashdot' };
+    const palette = [
+      '#4cc9f0', '#f72585', '#b5179e', '#7209b7', '#560bad', '#480ca8',
+      '#3a0ca3', '#3f37c9', '#4361ee', '#4895ef', '#4cc9f0', '#06d6a0',
+      '#ffd166', '#ef476f', '#118ab2', '#8338ec', '#ff006e', '#fb5607',
+    ];
+    const dashesByTransport = { local: 'solid', shm: 'dot' };
+    const seriesKey = (s) => [s.server_impl, s.transport, s.payload_size, s.in_flight].join('|');
+    const uniqueKeys = [...new Set(series.map(seriesKey))];
+    const colorByKey = Object.fromEntries(
+      uniqueKeys.map((k, i) => [k, palette[i % palette.length]]),
+    );
+
+    const singlePayload = new Set(series.map((s) => s.payload_size)).size === 1;
+    const singleInflight = new Set(series.map((s) => s.in_flight)).size === 1;
+
+    function shortLabel(s) {
+      let label = s.server_impl + ' ' + s.transport;
+      if (!singlePayload) label += ' payload=' + s.payload_size;
+      if (!singleInflight) label += ' in_flight=' + s.in_flight;
+      return label;
+    }
 
     function tracesFor(metric) {
       return series.map((s) => ({
         x: s.points.map((p) => p.offered_rps),
         y: s.points.map((p) => p[metric]),
         mode: 'lines+markers',
-        name: s.server_impl + ' server / ' + s.transport + ' p=' + s.payload_size + ' i=' + s.in_flight,
-        line: { color: palette[s.transport] ?? '#ccc', dash: dashes[s.in_flight] ?? 'solid' },
+        name: shortLabel(s),
+        line: {
+          color: colorByKey[seriesKey(s)] ?? '#ccc',
+          dash: dashesByTransport[s.transport] ?? 'solid',
+        },
         marker: { size: 7 },
       }));
     }
@@ -209,10 +243,14 @@ function main() {
         paper_bgcolor: 'transparent',
         plot_bgcolor: 'transparent',
         font: { color: '#eef6fb' },
-        margin: { l: 70, r: 20, t: 10, b: 55 },
-        xaxis: { title: 'offered rps', gridcolor: 'rgba(255,255,255,0.08)' },
-        yaxis: { title: yTitle, gridcolor: 'rgba(255,255,255,0.08)' },
-        legend: { orientation: 'h' },
+        margin: { l: 70, r: 220, t: 10, b: 80 },
+        xaxis: {
+          title: { text: 'offered rps', standoff: 18 },
+          automargin: true,
+          gridcolor: 'rgba(255,255,255,0.08)',
+        },
+        yaxis: { title: yTitle, automargin: true, gridcolor: 'rgba(255,255,255,0.08)' },
+        legend: { orientation: 'v', x: 1.02, xanchor: 'left', y: 1, yanchor: 'top' },
       }, { displayModeBar: false, responsive: true });
     }
 
@@ -224,26 +262,33 @@ function main() {
         x: s.points.map((p) => p.offered_rps),
         y: s.points.map((p) => p.phys_footprint_mib),
         mode: 'lines+markers',
-        name: s.server_impl + ' server / ' + s.transport + ' p=' + s.payload_size + ' i=' + s.in_flight + ' (phys)',
-        line: { color: palette[s.transport] ?? '#ccc', dash: dashes[s.in_flight] ?? 'solid' },
+        name: shortLabel(s) + ' phys',
+        line: {
+          color: colorByKey[seriesKey(s)] ?? '#ccc',
+          dash: dashesByTransport[s.transport] ?? 'solid',
+        },
         marker: { size: 7 },
       })),
       ...series.map((s) => ({
         x: s.points.map((p) => p.offered_rps),
         y: s.points.map((p) => p.rss_mib),
         mode: 'lines+markers',
-        name: s.server_impl + ' server / ' + s.transport + ' p=' + s.payload_size + ' i=' + s.in_flight + ' (rss)',
-        line: { color: palette[s.transport] ?? '#ccc', dash: 'dot' },
+        name: shortLabel(s) + ' rss',
+        line: { color: colorByKey[seriesKey(s)] ?? '#ccc', dash: 'dashdot' },
         marker: { size: 6, opacity: 0.6 },
       })),
     ], {
       paper_bgcolor: 'transparent',
       plot_bgcolor: 'transparent',
       font: { color: '#eef6fb' },
-      margin: { l: 70, r: 20, t: 10, b: 55 },
-      xaxis: { title: 'offered rps', gridcolor: 'rgba(255,255,255,0.08)' },
-      yaxis: { title: 'memory (MiB)', gridcolor: 'rgba(255,255,255,0.08)' },
-      legend: { orientation: 'h' },
+      margin: { l: 70, r: 220, t: 10, b: 80 },
+      xaxis: {
+        title: { text: 'offered rps', standoff: 18 },
+        automargin: true,
+        gridcolor: 'rgba(255,255,255,0.08)',
+      },
+      yaxis: { title: 'memory (MiB)', automargin: true, gridcolor: 'rgba(255,255,255,0.08)' },
+      legend: { orientation: 'v', x: 1.02, xanchor: 'left', y: 1, yanchor: 'top' },
     }, { displayModeBar: false, responsive: true });
 
     const tbody = document.getElementById('rows');
