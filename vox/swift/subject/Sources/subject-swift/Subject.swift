@@ -325,7 +325,30 @@ func runServer() async throws {
     ]
     let connection: Connection
     let driver: Driver
-    if addr.hasPrefix("local://") {
+    if addr.hasPrefix("shm://") {
+        let path = String(addr.dropFirst("shm://".count))
+        guard !path.isEmpty else {
+            log("invalid PEER_ADDR format")
+            throw SubjectError.invalidAddr
+        }
+        let ticket = try requestShmBootstrapTicket(
+            controlSocketPath: path,
+            sid: UUID().uuidString.lowercased()
+        )
+        log("shm bootstrap ticket received: peerId=\(ticket.peerId), hubPath=\(ticket.hubPath)")
+        let shmTransport = try ShmGuestTransport.attach(ticket: ticket)
+        log("shm transport attached")
+        (connection, driver, _, _) = try await establishShmGuest(
+            transport: shmTransport,
+            dispatcher: dispatcher,
+            role: .initiator,
+            conduit: transport,
+            acceptConnections: acceptConnections,
+            resumable: false,
+            metadata: rootMetadata
+        )
+        log("shm session established")
+    } else if addr.hasPrefix("local://") {
         let path = String(addr.dropFirst("local://".count))
         guard !path.isEmpty else {
             log("invalid PEER_ADDR format")

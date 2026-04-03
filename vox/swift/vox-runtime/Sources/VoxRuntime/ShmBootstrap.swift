@@ -1,6 +1,5 @@
 import Foundation
 #if os(macOS) || os(Linux)
-import CVoxShmFfi
 #if os(macOS)
 import Darwin
 #else
@@ -59,96 +58,12 @@ public func requestShmBootstrapTicket(controlSocketPath: String, sid: String) th
         throw ShmBootstrapError.invalidSid
     }
 
-    // Prefer current Rust wire bootstrap (`VSH1`/`VSP1` + SCM_RIGHTS).
-    // Fall back to legacy Swift bootstrap for older peers.
+    // Use the current Rust wire bootstrap (`VSH1`/`VSP1` + SCM_RIGHTS).
     if let ticket = try requestShmBootstrapTicketRust(controlSocketPath: controlSocketPath) {
         return ticket
     }
 
-    return try requestShmBootstrapTicketLegacy(controlSocketPath: controlSocketPath, sid: sid)
-}
-
-private func requestShmBootstrapTicketLegacy(controlSocketPath: String, sid: String) throws -> ShmBootstrapTicket {
-
-    #if os(Linux)
-    let fd = socket(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0)
-    #else
-    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-    #endif
-    guard fd >= 0 else {
-        throw ShmBootstrapError.socketCreateFailed(errno: errno)
-    }
-
-    do {
-        try connectUnixSocket(fd: fd, path: controlSocketPath)
-
-        let sidBytes = [UInt8](sid.utf8)
-        var request = [UInt8](
-            repeating: 0,
-            count: Int(vox_shm_bootstrap_request_header_size()) + sidBytes.count
-        )
-        var requestWritten: UInt = 0
-        let encodeRc = request.withUnsafeMutableBufferPointer { reqBuf in
-            sidBytes.withUnsafeBufferPointer { sidBuf in
-                vox_shm_bootstrap_request_encode(
-                    sidBuf.baseAddress,
-                    UInt(sidBuf.count),
-                    reqBuf.baseAddress,
-                    UInt(reqBuf.count),
-                    &requestWritten
-                )
-            }
-        }
-        guard encodeRc == 0 else {
-            throw ShmBootstrapError.invalidRequestEncoding
-        }
-
-        try writeAll(fd: fd, bytes: Array(request.prefix(Int(requestWritten))))
-
-        let recv = try recvBootstrapResponse(fd: fd)
-        let status = recv.info.status
-
-        switch status {
-        case shmBootstrapStatusOK:
-            guard recv.info.peer_id != 0 else {
-                closeReceivedFds(recv)
-                throw ShmBootstrapError.protocolError("invalid peer_id 0")
-            }
-            guard recv.info.peer_id <= UInt32(UInt8.max) else {
-                closeReceivedFds(recv)
-                throw ShmBootstrapError.protocolError("peer_id out of range")
-            }
-            guard let hubPath = String(bytes: recv.payload, encoding: .utf8) else {
-                closeReceivedFds(recv)
-                throw ShmBootstrapError.protocolError("hub path not utf-8")
-            }
-            guard recv.doorbellFd >= 0, recv.shmFd >= 0, recv.mmapControlFd >= 0 else {
-                closeReceivedFds(recv)
-                throw ShmBootstrapError.missingFileDescriptor
-            }
-
-            close(fd)
-            return ShmBootstrapTicket(
-                peerId: UInt8(recv.info.peer_id),
-                hubPath: hubPath,
-                doorbellFd: recv.doorbellFd,
-                shmFd: recv.shmFd,
-                mmapControlFd: recv.mmapControlFd
-            )
-
-        case shmBootstrapStatusError:
-            closeReceivedFds(recv)
-            let msg = String(bytes: recv.payload, encoding: .utf8) ?? "bootstrap error"
-            throw ShmBootstrapError.protocolError(msg)
-
-        default:
-            closeReceivedFds(recv)
-            throw ShmBootstrapError.protocolError("unknown bootstrap status \(status)")
-        }
-    } catch {
-        close(fd)
-        throw error
-    }
+    throw ShmBootstrapError.protocolError("peer did not complete VSH1 bootstrap")
 }
 
 private struct RustBootstrapRecv {
@@ -343,67 +258,6 @@ private func recvRustBootstrapResponse(fd: Int32) throws -> RustBootstrapRecv {
 private func closeRustFds(_ fds: [Int32]) {
     for fd in fds where fd >= 0 {
         close(fd)
-    }
-}
-
-private struct BootstrapRecv {
-    let info: VoxShmBootstrapResponseInfo
-    let payload: [UInt8]
-    let doorbellFd: Int32
-    let shmFd: Int32
-    let mmapControlFd: Int32
-}
-
-private func recvBootstrapResponse(fd: Int32) throws -> BootstrapRecv {
-    var payload = [UInt8](repeating: 0, count: Int(UInt16.max))
-    var info = VoxShmBootstrapResponseInfo(status: 0, peer_id: 0, payload_len: 0)
-    var doorbellFd: Int32 = -1
-    var shmFd: Int32 = -1
-    var mmapControlFd: Int32 = -1
-
-    let rc = payload.withUnsafeMutableBufferPointer { buf in
-        withUnsafeMutablePointer(to: &info) { infoPtr in
-            vox_shm_bootstrap_response_recv_unix(
-                fd,
-                buf.baseAddress,
-                UInt(buf.count),
-                infoPtr,
-                &doorbellFd,
-                &shmFd,
-                &mmapControlFd
-            )
-        }
-    }
-
-    switch rc {
-    case 0:
-        let payloadLen = Int(info.payload_len)
-        if payloadLen > payload.count {
-            throw ShmBootstrapError.protocolError("invalid payload length")
-        }
-        return BootstrapRecv(
-            info: info,
-            payload: Array(payload.prefix(payloadLen)),
-            doorbellFd: doorbellFd,
-            shmFd: shmFd,
-            mmapControlFd: mmapControlFd
-        )
-    case -2:
-        throw ShmBootstrapError.protocolError("bootstrap payload too large")
-    default:
-        throw ShmBootstrapError.protocolError("failed to receive bootstrap response")
-    }
-}
-
-private func closeReceivedFds(_ recv: BootstrapRecv) {
-    if recv.doorbellFd >= 0 {
-        close(recv.doorbellFd)
-    }
-    if recv.shmFd >= 0 {
-        close(recv.shmFd)
-    }
-    if recv.mmapControlFd >= 0 {
-        close(recv.mmapControlFd)
     }
 }
 

@@ -226,7 +226,8 @@ public func establishShmGuest<D: ServiceDispatcher>(
     conduit: TransportConduitKind = .bare,
     acceptConnections: Bool = false,
     keepalive: DriverKeepaliveConfig? = nil,
-    resumable: Bool = false
+    resumable: Bool = false,
+    metadata: [MetadataEntry] = []
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
     switch role {
     case .initiator:
@@ -238,7 +239,8 @@ public func establishShmGuest<D: ServiceDispatcher>(
             acceptConnections: acceptConnections,
             maxPayloadSize: transport.negotiated.maxPayloadSize,
             keepalive: keepalive,
-            resumable: resumable
+            resumable: resumable,
+            metadata: metadata
         )
     case .acceptor:
         _ = try await performAcceptorTransportPrologue(transport: transport, supportedConduit: .bare)
