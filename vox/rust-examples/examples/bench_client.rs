@@ -122,13 +122,6 @@ fn parse_config() -> eyre::Result<Config> {
         addr = pos_addr.clone();
     }
 
-    if payload_sizes.len() > 1 && payload_sizes[0] == 16 {
-        payload_sizes.remove(0);
-    }
-    if in_flights.len() > 1 && in_flights[0] == 1 {
-        in_flights.remove(0);
-    }
-
     payload_sizes.sort_unstable();
     payload_sizes.dedup();
     in_flights.sort_unstable();
@@ -229,14 +222,15 @@ async fn main() -> eyre::Result<()> {
 
     tracing_subscriber::fmt::init();
 
-    eprintln!("serving on {}, waiting for peer to connect...", cfg.addr);
+    let serve_addr = cfg.addr.clone();
+    eprintln!("serving on {}, waiting for peer to connect...", serve_addr);
     eprintln!(
         "plan: count={}, payload_sizes={:?}, in_flights={:?}",
         cfg.count, cfg.payload_sizes, cfg.in_flights
     );
 
     vox::serve(
-        &cfg.addr,
+        &serve_addr,
         vox::acceptor_fn(move |req, conn| {
             let _ = req.service();
             let client: Arc<TestbedClient> = Arc::new(conn.handle_with_client(()));
@@ -247,10 +241,22 @@ async fn main() -> eyre::Result<()> {
 
                 for &payload_size in &cfg.payload_sizes {
                     for &in_flight in &cfg.in_flights {
-                        let (elapsed, calls_per_sec) =
-                            run_case(Arc::clone(&client), cfg.count, payload_size, in_flight)
-                                .await
-                                .unwrap();
+                        let outcome =
+                            run_case(Arc::clone(&client), cfg.count, payload_size, in_flight).await;
+                        let (elapsed, calls_per_sec) = match outcome {
+                            Ok(v) => v,
+                            Err(err) => {
+                                eprintln!(
+                                    "transport={} payload={}B in_flight={} count={} ERROR: {}",
+                                    transport_from_addr(&cfg.addr),
+                                    payload_size,
+                                    in_flight,
+                                    cfg.count,
+                                    err
+                                );
+                                continue;
+                            }
+                        };
                         let per_call_micros = elapsed.as_secs_f64() * 1_000_000.0 / cfg.count as f64;
                         eprintln!(
                             "transport={} payload={}B in_flight={} count={} elapsed={:.2}s per_call={:.3}us calls_per_sec={:.0}",
