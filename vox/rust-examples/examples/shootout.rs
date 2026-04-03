@@ -242,8 +242,8 @@ fn parse_args() -> Result<Config> {
     let mut load_factors = vec![0.25, 0.5, 0.75, 0.9, 1.0, 1.1];
     let mut transports = vec![Transport::Local, Transport::Shm];
     let mut server_impls = vec![ServerImpl::Swift];
-    let mut out = PathBuf::from("/tmp/open-loop-blocks.json");
-    let mut logs_dir = PathBuf::from("/tmp/open-loop-blocks-logs");
+    let mut out = PathBuf::from("/tmp/shootout.json");
+    let mut logs_dir = PathBuf::from("/tmp/shootout-logs");
     let mut serve_report = false;
     let mut bind = "127.0.0.1:8000".to_string();
 
@@ -435,7 +435,7 @@ fn parse_args() -> Result<Config> {
 
 fn print_usage() {
     eprintln!(
-        "usage: cargo run -p rust-examples --example bench_open_loop_blocks -- [options]\n\
+        "usage: cargo run -p rust-examples --example shootout -- [options]\n\
 single-binary workflow:\n\
   1. run the benchmark and write JSON\n\
   2. optionally serve the report from the same binary with --serve-report\n\
