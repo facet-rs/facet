@@ -1,7 +1,9 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::thread::sleep;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::{JoinHandle, sleep};
 use std::time::Duration;
 
 use eyre::{Context as _, Result};
@@ -170,6 +172,64 @@ fn local_socket_path(addr: &str) -> Option<PathBuf> {
     addr.strip_prefix("local://").map(PathBuf::from)
 }
 
+fn read_rss_kib(pid: u32) -> Option<u64> {
+    let output = Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.trim().parse::<u64>().ok()
+}
+
+struct RssSampler {
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<u64>>,
+}
+
+impl RssSampler {
+    fn start(pid: u32) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_for_thread = Arc::clone(&stop);
+        let handle = std::thread::spawn(move || {
+            let mut peak_rss_kib = 0u64;
+            while !stop_for_thread.load(Ordering::Relaxed) {
+                if let Some(rss_kib) = read_rss_kib(pid) {
+                    peak_rss_kib = peak_rss_kib.max(rss_kib);
+                }
+                sleep(Duration::from_millis(100));
+            }
+            if let Some(rss_kib) = read_rss_kib(pid) {
+                peak_rss_kib = peak_rss_kib.max(rss_kib);
+            }
+            peak_rss_kib
+        });
+        Self {
+            stop,
+            handle: Some(handle),
+        }
+    }
+
+    fn finish(&mut self) -> u64 {
+        self.stop.store(true, Ordering::Relaxed);
+        self.handle
+            .take()
+            .and_then(|handle| handle.join().ok())
+            .unwrap_or(0)
+    }
+}
+
+impl Drop for RssSampler {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 fn remove_stale_socket(addr: &str) -> Result<()> {
     if let Some(path) = local_socket_path(addr) {
         if path.exists() {
@@ -298,6 +358,7 @@ fn run() -> Result<()> {
         .env("PEER_ADDR", &cfg.addr);
     let subject = spawn_child(subject_cmd, "subject-swift")?;
     let mut subject = ChildGuard::new(subject, "subject-swift");
+    let mut subject_rss = RssSampler::start(subject.child_mut().id());
 
     let bench_status = bench_client.wait()?;
     if !bench_status.success() {
@@ -313,8 +374,16 @@ fn run() -> Result<()> {
         Some(status) => return Err(exit_error("subject-swift", status)),
         None => {
             eprintln!("subject-swift did not exit promptly; terminating it");
+            let _ = subject.child_mut().kill();
+            let _ = subject.child_mut().wait();
         }
     }
+    let peak_rss_kib = subject_rss.finish();
+    eprintln!(
+        "subject-swift peak_rss_kib={} peak_rss_mib={:.2}",
+        peak_rss_kib,
+        peak_rss_kib as f64 / 1024.0
+    );
 
     if let Some(path) = local_socket_path(&cfg.addr) {
         let _ = std::fs::remove_file(path);

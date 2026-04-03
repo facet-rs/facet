@@ -1,5 +1,7 @@
 # samply
 profile.json.gz
+profile*.json.gz
+profile*.json.syms.json
 target/
 .handoffs/
 fuzz/**/.sand
@@ -53,3 +55,6 @@ java/**/out/
 .coverage/
 *.profraw
 .ship/
+scripts/__pycache__/
+rust-examples/bench_blocks_report.html
+rust-examples/bench_gnarly_report.html

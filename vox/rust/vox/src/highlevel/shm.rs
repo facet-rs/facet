@@ -72,8 +72,8 @@ impl Default for ShmListenerConfig {
     fn default() -> Self {
         Self {
             max_guests: 8,
-            bipbuf_capacity: 256 * 1024,
-            max_payload_size: 1024 * 1024,
+            bipbuf_capacity: 8 * 1024 * 1024,
+            max_payload_size: 64 * 1024 * 1024,
         }
     }
 }
@@ -83,15 +83,39 @@ impl ShmListenerConfig {
         vec![
             vox_shm::SizeClassConfig {
                 slot_size: 1024,
-                slot_count: 16,
+                slot_count: 256,
+            },
+            vox_shm::SizeClassConfig {
+                slot_size: 8192,
+                slot_count: 256,
             },
             vox_shm::SizeClassConfig {
                 slot_size: 16384,
-                slot_count: 8,
+                slot_count: 256,
             },
             vox_shm::SizeClassConfig {
                 slot_size: 65536,
-                slot_count: 4,
+                slot_count: 256,
+            },
+            vox_shm::SizeClassConfig {
+                slot_size: 262144,
+                slot_count: 128,
+            },
+            vox_shm::SizeClassConfig {
+                slot_size: 524288,
+                slot_count: 128,
+            },
+            vox_shm::SizeClassConfig {
+                slot_size: 1_048_576,
+                slot_count: 128,
+            },
+            vox_shm::SizeClassConfig {
+                slot_size: 2_097_152,
+                slot_count: 64,
+            },
+            vox_shm::SizeClassConfig {
+                slot_size: 4_194_304,
+                slot_count: 16,
             },
         ]
     }

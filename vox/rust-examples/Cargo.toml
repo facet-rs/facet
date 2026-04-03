@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 eyre.workspace = true
 facet.workspace = true
+htrace = { package = "hdrhistogram", version = "7" }
 spec-proto.workspace = true
 vox = { workspace = true, features = ["transport-tcp", "transport-shm", "transport-local", "transport-websocket"] }
 shm-primitives.workspace = true

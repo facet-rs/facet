@@ -1,6 +1,10 @@
-use std::time::Instant;
-use std::{hint::black_box, sync::Arc};
+use std::hint::black_box;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
+use eyre::{Context as _, Result};
+use htrace::Histogram;
 use spec_proto::{Color, GnarlyAttr, GnarlyEntry, GnarlyKind, GnarlyPayload, Shape, TestbedClient};
 use tokio::task::JoinSet;
 
@@ -13,7 +17,9 @@ enum Workload {
 
 #[derive(Debug, Clone)]
 struct Config {
-    count: usize,
+    count: Option<usize>,
+    warmup_secs: f64,
+    measure_secs: f64,
     addr: String,
     workload: Workload,
     payload_sizes: Vec<usize>,
@@ -22,19 +28,84 @@ struct Config {
 }
 
 #[derive(Debug, Clone)]
+struct HistogramBin {
+    value_us: u64,
+    count: u64,
+}
+
+#[derive(Debug, Clone)]
 struct BenchResult {
     workload: &'static str,
     transport: String,
     addr: String,
-    count: usize,
+    mode: &'static str,
+    count: Option<usize>,
+    warmup_secs: f64,
+    measure_secs: f64,
     payload_size: usize,
     in_flight: usize,
+    completed: usize,
+    errors: usize,
     elapsed_secs: f64,
     per_call_micros: f64,
     calls_per_sec: f64,
+    p50_us: f64,
+    p90_us: f64,
+    p99_us: f64,
+    p999_us: f64,
+    max_us: f64,
+    histogram: Vec<HistogramBin>,
 }
 
-fn parse_workload(value: &str) -> eyre::Result<Workload> {
+struct TrialAccumulator {
+    histogram: Histogram<u64>,
+    completed: usize,
+    errors: usize,
+}
+
+impl TrialAccumulator {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            histogram: Histogram::new_with_bounds(1, 60_000_000, 3)
+                .context("failed to allocate latency histogram")?,
+            completed: 0,
+            errors: 0,
+        })
+    }
+
+    fn record_ok(&mut self, elapsed: Duration) {
+        let latency_us = elapsed.as_micros().max(1).min(60_000_000u128) as u64;
+        let _ = self.histogram.record(latency_us);
+        self.completed += 1;
+    }
+
+    fn record_err(&mut self) {
+        self.errors += 1;
+    }
+
+    fn drain_histogram(&mut self) -> Result<Histogram<u64>> {
+        let replacement = Histogram::new_with_bounds(1, 60_000_000, 3)
+            .context("failed to allocate replacement latency histogram")?;
+        Ok(std::mem::replace(&mut self.histogram, replacement))
+    }
+}
+
+#[derive(Debug)]
+struct TrialResult {
+    completed: usize,
+    errors: usize,
+    elapsed_secs: f64,
+    per_call_micros: f64,
+    calls_per_sec: f64,
+    p50_us: f64,
+    p90_us: f64,
+    p99_us: f64,
+    p999_us: f64,
+    max_us: f64,
+    histogram: Vec<HistogramBin>,
+}
+
+fn parse_workload(value: &str) -> Result<Workload> {
     match value {
         "echo" => Ok(Workload::Echo),
         "canvas" => Ok(Workload::Canvas),
@@ -45,7 +116,7 @@ fn parse_workload(value: &str) -> eyre::Result<Workload> {
     }
 }
 
-fn parse_usize_csv(value: &str, flag: &str) -> eyre::Result<Vec<usize>> {
+fn parse_usize_csv(value: &str, flag: &str) -> Result<Vec<usize>> {
     let mut out = Vec::new();
     for part in value.split(',') {
         let s = part.trim();
@@ -63,8 +134,16 @@ fn parse_usize_csv(value: &str, flag: &str) -> eyre::Result<Vec<usize>> {
     Ok(out)
 }
 
-fn parse_config() -> eyre::Result<Config> {
-    let mut count: usize = 10_000;
+fn parse_f64_flag(value: &str, flag: &str) -> Result<f64> {
+    value
+        .parse::<f64>()
+        .map_err(|e| eyre::eyre!("invalid {flag} value '{value}': {e}"))
+}
+
+fn parse_config() -> Result<Config> {
+    let mut count: Option<usize> = None;
+    let mut warmup_secs: f64 = 5.0;
+    let mut measure_secs: f64 = 30.0;
     let mut addr = "local:///tmp/bench.vox".to_string();
     let mut workload = Workload::Echo;
     let mut payload_sizes: Vec<usize> = vec![16];
@@ -79,9 +158,22 @@ fn parse_config() -> eyre::Result<Config> {
                 let v = args
                     .next()
                     .ok_or_else(|| eyre::eyre!("missing value for --count"))?;
-                count = v
-                    .parse::<usize>()
-                    .map_err(|e| eyre::eyre!("invalid --count value '{v}': {e}"))?;
+                count = Some(
+                    v.parse::<usize>()
+                        .map_err(|e| eyre::eyre!("invalid --count value '{v}': {e}"))?,
+                );
+            }
+            "--warmup-secs" => {
+                let v = args
+                    .next()
+                    .ok_or_else(|| eyre::eyre!("missing value for --warmup-secs"))?;
+                warmup_secs = parse_f64_flag(&v, "--warmup-secs")?;
+            }
+            "--measure-secs" => {
+                let v = args
+                    .next()
+                    .ok_or_else(|| eyre::eyre!("missing value for --measure-secs"))?;
+                measure_secs = parse_f64_flag(&v, "--measure-secs")?;
             }
             "--addr" => {
                 addr = args
@@ -137,9 +229,11 @@ fn parse_config() -> eyre::Result<Config> {
     }
 
     if let Some(pos_count) = positionals.first() {
-        count = pos_count
-            .parse::<usize>()
-            .map_err(|e| eyre::eyre!("invalid positional count '{pos_count}': {e}"))?;
+        count = Some(
+            pos_count
+                .parse::<usize>()
+                .map_err(|e| eyre::eyre!("invalid positional count '{pos_count}': {e}"))?,
+        );
     }
     if let Some(pos_addr) = positionals.get(1) {
         addr = pos_addr.clone();
@@ -156,12 +250,22 @@ fn parse_config() -> eyre::Result<Config> {
     if in_flights.iter().any(|&n| n == 0) {
         return Err(eyre::eyre!("in-flight values must be > 0"));
     }
-    if count == 0 {
+    if let Some(count) = count
+        && count == 0
+    {
         return Err(eyre::eyre!("count must be > 0"));
+    }
+    if warmup_secs < 0.0 {
+        return Err(eyre::eyre!("warmup_secs must be >= 0"));
+    }
+    if measure_secs <= 0.0 {
+        return Err(eyre::eyre!("measure_secs must be > 0"));
     }
 
     Ok(Config {
         count,
+        warmup_secs,
+        measure_secs,
         addr,
         workload,
         payload_sizes,
@@ -286,75 +390,268 @@ fn transport_from_addr(addr: &str) -> String {
     addr.split("://").next().unwrap_or("unknown").to_string()
 }
 
-async fn run_case(
+fn quantile_us(hist: &Histogram<u64>, q: f64) -> f64 {
+    if hist.is_empty() {
+        0.0
+    } else {
+        hist.value_at_quantile(q) as f64
+    }
+}
+
+fn recorded_bins(hist: &Histogram<u64>) -> Vec<HistogramBin> {
+    let mut out = Vec::new();
+    for bucket in hist.iter_recorded() {
+        out.push(HistogramBin {
+            value_us: bucket.value_iterated_to(),
+            count: bucket.count_since_last_iteration(),
+        });
+    }
+    out
+}
+
+async fn run_one(
+    client: Arc<TestbedClient>,
+    workload: Workload,
+    payload_size: usize,
+    seq: usize,
+) -> Result<()> {
+    match workload {
+        Workload::Echo => {
+            let resp = client.echo(make_payload(payload_size, seq)).await?;
+            black_box(resp);
+        }
+        Workload::Canvas => {
+            let (name, shapes, background) = make_canvas(payload_size, seq);
+            let resp = client.create_canvas(name, shapes, background).await?;
+            black_box(resp);
+        }
+        Workload::Gnarly => {
+            let resp = client
+                .echo_gnarly(make_gnarly_payload(payload_size, seq))
+                .await?;
+            black_box(resp);
+        }
+    }
+    Ok(())
+}
+
+async fn run_count_case(
     client: Arc<TestbedClient>,
     workload: Workload,
     count: usize,
     payload_size: usize,
     in_flight: usize,
-) -> eyre::Result<(std::time::Duration, f64)> {
+) -> Result<TrialResult> {
     let start = Instant::now();
+    let acc = Arc::new(Mutex::new(TrialAccumulator::new()?));
+
     if in_flight == 1 {
         for i in 0..count {
-            match workload {
-                Workload::Echo => {
-                    let resp = client.echo(make_payload(payload_size, i)).await?;
-                    black_box(resp);
-                }
-                Workload::Canvas => {
-                    let (name, shapes, background) = make_canvas(payload_size, i);
-                    let resp = client.create_canvas(name, shapes, background).await?;
-                    black_box(resp);
-                }
-                Workload::Gnarly => {
-                    let resp = client
-                        .echo_gnarly(make_gnarly_payload(payload_size, i))
-                        .await?;
-                    black_box(resp);
-                }
+            let t0 = Instant::now();
+            match run_one(Arc::clone(&client), workload, payload_size, i).await {
+                Ok(()) => acc.lock().unwrap().record_ok(t0.elapsed()),
+                Err(_) => acc.lock().unwrap().record_err(),
             }
         }
     } else {
         let mut launched = 0usize;
         let mut completed = 0usize;
-        let mut joins: JoinSet<eyre::Result<()>> = JoinSet::new();
+        let mut joins: JoinSet<(Result<()>, Duration)> = JoinSet::new();
 
         while completed < count {
             while launched < count && joins.len() < in_flight {
                 let c = Arc::clone(&client);
-                let workload = workload;
                 joins.spawn(async move {
-                    match workload {
-                        Workload::Echo => {
-                            let msg = make_payload(payload_size, launched);
-                            let resp = c.echo(msg).await?;
-                            black_box(resp);
-                        }
-                        Workload::Canvas => {
-                            let (name, shapes, background) = make_canvas(payload_size, launched);
-                            let resp = c.create_canvas(name, shapes, background).await?;
-                            black_box(resp);
-                        }
-                        Workload::Gnarly => {
-                            let payload = make_gnarly_payload(payload_size, launched);
-                            let resp = c.echo_gnarly(payload).await?;
-                            black_box(resp);
-                        }
-                    }
-                    Ok(())
+                    let t0 = Instant::now();
+                    let result = run_one(c, workload, payload_size, launched).await;
+                    (result, t0.elapsed())
                 });
                 launched += 1;
             }
 
             if let Some(joined) = joins.join_next().await {
-                joined??;
+                let (result, elapsed) = joined.context("bench task panicked")?;
+                match result {
+                    Ok(()) => acc.lock().unwrap().record_ok(elapsed),
+                    Err(_) => acc.lock().unwrap().record_err(),
+                }
                 completed += 1;
             }
         }
     }
-    let elapsed = start.elapsed();
-    let calls_per_sec = count as f64 / elapsed.as_secs_f64();
-    Ok((elapsed, calls_per_sec))
+
+    let elapsed_secs = start.elapsed().as_secs_f64();
+    let mut acc = acc.lock().unwrap();
+    let histogram = acc.drain_histogram()?;
+    let completed = acc.completed;
+    let errors = acc.errors;
+    let per_call_micros = if completed == 0 {
+        0.0
+    } else {
+        histogram.mean()
+    };
+    let calls_per_sec = if elapsed_secs <= f64::EPSILON {
+        0.0
+    } else {
+        completed as f64 / elapsed_secs
+    };
+
+    Ok(TrialResult {
+        completed,
+        errors,
+        elapsed_secs,
+        per_call_micros,
+        calls_per_sec,
+        p50_us: quantile_us(&histogram, 0.50),
+        p90_us: quantile_us(&histogram, 0.90),
+        p99_us: quantile_us(&histogram, 0.99),
+        p999_us: quantile_us(&histogram, 0.999),
+        max_us: quantile_us(&histogram, 1.0),
+        histogram: recorded_bins(&histogram),
+    })
+}
+
+async fn run_timed_phase(
+    client: Arc<TestbedClient>,
+    workload: Workload,
+    duration: Duration,
+    payload_size: usize,
+    in_flight: usize,
+) -> Result<TrialResult> {
+    let start = Instant::now();
+    let deadline = start + duration;
+    let seq = Arc::new(AtomicUsize::new(0));
+    let acc = Arc::new(Mutex::new(TrialAccumulator::new()?));
+    let mut joins = JoinSet::new();
+
+    for _ in 0..in_flight {
+        let client = Arc::clone(&client);
+        let seq = Arc::clone(&seq);
+        let acc = Arc::clone(&acc);
+        joins.spawn(async move {
+            loop {
+                if Instant::now() >= deadline {
+                    break;
+                }
+                let n = seq.fetch_add(1, Ordering::Relaxed);
+                let t0 = Instant::now();
+                match run_one(Arc::clone(&client), workload, payload_size, n).await {
+                    Ok(()) => acc.lock().unwrap().record_ok(t0.elapsed()),
+                    Err(_) => acc.lock().unwrap().record_err(),
+                }
+            }
+            Ok::<(), eyre::Report>(())
+        });
+    }
+
+    while let Some(joined) = joins.join_next().await {
+        joined.context("timed bench worker panicked")??;
+    }
+
+    let elapsed_secs = start.elapsed().as_secs_f64();
+    let mut acc = acc.lock().unwrap();
+    let histogram = acc.drain_histogram()?;
+    let completed = acc.completed;
+    let errors = acc.errors;
+    let per_call_micros = if completed == 0 {
+        0.0
+    } else {
+        histogram.mean()
+    };
+    let calls_per_sec = if elapsed_secs <= f64::EPSILON {
+        0.0
+    } else {
+        completed as f64 / elapsed_secs
+    };
+
+    Ok(TrialResult {
+        completed,
+        errors,
+        elapsed_secs,
+        per_call_micros,
+        calls_per_sec,
+        p50_us: quantile_us(&histogram, 0.50),
+        p90_us: quantile_us(&histogram, 0.90),
+        p99_us: quantile_us(&histogram, 0.99),
+        p999_us: quantile_us(&histogram, 0.999),
+        max_us: quantile_us(&histogram, 1.0),
+        histogram: recorded_bins(&histogram),
+    })
+}
+
+async fn measure_case(
+    client: Arc<TestbedClient>,
+    cfg: &Config,
+    payload_size: usize,
+    in_flight: usize,
+) -> Result<BenchResult> {
+    let transport = transport_from_addr(&cfg.addr);
+    let workload = workload_name(cfg.workload);
+
+    let trial = if let Some(count) = cfg.count {
+        run_count_case(
+            Arc::clone(&client),
+            cfg.workload,
+            count,
+            payload_size,
+            in_flight,
+        )
+        .await?
+    } else {
+        if cfg.warmup_secs > 0.0 {
+            let _ = run_timed_phase(
+                Arc::clone(&client),
+                cfg.workload,
+                Duration::from_secs_f64(cfg.warmup_secs),
+                payload_size,
+                in_flight,
+            )
+            .await?;
+        }
+        run_timed_phase(
+            Arc::clone(&client),
+            cfg.workload,
+            Duration::from_secs_f64(cfg.measure_secs),
+            payload_size,
+            in_flight,
+        )
+        .await?
+    };
+
+    Ok(BenchResult {
+        workload,
+        transport,
+        addr: cfg.addr.clone(),
+        mode: if cfg.count.is_some() {
+            "count"
+        } else {
+            "timed"
+        },
+        count: cfg.count,
+        warmup_secs: if cfg.count.is_some() {
+            0.0
+        } else {
+            cfg.warmup_secs
+        },
+        measure_secs: if cfg.count.is_some() {
+            trial.elapsed_secs
+        } else {
+            cfg.measure_secs
+        },
+        payload_size,
+        in_flight,
+        completed: trial.completed,
+        errors: trial.errors,
+        elapsed_secs: trial.elapsed_secs,
+        per_call_micros: trial.per_call_micros,
+        calls_per_sec: trial.calls_per_sec,
+        p50_us: trial.p50_us,
+        p90_us: trial.p90_us,
+        p99_us: trial.p99_us,
+        p999_us: trial.p999_us,
+        max_us: trial.max_us,
+        histogram: trial.histogram,
+    })
 }
 
 fn print_json(results: &[BenchResult]) {
@@ -362,16 +659,34 @@ fn print_json(results: &[BenchResult]) {
     for (i, r) in results.iter().enumerate() {
         let comma = if i + 1 == results.len() { "" } else { "," };
         println!(
-            "  {{\"workload\":\"{}\",\"transport\":\"{}\",\"addr\":\"{}\",\"count\":{},\"payload_size\":{},\"in_flight\":{},\"elapsed_secs\":{:.6},\"per_call_micros\":{:.3},\"calls_per_sec\":{:.3}}}{}",
+            "  {{\"workload\":\"{}\",\"transport\":\"{}\",\"addr\":\"{}\",\"mode\":\"{}\",\"count\":{},\"warmup_secs\":{:.3},\"measure_secs\":{:.3},\"payload_size\":{},\"in_flight\":{},\"completed\":{},\"errors\":{},\"elapsed_secs\":{:.6},\"per_call_micros\":{:.3},\"calls_per_sec\":{:.3},\"p50_us\":{:.3},\"p90_us\":{:.3},\"p99_us\":{:.3},\"p999_us\":{:.3},\"max_us\":{:.3},\"histogram\":[{}]}}{}",
             r.workload,
             r.transport,
             r.addr,
-            r.count,
+            r.mode,
+            match r.count {
+                Some(count) => count.to_string(),
+                None => "null".to_string(),
+            },
+            r.warmup_secs,
+            r.measure_secs,
             r.payload_size,
             r.in_flight,
+            r.completed,
+            r.errors,
             r.elapsed_secs,
             r.per_call_micros,
             r.calls_per_sec,
+            r.p50_us,
+            r.p90_us,
+            r.p99_us,
+            r.p999_us,
+            r.max_us,
+            r.histogram
+                .iter()
+                .map(|bin| format!("{{\"value_us\":{},\"count\":{}}}", bin.value_us, bin.count))
+                .collect::<Vec<_>>()
+                .join(","),
             comma
         );
     }
@@ -379,20 +694,31 @@ fn print_json(results: &[BenchResult]) {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> eyre::Result<()> {
+async fn main() -> Result<()> {
     let cfg = parse_config()?;
 
     tracing_subscriber::fmt::init();
 
     let serve_addr = cfg.addr.clone();
     eprintln!("serving on {}, waiting for peer to connect...", serve_addr);
-    eprintln!(
-        "plan: workload={}, count={}, payload_sizes={:?}, in_flights={:?}",
-        workload_name(cfg.workload),
-        cfg.count,
-        cfg.payload_sizes,
-        cfg.in_flights
-    );
+    if let Some(count) = cfg.count {
+        eprintln!(
+            "plan: workload={}, count_mode(count={}), payload_sizes={:?}, in_flights={:?}",
+            workload_name(cfg.workload),
+            count,
+            cfg.payload_sizes,
+            cfg.in_flights
+        );
+    } else {
+        eprintln!(
+            "plan: workload={}, timed_mode(warmup_secs={:.2}, measure_secs={:.2}), payload_sizes={:?}, in_flights={:?}",
+            workload_name(cfg.workload),
+            cfg.warmup_secs,
+            cfg.measure_secs,
+            cfg.payload_sizes,
+            cfg.in_flights
+        );
+    }
 
     vox::serve(
         &serve_addr,
@@ -406,52 +732,40 @@ async fn main() -> eyre::Result<()> {
 
                 for &payload_size in &cfg.payload_sizes {
                     for &in_flight in &cfg.in_flights {
-                        let outcome = run_case(
-                            Arc::clone(&client),
-                            cfg.workload,
-                            cfg.count,
-                            payload_size,
-                            in_flight,
-                        )
-                        .await;
-                        let (elapsed, calls_per_sec) = match outcome {
+                        let outcome =
+                            measure_case(Arc::clone(&client), &cfg, payload_size, in_flight).await;
+                        let result = match outcome {
                             Ok(v) => v,
                             Err(err) => {
                                 eprintln!(
-                                    "workload={} transport={} size={} in_flight={} count={} ERROR: {}",
+                                    "workload={} transport={} size={} in_flight={} ERROR: {}",
                                     workload_name(cfg.workload),
                                     transport_from_addr(&cfg.addr),
                                     payload_size,
                                     in_flight,
-                                    cfg.count,
                                     err
                                 );
                                 continue;
                             }
                         };
-                        let per_call_micros = elapsed.as_secs_f64() * 1_000_000.0 / cfg.count as f64;
+
                         eprintln!(
-                            "workload={} transport={} size={} in_flight={} count={} elapsed={:.2}s per_call={:.3}us calls_per_sec={:.0}",
-                            workload_name(cfg.workload),
-                            transport_from_addr(&cfg.addr),
-                            payload_size,
-                            in_flight,
-                            cfg.count,
-                            elapsed.as_secs_f64(),
-                            per_call_micros,
-                            calls_per_sec
+                            "workload={} transport={} size={} in_flight={} mode={} completed={} errors={} elapsed={:.2}s mean={:.3}us p50={:.3}us p99={:.3}us p999={:.3}us calls_per_sec={:.0}",
+                            result.workload,
+                            result.transport,
+                            result.payload_size,
+                            result.in_flight,
+                            result.mode,
+                            result.completed,
+                            result.errors,
+                            result.elapsed_secs,
+                            result.per_call_micros,
+                            result.p50_us,
+                            result.p99_us,
+                            result.p999_us,
+                            result.calls_per_sec,
                         );
-                        results.push(BenchResult {
-                            workload: workload_name(cfg.workload),
-                            transport: transport_from_addr(&cfg.addr),
-                            addr: cfg.addr.clone(),
-                            count: cfg.count,
-                            payload_size,
-                            in_flight,
-                            elapsed_secs: elapsed.as_secs_f64(),
-                            per_call_micros,
-                            calls_per_sec,
-                        });
+                        results.push(result);
                     }
                 }
 
