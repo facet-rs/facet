@@ -1,8 +1,8 @@
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use spec_proto::{
     Canvas, Color, Config, GnarlyPayload, LookupError, MathError, Measurement, Message, Person,
@@ -16,8 +16,8 @@ use tokio::process::{Child, Command};
 use tokio::sync::oneshot;
 use vox::{Rx, Tx};
 use vox_core::{
-    DriverReplySink, SessionAcceptOutcome, SessionHandle, SessionRegistry, TransportMode,
-    acceptor_conduit, acceptor_on, acceptor_transport, memory_link_pair,
+    DriverReplySink, SessionAcceptOutcome, SessionHandle, SessionRegistry, acceptor_conduit,
+    acceptor_on, acceptor_transport, memory_link_pair,
 };
 use vox_stream::StreamLink;
 use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, RequestCall, SelfRef, WriteSlot};
@@ -382,13 +382,6 @@ fn subject_transport() -> SubjectTestTransport {
     }
 }
 
-fn requested_transport_mode() -> TransportMode {
-    match std::env::var("SPEC_CONDUIT").ok().as_deref() {
-        Some("stable") => TransportMode::Stable,
-        _ => TransportMode::Bare,
-    }
-}
-
 pub fn run_async<T>(f: impl Future<Output = T>) -> T {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -745,19 +738,6 @@ async fn spawn_subject_cmd_with_env(
     Ok(child)
 }
 
-fn sid_hex_32() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock before epoch")
-        .as_nanos();
-    format!("{nanos:032x}")
-}
-
-fn leaked_dirs() -> &'static Mutex<Vec<tempfile::TempDir>> {
-    static DIRS: OnceLock<Mutex<Vec<tempfile::TempDir>>> = OnceLock::new();
-    DIRS.get_or_init(|| Mutex::new(Vec::new()))
-}
-
 struct ResumableSubjectClientGuard {
     path: std::path::PathBuf,
 }
@@ -787,10 +767,6 @@ async fn acquire_resumable_subject_client_guard() -> Result<ResumableSubjectClie
             Err(err) => return Err(format!("create resumable subject lock: {err}")),
         }
     }
-}
-
-fn keep_tempdir_alive(dir: tempfile::TempDir) {
-    leaked_dirs().lock().expect("tempdir mutex").push(dir);
 }
 
 /// Listen on a random TCP port, upgrade incoming connection to WebSocket,
