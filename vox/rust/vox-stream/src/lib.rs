@@ -6,9 +6,9 @@
 
 use std::io;
 
-use moire::sync::Mutex;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
-use tokio::sync::oneshot;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
 
@@ -154,15 +154,33 @@ where
     type Rx = StreamLinkRx<BufReader<R>>;
 
     fn split(self) -> (Self::Tx, Self::Rx) {
+        let (tx_chan, mut rx_chan) = mpsc::channel::<Vec<u8>>(1);
+        let mut writer = BufWriter::new(self.writer);
+
+        let writer_task = tokio::spawn(async move {
+            while let Some(bytes) = rx_chan.recv().await {
+                writer
+                    .write_all(&(bytes.len() as u32).to_le_bytes())
+                    .await?;
+                writer.write_all(&bytes).await?;
+                // Drain any already-queued messages before flushing,
+                // so bursts coalesce into fewer syscalls.
+                while let Ok(bytes) = rx_chan.try_recv() {
+                    writer
+                        .write_all(&(bytes.len() as u32).to_le_bytes())
+                        .await?;
+                    writer.write_all(&bytes).await?;
+                }
+                writer.flush().await?;
+            }
+            writer.shutdown().await?;
+            Ok(())
+        });
+
         (
             StreamLinkTx {
-                inner: Mutex::new(
-                    "stream-link-tx",
-                    TxInner {
-                        writer: BufWriter::new(Box::new(self.writer)),
-                        inflight: None,
-                    },
-                ),
+                tx: tx_chan,
+                writer_task,
             },
             StreamLinkRx {
                 reader: BufReader::new(self.reader),
@@ -175,66 +193,36 @@ where
 // Tx
 // ---------------------------------------------------------------------------
 
-type BoxWriter = Box<dyn AsyncWrite + Send + Unpin>;
-
-struct TxInner {
-    writer: BufWriter<BoxWriter>,
-    /// Receives the committed bytes from the previous [`StreamWriteSlot::commit`],
-    /// or `None` if the slot was dropped without committing.
-    inflight: Option<oneshot::Receiver<Vec<u8>>>,
-}
-
 /// Sending half of a [`StreamLink`].
 pub struct StreamLinkTx {
-    inner: Mutex<TxInner>,
+    tx: mpsc::Sender<Vec<u8>>,
+    writer_task: JoinHandle<io::Result<()>>,
 }
 
 /// Permit for sending one payload through a [`StreamLinkTx`].
 pub struct StreamLinkTxPermit {
-    tx: oneshot::Sender<Vec<u8>>,
+    permit: mpsc::OwnedPermit<Vec<u8>>,
 }
 
 /// Write slot for [`StreamLinkTx`].
 pub struct StreamWriteSlot {
     buf: Vec<u8>,
-    tx: oneshot::Sender<Vec<u8>>,
+    permit: mpsc::OwnedPermit<Vec<u8>>,
 }
 
 impl LinkTx for StreamLinkTx {
     type Permit = StreamLinkTxPermit;
 
     async fn reserve(&self) -> io::Result<Self::Permit> {
-        let mut inner = self.inner.lock().await;
-        // Flush bytes committed by the previous slot, if any.
-        if let Some(rx) = inner.inflight.take()
-            && let Ok(bytes) = rx.await
-        {
-            inner
-                .writer
-                .write_all(&(bytes.len() as u32).to_le_bytes())
-                .await?;
-            inner.writer.write_all(&bytes).await?;
-            inner.writer.flush().await?;
-        }
-        let (tx, rx) = oneshot::channel();
-        inner.inflight = Some(rx);
-        Ok(StreamLinkTxPermit { tx })
+        let permit = self.tx.clone().reserve_owned().await.map_err(|_| {
+            io::Error::new(io::ErrorKind::ConnectionReset, "stream writer task stopped")
+        })?;
+        Ok(StreamLinkTxPermit { permit })
     }
 
     async fn close(self) -> io::Result<()> {
-        let mut inner = self.inner.lock().await;
-        if let Some(rx) = inner.inflight.take()
-            && let Ok(bytes) = rx.await
-        {
-            inner
-                .writer
-                .write_all(&(bytes.len() as u32).to_le_bytes())
-                .await?;
-            inner.writer.write_all(&bytes).await?;
-        }
-        inner.writer.flush().await?;
-        inner.writer.shutdown().await?;
-        Ok(())
+        drop(self.tx);
+        self.writer_task.await.map_err(io::Error::other)?
     }
 }
 
@@ -245,7 +233,7 @@ impl LinkTxPermit for StreamLinkTxPermit {
     fn alloc(self, len: usize) -> io::Result<Self::Slot> {
         Ok(StreamWriteSlot {
             buf: vec![0u8; len],
-            tx: self.tx,
+            permit: self.permit,
         })
     }
 }
@@ -256,8 +244,7 @@ impl WriteSlot for StreamWriteSlot {
     }
 
     fn commit(self) {
-        // If the receiver is gone (StreamLinkTx dropped), that's fine.
-        let _ = self.tx.send(self.buf);
+        drop(self.permit.send(self.buf));
     }
 }
 
@@ -293,6 +280,7 @@ impl<R: AsyncRead + Send + Unpin + 'static> LinkRx for StreamLinkRx<R> {
 // ---------------------------------------------------------------------------
 
 type BoxReader = Box<dyn AsyncRead + Send + Unpin>;
+type BoxWriter = Box<dyn AsyncWrite + Send + Unpin>;
 
 /// Raw local IPC stream.
 #[cfg(unix)]
