@@ -154,7 +154,7 @@ where
     type Rx = StreamLinkRx<BufReader<R>>;
 
     fn split(self) -> (Self::Tx, Self::Rx) {
-        let (tx_chan, mut rx_chan) = mpsc::channel::<Vec<u8>>(1);
+        let (tx_chan, mut rx_chan) = mpsc::channel::<Vec<u8>>(128);
         let mut writer = BufWriter::new(self.writer);
 
         let writer_task = tokio::spawn(async move {

@@ -15,6 +15,8 @@ htrace = { package = "hdrhistogram", version = "7" }
 indicatif = "0.17"
 spec-proto.workspace = true
 vox = { workspace = true, features = ["transport-tcp", "transport-shm", "transport-local", "transport-websocket"] }
+vox-ffi.workspace = true
+subject-rust.workspace = true
 shm-primitives.workspace = true
 tempfile.workspace = true
 serde.workspace = true

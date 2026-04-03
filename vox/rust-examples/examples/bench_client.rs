@@ -5,7 +5,11 @@ use std::time::{Duration, Instant};
 
 use eyre::{Context as _, Result};
 use htrace::Histogram;
-use spec_proto::{Color, GnarlyAttr, GnarlyEntry, GnarlyKind, GnarlyPayload, Shape, TestbedClient};
+use spec_proto::{
+    Color, GnarlyAttr, GnarlyEntry, GnarlyKind, GnarlyPayload, Shape, TestbedClient,
+    TestbedDispatcher,
+};
+use subject_rust::TestbedService;
 use tokio::task::JoinSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -922,11 +926,83 @@ fn print_json(results: &[BenchResult]) {
     println!("]");
 }
 
+async fn run_ffi_bench(cfg: Config) -> Result<()> {
+    let max_in_flight = cfg.in_flights.iter().copied().max().unwrap_or(1);
+    let (link_a, link_b) = vox_ffi::ffi_link_pair(max_in_flight);
+
+    // Server side: serve the Testbed service in a spawned task.
+    let _server = tokio::spawn(async move {
+        let _conn = vox::acceptor_on(link_b)
+            .on_connection(TestbedDispatcher::new(TestbedService))
+            .establish::<vox::NoopClient>()
+            .await
+            .expect("ffi server handshake");
+        std::future::pending::<()>().await
+    });
+
+    // Client side: establish initiator and get a TestbedClient caller.
+    let client = Arc::new(
+        vox::initiator_on(link_a, vox::TransportMode::Bare)
+            .establish::<TestbedClient>()
+            .await
+            .context("ffi client establish")?,
+    );
+
+    eprintln!("ffi in-process session established, running benchmark matrix...");
+    let mut results = Vec::<BenchResult>::new();
+    for &payload_size in &cfg.payload_sizes {
+        for &in_flight in &cfg.in_flights {
+            let outcome = measure_case(Arc::clone(&client), &cfg, payload_size, in_flight).await;
+            let result = match outcome {
+                Ok(v) => v,
+                Err(err) => {
+                    eprintln!(
+                        "workload={} transport={} size={} in_flight={} ERROR: {}",
+                        workload_name(cfg.workload),
+                        transport_from_addr(&cfg.addr),
+                        payload_size,
+                        in_flight,
+                        err
+                    );
+                    continue;
+                }
+            };
+            eprintln!(
+                "workload={} transport={} size={} in_flight={} mode={} issued={} completed={} errors={} dropped={} elapsed={:.2}s mean={:.3}us p50={:.3}us p99={:.3}us p999={:.3}us calls_per_sec={:.0}",
+                result.workload,
+                result.transport,
+                result.payload_size,
+                result.in_flight,
+                result.mode,
+                result.issued,
+                result.completed,
+                result.errors,
+                result.dropped,
+                result.elapsed_secs,
+                result.per_call_micros,
+                result.p50_us,
+                result.p99_us,
+                result.p999_us,
+                result.calls_per_sec,
+            );
+            results.push(result);
+        }
+    }
+    if cfg.json {
+        print_json(&results);
+    }
+    std::process::exit(0);
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let cfg = parse_config()?;
 
     tracing_subscriber::fmt::init();
+
+    if cfg.addr == "ffi://" {
+        return run_ffi_bench(cfg).await;
+    }
 
     let serve_addr = cfg.addr.clone();
     eprintln!("serving on {}, waiting for peer to connect...", serve_addr);

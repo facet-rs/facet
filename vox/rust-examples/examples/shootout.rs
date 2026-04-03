@@ -22,6 +22,7 @@ enum Workload {
 enum Transport {
     Local,
     Shm,
+    Ffi,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +155,18 @@ fn bench_runner_cmd(root: &Path) -> PathBuf {
         .join(bin_name)
 }
 
+fn bench_client_cmd(root: &Path) -> PathBuf {
+    let bin_name = if cfg!(windows) {
+        "bench_client.exe"
+    } else {
+        "bench_client"
+    };
+    root.join("target")
+        .join("release")
+        .join("examples")
+        .join(bin_name)
+}
+
 fn parse_workload(value: &str) -> Result<Workload> {
     match value {
         "echo" => Ok(Workload::Echo),
@@ -169,8 +182,9 @@ fn parse_transport(value: &str) -> Result<Transport> {
     match value {
         "local" => Ok(Transport::Local),
         "shm" => Ok(Transport::Shm),
+        "ffi" => Ok(Transport::Ffi),
         _ => Err(eyre::eyre!(
-            "invalid --transports value '{value}', expected local or shm"
+            "invalid --transports value '{value}', expected local, shm, or ffi"
         )),
     }
 }
@@ -495,7 +509,7 @@ options:\n\
   --calibration-target-drop-max <n>\n\
   --calibration-deadline-secs <n>\n\
   --load-factors <csv>\n\
-  --transports <local,shm>\n\
+  --transports <local,shm,ffi>\n\
   --server-impls <swift,rust>\n\
   --out <path>\n\
   --logs-dir <dir>\n\
@@ -518,6 +532,7 @@ fn addr_for_transport(transport: Transport) -> &'static str {
     match transport {
         Transport::Local => "local:///tmp/bench.vox",
         Transport::Shm => "shm:///tmp/bench-shm.sock",
+        Transport::Ffi => "ffi://",
     }
 }
 
@@ -533,6 +548,7 @@ fn transport_name(transport: Transport) -> &'static str {
     match transport {
         Transport::Local => "local",
         Transport::Shm => "shm",
+        Transport::Ffi => "ffi",
     }
 }
 
@@ -644,6 +660,81 @@ fn copy_trial_logs(logs_dir: &Path, from_label: &str, to_label: &str) -> Result<
     Ok(())
 }
 
+fn run_ffi_trial_once(
+    root: &Path,
+    label: &str,
+    server_impl: ServerImpl,
+    payload_size: usize,
+    in_flight: usize,
+    offered_rps: usize,
+    warmup_secs: f64,
+    measure_secs: f64,
+    cfg: &Config,
+) -> Result<TrialRow> {
+    let addr = addr_for_transport(Transport::Ffi);
+    let args = vec![
+        "--addr".to_string(),
+        addr.to_string(),
+        "--workload".to_string(),
+        workload_name(cfg.workload).to_string(),
+        "--payload-sizes".to_string(),
+        payload_size.to_string(),
+        "--in-flights".to_string(),
+        in_flight.to_string(),
+        "--drive-mode".to_string(),
+        "open".to_string(),
+        "--offered-rps".to_string(),
+        offered_rps.to_string(),
+        "--warmup-secs".to_string(),
+        warmup_secs.to_string(),
+        "--measure-secs".to_string(),
+        measure_secs.to_string(),
+        "--json".to_string(),
+    ];
+
+    let output = Command::new(bench_client_cmd(root))
+        .current_dir(root)
+        .args(&args)
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped())
+        .output()
+        .with_context(|| format!("failed to run ffi trial {label}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    fs::write(cfg.logs_dir.join(format!("{label}.stdout.json")), &stdout)
+        .with_context(|| format!("failed to write stdout log for {label}"))?;
+    fs::write(cfg.logs_dir.join(format!("{label}.stderr.log")), &stderr)
+        .with_context(|| format!("failed to write stderr log for {label}"))?;
+
+    if !output.status.success() {
+        return Err(eyre::eyre!(
+            "ffi trial {label} failed with status {}\n{stderr}",
+            output.status
+        ));
+    }
+
+    let mut rows: Vec<BenchResult> = serde_json::from_str(&stdout)
+        .with_context(|| format!("failed to parse ffi trial JSON for {label}"))?;
+    if rows.len() != 1 {
+        return Err(eyre::eyre!(
+            "ffi trial {label} produced {} rows, expected 1",
+            rows.len()
+        ));
+    }
+    let bench = rows.remove(0);
+    Ok(TrialRow {
+        bench,
+        server_impl: server_impl_name(server_impl).to_string(),
+        block: 0,
+        order_in_block: 0,
+        baseline_rps: None,
+        load_factor: None,
+        peak_rss_kib: None,
+        label: label.to_string(),
+    })
+}
+
 fn run_trial_once(
     root: &Path,
     label: &str,
@@ -656,6 +747,20 @@ fn run_trial_once(
     measure_secs: f64,
     cfg: &Config,
 ) -> Result<TrialRow> {
+    if transport == Transport::Ffi {
+        return run_ffi_trial_once(
+            root,
+            label,
+            server_impl,
+            payload_size,
+            in_flight,
+            offered_rps,
+            warmup_secs,
+            measure_secs,
+            cfg,
+        );
+    }
+
     let addr = addr_for_transport(transport);
     let args = vec![
         "--subject-cmd".to_string(),
@@ -1142,6 +1247,9 @@ fn main() -> Result<()> {
                 } else {
                     let mut transport_trials = BTreeMap::<String, TrialRow>::new();
                     for &transport in &cfg.transports {
+                        if transport == Transport::Ffi && server_impl != ServerImpl::Rust {
+                            continue;
+                        }
                         pb.set_message(format!(
                             "calibrating srv={} transport={} payload={} in_flight={}",
                             server_impl_name(server_impl),
@@ -1206,6 +1314,9 @@ fn main() -> Result<()> {
             let server_impl = parse_server_impl(&cal.server_impl)?;
             for (i, offered_rps) in cal.offered_rps_values.iter().copied().enumerate() {
                 for &transport in &cfg.transports {
+                    if transport == Transport::Ffi && server_impl != ServerImpl::Rust {
+                        continue;
+                    }
                     if cfg.sweep_rps.is_none()
                         && !cal.transport_trials.contains_key(transport_name(transport))
                     {

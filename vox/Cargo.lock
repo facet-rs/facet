@@ -2580,11 +2580,13 @@ dependencies = [
  "serde_json",
  "shm-primitives",
  "spec-proto",
+ "subject-rust",
  "sysinfo",
  "tempfile",
  "tokio",
  "tracing-subscriber",
  "vox",
+ "vox-ffi",
 ]
 
 [[package]]
