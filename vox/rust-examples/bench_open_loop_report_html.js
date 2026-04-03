@@ -1,44 +1,4 @@
-#!/usr/bin/env node
-
-import fs from 'node:fs';
-
-function usage(code = 0) {
-  const msg = 'usage: node rust-examples/bench_open_loop_report_html.js --input /tmp/open-loop-blocks.json --output /tmp/open-loop-report.html';
-  (code === 0 ? console.log : console.error)(msg);
-  process.exit(code);
-}
-
-function parseArgs(argv) {
-  const out = {
-    input: null,
-    output: '/tmp/open-loop-report.html',
-    title: 'Vox open-loop benchmark report',
-    inFlights: null,
-    minCompletedForP99: 5000,
-  };
-  for (let i = 2; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === '--input') out.input = argv[++i];
-    else if (arg === '--output') out.output = argv[++i];
-    else if (arg === '--title') out.title = argv[++i];
-    else if (arg === '--in-flights') {
-      out.inFlights = new Set(
-        argv[++i]
-          .split(',')
-          .map((s) => Number.parseInt(s.trim(), 10))
-          .filter((n) => Number.isFinite(n) && n > 0),
-      );
-    }
-    else if (arg === '--min-completed-for-p99') out.minCompletedForP99 = Number.parseInt(argv[++i], 10);
-    else if (arg === '--help' || arg === '-h') usage(0);
-    else {
-      console.error(`unknown arg: ${arg}`);
-      usage(1);
-    }
-  }
-  if (!out.input) usage(1);
-  return out;
-}
+const DEFAULT_DATA_URL = './data.json';
 
 function mean(xs) {
   return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN;
@@ -90,13 +50,24 @@ function pooledQuantile(pooled, q) {
   return pooled.entries.at(-1)?.[0] ?? null;
 }
 
-function main() {
-  const args = parseArgs(process.argv);
-  const input = JSON.parse(fs.readFileSync(args.input, 'utf8'));
-  const allRows = Array.isArray(input) ? input : input.rows;
-  const rows = args.inFlights
-    ? allRows.filter((r) => args.inFlights.has(Number(r.in_flight)))
-    : allRows;
+function parseArgs() {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    dataUrl: params.get('data') || DEFAULT_DATA_URL,
+    title: params.get('title') || 'Vox open-loop benchmark report',
+    minCompletedForP99: Number.parseInt(params.get('min-completed-for-p99') || '5000', 10),
+  };
+}
+
+function formatNumber(value, digits = 1) {
+  return Number.isFinite(value) ? value.toFixed(digits) : 'n/a';
+}
+
+function formatInt(value) {
+  return Number.isFinite(value) ? Math.round(value).toString() : 'n/a';
+}
+
+function buildSeries(rows, minCompletedForP99) {
   const grouped = groupBy(rows, (r) => `${r.server_impl ?? 'swift'}|${r.transport}|${r.payload_size}|${r.in_flight}`);
   const series = [];
   const tableRows = [];
@@ -118,8 +89,8 @@ function main() {
         baseline_rps: mean(trials.map((t) => t.baseline_rps)),
         achieved_rps: mean(trials.map((t) => t.calls_per_sec)),
         p50_us: pooledQuantile(pooled, 0.50),
-        p99_us: completedTotal >= args.minCompletedForP99 ? pooledQuantile(pooled, 0.99) : null,
-        p999_us: completedTotal >= args.minCompletedForP99 ? pooledQuantile(pooled, 0.999) : null,
+        p99_us: completedTotal >= minCompletedForP99 ? pooledQuantile(pooled, 0.99) : null,
+        p999_us: completedTotal >= minCompletedForP99 ? pooledQuantile(pooled, 0.999) : null,
         drop_rate_pct: mean(trials.map((t) => {
           const denom = (t.issued ?? 0) + (t.dropped ?? 0);
           return denom > 0 ? (t.dropped / denom) * 100 : 0;
@@ -128,249 +99,386 @@ function main() {
         phys_footprint_mib: meanFinite(trials.map((t) => Number.isFinite(t.peak_phys_footprint_kib) ? t.peak_phys_footprint_kib / 1024 : null)),
       };
     });
-    series.push({ server_impl: serverImpl, transport, payload_size: Number(payloadSize), in_flight: Number(inFlight), points });
+    series.push({
+      server_impl: serverImpl,
+      transport,
+      payload_size: Number(payloadSize),
+      in_flight: Number(inFlight),
+      points,
+    });
     tableRows.push(...points);
   }
 
-  const html = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${args.title}</title>
-  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-  <style>
-    :root {
-      --bg: #0a1116;
-      --panel: #101920;
-      --text: #eef6fb;
-      --muted: #99aebd;
-      --local: #f7b955;
-      --shm: #51d0c8;
-      --grid: rgba(255,255,255,0.08);
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      color: var(--text);
-      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background:
-        radial-gradient(circle at top left, rgba(81,208,200,0.12), transparent 35%),
-        radial-gradient(circle at top right, rgba(247,185,85,0.14), transparent 32%),
-        linear-gradient(180deg, #081017, var(--bg));
-    }
-    .page { width: min(1320px, calc(100vw - 32px)); margin: 24px auto 40px; }
-    .hero, .panel {
-      background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015));
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 20px;
-      box-shadow: 0 18px 60px rgba(0,0,0,0.3);
-    }
-    .hero { padding: 26px 28px; margin-bottom: 18px; }
-    h1 { margin: 0 0 8px; font-size: clamp(30px, 4vw, 52px); line-height: 0.95; }
-    .sub { margin: 0; color: var(--muted); max-width: 80ch; line-height: 1.5; }
-    .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 18px; }
-    .layout.single { grid-template-columns: 1fr; }
-    .panel { padding: 18px; }
-    .panel h2 { margin: 0 0 6px; font-size: 22px; }
-    .panel p { margin: 0 0 12px; color: var(--muted); }
-    .plot { width: 100%; height: 460px; }
-    .table-wrap { overflow-x: auto; border-radius: 16px; border: 1px solid rgba(255,255,255,0.08); }
-    table { width: 100%; border-collapse: collapse; min-width: 1200px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
-    thead th { text-align: left; color: var(--muted); padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.08); background: rgba(16,25,32,0.95); position: sticky; top: 0; }
-    tbody td { padding: 10px 14px; border-top: 1px solid rgba(255,255,255,0.05); }
-    @media (max-width: 960px) { .layout { grid-template-columns: 1fr; } }
-  </style>
-</head>
-<body>
-  <div class="page">
-    <section class="hero">
-      <h1>${args.title}</h1>
-      <p class="sub">Calibrated open-loop trials. X-axis is offered request rate, not completions. Each series is one payload/in-flight/transport combination averaged across blocks. p99/p999 are hidden when total completions at a point are below ${args.minCompletedForP99}.</p>
-    </section>
-    <section class="layout">
-      <div class="panel">
-        <h2>p99 latency vs offered load</h2>
-        <p>Tail latency should reveal the knee when queueing starts to dominate.</p>
-        <div class="plot" id="p99Plot"></div>
-      </div>
-      <div class="panel">
-        <h2>Achieved throughput vs offered load</h2>
-        <p>If the line flattens while offered load rises, you are past saturation.</p>
-        <div class="plot" id="throughputPlot"></div>
-      </div>
-    </section>
-    <section class="layout">
-      <div class="panel">
-        <h2>Drop rate vs offered load</h2>
-        <p>Drops here mean the scheduler wanted to inject more work but the configured in-flight budget was already full.</p>
-        <div class="plot" id="dropPlot"></div>
-      </div>
-      <div class="panel">
-        <h2>Peak Process Memory vs offered load</h2>
-        <p>Solid = peak physical footprint (macOS). Dashed = peak RSS.</p>
-        <div class="plot" id="memoryPlot"></div>
-      </div>
-    </section>
-    <section class="layout single">
-      <div class="panel">
-        <h2>Summary table</h2>
-        <p>One row per payload, concurrency, transport, and offered-load point.</p>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>transport</th>
-                <th>server_impl</th>
-                <th>payload</th>
-                <th>in_flight</th>
-                <th>blocks</th>
-                <th>completed_total</th>
-                <th>baseline_rps</th>
-                <th>offered_rps</th>
-                <th>achieved_rps</th>
-                <th>p50_us</th>
-                <th>p99_us</th>
-                <th>p999_us</th>
-                <th>drop_rate_pct</th>
-                <th>rss_mib</th>
-                <th>phys_footprint_mib</th>
-              </tr>
-            </thead>
-            <tbody id="rows"></tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-  </div>
-  <script>
-    const series = ${JSON.stringify(series)};
-    const rows = ${JSON.stringify(tableRows)};
-    const palette = [
-      '#4cc9f0', '#f72585', '#b5179e', '#7209b7', '#560bad', '#480ca8',
-      '#3a0ca3', '#3f37c9', '#4361ee', '#4895ef', '#4cc9f0', '#06d6a0',
-      '#ffd166', '#ef476f', '#118ab2', '#8338ec', '#ff006e', '#fb5607',
-    ];
-    const dashesByTransport = { local: 'solid', shm: 'dot' };
-    const seriesKey = (s) => [s.server_impl, s.transport, s.payload_size, s.in_flight].join('|');
-    const uniqueKeys = [...new Set(series.map(seriesKey))];
-    const colorByKey = Object.fromEntries(
-      uniqueKeys.map((k, i) => [k, palette[i % palette.length]]),
-    );
-
-    const singlePayload = new Set(series.map((s) => s.payload_size)).size === 1;
-    const singleInflight = new Set(series.map((s) => s.in_flight)).size === 1;
-
-    function shortLabel(s) {
-      let label = s.server_impl + ' ' + s.transport;
-      if (!singlePayload) label += ' payload=' + s.payload_size;
-      if (!singleInflight) label += ' in_flight=' + s.in_flight;
-      return label;
-    }
-
-    function fmtMaybe(value, digits = 1) {
-      return Number.isFinite(value) ? value.toFixed(digits) : 'n/a';
-    }
-
-    function tracesFor(metric) {
-      return series.map((s) => ({
-        x: s.points.map((p) => p.offered_rps),
-        y: s.points.map((p) => p[metric]),
-        mode: 'lines+markers',
-        name: shortLabel(s),
-        line: {
-          color: colorByKey[seriesKey(s)] ?? '#ccc',
-          dash: dashesByTransport[s.transport] ?? 'solid',
-        },
-        marker: { size: 7 },
-      }));
-    }
-
-    function plot(target, metric, yTitle) {
-      Plotly.newPlot(target, tracesFor(metric), {
-        paper_bgcolor: 'transparent',
-        plot_bgcolor: 'transparent',
-        font: { color: '#eef6fb' },
-        margin: { l: 70, r: 220, t: 10, b: 80 },
-        xaxis: {
-          title: { text: 'offered rps', standoff: 18 },
-          automargin: true,
-          gridcolor: 'rgba(255,255,255,0.08)',
-        },
-        yaxis: { title: yTitle, automargin: true, gridcolor: 'rgba(255,255,255,0.08)' },
-        legend: { orientation: 'v', x: 1.02, xanchor: 'left', y: 1, yanchor: 'top' },
-      }, { displayModeBar: false, responsive: true });
-    }
-
-    plot('p99Plot', 'p99_us', 'p99 latency (us)');
-    plot('throughputPlot', 'achieved_rps', 'achieved throughput (rps)');
-    plot('dropPlot', 'drop_rate_pct', 'drop rate (%)');
-    Plotly.newPlot('memoryPlot', [
-      ...series.map((s) => ({
-        x: s.points.map((p) => p.offered_rps),
-        y: s.points.map((p) => p.phys_footprint_mib),
-        mode: 'lines+markers',
-        name: shortLabel(s) + ' phys',
-        line: {
-          color: colorByKey[seriesKey(s)] ?? '#ccc',
-          dash: dashesByTransport[s.transport] ?? 'solid',
-        },
-        marker: { size: 7 },
-      })),
-      ...series.map((s) => ({
-        x: s.points.map((p) => p.offered_rps),
-        y: s.points.map((p) => p.rss_mib),
-        mode: 'lines+markers',
-        name: shortLabel(s) + ' rss',
-        line: { color: colorByKey[seriesKey(s)] ?? '#ccc', dash: 'dashdot' },
-        marker: { size: 6, opacity: 0.6 },
-      })),
-    ], {
-      paper_bgcolor: 'transparent',
-      plot_bgcolor: 'transparent',
-      font: { color: '#eef6fb' },
-      margin: { l: 70, r: 220, t: 10, b: 80 },
-      xaxis: {
-        title: { text: 'offered rps', standoff: 18 },
-        automargin: true,
-        gridcolor: 'rgba(255,255,255,0.08)',
-      },
-      yaxis: { title: 'memory (MiB)', automargin: true, gridcolor: 'rgba(255,255,255,0.08)' },
-      legend: { orientation: 'v', x: 1.02, xanchor: 'left', y: 1, yanchor: 'top' },
-    }, { displayModeBar: false, responsive: true });
-
-    const tbody = document.getElementById('rows');
-    for (const row of rows.sort((a, b) => (a.server_impl ?? 'swift').localeCompare(b.server_impl ?? 'swift') || a.payload_size - b.payload_size || a.in_flight - b.in_flight || a.offered_rps - b.offered_rps || a.transport.localeCompare(b.transport))) {
-      const tr = document.createElement('tr');
-      for (const cell of [
-        row.transport,
-        row.server_impl ?? 'swift',
-        row.payload_size,
-        row.in_flight,
-        row.blocks,
-        row.completed_total.toFixed(0),
-        row.baseline_rps.toFixed(0),
-        row.offered_rps.toFixed(0),
-        row.achieved_rps.toFixed(0),
-        fmtMaybe(row.p50_us, 1),
-        fmtMaybe(row.p99_us, 1),
-        fmtMaybe(row.p999_us, 1),
-        row.drop_rate_pct.toFixed(1),
-        fmtMaybe(row.rss_mib, 1),
-        fmtMaybe(row.phys_footprint_mib, 1),
-      ]) {
-        const td = document.createElement('td');
-        td.textContent = String(cell);
-        tr.appendChild(td);
-      }
-      tbody.appendChild(tr);
-    }
-  </script>
-</body>
-</html>`;
-
-  fs.writeFileSync(args.output, html);
-  console.log(`wrote ${args.output}`);
+  return { series, tableRows };
 }
 
-main();
+function lineStyle(series) {
+  if (series.dash) {
+    return { strokeDasharray: series.dash };
+  }
+  return series.transport === 'shm'
+    ? { strokeDasharray: '4 4' }
+    : { strokeDasharray: '' };
+}
+
+function colorForIndex(index) {
+  const palette = [
+    '#4cc9f0', '#f72585', '#b5179e', '#7209b7', '#560bad', '#480ca8',
+    '#3a0ca3', '#3f37c9', '#4361ee', '#4895ef', '#06d6a0', '#ffd166',
+    '#ef476f', '#118ab2', '#8338ec', '#ff006e', '#fb5607',
+  ];
+  return palette[index % palette.length];
+}
+
+function createSvgEl(tag) {
+  return document.createElementNS('http://www.w3.org/2000/svg', tag);
+}
+
+function niceTicks(min, max, count = 5) {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [];
+  if (min === max) return [min];
+  const span = max - min;
+  const step = niceStep(span / Math.max(1, count - 1));
+  const start = Math.ceil(min / step) * step;
+  const ticks = [];
+  for (let tick = start; tick <= max + step * 0.5; tick += step) {
+    ticks.push(tick);
+  }
+  return ticks;
+}
+
+function niceStep(rawStep) {
+  const power = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const normalized = rawStep / power;
+  const nice =
+    normalized <= 1 ? 1 :
+    normalized <= 2 ? 2 :
+    normalized <= 5 ? 5 : 10;
+  return nice * power;
+}
+
+function renderChart(container, { title, yLabel, series, xFormat = formatInt, yFormat = formatNumber }) {
+  const width = Math.max(container.clientWidth || 0, 320);
+  const height = 360;
+  const margin = { top: 28, right: 18, bottom: 48, left: 76 };
+  const plotWidth = Math.max(1, width - margin.left - margin.right);
+  const plotHeight = Math.max(1, height - margin.top - margin.bottom);
+
+  const allPoints = series.flatMap((s) => s.points.map((p) => ({ x: p.offered_rps, y: p.y })));
+  const xs = allPoints.map((p) => p.x).filter(Number.isFinite);
+  const ys = allPoints.map((p) => p.y).filter(Number.isFinite);
+  const xMin = xs.length ? Math.min(...xs) : 0;
+  const xMax = xs.length ? Math.max(...xs) : 1;
+  const yMin = ys.length ? Math.min(...ys) : 0;
+  const yMax = ys.length ? Math.max(...ys) : 1;
+  const xPad = xMin === xMax ? 1 : (xMax - xMin) * 0.05;
+  const yPad = yMin === yMax ? 1 : (yMax - yMin) * 0.08;
+  const x0 = xMin - xPad;
+  const x1 = xMax + xPad;
+  const y0 = yMin - yPad;
+  const y1 = yMax + yPad;
+
+  const xScale = (x) => margin.left + ((x - x0) / (x1 - x0)) * plotWidth;
+  const yScale = (y) => margin.top + plotHeight - ((y - y0) / (y1 - y0)) * plotHeight;
+
+  const svg = createSvgEl('svg');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('width', '100%');
+  svg.setAttribute('height', String(height));
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', title);
+
+  const background = createSvgEl('rect');
+  background.setAttribute('x', '0');
+  background.setAttribute('y', '0');
+  background.setAttribute('width', String(width));
+  background.setAttribute('height', String(height));
+  background.setAttribute('rx', '16');
+  background.setAttribute('fill', 'rgba(255,255,255,0.02)');
+  svg.appendChild(background);
+
+  const titleEl = createSvgEl('text');
+  titleEl.setAttribute('x', String(margin.left));
+  titleEl.setAttribute('y', '18');
+  titleEl.setAttribute('fill', 'var(--text)');
+  titleEl.setAttribute('font-size', '16');
+  titleEl.setAttribute('font-weight', '700');
+  titleEl.textContent = title;
+  svg.appendChild(titleEl);
+
+  const xTicks = niceTicks(x0, x1, 5);
+  const yTicks = niceTicks(y0, y1, 5);
+
+  for (const tick of xTicks) {
+    const x = xScale(tick);
+    const line = createSvgEl('line');
+    line.setAttribute('x1', String(x));
+    line.setAttribute('x2', String(x));
+    line.setAttribute('y1', String(margin.top));
+    line.setAttribute('y2', String(margin.top + plotHeight));
+    line.setAttribute('stroke', 'rgba(255,255,255,0.08)');
+    svg.appendChild(line);
+
+    const label = createSvgEl('text');
+    label.setAttribute('x', String(x));
+    label.setAttribute('y', String(margin.top + plotHeight + 18));
+    label.setAttribute('fill', 'var(--muted)');
+    label.setAttribute('font-size', '11');
+    label.setAttribute('text-anchor', 'middle');
+    label.textContent = xFormat(tick);
+    svg.appendChild(label);
+  }
+
+  for (const tick of yTicks) {
+    const y = yScale(tick);
+    const line = createSvgEl('line');
+    line.setAttribute('x1', String(margin.left));
+    line.setAttribute('x2', String(margin.left + plotWidth));
+    line.setAttribute('y1', String(y));
+    line.setAttribute('y2', String(y));
+    line.setAttribute('stroke', 'rgba(255,255,255,0.08)');
+    svg.appendChild(line);
+
+    const label = createSvgEl('text');
+    label.setAttribute('x', String(margin.left - 10));
+    label.setAttribute('y', String(y + 4));
+    label.setAttribute('fill', 'var(--muted)');
+    label.setAttribute('font-size', '11');
+    label.setAttribute('text-anchor', 'end');
+    label.textContent = yFormat(tick);
+    svg.appendChild(label);
+  }
+
+  const xAxis = createSvgEl('line');
+  xAxis.setAttribute('x1', String(margin.left));
+  xAxis.setAttribute('x2', String(margin.left + plotWidth));
+  xAxis.setAttribute('y1', String(margin.top + plotHeight));
+  xAxis.setAttribute('y2', String(margin.top + plotHeight));
+  xAxis.setAttribute('stroke', 'rgba(255,255,255,0.35)');
+  svg.appendChild(xAxis);
+
+  const yAxis = createSvgEl('line');
+  yAxis.setAttribute('x1', String(margin.left));
+  yAxis.setAttribute('x2', String(margin.left));
+  yAxis.setAttribute('y1', String(margin.top));
+  yAxis.setAttribute('y2', String(margin.top + plotHeight));
+  yAxis.setAttribute('stroke', 'rgba(255,255,255,0.35)');
+  svg.appendChild(yAxis);
+
+  for (const [index, s] of series.entries()) {
+    const color = colorForIndex(index);
+    const style = lineStyle(s);
+    const validPoints = s.points.filter((p) => Number.isFinite(p.y));
+    if (!validPoints.length) continue;
+
+    const path = createSvgEl('path');
+    path.setAttribute(
+      'd',
+      validPoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xScale(p.offered_rps)} ${yScale(p.y)}`).join(' '),
+    );
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', color);
+    path.setAttribute('stroke-width', '2.5');
+    if (style.strokeDasharray) path.setAttribute('stroke-dasharray', style.strokeDasharray);
+    svg.appendChild(path);
+
+    for (const point of validPoints) {
+      const circle = createSvgEl('circle');
+      circle.setAttribute('cx', String(xScale(point.offered_rps)));
+      circle.setAttribute('cy', String(yScale(point.y)));
+      circle.setAttribute('r', '3.5');
+      circle.setAttribute('fill', color);
+      svg.appendChild(circle);
+    }
+  }
+
+  const xLabel = createSvgEl('text');
+  xLabel.setAttribute('x', String(margin.left + plotWidth / 2));
+  xLabel.setAttribute('y', String(height - 10));
+  xLabel.setAttribute('fill', 'var(--muted)');
+  xLabel.setAttribute('font-size', '12');
+  xLabel.setAttribute('text-anchor', 'middle');
+  xLabel.textContent = 'offered rps';
+  svg.appendChild(xLabel);
+
+  const yAxisLabel = createSvgEl('text');
+  yAxisLabel.setAttribute('x', '16');
+  yAxisLabel.setAttribute('y', String(margin.top + plotHeight / 2));
+  yAxisLabel.setAttribute('fill', 'var(--muted)');
+  yAxisLabel.setAttribute('font-size', '12');
+  yAxisLabel.setAttribute('text-anchor', 'middle');
+  yAxisLabel.setAttribute('transform', `rotate(-90 16 ${margin.top + plotHeight / 2})`);
+  yAxisLabel.textContent = yLabel;
+  svg.appendChild(yAxisLabel);
+
+  const legend = document.createElement('div');
+  legend.className = 'legend';
+  for (const [index, s] of series.entries()) {
+    const color = colorForIndex(index);
+    const entry = document.createElement('div');
+    entry.className = 'legend-entry';
+    const swatch = document.createElement('span');
+    swatch.className = 'swatch';
+    swatch.style.background = color;
+    const style = lineStyle(s);
+    if (style.strokeDasharray) swatch.style.borderBottom = '2px dashed rgba(255,255,255,0.4)';
+    const label = document.createElement('span');
+    label.textContent = `${s.server_impl} ${s.transport}${s.payload_size ? ` payload=${s.payload_size}` : ''}${s.in_flight ? ` in_flight=${s.in_flight}` : ''}`;
+    entry.append(swatch, label);
+    legend.appendChild(entry);
+  }
+
+  container.innerHTML = '';
+  container.append(svg, legend);
+}
+
+function renderTable(rows) {
+  const tbody = document.getElementById('rows');
+  tbody.textContent = '';
+  const sorted = rows.slice().sort((a, b) => {
+    const sa = a.server_impl ?? 'swift';
+    const sb = b.server_impl ?? 'swift';
+    return sa.localeCompare(sb)
+      || a.payload_size - b.payload_size
+      || a.in_flight - b.in_flight
+      || a.offered_rps - b.offered_rps
+      || a.transport.localeCompare(b.transport);
+  });
+
+  for (const row of sorted) {
+    const tr = document.createElement('tr');
+    const cells = [
+      row.transport,
+      row.server_impl ?? 'swift',
+      row.payload_size,
+      row.in_flight,
+      row.blocks,
+      formatInt(row.completed_total),
+      formatNumber(row.baseline_rps, 0),
+      formatNumber(row.offered_rps, 0),
+      formatNumber(row.achieved_rps, 0),
+      formatNumber(row.p50_us, 1),
+      formatNumber(row.p99_us, 1),
+      formatNumber(row.p999_us, 1),
+      formatNumber(row.drop_rate_pct, 1),
+      formatNumber(row.rss_mib, 1),
+      formatNumber(row.phys_footprint_mib, 1),
+    ];
+    for (const cell of cells) {
+      const td = document.createElement('td');
+      td.textContent = String(cell);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+}
+
+function renderSummary(rows) {
+  const el = document.getElementById('summary');
+  const totalCompleted = rows.reduce((acc, row) => acc + (row.completed_total ?? 0), 0);
+  const avgDrop = mean(rows.map((r) => r.drop_rate_pct));
+  const avgThroughput = mean(rows.map((r) => r.achieved_rps));
+  el.innerHTML = `
+    <div class="stat"><div class="label">rows</div><div class="value">${rows.length}</div></div>
+    <div class="stat"><div class="label">completed</div><div class="value">${formatInt(totalCompleted)}</div></div>
+    <div class="stat"><div class="label">avg throughput</div><div class="value">${formatNumber(avgThroughput, 0)}</div></div>
+    <div class="stat"><div class="label">avg drop rate</div><div class="value">${formatNumber(avgDrop, 1)}%</div></div>
+  `;
+}
+
+function renderApp(data, title) {
+  const { minCompletedForP99 } = parseArgs();
+  const { series, tableRows } = buildSeries(data.rows ?? [], minCompletedForP99);
+  document.title = title;
+  document.getElementById('title').textContent = title;
+  document.getElementById('subtitle').textContent = `Loaded ${tableRows.length} open-loop rows from ${series.length} series. Refresh the JSON and reload the page to iterate on plots.`;
+  renderSummary(tableRows);
+  renderTable(tableRows);
+
+  const groupedByChart = [
+    {
+      id: 'p99Plot',
+      title: 'p99 latency vs offered load',
+      yLabel: 'p99 latency (us)',
+      series: series.map((s) => ({
+        ...s,
+        points: s.points.map((p) => ({ offered_rps: p.offered_rps, y: p.p99_us })),
+      })),
+      yFormat: (v) => formatNumber(v, 0),
+    },
+    {
+      id: 'throughputPlot',
+      title: 'achieved throughput vs offered load',
+      yLabel: 'achieved throughput (rps)',
+      series: series.map((s) => ({
+        ...s,
+        points: s.points.map((p) => ({ offered_rps: p.offered_rps, y: p.achieved_rps })),
+      })),
+      yFormat: (v) => formatNumber(v, 0),
+    },
+    {
+      id: 'dropPlot',
+      title: 'drop rate vs offered load',
+      yLabel: 'drop rate (%)',
+      series: series.map((s) => ({
+        ...s,
+        points: s.points.map((p) => ({ offered_rps: p.offered_rps, y: p.drop_rate_pct })),
+      })),
+      yFormat: (v) => formatNumber(v, 1),
+    },
+    {
+      id: 'memoryPlot',
+      title: 'peak process memory vs offered load',
+      yLabel: 'memory (MiB)',
+      series: [
+        ...series.map((s) => ({
+          ...s,
+          dash: '4 4',
+          points: s.points.map((p) => ({ offered_rps: p.offered_rps, y: p.phys_footprint_mib })),
+          metric: 'phys',
+        })),
+        ...series.map((s) => ({
+          ...s,
+          transport: `${s.transport} rss`,
+          dash: '10 4 2 4',
+          points: s.points.map((p) => ({ offered_rps: p.offered_rps, y: p.rss_mib })),
+          metric: 'rss',
+        })),
+      ],
+      yFormat: (v) => formatNumber(v, 1),
+    },
+  ];
+
+  for (const chart of groupedByChart) {
+    const container = document.getElementById(chart.id);
+    renderChart(container, {
+      title: chart.title,
+      yLabel: chart.yLabel,
+      series: chart.series,
+      yFormat: chart.yFormat,
+    });
+  }
+}
+
+async function main() {
+  const { dataUrl, title } = parseArgs();
+  const status = document.getElementById('status');
+  status.textContent = `Loading ${dataUrl}...`;
+  try {
+    const response = await fetch(dataUrl, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error(`failed to fetch ${dataUrl}: ${response.status} ${response.statusText}`);
+    }
+    const data = await response.json();
+    renderApp(data, title);
+    status.textContent = `Loaded ${data.rows?.length ?? 0} rows from ${dataUrl}`;
+  } catch (err) {
+    status.textContent = `Failed to load ${dataUrl}: ${err instanceof Error ? err.message : String(err)}`;
+    status.classList.add('error');
+    throw err;
+  }
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  void main();
+});
