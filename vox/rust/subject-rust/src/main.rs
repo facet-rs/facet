@@ -10,7 +10,7 @@ use vox::{Rx, Tx};
 use vox_core::{TransportMode, initiator, initiator_on};
 use vox_shm::bootstrap::{BootstrapStatus, encode_request};
 use vox_shm::segment::Segment;
-use vox_stream::tcp_link_source;
+use vox_stream::{local_link_source, tcp_link_source};
 
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
@@ -337,12 +337,32 @@ async fn listen_and_serve() -> Result<(), String> {
 async fn connect_and_serve() -> Result<(), String> {
     let addr = std::env::var("PEER_ADDR").map_err(|_| "PEER_ADDR env var not set".to_string())?;
     info!("connecting to {addr}");
+    let mode = requested_transport_mode();
+    let dispatcher = TestbedDispatcher::new(TestbedService);
+    let (scheme, host) = match addr.split_once("://") {
+        Some((scheme, host)) => (scheme, host.to_string()),
+        None => ("tcp", addr.clone()),
+    };
 
-    let root_caller_guard = initiator(tcp_link_source(addr), requested_transport_mode())
-        .on_connection(TestbedDispatcher::new(TestbedService))
-        .establish::<TestbedClient>()
-        .await
-        .map_err(|e| format!("handshake failed: {e}"))?;
+    let root_caller_guard = match scheme {
+        "tcp" => initiator(tcp_link_source(host), mode)
+            .on_connection(dispatcher.clone())
+            .establish::<TestbedClient>()
+            .await
+            .map_err(|e| format!("handshake failed: {e}"))?,
+        "local" => initiator(local_link_source(host), mode)
+            .on_connection(dispatcher.clone())
+            .establish::<TestbedClient>()
+            .await
+            .map_err(|e| format!("handshake failed: {e}"))?,
+        #[cfg(unix)]
+        "shm" => initiator(vox_shm::bootstrap::shm_link_source(host), mode)
+            .on_connection(dispatcher.clone())
+            .establish::<TestbedClient>()
+            .await
+            .map_err(|e| format!("handshake failed: {e}"))?,
+        _ => return Err(format!("unsupported PEER_ADDR scheme: {scheme}")),
+    };
 
     let _root_caller_guard = root_caller_guard;
     std::future::pending::<()>().await;
