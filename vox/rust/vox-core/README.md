@@ -15,7 +15,7 @@ Core runtime for sessions, drivers, conduits, and connection orchestration.
 ## Fits with
 
 - `vox` for service-facing APIs
-- Link/transport crates (`vox-stream`, `vox-websocket`, `vox-shm`, `vox-local`)
+- Link/transport crates (`vox-stream`, `vox-websocket`, `vox-local`)
 - `vox-types` for protocol state and message types
 
 Part of the Vox workspace: <https://github.com/bearcove/vox>

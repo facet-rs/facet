@@ -110,36 +110,12 @@ insert_anchor_links = "left"
 > deliver to JS via a `js_sys::Function` callback as a `Uint8Array`. One copy
 > (value → message buffer).
 
-> r[zerocopy.send.shm]
->
-> **SHM links:** the send path depends on payload size:
->
-> - **Small (`8 + payload_len <= inline_threshold`):** `LinkTx::alloc`
->   returns a `WriteSlot` backed by a heap-allocated `Vec<u8>`.
->   Serialization writes into this buffer, then `commit()` copies the
->   bytes into the BipBuffer ring. One copy (heap buffer → ring). The
->   ring cannot be written to directly because the producer reservation
->   must be held as briefly as possible to avoid blocking the receiver.
-> - **Medium (`8 + payload_len > inline_threshold` and
->   `payload_len <= mmap_threshold`):** serialize
->   into a VarSlot. `LinkTx::alloc` allocates a slot and returns a
->   `WriteSlot` pointing directly into shared memory. Zero copies for
->   the payload bytes. A slot-ref frame is written to the BipBuffer to
->   notify the receiver.
-> - **Large (`payload_len > mmap_threshold`):** serialize into a memory-mapped
->   region. A reference to the mapping is sent through the BipBuffer.
->
-> `mmap_threshold` is defined by the SHM transport as the largest payload
-> that fits in any VarSlotPool class (see [SHM spec](@/spec/shm.md)).
-
 ## Receive path
 
 > r[zerocopy.recv]
 >
 > On the receive side, `LinkRx::recv` returns a `Backing` that keeps raw
-> bytes alive. For heap-backed links the Backing owns the buffer; for SHM
-> links it holds a handle (BipBuf region, VarSlot, or mmap) that keeps the
-> underlying shared memory valid until dropped. The conduit
+> bytes alive. For heap-backed links the Backing owns the buffer. The conduit
 > deserializes borrowing from this backing, producing a `SelfRef<T>` that
 > pairs the decoded value with its backing.
 
@@ -168,29 +144,6 @@ insert_anchor_links = "left"
 > **In-process links (WASM ↔ JS):** `recv` yields a `Vec<u8>` pushed by JS
 > via the `deliver()` method, converted to `Box<[u8]>`. One copy (JS
 > `Uint8Array` → Rust heap). Deserialization borrows from the box.
-
-> r[zerocopy.recv.shm.inline]
->
-> **SHM links (inline):** for messages where
-> `8 + payload_len <= inline_threshold`, `recv`
-> copies the payload out of the BipBuffer ring into a `Box<[u8]>` and
-> releases the ring region immediately (see `zerocopy.backing.bipbuf`).
-> One copy (ring → heap). Deserialization borrows from the box.
-
-> r[zerocopy.recv.shm.slotref]
->
-> **SHM links (slot-ref):** for messages where
-> `8 + payload_len > inline_threshold` and `payload_len <= mmap_threshold`,
-> `recv` returns a Backing
-> that borrows from a VarSlot. Zero copies — deserialization reads from the
-> slot, which is returned to the pool when the Backing drops.
-
-> r[zerocopy.recv.shm.mmap]
->
-> **SHM links (mmap):** for messages where `payload_len > mmap_threshold`,
-> `recv` maps the region and
-> returns a Backing that owns the mapping. Zero copies — deserialization
-> reads from the mapping.
 
 ## Framing layers
 
@@ -246,7 +199,7 @@ insert_anchor_links = "left"
 >
 > **BareConduit** — no additional framing. The serialized value bytes are
 > passed directly to the link. Suitable for transports where reliability
-> is inherent or unnecessary (shared memory, in-process, memory).
+> is inherent or unnecessary (in-process, memory).
 
 > r[zerocopy.framing.conduit.stable]
 >
@@ -279,19 +232,6 @@ insert_anchor_links = "left"
 >
 > **WebSocket links:** each message is sent as a single binary WebSocket
 > frame. The WebSocket protocol preserves message boundaries natively.
-
-> r[zerocopy.framing.link.shm]
->
-> **SHM links:** 8-byte frame header (total_len + flags + reserved)
-> followed by one of:
->
-> - inline payload bytes (padded to 4-byte alignment),
-> - a 12-byte slot-ref body pointing into the VarSlotPool (`SLOT_REF`), or
-> - a 24-byte mmap-ref body (`MMAP_REF`) containing mapping identifier,
->   generation, offset, and payload length.
->
-> See the
-> [SHM spec](@/spec/shm.md) for details.
 
 > r[zerocopy.framing.link.inprocess]
 >

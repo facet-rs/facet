@@ -15,7 +15,6 @@ cov *args:
     cargo llvm-cov nextest --summary-only {{ args }}
 
 rust-ffi:
-    cargo build --release -p vox-shm-ffi
 
 ts-typecheck:
     pnpm check
@@ -33,7 +32,6 @@ swift *args:
     swift test --no-parallel -Xlinker -L$(pwd)/target/release
     swift build -c release --package-path swift/subject
     SUBJECT_CMD="./swift/subject/subject-swift.sh" cargo nextest run -p spec-tests {{ quote(args) }}
-    SPEC_TRANSPORT=shm SUBJECT_CMD="./swift/subject/subject-swift.sh" cargo nextest run -p spec-tests {{ quote(args) }}
 
 swift-subject-cov *args:
     just rust-ffi
@@ -45,8 +43,6 @@ swift-subject-cov *args:
     LLVM_PROFILE_FILE="$(pwd)/.coverage/swift-subject/tcp-%p%c.profraw" \
       SUBJECT_CMD="$(pwd)/swift/subject/.build/debug/subject-swift" \
       cargo nextest run -P coverage --test-threads=1 -p spec-tests {{ quote(args) }}
-    LLVM_PROFILE_FILE="$(pwd)/.coverage/swift-subject/shm-%p%c.profraw" \
-      SPEC_TRANSPORT=shm \
       SUBJECT_CMD="$(pwd)/swift/subject/.build/debug/subject-swift" \
       cargo nextest run -P coverage --test-threads=1 -p spec-tests {{ quote(args) }}
     LLVM_PROFILE_FILE="$(pwd)/.coverage/swift-subject/subject-tests-%p%c.profraw" \
@@ -125,14 +121,9 @@ ws-wasm *args:
 ws-ts *args:
     cd typescript/tests/playwright && pnpm exec playwright test ws-ts.spec.ts {{ args }}
 
-fuzz-shm-build:
-    cargo afl build --manifest-path fuzz/vox-shm-afl/Cargo.toml --bin framing_peek
-    cargo afl build --manifest-path fuzz/vox-shm-afl/Cargo.toml --bin shm_link_roundtrip
 
 fuzz-targets:
     @echo "Available fuzz targets:"
-    @echo "  framing_peek         (fuzz/vox-shm-afl)"
-    @echo "  shm_link_roundtrip   (fuzz/vox-shm-afl)"
     @echo "  protocol_decode      (fuzz/vox-afl)"
     @echo "  testbed_mem_session  (fuzz/vox-afl)"
     @echo ""
@@ -143,13 +134,9 @@ fuzz-targets:
 fuzz-build target="all":
     @case "{{ target }}" in \
       all) \
-        cargo afl build --manifest-path fuzz/vox-shm-afl/Cargo.toml --bin framing_peek; \
-        cargo afl build --manifest-path fuzz/vox-shm-afl/Cargo.toml --bin shm_link_roundtrip; \
         cargo afl build --manifest-path fuzz/vox-afl/Cargo.toml --bin protocol_decode; \
         cargo afl build --manifest-path fuzz/vox-afl/Cargo.toml --bin testbed_mem_session; \
         ;; \
-      framing_peek|shm_link_roundtrip) \
-        cargo afl build --manifest-path fuzz/vox-shm-afl/Cargo.toml --bin "{{ target }}"; \
         ;; \
       protocol_decode|testbed_mem_session) \
         cargo afl build --manifest-path fuzz/vox-afl/Cargo.toml --bin "{{ target }}"; \
@@ -164,8 +151,6 @@ fuzz-build target="all":
 fuzz-run target="all" seconds="":
     just fuzz-build "{{ target }}"
     @mkdir -p \
-      fuzz/vox-shm-afl/out/framing_peek \
-      fuzz/vox-shm-afl/out/shm_link_roundtrip \
       fuzz/vox-afl/out/protocol_decode \
       fuzz/vox-afl/out/testbed_mem_session
     @trap 'exit 130' INT TERM; \
@@ -184,16 +169,10 @@ fuzz-run target="all" seconds="":
     }; \
     case "{{ target }}" in \
       all) \
-        run_fuzz "{{ seconds }}" fuzz/vox-shm-afl/in/framing_peek fuzz/vox-shm-afl/out/framing_peek fuzz/vox-shm-afl/target/debug/framing_peek; \
-        run_fuzz "{{ seconds }}" fuzz/vox-shm-afl/in/shm_link_roundtrip fuzz/vox-shm-afl/out/shm_link_roundtrip fuzz/vox-shm-afl/target/debug/shm_link_roundtrip; \
         run_fuzz "{{ seconds }}" fuzz/vox-afl/in/protocol_decode fuzz/vox-afl/out/protocol_decode fuzz/vox-afl/target/debug/protocol_decode; \
         run_fuzz "{{ seconds }}" fuzz/vox-afl/in/testbed_mem_session fuzz/vox-afl/out/testbed_mem_session fuzz/vox-afl/target/debug/testbed_mem_session; \
         ;; \
-      framing_peek) \
-        run_fuzz "{{ seconds }}" fuzz/vox-shm-afl/in/framing_peek fuzz/vox-shm-afl/out/framing_peek fuzz/vox-shm-afl/target/debug/framing_peek; \
         ;; \
-      shm_link_roundtrip) \
-        run_fuzz "{{ seconds }}" fuzz/vox-shm-afl/in/shm_link_roundtrip fuzz/vox-shm-afl/out/shm_link_roundtrip fuzz/vox-shm-afl/target/debug/shm_link_roundtrip; \
         ;; \
       protocol_decode) \
         run_fuzz "{{ seconds }}" fuzz/vox-afl/in/protocol_decode fuzz/vox-afl/out/protocol_decode fuzz/vox-afl/target/debug/protocol_decode; \
@@ -235,9 +214,6 @@ fuzz-sand-build target="all":
     @build_one() { \
       t="$1"; \
       case "$t" in \
-        framing_peek|shm_link_roundtrip) \
-          manifest="fuzz/vox-shm-afl/Cargo.toml"; \
-          bin_path="fuzz/vox-shm-afl/target/debug/$t"; \
           ;; \
         protocol_decode|testbed_mem_session) \
           manifest="fuzz/vox-afl/Cargo.toml"; \
@@ -260,8 +236,6 @@ fuzz-sand-build target="all":
     }; \
     case "{{ target }}" in \
       all) \
-        build_one framing_peek; \
-        build_one shm_link_roundtrip; \
         build_one protocol_decode; \
         build_one testbed_mem_session; \
         ;; \
@@ -274,7 +248,6 @@ fuzz-sand-run target="all" seconds="":
     @run_one() { \
       t="$1"; \
       case "$t" in \
-        framing_peek|shm_link_roundtrip) in_dir="fuzz/vox-shm-afl/in/$t" ;; \
         protocol_decode|testbed_mem_session) in_dir="fuzz/vox-afl/in/$t" ;; \
         *) \
           echo "Unknown target: $t" >&2; \
@@ -300,8 +273,6 @@ fuzz-sand-run target="all" seconds="":
     }; \
     case "{{ target }}" in \
       all) \
-        run_one framing_peek; \
-        run_one shm_link_roundtrip; \
         run_one protocol_decode; \
         run_one testbed_mem_session; \
         ;; \

@@ -59,11 +59,6 @@ weight = 11
 >
 > The in-process link is available only on `wasm32-unknown-unknown`.
 
-> r[transport.shm]
->
-> Vox provides a shared memory transport. It is designed for high-performance
-> IPC on a single machine.
-
 > r[link.split]
 >
 > A `Link` MUST be splittable into independent transmit and receive halves.
@@ -552,8 +547,8 @@ The design objective is to allow proxies to map existing connections without
 having to translate request IDs or channel IDs.
 
 Case study: [dodeca](https://github.com/bearcove/dodeca) is a static site
-generator. It's using vox RPC over the shared memory transport to communicate
-the host (main binary) and cells, which implement basic functionality.
+generator. It uses vox RPC to communicate the host (main binary) and cells,
+which implement basic functionality.
 
 Dodeca's HTTP server is implemented as a cell: on top of serving HTML, it also
 accepts new vox sessions over WebSocket connections, to serve the DevTools

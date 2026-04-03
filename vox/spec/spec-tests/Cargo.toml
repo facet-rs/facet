@@ -11,16 +11,13 @@ vox = { workspace = true }
 vox-core = { workspace = true }
 vox-local.workspace = true
 vox-postcard.workspace = true
-vox-shm.workspace = true
 vox-stream = { workspace = true }
 vox-websocket = { workspace = true }
 vox-types = { workspace = true }
-shm-primitives = { workspace = true }
 spec-proto.workspace = true
 moire = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "time", "process"] }
 tempfile.workspace = true
 
 [dev-dependencies]
-shm-primitives-async = { path = "../../rust/shm-primitives-async" }
 libc.workspace = true

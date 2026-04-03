@@ -14,7 +14,7 @@ Protocol and runtime data model shared across Vox implementations.
 
 ## Fits with
 
-- `vox`, `vox-core`, and transport crates (`vox-stream`, `vox-websocket`, `vox-shm`)
+- `vox`, `vox-core`, and transport crates (`vox-stream`, `vox-websocket`)
 - `vox-codegen` when generating non-Rust bindings
 
 Part of the Vox workspace: <https://github.com/bearcove/vox>

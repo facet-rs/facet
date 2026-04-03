@@ -175,7 +175,7 @@ Service routing and transport info use the same mechanism:
 | Key | Value | Set by |
 |-----|-------|--------|
 | `vox-service` | Service name (e.g. `"Hello"`) | Client, automatically from type param |
-| `vox-transport` | Transport type (`"tcp"`, `"local"`, `"shm"`, `"ws"`) | Transport layer |
+| `vox-transport` | Transport type (`"tcp"`, `"local"`, `"ws"`) | Transport layer |
 | `vox-peer-addr` | Remote address (e.g. `"192.168.1.1:4000"`) | TCP/WS transport |
 | `vox-peer-pid` | Peer process ID | Unix socket transport |
 | `vox-connection-kind` | `"root"` or `"virtual"` | Session layer |
@@ -271,7 +271,6 @@ feature entirely.
 1. ✅ `vox::connect(addr)` — TCP, local, WebSocket, SHM
 2. ✅ `SessionHandle` stored in client
 3. ✅ `resumable` defaults to `false`
-4. ✅ SHM bootstrap: removed SID, 4 FDs, `ShmLinkSource`
 5. ✅ Concrete `Caller` type, public fields on clients
    - Killed: `Caller` trait, `ErasedCaller`, `ErasedCallerDyn`,
      `MiddlewareCaller`, `VoxClient`, `HasSessionHandle`, old `NoopCaller`
@@ -325,21 +324,17 @@ feature entirely.
 
 ## SHM Transport in `connect()` ✅
 
-**Done.** The SHM bootstrap protocol (in `shm-primitives/src/bootstrap.rs`)
 now sends 4 FDs (doorbell, segment, mmap_rx, mmap_tx) over SCM_RIGHTS,
 eliminating the need for FD inheritance. The SID field was removed from
 the wire format (it was vixen-specific). Magic renamed from RSH0/RSP0
 to VSH1/VSP1.
 
-`ShmLinkSource` (in `vox-shm/src/bootstrap.rs`) performs the full
 guest-side bootstrap on each `next_link()` call:
 
 1. Connect to Unix control socket
 2. Send 4-byte magic (`VSH1`)
 3. Receive response + 4 FDs
-4. Attach segment, claim peer slot, build `ShmLink`
 
-Usage: `vox::connect("shm:///path/to/control.sock")`
 
 ## Connect Timeout ✅
 

@@ -55,10 +55,6 @@ The best way to learn the Rust API is to run the examples in order, from simples
 > vox::proxy_connections(incoming_handle, upstream_conn).await;
 > ```
 
-## 5) `shm_host_two_guests` (most complex: host + multiple guest processes)
-
-- Source: [rust-examples/examples/shm_host_two_guests.rs](https://github.com/bearcove/vox/blob/main/rust-examples/examples/shm_host_two_guests.rs)
-- Run (Unix): `cargo run -p rust-examples --example shm_host_two_guests`
 - Learn: one host process launching two guest processes, SHM bootstrap, and serving different services from each guest.
 
 > ```rust

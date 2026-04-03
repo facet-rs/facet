@@ -11,6 +11,6 @@ The Vox specification defines the protocol and runtime model across layers:
 - Transport prologue and conduit selection
 - Conduit behavior
 - Retry semantics and operation continuity
-- Link transports (stream, WebSocket, shared memory)
+- Link transports (stream and WebSocket)
 
 Start with [Introduction](./intro/), then continue through the protocol chapters in this section.

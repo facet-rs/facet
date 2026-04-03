@@ -53,25 +53,12 @@ check_forbidden_outside_allowlist \
   'Sources/VoxRuntime/Binding.swift' \
   'Sources/VoxRuntime/Channel.swift' \
   'Sources/VoxRuntime/Driver.swift' \
-  'Sources/VoxRuntime/ShmBipBuffer.swift' \
-  'Sources/VoxRuntime/ShmGuest.swift' \
-  'Sources/VoxRuntime/ShmRegion.swift' \
-  'Sources/VoxRuntime/ShmTransport.swift' \
   'Sources/VoxRuntime/Transport.swift' \
-  'Sources/shm-guest-client/main.swift'
 
 check_forbidden_outside_allowlist \
   '(^|[^[:alnum:]_])(Unmanaged|Unsafe[A-Za-z0-9_]*|withUnsafe[A-Za-z0-9_]*)' \
   'unsafe APIs' \
   'Sources/VoxRuntime/Postcard.swift' \
-  'Sources/VoxRuntime/ShmAtomics.swift' \
-  'Sources/VoxRuntime/ShmBipBuffer.swift' \
-  'Sources/VoxRuntime/ShmBootstrap.swift' \
-  'Sources/VoxRuntime/ShmGuest.swift' \
-  'Sources/VoxRuntime/ShmRegion.swift' \
-  'Sources/VoxRuntime/ShmTransport.swift' \
-  'Tests/VoxRuntimeTests/ShmBootstrapTests.swift' \
-  'Tests/VoxRuntimeTests/ShmGuestRuntimeTests.swift'
 
 if [[ "$fail" == true ]]; then
   exit 1

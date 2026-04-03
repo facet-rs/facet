@@ -19,10 +19,8 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 vox = { workspace = true }
 vox-core = { workspace = true }
 vox-local.workspace = true
-vox-shm.workspace = true
 vox-stream = { workspace = true }
 vox-types = { workspace = true }
-shm-primitives = { workspace = true }
 spec-proto.workspace = true
 tokio = { workspace = true, features = ["rt", "net"] }
 moire = { workspace = true }

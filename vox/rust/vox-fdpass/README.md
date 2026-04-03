@@ -15,6 +15,5 @@ Cross-platform descriptor/handle passing primitives for local IPC scenarios.
 ## Fits with
 
 - `vox-local` and stream-based local connection setup
-- `vox-shm` bootstrap paths that may require OS resource transfer
 
 Part of the Vox workspace: <https://github.com/bearcove/vox>

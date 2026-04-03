@@ -325,30 +325,7 @@ func runServer() async throws {
     ]
     let connection: Connection
     let driver: Driver
-    if addr.hasPrefix("shm://") {
-        let path = String(addr.dropFirst("shm://".count))
-        guard !path.isEmpty else {
-            log("invalid PEER_ADDR format")
-            throw SubjectError.invalidAddr
-        }
-        let ticket = try requestShmBootstrapTicket(
-            controlSocketPath: path,
-            sid: UUID().uuidString.lowercased()
-        )
-        log("shm bootstrap ticket received: peerId=\(ticket.peerId), hubPath=\(ticket.hubPath)")
-        let shmTransport = try ShmGuestTransport.attach(ticket: ticket)
-        log("shm transport attached")
-        (connection, driver, _, _) = try await establishShmGuest(
-            transport: shmTransport,
-            dispatcher: dispatcher,
-            role: .initiator,
-            conduit: transport,
-            acceptConnections: acceptConnections,
-            resumable: false,
-            metadata: rootMetadata
-        )
-        log("shm session established")
-    } else if addr.hasPrefix("local://") {
+    if addr.hasPrefix("local://") {
         let path = String(addr.dropFirst("local://".count))
         guard !path.isEmpty else {
             log("invalid PEER_ADDR format")
@@ -356,7 +333,7 @@ func runServer() async throws {
         }
         let connector = UnixConnector(path: path, transport: transport)
         let attachment = try await connector.openAttachment()
-        (connection, driver, _, _) = try await establishInitiator(
+        (connection, driver, _, _, _) = try await establishInitiator(
             attachment: attachment,
             transport: transport,
             dispatcher: dispatcher,
@@ -373,7 +350,7 @@ func runServer() async throws {
         let host = String(parts[0])
         let connector = TcpConnector(host: host, port: port, transport: transport)
         let attachment = try await connector.openAttachment()
-        (connection, driver, _, _) = try await establishInitiator(
+        (connection, driver, _, _, _) = try await establishInitiator(
             attachment: attachment,
             transport: transport,
             dispatcher: dispatcher,
@@ -1068,6 +1045,36 @@ private func readExactlyAllowingEof(fd: Int32, count: Int) throws -> [UInt8]? {
     return out
 }
 
+private func writeAll(_ fd: Int32, bytes: [UInt8]) throws {
+    var sent = 0
+    while sent < bytes.count {
+        let n = bytes.withUnsafeBytes { raw -> Int in
+            guard let base = raw.baseAddress else { return -1 }
+            #if canImport(Darwin)
+            return Darwin.send(fd, base.advanced(by: sent), bytes.count - sent, 0)
+            #else
+            return Glibc.send(fd, base.advanced(by: sent), bytes.count - sent, 0)
+            #endif
+        }
+        if n > 0 {
+            sent += n
+            continue
+        }
+        if n < 0, errno == EINTR {
+            continue
+        }
+        throw SubjectError.socketSetupFailed
+    }
+}
+
+private func readExactly(fd: Int32, count: Int) throws -> [UInt8] {
+    if count == 0 { return [] }
+    guard let bytes = try readExactlyAllowingEof(fd: fd, count: count) else {
+        throw SubjectError.socketSetupFailed
+    }
+    return bytes
+}
+
 private func makeTcpListener(port: Int) throws -> (fd: Int32, boundPort: Int) {
     #if canImport(Glibc)
     let fd = socket(AF_INET, Int32(SOCK_STREAM.rawValue), 0)
@@ -1185,247 +1192,6 @@ func runServerListen() async throws {
     try await session.run()
 }
 
-func runShmClient() async throws {
-    guard let controlSock = ProcessInfo.processInfo.environment["SHM_CONTROL_SOCK"] else {
-        log("SHM_CONTROL_SOCK not set")
-        throw SubjectError.missingEnv
-    }
-    guard let sid = ProcessInfo.processInfo.environment["SHM_SESSION_ID"] else {
-        log("SHM_SESSION_ID not set")
-        throw SubjectError.missingEnv
-    }
-
-    let ticket = try requestShmBootstrapTicket(controlSocketPath: controlSock, sid: sid)
-    let transport = try ShmGuestTransport.attach(ticket: ticket)
-
-    let handler = TestbedService()
-    let dispatcher = TestbedDispatcherAdapter(handler: handler)
-    let (handle, driver, _, _) = try await establishShmGuest(
-        transport: transport,
-        dispatcher: dispatcher,
-        conduit: subjectConduit()
-    )
-
-    let driverTask = Task {
-        do {
-            try await driver.run()
-        } catch {
-            log("driver error: \(error)")
-        }
-    }
-
-    let client = TestbedClient(connection: handle)
-    let scenario = ProcessInfo.processInfo.environment["CLIENT_SCENARIO"] ?? "echo"
-    try await runClientScenario(client: client, scenario: scenario)
-
-    try await transport.close()
-    _ = await driverTask.result
-}
-
-/// SHM mode equivalent of `runServer`: attach over SHM and only serve incoming RPC.
-func runShmServer() async throws {
-    guard let controlSock = ProcessInfo.processInfo.environment["SHM_CONTROL_SOCK"] else {
-        log("SHM_CONTROL_SOCK not set")
-        throw SubjectError.missingEnv
-    }
-    guard let sid = ProcessInfo.processInfo.environment["SHM_SESSION_ID"] else {
-        log("SHM_SESSION_ID not set")
-        throw SubjectError.missingEnv
-    }
-
-    let ticket = try requestShmBootstrapTicket(controlSocketPath: controlSock, sid: sid)
-    let transport = try ShmGuestTransport.attach(ticket: ticket)
-
-    let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] == "1"
-    let handler = TestbedService()
-    let dispatcher = TestbedDispatcherAdapter(handler: handler)
-    let rootMetadata: [MetadataEntry] = [
-        MetadataEntry(key: "vox-service", value: .string("Testbed"), flags: 0),
-        MetadataEntry(key: "vox-connection-kind", value: .string("root"), flags: 0),
-    ]
-
-    try await performInitiatorTransportPrologue(
-        transport: transport,
-        conduit: subjectConduit()
-    )
-    let attachment: LinkAttachment = .initiator(transport)
-    let (_, driver, _, _) = try await establishInitiator(
-        attachment: attachment,
-        transport: subjectConduit(),
-        dispatcher: dispatcher,
-        acceptConnections: acceptConnections,
-        maxPayloadSize: transport.negotiated.maxPayloadSize,
-        resumable: false,
-        metadata: rootMetadata
-    )
-    try await driver.run()
-}
-
-/// SHM host mode: create the hub segment locally, serve one bootstrap request,
-/// then run as RPC acceptor over a host-side SHM transport.
-func runShmHostServer() async throws {
-    guard let controlSock = ProcessInfo.processInfo.environment["SHM_CONTROL_SOCK"] else {
-        log("SHM_CONTROL_SOCK not set")
-        throw SubjectError.missingEnv
-    }
-    guard let sid = ProcessInfo.processInfo.environment["SHM_SESSION_ID"] else {
-        log("SHM_SESSION_ID not set")
-        throw SubjectError.missingEnv
-    }
-
-    let hubPath = ProcessInfo.processInfo.environment["SHM_HUB_PATH"]
-        ?? "/tmp/vox-swift-subject-\(UUID().uuidString).shm"
-    let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] == "1"
-
-    let segment = try ShmHostSegment.create(
-        path: hubPath,
-        config: ShmHostSegmentConfig(
-            maxGuests: 1,
-            bipbufCapacity: 64 * 1024,
-            maxPayloadSize: 1024 * 1024,
-            inlineThreshold: 256,
-            heartbeatInterval: 0,
-            sizeClasses: [
-                ShmVarSlotClass(slotSize: 256, count: 64),
-                ShmVarSlotClass(slotSize: 1024, count: 32),
-                ShmVarSlotClass(slotSize: 4096, count: 16),
-                ShmVarSlotClass(slotSize: 16384, count: 8),
-                ShmVarSlotClass(slotSize: 65536, count: 4),
-                ShmVarSlotClass(slotSize: 262144, count: 2),
-            ]
-        )
-    )
-    let prepared = try segment.reservePeer()
-
-    let listenerFd = try makeUnixListener(path: controlSock)
-    defer {
-        close(listenerFd)
-        unlink(controlSock)
-    }
-
-    let clientFd = accept(listenerFd, nil, nil)
-    guard clientFd >= 0 else {
-        throw SubjectError.socketSetupFailed
-    }
-    defer { close(clientFd) }
-
-    let magic = try readExactly(fd: clientFd, count: 4)
-    guard magic == [UInt8]("RSH0".utf8) else {
-        throw SubjectError.invalidBootstrapRequest
-    }
-    let sidLenBytes = try readExactly(fd: clientFd, count: 2)
-    let sidLen = Int(UInt16(sidLenBytes[0]) | (UInt16(sidLenBytes[1]) << 8))
-    let sidBytes = try readExactly(fd: clientFd, count: sidLen)
-    guard let receivedSid = String(bytes: sidBytes, encoding: .utf8), receivedSid == sid else {
-        throw SubjectError.bootstrapSidMismatch
-    }
-
-    try prepared.sendBootstrapSuccess(controlFd: clientFd, hubPath: hubPath)
-
-    let transport = try prepared.intoTransport()
-    _ = try await performAcceptorTransportPrologue(
-        transport: transport,
-        supportedConduit: .bare
-    )
-    let handler = TestbedService()
-    let dispatcher = TestbedDispatcherAdapter(handler: handler)
-
-    let (_, driver, _, _) = try await establishAcceptor(
-        link: transport,
-        transport: .bare,
-        dispatcher: dispatcher,
-        acceptConnections: acceptConnections
-    )
-    prepared.closeGuestEndpoints()
-    try await driver.run()
-}
-
-private func writeAll(_ fd: Int32, bytes: [UInt8]) throws {
-    var sent = 0
-    while sent < bytes.count {
-        let n = bytes.withUnsafeBytes { raw -> Int in
-            guard let base = raw.baseAddress else { return -1 }
-            #if canImport(Darwin)
-            return Darwin.send(fd, base.advanced(by: sent), bytes.count - sent, 0)
-            #else
-            return Glibc.send(fd, base.advanced(by: sent), bytes.count - sent, 0)
-            #endif
-        }
-        if n > 0 {
-            sent += n
-            continue
-        }
-        if n < 0, errno == EINTR {
-            continue
-        }
-        throw SubjectError.socketSetupFailed
-    }
-}
-
-private func makeUnixListener(path: String) throws -> Int32 {
-    unlink(path)
-
-    #if canImport(Glibc)
-    let fd = socket(AF_UNIX, Int32(SOCK_STREAM.rawValue), 0)
-    #else
-    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-    #endif
-    guard fd >= 0 else {
-        throw SubjectError.socketSetupFailed
-    }
-
-    var addr = sockaddr_un()
-    addr.sun_family = sa_family_t(AF_UNIX)
-
-    let pathBytes = [UInt8](path.utf8)
-    let maxPathLen = MemoryLayout.size(ofValue: addr.sun_path)
-    guard pathBytes.count < maxPathLen else {
-        close(fd)
-        throw SubjectError.socketSetupFailed
-    }
-
-    withUnsafeMutablePointer(to: &addr.sun_path) { sunPathPtr in
-        let raw = UnsafeMutableRawPointer(sunPathPtr)
-        raw.initializeMemory(as: UInt8.self, repeating: 0, count: maxPathLen)
-        raw.copyMemory(from: pathBytes, byteCount: pathBytes.count)
-    }
-
-    let bindResult = withUnsafePointer(to: &addr) { ptr in
-        ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
-            bind(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
-        }
-    }
-    guard bindResult == 0, listen(fd, 1) == 0 else {
-        close(fd)
-        throw SubjectError.socketSetupFailed
-    }
-
-    return fd
-}
-
-private func readExactly(fd: Int32, count: Int) throws -> [UInt8] {
-    if count == 0 { return [] }
-
-    var out = [UInt8](repeating: 0, count: count)
-    var offset = 0
-    while offset < count {
-        let n = out.withUnsafeMutableBytes { raw in
-            read(fd, raw.baseAddress!.advanced(by: offset), count - offset)
-        }
-        if n < 0 {
-            if errno == EINTR {
-                continue
-            }
-            throw SubjectError.socketSetupFailed
-        }
-        if n == 0 {
-            throw SubjectError.invalidBootstrapRequest
-        }
-        offset += n
-    }
-    return out
-}
-
 // MARK: - Errors
 
 enum SubjectError: Error {
@@ -1434,8 +1200,6 @@ enum SubjectError: Error {
     case invalidResponse
     case unknownScenario
     case socketSetupFailed
-    case invalidBootstrapRequest
-    case bootstrapSidMismatch
 }
 
 // MARK: - Main Entry Point
@@ -1454,12 +1218,6 @@ struct SubjectMain {
                 try await runServerListen()
             case "client":
                 try await runClient()
-            case "shm-client":
-                try await runShmClient()
-            case "shm-server":
-                try await runShmServer()
-            case "shm-host-server":
-                try await runShmHostServer()
             default:
                 log("unknown SUBJECT_MODE: \(mode)")
                 exit(1)

@@ -221,43 +221,6 @@ private actor DeferredStableAcceptorAttachmentSource: LinkSource {
     }
 }
 
-/// Establish a SHM guest connection as an initiator.
-public func establishShmGuest<D: ServiceDispatcher>(
-    transport: ShmGuestTransport,
-    dispatcher: D,
-    role: Role = .initiator,
-    conduit: TransportConduitKind = .bare,
-    acceptConnections: Bool = false,
-    keepalive: DriverKeepaliveConfig? = nil,
-    resumable: Bool = false,
-    metadata: [MetadataEntry] = []
-) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
-    switch role {
-    case .initiator:
-        try await performInitiatorTransportPrologue(transport: transport, conduit: conduit)
-        return try await establishInitiator(
-            attachment: .initiator(transport),
-            transport: conduit,
-            dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
-            maxPayloadSize: transport.negotiated.maxPayloadSize,
-            keepalive: keepalive,
-            resumable: resumable,
-            metadata: metadata
-        )
-    case .acceptor:
-        _ = try await performAcceptorTransportPrologue(transport: transport, supportedConduit: .bare)
-        return try await establishAcceptor(
-            attachment: .init(link: transport),
-            transport: .bare,
-            dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
-            keepalive: keepalive,
-            resumable: resumable
-        )
-    }
-}
-
 public func establishInitiator(
     attachment: LinkAttachment,
     transport: TransportConduitKind = .bare,

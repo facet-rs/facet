@@ -70,8 +70,8 @@ But how do you obtain a client?
 To "handle" a call (i.e. send a response to an incoming request), or to "make" a
 call (i.e. send a request to the peer, expecting a response), one needs a connection.
 
-vox supports various transports, like memory, TCP and other sockets, WebSocket,
-shared memory; but a vox connection sits several layers above a "TCP connection".
+vox supports various transports, like memory, TCP and other sockets, and
+WebSocket; but a vox connection sits several layers above a "TCP connection".
 
 ```aasvg
 +------------------------+
@@ -85,7 +85,7 @@ shared memory; but a vox connection sits several layers above a "TCP connection"
 +------------------------+
 | Transport Prologue     |  conduit mode request / accept / reject
 +------------------------+
-| Link                   |  TCP, SHM, WebSocket, etc.
+| Link                   |  TCP, WebSocket, etc.
 +------------------------+
 ```
 

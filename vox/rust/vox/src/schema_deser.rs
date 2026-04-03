@@ -3,9 +3,8 @@ use std::sync::Arc;
 use facet::Facet;
 use vox_postcard::error::DeserializeError;
 use vox_postcard::plan::{PlanInput, SchemaSet, TranslationPlan, build_plan};
-use vox_types::{
-    BindingDirection, MethodId, PlanCacheKey, Schema, SchemaRecvTracker, TypeRef, extract_schemas,
-};
+use vox_types::schema::{PlanCacheKey, SchemaRecvTracker};
+use vox_types::{BindingDirection, MethodId, Schema, TypeRef, extract_schemas};
 
 /// Deserialize args from a request (caller → callee direction).
 // r[impl schema.exchange.required]
@@ -62,12 +61,10 @@ fn resolve_plan<'facet, T: Facet<'facet>>(
         local_shape: T::SHAPE,
     };
 
-    // Fast path: check cache.
     if let Some(cached) = tracker.get_cached_plan::<ResolvedPlan>(&cache_key) {
         return Ok(cached);
     }
 
-    // Slow path: build the plan.
     let resolved = Arc::new(build_resolved_plan::<T>(method_id, direction, tracker)?);
     tracker.insert_cached_plan(cache_key, Arc::clone(&resolved));
     Ok(resolved)

@@ -124,12 +124,3 @@ pub fn run_rust_binary_payload_transport_matrix_subject_tcp(spec: SubjectSpec) {
     })
     .unwrap();
 }
-
-// r[verify transport.message.binary]
-pub fn run_rust_binary_payload_transport_matrix_subject_shm(spec: SubjectSpec) {
-    run_async(async {
-        run_for_subject_transport(spec).await?;
-        Ok::<_, String>(())
-    })
-    .unwrap();
-}

@@ -24,9 +24,7 @@ cargo build --package subject-rust
 cd typescript && pnpm install && cd ..
 
 # 3. Build Rust FFI staticlib (needed by Swift)
-cargo build --release -p vox-shm-ffi
 
-# 4. Build Swift runtime in debug mode (needed by SHM cross-language tests —
 #    the shm-guest-client binary is only looked up under .build/debug/)
 swift build --package-path swift/vox-runtime
 
@@ -91,10 +89,8 @@ just swift
 
 # Build just the Rust FFI staticlib
 just rust-ffi
-# or: cargo build --release -p vox-shm-ffi
 
 # Run root Swift package tests the same way CI does
-cargo build --release -p vox-shm-ffi
 swift test --no-parallel -Xlinker -L$(pwd)/target/release
 
 # Build the Swift subject package
@@ -105,19 +101,7 @@ swift build -c release --package-path swift/subject
 # command is the preferred validation path in this repo.
 swift test --package-path swift/vox-runtime --no-parallel -Xlinker -L$(pwd)/target/release
 
-# Run SHM cross-language tests (Rust host, Swift guest)
-cargo nextest run -p vox-shm --test bootstrap_cross_language
 ```
-
-#### Consuming VoxRuntime from another Swift package
-
-VoxRuntime depends on `libvox_shm_ffi.a`, a Rust staticlib. Consumers must:
-
-1. Build the staticlib: `cargo build --release -p vox-shm-ffi` (from the vox workspace root)
-2. Tell the linker where to find it:
-   - **SPM CLI**: `swift build -Xlinker -L<path-to-vox>/target/release`
-   - **SPM test**: `swift test -Xlinker -L<path-to-vox>/target/release`
-   - **Xcode**: Add `<path-to-vox>/target/release` to `LIBRARY_SEARCH_PATHS`
 
 ### Code Generation
 
@@ -168,7 +152,6 @@ just fuzz testbed_mem_session 300
 just fuzz-run protocol_decode 300
 
 # Fuzz with ASAN
-just fuzz-asan shm_link_roundtrip 300
 
 # Fuzz with UBSAN
 just fuzz-ubsan protocol_decode 300
@@ -178,8 +161,6 @@ just fuzz-sand protocol_decode 300
 ```
 
 Current targets:
-- `framing_peek` (SHM frame parser)
-- `shm_link_roundtrip` (SHM send/recv roundtrip)
 - `protocol_decode` (Vox wire message decode/encode)
 - `testbed_mem_session` (generated `spec-proto` RPC traffic over in-memory session/driver)
 
@@ -192,7 +173,6 @@ SAND recipes build three binaries per target under `fuzz/.sand/<target>/`:
 
 - `rust/` - Rust implementation (vox, vox-session, vox-codegen, etc.)
 - `swift/` - Swift implementation
-  - `vox-runtime/` - VoxRuntime Swift package (SHM transport, RPC, codegen)
   - `subject/` - Test subject for compliance suite
 - `typescript/` - TypeScript implementation
   - `packages/vox-core/` - Core runtime

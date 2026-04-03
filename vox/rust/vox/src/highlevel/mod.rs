@@ -25,11 +25,6 @@ mod wss;
 #[cfg(feature = "transport-websocket-tls")]
 pub use wss::WssListener;
 
-#[cfg(all(unix, feature = "transport-shm"))]
-mod shm;
-#[cfg(all(unix, feature = "transport-shm"))]
-pub use shm::{ShmListener, ShmListenerConfig};
-
 mod channel;
 pub use channel::{ChannelListener, ChannelListenerSender};
 
@@ -49,7 +44,6 @@ pub trait VoxListener: Send + 'static {
 /// - `tcp://host:port` or bare `host:port` — TCP stream transport
 /// - `local://path` — Unix socket / Windows named pipe
 /// - `ws://host:port/path` — WebSocket transport
-/// - `shm:///path/to/control.sock` — Shared-memory transport (Unix only)
 ///
 /// # Examples
 ///
@@ -84,8 +78,6 @@ pub async fn connect<Client: FromVoxSession>(
             let url = format!("{scheme}://{host}");
             connect_bare(vox_websocket::ws_link_source(url)).await
         }
-        #[cfg(all(unix, feature = "transport-shm"))]
-        "shm" => connect_bare(vox_shm::bootstrap::shm_link_source(host)).await,
         _ => Err(SessionError::Protocol(format!(
             "unknown transport scheme: {scheme:?}"
         ))),
@@ -100,7 +92,6 @@ pub async fn connect<Client: FromVoxSession>(
 /// - `local://path` — Unix socket / Windows named pipe
 /// - `ws://host:port` — WebSocket (accepts TCP, upgrades to WS)
 /// - `wss://host:port?cert=/path/to/cert.pem&key=/path/to/key.pem` — WebSocket over TLS
-/// - `shm:///path/to/control.sock` — Shared-memory transport (Unix only)
 ///
 /// This function runs forever (or until an I/O error occurs). Each incoming
 /// connection is handled in a spawned task.
@@ -148,11 +139,6 @@ pub async fn serve(
         }
         #[cfg(feature = "transport-websocket-tls")]
         "wss" => wss::serve_wss(&host, acceptor).await,
-        #[cfg(all(unix, feature = "transport-shm"))]
-        "shm" => {
-            let listener = ShmListener::bind(&host)?;
-            Ok(serve_listener(listener, acceptor).await?)
-        }
         _ => Err(ServeError::UnsupportedScheme { scheme }),
     }
 }

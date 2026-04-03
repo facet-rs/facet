@@ -30,19 +30,13 @@ Generated Swift files import:
 - `Foundation`
 - `VoxRuntime`
 
-## 1.5) Build the Rust SHM staticlib before testing
-
-`VoxRuntime` links against `libvox_shm_ffi.a`, which is produced by the Rust
-workspace.
+## 1.5) Build and test
 
 From the Vox workspace root:
 
 ```bash
-cargo build --release -p vox-shm-ffi
-swift test --no-parallel -Xlinker -L$(pwd)/target/release
+swift test --no-parallel
 ```
-
-That root-level `swift test` command is the same validation path used in CI.
 
 ## 2) Generate Swift bindings from Rust
 

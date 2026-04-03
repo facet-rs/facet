@@ -26,7 +26,6 @@ vox-core.workspace = true
 vox-types.workspace = true
 vox-postcard.workspace = true
 facet.workspace = true
-vox-shm.workspace = true
 vox-stream.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
 moire.workspace = true
@@ -41,13 +40,8 @@ hyper-util = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tokio-stream = { workspace = true, optional = true }
 
-shm-primitives.workspace = true
 tempfile.workspace = true
 divan.workspace = true
 
 [build-dependencies]
 tonic-prost-build = { workspace = true, optional = true }
-
-[[bench]]
-name = "rpc"
-harness = false

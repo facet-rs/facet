@@ -131,7 +131,7 @@ let client = DownstreamClient::new(caller);
 - **Bidirectional RPC** — Request/response with correlation
 - **Channels** — `Tx<T>`/`Rx<T>` with credit-based flow control
 - **Virtual connections** — Multiple independent contexts on a single link
-- **Transport-agnostic** — TCP, WebSocket, shared memory, with QUIC/WebTransport planned
+- **Transport-agnostic** — TCP and WebSocket, with QUIC/WebTransport planned
 - **Type-safe** — [Facet](https://facet.rs)-based serialization
 
 ## Language Support

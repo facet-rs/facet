@@ -39,7 +39,6 @@
 //! | `tcp://host:port` (or bare `host:port`) | TCP stream |
 //! | `local://path` | Unix socket / Windows named pipe |
 //! | `ws://host:port/path` | WebSocket |
-//! | `shm:///path/to/control.sock` | Shared memory (Unix) |
 //!
 //! # Serving
 //!
@@ -281,7 +280,6 @@ pub use vox_core::{DynConduitRx, DynConduitTx};
 /// Enable with cargo features:
 /// - `transport-tcp`
 /// - `transport-local`
-/// - `transport-shm`
 /// - `transport-websocket`
 pub mod transport {
     /// TCP byte-stream transport (`vox-stream`).
@@ -298,12 +296,6 @@ pub mod transport {
             LocalStream, connect, endpoint_exists, local_link_source, path_to_pipe_name,
             remove_endpoint,
         };
-    }
-
-    /// Shared-memory transport (`vox-shm`).
-    #[cfg(feature = "transport-shm")]
-    pub mod shm {
-        pub use vox_shm::*;
     }
 
     /// WebSocket transport (`vox-websocket`).

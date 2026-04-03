@@ -5,8 +5,8 @@
 //! provide a real vox peer for the TypeScript client to talk to.
 
 use spec_proto::{
-    Canvas, Color, Config, LookupError, MathError, Measurement, Message, Person, Point, Profile,
-    Record, Rectangle, Shape, Status, Tag, TaggedPoint,
+    Canvas, Color, Config, GnarlyPayload, LookupError, MathError, Measurement, Message, Person,
+    Point, Profile, Record, Rectangle, Shape, Status, Tag, TaggedPoint,
 };
 use spec_proto::{Testbed, TestbedClient, TestbedDispatcher};
 use std::env;
@@ -230,6 +230,10 @@ impl Testbed for TestbedService {
 
     async fn echo_tag_v1(&self, tag: Tag) -> Tag {
         tag
+    }
+
+    async fn echo_gnarly(&self, payload: GnarlyPayload) -> GnarlyPayload {
+        payload
     }
 }
 

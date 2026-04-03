@@ -473,7 +473,6 @@ fn generate_spec_matrix(
     struct Combo {
         mod_name: &'static str,
         spec_const: &'static str,
-        shm: bool,
         ignore: bool,
     }
 
@@ -486,43 +485,21 @@ fn generate_spec_matrix(
         Combo {
             mod_name: "lang_rust_transport_tcp",
             spec_const: "SUBJECT_RUST_TCP",
-            shm: false,
-            ignore: false,
-        },
-        Combo {
-            mod_name: "lang_rust_transport_shm_guest_mode",
-            spec_const: "SUBJECT_RUST_SHM_GUEST",
-            shm: true,
             ignore: false,
         },
         Combo {
             mod_name: "lang_typescript_transport_tcp",
             spec_const: "SUBJECT_TYPESCRIPT_TCP",
-            shm: false,
             ignore: false,
         },
         Combo {
             mod_name: "lang_typescript_transport_ws",
             spec_const: "SUBJECT_TYPESCRIPT_WS",
-            shm: false,
             ignore: false,
         },
         Combo {
             mod_name: "lang_swift_transport_tcp",
             spec_const: "SUBJECT_SWIFT_TCP",
-            shm: false,
-            ignore: true,
-        },
-        Combo {
-            mod_name: "lang_swift_transport_shm_guest_mode",
-            spec_const: "SUBJECT_SWIFT_SHM_GUEST",
-            shm: true,
-            ignore: true,
-        },
-        Combo {
-            mod_name: "lang_swift_transport_shm_host_mode",
-            spec_const: "SUBJECT_SWIFT_SHM_HOST",
-            shm: true,
             ignore: true,
         },
     ];
@@ -791,11 +768,6 @@ fn generate_spec_matrix(
         name: "channeling_transform",
         call: "channeling::run_channeling_transform_bidirectional",
     }];
-    let shm_harness_to_subject = [TestCase {
-        name: "binary_payload_cutover_boundaries",
-        call: "binary_payloads::run_subject_process_message_binary_payload_shm_cutover_boundaries",
-    }];
-
     // Cross-language pairs: both sides are subject processes; the harness only orchestrates.
     // Test functions take (SERVER: SubjectSpec, CLIENT: SubjectSpec).
     struct CrossLangCombo {
@@ -991,15 +963,6 @@ fn generate_spec_matrix(
                 c.ignore,
             );
             let bidi = gen_mod("direction_bidirectional", &bidirectional, c.ignore);
-            let shm_mod = if c.shm {
-                gen_mod(
-                    "direction_harness_to_subject_shm_only",
-                    &shm_harness_to_subject,
-                    c.ignore,
-                )
-            } else {
-                quote! {}
-            };
             quote! {
                 mod #mod_ident {
                     use super::*;
@@ -1007,7 +970,6 @@ fn generate_spec_matrix(
                     #h2s
                     #s2h
                     #bidi
-                    #shm_mod
                 }
             }
         })
@@ -1027,19 +989,12 @@ fn generate_spec_matrix(
         #[path = "cases/testbed.rs"]
         mod testbed;
 
-        #[cfg(all(unix, target_os = "macos"))]
-        #[path = "cases/cross_language_shm_guest_matrix.rs"]
-        mod cross_language_shm_guest_matrix;
-
         use spec_tests::harness::{SubjectLanguage, SubjectSpec};
 
         const SUBJECT_RUST_TCP: SubjectSpec = SubjectSpec::tcp(SubjectLanguage::Rust);
-        const SUBJECT_RUST_SHM_GUEST: SubjectSpec = SubjectSpec::shm_guest(SubjectLanguage::Rust);
         const SUBJECT_TYPESCRIPT_TCP: SubjectSpec = SubjectSpec::tcp(SubjectLanguage::TypeScript);
         const SUBJECT_TYPESCRIPT_WS: SubjectSpec = SubjectSpec::ws(SubjectLanguage::TypeScript);
         const SUBJECT_SWIFT_TCP: SubjectSpec = SubjectSpec::tcp(SubjectLanguage::Swift);
-        const SUBJECT_SWIFT_SHM_GUEST: SubjectSpec = SubjectSpec::shm_guest(SubjectLanguage::Swift);
-        const SUBJECT_SWIFT_SHM_HOST: SubjectSpec = SubjectSpec::shm_host(SubjectLanguage::Swift);
 
         #(#combo_mods)*
 
@@ -1082,45 +1037,6 @@ fn generate_spec_matrix(
         #[test]
         fn lang_rust_to_rust_transport_tcp_direction_bidirectional_binary_payload_transport_matrix() {
             binary_payload_transport_matrix::run_rust_binary_payload_transport_matrix_subject_tcp(SUBJECT_RUST_TCP);
-        }
-        #[test]
-        fn lang_rust_to_rust_transport_shm_direction_bidirectional_binary_payload_transport_matrix() {
-            binary_payload_transport_matrix::run_rust_binary_payload_transport_matrix_subject_shm(SUBJECT_RUST_SHM_GUEST);
-        }
-        #[cfg(all(unix, target_os = "macos"))]
-        #[test]
-        fn lang_swift_to_rust_transport_shm_direction_guest_to_host_cross_language_data_path() {
-            cross_language_shm_guest_matrix::run_data_path_case();
-        }
-        #[cfg(all(unix, target_os = "macos"))]
-        #[test]
-        fn lang_swift_to_rust_transport_shm_direction_guest_to_host_cross_language_message() {
-            cross_language_shm_guest_matrix::run_message_case();
-        }
-        #[cfg(all(unix, target_os = "macos"))]
-        #[test]
-        fn lang_rust_to_swift_transport_shm_direction_host_to_guest_cross_language_mmap_ref_receive() {
-            cross_language_shm_guest_matrix::run_mmap_ref_receive_case();
-        }
-        #[cfg(all(unix, target_os = "macos"))]
-        #[test]
-        fn lang_rust_to_swift_transport_shm_direction_host_to_guest_cross_language_cutover_boundaries() {
-            cross_language_shm_guest_matrix::run_boundary_cutover_rust_to_swift_case();
-        }
-        #[cfg(all(unix, target_os = "macos"))]
-        #[test]
-        fn lang_swift_to_rust_transport_shm_direction_guest_to_host_cross_language_cutover_boundaries() {
-            cross_language_shm_guest_matrix::run_boundary_cutover_swift_to_rust_case();
-        }
-        #[cfg(all(unix, target_os = "macos"))]
-        #[test]
-        fn lang_swift_to_rust_transport_shm_direction_guest_to_host_cross_language_fault_mmap_control_breakage() {
-            cross_language_shm_guest_matrix::run_fault_mmap_control_breakage_case();
-        }
-        #[cfg(all(unix, target_os = "macos"))]
-        #[test]
-        fn lang_rust_to_swift_transport_shm_direction_host_to_guest_cross_language_fault_host_goodbye_wake() {
-            cross_language_shm_guest_matrix::run_fault_host_goodbye_wake_case();
         }
     };
 

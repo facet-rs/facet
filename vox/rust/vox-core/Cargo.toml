@@ -42,8 +42,6 @@ wasm-bindgen-futures.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 vox-postcard = { path = "../vox-postcard" }
-shm-primitives = { path = "../shm-primitives" }
-vox-shm = { path = "../vox-shm" }
 tempfile.workspace = true
 facet-testhelpers.workspace = true
 tracing-subscriber = { workspace = true }

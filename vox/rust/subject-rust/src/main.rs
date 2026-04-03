@@ -1,38 +1,11 @@
 //! Rust subject binary for the vox compliance suite.
 
 use spec_proto::{Color, MathError, TestbedClient, TestbedDispatcher};
+use std::time::Duration;
 use subject_rust::TestbedService;
 use tracing::info;
-use vox_core::{TransportMode, initiator, initiator_on};
-use vox_shm::bootstrap::{BootstrapStatus, encode_request};
-use vox_shm::segment::Segment;
+use vox_core::{TransportMode, initiator};
 use vox_stream::{local_link_source, tcp_link_source};
-
-#[cfg(unix)]
-use std::os::fd::AsRawFd;
-use std::time::Duration;
-#[cfg(windows)]
-use vox_shm::guest_link_from_names;
-#[cfg(unix)]
-use vox_shm::guest_link_from_raw;
-
-fn attach_segment_with_retry(path: &std::path::Path) -> Result<Segment, String> {
-    let deadline = std::time::Instant::now() + Duration::from_millis(500);
-    let mut last_err = None;
-    loop {
-        match Segment::attach(path) {
-            Ok(segment) => return Ok(segment),
-            Err(err) => {
-                last_err = Some(err.to_string());
-                if std::time::Instant::now() >= deadline {
-                    let detail = last_err.unwrap_or_else(|| "unknown error".to_string());
-                    return Err(format!("attach segment at {}: {detail}", path.display()));
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
-    }
-}
 
 fn requested_transport_mode() -> TransportMode {
     match std::env::var("SPEC_CONDUIT").ok().as_deref() {
@@ -60,7 +33,6 @@ fn main() -> Result<(), String> {
         "server" => rt.block_on(connect_and_serve()),
         "client" => rt.block_on(run_client()),
         "server-listen" => rt.block_on(listen_and_serve()),
-        "shm-server" => rt.block_on(connect_and_serve_shm()),
         other => Err(format!("unknown SUBJECT_MODE: {other}")),
     }
 }
@@ -122,12 +94,6 @@ async fn connect_and_serve() -> Result<(), String> {
             .await
             .map_err(|e| format!("handshake failed: {e}"))?,
         "local" => initiator(local_link_source(host), mode)
-            .on_connection(dispatcher.clone())
-            .establish::<TestbedClient>()
-            .await
-            .map_err(|e| format!("handshake failed: {e}"))?,
-        #[cfg(unix)]
-        "shm" => initiator(vox_shm::bootstrap::shm_link_source(host), mode)
             .on_connection(dispatcher.clone())
             .establish::<TestbedClient>()
             .await
@@ -697,131 +663,5 @@ async fn run_client() -> Result<(), String> {
         other => return Err(format!("unknown CLIENT_SCENARIO: {other}")),
     }
 
-    Ok(())
-}
-
-async fn connect_and_serve_shm() -> Result<(), String> {
-    let control_sock = std::env::var("SHM_CONTROL_SOCK")
-        .map_err(|_| "SHM_CONTROL_SOCK env var not set".to_string())?;
-
-    let request = encode_request();
-
-    // Connect to the control socket, send the bootstrap request, and receive the
-    // bootstrap response. The response carries fds on Unix and names on Windows.
-    #[cfg(unix)]
-    let link = {
-        let mut stream = std::os::unix::net::UnixStream::connect(&control_sock)
-            .map_err(|e| format!("connect bootstrap socket: {e}"))?;
-        std::io::Write::write_all(&mut stream, &request)
-            .map_err(|e| format!("send bootstrap request: {e}"))?;
-
-        let received = shm_primitives::bootstrap::recv_response_unix(stream.as_raw_fd())
-            .map_err(|e| format!("recv bootstrap response: {e}"))?;
-        if received.response.status != BootstrapStatus::Success {
-            return Err(format!(
-                "bootstrap failed: status={:?}, payload={}",
-                received.response.status,
-                String::from_utf8_lossy(&received.response.payload)
-            ));
-        }
-        let fds = received
-            .fds
-            .ok_or_else(|| "missing bootstrap success fds".to_string())?;
-        let hub_path = std::str::from_utf8(&received.response.payload)
-            .map_err(|e| format!("bootstrap payload is not utf-8 path: {e}"))?;
-        let segment =
-            std::sync::Arc::new(attach_segment_with_retry(std::path::Path::new(hub_path))?);
-        let peer_id = shm_primitives::PeerId::new(received.response.peer_id as u8)
-            .ok_or_else(|| format!("invalid peer id {}", received.response.peer_id))?;
-
-        use std::os::fd::IntoRawFd;
-        let doorbell_fd = fds.doorbell_fd.into_raw_fd();
-        let mmap_rx_fd = fds.mmap_rx_fd.into_raw_fd();
-        let mmap_tx_fd = fds.mmap_tx_fd.into_raw_fd();
-
-        unsafe { guest_link_from_raw(segment, peer_id, doorbell_fd, mmap_rx_fd, mmap_tx_fd, true) }
-            .map_err(|e| format!("guest_link_from_raw: {e}"))?
-    };
-
-    #[cfg(windows)]
-    let link = {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use vox_shm::bootstrap::{
-            BOOTSTRAP_RESPONSE_HEADER_LEN, BootstrapSuccessNames, decode_response,
-        };
-
-        let mmap_tx_pipe = std::env::var("SHM_MMAP_TX_PIPE")
-            .map_err(|_| "SHM_MMAP_TX_PIPE env var not set".to_string())?;
-
-        // On Windows, SHM_CONTROL_SOCK is a named pipe path.
-        let mut stream = vox_local::connect(&control_sock)
-            .await
-            .map_err(|e| format!("connect bootstrap pipe: {e}"))?;
-        stream
-            .write_all(&request)
-            .await
-            .map_err(|e| format!("send bootstrap request: {e}"))?;
-
-        // Read the bootstrap response header.
-        let mut header = [0u8; BOOTSTRAP_RESPONSE_HEADER_LEN];
-        stream
-            .read_exact(&mut header)
-            .await
-            .map_err(|e| format!("read bootstrap response header: {e}"))?;
-
-        // Parse payload length from header (bytes 9-10 = payload_len as u16 LE).
-        let payload_len = u16::from_le_bytes([header[9], header[10]]) as usize;
-        let mut payload = vec![0u8; payload_len];
-        if payload_len > 0 {
-            stream
-                .read_exact(&mut payload)
-                .await
-                .map_err(|e| format!("read bootstrap response payload: {e}"))?;
-        }
-
-        // Combine into full frame for decode_response.
-        let mut frame = Vec::with_capacity(BOOTSTRAP_RESPONSE_HEADER_LEN + payload_len);
-        frame.extend_from_slice(&header);
-        frame.extend_from_slice(&payload);
-        let response_ref =
-            decode_response(&frame).map_err(|e| format!("decode bootstrap response: {e}"))?;
-
-        if response_ref.status != BootstrapStatus::Success {
-            return Err(format!(
-                "bootstrap failed: status={:?}, payload={}",
-                response_ref.status,
-                String::from_utf8_lossy(response_ref.payload)
-            ));
-        }
-
-        let names = BootstrapSuccessNames::decode(response_ref.payload)
-            .map_err(|e| format!("decode bootstrap names: {e}"))?;
-        let segment = std::sync::Arc::new(attach_segment_with_retry(std::path::Path::new(
-            &names.segment_path,
-        ))?);
-        let peer_id = shm_primitives::PeerId::new(response_ref.peer_id as u8)
-            .ok_or_else(|| format!("invalid peer id {}", response_ref.peer_id))?;
-
-        guest_link_from_names(
-            segment,
-            peer_id,
-            &names.doorbell_name,
-            &names.mmap_ctrl_name,
-            &mmap_tx_pipe,
-            true,
-        )
-        .map_err(|e| format!("guest_link_from_names: {e}"))?
-    };
-
-    let root_caller_guard = initiator_on(link, requested_transport_mode())
-        .on_connection(TestbedDispatcher::new(TestbedService))
-        .establish::<TestbedClient>()
-        .await
-        .map_err(|e| format!("handshake failed: {e}"))?;
-
-    let _root_caller_guard = root_caller_guard;
-    // Session and driver are spawned internally by establish(); wait forever
-    // so the spawned tasks can continue serving requests.
-    std::future::pending::<()>().await;
     Ok(())
 }

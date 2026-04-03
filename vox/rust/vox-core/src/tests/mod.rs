@@ -16,7 +16,6 @@ use crate::{
 mod credit_tests;
 mod driver_tests;
 mod resumable_tests;
-mod shm_driver_tests;
 pub(crate) mod utils;
 mod vconn_tests;
 
