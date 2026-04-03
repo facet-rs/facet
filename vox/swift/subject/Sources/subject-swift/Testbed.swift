@@ -22,6 +22,7 @@ public enum TestbedMethodId {
   public static let parseColor: UInt64 = 0xd4f1_6ea9_eca1_32e6
   public static let shapeArea: UInt64 = 0x0438_5a4b_e2a8_82f5
   public static let createCanvas: UInt64 = 0xef42_1eb5_b08c_973a
+  public static let echoGnarly: UInt64 = 0xb6fa_cae6_a7a8_6e99
   public static let processMessage: UInt64 = 0xe08f_0f52_54e7_a997
   public static let getPoints: UInt64 = 0x5985_1852_3a62_66bf
   public static let swapPair: UInt64 = 0x7d55_a713_ad61_2bf2
@@ -111,6 +112,63 @@ public struct Canvas: Codable, Sendable {
     self.name = name
     self.shapes = shapes
     self.background = background
+  }
+}
+
+public struct GnarlyAttr: Codable, Sendable {
+  public var key: String
+  public var value: String
+
+  public init(key: String, value: String) {
+    self.key = key
+    self.value = value
+  }
+}
+
+public enum GnarlyKind: Codable, Sendable {
+  case file(mime: String, tags: [String])
+  case directory(childCount: UInt32, children: [String])
+  case symlink(target: String, hops: [UInt32])
+}
+
+public struct GnarlyEntry: Codable, Sendable {
+  public var id: UInt64
+  public var parent: UInt64?
+  public var name: String
+  public var path: String
+  public var attrs: [GnarlyAttr]
+  public var chunks: [Data]
+  public var kind: GnarlyKind
+
+  public init(
+    id: UInt64, parent: UInt64?, name: String, path: String, attrs: [GnarlyAttr], chunks: [Data],
+    kind: GnarlyKind
+  ) {
+    self.id = id
+    self.parent = parent
+    self.name = name
+    self.path = path
+    self.attrs = attrs
+    self.chunks = chunks
+    self.kind = kind
+  }
+}
+
+public struct GnarlyPayload: Codable, Sendable {
+  public var revision: UInt64
+  public var mount: String
+  public var entries: [GnarlyEntry]
+  public var footer: String?
+  public var digest: Data
+
+  public init(
+    revision: UInt64, mount: String, entries: [GnarlyEntry], footer: String?, digest: Data
+  ) {
+    self.revision = revision
+    self.mount = mount
+    self.entries = entries
+    self.footer = footer
+    self.digest = digest
   }
 }
 
@@ -243,6 +301,8 @@ public protocol TestbedCaller {
   func shapeArea(shape: Shape) async throws -> Double
   ///  Create a canvas with given shapes.
   func createCanvas(name: String, shapes: [Shape], background: Color) async throws -> Canvas
+  ///  Echo a deeply nested payload back unchanged.
+  func echoGnarly(payload: GnarlyPayload) async throws -> GnarlyPayload
   ///  Process a message and return a response.
   func processMessage(msg: Message) async throws -> Message
   ///  Return multiple points.
@@ -1038,6 +1098,125 @@ public final class TestbedClient: TestbedCaller, Sendable {
       }
       let result = Canvas(
         name: _result_name, shapes: _result_shapes, background: _result_background)
+      return result
+    case 1:
+      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      switch _cursor_errorCode {
+      case 0:
+        throw VoxError.decodeError("unexpected user error for infallible method")
+      case 1:
+        throw VoxError.unknownMethod
+      case 2:
+        throw VoxError.decodeError("invalid payload")
+      case 3:
+        throw VoxError.cancelled
+      case 4:
+        throw VoxError.indeterminate
+      default:
+        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
+      }
+    default:
+      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
+    }
+  }
+
+  public func echoGnarly(payload: GnarlyPayload) async throws -> GnarlyPayload {
+    var payloadBytes: [UInt8] = []
+    payloadBytes +=
+      encodeVarint(payload.revision) + encodeString(payload.mount)
+      + encodeVec(
+        payload.entries,
+        encoder: {
+          encodeVarint($0.id) + encodeOption($0.parent, encoder: { encodeVarint($0) })
+            + encodeString($0.name) + encodeString($0.path)
+            + encodeVec($0.attrs, encoder: { encodeString($0.key) + encodeString($0.value) })
+            + encodeVec($0.chunks, encoder: { encodeBytes(Array($0)) })
+            + { v in
+              switch v {
+              case .file(let mime, let tags):
+                return encodeVarint(UInt64(0)) + encodeString(mime)
+                  + encodeVec(tags, encoder: { encodeString($0) })
+              case .directory(let childCount, let children):
+                return encodeVarint(UInt64(1)) + encodeU32(childCount)
+                  + encodeVec(children, encoder: { encodeString($0) })
+              case .symlink(let target, let hops):
+                return encodeVarint(UInt64(2)) + encodeString(target)
+                  + encodeVec(hops, encoder: { encodeU32($0) })
+              }
+            }($0.kind)
+        }) + encodeOption(payload.footer, encoder: { encodeString($0) })
+      + encodeBytes(Array(payload.digest))
+    let payload = Data(payloadBytes)
+    let schemaInfo = ClientSchemaInfo(
+      methodInfo: testbed_method_schemas[0xb6fa_cae6_a7a8_6e99]!,
+      schemaRegistry: testbed_schema_registry)
+    let response = try await connection.call(
+      methodId: 0xb6fa_cae6_a7a8_6e99, metadata: [], payload: payload, retry: .volatile,
+      timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
+    var cursor = 0
+    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    switch _cursor_resultDisc {
+    case 0:
+      let _result_revision = try decodeVarint(from: response, offset: &cursor)
+      let _result_mount = try decodeString(from: response, offset: &cursor)
+      let _result_entries = try decodeVec(
+        from: response, offset: &cursor,
+        decoder: { data, off in
+          let _id = try decodeVarint(from: data, offset: &off)
+          let _parent = try decodeOption(
+            from: data, offset: &off,
+            decoder: { data, off in try decodeVarint(from: data, offset: &off) })
+          let _name = try decodeString(from: data, offset: &off)
+          let _path = try decodeString(from: data, offset: &off)
+          let _attrs = try decodeVec(
+            from: data, offset: &off,
+            decoder: { data, off in
+              let _key = try decodeString(from: data, offset: &off)
+              let _value = try decodeString(from: data, offset: &off)
+              return GnarlyAttr(key: _key, value: _value)
+            })
+          let _chunks = try decodeVec(
+            from: data, offset: &off,
+            decoder: { data, off in try decodeBytes(from: data, offset: &off) })
+          let _kind = try
+            ({ data, off in
+              let disc = try decodeVarint(from: data, offset: &off)
+              let result: GnarlyKind
+              switch disc {
+              case 0:
+                let _mime = try decodeString(from: data, offset: &off)
+                let _tags = try decodeVec(
+                  from: data, offset: &off,
+                  decoder: { data, off in try decodeString(from: data, offset: &off) })
+                result = .file(mime: _mime, tags: _tags)
+              case 1:
+                let _childCount = try decodeU32(from: data, offset: &off)
+                let _children = try decodeVec(
+                  from: data, offset: &off,
+                  decoder: { data, off in try decodeString(from: data, offset: &off) })
+                result = .directory(childCount: _childCount, children: _children)
+              case 2:
+                let _target = try decodeString(from: data, offset: &off)
+                let _hops = try decodeVec(
+                  from: data, offset: &off,
+                  decoder: { data, off in try decodeU32(from: data, offset: &off) })
+                result = .symlink(target: _target, hops: _hops)
+              default:
+                throw VoxError.decodeError("unknown enum variant")
+              }
+              return result
+            })(data, &off)
+          return GnarlyEntry(
+            id: _id, parent: _parent, name: _name, path: _path, attrs: _attrs, chunks: _chunks,
+            kind: _kind)
+        })
+      let _result_footer = try decodeOption(
+        from: response, offset: &cursor,
+        decoder: { data, off in try decodeString(from: data, offset: &off) })
+      let _result_digest = try decodeBytes(from: response, offset: &cursor)
+      let result = GnarlyPayload(
+        revision: _result_revision, mount: _result_mount, entries: _result_entries,
+        footer: _result_footer, digest: _result_digest)
       return result
     case 1:
       let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
@@ -2014,6 +2193,8 @@ public protocol TestbedHandler {
   func shapeArea(shape: Shape) async throws -> Double
   ///  Create a canvas with given shapes.
   func createCanvas(name: String, shapes: [Shape], background: Color) async throws -> Canvas
+  ///  Echo a deeply nested payload back unchanged.
+  func echoGnarly(payload: GnarlyPayload) async throws -> GnarlyPayload
   ///  Process a message and return a response.
   func processMessage(msg: Message) async throws -> Message
   ///  Return multiple points.
@@ -2114,6 +2295,8 @@ public final class TestbedChannelingDispatcher {
       await dispatch_shapeArea(methodId: methodId, requestId: requestId, payload: payload)
     case 0xef42_1eb5_b08c_973a:
       await dispatch_createCanvas(methodId: methodId, requestId: requestId, payload: payload)
+    case 0xb6fa_cae6_a7a8_6e99:
+      await dispatch_echoGnarly(methodId: methodId, requestId: requestId, payload: payload)
     case 0xe08f_0f52_54e7_a997:
       await dispatch_processMessage(methodId: methodId, requestId: requestId, payload: payload)
     case 0x5985_1852_3a62_66bf:
@@ -2190,6 +2373,8 @@ public final class TestbedChannelingDispatcher {
     case 0x0438_5a4b_e2a8_82f5:
       return .volatile
     case 0xef42_1eb5_b08c_973a:
+      return .volatile
+    case 0xb6fa_cae6_a7a8_6e99:
       return .volatile
     case 0xe08f_0f52_54e7_a997:
       return .volatile
@@ -2929,6 +3114,122 @@ public final class TestbedChannelingDispatcher {
                       return encodeVarint(UInt64(2))
                     }
                   }($0.background)
+              }), methodId: methodId, schemaPayload: responseSchemaPayload))
+      } catch {
+        taskSender(
+          .response(
+            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+            schemaPayload: responseSchemaPayload))
+      }
+    } catch {
+      taskSender(
+        .response(
+          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          schemaPayload: responseSchemaPayload))
+    }
+  }
+
+  private func dispatch_echoGnarly(methodId: UInt64, requestId: UInt64, payload: Data) async {
+    guard let methodInfo = methodSchemas[methodId] else {
+      taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
+      return
+    }
+    let responseSchemaPayload = methodInfo.buildPayload(
+      direction: .response, registry: schemaRegistry)
+    do {
+      var cursor = 0
+      let _payload_revision = try decodeVarint(from: payload, offset: &cursor)
+      let _payload_mount = try decodeString(from: payload, offset: &cursor)
+      let _payload_entries = try decodeVec(
+        from: payload, offset: &cursor,
+        decoder: { data, off in
+          let _id = try decodeVarint(from: data, offset: &off)
+          let _parent = try decodeOption(
+            from: data, offset: &off,
+            decoder: { data, off in try decodeVarint(from: data, offset: &off) })
+          let _name = try decodeString(from: data, offset: &off)
+          let _path = try decodeString(from: data, offset: &off)
+          let _attrs = try decodeVec(
+            from: data, offset: &off,
+            decoder: { data, off in
+              let _key = try decodeString(from: data, offset: &off)
+              let _value = try decodeString(from: data, offset: &off)
+              return GnarlyAttr(key: _key, value: _value)
+            })
+          let _chunks = try decodeVec(
+            from: data, offset: &off,
+            decoder: { data, off in try decodeBytes(from: data, offset: &off) })
+          let _kind = try
+            ({ data, off in
+              let disc = try decodeVarint(from: data, offset: &off)
+              let result: GnarlyKind
+              switch disc {
+              case 0:
+                let _mime = try decodeString(from: data, offset: &off)
+                let _tags = try decodeVec(
+                  from: data, offset: &off,
+                  decoder: { data, off in try decodeString(from: data, offset: &off) })
+                result = .file(mime: _mime, tags: _tags)
+              case 1:
+                let _childCount = try decodeU32(from: data, offset: &off)
+                let _children = try decodeVec(
+                  from: data, offset: &off,
+                  decoder: { data, off in try decodeString(from: data, offset: &off) })
+                result = .directory(childCount: _childCount, children: _children)
+              case 2:
+                let _target = try decodeString(from: data, offset: &off)
+                let _hops = try decodeVec(
+                  from: data, offset: &off,
+                  decoder: { data, off in try decodeU32(from: data, offset: &off) })
+                result = .symlink(target: _target, hops: _hops)
+              default:
+                throw VoxError.decodeError("unknown enum variant")
+              }
+              return result
+            })(data, &off)
+          return GnarlyEntry(
+            id: _id, parent: _parent, name: _name, path: _path, attrs: _attrs, chunks: _chunks,
+            kind: _kind)
+        })
+      let _payload_footer = try decodeOption(
+        from: payload, offset: &cursor,
+        decoder: { data, off in try decodeString(from: data, offset: &off) })
+      let _payload_digest = try decodeBytes(from: payload, offset: &cursor)
+      let payload = GnarlyPayload(
+        revision: _payload_revision, mount: _payload_mount, entries: _payload_entries,
+        footer: _payload_footer, digest: _payload_digest)
+      do {
+        let result = try await handler.echoGnarly(payload: payload)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeResultOk(
+              result,
+              encoder: {
+                encodeVarint($0.revision) + encodeString($0.mount)
+                  + encodeVec(
+                    $0.entries,
+                    encoder: {
+                      encodeVarint($0.id) + encodeOption($0.parent, encoder: { encodeVarint($0) })
+                        + encodeString($0.name) + encodeString($0.path)
+                        + encodeVec(
+                          $0.attrs, encoder: { encodeString($0.key) + encodeString($0.value) })
+                        + encodeVec($0.chunks, encoder: { encodeBytes(Array($0)) })
+                        + { v in
+                          switch v {
+                          case .file(let mime, let tags):
+                            return encodeVarint(UInt64(0)) + encodeString(mime)
+                              + encodeVec(tags, encoder: { encodeString($0) })
+                          case .directory(let childCount, let children):
+                            return encodeVarint(UInt64(1)) + encodeU32(childCount)
+                              + encodeVec(children, encoder: { encodeString($0) })
+                          case .symlink(let target, let hops):
+                            return encodeVarint(UInt64(2)) + encodeString(target)
+                              + encodeVec(hops, encoder: { encodeU32($0) })
+                          }
+                        }($0.kind)
+                    }) + encodeOption($0.footer, encoder: { encodeString($0) })
+                  + encodeBytes(Array($0.digest))
               }), methodId: methodId, schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
@@ -3740,6 +4041,28 @@ public let testbed_schemas: [String: MethodBindingSchema] = [
       element: .enum(variants: [("Circle", [.f64]), ("Rectangle", [.f64, .f64]), ("Point", [])])),
     .enum(variants: [("Red", []), ("Green", []), ("Blue", [])]),
   ]),
+  "echoGnarly": MethodBindingSchema(args: [
+    .struct(fields: [
+      ("revision", .u64), ("mount", .string),
+      (
+        "entries",
+        .vec(
+          element: .struct(fields: [
+            ("id", .u64), ("parent", .option(inner: .u64)), ("name", .string), ("path", .string),
+            ("attrs", .vec(element: .struct(fields: [("key", .string), ("value", .string)]))),
+            ("chunks", .vec(element: .bytes)),
+            (
+              "kind",
+              .enum(variants: [
+                ("File", [.string, .vec(element: .string)]),
+                ("Directory", [.u32, .vec(element: .string)]),
+                ("Symlink", [.string, .vec(element: .u32)]),
+              ])
+            ),
+          ]))
+      ), ("footer", .option(inner: .string)), ("digest", .bytes),
+    ])
+  ]),
   "processMessage": MethodBindingSchema(args: [
     .enum(variants: [("Text", [.string]), ("Number", [.i64]), ("Data", [.bytes])])
   ]),
@@ -3805,6 +4128,14 @@ public let testbed_schema_registry: [UInt64: Schema] = [
         VariantSchema(name: "AccessDenied", index: 1, payload: .unit),
       ])),
   0x1783_67a8_7f66_fb46: Schema(id: 0x1783_67a8_7f66_fb46, typeParams: [], kind: .primitive(.bool)),
+  0x1b46_261b_ad2c_62c9: Schema(
+    id: 0x1b46_261b_ad2c_62c9, typeParams: [],
+    kind: .struct(
+      name: "GnarlyAttr",
+      fields: [
+        FieldSchema(name: "key", typeRef: .concrete(0x6d7d_ce91_4ee1_50e8), required: true),
+        FieldSchema(name: "value", typeRef: .concrete(0x6d7d_ce91_4ee1_50e8), required: true),
+      ])),
   0x1b57_cc77_42fa_beb0: Schema(
     id: 0x1b57_cc77_42fa_beb0, typeParams: [],
     kind: .enum(
@@ -3825,6 +4156,40 @@ public let testbed_schema_registry: [UInt64: Schema] = [
           typeRef: .generic(0x0a96_b404_b4d7_9d67, args: [.concrete(0xe407_302c_560d_a502)]),
           required: true),
         FieldSchema(name: "background", typeRef: .concrete(0x1b57_cc77_42fa_beb0), required: true),
+      ])),
+  0x2404_fbaa_0448_2121: Schema(
+    id: 0x2404_fbaa_0448_2121, typeParams: [],
+    kind: .enum(
+      name: "GnarlyKind",
+      variants: [
+        VariantSchema(
+          name: "File", index: 0,
+          payload: .struct(fields: [
+            FieldSchema(name: "mime", typeRef: .concrete(0x6d7d_ce91_4ee1_50e8), required: true),
+            FieldSchema(
+              name: "tags",
+              typeRef: .generic(0x0a96_b404_b4d7_9d67, args: [.concrete(0x6d7d_ce91_4ee1_50e8)]),
+              required: true),
+          ])),
+        VariantSchema(
+          name: "Directory", index: 1,
+          payload: .struct(fields: [
+            FieldSchema(
+              name: "child_count", typeRef: .concrete(0x281c_5be4_f2ee_63b4), required: true),
+            FieldSchema(
+              name: "children",
+              typeRef: .generic(0x0a96_b404_b4d7_9d67, args: [.concrete(0x6d7d_ce91_4ee1_50e8)]),
+              required: true),
+          ])),
+        VariantSchema(
+          name: "Symlink", index: 2,
+          payload: .struct(fields: [
+            FieldSchema(name: "target", typeRef: .concrete(0x6d7d_ce91_4ee1_50e8), required: true),
+            FieldSchema(
+              name: "hops",
+              typeRef: .generic(0x0a96_b404_b4d7_9d67, args: [.concrete(0x281c_5be4_f2ee_63b4)]),
+              required: true),
+          ])),
       ])),
   0x281c_5be4_f2ee_63b4: Schema(id: 0x281c_5be4_f2ee_63b4, typeParams: [], kind: .primitive(.u32)),
   0x2c8d_54f2_314d_0f20: Schema(id: 0x2c8d_54f2_314d_0f20, typeParams: [], kind: .primitive(.u8)),
@@ -3901,6 +4266,30 @@ public let testbed_schema_registry: [UInt64: Schema] = [
         FieldSchema(name: "y", typeRef: .concrete(0x361f_4536_eee9_f991), required: true),
         FieldSchema(name: "active", typeRef: .concrete(0x1783_67a8_7f66_fb46), required: true),
       ])),
+  0x903c_92be_6fd7_e0e7: Schema(
+    id: 0x903c_92be_6fd7_e0e7, typeParams: [],
+    kind: .struct(
+      name: "GnarlyEntry",
+      fields: [
+        FieldSchema(name: "id", typeRef: .concrete(0xd935_6298_b816_39ac), required: true),
+        FieldSchema(
+          name: "parent",
+          typeRef: .generic(0xdcaf_d4de_6b79_69bb, args: [.concrete(0xd935_6298_b816_39ac)]),
+          required: true),
+        FieldSchema(name: "name", typeRef: .concrete(0x6d7d_ce91_4ee1_50e8), required: true),
+        FieldSchema(name: "path", typeRef: .concrete(0x6d7d_ce91_4ee1_50e8), required: true),
+        FieldSchema(
+          name: "attrs",
+          typeRef: .generic(0x0a96_b404_b4d7_9d67, args: [.concrete(0x1b46_261b_ad2c_62c9)]),
+          required: true),
+        FieldSchema(
+          name: "chunks",
+          typeRef: .generic(
+            0x0a96_b404_b4d7_9d67,
+            args: [.generic(0x0a96_b404_b4d7_9d67, args: [.concrete(0x2c8d_54f2_314d_0f20)])]),
+          required: true),
+        FieldSchema(name: "kind", typeRef: .concrete(0x2404_fbaa_0448_2121), required: true),
+      ])),
   0x915c_6fb5_b64f_270b: Schema(
     id: 0x915c_6fb5_b64f_270b, typeParams: ["T0", "T1", "T2", "T3"],
     kind: .tuple(elements: [.var(name: "T0"), .var(name: "T1"), .var(name: "T2"), .var(name: "T3")])
@@ -3969,6 +4358,26 @@ public let testbed_schema_registry: [UInt64: Schema] = [
       variants: [
         VariantSchema(name: "DivisionByZero", index: 0, payload: .unit),
         VariantSchema(name: "Overflow", index: 1, payload: .unit),
+      ])),
+  0xdc8d_07b0_eaab_99ba: Schema(
+    id: 0xdc8d_07b0_eaab_99ba, typeParams: [],
+    kind: .struct(
+      name: "GnarlyPayload",
+      fields: [
+        FieldSchema(name: "revision", typeRef: .concrete(0xd935_6298_b816_39ac), required: true),
+        FieldSchema(name: "mount", typeRef: .concrete(0x6d7d_ce91_4ee1_50e8), required: true),
+        FieldSchema(
+          name: "entries",
+          typeRef: .generic(0x0a96_b404_b4d7_9d67, args: [.concrete(0x903c_92be_6fd7_e0e7)]),
+          required: true),
+        FieldSchema(
+          name: "footer",
+          typeRef: .generic(0xdcaf_d4de_6b79_69bb, args: [.concrete(0x6d7d_ce91_4ee1_50e8)]),
+          required: true),
+        FieldSchema(
+          name: "digest",
+          typeRef: .generic(0x0a96_b404_b4d7_9d67, args: [.concrete(0x2c8d_54f2_314d_0f20)]),
+          required: true),
       ])),
   0xdcaf_d4de_6b79_69bb: Schema(
     id: 0xdcaf_d4de_6b79_69bb, typeParams: ["T"], kind: .option(element: .var(name: "T"))),
@@ -4262,6 +4671,26 @@ public let testbed_method_schemas: [UInt64: MethodSchemaInfo] = [
       0x4204_6de6_63be_eef0,
       args: [
         .concrete(0x2218_55c9_65fb_31e1),
+        .generic(0x4cf4_b2ae_b98a_1939, args: [.concrete(0x5db7_0a39_4660_f3e6)]),
+      ])
+  ),
+  0xb6fa_cae6_a7a8_6e99: MethodSchemaInfo(
+    argsSchemaIds: [
+      0xd935_6298_b816_39ac, 0x6d7d_ce91_4ee1_50e8, 0xdcaf_d4de_6b79_69bb, 0x1b46_261b_ad2c_62c9,
+      0x0a96_b404_b4d7_9d67, 0x2c8d_54f2_314d_0f20, 0x281c_5be4_f2ee_63b4, 0x2404_fbaa_0448_2121,
+      0x903c_92be_6fd7_e0e7, 0xdc8d_07b0_eaab_99ba, 0x6847_ab90_feda_71c1,
+    ],
+    argsRoot: .generic(0x6847_ab90_feda_71c1, args: [.concrete(0xdc8d_07b0_eaab_99ba)]),
+    responseSchemaIds: [
+      0x1783_67a8_7f66_fb46, 0x281c_5be4_f2ee_63b4, 0x4204_6de6_63be_eef0, 0x5db7_0a39_4660_f3e6,
+      0x6d7d_ce91_4ee1_50e8, 0x4cf4_b2ae_b98a_1939, 0xd935_6298_b816_39ac, 0xdcaf_d4de_6b79_69bb,
+      0x1b46_261b_ad2c_62c9, 0x0a96_b404_b4d7_9d67, 0x2c8d_54f2_314d_0f20, 0x2404_fbaa_0448_2121,
+      0x903c_92be_6fd7_e0e7, 0xdc8d_07b0_eaab_99ba,
+    ],
+    responseRoot: .generic(
+      0x4204_6de6_63be_eef0,
+      args: [
+        .concrete(0xdc8d_07b0_eaab_99ba),
         .generic(0x4cf4_b2ae_b98a_1939, args: [.concrete(0x5db7_0a39_4660_f3e6)]),
       ])
   ),

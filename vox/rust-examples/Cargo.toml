@@ -10,6 +10,8 @@ publish = false
 
 [dependencies]
 eyre.workspace = true
+facet.workspace = true
+spec-proto.workspace = true
 vox = { workspace = true, features = ["transport-tcp", "transport-shm", "transport-local", "transport-websocket"] }
 shm-primitives.workspace = true
 tempfile.workspace = true

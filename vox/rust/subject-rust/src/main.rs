@@ -1,8 +1,9 @@
 //! Rust subject binary for the vox compliance suite.
 
 use spec_proto::{
-    Canvas, Color, Config, LookupError, MathError, Measurement, Message, Person, Point, Profile,
-    Record, Rectangle, Shape, Status, Tag, TaggedPoint, Testbed, TestbedClient, TestbedDispatcher,
+    Canvas, Color, Config, GnarlyPayload, LookupError, MathError, Measurement, Message, Person,
+    Point, Profile, Record, Rectangle, Shape, Status, Tag, TaggedPoint, Testbed, TestbedClient,
+    TestbedDispatcher,
 };
 use tracing::{debug, error, info, instrument};
 use vox::{Rx, Tx};
@@ -159,6 +160,10 @@ impl Testbed for TestbedService {
             shapes,
             background,
         }
+    }
+
+    async fn echo_gnarly(&self, payload: GnarlyPayload) -> GnarlyPayload {
+        payload
     }
 
     async fn process_message(&self, msg: Message) -> Message {

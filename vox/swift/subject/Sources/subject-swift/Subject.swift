@@ -135,6 +135,10 @@ struct TestbedService: TestbedHandler {
         return Canvas(name: name, shapes: shapes, background: background)
     }
 
+    func echoGnarly(payload: GnarlyPayload) async throws -> GnarlyPayload {
+        payload
+    }
+
     func processMessage(msg: Message) async throws -> Message {
         switch msg {
         case .text(let s):

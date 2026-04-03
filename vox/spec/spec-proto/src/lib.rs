@@ -87,6 +87,9 @@ pub trait Testbed {
     /// Create a canvas with given shapes.
     async fn create_canvas(&self, name: String, shapes: Vec<Shape>, background: Color) -> Canvas;
 
+    /// Echo a deeply nested payload back unchanged.
+    async fn echo_gnarly(&self, payload: GnarlyPayload) -> GnarlyPayload;
+
     /// Process a message and return a response.
     async fn process_message(&self, msg: Message) -> Message;
 
@@ -218,6 +221,53 @@ pub struct Canvas {
     pub name: String,
     pub shapes: Vec<Shape>,
     pub background: Color,
+}
+
+/// A key/value attribute for the gnarly payload benchmark.
+#[derive(Debug, Clone, PartialEq, Facet)]
+pub struct GnarlyAttr {
+    pub key: String,
+    pub value: String,
+}
+
+/// A nested enum used by the gnarly payload benchmark.
+#[derive(Debug, Clone, PartialEq, Facet)]
+#[repr(u8)]
+pub enum GnarlyKind {
+    File {
+        mime: String,
+        tags: Vec<String>,
+    } = 0,
+    Directory {
+        child_count: u32,
+        children: Vec<String>,
+    } = 1,
+    Symlink {
+        target: String,
+        hops: Vec<u32>,
+    } = 2,
+}
+
+/// An entry inside the gnarly payload benchmark fixture.
+#[derive(Debug, Clone, PartialEq, Facet)]
+pub struct GnarlyEntry {
+    pub id: u64,
+    pub parent: Option<u64>,
+    pub name: String,
+    pub path: String,
+    pub attrs: Vec<GnarlyAttr>,
+    pub chunks: Vec<Vec<u8>>,
+    pub kind: GnarlyKind,
+}
+
+/// A deep, heterogenous payload for transport and codec benchmarking.
+#[derive(Debug, Clone, PartialEq, Facet)]
+pub struct GnarlyPayload {
+    pub revision: u64,
+    pub mount: String,
+    pub entries: Vec<GnarlyEntry>,
+    pub footer: Option<String>,
+    pub digest: Vec<u8>,
 }
 
 /// An enum with newtype variants.

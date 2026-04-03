@@ -2449,7 +2449,9 @@ name = "rust-examples"
 version = "0.3.1"
 dependencies = [
  "eyre",
+ "facet",
  "shm-primitives",
+ "spec-proto",
  "tempfile",
  "tokio",
  "tracing-subscriber",

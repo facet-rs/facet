@@ -107,7 +107,7 @@ fn generate_wire_schemas(service: &ServiceDescriptor) -> String {
         let args_extracted = extract_schemas(method.args_shape).expect("args schema extraction");
         let args_schema_ids: Vec<SchemaHash> =
             args_extracted.schemas.iter().map(|s| s.id).collect();
-        for schema in args_extracted.schemas {
+        for schema in args_extracted.schemas.iter().cloned() {
             global_schemas.insert(schema.id, schema);
         }
 
@@ -132,11 +132,11 @@ fn generate_wire_schemas(service: &ServiceDescriptor) -> String {
         for schema in vox_error_extracted.schemas.iter() {
             response_schema_ids.push(schema.id);
         }
-        for schema in ok_extracted.schemas {
+        for schema in ok_extracted.schemas.iter().cloned() {
             response_schema_ids.push(schema.id);
             global_schemas.insert(schema.id, schema);
         }
-        for schema in err_extracted.schemas {
+        for schema in err_extracted.schemas.iter().cloned() {
             response_schema_ids.push(schema.id);
             global_schemas.insert(schema.id, schema);
         }
@@ -146,15 +146,17 @@ fn generate_wire_schemas(service: &ServiceDescriptor) -> String {
         response_schema_ids.retain(|id| seen.insert(*id));
 
         // Build the response root: Result<ok_root, VoxError<err_root>>
-        let vox_error_ref = TypeRef::generic(vox_error_type_id, vec![err_extracted.root]);
-        let response_root =
-            TypeRef::generic(result_type_id, vec![ok_extracted.root, vox_error_ref]);
+        let vox_error_ref = TypeRef::generic(vox_error_type_id, vec![err_extracted.root.clone()]);
+        let response_root = TypeRef::generic(
+            result_type_id,
+            vec![ok_extracted.root.clone(), vox_error_ref],
+        );
 
         method_infos.push((
             method_id,
             MethodSchemaInfo {
                 args_schema_ids,
-                args_root: args_extracted.root,
+                args_root: args_extracted.root.clone(),
                 response_schema_ids,
                 response_root,
             },

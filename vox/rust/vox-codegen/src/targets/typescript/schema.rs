@@ -34,7 +34,7 @@ pub fn generate_send_schema_table(service: &ServiceDescriptor) -> String {
     fn extract_into(shape: &'static Shape, all_schemas: &mut Vec<Schema>) -> TypeRef<SchemaHash> {
         let extracted = vox_types::extract_schemas(shape).expect("schema extraction");
         let root = extracted.root.clone();
-        all_schemas.extend(extracted.schemas);
+        all_schemas.extend(extracted.schemas.iter().cloned());
         root
     }
 
