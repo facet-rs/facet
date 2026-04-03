@@ -89,7 +89,7 @@
       </div>
       <div class="panel">
         <h2>Peak memory</h2>
-        <p>Solid line is physical footprint. Dashed line is RSS.</p>
+        <p>Peak RSS (resident set size) sampled every 100ms during the run.</p>
         <div class="plot" id="memoryPlot"></div>
       </div>
     </section>
@@ -114,7 +114,6 @@
                 <th>p999_us</th>
                 <th>drop_rate_pct</th>
                 <th>rss_mib</th>
-                <th>phys_footprint_mib</th>
               </tr>
             </thead>
             <tbody id="rows"></tbody>

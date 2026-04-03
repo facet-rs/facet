@@ -109,7 +109,6 @@ function buildSeries(rows, minCompletedForP99) {
           return denom > 0 ? (t.dropped / denom) * 100 : 0;
         })),
         rss_mib: meanFinite(trials.map((t) => Number.isFinite(t.peak_rss_kib) ? t.peak_rss_kib / 1024 : null)),
-        phys_footprint_mib: meanFinite(trials.map((t) => Number.isFinite(t.peak_phys_footprint_kib) ? t.peak_phys_footprint_kib / 1024 : null)),
       };
     });
     series.push({
@@ -197,12 +196,11 @@ function makeMemorySeries(series) {
     const color = seriesColor(s) ?? colorForIndex(index);
     const data = s.points
       .map((p) => {
-        if (!Number.isFinite(p.phys_footprint_mib)) {
+        if (!Number.isFinite(p.rss_mib)) {
           return null;
         }
         return {
-          value: [p.offered_rps, p.phys_footprint_mib],
-          rss_mib: Number.isFinite(p.rss_mib) ? p.rss_mib : null,
+          value: [p.offered_rps, p.rss_mib],
         };
       })
       .filter(Boolean);
@@ -278,18 +276,18 @@ function mountChart(containerId, { series, yLabel, yFormat }) {
     color: series.map((_, index) => colorForIndex(index)),
     legend: {
       type: 'plain',
+      show: true,
       top: 8,
       left: 16,
       right: 16,
       orient: 'horizontal',
       selectedMode: false,
       hoverLink: true,
-      itemWidth: 18,
-      itemHeight: 10,
-      itemGap: 14,
-      textStyle: { color: cssVar('--muted') || '#99aebd' },
+      itemWidth: 30,
+      itemHeight: 12,
+      itemGap: 16,
+      textStyle: { color: '#eef6fb', fontSize: 12 },
       inactiveColor: 'rgba(255,255,255,0.38)',
-      icon: 'line',
     },
     grid: {
       left: 70,
@@ -398,7 +396,6 @@ function renderTable(rows) {
       formatNumber(row.p999_us, 1),
       formatNumber(row.drop_rate_pct, 1),
       formatNumber(row.rss_mib, 1),
-      formatNumber(row.phys_footprint_mib, 1),
     ];
     for (const cell of cells) {
       const td = document.createElement('td');
@@ -444,7 +441,7 @@ function renderApp(data, title) {
   renderLineChart(
     'p99Plot',
     makeEchartsSeries(series, (p) => p.p99_us),
-    'p99 latency (us)',
+    'p99 latency (µs)',
     (value) => formatNumber(value, 0),
   );
   renderLineChart(

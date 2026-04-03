@@ -53,6 +53,7 @@ struct Config {
     logs_dir: PathBuf,
     serve_report: bool,
     bind: String,
+    sweep_rps: Option<Vec<usize>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,7 +99,6 @@ struct TrialRow {
     baseline_rps: Option<f64>,
     load_factor: Option<f64>,
     peak_rss_kib: Option<u64>,
-    peak_phys_footprint_kib: Option<u64>,
     label: String,
 }
 
@@ -250,6 +250,7 @@ fn parse_args() -> Result<Config> {
     let mut logs_dir = PathBuf::from("/tmp/shootout-logs");
     let mut serve_report = false;
     let mut bind = "127.0.0.1:8000".to_string();
+    let mut sweep_rps: Option<Vec<usize>> = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -388,6 +389,9 @@ fn parse_args() -> Result<Config> {
                     .next()
                     .ok_or_else(|| eyre::eyre!("missing value for --bind"))?
             }
+            "--sweep" => {
+                sweep_rps = Some((1..=8).map(|i| i * 25).collect());
+            }
             "--help" | "-h" => {
                 print_usage();
                 std::process::exit(0);
@@ -478,6 +482,7 @@ fn parse_args() -> Result<Config> {
         logs_dir,
         serve_report,
         bind,
+        sweep_rps,
     })
 }
 
@@ -636,17 +641,6 @@ fn parse_peak_rss_kib(stderr: &str) -> Option<u64> {
         .and_then(|s| s.parse::<u64>().ok())
 }
 
-fn parse_peak_phys_footprint_kib(stderr: &str) -> Option<u64> {
-    stderr
-        .lines()
-        .find_map(|line| line.strip_prefix("subject peak_rss_kib="))
-        .and_then(|rest| {
-            rest.split_whitespace()
-                .find_map(|part| part.strip_prefix("peak_phys_footprint_kib="))
-        })
-        .and_then(|s| s.parse::<u64>().ok())
-}
-
 fn copy_trial_logs(logs_dir: &Path, from_label: &str, to_label: &str) -> Result<()> {
     if from_label == to_label {
         return Ok(());
@@ -742,7 +736,6 @@ fn run_trial(
         baseline_rps: None,
         load_factor: None,
         peak_rss_kib: parse_peak_rss_kib(&stderr),
-        peak_phys_footprint_kib: parse_peak_phys_footprint_kib(&stderr),
         label: label.to_string(),
     })
 }
@@ -974,17 +967,16 @@ fn unique_sorted_usizes(values: Vec<usize>) -> Vec<usize> {
 }
 
 fn planned_trials(cfg: &Config) -> usize {
-    let calibration_upper = cfg.server_impls.len()
+    let combinations = cfg.server_impls.len()
         * cfg.payload_sizes.len()
         * cfg.in_flights.len()
-        * cfg.transports.len()
-        * (cfg.calibration_max_probes + cfg.calibration_refine_steps);
-    let block_trials = cfg.blocks
-        * cfg.server_impls.len()
-        * cfg.payload_sizes.len()
-        * cfg.in_flights.len()
-        * cfg.transports.len()
-        * cfg.load_factors.len();
+        * cfg.transports.len();
+    if let Some(sweep) = &cfg.sweep_rps {
+        return cfg.blocks * combinations * sweep.len();
+    }
+    let calibration_upper =
+        combinations * (cfg.calibration_max_probes + cfg.calibration_refine_steps);
+    let block_trials = cfg.blocks * combinations * cfg.load_factors.len();
     calibration_upper + block_trials
 }
 
@@ -1159,57 +1151,71 @@ fn main() -> Result<()> {
     for &server_impl in &cfg.server_impls {
         for &payload_size in &cfg.payload_sizes {
             for &in_flight in &cfg.in_flights {
-                let mut transport_trials = BTreeMap::<String, TrialRow>::new();
-                for &transport in &cfg.transports {
-                    pb.set_message(format!(
-                        "calibrating srv={} transport={} payload={} in_flight={}",
-                        server_impl_name(server_impl),
-                        transport_name(transport),
-                        payload_size,
-                        in_flight
-                    ));
-                    let (_best, row, trials) = calibrate_transport_open_loop(
-                        &root,
-                        &cfg,
-                        server_impl,
-                        transport,
+                if let Some(sweep) = &cfg.sweep_rps {
+                    calibrations.push(Calibration {
+                        server_impl: server_impl_name(server_impl).to_string(),
                         payload_size,
                         in_flight,
-                        &pb,
-                    )?;
-                    transport_trials.extend(trials);
-                    if let Some(trial) = transport_trials.get_mut(transport_name(transport)) {
-                        trial.server_impl = server_impl_name(server_impl).to_string();
-                        trial.baseline_rps =
-                            Some(row.bench.offered_rps.unwrap_or(row.bench.calls_per_sec));
-                    }
-                }
-
-                let transport_rows: Vec<&TrialRow> = transport_trials.values().collect();
-                let baseline_rps = transport_rows
-                    .iter()
-                    .map(|row| row.bench.offered_rps.unwrap_or(row.bench.calls_per_sec))
-                    .fold(f64::INFINITY, f64::min);
-                let baseline_rps = if baseline_rps.is_finite() {
-                    baseline_rps
+                        baseline_rps: None,
+                        transport_trials: BTreeMap::new(),
+                        offered_rps_values: sweep.clone(),
+                        load_factors: vec![1.0; sweep.len()],
+                    });
                 } else {
-                    0.0
-                };
-                let offered_rps_values = unique_sorted_usizes(
-                    cfg.load_factors
+                    let mut transport_trials = BTreeMap::<String, TrialRow>::new();
+                    for &transport in &cfg.transports {
+                        pb.set_message(format!(
+                            "calibrating srv={} transport={} payload={} in_flight={}",
+                            server_impl_name(server_impl),
+                            transport_name(transport),
+                            payload_size,
+                            in_flight
+                        ));
+                        let (_best, row, trials) = calibrate_transport_open_loop(
+                            &root,
+                            &cfg,
+                            server_impl,
+                            transport,
+                            payload_size,
+                            in_flight,
+                            &pb,
+                        )?;
+                        transport_trials.extend(trials);
+                        if let Some(trial) = transport_trials.get_mut(transport_name(transport)) {
+                            trial.server_impl = server_impl_name(server_impl).to_string();
+                            trial.baseline_rps =
+                                Some(row.bench.offered_rps.unwrap_or(row.bench.calls_per_sec));
+                        }
+                    }
+
+                    let transport_rows: Vec<&TrialRow> = transport_trials.values().collect();
+                    let baseline_rps = transport_rows
                         .iter()
-                        .map(|factor| std::cmp::max(1, (baseline_rps * factor).round() as usize))
-                        .collect(),
-                );
-                calibrations.push(Calibration {
-                    server_impl: server_impl_name(server_impl).to_string(),
-                    payload_size,
-                    in_flight,
-                    baseline_rps: Some(baseline_rps),
-                    transport_trials,
-                    offered_rps_values,
-                    load_factors: cfg.load_factors.clone(),
-                });
+                        .map(|row| row.bench.offered_rps.unwrap_or(row.bench.calls_per_sec))
+                        .fold(f64::INFINITY, f64::min);
+                    let baseline_rps = if baseline_rps.is_finite() {
+                        baseline_rps
+                    } else {
+                        0.0
+                    };
+                    let offered_rps_values = unique_sorted_usizes(
+                        cfg.load_factors
+                            .iter()
+                            .map(|factor| {
+                                std::cmp::max(1, (baseline_rps * factor).round() as usize)
+                            })
+                            .collect(),
+                    );
+                    calibrations.push(Calibration {
+                        server_impl: server_impl_name(server_impl).to_string(),
+                        payload_size,
+                        in_flight,
+                        baseline_rps: Some(baseline_rps),
+                        transport_trials,
+                        offered_rps_values,
+                        load_factors: cfg.load_factors.clone(),
+                    });
+                }
             }
         }
     }
@@ -1222,7 +1228,9 @@ fn main() -> Result<()> {
             let server_impl = parse_server_impl(&cal.server_impl)?;
             for (i, offered_rps) in cal.offered_rps_values.iter().copied().enumerate() {
                 for &transport in &cfg.transports {
-                    if !cal.transport_trials.contains_key(transport_name(transport)) {
+                    if cfg.sweep_rps.is_none()
+                        && !cal.transport_trials.contains_key(transport_name(transport))
+                    {
                         continue;
                     }
                     conditions.push((

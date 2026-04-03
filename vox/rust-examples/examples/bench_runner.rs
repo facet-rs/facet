@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{JoinHandle, sleep};
 use std::time::Duration;
 
+use sysinfo::{Pid, ProcessesToUpdate, System};
+
 use eyre::{Context as _, Result};
 
 #[derive(Debug, Clone)]
@@ -184,63 +186,15 @@ fn shm_socket_path(addr: &str) -> Option<String> {
     addr.strip_prefix("shm://").map(ToOwned::to_owned)
 }
 
-fn read_rss_kib(pid: u32) -> Option<u64> {
-    let output = Command::new("ps")
-        .args(["-o", "rss=", "-p", &pid.to_string()])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout.trim().parse::<u64>().ok()
-}
-
-fn parse_size_to_kib(value: &str) -> Option<u64> {
-    let trimmed = value.trim();
-    let mut chars = trimmed.chars();
-    let mut number = String::new();
-    let mut suffix = String::new();
-    for c in chars.by_ref() {
-        if c.is_ascii_digit() || c == '.' {
-            number.push(c);
-        } else if !c.is_whitespace() {
-            suffix.push(c);
-        }
-    }
-    let base = number.parse::<f64>().ok()?;
-    let mult = match suffix.to_ascii_uppercase().as_str() {
-        "" | "B" => 1.0 / 1024.0,
-        "K" | "KB" => 1.0,
-        "M" | "MB" => 1024.0,
-        "G" | "GB" => 1024.0 * 1024.0,
-        "T" | "TB" => 1024.0 * 1024.0 * 1024.0,
-        _ => return None,
-    };
-    Some((base * mult).round() as u64)
-}
-
-fn read_phys_footprint_kib(pid: u32) -> Option<u64> {
-    let output = Command::new("vmmap")
-        .args(["-summary", &pid.to_string()])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if let Some((_, right)) = line.split_once("Physical footprint:") {
-            return parse_size_to_kib(right);
-        }
-    }
-    None
+fn read_rss_kib(pid: u32, sys: &mut System) -> Option<u64> {
+    let pid = Pid::from(pid as usize);
+    sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), false);
+    Some(sys.process(pid)?.memory() / 1024)
 }
 
 #[derive(Debug, Clone, Copy)]
 struct PeakMemory {
     peak_rss_kib: u64,
-    peak_phys_footprint_kib: Option<u64>,
 }
 
 struct MemorySampler {
@@ -253,33 +207,18 @@ impl MemorySampler {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_for_thread = Arc::clone(&stop);
         let handle = std::thread::spawn(move || {
+            let mut sys = System::new();
             let mut peak_rss_kib = 0u64;
-            let mut peak_phys_footprint_kib: Option<u64> = None;
-            let mut ticks = 0u64;
             while !stop_for_thread.load(Ordering::Relaxed) {
-                if let Some(rss_kib) = read_rss_kib(pid) {
+                if let Some(rss_kib) = read_rss_kib(pid, &mut sys) {
                     peak_rss_kib = peak_rss_kib.max(rss_kib);
                 }
-                if ticks % 5 == 0
-                    && let Some(footprint_kib) = read_phys_footprint_kib(pid)
-                {
-                    peak_phys_footprint_kib =
-                        Some(peak_phys_footprint_kib.unwrap_or(0).max(footprint_kib));
-                }
-                ticks += 1;
                 sleep(Duration::from_millis(100));
             }
-            if let Some(rss_kib) = read_rss_kib(pid) {
+            if let Some(rss_kib) = read_rss_kib(pid, &mut sys) {
                 peak_rss_kib = peak_rss_kib.max(rss_kib);
             }
-            if let Some(footprint_kib) = read_phys_footprint_kib(pid) {
-                peak_phys_footprint_kib =
-                    Some(peak_phys_footprint_kib.unwrap_or(0).max(footprint_kib));
-            }
-            PeakMemory {
-                peak_rss_kib,
-                peak_phys_footprint_kib,
-            }
+            PeakMemory { peak_rss_kib }
         });
         Self {
             stop,
@@ -292,10 +231,7 @@ impl MemorySampler {
         self.handle
             .take()
             .and_then(|handle| handle.join().ok())
-            .unwrap_or(PeakMemory {
-                peak_rss_kib: 0,
-                peak_phys_footprint_kib: None,
-            })
+            .unwrap_or(PeakMemory { peak_rss_kib: 0 })
     }
 }
 
@@ -309,11 +245,16 @@ impl Drop for MemorySampler {
 }
 
 fn remove_stale_socket(addr: &str) -> Result<()> {
-    if let Some(path) = local_socket_path(addr) {
-        if path.exists() {
-            std::fs::remove_file(&path)
-                .with_context(|| format!("failed to remove stale socket {}", path.display()))?;
-        }
+    let path = if let Some(path) = local_socket_path(addr) {
+        path
+    } else if let Some(s) = shm_socket_path(addr) {
+        PathBuf::from(s)
+    } else {
+        return Ok(());
+    };
+    if path.exists() {
+        std::fs::remove_file(&path)
+            .with_context(|| format!("failed to remove stale socket {}", path.display()))?;
     }
     Ok(())
 }
@@ -415,6 +356,8 @@ fn run() -> Result<()> {
 
     if let Some(socket_path) = local_socket_path(&cfg.addr) {
         wait_for_socket_or_exit(bench_client.child_mut(), &socket_path)?;
+    } else if let Some(socket_path) = shm_socket_path(&cfg.addr) {
+        wait_for_socket_or_exit(bench_client.child_mut(), Path::new(&socket_path))?;
     } else {
         sleep(Duration::from_millis(100));
     }
@@ -466,15 +409,10 @@ fn run() -> Result<()> {
     }
     let peak_memory = subject_memory.finish();
     let peak_rss_kib = peak_memory.peak_rss_kib;
-    let peak_phys_footprint_kib = peak_memory.peak_phys_footprint_kib;
     eprintln!(
-        "subject peak_rss_kib={} peak_rss_mib={:.2} peak_phys_footprint_kib={} peak_phys_footprint_mib={:.2}",
+        "subject peak_rss_kib={} peak_rss_mib={:.2}",
         peak_rss_kib,
         peak_rss_kib as f64 / 1024.0,
-        peak_phys_footprint_kib.unwrap_or(0),
-        peak_phys_footprint_kib
-            .map(|v| v as f64 / 1024.0)
-            .unwrap_or(0.0),
     );
 
     if let Some(path) = local_socket_path(&cfg.addr) {

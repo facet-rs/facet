@@ -220,10 +220,10 @@ function main() {
                 <th>payload</th>
                 <th>in_flight</th>
                 <th>blocks</th>
-                <th>local p50 us</th>
-                <th>shm p50 us</th>
-                <th>local p99 us</th>
-                <th>shm p99 us</th>
+                <th>local p50 µs</th>
+                <th>shm p50 µs</th>
+                <th>local p99 µs</th>
+                <th>shm p99 µs</th>
                 <th>local rps</th>
                 <th>shm rps</th>
                 <th>local rss MiB</th>
@@ -308,8 +308,8 @@ function main() {
       }, { displayModeBar: false, responsive: true });
     }
 
-    linePlot('p50Plot', 'local_p50_us', 'shm_p50_us', 'p50', 'microseconds');
-    linePlot('p99Plot', 'local_p99_us', 'shm_p99_us', 'p99', 'microseconds');
+    linePlot('p50Plot', 'local_p50_us', 'shm_p50_us', 'p50', 'µs');
+    linePlot('p99Plot', 'local_p99_us', 'shm_p99_us', 'p99', 'µs');
     linePlot('throughputPlot', 'local_rps', 'shm_rps', 'throughput', 'calls / sec');
 
     const rssTraces = [];

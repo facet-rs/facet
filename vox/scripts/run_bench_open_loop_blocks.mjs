@@ -141,10 +141,6 @@ function parsePeakRssKib(stderr) {
   return match ? Number.parseInt(match[1], 10) : null;
 }
 
-function parsePeakPhysFootprintKib(stderr) {
-  const match = stderr.match(/peak_phys_footprint_kib=(\d+)/);
-  return match ? Number.parseInt(match[1], 10) : null;
-}
 
 function subjectCmdForServerImpl(serverImpl) {
   if (serverImpl === 'swift') return path.join(repoRoot, 'swift', 'subject', 'subject-swift.sh');
@@ -193,10 +189,6 @@ function aggregateFromLogs(logsDir) {
     const peakRssKib = fs.existsSync(stderrPath)
       ? parsePeakRssKib(fs.readFileSync(stderrPath, 'utf8'))
       : null;
-    const peakPhysFootprintKib = fs.existsSync(stderrPath)
-      ? parsePeakPhysFootprintKib(fs.readFileSync(stderrPath, 'utf8'))
-      : null;
-
     let match = stem.match(/^cal-srv(swift|rust)-(local|shm)-p(\d+)-i(\d+)$/);
     if (match) {
       const [, serverImpl, transport, payloadSizeRaw, inFlightRaw] = match;
@@ -219,7 +211,6 @@ function aggregateFromLogs(logsDir) {
       calibration.transport_trials[transport] = {
         ...row,
         peak_rss_kib: peakRssKib,
-        peak_phys_footprint_kib: peakPhysFootprintKib,
         label: stem,
       };
       continue;
@@ -247,7 +238,6 @@ function aggregateFromLogs(logsDir) {
       calibration.transport_trials[transport] = {
         ...row,
         peak_rss_kib: peakRssKib,
-        peak_phys_footprint_kib: peakPhysFootprintKib,
         label: stem,
       };
       continue;
@@ -266,7 +256,6 @@ function aggregateFromLogs(logsDir) {
         in_flight: Number(inFlightRaw),
         offered_rps: Number(offeredRpsRaw),
         peak_rss_kib: peakRssKib,
-        peak_phys_footprint_kib: peakPhysFootprintKib,
         label: stem,
       });
       continue;
@@ -285,7 +274,6 @@ function aggregateFromLogs(logsDir) {
       in_flight: Number(inFlightRaw),
       offered_rps: Number(offeredRpsRaw),
       peak_rss_kib: peakRssKib,
-      peak_phys_footprint_kib: peakPhysFootprintKib,
       label: stem,
     });
   }
@@ -375,7 +363,6 @@ function runTrial(label, serverImpl, transport, clientArgs, logsDir) {
     ...rows[0],
     server_impl: serverImpl,
     peak_rss_kib: parsePeakRssKib(stderr),
-    peak_phys_footprint_kib: parsePeakPhysFootprintKib(stderr),
     label,
   };
 }
