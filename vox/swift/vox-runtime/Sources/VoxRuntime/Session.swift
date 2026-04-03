@@ -5,6 +5,7 @@ public final class Session: @unchecked Sendable {
     public let rootConnection: Connection
     public let driver: Driver
     public let handle: SessionHandle
+    public let peerMetadata: [MetadataEntry]
     let sessionResumeKey: [UInt8]?
 
     public var connection: Connection {
@@ -16,12 +17,14 @@ public final class Session: @unchecked Sendable {
         rootConnection: Connection,
         driver: Driver,
         handle: SessionHandle,
+        peerMetadata: [MetadataEntry],
         sessionResumeKey: [UInt8]?
     ) {
         self.role = role
         self.rootConnection = rootConnection
         self.driver = driver
         self.handle = handle
+        self.peerMetadata = peerMetadata
         self.sessionResumeKey = sessionResumeKey
     }
 
@@ -45,7 +48,7 @@ public final class Session: @unchecked Sendable {
         } else {
             recoverAttachment = nil
         }
-        let (connection, driver, handle, sessionResumeKey) = try await establishInitiator(
+        let (connection, driver, handle, sessionResumeKey, peerMetadata) = try await establishInitiator(
             attachment: attachment,
             transport: connector.transport,
             dispatcher: dispatcher,
@@ -59,6 +62,7 @@ public final class Session: @unchecked Sendable {
             rootConnection: connection,
             driver: driver,
             handle: handle,
+            peerMetadata: peerMetadata,
             sessionResumeKey: sessionResumeKey
         )
     }
@@ -109,7 +113,7 @@ public final class Session: @unchecked Sendable {
         keepalive: DriverKeepaliveConfig? = nil,
         resumable: Bool = false
     ) async throws -> Session {
-        let (connection, driver, handle, sessionResumeKey) = try await establishInitiator(
+        let (connection, driver, handle, sessionResumeKey, peerMetadata) = try await establishInitiator(
             attachment: .initiator(link),
             transport: transport,
             dispatcher: dispatcher,
@@ -122,6 +126,7 @@ public final class Session: @unchecked Sendable {
             rootConnection: connection,
             driver: driver,
             handle: handle,
+            peerMetadata: peerMetadata,
             sessionResumeKey: sessionResumeKey
         )
     }
@@ -135,7 +140,7 @@ public final class Session: @unchecked Sendable {
         resumable: Bool = false
     ) async throws -> Session {
         let selectedTransport = transport ?? (attachment.clientHello == nil ? .bare : .stable)
-        let (connection, driver, handle, sessionResumeKey) = try await establishAcceptor(
+        let (connection, driver, handle, sessionResumeKey, peerMetadata) = try await establishAcceptor(
             attachment: attachment,
             transport: selectedTransport,
             dispatcher: dispatcher,
@@ -148,6 +153,7 @@ public final class Session: @unchecked Sendable {
             rootConnection: connection,
             driver: driver,
             handle: handle,
+            peerMetadata: peerMetadata,
             sessionResumeKey: sessionResumeKey
         )
     }

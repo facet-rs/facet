@@ -202,6 +202,29 @@ private struct NoopDispatcher: ServiceDispatcher {
     ) async {}
 }
 
+
+@Test func acceptorSessionExposesPeerHandshakeMetadata() async throws {
+    let metadata = [
+        MetadataEntry(key: "vox-service", value: .string("Noop"), flags: 0),
+        MetadataEntry(key: "vixenfs-sid", value: .string("abc123"), flags: 0),
+    ]
+    let link = ScriptedTransport(
+        initialHandshake: .hello(
+            HandshakeHello(
+                parity: .odd,
+                connectionSettings: ConnectionSettings(parity: .odd, maxConcurrentRequests: 64),
+                messagePayloadSchemaCbor: wireMessageSchemasCbor,
+                supportsRetry: true,
+                resumeKey: nil,
+                metadata: metadata
+            ))
+    )
+
+    let session = try await Session.acceptorOn(link, dispatcher: NoopDispatcher())
+
+    #expect(session.peerMetadata == metadata)
+}
+
 private struct ImmediateResponseDispatcher: ServiceDispatcher {
     func preregister(
         methodId _: UInt64,
@@ -476,7 +499,7 @@ struct ConnectionFailureTests {
                     resumeKey: nil,
                     metadata: []
                 )))
-        let (handle, driver, _, _) = try await establishInitiator(
+        let (handle, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher()
         )
@@ -524,7 +547,7 @@ struct ConnectionFailureTests {
                     metadata: []
                 )))
         let probe = BlockingDispatchProbe()
-        let (_, driver, _, _) = try await establishAcceptor(
+        let (_, driver, _, _, _) = try await establishAcceptor(
             conduit: transport,
             dispatcher: BlockingResponseDispatcher(probe: probe)
         )
@@ -600,7 +623,7 @@ struct ConnectionFailureTests {
                     resumeKey: nil,
                     metadata: []
                 )))
-        let (_, driver, _, _) = try await establishAcceptor(
+        let (_, driver, _, _, _) = try await establishAcceptor(
             conduit: transport,
             dispatcher: ImmediateResponseDispatcher()
         )
@@ -667,7 +690,7 @@ struct ConnectionFailureTests {
 
     @Test func immediateResponseAfterSendStillCompletesCall() async throws {
         let transport = ScriptedTransport(autoRespondRequestCount: 1)
-        let (handle, driver, _, _) = try await establishInitiator(
+        let (handle, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher()
         )
@@ -685,7 +708,7 @@ struct ConnectionFailureTests {
 
     @Test func callFailsFastAfterDriverExit() async throws {
         let transport = ScriptedTransport()
-        let (handle, driver, _, _) = try await establishInitiator(
+        let (handle, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher()
         )
@@ -709,7 +732,7 @@ struct ConnectionFailureTests {
 
     @Test func zeroTimeoutDoesNotOrphanContinuation() async throws {
         let transport = ScriptedTransport()
-        let (handle, driver, _, _) = try await establishInitiator(
+        let (handle, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher()
         )
@@ -733,7 +756,7 @@ struct ConnectionFailureTests {
 
     @Test func callTimesOutAndSendsCancel() async throws {
         let transport = ScriptedTransport()
-        let (handle, driver, _, _) = try await establishInitiator(
+        let (handle, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher()
         )
@@ -759,7 +782,7 @@ struct ConnectionFailureTests {
         let transport = ScriptedTransport()
         await transport.setFailNextRequestSend()
 
-        let (handle, driver, _, _) = try await establishInitiator(
+        let (handle, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher()
         )
@@ -780,7 +803,7 @@ struct ConnectionFailureTests {
 
     @Test func unknownResponseRequestIdClosesConnectionAndFailsPendingCalls() async throws {
         let transport = ScriptedTransport()
-        let (handle, driver, _, _) = try await establishInitiator(
+        let (handle, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher()
         )
@@ -815,7 +838,7 @@ struct ConnectionFailureTests {
 
     @Test func lateResponseAfterTimeoutIsIgnoredAndConnectionStaysUsable() async throws {
         let transport = ScriptedTransport()
-        let (handle, driver, _, _) = try await establishInitiator(
+        let (handle, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher()
         )
@@ -872,7 +895,7 @@ struct ConnectionFailureTests {
 
     @Test func duplicateResponseAfterSuccessIsIgnored() async throws {
         let transport = ScriptedTransport()
-        let (handle, driver, _, _) = try await establishInitiator(
+        let (handle, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher()
         )
@@ -936,7 +959,7 @@ struct ConnectionFailureTests {
 
     @Test func protocolViolationFromIncomingMessageFailsPendingCalls() async throws {
         let transport = ScriptedTransport()
-        let (handle, driver, _, _) = try await establishInitiator(
+        let (handle, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher()
         )
@@ -967,7 +990,7 @@ struct ConnectionFailureTests {
 
     @Test func manyCallsFailFastWhenConnectionDrops() async throws {
         let transport = ScriptedTransport(autoRespondRequestCount: 20, dropAfterRequestCount: 20)
-        let (handle, driver, _, _) = try await establishInitiator(
+        let (handle, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher()
         )
@@ -1030,7 +1053,7 @@ struct ConnectionFailureTests {
 
     @Test func keepalivePingPongHealthyPath() async throws {
         let transport = ScriptedTransport(autoRespondPing: true)
-        let (handle, driver, _, _) = try await establishInitiator(
+        let (handle, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher(),
             keepalive: DriverKeepaliveConfig(pingInterval: 0.02, pongTimeout: 0.05)
@@ -1063,7 +1086,7 @@ struct ConnectionFailureTests {
 
     @Test func keepaliveMissingPongClosesDriver() async throws {
         let transport = ScriptedTransport()
-        let (_, driver, _, _) = try await establishInitiator(
+        let (_, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher(),
             keepalive: DriverKeepaliveConfig(pingInterval: 0.02, pongTimeout: 0.05)
@@ -1089,7 +1112,7 @@ struct ConnectionFailureTests {
 
     @Test func keepaliveFailureFailsPendingCall() async throws {
         let transport = ScriptedTransport()
-        let (handle, driver, _, _) = try await establishInitiator(
+        let (handle, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher(),
             keepalive: DriverKeepaliveConfig(pingInterval: 0.02, pongTimeout: 0.05)

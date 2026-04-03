@@ -232,7 +232,7 @@ struct SessionResumeTests {
                 ))
         )
 
-        let (connection, driver, handle, _) = try await establishInitiator(
+        let (connection, driver, handle, _, _) = try await establishInitiator(
             conduit: initial,
             dispatcher: ResumeNoopDispatcher(),
             resumable: true

@@ -351,7 +351,7 @@ private func establishShmInitiator(
         throw ShmHarnessError.unexpectedFrame("expected lets-go during handshake")
     }
 
-    let (handle, driver, _, _) = try await establishTask.value
+    let (handle, driver, _, _, _) = try await establishTask.value
     return (transport, handle, driver)
 }
 

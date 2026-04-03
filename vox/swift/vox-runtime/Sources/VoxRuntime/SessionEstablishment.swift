@@ -6,6 +6,7 @@ struct SessionHandshakeResult {
     let sessionResumeKey: [UInt8]?
     let localRootSettings: ConnectionSettings
     let peerRootSettings: ConnectionSettings
+    let peerMetadata: [MetadataEntry]
 }
 
 func oppositeParity(_ parity: Parity) -> Parity {
@@ -94,7 +95,8 @@ func performInitiatorHandshake(
         peerSupportsRetry: peerHello.supportsRetry,
         sessionResumeKey: sessionResumeKey,
         localRootSettings: ourSettings,
-        peerRootSettings: peerHello.connectionSettings
+        peerRootSettings: peerHello.connectionSettings,
+        peerMetadata: peerHello.metadata
     )
 }
 
@@ -171,7 +173,8 @@ func performAcceptorHandshake(
         peerSupportsRetry: peerHello.supportsRetry,
         sessionResumeKey: sessionResumeKey,
         localRootSettings: ourSettings,
-        peerRootSettings: peerHello.connectionSettings
+        peerRootSettings: peerHello.connectionSettings,
+        peerMetadata: peerHello.metadata
     )
 }
 
@@ -228,7 +231,7 @@ public func establishShmGuest<D: ServiceDispatcher>(
     keepalive: DriverKeepaliveConfig? = nil,
     resumable: Bool = false,
     metadata: [MetadataEntry] = []
-) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
+) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
     switch role {
     case .initiator:
         try await performInitiatorTransportPrologue(transport: transport, conduit: conduit)
@@ -265,7 +268,7 @@ public func establishInitiator(
     resumable: Bool = false,
     recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
     metadata: [MetadataEntry] = []
-) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
+) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
     let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
     let handshake = try await performInitiatorHandshake(
         link: attachment.link,
@@ -298,7 +301,7 @@ public func establishInitiator(
         transport: transport,
         recoverAttachment: recoverAttachment
     )
-    return (connection, driver, handle, handshake.sessionResumeKey)
+    return (connection, driver, handle, handshake.sessionResumeKey, handshake.peerMetadata)
 }
 
 public func establishInitiator(
@@ -311,7 +314,7 @@ public func establishInitiator(
     resumable: Bool = false,
     recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
     metadata: [MetadataEntry] = []
-) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
+) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
     try await establishInitiator(
         attachment: .initiator(link),
         transport: transport,
@@ -335,7 +338,7 @@ public func establishInitiator(
     resumable: Bool = false,
     recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
     metadata: [MetadataEntry] = []
-) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
+) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
     try await establishInitiator(
         link: conduit,
         transport: transport,
@@ -358,7 +361,7 @@ public func establishAcceptor(
     keepalive: DriverKeepaliveConfig? = nil,
     resumable: Bool = false,
     metadata: [MetadataEntry] = []
-) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
+) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
     let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
     let handshake = try await performAcceptorHandshake(
         link: attachment.link,
@@ -390,7 +393,7 @@ public func establishAcceptor(
         transport: transport,
         recoverAttachment: nil
     )
-    return (connection, driver, handle, handshake.sessionResumeKey)
+    return (connection, driver, handle, handshake.sessionResumeKey, handshake.peerMetadata)
 }
 
 public func establishAcceptor(
@@ -402,7 +405,7 @@ public func establishAcceptor(
     keepalive: DriverKeepaliveConfig? = nil,
     resumable: Bool = false,
     metadata: [MetadataEntry] = []
-) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
+) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
     try await establishAcceptor(
         attachment: .init(link: link),
         transport: transport,
@@ -424,7 +427,7 @@ public func establishAcceptor(
     keepalive: DriverKeepaliveConfig? = nil,
     resumable: Bool = false,
     metadata: [MetadataEntry] = []
-) async throws -> (Connection, Driver, SessionHandle, [UInt8]?) {
+) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
     try await establishAcceptor(
         link: conduit,
         transport: transport,
