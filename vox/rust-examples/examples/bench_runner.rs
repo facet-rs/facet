@@ -371,25 +371,15 @@ fn wait_for_exit(child: &mut Child, label: &str, timeout: Duration) -> Result<Op
 
 struct ChildGuard {
     child: Option<Child>,
-    label: &'static str,
 }
 
 impl ChildGuard {
-    fn new(child: Child, label: &'static str) -> Self {
-        Self {
-            child: Some(child),
-            label,
-        }
+    fn new(child: Child) -> Self {
+        Self { child: Some(child) }
     }
 
     fn child_mut(&mut self) -> &mut Child {
         self.child.as_mut().expect("child is present")
-    }
-
-    fn wait(&mut self) -> Result<ExitStatus> {
-        self.child_mut()
-            .wait()
-            .with_context(|| format!("failed waiting for {}", self.label))
     }
 }
 
@@ -421,7 +411,7 @@ fn run() -> Result<()> {
         .current_dir(&workspace_root)
         .args(&cfg.bench_client_args);
     let bench_client = spawn_child(bench_cmd, "bench_client")?;
-    let mut bench_client = ChildGuard::new(bench_client, "bench_client");
+    let mut bench_client = ChildGuard::new(bench_client);
 
     if let Some(socket_path) = local_socket_path(&cfg.addr) {
         wait_for_socket_or_exit(bench_client.child_mut(), &socket_path)?;
@@ -440,7 +430,7 @@ fn run() -> Result<()> {
         subject_cmd.env("SHM_CONTROL_SOCK", control_sock);
     }
     let subject = spawn_child(subject_cmd, "subject")?;
-    let mut subject = ChildGuard::new(subject, "subject");
+    let mut subject = ChildGuard::new(subject);
     let mut subject_memory = MemorySampler::start(subject.child_mut().id());
 
     // Fail fast if the subject exits before the bench client is done.

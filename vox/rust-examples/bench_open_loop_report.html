@@ -46,7 +46,7 @@
     .panel { padding: 18px; }
     .panel h2 { margin: 0 0 6px; font-size: 22px; }
     .panel p { margin: 0 0 12px; color: var(--muted); }
-    .plot { width: 100%; min-height: 360px; }
+    .plot { width: 100%; height: 360px; }
     .plot svg { display: block; }
     .legend { display: flex; flex-wrap: wrap; gap: 10px 14px; margin-top: 10px; color: var(--muted); font-size: 12px; }
     .legend-entry { display: inline-flex; align-items: center; gap: 8px; }
@@ -97,15 +97,13 @@
     <section class="layout single">
       <div class="panel">
         <h2>Summary table</h2>
-        <p>One row per payload, concurrency, transport, and offered-load point.</p>
+        <p>One row per transport, runtime, and offered-load point.</p>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>transport</th>
                 <th>server_impl</th>
-                <th>payload</th>
-                <th>in_flight</th>
                 <th>blocks</th>
                 <th>completed_total</th>
                 <th>baseline_rps</th>
@@ -126,6 +124,7 @@
     </section>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.simple.min.js"></script>
   <script type="module" src="./bench_open_loop_report_html.js"></script>
 </body>
 </html>

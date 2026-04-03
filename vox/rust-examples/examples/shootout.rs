@@ -232,20 +232,20 @@ fn parse_args() -> Result<Config> {
     let mut quick = false;
     let mut short = false;
     let mut workload = Workload::Gnarly;
-    let mut payload_sizes = vec![1, 4, 16, 64, 256, 1024];
-    let mut in_flights = vec![1, 16, 64];
-    let mut blocks = 5usize;
-    let mut warmup_secs = 2.0f64;
-    let mut measure_secs = 5.0f64;
-    let mut calibration_warmup_secs = 0.5f64;
-    let mut calibration_measure_secs = 1.0f64;
+    let mut payload_sizes = vec![256];
+    let mut in_flights = vec![1];
+    let mut blocks = 1usize;
+    let mut warmup_secs = 0.25f64;
+    let mut measure_secs = 1.0f64;
+    let mut calibration_warmup_secs = 0.1f64;
+    let mut calibration_measure_secs = 0.2f64;
     let mut calibration_target_drop_min = 0.01f64;
     let mut calibration_target_drop_max = 0.05f64;
-    let mut calibration_max_probes = 8usize;
-    let mut calibration_refine_steps = 4usize;
-    let mut load_factors = vec![0.25, 0.5, 0.75, 0.9, 1.0, 1.1];
+    let mut calibration_max_probes = 5usize;
+    let mut calibration_refine_steps = 2usize;
+    let mut load_factors = vec![1.0, 1.5, 2.0, 3.0, 4.0];
     let mut transports = vec![Transport::Local, Transport::Shm];
-    let mut server_impls = vec![ServerImpl::Swift];
+    let mut server_impls = vec![ServerImpl::Swift, ServerImpl::Rust];
     let mut out = PathBuf::from("/tmp/shootout.json");
     let mut logs_dir = PathBuf::from("/tmp/shootout-logs");
     let mut serve_report = false;
@@ -440,7 +440,7 @@ fn parse_args() -> Result<Config> {
 
     if short {
         workload = Workload::Gnarly;
-        payload_sizes = vec![16, 64];
+        payload_sizes = vec![256];
         in_flights = vec![1];
         blocks = 1;
         warmup_secs = 0.1;
@@ -451,7 +451,7 @@ fn parse_args() -> Result<Config> {
         calibration_target_drop_max = 0.05;
         calibration_max_probes = 3;
         calibration_refine_steps = 1;
-        load_factors = vec![0.5, 1.0, 1.5];
+        load_factors = vec![0.75, 1.0, 1.5, 2.0];
         transports = vec![Transport::Local];
         server_impls = vec![ServerImpl::Swift];
     }

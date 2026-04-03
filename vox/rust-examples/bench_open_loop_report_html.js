@@ -52,10 +52,16 @@ function pooledQuantile(pooled, q) {
 
 function parseArgs() {
   const params = new URLSearchParams(window.location.search);
+  const parsedMinCompletedForP99 = Number.parseInt(
+    params.get('min-completed-for-p99') || '0',
+    10,
+  );
   return {
     dataUrl: params.get('data') || DEFAULT_DATA_URL,
     title: params.get('title') || 'Vox open-loop benchmark report',
-    minCompletedForP99: Number.parseInt(params.get('min-completed-for-p99') || '5000', 10),
+    minCompletedForP99: Number.isFinite(parsedMinCompletedForP99)
+      ? Math.max(0, parsedMinCompletedForP99)
+      : 0,
   };
 }
 
@@ -68,29 +74,36 @@ function formatInt(value) {
 }
 
 function buildSeries(rows, minCompletedForP99) {
-  const grouped = groupBy(rows, (r) => `${r.server_impl ?? 'swift'}|${r.transport}|${r.payload_size}|${r.in_flight}`);
+  const grouped = groupBy(rows, (r) => `${r.server_impl ?? 'swift'}|${r.transport}`);
   const series = [];
   const tableRows = [];
+  const runtimeRank = { swift: 0, rust: 1 };
+  const transportRank = { local: 0, shm: 1 };
 
-  for (const [key, group] of [...grouped.entries()].sort()) {
-    const [serverImpl, transport, payloadSize, inFlight] = key.split('|');
+  for (const [key, group] of [...grouped.entries()].sort(([a], [b]) => {
+    const [aRuntime, aTransport] = a.split('|');
+    const [bRuntime, bTransport] = b.split('|');
+    return (runtimeRank[aRuntime] ?? 99) - (runtimeRank[bRuntime] ?? 99)
+      || (transportRank[aTransport] ?? 99) - (transportRank[bTransport] ?? 99)
+      || a.localeCompare(b);
+  })) {
+    const [serverImpl, transport] = key.split('|');
     const byRate = groupBy(group, (r) => r.offered_rps);
     const points = [...byRate.entries()].sort((a, b) => Number(a[0]) - Number(b[0])).map(([offeredRps, trials]) => {
       const completedTotal = trials.reduce((acc, t) => acc + (t.completed ?? 0), 0);
       const pooled = pooledHistogram(trials);
+      const hasCompletedSamples = completedTotal > 0 && pooled.total > 0;
       return {
         completed_total: completedTotal,
         offered_rps: Number(offeredRps),
         server_impl: serverImpl,
-        payload_size: Number(payloadSize),
-        in_flight: Number(inFlight),
         transport,
         blocks: trials.length,
         baseline_rps: mean(trials.map((t) => t.baseline_rps)),
         achieved_rps: mean(trials.map((t) => t.calls_per_sec)),
         p50_us: pooledQuantile(pooled, 0.50),
-        p99_us: completedTotal >= minCompletedForP99 ? pooledQuantile(pooled, 0.99) : null,
-        p999_us: completedTotal >= minCompletedForP99 ? pooledQuantile(pooled, 0.999) : null,
+        p99_us: hasCompletedSamples && completedTotal >= minCompletedForP99 ? pooledQuantile(pooled, 0.99) : null,
+        p999_us: hasCompletedSamples && completedTotal >= minCompletedForP99 ? pooledQuantile(pooled, 0.999) : null,
         drop_rate_pct: mean(trials.map((t) => {
           const denom = (t.issued ?? 0) + (t.dropped ?? 0);
           return denom > 0 ? (t.dropped / denom) * 100 : 0;
@@ -102,23 +115,12 @@ function buildSeries(rows, minCompletedForP99) {
     series.push({
       server_impl: serverImpl,
       transport,
-      payload_size: Number(payloadSize),
-      in_flight: Number(inFlight),
       points,
     });
     tableRows.push(...points);
   }
 
   return { series, tableRows };
-}
-
-function lineStyle(series) {
-  if (series.dash) {
-    return { strokeDasharray: series.dash };
-  }
-  return series.transport === 'shm'
-    ? { strokeDasharray: '4 4' }
-    : { strokeDasharray: '' };
 }
 
 function colorForIndex(index) {
@@ -130,219 +132,255 @@ function colorForIndex(index) {
   return palette[index % palette.length];
 }
 
-function createSvgEl(tag) {
-  return document.createElementNS('http://www.w3.org/2000/svg', tag);
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-function niceTicks(min, max, count = 5) {
-  if (!Number.isFinite(min) || !Number.isFinite(max)) return [];
-  if (min === max) return [min];
-  const span = max - min;
-  const step = niceStep(span / Math.max(1, count - 1));
-  const start = Math.ceil(min / step) * step;
-  const ticks = [];
-  for (let tick = start; tick <= max + step * 0.5; tick += step) {
-    ticks.push(tick);
-  }
-  return ticks;
+function makeSeriesLabel(series, suffix = '') {
+  return `${series.server_impl} ${series.transport}${suffix}`;
 }
 
-function niceStep(rawStep) {
-  const power = Math.pow(10, Math.floor(Math.log10(rawStep)));
-  const normalized = rawStep / power;
-  const nice =
-    normalized <= 1 ? 1 :
-    normalized <= 2 ? 2 :
-    normalized <= 5 ? 5 : 10;
-  return nice * power;
+function seriesColor(series) {
+  return series.server_impl === 'rust' ? '#f72585' : '#4cc9f0';
 }
 
-function renderChart(container, { title, yLabel, series, xFormat = formatInt, yFormat = formatNumber }) {
-  const width = Math.max(container.clientWidth || 0, 320);
-  const height = 360;
-  const margin = { top: 28, right: 18, bottom: 48, left: 76 };
-  const plotWidth = Math.max(1, width - margin.left - margin.right);
-  const plotHeight = Math.max(1, height - margin.top - margin.bottom);
+function seriesSymbol(series) {
+  return series.transport === 'shm' ? 'diamond' : 'circle';
+}
 
-  const allPoints = series.flatMap((s) => s.points.map((p) => ({ x: p.offered_rps, y: p.y })));
-  const xs = allPoints.map((p) => p.x).filter(Number.isFinite);
-  const ys = allPoints.map((p) => p.y).filter(Number.isFinite);
-  const xMin = xs.length ? Math.min(...xs) : 0;
-  const xMax = xs.length ? Math.max(...xs) : 1;
-  const yMin = ys.length ? Math.min(...ys) : 0;
-  const yMax = ys.length ? Math.max(...ys) : 1;
-  const xPad = xMin === xMax ? 1 : (xMax - xMin) * 0.05;
-  const yPad = yMin === yMax ? 1 : (yMax - yMin) * 0.08;
-  const x0 = xMin - xPad;
-  const x1 = xMax + xPad;
-  const y0 = yMin - yPad;
-  const y1 = yMax + yPad;
+function seriesLineType(series) {
+  return series.transport === 'shm' ? 'dashed' : 'solid';
+}
 
-  const xScale = (x) => margin.left + ((x - x0) / (x1 - x0)) * plotWidth;
-  const yScale = (y) => margin.top + plotHeight - ((y - y0) / (y1 - y0)) * plotHeight;
+const mountedCharts = [];
+let resizeListenerInstalled = false;
 
-  const svg = createSvgEl('svg');
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-  svg.setAttribute('width', '100%');
-  svg.setAttribute('height', String(height));
-  svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', title);
+function makeEchartsSeries(series, valueFn, { suffix = '', dash = false, colorOffset = 0 } = {}) {
+  return series.map((s, index) => {
+    const color = seriesColor(s) ?? colorForIndex(index + colorOffset);
+    const data = s.points
+      .map((p) => {
+        const y = valueFn(p);
+        return Number.isFinite(y) ? [p.offered_rps, y] : null;
+      })
+      .filter(Boolean);
+    return {
+      name: makeSeriesLabel(s, suffix),
+      type: 'line',
+      data,
+      showSymbol: true,
+      symbol: seriesSymbol(s),
+      symbolSize: 6,
+      connectNulls: false,
+      lineStyle: {
+        color,
+        width: 2.5,
+        type: dash ? 'dashed' : seriesLineType(s),
+      },
+      itemStyle: {
+        color,
+      },
+      emphasis: {
+        focus: 'series',
+        blurScope: 'series',
+        lineStyle: {
+          width: 4,
+        },
+      },
+      legendHoverLink: true,
+    };
+  });
+}
 
-  const background = createSvgEl('rect');
-  background.setAttribute('x', '0');
-  background.setAttribute('y', '0');
-  background.setAttribute('width', String(width));
-  background.setAttribute('height', String(height));
-  background.setAttribute('rx', '16');
-  background.setAttribute('fill', 'rgba(255,255,255,0.02)');
-  svg.appendChild(background);
+function makeMemorySeries(series) {
+  return series.map((s, index) => {
+    const color = seriesColor(s) ?? colorForIndex(index);
+    const data = s.points
+      .map((p) => {
+        if (!Number.isFinite(p.phys_footprint_mib)) {
+          return null;
+        }
+        return {
+          value: [p.offered_rps, p.phys_footprint_mib],
+          rss_mib: Number.isFinite(p.rss_mib) ? p.rss_mib : null,
+        };
+      })
+      .filter(Boolean);
+    return {
+      name: makeSeriesLabel(s),
+      type: 'line',
+      data,
+      showSymbol: true,
+      symbol: seriesSymbol(s),
+      symbolSize: 6,
+      connectNulls: false,
+      lineStyle: {
+        color,
+        width: 2.5,
+        type: seriesLineType(s),
+      },
+      itemStyle: {
+        color,
+      },
+      emphasis: {
+        focus: 'series',
+        blurScope: 'series',
+        lineStyle: {
+          width: 4,
+        },
+      },
+      legendHoverLink: true,
+    };
+  });
+}
 
-  const titleEl = createSvgEl('text');
-  titleEl.setAttribute('x', String(margin.left));
-  titleEl.setAttribute('y', '18');
-  titleEl.setAttribute('fill', 'var(--text)');
-  titleEl.setAttribute('font-size', '16');
-  titleEl.setAttribute('font-weight', '700');
-  titleEl.textContent = title;
-  svg.appendChild(titleEl);
+function attachHoverFocus(chart) {
+  let activeName = null;
 
-  const xTicks = niceTicks(x0, x1, 5);
-  const yTicks = niceTicks(y0, y1, 5);
+  const clear = () => {
+    if (!activeName) return;
+    chart.dispatchAction({ type: 'downplay', seriesIndex: 'all' });
+    activeName = null;
+  };
 
-  for (const tick of xTicks) {
-    const x = xScale(tick);
-    const line = createSvgEl('line');
-    line.setAttribute('x1', String(x));
-    line.setAttribute('x2', String(x));
-    line.setAttribute('y1', String(margin.top));
-    line.setAttribute('y2', String(margin.top + plotHeight));
-    line.setAttribute('stroke', 'rgba(255,255,255,0.08)');
-    svg.appendChild(line);
-
-    const label = createSvgEl('text');
-    label.setAttribute('x', String(x));
-    label.setAttribute('y', String(margin.top + plotHeight + 18));
-    label.setAttribute('fill', 'var(--muted)');
-    label.setAttribute('font-size', '11');
-    label.setAttribute('text-anchor', 'middle');
-    label.textContent = xFormat(tick);
-    svg.appendChild(label);
-  }
-
-  for (const tick of yTicks) {
-    const y = yScale(tick);
-    const line = createSvgEl('line');
-    line.setAttribute('x1', String(margin.left));
-    line.setAttribute('x2', String(margin.left + plotWidth));
-    line.setAttribute('y1', String(y));
-    line.setAttribute('y2', String(y));
-    line.setAttribute('stroke', 'rgba(255,255,255,0.08)');
-    svg.appendChild(line);
-
-    const label = createSvgEl('text');
-    label.setAttribute('x', String(margin.left - 10));
-    label.setAttribute('y', String(y + 4));
-    label.setAttribute('fill', 'var(--muted)');
-    label.setAttribute('font-size', '11');
-    label.setAttribute('text-anchor', 'end');
-    label.textContent = yFormat(tick);
-    svg.appendChild(label);
-  }
-
-  const xAxis = createSvgEl('line');
-  xAxis.setAttribute('x1', String(margin.left));
-  xAxis.setAttribute('x2', String(margin.left + plotWidth));
-  xAxis.setAttribute('y1', String(margin.top + plotHeight));
-  xAxis.setAttribute('y2', String(margin.top + plotHeight));
-  xAxis.setAttribute('stroke', 'rgba(255,255,255,0.35)');
-  svg.appendChild(xAxis);
-
-  const yAxis = createSvgEl('line');
-  yAxis.setAttribute('x1', String(margin.left));
-  yAxis.setAttribute('x2', String(margin.left));
-  yAxis.setAttribute('y1', String(margin.top));
-  yAxis.setAttribute('y2', String(margin.top + plotHeight));
-  yAxis.setAttribute('stroke', 'rgba(255,255,255,0.35)');
-  svg.appendChild(yAxis);
-
-  for (const [index, s] of series.entries()) {
-    const color = colorForIndex(index);
-    const style = lineStyle(s);
-    const validPoints = s.points.filter((p) => Number.isFinite(p.y));
-    if (!validPoints.length) continue;
-
-    const path = createSvgEl('path');
-    path.setAttribute(
-      'd',
-      validPoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xScale(p.offered_rps)} ${yScale(p.y)}`).join(' '),
-    );
-    path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', color);
-    path.setAttribute('stroke-width', '2.5');
-    if (style.strokeDasharray) path.setAttribute('stroke-dasharray', style.strokeDasharray);
-    svg.appendChild(path);
-
-    for (const point of validPoints) {
-      const circle = createSvgEl('circle');
-      circle.setAttribute('cx', String(xScale(point.offered_rps)));
-      circle.setAttribute('cy', String(yScale(point.y)));
-      circle.setAttribute('r', '3.5');
-      circle.setAttribute('fill', color);
-      svg.appendChild(circle);
+  chart.on('mouseover', (params) => {
+    const name = params.componentType === 'legend' ? params.name : params.seriesName;
+    if (!name || name === activeName) {
+      return;
     }
+    chart.dispatchAction({ type: 'downplay', seriesIndex: 'all' });
+    chart.dispatchAction({ type: 'highlight', seriesName: name });
+    activeName = name;
+  });
+
+  chart.on('mouseout', (params) => {
+    if (params.componentType === 'legend' || params.componentType === 'series') {
+      clear();
+    }
+  });
+
+  chart.on('globalout', clear);
+}
+
+function mountChart(containerId, { series, yLabel, yFormat }) {
+  const container = document.getElementById(containerId);
+  if (!container) {
+    return;
+  }
+  if (!window.echarts) {
+    throw new Error('ECharts failed to load. Check the browser console and network access to the CDN.');
   }
 
-  const xLabel = createSvgEl('text');
-  xLabel.setAttribute('x', String(margin.left + plotWidth / 2));
-  xLabel.setAttribute('y', String(height - 10));
-  xLabel.setAttribute('fill', 'var(--muted)');
-  xLabel.setAttribute('font-size', '12');
-  xLabel.setAttribute('text-anchor', 'middle');
-  xLabel.textContent = 'offered rps';
-  svg.appendChild(xLabel);
+  const chart = window.echarts.init(container, null, { renderer: 'canvas' });
+  chart.setOption({
+    backgroundColor: 'transparent',
+    animationDuration: 200,
+    color: series.map((_, index) => colorForIndex(index)),
+    legend: {
+      type: 'plain',
+      top: 8,
+      left: 16,
+      right: 16,
+      orient: 'horizontal',
+      selectedMode: false,
+      hoverLink: true,
+      itemWidth: 18,
+      itemHeight: 10,
+      itemGap: 14,
+      textStyle: { color: cssVar('--muted') || '#99aebd' },
+      inactiveColor: 'rgba(255,255,255,0.38)',
+      icon: 'line',
+    },
+    grid: {
+      left: 70,
+      right: 112,
+      top: 88,
+      bottom: 36,
+      containLabel: true,
+    },
+    tooltip: {
+      trigger: 'item',
+      triggerOn: 'mousemove|click',
+      backgroundColor: 'rgba(12, 18, 24, 0.96)',
+      borderColor: 'rgba(255,255,255,0.12)',
+      textStyle: { color: cssVar('--text') || '#eef6fb' },
+      valueFormatter: (value) => yFormat(value),
+      formatter: (params) => {
+        const value = Array.isArray(params.value) ? params.value[1] : params.value;
+        const lines = [
+          `${params.seriesName}`,
+          `offered rps: ${params.value?.[0] ?? 'n/a'}`,
+          `${yLabel}: ${yFormat(value)}`,
+        ];
+        if (params.data && Object.prototype.hasOwnProperty.call(params.data, 'rss_mib')) {
+          lines.push(`rss (MiB): ${formatNumber(params.data.rss_mib, 1)}`);
+        }
+        return lines.join('<br/>');
+      },
+    },
+    xAxis: {
+      type: 'value',
+      name: 'offered rps',
+      nameLocation: 'middle',
+      nameGap: 28,
+      max: (extent) => {
+        const range = extent.max - extent.min;
+        const pad = Math.max(8, range * 0.08);
+        return extent.max + pad;
+      },
+      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.35)' } },
+      axisLabel: { color: cssVar('--muted') || '#99aebd' },
+      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } },
+    },
+    yAxis: {
+      type: 'value',
+      name: yLabel,
+      nameLocation: 'middle',
+      nameGap: 50,
+      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.35)' } },
+      axisLabel: {
+        color: cssVar('--muted') || '#99aebd',
+        formatter: (value) => yFormat(value),
+      },
+      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } },
+    },
+    series,
+  });
 
-  const yAxisLabel = createSvgEl('text');
-  yAxisLabel.setAttribute('x', '16');
-  yAxisLabel.setAttribute('y', String(margin.top + plotHeight / 2));
-  yAxisLabel.setAttribute('fill', 'var(--muted)');
-  yAxisLabel.setAttribute('font-size', '12');
-  yAxisLabel.setAttribute('text-anchor', 'middle');
-  yAxisLabel.setAttribute('transform', `rotate(-90 16 ${margin.top + plotHeight / 2})`);
-  yAxisLabel.textContent = yLabel;
-  svg.appendChild(yAxisLabel);
+  attachHoverFocus(chart);
+  mountedCharts.push(chart);
 
-  const legend = document.createElement('div');
-  legend.className = 'legend';
-  for (const [index, s] of series.entries()) {
-    const color = colorForIndex(index);
-    const entry = document.createElement('div');
-    entry.className = 'legend-entry';
-    const swatch = document.createElement('span');
-    swatch.className = 'swatch';
-    swatch.style.background = color;
-    const style = lineStyle(s);
-    if (style.strokeDasharray) swatch.style.borderBottom = '2px dashed rgba(255,255,255,0.4)';
-    const label = document.createElement('span');
-    label.textContent = `${s.server_impl} ${s.transport}${s.payload_size ? ` payload=${s.payload_size}` : ''}${s.in_flight ? ` in_flight=${s.in_flight}` : ''}`;
-    entry.append(swatch, label);
-    legend.appendChild(entry);
+  if (!resizeListenerInstalled) {
+    resizeListenerInstalled = true;
+    window.addEventListener('resize', () => {
+      for (const mounted of mountedCharts) {
+        mounted.resize();
+      }
+    });
   }
+}
 
-  container.innerHTML = '';
-  container.append(svg, legend);
+function renderLineChart(containerId, series, yLabel, yFormat) {
+  mountChart(containerId, {
+    series,
+    yLabel,
+    yFormat,
+  });
 }
 
 function renderTable(rows) {
   const tbody = document.getElementById('rows');
   tbody.textContent = '';
   const sorted = rows.slice().sort((a, b) => {
+    const rank = { swift: 0, rust: 1 };
+    const ta = a.transport ?? '';
+    const tb = b.transport ?? '';
     const sa = a.server_impl ?? 'swift';
     const sb = b.server_impl ?? 'swift';
-    return sa.localeCompare(sb)
-      || a.payload_size - b.payload_size
-      || a.in_flight - b.in_flight
+    return (rank[sa] ?? 99) - (rank[sb] ?? 99)
+      || ta.localeCompare(tb)
       || a.offered_rps - b.offered_rps
-      || a.transport.localeCompare(b.transport);
+      || sa.localeCompare(sb);
   });
 
   for (const row of sorted) {
@@ -350,8 +388,6 @@ function renderTable(rows) {
     const cells = [
       row.transport,
       row.server_impl ?? 'swift',
-      row.payload_size,
-      row.in_flight,
       row.blocks,
       formatInt(row.completed_total),
       formatNumber(row.baseline_rps, 0),
@@ -389,75 +425,46 @@ function renderSummary(rows) {
 function renderApp(data, title) {
   const { minCompletedForP99 } = parseArgs();
   const { series, tableRows } = buildSeries(data.rows ?? [], minCompletedForP99);
+  const totalCompleted = tableRows.reduce((acc, row) => acc + (row.completed_total ?? 0), 0);
   document.title = title;
   document.getElementById('title').textContent = title;
-  document.getElementById('subtitle').textContent = `Loaded ${tableRows.length} open-loop rows from ${series.length} series. Refresh the JSON and reload the page to iterate on plots.`;
+  document.getElementById('subtitle').textContent = minCompletedForP99 > 0
+    ? `Loaded ${tableRows.length} open-loop rows from ${series.length} series. Hover a line or legend entry to focus it. p99/p999 are shown once a series reaches ${minCompletedForP99} completed samples.`
+    : `Loaded ${tableRows.length} open-loop rows from ${series.length} series and ${totalCompleted} completed samples. Hover a line or legend entry to focus it. p99/p999 are shown for any series with histogram data.`;
   renderSummary(tableRows);
   renderTable(tableRows);
 
-  const groupedByChart = [
-    {
-      id: 'p99Plot',
-      title: 'p99 latency vs offered load',
-      yLabel: 'p99 latency (us)',
-      series: series.map((s) => ({
-        ...s,
-        points: s.points.map((p) => ({ offered_rps: p.offered_rps, y: p.p99_us })),
-      })),
-      yFormat: (v) => formatNumber(v, 0),
-    },
-    {
-      id: 'throughputPlot',
-      title: 'achieved throughput vs offered load',
-      yLabel: 'achieved throughput (rps)',
-      series: series.map((s) => ({
-        ...s,
-        points: s.points.map((p) => ({ offered_rps: p.offered_rps, y: p.achieved_rps })),
-      })),
-      yFormat: (v) => formatNumber(v, 0),
-    },
-    {
-      id: 'dropPlot',
-      title: 'drop rate vs offered load',
-      yLabel: 'drop rate (%)',
-      series: series.map((s) => ({
-        ...s,
-        points: s.points.map((p) => ({ offered_rps: p.offered_rps, y: p.drop_rate_pct })),
-      })),
-      yFormat: (v) => formatNumber(v, 1),
-    },
-    {
-      id: 'memoryPlot',
-      title: 'peak process memory vs offered load',
-      yLabel: 'memory (MiB)',
-      series: [
-        ...series.map((s) => ({
-          ...s,
-          dash: '4 4',
-          points: s.points.map((p) => ({ offered_rps: p.offered_rps, y: p.phys_footprint_mib })),
-          metric: 'phys',
-        })),
-        ...series.map((s) => ({
-          ...s,
-          transport: `${s.transport} rss`,
-          dash: '10 4 2 4',
-          points: s.points.map((p) => ({ offered_rps: p.offered_rps, y: p.rss_mib })),
-          metric: 'rss',
-        })),
-      ],
-      yFormat: (v) => formatNumber(v, 1),
-    },
-  ];
-
-  for (const chart of groupedByChart) {
-    const container = document.getElementById(chart.id);
-    renderChart(container, {
-      title: chart.title,
-      yLabel: chart.yLabel,
-      series: chart.series,
-      yFormat: chart.yFormat,
-    });
+  if (!window.echarts) {
+    const status = document.getElementById('status');
+    status.textContent = 'ECharts failed to load. Check network access to the CDN.';
+    status.classList.add('error');
+    return;
   }
+
+  renderLineChart(
+    'p99Plot',
+    makeEchartsSeries(series, (p) => p.p99_us),
+    'p99 latency (us)',
+    (value) => formatNumber(value, 0),
+  );
+  renderLineChart(
+    'throughputPlot',
+    makeEchartsSeries(series, (p) => p.achieved_rps),
+    'achieved throughput (rps)',
+    (value) => formatNumber(value, 0),
+  );
+  renderLineChart(
+    'dropPlot',
+    makeEchartsSeries(series, (p) => p.drop_rate_pct),
+    'drop rate (%)',
+    (value) => formatNumber(value, 1),
+  );
+  renderLineChart(
+    'memoryPlot',
+    makeMemorySeries(series),
+    'memory (MiB)',
+    (value) => formatNumber(value, 1),
+  );
 }
 
 async function main() {

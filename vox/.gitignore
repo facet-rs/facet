@@ -58,3 +58,4 @@ java/**/out/
 scripts/__pycache__/
 rust-examples/bench_blocks_report.html
 rust-examples/bench_gnarly_report.html
+build/

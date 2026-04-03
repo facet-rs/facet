@@ -168,7 +168,7 @@ fn generate_wire_schemas(service: &ServiceDescriptor) -> String {
     // Generate global schema registry
     out.push_str("/// Global schema registry containing all schemas for this service.\n");
     out.push_str(&format!(
-        "public let {service_name}_schema_registry: [UInt64: Schema] = [\n"
+        "nonisolated(unsafe) public let {service_name}_schema_registry: [UInt64: Schema] = [\n"
     ));
 
     let mut sorted_schemas: Vec<_> = global_schemas.into_iter().collect();
@@ -186,7 +186,7 @@ fn generate_wire_schemas(service: &ServiceDescriptor) -> String {
     // Generate per-method schema info
     out.push_str("/// Per-method schema information for wire protocol.\n");
     out.push_str(&format!(
-        "public let {service_name}_method_schemas: [UInt64: MethodSchemaInfo] = [\n"
+        "nonisolated(unsafe) public let {service_name}_method_schemas: [UInt64: MethodSchemaInfo] = [\n"
     ));
 
     for (method_id, info) in &method_infos {

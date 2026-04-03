@@ -43,7 +43,9 @@ fn generate_handler_protocol(service: &ServiceDescriptor) -> String {
     if let Some(doc) = &service.doc {
         out.push_str(&format_doc(doc, ""));
     }
-    out.push_str(&format!("public protocol {service_name}Handler {{\n"));
+    out.push_str(&format!(
+        "public protocol {service_name}Handler: Sendable {{\n"
+    ));
 
     for method in service.methods {
         let method_name = method.method_name.to_lower_camel_case();
@@ -94,42 +96,39 @@ fn generate_channeling_dispatcher(service: &ServiceDescriptor) -> String {
 
     cw_writeln!(
         w,
-        "public final class {service_name}ChannelingDispatcher {{"
+        "public final class {service_name}ChannelingDispatcher: ServiceDispatcher {{"
     )
     .unwrap();
     {
         let _indent = w.indent();
         cw_writeln!(w, "private let handler: {service_name}Handler").unwrap();
-        w.writeln("private let registry: IncomingChannelRegistry")
-            .unwrap();
-        w.writeln("private let taskSender: TaskSender").unwrap();
         cw_writeln!(w, "private let schemaRegistry: [UInt64: Schema]").unwrap();
         cw_writeln!(w, "private let methodSchemas: [UInt64: MethodSchemaInfo]").unwrap();
         w.blank_line().unwrap();
 
         cw_writeln!(
             w,
-            "public init(handler: {service_name}Handler, registry: IncomingChannelRegistry, taskSender: @escaping TaskSender, schemaSendTracker _: SchemaSendTracker, schemaRegistry: [UInt64: Schema] = {service_name_lower}_schema_registry, methodSchemas: [UInt64: MethodSchemaInfo] = {service_name_lower}_method_schemas) {{"
+            "public init(handler: {service_name}Handler, schemaRegistry: [UInt64: Schema] = {service_name_lower}_schema_registry, methodSchemas: [UInt64: MethodSchemaInfo] = {service_name_lower}_method_schemas) {{"
         )
         .unwrap();
         {
             let _indent = w.indent();
             w.writeln("self.handler = handler").unwrap();
-            w.writeln("self.registry = registry").unwrap();
-            w.writeln("self.taskSender = taskSender").unwrap();
             w.writeln("self.schemaRegistry = schemaRegistry").unwrap();
             w.writeln("self.methodSchemas = methodSchemas").unwrap();
         }
         w.writeln("}").unwrap();
         w.blank_line().unwrap();
 
-        // Main dispatch method
+        // Main dispatch method matching ServiceDispatcher protocol
         w.writeln(
-            "public func dispatch(methodId: UInt64, requestId: UInt64, payload: Data) async {",
+            "public func dispatch(methodId: UInt64, payload: [UInt8], requestId: UInt64, registry: ChannelRegistry, schemaSendTracker _: SchemaSendTracker, taskTx: @escaping @Sendable (TaskMessage) -> Void) async {",
         )
         .unwrap();
         {
             let _indent = w.indent();
+            w.writeln("let payload = Data(payload)").unwrap();
+            w.writeln("let taskSender: TaskSender = taskTx").unwrap();
             w.writeln("switch methodId {").unwrap();
             for method in service.methods {
                 let method_name = method.method_name.to_lower_camel_case();
@@ -138,7 +137,7 @@ fn generate_channeling_dispatcher(service: &ServiceDescriptor) -> String {
                 cw_writeln!(w, "case {}:", hex_u64(method_id)).unwrap();
                 cw_writeln!(
                     w,
-                    "    await {dispatch_name}(methodId: methodId, requestId: requestId, payload: payload)"
+                    "    await {dispatch_name}(methodId: methodId, requestId: requestId, payload: payload, registry: registry, taskSender: taskSender)"
                 )
                 .unwrap();
             }
@@ -152,7 +151,7 @@ fn generate_channeling_dispatcher(service: &ServiceDescriptor) -> String {
         w.writeln("}").unwrap();
         w.blank_line().unwrap();
 
-        w.writeln("public static func retryPolicy(methodId: UInt64) -> RetryPolicy {")
+        w.writeln("public func retryPolicy(methodId: UInt64) -> RetryPolicy {")
             .unwrap();
         {
             let _indent = w.indent();
@@ -195,9 +194,13 @@ fn generate_preregister_channels(w: &mut CodeWriter<&mut String>, service: &Serv
     w.writeln("/// race conditions where Data arrives before channels are registered.")
         .unwrap();
     w.writeln(
-        "public static func preregisterChannels(methodId: UInt64, payload: Data, registry: ChannelRegistry) async {",
+        "public func preregister(methodId: UInt64, payload: [UInt8], registry: ChannelRegistry) async {",
     )
         .unwrap();
+    {
+        let _indent = w.indent();
+        w.writeln("let payload = Data(payload)").unwrap();
+    }
     {
         let _indent = w.indent();
         w.writeln("switch methodId {").unwrap();
@@ -269,7 +272,7 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
 
     cw_writeln!(
         w,
-        "private func {dispatch_name}(methodId: UInt64, requestId: UInt64, payload: Data) async {{"
+        "private func {dispatch_name}(methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry, taskSender: @escaping TaskSender) async {{"
     )
     .unwrap();
     {
@@ -433,7 +436,7 @@ fn generate_channeling_decode_arg(
             .unwrap();
             cw_writeln!(
                 w,
-                "let {name}Receiver = await registry.register({name}ChannelId, initialCredit: 16, onConsumed: {{ [taskSender = self.taskSender] additional in taskSender(.grantCredit(channelId: {name}ChannelId, bytes: additional)) }})"
+                "let {name}Receiver = await registry.register({name}ChannelId, initialCredit: 16, onConsumed: {{ [taskSender] additional in taskSender(.grantCredit(channelId: {name}ChannelId, bytes: additional)) }})"
             )
             .unwrap();
             cw_writeln!(
