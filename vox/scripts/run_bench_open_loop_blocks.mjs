@@ -19,6 +19,10 @@ function usage(code = 0) {
     '  --measure-secs <n>',
     '  --calibration-warmup-secs <n>',
     '  --calibration-measure-secs <n>',
+    '  --calibration-target-drop-min <n>',
+    '  --calibration-target-drop-max <n>',
+    '  --calibration-max-probes <n>',
+    '  --calibration-refine-steps <n>',
     '  --load-factors <csv>',
     '  --transports <local,shm>',
     '  --server-impls <swift,rust>',
@@ -77,8 +81,10 @@ function parseArgs(argv) {
     loadFactors: [0.25, 0.5, 0.75, 0.9, 1.0, 1.1],
     calibrationStartRps: 100,
     calibrationMaxRps: 200000,
-    calibrationDropThreshold: 0.01,
-    calibrationBinarySteps: 5,
+    calibrationTargetDropMin: 0.01,
+    calibrationTargetDropMax: 0.05,
+    calibrationMaxProbes: 8,
+    calibrationRefineSteps: 4,
     transports: ['local', 'shm'],
     serverImpls: ['swift'],
     out: '/tmp/open-loop-blocks.json',
@@ -100,8 +106,10 @@ function parseArgs(argv) {
       case '--load-factors': out.loadFactors = parseCsvFloats(argv[++i], '--load-factors'); break;
       case '--calibration-start-rps': out.calibrationStartRps = Number.parseInt(argv[++i], 10); break;
       case '--calibration-max-rps': out.calibrationMaxRps = Number.parseInt(argv[++i], 10); break;
-      case '--calibration-drop-threshold': out.calibrationDropThreshold = Number.parseFloat(argv[++i]); break;
-      case '--calibration-binary-steps': out.calibrationBinarySteps = Number.parseInt(argv[++i], 10); break;
+      case '--calibration-target-drop-min': out.calibrationTargetDropMin = Number.parseFloat(argv[++i]); break;
+      case '--calibration-target-drop-max': out.calibrationTargetDropMax = Number.parseFloat(argv[++i]); break;
+      case '--calibration-max-probes': out.calibrationMaxProbes = Number.parseInt(argv[++i], 10); break;
+      case '--calibration-refine-steps': out.calibrationRefineSteps = Number.parseInt(argv[++i], 10); break;
       case '--transports': out.transports = parseCsvStrings(argv[++i], '--transports'); break;
       case '--server-impls': out.serverImpls = parseCsvStrings(argv[++i], '--server-impls'); break;
       case '--out': out.out = argv[++i]; break;
@@ -384,6 +392,42 @@ function isHealthyOpenLoop(row, dropThreshold) {
   return (row.errors ?? 0) === 0 && dropRate(row) <= dropThreshold;
 }
 
+function distanceToDropBand(row, minDrop, maxDrop) {
+  if ((row.errors ?? 0) !== 0) return Number.POSITIVE_INFINITY;
+  const drop = dropRate(row);
+  if (drop < minDrop) return minDrop - drop;
+  if (drop > maxDrop) return drop - maxDrop;
+  return 0;
+}
+
+function chooseBestCalibrationProbe(probes, minDrop, maxDrop) {
+  if (!probes.length) return null;
+  const center = (minDrop + maxDrop) / 2;
+  const sorted = probes.slice().sort((a, b) => {
+    const da = distanceToDropBand(a.row, minDrop, maxDrop);
+    const db = distanceToDropBand(b.row, minDrop, maxDrop);
+    if (da !== db) return da - db;
+    const ea = a.row.errors ?? 0;
+    const eb = b.row.errors ?? 0;
+    if (ea !== eb) return ea - eb;
+    const ca = Math.abs(dropRate(a.row) - center);
+    const cb = Math.abs(dropRate(b.row) - center);
+    return ca - cb;
+  });
+  return sorted[0];
+}
+
+function copyTrialLogs(logsDir, fromLabel, toLabel) {
+  if (fromLabel === toLabel) return;
+  for (const ext of ['stdout.json', 'stderr.log']) {
+    const from = path.join(logsDir, `${fromLabel}.${ext}`);
+    const to = path.join(logsDir, `${toLabel}.${ext}`);
+    if (fs.existsSync(from)) {
+      fs.copyFileSync(from, to);
+    }
+  }
+}
+
 function runCalibrationProbe(args, serverImpl, transport, payloadSize, inFlight, offeredRps, logsDir, suffix) {
   return runTrial(
     `calprobe-srv${serverImpl}-${transport}-p${payloadSize}-i${inFlight}-r${offeredRps}-${suffix}`,
@@ -403,15 +447,23 @@ function runCalibrationProbe(args, serverImpl, transport, payloadSize, inFlight,
 }
 
 function calibrateTransportOpenLoop(args, serverImpl, transport, payloadSize, inFlight, logsDir) {
-  const dropThreshold = args.calibrationDropThreshold;
+  const minDrop = args.calibrationTargetDropMin;
+  const maxDrop = args.calibrationTargetDropMax;
+  if (!(Number.isFinite(minDrop) && Number.isFinite(maxDrop) && minDrop >= 0 && maxDrop >= minDrop)) {
+    throw new Error(`invalid drop band: min=${minDrop} max=${maxDrop}`);
+  }
+
   let offered = Math.max(1, args.calibrationStartRps);
   const maxOffered = Math.max(offered, args.calibrationMaxRps);
+  const maxProbes = Math.max(1, args.calibrationMaxProbes);
+  const refineSteps = Math.max(0, args.calibrationRefineSteps);
+
+  const probes = [];
   let step = 0;
+  let low = null;
+  let high = null;
 
-  let best = null;
-  let bad = null;
-
-  while (offered <= maxOffered) {
+  while (step < maxProbes) {
     const row = runCalibrationProbe(
       args,
       serverImpl,
@@ -420,69 +472,58 @@ function calibrateTransportOpenLoop(args, serverImpl, transport, payloadSize, in
       inFlight,
       offered,
       logsDir,
-      `exp${step}`,
+      `scan${step}`,
     );
-    if (isHealthyOpenLoop(row, dropThreshold)) {
-      best = { offered_rps: offered, row };
-      const next = Math.min(maxOffered, offered * 2);
+    const probe = { offered_rps: offered, row };
+    probes.push(probe);
+
+    const d = dropRate(row);
+    if ((row.errors ?? 0) === 0 && d >= minDrop && d <= maxDrop) {
+      return { bestOfferedRps: offered, row };
+    }
+
+    if ((row.errors ?? 0) !== 0 || d > maxDrop) {
+      if (!high || offered < high.offered_rps) high = probe;
+      if (low) break;
+      const next = Math.max(1, Math.floor(offered / 2));
       if (next === offered) break;
       offered = next;
       step += 1;
       continue;
     }
-    bad = { offered_rps: offered, row };
-    break;
+
+    if (!low || offered > low.offered_rps) low = probe;
+    const next = Math.min(maxOffered, Math.max(offered + 1, offered * 2));
+    if (next === offered) break;
+    offered = next;
+    step += 1;
   }
 
-  if (!best && bad) {
-    return {
-      bestOfferedRps: Math.max(1, Math.floor(bad.offered_rps / 2)),
-      row: bad.row,
-    };
-  }
-
-  if (!best) {
-    const row = runCalibrationProbe(
-      args,
-      serverImpl,
-      transport,
-      payloadSize,
-      inFlight,
-      offered,
-      logsDir,
-      'fallback',
-    );
-    return {
-      bestOfferedRps: Math.max(1, offered),
-      row,
-    };
-  }
-
-  if (!bad) {
-    return {
-      bestOfferedRps: best.offered_rps,
-      row: best.row,
-    };
-  }
-
-  let low = best.offered_rps;
-  let high = bad.offered_rps;
-  let bestRow = best.row;
-  for (let i = 0; i < args.calibrationBinarySteps; i++) {
-    if (high - low <= 1) break;
-    const mid = Math.floor((low + high) / 2);
-    const row = runCalibrationProbe(args, serverImpl, transport, payloadSize, inFlight, mid, logsDir, `bin${i}`);
-    if (isHealthyOpenLoop(row, dropThreshold)) {
-      low = mid;
-      bestRow = row;
+  for (let i = 0; i < refineSteps; i++) {
+    if (!low || !high) break;
+    if (high.offered_rps - low.offered_rps <= 1) break;
+    const mid = Math.floor((low.offered_rps + high.offered_rps) / 2);
+    const row = runCalibrationProbe(args, serverImpl, transport, payloadSize, inFlight, mid, logsDir, `refine${i}`);
+    const probe = { offered_rps: mid, row };
+    probes.push(probe);
+    const d = dropRate(row);
+    if ((row.errors ?? 0) === 0 && d >= minDrop && d <= maxDrop) {
+      return { bestOfferedRps: mid, row };
+    }
+    if ((row.errors ?? 0) !== 0 || d > maxDrop) {
+      high = probe;
     } else {
-      high = mid;
+      low = probe;
     }
   }
 
+  const best = chooseBestCalibrationProbe(probes, minDrop, maxDrop);
+  if (!best) {
+    throw new Error(`no calibration probes produced a candidate for server=${serverImpl} transport=${transport} payload=${payloadSize} in_flight=${inFlight}`);
+  }
   return {
-    bestOfferedRps: low,
-    row: bestRow,
+    bestOfferedRps: Math.max(1, Math.round(best.offered_rps)),
+    row: best.row,
   };
 }
 
@@ -494,28 +535,17 @@ function calibrateCondition(args, serverImpl, payloadSize, inFlight, logsDir) {
       continue;
     }
     const calibrated = calibrateTransportOpenLoop(args, serverImpl, transport, payloadSize, inFlight, logsDir);
-    const row = runTrial(
-      `cal-srv${serverImpl}-${transport}-p${payloadSize}-i${inFlight}`,
-      serverImpl,
-      transport,
-      [
-        '--workload', args.workload,
-        '--payload-sizes', String(payloadSize),
-        '--in-flights', String(inFlight),
-        '--drive-mode', 'open',
-        '--offered-rps', String(calibrated.bestOfferedRps),
-        '--warmup-secs', String(args.calibrationWarmupSecs),
-        '--measure-secs', String(args.calibrationMeasureSecs),
-      ],
-      logsDir,
-    );
-    perTransport[transport] = row;
+    const aliasLabel = `cal-srv${serverImpl}-${transport}-p${payloadSize}-i${inFlight}`;
+    copyTrialLogs(logsDir, calibrated.row.label, aliasLabel);
+    perTransport[transport] = { ...calibrated.row, label: aliasLabel };
   }
 
-  const baselineRps = Math.min(
-    ...Object.values(perTransport).map((row) => row.offered_rps ?? row.calls_per_sec),
-  );
-  const offeredRpsValues = args.loadFactors.map((factor) => Math.max(1, Math.round(baselineRps * factor)));
+  const transportRows = Object.values(perTransport);
+  if (transportRows.length === 0) {
+    throw new Error(`no usable transports for server=${serverImpl} payload=${payloadSize} in_flight=${inFlight}`);
+  }
+  const baselineRps = Math.min(...transportRows.map((row) => row.offered_rps ?? row.calls_per_sec));
+  const offeredRpsValues = [...new Set(args.loadFactors.map((factor) => Math.max(1, Math.round(baselineRps * factor))))].sort((a, b) => a - b);
 
   return {
     server_impl: serverImpl,

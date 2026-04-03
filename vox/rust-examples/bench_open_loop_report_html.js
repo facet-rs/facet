@@ -14,6 +14,7 @@ function parseArgs(argv) {
     output: '/tmp/open-loop-report.html',
     title: 'Vox open-loop benchmark report',
     inFlights: null,
+    minCompletedForP99: 5000,
   };
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
@@ -28,6 +29,7 @@ function parseArgs(argv) {
           .filter((n) => Number.isFinite(n) && n > 0),
       );
     }
+    else if (arg === '--min-completed-for-p99') out.minCompletedForP99 = Number.parseInt(argv[++i], 10);
     else if (arg === '--help' || arg === '-h') usage(0);
     else {
       console.error(`unknown arg: ${arg}`);
@@ -67,6 +69,7 @@ function main() {
     const [serverImpl, transport, payloadSize, inFlight] = key.split('|');
     const byRate = groupBy(group, (r) => r.offered_rps);
     const points = [...byRate.entries()].sort((a, b) => Number(a[0]) - Number(b[0])).map(([offeredRps, trials]) => ({
+      completed_total: trials.reduce((acc, t) => acc + (t.completed ?? 0), 0),
       offered_rps: Number(offeredRps),
       server_impl: serverImpl,
       payload_size: Number(payloadSize),
@@ -76,8 +79,14 @@ function main() {
       baseline_rps: mean(trials.map((t) => t.baseline_rps)),
       achieved_rps: mean(trials.map((t) => t.calls_per_sec)),
       p50_us: mean(trials.map((t) => t.p50_us)),
-      p99_us: mean(trials.map((t) => t.p99_us)),
-      p999_us: mean(trials.map((t) => t.p999_us)),
+      p99_us:
+        trials.reduce((acc, t) => acc + (t.completed ?? 0), 0) >= args.minCompletedForP99
+          ? mean(trials.map((t) => t.p99_us))
+          : null,
+      p999_us:
+        trials.reduce((acc, t) => acc + (t.completed ?? 0), 0) >= args.minCompletedForP99
+          ? mean(trials.map((t) => t.p999_us))
+          : null,
       drop_rate_pct: mean(trials.map((t) => {
         const denom = (t.issued ?? 0) + (t.dropped ?? 0);
         return denom > 0 ? (t.dropped / denom) * 100 : 0;
@@ -143,7 +152,7 @@ function main() {
   <div class="page">
     <section class="hero">
       <h1>${args.title}</h1>
-      <p class="sub">Calibrated open-loop trials. X-axis is offered request rate, not completions. Each series is one payload/in-flight/transport combination averaged across blocks.</p>
+      <p class="sub">Calibrated open-loop trials. X-axis is offered request rate, not completions. Each series is one payload/in-flight/transport combination averaged across blocks. p99/p999 are hidden when total completions at a point are below ${args.minCompletedForP99}.</p>
     </section>
     <section class="layout">
       <div class="panel">
@@ -182,6 +191,7 @@ function main() {
                 <th>payload</th>
                 <th>in_flight</th>
                 <th>blocks</th>
+                <th>completed_total</th>
                 <th>baseline_rps</th>
                 <th>offered_rps</th>
                 <th>achieved_rps</th>
@@ -300,12 +310,13 @@ function main() {
         row.payload_size,
         row.in_flight,
         row.blocks,
+        row.completed_total.toFixed(0),
         row.baseline_rps.toFixed(0),
         row.offered_rps.toFixed(0),
         row.achieved_rps.toFixed(0),
         row.p50_us.toFixed(1),
-        row.p99_us.toFixed(1),
-        row.p999_us.toFixed(1),
+        row.p99_us == null ? 'n/a' : row.p99_us.toFixed(1),
+        row.p999_us == null ? 'n/a' : row.p999_us.toFixed(1),
         row.drop_rate_pct.toFixed(1),
         row.rss_mib.toFixed(1),
         row.phys_footprint_mib.toFixed(1),
