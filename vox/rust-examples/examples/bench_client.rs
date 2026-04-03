@@ -521,24 +521,28 @@ async fn run_count_case(
     } else {
         let mut launched = 0usize;
         let mut completed = 0usize;
-        let mut joins: JoinSet<(Result<()>, Duration)> = JoinSet::new();
+        let mut joins: JoinSet<(Result<()>, Instant, Instant)> = JoinSet::new();
 
         while completed < count {
             while launched < count && joins.len() < in_flight {
                 let c = Arc::clone(&client);
+                let issue_at = Instant::now();
                 acc.lock().unwrap().record_issue();
                 joins.spawn(async move {
-                    let t0 = Instant::now();
                     let result = run_one(c, workload, payload_size, launched).await;
-                    (result, t0.elapsed())
+                    let completed_at = Instant::now();
+                    (result, issue_at, completed_at)
                 });
                 launched += 1;
             }
 
             if let Some(joined) = joins.join_next().await {
-                let (result, elapsed) = joined.context("bench task panicked")?;
+                let (result, issue_at, completed_at) = joined.context("bench task panicked")?;
                 match result {
-                    Ok(()) => acc.lock().unwrap().record_ok(elapsed),
+                    Ok(()) => acc
+                        .lock()
+                        .unwrap()
+                        .record_ok(completed_at.duration_since(issue_at)),
                     Err(_) => acc.lock().unwrap().record_err(),
                 }
                 completed += 1;
@@ -668,7 +672,7 @@ async fn run_timed_open_phase(
     let arrival_interval = Duration::from_secs_f64(1.0 / offered_rps);
     let seq = Arc::new(AtomicUsize::new(0));
     let acc = Arc::new(Mutex::new(TrialAccumulator::new()?));
-    let mut joins: JoinSet<(Result<()>, Duration)> = JoinSet::new();
+    let mut joins: JoinSet<(Result<()>, Instant, Instant)> = JoinSet::new();
 
     loop {
         let arrivals_done = next_arrival >= deadline;
@@ -678,9 +682,13 @@ async fn run_timed_open_phase(
 
         if arrivals_done {
             if let Some(joined) = joins.join_next().await {
-                let (result, elapsed) = joined.context("open-loop worker panicked")?;
+                let (result, scheduled_arrival, completed_at) =
+                    joined.context("open-loop worker panicked")?;
                 match result {
-                    Ok(()) => acc.lock().unwrap().record_ok(elapsed),
+                    Ok(()) => acc
+                        .lock()
+                        .unwrap()
+                        .record_ok(completed_at.duration_since(scheduled_arrival)),
                     Err(_) => acc.lock().unwrap().record_err(),
                 }
             }
@@ -693,9 +701,9 @@ async fn run_timed_open_phase(
         tokio::select! {
             joined = joins.join_next(), if !joins.is_empty() => {
                 if let Some(joined) = joined {
-                    let (result, elapsed) = joined.context("open-loop worker panicked")?;
+                    let (result, scheduled_arrival, completed_at) = joined.context("open-loop worker panicked")?;
                     match result {
-                        Ok(()) => acc.lock().unwrap().record_ok(elapsed),
+                        Ok(()) => acc.lock().unwrap().record_ok(completed_at.duration_since(scheduled_arrival)),
                         Err(_) => acc.lock().unwrap().record_err(),
                     }
                 }
@@ -704,11 +712,12 @@ async fn run_timed_open_phase(
                 if joins.len() < max_in_flight {
                     let c = Arc::clone(&client);
                     let n = seq.fetch_add(1, Ordering::Relaxed);
+                    let scheduled_arrival = next_arrival;
                     acc.lock().unwrap().record_issue();
                     joins.spawn(async move {
-                        let t0 = Instant::now();
                         let result = run_one(c, workload, payload_size, n).await;
-                        (result, t0.elapsed())
+                        let completed_at = Instant::now();
+                        (result, scheduled_arrival, completed_at)
                     });
                 } else {
                     acc.lock().unwrap().record_drop();
@@ -731,7 +740,7 @@ async fn run_timed_open_phase(
         }
     }
 
-    let elapsed_secs = start.elapsed().as_secs_f64();
+    let elapsed_secs = duration.as_secs_f64();
     let mut acc = acc.lock().unwrap();
     let histogram = acc.drain_histogram()?;
     let issued = acc.issued;

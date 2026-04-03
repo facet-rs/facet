@@ -44,6 +44,11 @@ function mean(xs) {
   return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN;
 }
 
+function meanFinite(xs) {
+  const finite = xs.filter((x) => Number.isFinite(x));
+  return finite.length ? mean(finite) : null;
+}
+
 function groupBy(rows, keyFn) {
   const out = new Map();
   for (const row of rows) {
@@ -52,6 +57,37 @@ function groupBy(rows, keyFn) {
     out.get(key).push(row);
   }
   return out;
+}
+
+function pooledHistogram(trials) {
+  const counts = new Map();
+  let total = 0;
+  for (const trial of trials) {
+    for (const bin of trial.histogram ?? []) {
+      const value = Number(bin.value_us);
+      const count = Number(bin.count);
+      if (!Number.isFinite(value) || !Number.isFinite(count) || count <= 0) continue;
+      counts.set(value, (counts.get(value) ?? 0) + count);
+      total += count;
+    }
+  }
+  return {
+    entries: [...counts.entries()].sort((a, b) => a[0] - b[0]),
+    total,
+  };
+}
+
+function pooledQuantile(pooled, q) {
+  if (!pooled.total) return null;
+  if (q <= 0) return pooled.entries[0]?.[0] ?? null;
+  if (q >= 1) return pooled.entries.at(-1)?.[0] ?? null;
+  const target = Math.max(1, Math.ceil(q * pooled.total));
+  let seen = 0;
+  for (const [value, count] of pooled.entries) {
+    seen += count;
+    if (seen >= target) return value;
+  }
+  return pooled.entries.at(-1)?.[0] ?? null;
 }
 
 function main() {
@@ -68,32 +104,30 @@ function main() {
   for (const [key, group] of [...grouped.entries()].sort()) {
     const [serverImpl, transport, payloadSize, inFlight] = key.split('|');
     const byRate = groupBy(group, (r) => r.offered_rps);
-    const points = [...byRate.entries()].sort((a, b) => Number(a[0]) - Number(b[0])).map(([offeredRps, trials]) => ({
-      completed_total: trials.reduce((acc, t) => acc + (t.completed ?? 0), 0),
-      offered_rps: Number(offeredRps),
-      server_impl: serverImpl,
-      payload_size: Number(payloadSize),
-      in_flight: Number(inFlight),
-      transport,
-      blocks: trials.length,
-      baseline_rps: mean(trials.map((t) => t.baseline_rps)),
-      achieved_rps: mean(trials.map((t) => t.calls_per_sec)),
-      p50_us: mean(trials.map((t) => t.p50_us)),
-      p99_us:
-        trials.reduce((acc, t) => acc + (t.completed ?? 0), 0) >= args.minCompletedForP99
-          ? mean(trials.map((t) => t.p99_us))
-          : null,
-      p999_us:
-        trials.reduce((acc, t) => acc + (t.completed ?? 0), 0) >= args.minCompletedForP99
-          ? mean(trials.map((t) => t.p999_us))
-          : null,
-      drop_rate_pct: mean(trials.map((t) => {
-        const denom = (t.issued ?? 0) + (t.dropped ?? 0);
-        return denom > 0 ? (t.dropped / denom) * 100 : 0;
-      })),
-      rss_mib: mean(trials.map((t) => (t.peak_rss_kib ?? 0) / 1024)),
-      phys_footprint_mib: mean(trials.map((t) => (t.peak_phys_footprint_kib ?? 0) / 1024)),
-    }));
+    const points = [...byRate.entries()].sort((a, b) => Number(a[0]) - Number(b[0])).map(([offeredRps, trials]) => {
+      const completedTotal = trials.reduce((acc, t) => acc + (t.completed ?? 0), 0);
+      const pooled = pooledHistogram(trials);
+      return {
+        completed_total: completedTotal,
+        offered_rps: Number(offeredRps),
+        server_impl: serverImpl,
+        payload_size: Number(payloadSize),
+        in_flight: Number(inFlight),
+        transport,
+        blocks: trials.length,
+        baseline_rps: mean(trials.map((t) => t.baseline_rps)),
+        achieved_rps: mean(trials.map((t) => t.calls_per_sec)),
+        p50_us: pooledQuantile(pooled, 0.50),
+        p99_us: completedTotal >= args.minCompletedForP99 ? pooledQuantile(pooled, 0.99) : null,
+        p999_us: completedTotal >= args.minCompletedForP99 ? pooledQuantile(pooled, 0.999) : null,
+        drop_rate_pct: mean(trials.map((t) => {
+          const denom = (t.issued ?? 0) + (t.dropped ?? 0);
+          return denom > 0 ? (t.dropped / denom) * 100 : 0;
+        })),
+        rss_mib: meanFinite(trials.map((t) => Number.isFinite(t.peak_rss_kib) ? t.peak_rss_kib / 1024 : null)),
+        phys_footprint_mib: meanFinite(trials.map((t) => Number.isFinite(t.peak_phys_footprint_kib) ? t.peak_phys_footprint_kib / 1024 : null)),
+      };
+    });
     series.push({ server_impl: serverImpl, transport, payload_size: Number(payloadSize), in_flight: Number(inFlight), points });
     tableRows.push(...points);
   }
@@ -234,6 +268,10 @@ function main() {
       return label;
     }
 
+    function fmtMaybe(value, digits = 1) {
+      return Number.isFinite(value) ? value.toFixed(digits) : 'n/a';
+    }
+
     function tracesFor(metric) {
       return series.map((s) => ({
         x: s.points.map((p) => p.offered_rps),
@@ -314,12 +352,12 @@ function main() {
         row.baseline_rps.toFixed(0),
         row.offered_rps.toFixed(0),
         row.achieved_rps.toFixed(0),
-        row.p50_us.toFixed(1),
-        row.p99_us == null ? 'n/a' : row.p99_us.toFixed(1),
-        row.p999_us == null ? 'n/a' : row.p999_us.toFixed(1),
+        fmtMaybe(row.p50_us, 1),
+        fmtMaybe(row.p99_us, 1),
+        fmtMaybe(row.p999_us, 1),
         row.drop_rate_pct.toFixed(1),
-        row.rss_mib.toFixed(1),
-        row.phys_footprint_mib.toFixed(1),
+        fmtMaybe(row.rss_mib, 1),
+        fmtMaybe(row.phys_footprint_mib, 1),
       ]) {
         const td = document.createElement('td');
         td.textContent = String(cell);
