@@ -293,7 +293,16 @@ function main() {
         plot_bgcolor: 'transparent',
         font: { color: '#eef6fb' },
         margin: { l: 60, r: 20, t: 10, b: 50 },
-        xaxis: { title: 'payload size', type: 'log', gridcolor: 'rgba(255,255,255,0.08)' },
+        xaxis: {
+          title: 'payload size',
+          type: 'category',
+          categoryorder: 'array',
+          categoryarray: payloads,
+          tickmode: 'array',
+          tickvals: payloads,
+          ticktext: payloads.map(String),
+          gridcolor: 'rgba(255,255,255,0.08)'
+        },
         yaxis: { title: yAxisTitle, gridcolor: 'rgba(255,255,255,0.08)' },
         legend: { orientation: 'h' },
       }, { displayModeBar: false, responsive: true });
@@ -326,7 +335,16 @@ function main() {
       plot_bgcolor: 'transparent',
       font: { color: '#eef6fb' },
       margin: { l: 60, r: 20, t: 10, b: 50 },
-      xaxis: { title: 'payload size', type: 'log', gridcolor: 'rgba(255,255,255,0.08)' },
+      xaxis: {
+        title: 'payload size',
+        type: 'category',
+        categoryorder: 'array',
+        categoryarray: payloads,
+        tickmode: 'array',
+        tickvals: payloads,
+        ticktext: payloads.map(String),
+        gridcolor: 'rgba(255,255,255,0.08)'
+      },
       yaxis: { title: 'MiB', gridcolor: 'rgba(255,255,255,0.08)' },
       legend: { orientation: 'h' },
     }, { displayModeBar: false, responsive: true });

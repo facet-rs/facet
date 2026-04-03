@@ -15,11 +15,19 @@ enum Workload {
     Gnarly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DriveMode {
+    Closed,
+    Open,
+}
+
 #[derive(Debug, Clone)]
 struct Config {
     count: Option<usize>,
     warmup_secs: f64,
     measure_secs: f64,
+    drive_mode: DriveMode,
+    offered_rps: Option<f64>,
     addr: String,
     workload: Workload,
     payload_sizes: Vec<usize>,
@@ -42,10 +50,13 @@ struct BenchResult {
     count: Option<usize>,
     warmup_secs: f64,
     measure_secs: f64,
+    offered_rps: Option<f64>,
     payload_size: usize,
     in_flight: usize,
+    issued: usize,
     completed: usize,
     errors: usize,
+    dropped: usize,
     elapsed_secs: f64,
     per_call_micros: f64,
     calls_per_sec: f64,
@@ -59,8 +70,10 @@ struct BenchResult {
 
 struct TrialAccumulator {
     histogram: Histogram<u64>,
+    issued: usize,
     completed: usize,
     errors: usize,
+    dropped: usize,
 }
 
 impl TrialAccumulator {
@@ -68,9 +81,15 @@ impl TrialAccumulator {
         Ok(Self {
             histogram: Histogram::new_with_bounds(1, 60_000_000, 3)
                 .context("failed to allocate latency histogram")?,
+            issued: 0,
             completed: 0,
             errors: 0,
+            dropped: 0,
         })
+    }
+
+    fn record_issue(&mut self) {
+        self.issued += 1;
     }
 
     fn record_ok(&mut self, elapsed: Duration) {
@@ -83,6 +102,10 @@ impl TrialAccumulator {
         self.errors += 1;
     }
 
+    fn record_drop(&mut self) {
+        self.dropped += 1;
+    }
+
     fn drain_histogram(&mut self) -> Result<Histogram<u64>> {
         let replacement = Histogram::new_with_bounds(1, 60_000_000, 3)
             .context("failed to allocate replacement latency histogram")?;
@@ -92,8 +115,10 @@ impl TrialAccumulator {
 
 #[derive(Debug)]
 struct TrialResult {
+    issued: usize,
     completed: usize,
     errors: usize,
+    dropped: usize,
     elapsed_secs: f64,
     per_call_micros: f64,
     calls_per_sec: f64,
@@ -112,6 +137,16 @@ fn parse_workload(value: &str) -> Result<Workload> {
         "gnarly" => Ok(Workload::Gnarly),
         _ => Err(eyre::eyre!(
             "invalid --workload value '{value}', expected echo, canvas, or gnarly"
+        )),
+    }
+}
+
+fn parse_drive_mode(value: &str) -> Result<DriveMode> {
+    match value {
+        "closed" => Ok(DriveMode::Closed),
+        "open" => Ok(DriveMode::Open),
+        _ => Err(eyre::eyre!(
+            "invalid --drive-mode value '{value}', expected closed or open"
         )),
     }
 }
@@ -144,6 +179,8 @@ fn parse_config() -> Result<Config> {
     let mut count: Option<usize> = None;
     let mut warmup_secs: f64 = 5.0;
     let mut measure_secs: f64 = 30.0;
+    let mut drive_mode = DriveMode::Closed;
+    let mut offered_rps: Option<f64> = None;
     let mut addr = "local:///tmp/bench.vox".to_string();
     let mut workload = Workload::Echo;
     let mut payload_sizes: Vec<usize> = vec![16];
@@ -174,6 +211,18 @@ fn parse_config() -> Result<Config> {
                     .next()
                     .ok_or_else(|| eyre::eyre!("missing value for --measure-secs"))?;
                 measure_secs = parse_f64_flag(&v, "--measure-secs")?;
+            }
+            "--drive-mode" => {
+                let v = args
+                    .next()
+                    .ok_or_else(|| eyre::eyre!("missing value for --drive-mode"))?;
+                drive_mode = parse_drive_mode(&v)?;
+            }
+            "--offered-rps" => {
+                let v = args
+                    .next()
+                    .ok_or_else(|| eyre::eyre!("missing value for --offered-rps"))?;
+                offered_rps = Some(parse_f64_flag(&v, "--offered-rps")?);
             }
             "--addr" => {
                 addr = args
@@ -261,11 +310,26 @@ fn parse_config() -> Result<Config> {
     if measure_secs <= 0.0 {
         return Err(eyre::eyre!("measure_secs must be > 0"));
     }
+    if let Some(offered_rps) = offered_rps
+        && offered_rps <= 0.0
+    {
+        return Err(eyre::eyre!("offered_rps must be > 0"));
+    }
+    if drive_mode == DriveMode::Open && count.is_some() {
+        return Err(eyre::eyre!(
+            "open-loop mode does not support --count; use --warmup-secs/--measure-secs"
+        ));
+    }
+    if drive_mode == DriveMode::Open && offered_rps.is_none() {
+        return Err(eyre::eyre!("open-loop mode requires --offered-rps"));
+    }
 
     Ok(Config {
         count,
         warmup_secs,
         measure_secs,
+        drive_mode,
+        offered_rps,
         addr,
         workload,
         payload_sizes,
@@ -448,6 +512,7 @@ async fn run_count_case(
     if in_flight == 1 {
         for i in 0..count {
             let t0 = Instant::now();
+            acc.lock().unwrap().record_issue();
             match run_one(Arc::clone(&client), workload, payload_size, i).await {
                 Ok(()) => acc.lock().unwrap().record_ok(t0.elapsed()),
                 Err(_) => acc.lock().unwrap().record_err(),
@@ -461,6 +526,7 @@ async fn run_count_case(
         while completed < count {
             while launched < count && joins.len() < in_flight {
                 let c = Arc::clone(&client);
+                acc.lock().unwrap().record_issue();
                 joins.spawn(async move {
                     let t0 = Instant::now();
                     let result = run_one(c, workload, payload_size, launched).await;
@@ -483,8 +549,10 @@ async fn run_count_case(
     let elapsed_secs = start.elapsed().as_secs_f64();
     let mut acc = acc.lock().unwrap();
     let histogram = acc.drain_histogram()?;
+    let issued = acc.issued;
     let completed = acc.completed;
     let errors = acc.errors;
+    let dropped = acc.dropped;
     let per_call_micros = if completed == 0 {
         0.0
     } else {
@@ -497,8 +565,10 @@ async fn run_count_case(
     };
 
     Ok(TrialResult {
+        issued,
         completed,
         errors,
+        dropped,
         elapsed_secs,
         per_call_micros,
         calls_per_sec,
@@ -534,6 +604,7 @@ async fn run_timed_phase(
                     break;
                 }
                 let n = seq.fetch_add(1, Ordering::Relaxed);
+                acc.lock().unwrap().record_issue();
                 let t0 = Instant::now();
                 match run_one(Arc::clone(&client), workload, payload_size, n).await {
                     Ok(()) => acc.lock().unwrap().record_ok(t0.elapsed()),
@@ -551,8 +622,10 @@ async fn run_timed_phase(
     let elapsed_secs = start.elapsed().as_secs_f64();
     let mut acc = acc.lock().unwrap();
     let histogram = acc.drain_histogram()?;
+    let issued = acc.issued;
     let completed = acc.completed;
     let errors = acc.errors;
+    let dropped = acc.dropped;
     let per_call_micros = if completed == 0 {
         0.0
     } else {
@@ -565,8 +638,122 @@ async fn run_timed_phase(
     };
 
     Ok(TrialResult {
+        issued,
         completed,
         errors,
+        dropped,
+        elapsed_secs,
+        per_call_micros,
+        calls_per_sec,
+        p50_us: quantile_us(&histogram, 0.50),
+        p90_us: quantile_us(&histogram, 0.90),
+        p99_us: quantile_us(&histogram, 0.99),
+        p999_us: quantile_us(&histogram, 0.999),
+        max_us: quantile_us(&histogram, 1.0),
+        histogram: recorded_bins(&histogram),
+    })
+}
+
+async fn run_timed_open_phase(
+    client: Arc<TestbedClient>,
+    workload: Workload,
+    duration: Duration,
+    payload_size: usize,
+    max_in_flight: usize,
+    offered_rps: f64,
+) -> Result<TrialResult> {
+    let start = Instant::now();
+    let deadline = start + duration;
+    let mut next_arrival = start;
+    let arrival_interval = Duration::from_secs_f64(1.0 / offered_rps);
+    let seq = Arc::new(AtomicUsize::new(0));
+    let acc = Arc::new(Mutex::new(TrialAccumulator::new()?));
+    let mut joins: JoinSet<(Result<()>, Duration)> = JoinSet::new();
+
+    loop {
+        let arrivals_done = next_arrival >= deadline;
+        if arrivals_done && joins.is_empty() {
+            break;
+        }
+
+        if arrivals_done {
+            if let Some(joined) = joins.join_next().await {
+                let (result, elapsed) = joined.context("open-loop worker panicked")?;
+                match result {
+                    Ok(()) => acc.lock().unwrap().record_ok(elapsed),
+                    Err(_) => acc.lock().unwrap().record_err(),
+                }
+            }
+            continue;
+        }
+
+        let sleep = tokio::time::sleep_until(next_arrival.into());
+        tokio::pin!(sleep);
+
+        tokio::select! {
+            joined = joins.join_next(), if !joins.is_empty() => {
+                if let Some(joined) = joined {
+                    let (result, elapsed) = joined.context("open-loop worker panicked")?;
+                    match result {
+                        Ok(()) => acc.lock().unwrap().record_ok(elapsed),
+                        Err(_) => acc.lock().unwrap().record_err(),
+                    }
+                }
+            }
+            _ = &mut sleep => {
+                if joins.len() < max_in_flight {
+                    let c = Arc::clone(&client);
+                    let n = seq.fetch_add(1, Ordering::Relaxed);
+                    acc.lock().unwrap().record_issue();
+                    joins.spawn(async move {
+                        let t0 = Instant::now();
+                        let result = run_one(c, workload, payload_size, n).await;
+                        (result, t0.elapsed())
+                    });
+                } else {
+                    acc.lock().unwrap().record_drop();
+                }
+
+                next_arrival += arrival_interval;
+                let now = Instant::now();
+                if next_arrival < now {
+                    let lag = now.duration_since(next_arrival);
+                    let skipped = (lag.as_secs_f64() / arrival_interval.as_secs_f64()).floor() as usize;
+                    for _ in 0..skipped {
+                        if next_arrival >= deadline {
+                            break;
+                        }
+                        acc.lock().unwrap().record_drop();
+                        next_arrival += arrival_interval;
+                    }
+                }
+            }
+        }
+    }
+
+    let elapsed_secs = start.elapsed().as_secs_f64();
+    let mut acc = acc.lock().unwrap();
+    let histogram = acc.drain_histogram()?;
+    let issued = acc.issued;
+    let completed = acc.completed;
+    let errors = acc.errors;
+    let dropped = acc.dropped;
+    let per_call_micros = if completed == 0 {
+        0.0
+    } else {
+        histogram.mean()
+    };
+    let calls_per_sec = if elapsed_secs <= f64::EPSILON {
+        0.0
+    } else {
+        completed as f64 / elapsed_secs
+    };
+
+    Ok(TrialResult {
+        issued,
+        completed,
+        errors,
+        dropped,
         elapsed_secs,
         per_call_micros,
         calls_per_sec,
@@ -599,23 +786,47 @@ async fn measure_case(
         .await?
     } else {
         if cfg.warmup_secs > 0.0 {
-            let _ = run_timed_phase(
+            let _ = if cfg.drive_mode == DriveMode::Open {
+                run_timed_open_phase(
+                    Arc::clone(&client),
+                    cfg.workload,
+                    Duration::from_secs_f64(cfg.warmup_secs),
+                    payload_size,
+                    in_flight,
+                    cfg.offered_rps.expect("validated offered_rps"),
+                )
+                .await?
+            } else {
+                run_timed_phase(
+                    Arc::clone(&client),
+                    cfg.workload,
+                    Duration::from_secs_f64(cfg.warmup_secs),
+                    payload_size,
+                    in_flight,
+                )
+                .await?
+            };
+        }
+        if cfg.drive_mode == DriveMode::Open {
+            run_timed_open_phase(
                 Arc::clone(&client),
                 cfg.workload,
-                Duration::from_secs_f64(cfg.warmup_secs),
+                Duration::from_secs_f64(cfg.measure_secs),
+                payload_size,
+                in_flight,
+                cfg.offered_rps.expect("validated offered_rps"),
+            )
+            .await?
+        } else {
+            run_timed_phase(
+                Arc::clone(&client),
+                cfg.workload,
+                Duration::from_secs_f64(cfg.measure_secs),
                 payload_size,
                 in_flight,
             )
-            .await?;
+            .await?
         }
-        run_timed_phase(
-            Arc::clone(&client),
-            cfg.workload,
-            Duration::from_secs_f64(cfg.measure_secs),
-            payload_size,
-            in_flight,
-        )
-        .await?
     };
 
     Ok(BenchResult {
@@ -633,6 +844,7 @@ async fn measure_case(
         } else {
             cfg.warmup_secs
         },
+        offered_rps: cfg.offered_rps,
         measure_secs: if cfg.count.is_some() {
             trial.elapsed_secs
         } else {
@@ -640,8 +852,10 @@ async fn measure_case(
         },
         payload_size,
         in_flight,
+        issued: trial.issued,
         completed: trial.completed,
         errors: trial.errors,
+        dropped: trial.dropped,
         elapsed_secs: trial.elapsed_secs,
         per_call_micros: trial.per_call_micros,
         calls_per_sec: trial.calls_per_sec,
@@ -659,7 +873,7 @@ fn print_json(results: &[BenchResult]) {
     for (i, r) in results.iter().enumerate() {
         let comma = if i + 1 == results.len() { "" } else { "," };
         println!(
-            "  {{\"workload\":\"{}\",\"transport\":\"{}\",\"addr\":\"{}\",\"mode\":\"{}\",\"count\":{},\"warmup_secs\":{:.3},\"measure_secs\":{:.3},\"payload_size\":{},\"in_flight\":{},\"completed\":{},\"errors\":{},\"elapsed_secs\":{:.6},\"per_call_micros\":{:.3},\"calls_per_sec\":{:.3},\"p50_us\":{:.3},\"p90_us\":{:.3},\"p99_us\":{:.3},\"p999_us\":{:.3},\"max_us\":{:.3},\"histogram\":[{}]}}{}",
+            "  {{\"workload\":\"{}\",\"transport\":\"{}\",\"addr\":\"{}\",\"mode\":\"{}\",\"count\":{},\"warmup_secs\":{:.3},\"measure_secs\":{:.3},\"offered_rps\":{},\"payload_size\":{},\"in_flight\":{},\"issued\":{},\"completed\":{},\"errors\":{},\"dropped\":{},\"elapsed_secs\":{:.6},\"per_call_micros\":{:.3},\"calls_per_sec\":{:.3},\"p50_us\":{:.3},\"p90_us\":{:.3},\"p99_us\":{:.3},\"p999_us\":{:.3},\"max_us\":{:.3},\"histogram\":[{}]}}{}",
             r.workload,
             r.transport,
             r.addr,
@@ -670,10 +884,16 @@ fn print_json(results: &[BenchResult]) {
             },
             r.warmup_secs,
             r.measure_secs,
+            match r.offered_rps {
+                Some(offered_rps) => format!("{offered_rps:.3}"),
+                None => "null".to_string(),
+            },
             r.payload_size,
             r.in_flight,
+            r.issued,
             r.completed,
             r.errors,
+            r.dropped,
             r.elapsed_secs,
             r.per_call_micros,
             r.calls_per_sec,
@@ -703,18 +923,21 @@ async fn main() -> Result<()> {
     eprintln!("serving on {}, waiting for peer to connect...", serve_addr);
     if let Some(count) = cfg.count {
         eprintln!(
-            "plan: workload={}, count_mode(count={}), payload_sizes={:?}, in_flights={:?}",
+            "plan: workload={}, drive_mode={:?}, count_mode(count={}), payload_sizes={:?}, in_flights={:?}",
             workload_name(cfg.workload),
+            cfg.drive_mode,
             count,
             cfg.payload_sizes,
             cfg.in_flights
         );
     } else {
         eprintln!(
-            "plan: workload={}, timed_mode(warmup_secs={:.2}, measure_secs={:.2}), payload_sizes={:?}, in_flights={:?}",
+            "plan: workload={}, drive_mode={:?}, timed_mode(warmup_secs={:.2}, measure_secs={:.2}, offered_rps={:?}), payload_sizes={:?}, in_flights={:?}",
             workload_name(cfg.workload),
+            cfg.drive_mode,
             cfg.warmup_secs,
             cfg.measure_secs,
+            cfg.offered_rps,
             cfg.payload_sizes,
             cfg.in_flights
         );
@@ -750,14 +973,16 @@ async fn main() -> Result<()> {
                         };
 
                         eprintln!(
-                            "workload={} transport={} size={} in_flight={} mode={} completed={} errors={} elapsed={:.2}s mean={:.3}us p50={:.3}us p99={:.3}us p999={:.3}us calls_per_sec={:.0}",
+                            "workload={} transport={} size={} in_flight={} mode={} issued={} completed={} errors={} dropped={} elapsed={:.2}s mean={:.3}us p50={:.3}us p99={:.3}us p999={:.3}us calls_per_sec={:.0}",
                             result.workload,
                             result.transport,
                             result.payload_size,
                             result.in_flight,
                             result.mode,
+                            result.issued,
                             result.completed,
                             result.errors,
+                            result.dropped,
                             result.elapsed_secs,
                             result.per_call_micros,
                             result.p50_us,
