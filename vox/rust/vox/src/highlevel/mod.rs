@@ -3,8 +3,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use vox_core::{ConnectionAcceptor, FromVoxSession, SessionError, TransportMode, initiator};
-use vox_types::{MaybeSend, Metadata, metadata_into_owned};
+use vox_core::{
+    ConnectionAcceptor, ConnectionRequest, FromVoxSession, NoopClient, PendingConnection,
+    SessionError, TransportMode, initiator,
+};
+use vox_types::{Link, LinkTx, MaybeSend, MaybeSync, Metadata, metadata_into_owned};
 
 mod error;
 pub use error::ServeError;
@@ -29,14 +32,14 @@ mod channel;
 pub use channel::{ChannelListener, ChannelListenerSender};
 
 /// A listener that accepts incoming connections for [`serve_listener()`].
-pub trait VoxListener: vox_types::MaybeSend + 'static {
+pub trait VoxListener: MaybeSend + 'static {
     /// The link type produced by this listener.
-    type Link: vox_types::Link + vox_types::MaybeSend + 'static;
+    type Link: Link + MaybeSend + 'static;
 
     /// Accept the next incoming connection.
     fn accept(
         &mut self,
-    ) -> impl std::future::Future<Output = std::io::Result<Self::Link>> + vox_types::MaybeSend + '_;
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Link>> + MaybeSend + '_;
 }
 
 /// Connect to a remote vox service, returning a typed client.
@@ -308,9 +311,9 @@ pub async fn serve_listener<L>(
 ) -> Result<(), SessionError>
 where
     L: VoxListener,
-    <L::Link as vox_types::Link>::Tx: vox_types::MaybeSend + vox_types::MaybeSync + 'static,
-    <<L::Link as vox_types::Link>::Tx as vox_types::LinkTx>::Permit: vox_types::MaybeSend,
-    <L::Link as vox_types::Link>::Rx: vox_types::MaybeSend + 'static,
+    <L::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
+    <<L::Link as Link>::Tx as LinkTx>::Permit: MaybeSend,
+    <L::Link as Link>::Rx: MaybeSend + 'static,
 {
     let acceptor: Arc<dyn ConnectionAcceptor> = Arc::new(acceptor);
     loop {
@@ -319,7 +322,7 @@ where
         moire::spawn(async move {
             let result = vox_core::acceptor_on(link)
                 .on_connection(AcceptorRef(acceptor))
-                .establish::<vox_core::NoopClient>()
+                .establish::<NoopClient>()
                 .await;
             if let Ok(client) = result {
                 client.caller.closed().await;
@@ -334,9 +337,9 @@ struct AcceptorRef(Arc<dyn ConnectionAcceptor>);
 impl ConnectionAcceptor for AcceptorRef {
     fn accept(
         &self,
-        request: &vox_core::ConnectionRequest,
-        connection: vox_core::PendingConnection,
-    ) -> Result<(), vox_types::Metadata<'static>> {
+        request: &ConnectionRequest,
+        connection: PendingConnection,
+    ) -> Result<(), Metadata<'static>> {
         self.0.accept(request, connection)
     }
 }
