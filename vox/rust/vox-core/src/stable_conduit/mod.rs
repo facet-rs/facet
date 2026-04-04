@@ -6,8 +6,8 @@ use facet::Facet;
 use facet_core::PtrConst;
 use facet_reflect::Peek;
 use vox_types::{
-    Conduit, ConduitRx, ConduitTx, ConduitTxPermit, Link, LinkRx, LinkTx, LinkTxPermit, MsgFamily,
-    Payload, SelfRef, WriteSlot,
+    Conduit, ConduitRx, ConduitTx, ConduitTxPermit, Link, LinkRx, LinkTx, LinkTxPermit, MaybeSend,
+    MsgFamily, Payload, SelfRef, WriteSlot,
 };
 
 use crate::MessagePlan;
@@ -162,12 +162,12 @@ pub async fn prepare_acceptor_attachment<L: Link>(
 }
 
 // r[impl stable.link-source]
-pub trait LinkSource: Send + 'static {
-    type Link: Link + Send;
+pub trait LinkSource: MaybeSend + 'static {
+    type Link: Link + MaybeSend;
 
     fn next_link(
         &mut self,
-    ) -> impl Future<Output = std::io::Result<Attachment<Self::Link>>> + Send + '_;
+    ) -> impl Future<Output = std::io::Result<Attachment<Self::Link>>> + MaybeSend + '_;
 }
 
 /// A one-shot [`LinkSource`] backed by a single attachment.
@@ -176,7 +176,7 @@ pub struct SingleAttachmentSource<L> {
 }
 
 /// Build a one-shot [`LinkSource`] from a prepared attachment.
-pub fn single_attachment_source<L: Link + Send + 'static>(
+pub fn single_attachment_source<L: Link + MaybeSend + 'static>(
     attachment: Attachment<L>,
 ) -> SingleAttachmentSource<L> {
     SingleAttachmentSource {
@@ -185,18 +185,18 @@ pub fn single_attachment_source<L: Link + Send + 'static>(
 }
 
 /// Build a one-shot initiator-side [`LinkSource`] from a raw link.
-pub fn single_link_source<L: Link + Send + 'static>(link: L) -> SingleAttachmentSource<L> {
+pub fn single_link_source<L: Link + MaybeSend + 'static>(link: L) -> SingleAttachmentSource<L> {
     single_attachment_source(Attachment::initiator(link))
 }
 
 /// Build an already-exhausted [`LinkSource`]. Any call to `next_link` will
 /// fail immediately. Used when the first link is passed directly to
 /// [`StableConduit::with_first_link`] and no reconnection source is available.
-pub fn exhausted_source<L: Link + Send + 'static>() -> SingleAttachmentSource<L> {
+pub fn exhausted_source<L: Link + MaybeSend + 'static>() -> SingleAttachmentSource<L> {
     SingleAttachmentSource { attachment: None }
 }
 
-impl<L: Link + Send + 'static> LinkSource for SingleAttachmentSource<L> {
+impl<L: Link + MaybeSend + 'static> LinkSource for SingleAttachmentSource<L> {
     type Link = L;
 
     async fn next_link(&mut self) -> std::io::Result<Attachment<Self::Link>> {
@@ -526,9 +526,9 @@ fn fresh_key() -> Result<ResumeKey, StableConduitError> {
 
 impl<F: MsgFamily, LS: LinkSource> Conduit for StableConduit<F, LS>
 where
-    <LS::Link as Link>::Tx: Send + 'static,
-    <LS::Link as Link>::Rx: Send + 'static,
-    LS: Send + 'static,
+    <LS::Link as Link>::Tx: MaybeSend + 'static,
+    <LS::Link as Link>::Rx: MaybeSend + 'static,
+    LS: MaybeSend + 'static,
 {
     type Msg = F;
     type Tx = StableConduitTx<F, LS>;
@@ -560,9 +560,9 @@ pub struct StableConduitTx<F: MsgFamily, LS: LinkSource> {
 
 impl<F: MsgFamily, LS: LinkSource> ConduitTx for StableConduitTx<F, LS>
 where
-    <LS::Link as Link>::Tx: Send + 'static,
-    <LS::Link as Link>::Rx: Send + 'static,
-    LS: Send + 'static,
+    <LS::Link as Link>::Tx: MaybeSend + 'static,
+    <LS::Link as Link>::Rx: MaybeSend + 'static,
+    LS: MaybeSend + 'static,
 {
     type Msg = F;
     type Permit<'a>
@@ -772,9 +772,9 @@ pub struct StableConduitRx<F: MsgFamily, LS: LinkSource> {
 
 impl<F: MsgFamily, LS: LinkSource> ConduitRx for StableConduitRx<F, LS>
 where
-    <LS::Link as Link>::Tx: Send + 'static,
-    <LS::Link as Link>::Rx: Send + 'static,
-    LS: Send + 'static,
+    <LS::Link as Link>::Tx: MaybeSend + 'static,
+    <LS::Link as Link>::Rx: MaybeSend + 'static,
+    LS: MaybeSend + 'static,
 {
     type Msg = F;
     type Error = StableConduitError;

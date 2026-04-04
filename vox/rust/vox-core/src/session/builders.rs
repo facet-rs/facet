@@ -7,12 +7,12 @@ use std::{
 };
 
 use moire::sync::mpsc;
+use moire::time;
 use vox_types::{
     Conduit, ConduitTx, ConnectionSettings, HandshakeResult, Link, MaybeSend, MaybeSync,
     MessageFamily, Metadata, Parity, SessionResumeKey, SplitLink, metadata_into_owned,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
 use crate::{Attachment, LinkSource, StableConduit};
 use crate::{
     BareConduit, IntoConduit, OperationStore, TransportMode, accept_transport,
@@ -72,7 +72,6 @@ pub fn initiator_conduit<I: IntoConduit>(
     SessionInitiatorBuilder::new(into_conduit.into_conduit(), handshake_result)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn initiator<S>(source: S, mode: TransportMode) -> SessionSourceInitiatorBuilder<'static, S>
 where
     S: LinkSource,
@@ -374,14 +373,12 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub struct SessionSourceInitiatorBuilder<'a, S> {
     source: S,
     mode: TransportMode,
     config: SessionConfig<'a>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
     fn new(source: S, mode: TransportMode) -> Self {
         let config = SessionConfig {
@@ -460,15 +457,15 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
     pub async fn establish<Client: FromVoxSession>(self) -> Result<Client, SessionError>
     where
         S: LinkSource,
-        S::Link: Link + Send + 'static,
-        <S::Link as Link>::Tx: MaybeSend + MaybeSync + Send + 'static,
+        S::Link: Link + MaybeSend + 'static,
+        <S::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
         <<S::Link as Link>::Tx as vox_types::LinkTx>::Permit: MaybeSend,
-        <S::Link as Link>::Rx: MaybeSend + Send + 'static,
+        <S::Link as Link>::Rx: MaybeSend + 'static,
     {
         let connect_timeout = self.config.connect_timeout;
         let fut = self.establish_inner::<Client>();
         match connect_timeout {
-            Some(timeout) => tokio::time::timeout(timeout, fut)
+            Some(timeout) => time::timeout(timeout, fut)
                 .await
                 .map_err(|_| SessionError::ConnectTimeout)?,
             None => fut.await,
@@ -478,10 +475,10 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
     async fn establish_inner<Client: FromVoxSession>(self) -> Result<Client, SessionError>
     where
         S: LinkSource,
-        S::Link: Link + Send + 'static,
-        <S::Link as Link>::Tx: MaybeSend + MaybeSync + Send + 'static,
+        S::Link: Link + MaybeSend + 'static,
+        <S::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
         <<S::Link as Link>::Tx as vox_types::LinkTx>::Permit: MaybeSend,
-        <S::Link as Link>::Rx: MaybeSend + Send + 'static,
+        <S::Link as Link>::Rx: MaybeSend + 'static,
     {
         let Self {
             mut source,
@@ -801,7 +798,6 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 struct BareSourceRecoverer<S> {
     source: S,
     settings: ConnectionSettings,
@@ -809,19 +805,16 @@ struct BareSourceRecoverer<S> {
     metadata: Metadata<'static>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 const SOURCE_RECOVERY_BACKOFF_MIN: Duration = Duration::from_millis(100);
-#[cfg(not(target_arch = "wasm32"))]
 const SOURCE_RECOVERY_BACKOFF_MAX: Duration = Duration::from_secs(5);
 
-#[cfg(not(target_arch = "wasm32"))]
 impl<S> ConduitRecoverer for BareSourceRecoverer<S>
 where
     S: LinkSource,
-    S::Link: Link + Send + 'static,
-    <S::Link as Link>::Tx: MaybeSend + MaybeSync + Send + 'static,
+    S::Link: Link + MaybeSend + 'static,
+    <S::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
     <<S::Link as Link>::Tx as vox_types::LinkTx>::Permit: MaybeSend,
-    <S::Link as Link>::Rx: MaybeSend + Send + 'static,
+    <S::Link as Link>::Rx: MaybeSend + 'static,
 {
     fn next_conduit<'a>(
         &'a mut self,
@@ -859,7 +852,7 @@ where
                 };
 
                 let result = match self.connect_timeout {
-                    Some(timeout) => match tokio::time::timeout(timeout, attempt).await {
+                    Some(timeout) => match time::timeout(timeout, attempt).await {
                         Ok(r) => r,
                         Err(_) => Err(SessionError::ConnectTimeout),
                     },
@@ -878,27 +871,25 @@ where
                     use_resume_key = false;
                 }
 
-                tokio::time::sleep(backoff).await;
+                time::sleep(backoff).await;
                 backoff = backoff.saturating_mul(2).min(SOURCE_RECOVERY_BACKOFF_MAX);
             }
         })
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 struct TransportedLinkSource<S> {
     source: S,
     mode: TransportMode,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl<S> LinkSource for TransportedLinkSource<S>
 where
     S: LinkSource,
-    S::Link: Link + Send + 'static,
-    <S::Link as Link>::Tx: MaybeSend + MaybeSync + Send + 'static,
+    S::Link: Link + MaybeSend + 'static,
+    <S::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
     <<S::Link as Link>::Tx as vox_types::LinkTx>::Permit: MaybeSend,
-    <S::Link as Link>::Rx: MaybeSend + Send + 'static,
+    <S::Link as Link>::Rx: MaybeSend + 'static,
 {
     type Link = SplitLink<<S::Link as Link>::Tx, <S::Link as Link>::Rx>;
 
@@ -1167,10 +1158,9 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     }
 
     #[moire::instrument]
-    #[cfg(not(target_arch = "wasm32"))]
     pub async fn establish<Client: FromVoxSession>(self) -> Result<Client, SessionError>
     where
-        L: Link + Send + 'static,
+        L: Link + MaybeSend + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
         <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
@@ -1206,12 +1196,11 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     }
 
     #[moire::instrument]
-    #[cfg(not(target_arch = "wasm32"))]
     pub async fn establish_or_resume<Client: FromVoxSession>(
         self,
     ) -> Result<SessionAcceptOutcome<Client>, SessionError>
     where
-        L: Link + Send + 'static,
+        L: Link + MaybeSend + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
         <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
@@ -1249,98 +1238,15 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
-    pub async fn establish<Client: FromVoxSession>(self) -> Result<Client, SessionError>
-    where
-        L: Link + 'static,
-        L::Tx: MaybeSend + MaybeSync + 'static,
-        <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
-        L::Rx: MaybeSend + 'static,
-    {
-        let Self { link, config } = self;
-        let (mode, mut link) = accept_transport(link)
-            .await
-            .map_err(session_error_from_transport)?;
-        match mode {
-            TransportMode::Bare => {
-                let handshake_result = handshake_as_acceptor(
-                    &link.tx,
-                    &mut link.rx,
-                    config.root_settings.clone(),
-                    true,
-                    config.resumable,
-                    None,
-                    metadata_into_owned(config.metadata.clone()),
-                )
-                .await
-                .map_err(session_error_from_handshake)?;
-                let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
-                    .map_err(SessionError::Protocol)?;
-                let builder = SessionAcceptorBuilder::new(
-                    BareConduit::with_message_plan(link, message_plan),
-                    handshake_result,
-                );
-                Self::apply_common_parts(builder, config).establish().await
-            }
-            TransportMode::Stable => Err(SessionError::Protocol(
-                "stable conduit transport selection is unsupported on wasm".into(),
-            )),
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub async fn establish_or_resume<Client: FromVoxSession>(
-        self,
-    ) -> Result<SessionAcceptOutcome<Client>, SessionError>
-    where
-        L: Link + 'static,
-        L::Tx: MaybeSend + MaybeSync + 'static,
-        <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
-        L::Rx: MaybeSend + 'static,
-    {
-        let Self { link, config } = self;
-        let (mode, mut link) = accept_transport(link)
-            .await
-            .map_err(session_error_from_transport)?;
-        match mode {
-            TransportMode::Bare => {
-                let handshake_result = handshake_as_acceptor(
-                    &link.tx,
-                    &mut link.rx,
-                    config.root_settings.clone(),
-                    true,
-                    config.resumable,
-                    None,
-                    metadata_into_owned(config.metadata.clone()),
-                )
-                .await
-                .map_err(session_error_from_handshake)?;
-                let message_plan = crate::MessagePlan::from_handshake(&handshake_result)
-                    .map_err(SessionError::Protocol)?;
-                let builder = SessionAcceptorBuilder::new(
-                    BareConduit::with_message_plan(link, message_plan),
-                    handshake_result,
-                );
-                Self::apply_common_parts(builder, config)
-                    .establish_or_resume()
-                    .await
-            }
-            TransportMode::Stable => Err(SessionError::Protocol(
-                "stable conduit transport selection is unsupported on wasm".into(),
-            )),
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     async fn finish_with_stable_parts<Client: FromVoxSession>(
         mut link: SplitLink<L::Tx, L::Rx>,
         config: SessionConfig<'a>,
     ) -> Result<Client, SessionError>
     where
-        L: Link + Send + 'static,
-        L::Tx: MaybeSend + MaybeSync + Send + 'static,
+        L: Link + MaybeSend + 'static,
+        L::Tx: MaybeSend + MaybeSync + 'static,
         <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
-        L::Rx: MaybeSend + Send + 'static,
+        L::Rx: MaybeSend + 'static,
     {
         let handshake_result = handshake_as_acceptor(
             &link.tx,
