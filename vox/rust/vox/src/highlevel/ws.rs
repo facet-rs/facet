@@ -26,7 +26,7 @@ impl WsListener {
 impl VoxListener for WsListener {
     type Link = vox_websocket::WsLink<tokio::net::TcpStream>;
 
-    async fn accept(&self) -> std::io::Result<Self::Link> {
+    async fn accept(&mut self) -> std::io::Result<Self::Link> {
         let (stream, _addr) = self.tcp.accept().await?;
         vox_websocket::WsLink::server(stream).await
     }

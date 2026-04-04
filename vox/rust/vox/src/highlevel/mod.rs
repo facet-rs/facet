@@ -3,10 +3,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use vox_core::{
-    ConnectionAcceptor, FromVoxSession, NoopClient, SessionError, TransportMode, initiator,
-};
-use vox_types::{Metadata, metadata_into_owned};
+use vox_core::{ConnectionAcceptor, FromVoxSession, SessionError, TransportMode, initiator};
+use vox_types::{MaybeSend, Metadata, metadata_into_owned};
 
 mod error;
 pub use error::ServeError;
@@ -31,12 +29,14 @@ mod channel;
 pub use channel::{ChannelListener, ChannelListenerSender};
 
 /// A listener that accepts incoming connections for [`serve_listener()`].
-pub trait VoxListener: Send + 'static {
+pub trait VoxListener: vox_types::MaybeSend + 'static {
     /// The link type produced by this listener.
-    type Link: vox_types::Link + Send + 'static;
+    type Link: vox_types::Link + vox_types::MaybeSend + 'static;
 
     /// Accept the next incoming connection.
-    fn accept(&self) -> impl std::future::Future<Output = std::io::Result<Self::Link>> + Send + '_;
+    fn accept(
+        &mut self,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Link>> + vox_types::MaybeSend + '_;
 }
 
 /// Connect to a remote vox service, returning a typed client.
@@ -303,23 +303,23 @@ pub async fn serve(
 /// # }
 /// ```
 pub async fn serve_listener<L>(
-    listener: L,
+    mut listener: L,
     acceptor: impl ConnectionAcceptor,
 ) -> Result<(), SessionError>
 where
     L: VoxListener,
-    <L::Link as vox_types::Link>::Tx: vox_types::MaybeSend + vox_types::MaybeSync + Send + 'static,
+    <L::Link as vox_types::Link>::Tx: vox_types::MaybeSend + vox_types::MaybeSync + 'static,
     <<L::Link as vox_types::Link>::Tx as vox_types::LinkTx>::Permit: vox_types::MaybeSend,
-    <L::Link as vox_types::Link>::Rx: vox_types::MaybeSend + Send + 'static,
+    <L::Link as vox_types::Link>::Rx: vox_types::MaybeSend + 'static,
 {
     let acceptor: Arc<dyn ConnectionAcceptor> = Arc::new(acceptor);
     loop {
         let link = listener.accept().await.map_err(SessionError::Io)?;
         let acceptor = acceptor.clone();
-        tokio::spawn(async move {
+        moire::spawn(async move {
             let result = vox_core::acceptor_on(link)
                 .on_connection(AcceptorRef(acceptor))
-                .establish::<NoopClient>()
+                .establish::<vox_core::NoopClient>()
                 .await;
             if let Ok(client) = result {
                 client.caller.closed().await;

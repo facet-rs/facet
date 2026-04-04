@@ -10,7 +10,7 @@ use super::{ServeError, VoxListener, serve_listener};
 impl VoxListener for vox_stream::LocalLinkAcceptor {
     type Link = vox_stream::LocalLink;
 
-    async fn accept(&self) -> std::io::Result<Self::Link> {
+    async fn accept(&mut self) -> std::io::Result<Self::Link> {
         vox_stream::LocalLinkAcceptor::accept(self).await
     }
 }
