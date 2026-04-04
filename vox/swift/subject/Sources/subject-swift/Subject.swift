@@ -7,9 +7,9 @@ import Foundation
 import VoxRuntime
 
 #if canImport(Darwin)
-import Darwin
+    import Darwin
 #elseif canImport(Glibc)
-import Glibc
+    import Glibc
 #endif
 
 // MARK: - Testbed Service Implementation
@@ -186,7 +186,8 @@ struct TestbedService: TestbedHandler {
         [.red, .green, .blue]
     }
 
-    func describePoint(label: String, x: Int32, y: Int32, active: Bool) async throws -> TaggedPoint {
+    func describePoint(label: String, x: Int32, y: Int32, active: Bool) async throws -> TaggedPoint
+    {
         TaggedPoint(label: label, x: x, y: y, active: active)
     }
 
@@ -227,56 +228,6 @@ struct TestbedService: TestbedHandler {
     }
 }
 
-// MARK: - Channeling Dispatcher Adapter
-
-/// Adapter to make TestbedChannelingDispatcher conform to ServiceDispatcher.
-final class TestbedDispatcherAdapter: ServiceDispatcher, @unchecked Sendable {
-    private let handler: TestbedHandler
-
-    init(handler: TestbedHandler) {
-        self.handler = handler
-    }
-
-    func retryPolicy(methodId: UInt64) -> RetryPolicy {
-        TestbedChannelingDispatcher.retryPolicy(methodId: methodId)
-    }
-
-    func preregister(
-        methodId: UInt64,
-        payload: [UInt8],
-        registry: ChannelRegistry
-    ) async {
-        await TestbedChannelingDispatcher.preregisterChannels(
-            methodId: methodId,
-            payload: Data(payload),
-            registry: registry
-        )
-    }
-
-    func dispatch(
-        methodId: UInt64,
-        payload: [UInt8],
-        requestId: UInt64,
-        registry: ChannelRegistry,
-        schemaSendTracker: SchemaSendTracker,
-        taskTx: @escaping @Sendable (TaskMessage) -> Void
-    ) async {
-        let dispatcher = TestbedChannelingDispatcher(
-            handler: handler,
-            registry: registry,
-            taskSender: taskTx,
-            schemaSendTracker: schemaSendTracker
-        )
-
-        // Dispatch the request
-        await dispatcher.dispatch(
-            methodId: methodId,
-            requestId: requestId,
-            payload: Data(payload)
-        )
-    }
-}
-
 // MARK: - Logging
 
 func log(_ message: String) {
@@ -294,9 +245,9 @@ func sameShape(_ lhs: Shape, _ rhs: Shape) -> Bool {
     switch (lhs, rhs) {
     case (.point, .point):
         true
-    case let (.circle(lRadius), .circle(rRadius)):
+    case (.circle(let lRadius), .circle(let rRadius)):
         lRadius == rRadius
-    case let (.rectangle(lWidth, lHeight), .rectangle(rWidth, rHeight)):
+    case (.rectangle(let lWidth, let lHeight), .rectangle(let rWidth, let rHeight)):
         lWidth == rWidth && lHeight == rHeight
     default:
         false
@@ -309,7 +260,7 @@ func sameShape(_ lhs: Shape, _ rhs: Shape) -> Bool {
 /// But it CONNECTS TO the test harness (specified by PEER_ADDR).
 func runServer() async throws {
     let handler = TestbedService()
-    let dispatcher = TestbedDispatcherAdapter(handler: handler)
+    let dispatcher = TestbedChannelingDispatcher(handler: handler)
     guard let addr = ProcessInfo.processInfo.environment["PEER_ADDR"] else {
         log("PEER_ADDR not set")
         throw SubjectError.missingEnv
@@ -317,7 +268,9 @@ func runServer() async throws {
 
     let transport = subjectConduit()
     let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] != "0"
-    log("server mode: connecting to \(addr), transport=\(transport), acceptConnections=\(acceptConnections)")
+    log(
+        "server mode: connecting to \(addr), transport=\(transport), acceptConnections=\(acceptConnections)"
+    )
 
     let rootMetadata: [MetadataEntry] = [
         MetadataEntry(key: "vox-service", value: .string("Testbed"), flags: 0),
@@ -577,18 +530,25 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
 
         try await callTask.value
         let received = try await receiveTask.value
-        guard let restart = received.enumerated().dropFirst().first(where: { $0.element == 0 })?.offset else {
+        guard
+            let restart = received.enumerated().dropFirst().first(where: { $0.element == 0 })?
+                .offset
+        else {
             log("channel_retry_idem expected retry restart, got \(received)")
             throw SubjectError.invalidResponse
         }
         let expectedPrefix = (0..<Int32(restart)).map { $0 }
         guard Array(received[..<restart]) == expectedPrefix else {
-            log("channel_retry_idem expected prefix \(expectedPrefix), got \(Array(received[..<restart]))")
+            log(
+                "channel_retry_idem expected prefix \(expectedPrefix), got \(Array(received[..<restart]))"
+            )
             throw SubjectError.invalidResponse
         }
         let expectedRerun = (0..<Int32(retryProbeItemCount)).map { $0 }
         guard Array(received[restart...]) == expectedRerun else {
-            log("channel_retry_idem expected rerun \(expectedRerun), got \(Array(received[restart...]))")
+            log(
+                "channel_retry_idem expected rerun \(expectedRerun), got \(Array(received[restart...]))"
+            )
             throw SubjectError.invalidResponse
         }
     case "divide_error":
@@ -736,7 +696,8 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
             throw SubjectError.invalidResponse
         }
         let second = try await client.describePoint(label: "far", x: -100, y: 200, active: false)
-        guard second.label == "far", second.x == -100, second.y == 200, second.active == false else {
+        guard second.label == "far", second.x == -100, second.y == 200, second.active == false
+        else {
             log("describe_point far failed: \(second)")
             throw SubjectError.invalidResponse
         }
@@ -879,7 +840,7 @@ func runClient() async throws {
     log("connecting via \(connector.transport)")
 
     let handler = TestbedService()
-    let dispatcher = TestbedDispatcherAdapter(handler: handler)
+    let dispatcher = TestbedChannelingDispatcher(handler: handler)
 
     let session = try await Session.initiator(
         connector,
@@ -917,7 +878,8 @@ final class SocketLink: Link, @unchecked Sendable {
     }
 
     func sendFrame(_ bytes: [UInt8]) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
             self.writeQueue.async {
                 do {
                     try self.ensureOpen()
@@ -978,11 +940,11 @@ final class SocketLink: Link, @unchecked Sendable {
                 }
                 if !wasClosed {
                     #if canImport(Darwin)
-                    _ = Darwin.shutdown(self.fd, SHUT_RDWR)
-                    _ = Darwin.close(self.fd)
+                        _ = Darwin.shutdown(self.fd, SHUT_RDWR)
+                        _ = Darwin.close(self.fd)
                     #else
-                    _ = Glibc.shutdown(self.fd, Int32(SHUT_RDWR))
-                    _ = Glibc.close(self.fd)
+                        _ = Glibc.shutdown(self.fd, Int32(SHUT_RDWR))
+                        _ = Glibc.close(self.fd)
                     #endif
                 }
                 continuation.resume()
@@ -1023,9 +985,9 @@ private func readExactlyAllowingEof(fd: Int32, count: Int) throws -> [UInt8]? {
         let n = out.withUnsafeMutableBytes { raw -> Int in
             guard let base = raw.baseAddress else { return -1 }
             #if canImport(Darwin)
-            return Darwin.recv(fd, base.advanced(by: offset), count - offset, 0)
+                return Darwin.recv(fd, base.advanced(by: offset), count - offset, 0)
             #else
-            return Glibc.recv(fd, base.advanced(by: offset), count - offset, 0)
+                return Glibc.recv(fd, base.advanced(by: offset), count - offset, 0)
             #endif
         }
         if n == 0 {
@@ -1051,9 +1013,9 @@ private func writeAll(_ fd: Int32, bytes: [UInt8]) throws {
         let n = bytes.withUnsafeBytes { raw -> Int in
             guard let base = raw.baseAddress else { return -1 }
             #if canImport(Darwin)
-            return Darwin.send(fd, base.advanced(by: sent), bytes.count - sent, 0)
+                return Darwin.send(fd, base.advanced(by: sent), bytes.count - sent, 0)
             #else
-            return Glibc.send(fd, base.advanced(by: sent), bytes.count - sent, 0)
+                return Glibc.send(fd, base.advanced(by: sent), bytes.count - sent, 0)
             #endif
         }
         if n > 0 {
@@ -1077,27 +1039,28 @@ private func readExactly(fd: Int32, count: Int) throws -> [UInt8] {
 
 private func makeTcpListener(port: Int) throws -> (fd: Int32, boundPort: Int) {
     #if canImport(Glibc)
-    let fd = socket(AF_INET, Int32(SOCK_STREAM.rawValue), 0)
+        let fd = socket(AF_INET, Int32(SOCK_STREAM.rawValue), 0)
     #else
-    let fd = socket(AF_INET, SOCK_STREAM, 0)
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
     #endif
     guard fd >= 0 else {
         throw SubjectError.socketSetupFailed
     }
 
     var yes: Int32 = 1
-    guard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size)) == 0 else {
+    guard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size)) == 0
+    else {
         #if canImport(Darwin)
-        _ = Darwin.close(fd)
+            _ = Darwin.close(fd)
         #else
-        _ = Glibc.close(fd)
+            _ = Glibc.close(fd)
         #endif
         throw SubjectError.socketSetupFailed
     }
 
     var addr = sockaddr_in()
     #if canImport(Darwin)
-    addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
     #endif
     addr.sin_family = sa_family_t(AF_INET)
     addr.sin_port = in_port_t(UInt16(port).bigEndian)
@@ -1106,17 +1069,17 @@ private func makeTcpListener(port: Int) throws -> (fd: Int32, boundPort: Int) {
     let bindResult = withUnsafePointer(to: &addr) { ptr in
         ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
             #if canImport(Darwin)
-            Darwin.bind(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+                Darwin.bind(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
             #else
-            Glibc.bind(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+                Glibc.bind(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
             #endif
         }
     }
     guard bindResult == 0, listen(fd, 1) == 0 else {
         #if canImport(Darwin)
-        _ = Darwin.close(fd)
+            _ = Darwin.close(fd)
         #else
-        _ = Glibc.close(fd)
+            _ = Glibc.close(fd)
         #endif
         throw SubjectError.socketSetupFailed
     }
@@ -1130,9 +1093,9 @@ private func makeTcpListener(port: Int) throws -> (fd: Int32, boundPort: Int) {
     }
     guard nameResult == 0 else {
         #if canImport(Darwin)
-        _ = Darwin.close(fd)
+            _ = Darwin.close(fd)
         #else
-        _ = Glibc.close(fd)
+            _ = Glibc.close(fd)
         #endif
         throw SubjectError.socketSetupFailed
     }
@@ -1143,18 +1106,19 @@ private func makeTcpListener(port: Int) throws -> (fd: Int32, boundPort: Int) {
 
 private func acceptTcpConnection(listenerFd: Int32) async throws -> Int32 {
     try await withCheckedThrowingContinuation { continuation in
-        DispatchQueue.global().async(execute: DispatchWorkItem {
-            #if canImport(Darwin)
-            let clientFd = Darwin.accept(listenerFd, nil, nil)
-            #else
-            let clientFd = Glibc.accept(listenerFd, nil, nil)
-            #endif
-            if clientFd >= 0 {
-                continuation.resume(returning: clientFd)
-            } else {
-                continuation.resume(throwing: SubjectError.socketSetupFailed)
-            }
-        })
+        DispatchQueue.global().async(
+            execute: DispatchWorkItem {
+                #if canImport(Darwin)
+                    let clientFd = Darwin.accept(listenerFd, nil, nil)
+                #else
+                    let clientFd = Glibc.accept(listenerFd, nil, nil)
+                #endif
+                if clientFd >= 0 {
+                    continuation.resume(returning: clientFd)
+                } else {
+                    continuation.resume(throwing: SubjectError.socketSetupFailed)
+                }
+            })
     }
 }
 
@@ -1163,9 +1127,9 @@ func runServerListen() async throws {
     let (listenerFd, boundPort) = try makeTcpListener(port: listenPort)
     defer {
         #if canImport(Darwin)
-        _ = Darwin.close(listenerFd)
+            _ = Darwin.close(listenerFd)
         #else
-        _ = Glibc.close(listenerFd)
+            _ = Glibc.close(listenerFd)
         #endif
     }
 
@@ -1181,7 +1145,7 @@ func runServerListen() async throws {
 
     let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] == "1"
     let handler = TestbedService()
-    let dispatcher = TestbedDispatcherAdapter(handler: handler)
+    let dispatcher = TestbedChannelingDispatcher(handler: handler)
     let session = try await Session.acceptFreshLink(
         link,
         conduit: subjectConduit(),
