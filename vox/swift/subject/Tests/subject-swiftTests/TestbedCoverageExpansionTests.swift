@@ -9,7 +9,18 @@ private actor TaskResponseInbox {
     private var waiters: [UInt64: CheckedContinuation<[UInt8], Never>] = [:]
 
     func push(_ message: TaskMessage) {
-        guard case .response(let requestId, let payload, _) = message else {
+        let requestId: UInt64
+        let payload: [UInt8]
+        switch message {
+        case .response(
+            requestId: let matchedRequestId,
+            payload: let matchedPayload,
+            methodId: _,
+            schemaPayload: _
+        ):
+            requestId = matchedRequestId
+            payload = matchedPayload
+        default:
             return
         }
         if let waiter = waiters.removeValue(forKey: requestId) {

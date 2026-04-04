@@ -75,8 +75,16 @@ private actor TaskMessageRecorder {
 
     func firstResponse() -> (UInt64, [UInt8])? {
         for message in messages {
-            if case .response(let requestId, let payload, _) = message {
+            switch message {
+            case .response(
+                requestId: let requestId,
+                payload: let payload,
+                methodId: _,
+                schemaPayload: _
+            ):
                 return (requestId, payload)
+            default:
+                break
             }
         }
         return nil
