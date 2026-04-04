@@ -65,7 +65,7 @@ impl<'a> ConnectionRequest<'a> {
 
     /// Whether this is a root or virtual connection.
     pub fn is_root(&self) -> bool {
-        vox_types::metadata_get_str(self.metadata, "vox-connection-kind") == Some("root")
+        !self.is_virtual()
     }
 
     /// Whether this is a virtual connection.

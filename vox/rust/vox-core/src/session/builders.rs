@@ -356,7 +356,10 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
             caller_slot.clone(),
             config.operation_store,
         );
-        peer_metadata.push(vox_types::MetadataEntry::str("vox-connection-kind", "root"));
+        peer_metadata.push(vox_types::MetadataEntry::str(
+            VOX_SERVICE_METADATA_KEY,
+            Client::SERVICE_NAME,
+        ));
         let request = super::ConnectionRequest::new(&peer_metadata)?;
         acceptor
             .accept(&request, pending)
@@ -1032,7 +1035,10 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
             caller_slot.clone(),
             config.operation_store,
         );
-        peer_metadata.push(vox_types::MetadataEntry::str("vox-connection-kind", "root"));
+        peer_metadata.push(vox_types::MetadataEntry::str(
+            VOX_SERVICE_METADATA_KEY,
+            Client::SERVICE_NAME,
+        ));
         let request = super::ConnectionRequest::new(&peer_metadata)?;
         acceptor
             .accept(&request, pending)
