@@ -477,6 +477,49 @@ starts only after that conduit has been selected and initialized.
 > connection failure, in which case they MUST tear down the session and fail all
 > pending requests with a connection-closed style error.
 
+# Initial connect waiting
+
+> r[session.initial-connect-waiting]
+>
+> A caller that has just spawned a local daemon or is waiting for a remote
+> service to become reachable MAY request initial-connect waiting from the
+> runtime. In this mode, the runtime retries failed initial connection
+> attempts until a session is established or the waiting timeout expires.
+>
+> Initial connect waiting is distinct from session recovery. Session
+> recovery applies after a session exists and its conduit fails. Initial
+> connect waiting applies before any session has been established.
+
+> r[session.initial-connect-waiting.retryable]
+>
+> During initial connect waiting, only transient failures MUST be retried:
+> I/O errors and connect timeouts. These indicate that the service is not
+> yet reachable.
+
+> r[session.initial-connect-waiting.non-retryable]
+>
+> During initial connect waiting, permanent failures MUST NOT be retried and
+> MUST surface immediately. Protocol errors, payload/schema incompatibilities,
+> and explicit rejections indicate a fundamental mismatch that retrying will
+> not resolve.
+
+> r[session.initial-connect-waiting.backoff]
+>
+> The runtime MUST apply exponential backoff between retry attempts, starting
+> from a small initial interval and capping at a maximum interval. This
+> prevents a busy loop when the service is slow to start.
+
+> r[session.initial-connect-waiting.timeout]
+>
+> Initial connect waiting is bounded by a caller-supplied timeout. If the
+> timeout expires before a session is established, the runtime MUST surface
+> the last retryable failure.
+
+> r[session.initial-connect-waiting.no-session]
+>
+> A failed initial connect waiting attempt that never establishes a session
+> MUST NOT be treated as session recovery.
+
 # Connections
 
 > r[connection]

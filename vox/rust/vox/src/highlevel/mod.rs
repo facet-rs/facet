@@ -1,7 +1,7 @@
 use std::future::IntoFuture;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use vox_core::{
     ConnectionAcceptor, ConnectionRequest, FromVoxSession, NoopClient, PendingConnection,
@@ -103,6 +103,7 @@ pub struct ConnectBuilder<'a, Client> {
     on_connection: Option<Arc<dyn ConnectionAcceptor>>,
     connect_timeout: Option<Duration>,
     resumable: bool,
+    wait_for_service: Option<Duration>,
     _client: std::marker::PhantomData<Client>,
 }
 
@@ -114,6 +115,7 @@ impl<'a, Client> ConnectBuilder<'a, Client> {
             on_connection: None,
             connect_timeout: Some(Duration::from_secs(5)),
             resumable: false,
+            wait_for_service: None,
             _client: std::marker::PhantomData,
         }
     }
@@ -138,7 +140,21 @@ impl<'a, Client> ConnectBuilder<'a, Client> {
         self.resumable = true;
         self
     }
+
+    // r[impl session.initial-connect-waiting]
+    /// Wait for the service to become reachable, retrying for up to `timeout`.
+    ///
+    /// Only transient failures (I/O errors, connect timeouts) are retried.
+    /// Protocol errors, schema incompatibilities, and explicit rejections fail
+    /// immediately without retrying.
+    pub fn wait_for_service(mut self, timeout: Duration) -> Self {
+        self.wait_for_service = Some(timeout);
+        self
+    }
 }
+
+const INITIAL_CONNECT_BACKOFF_MIN: Duration = Duration::from_millis(100);
+const INITIAL_CONNECT_BACKOFF_MAX: Duration = Duration::from_secs(5);
 
 impl<'a, Client> ConnectBuilder<'a, Client>
 where
@@ -151,15 +167,74 @@ where
             on_connection,
             connect_timeout,
             resumable,
+            wait_for_service,
             _client: _,
         } = self;
+
         let parsed = parse_connect_address(addr)?;
         let metadata = metadata_into_owned(metadata);
 
+        match wait_for_service {
+            // r[impl session.initial-connect-waiting]
+            // r[impl session.initial-connect-waiting.no-session]
+            Some(service_timeout) => {
+                let deadline = Instant::now() + service_timeout;
+                let mut backoff = INITIAL_CONNECT_BACKOFF_MIN;
+
+                loop {
+                    match Self::establish_once(
+                        &parsed,
+                        metadata.clone(),
+                        on_connection.clone(),
+                        connect_timeout,
+                        resumable,
+                    )
+                    .await
+                    {
+                        Ok(client) => return Ok(client),
+                        // r[impl session.initial-connect-waiting.non-retryable]
+                        Err(e)
+                            if !matches!(e, SessionError::Io(_) | SessionError::ConnectTimeout) =>
+                        {
+                            return Err(e);
+                        }
+                        // r[impl session.initial-connect-waiting.retryable]
+                        // r[impl session.initial-connect-waiting.timeout]
+                        // r[impl session.initial-connect-waiting.backoff]
+                        Err(e) => {
+                            let now = Instant::now();
+                            if now >= deadline {
+                                return Err(e);
+                            }
+                            let remaining = deadline - now;
+                            let sleep = backoff.min(remaining);
+                            moire::time::sleep(sleep).await;
+                            backoff = backoff.saturating_mul(2).min(INITIAL_CONNECT_BACKOFF_MAX);
+                        }
+                    }
+                }
+            }
+            None => {
+                Self::establish_once(&parsed, metadata, on_connection, connect_timeout, resumable)
+                    .await
+            }
+        }
+    }
+
+    async fn establish_once(
+        parsed: &ConnectAddress,
+        metadata: vox_types::Metadata<'static>,
+        on_connection: Option<Arc<dyn ConnectionAcceptor>>,
+        connect_timeout: Option<Duration>,
+        resumable: bool,
+    ) -> Result<Client, SessionError> {
         match parsed {
             #[cfg(feature = "transport-tcp")]
             ConnectAddress::Tcp(host) => {
-                let mut builder = initiator(vox_stream::tcp_link_source(host), TransportMode::Bare);
+                let mut builder = initiator(
+                    vox_stream::tcp_link_source(host.clone()),
+                    TransportMode::Bare,
+                );
                 if let Some(acceptor) = on_connection.clone() {
                     builder = builder.on_connection(AcceptorRef(acceptor));
                 }
@@ -173,8 +248,10 @@ where
             }
             #[cfg(feature = "transport-local")]
             ConnectAddress::Local(host) => {
-                let mut builder =
-                    initiator(vox_stream::local_link_source(host), TransportMode::Bare);
+                let mut builder = initiator(
+                    vox_stream::local_link_source(host.clone()),
+                    TransportMode::Bare,
+                );
                 if let Some(acceptor) = on_connection.clone() {
                     builder = builder.on_connection(AcceptorRef(acceptor));
                 }
@@ -188,8 +265,10 @@ where
             }
             #[cfg(feature = "transport-websocket")]
             ConnectAddress::Ws(url) => {
-                let mut builder =
-                    initiator(vox_websocket::ws_link_source(url), TransportMode::Bare);
+                let mut builder = initiator(
+                    vox_websocket::ws_link_source(url.clone()),
+                    TransportMode::Bare,
+                );
                 if let Some(acceptor) = on_connection {
                     builder = builder.on_connection(AcceptorRef(acceptor));
                 }
