@@ -443,8 +443,15 @@ struct SessionResumeTests {
             }
 
             try await initial.close()
+
+            guard let replayedRequestId = await awaitResumeRequestId(replacement, index: 0) else {
+                Issue.record("expected request to be replayed on replacement link")
+                return
+            }
+
+            #expect(replayedRequestId == requestId)
             await replacement.enqueueMessage(
-                .response(connId: 0, requestId: requestId, metadata: [], payload: [0x24])
+                .response(connId: 0, requestId: replayedRequestId, metadata: [], payload: [0x24])
             )
 
             let response = try await callTask.value
