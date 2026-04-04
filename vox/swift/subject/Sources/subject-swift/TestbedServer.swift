@@ -22,6 +22,7 @@ public enum TestbedMethodId {
   public static let parseColor: UInt64 = 0xd4f1_6ea9_eca1_32e6
   public static let shapeArea: UInt64 = 0x0438_5a4b_e2a8_82f5
   public static let createCanvas: UInt64 = 0xef42_1eb5_b08c_973a
+  public static let echoGnarly: UInt64 = 0xb6fa_cae6_a7a8_6e99
   public static let processMessage: UInt64 = 0xe08f_0f52_54e7_a997
   public static let getPoints: UInt64 = 0x5985_1852_3a62_66bf
   public static let swapPair: UInt64 = 0x7d55_a713_ad61_2bf2
@@ -114,6 +115,63 @@ public struct Canvas: Codable, Sendable {
   }
 }
 
+public struct GnarlyAttr: Codable, Sendable {
+  public var key: String
+  public var value: String
+
+  public init(key: String, value: String) {
+    self.key = key
+    self.value = value
+  }
+}
+
+public enum GnarlyKind: Codable, Sendable {
+  case file(mime: String, tags: [String])
+  case directory(childCount: UInt32, children: [String])
+  case symlink(target: String, hops: [UInt32])
+}
+
+public struct GnarlyEntry: Codable, Sendable {
+  public var id: UInt64
+  public var parent: UInt64?
+  public var name: String
+  public var path: String
+  public var attrs: [GnarlyAttr]
+  public var chunks: [Data]
+  public var kind: GnarlyKind
+
+  public init(
+    id: UInt64, parent: UInt64?, name: String, path: String, attrs: [GnarlyAttr], chunks: [Data],
+    kind: GnarlyKind
+  ) {
+    self.id = id
+    self.parent = parent
+    self.name = name
+    self.path = path
+    self.attrs = attrs
+    self.chunks = chunks
+    self.kind = kind
+  }
+}
+
+public struct GnarlyPayload: Codable, Sendable {
+  public var revision: UInt64
+  public var mount: String
+  public var entries: [GnarlyEntry]
+  public var footer: String?
+  public var digest: Data
+
+  public init(
+    revision: UInt64, mount: String, entries: [GnarlyEntry], footer: String?, digest: Data
+  ) {
+    self.revision = revision
+    self.mount = mount
+    self.entries = entries
+    self.footer = footer
+    self.digest = digest
+  }
+}
+
 public enum Message: Codable, Sendable {
   case text(String)
   case number(Int64)
@@ -198,7 +256,7 @@ public struct Config: Codable, Sendable {
 ///  Testbed service for conformance testing.
 ///
 ///  Combines simple RPC, channeling, and complex type methods for comprehensive testing.
-public protocol TestbedHandler {
+public protocol TestbedHandler: Sendable {
   ///  Echoes the message back.
   func echo(message: String) async throws -> String
   ///  Returns the message reversed.
@@ -243,6 +301,8 @@ public protocol TestbedHandler {
   func shapeArea(shape: Shape) async throws -> Double
   ///  Create a canvas with given shapes.
   func createCanvas(name: String, shapes: [Shape], background: Color) async throws -> Canvas
+  ///  Echo a deeply nested payload back unchanged.
+  func echoGnarly(payload: GnarlyPayload) async throws -> GnarlyPayload
   ///  Process a message and return a response.
   func processMessage(msg: Message) async throws -> Message
   ///  Return multiple points.
@@ -290,105 +350,177 @@ public protocol TestbedHandler {
   func echoConfig(c: Config) async throws -> Config
 }
 
-public final class TestbedChannelingDispatcher {
+public final class TestbedChannelingDispatcher: ServiceDispatcher {
   private let handler: TestbedHandler
-  private let registry: IncomingChannelRegistry
-  private let taskSender: TaskSender
   private let schemaRegistry: [UInt64: Schema]
   private let methodSchemas: [UInt64: MethodSchemaInfo]
 
   public init(
-    handler: TestbedHandler, registry: IncomingChannelRegistry, taskSender: @escaping TaskSender,
-    schemaSendTracker _: SchemaSendTracker,
-    schemaRegistry: [UInt64: Schema] = testbed_schema_registry,
+    handler: TestbedHandler, schemaRegistry: [UInt64: Schema] = testbed_schema_registry,
     methodSchemas: [UInt64: MethodSchemaInfo] = testbed_method_schemas
   ) {
     self.handler = handler
-    self.registry = registry
-    self.taskSender = taskSender
     self.schemaRegistry = schemaRegistry
     self.methodSchemas = methodSchemas
   }
 
-  public func dispatch(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  public func dispatch(
+    methodId: UInt64, payload: [UInt8], requestId: UInt64, registry: ChannelRegistry,
+    schemaSendTracker _: SchemaSendTracker, taskTx: @escaping @Sendable (TaskMessage) -> Void
+  ) async {
+    let payload = Data(payload)
+    let taskSender: TaskSender = taskTx
     switch methodId {
     case 0x880b_c4ee_e235_74be:
-      await dispatch_echo(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_echo(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x1c22_3f30_e180_392a:
-      await dispatch_reverse(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_reverse(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0xfb68_d931_8f83_0875:
-      await dispatch_divide(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_divide(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0xa15f_f520_9471_2a3b:
-      await dispatch_lookup(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_lookup(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x51f9_cfd8_e865_77c9:
-      await dispatch_sum(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_sum(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x239e_5b99_b1f8_207a:
-      await dispatch_generate(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_generate(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x3441_9529_478c_c7b8:
       await dispatch_generateRetryNonIdem(
-        methodId: methodId, requestId: requestId, payload: payload)
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0xe2d2_7fd9_098c_6ea2:
-      await dispatch_generateRetryIdem(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_generateRetryIdem(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0xcb46_9cff_8d79_8feb:
-      await dispatch_transform(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_transform(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x81f5_386d_589d_fbe4:
-      await dispatch_echoPoint(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_echoPoint(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x68ff_a90b_7728_bde7:
-      await dispatch_createPerson(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_createPerson(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x223f_e028_2d26_3107:
-      await dispatch_rectangleArea(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_rectangleArea(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0xd4f1_6ea9_eca1_32e6:
-      await dispatch_parseColor(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_parseColor(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x0438_5a4b_e2a8_82f5:
-      await dispatch_shapeArea(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_shapeArea(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0xef42_1eb5_b08c_973a:
-      await dispatch_createCanvas(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_createCanvas(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
+    case 0xb6fa_cae6_a7a8_6e99:
+      await dispatch_echoGnarly(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0xe08f_0f52_54e7_a997:
-      await dispatch_processMessage(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_processMessage(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x5985_1852_3a62_66bf:
-      await dispatch_getPoints(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_getPoints(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x7d55_a713_ad61_2bf2:
-      await dispatch_swapPair(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_swapPair(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x4405_6c78_42fa_336c:
-      await dispatch_echoBytes(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_echoBytes(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x5136_d8f0_1a5f_496c:
-      await dispatch_echoBool(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_echoBool(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x85e2_380d_bf7f_fe65:
-      await dispatch_echoU64(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_echoU64(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0xb1a5_bfd2_05b3_fbfc:
-      await dispatch_echoOptionString(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_echoOptionString(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x9a7b_ed54_5e08_8054:
-      await dispatch_sumLarge(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_sumLarge(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x8edf_bd65_d162_f685:
-      await dispatch_generateLarge(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_generateLarge(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0xfbfb_05bb_caad_e4a0:
-      await dispatch_allColors(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_allColors(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x62fe_b14a_8fcf_9b6d:
-      await dispatch_describePoint(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_describePoint(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x4125_b5e6_78b7_b4a5:
-      await dispatch_echoShape(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_echoShape(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0xc7c5_aa84_5cfb_8bf6:
-      await dispatch_echoStatusV1(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_echoStatusV1(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x6619_071b_e5d5_c259:
-      await dispatch_echoTagV1(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_echoTagV1(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0xbd9b_cabd_deeb_eb04:
-      await dispatch_echoProfile(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_echoProfile(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x100b_0e08_da4b_8f1a:
-      await dispatch_echoRecord(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_echoRecord(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x6975_90d3_ffc3_6703:
-      await dispatch_echoStatus(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_echoStatus(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x2bd1_b314_9d73_ce97:
-      await dispatch_echoTag(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_echoTag(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0x3b3d_22b0_15fa_1a3f:
-      await dispatch_echoMeasurement(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_echoMeasurement(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     case 0xe13a_477f_b964_ce28:
-      await dispatch_echoConfig(methodId: methodId, requestId: requestId, payload: payload)
+      await dispatch_echoConfig(
+        methodId: methodId, requestId: requestId, payload: payload, registry: registry,
+        taskSender: taskSender)
     default:
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
     }
   }
 
-  public static func retryPolicy(methodId: UInt64) -> RetryPolicy {
+  public func retryPolicy(methodId: UInt64) -> RetryPolicy {
     switch methodId {
     case 0x880b_c4ee_e235_74be:
       return .volatile
@@ -419,6 +551,8 @@ public final class TestbedChannelingDispatcher {
     case 0x0438_5a4b_e2a8_82f5:
       return .volatile
     case 0xef42_1eb5_b08c_973a:
+      return .volatile
+    case 0xb6fa_cae6_a7a8_6e99:
       return .volatile
     case 0xe08f_0f52_54e7_a997:
       return .volatile
@@ -468,9 +602,8 @@ public final class TestbedChannelingDispatcher {
   /// Pre-register Rx channel IDs from request payloads.
   /// Call this synchronously before spawning the dispatch task to avoid
   /// race conditions where Data arrives before channels are registered.
-  public static func preregisterChannels(methodId: UInt64, payload: Data, registry: ChannelRegistry)
-    async
-  {
+  public func preregister(methodId: UInt64, payload: [UInt8], registry: ChannelRegistry) async {
+    let payload = Data(payload)
     switch methodId {
     case 0x51f9_cfd8_e865_77c9:
       do {
@@ -534,7 +667,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_echo(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_echo(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -564,7 +700,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_reverse(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_reverse(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -594,7 +733,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_divide(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_divide(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -639,7 +781,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_lookup(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_lookup(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -688,7 +833,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_sum(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_sum(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -700,7 +848,7 @@ public final class TestbedChannelingDispatcher {
       let numbersChannelId = try decodeVarint(from: payload, offset: &cursor)
       let numbersReceiver = await registry.register(
         numbersChannelId, initialCredit: 16,
-        onConsumed: { [taskSender = self.taskSender] additional in
+        onConsumed: { [taskSender] additional in
           taskSender(.grantCredit(channelId: numbersChannelId, bytes: additional))
         })
       let numbers = createServerRx(
@@ -729,7 +877,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_generate(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_generate(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -764,9 +915,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_generateRetryNonIdem(methodId: UInt64, requestId: UInt64, payload: Data)
-    async
-  {
+  private func dispatch_generateRetryNonIdem(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -801,8 +953,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_generateRetryIdem(methodId: UInt64, requestId: UInt64, payload: Data) async
-  {
+  private func dispatch_generateRetryIdem(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -837,7 +991,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_transform(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_transform(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -849,7 +1006,7 @@ public final class TestbedChannelingDispatcher {
       let inputChannelId = try decodeVarint(from: payload, offset: &cursor)
       let inputReceiver = await registry.register(
         inputChannelId, initialCredit: 16,
-        onConsumed: { [taskSender = self.taskSender] additional in
+        onConsumed: { [taskSender] additional in
           taskSender(.grantCredit(channelId: inputChannelId, bytes: additional))
         })
       let input = createServerRx(
@@ -883,7 +1040,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_echoPoint(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_echoPoint(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -916,7 +1076,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_createPerson(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_createPerson(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -955,7 +1118,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_rectangleArea(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_rectangleArea(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -995,7 +1161,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_parseColor(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_parseColor(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1040,7 +1209,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_shapeArea(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_shapeArea(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1084,7 +1256,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_createCanvas(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_createCanvas(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1173,7 +1348,129 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_processMessage(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_echoGnarly(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
+    guard let methodInfo = methodSchemas[methodId] else {
+      taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
+      return
+    }
+    let responseSchemaPayload = methodInfo.buildPayload(
+      direction: .response, registry: schemaRegistry)
+    do {
+      var cursor = 0
+      let _payload_revision = try decodeVarint(from: payload, offset: &cursor)
+      let _payload_mount = try decodeString(from: payload, offset: &cursor)
+      let _payload_entries = try decodeVec(
+        from: payload, offset: &cursor,
+        decoder: { data, off in
+          let _id = try decodeVarint(from: data, offset: &off)
+          let _parent = try decodeOption(
+            from: data, offset: &off,
+            decoder: { data, off in try decodeVarint(from: data, offset: &off) })
+          let _name = try decodeString(from: data, offset: &off)
+          let _path = try decodeString(from: data, offset: &off)
+          let _attrs = try decodeVec(
+            from: data, offset: &off,
+            decoder: { data, off in
+              let _key = try decodeString(from: data, offset: &off)
+              let _value = try decodeString(from: data, offset: &off)
+              return GnarlyAttr(key: _key, value: _value)
+            })
+          let _chunks = try decodeVec(
+            from: data, offset: &off,
+            decoder: { data, off in try decodeBytes(from: data, offset: &off) })
+          let _kind = try
+            ({ data, off in
+              let disc = try decodeVarint(from: data, offset: &off)
+              let result: GnarlyKind
+              switch disc {
+              case 0:
+                let _mime = try decodeString(from: data, offset: &off)
+                let _tags = try decodeVec(
+                  from: data, offset: &off,
+                  decoder: { data, off in try decodeString(from: data, offset: &off) })
+                result = .file(mime: _mime, tags: _tags)
+              case 1:
+                let _childCount = try decodeU32(from: data, offset: &off)
+                let _children = try decodeVec(
+                  from: data, offset: &off,
+                  decoder: { data, off in try decodeString(from: data, offset: &off) })
+                result = .directory(childCount: _childCount, children: _children)
+              case 2:
+                let _target = try decodeString(from: data, offset: &off)
+                let _hops = try decodeVec(
+                  from: data, offset: &off,
+                  decoder: { data, off in try decodeU32(from: data, offset: &off) })
+                result = .symlink(target: _target, hops: _hops)
+              default:
+                throw VoxError.decodeError("unknown enum variant")
+              }
+              return result
+            })(data, &off)
+          return GnarlyEntry(
+            id: _id, parent: _parent, name: _name, path: _path, attrs: _attrs, chunks: _chunks,
+            kind: _kind)
+        })
+      let _payload_footer = try decodeOption(
+        from: payload, offset: &cursor,
+        decoder: { data, off in try decodeString(from: data, offset: &off) })
+      let _payload_digest = try decodeBytes(from: payload, offset: &cursor)
+      let payload = GnarlyPayload(
+        revision: _payload_revision, mount: _payload_mount, entries: _payload_entries,
+        footer: _payload_footer, digest: _payload_digest)
+      do {
+        let result = try await handler.echoGnarly(payload: payload)
+        taskSender(
+          .response(
+            requestId: requestId,
+            payload: encodeResultOk(
+              result,
+              encoder: {
+                encodeVarint($0.revision) + encodeString($0.mount)
+                  + encodeVec(
+                    $0.entries,
+                    encoder: {
+                      encodeVarint($0.id) + encodeOption($0.parent, encoder: { encodeVarint($0) })
+                        + encodeString($0.name) + encodeString($0.path)
+                        + encodeVec(
+                          $0.attrs, encoder: { encodeString($0.key) + encodeString($0.value) })
+                        + encodeVec($0.chunks, encoder: { encodeBytes(Array($0)) })
+                        + { v in
+                          switch v {
+                          case .file(let mime, let tags):
+                            return encodeVarint(UInt64(0)) + encodeString(mime)
+                              + encodeVec(tags, encoder: { encodeString($0) })
+                          case .directory(let childCount, let children):
+                            return encodeVarint(UInt64(1)) + encodeU32(childCount)
+                              + encodeVec(children, encoder: { encodeString($0) })
+                          case .symlink(let target, let hops):
+                            return encodeVarint(UInt64(2)) + encodeString(target)
+                              + encodeVec(hops, encoder: { encodeU32($0) })
+                          }
+                        }($0.kind)
+                    }) + encodeOption($0.footer, encoder: { encodeString($0) })
+                  + encodeBytes(Array($0.digest))
+              }), methodId: methodId, schemaPayload: responseSchemaPayload))
+      } catch {
+        taskSender(
+          .response(
+            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+            schemaPayload: responseSchemaPayload))
+      }
+    } catch {
+      taskSender(
+        .response(
+          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          schemaPayload: responseSchemaPayload))
+    }
+  }
+
+  private func dispatch_processMessage(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1228,7 +1525,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_getPoints(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_getPoints(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1260,7 +1560,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_swapPair(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_swapPair(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1295,7 +1598,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_echoBytes(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_echoBytes(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1326,7 +1632,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_echoBool(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_echoBool(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1356,7 +1665,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_echoU64(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_echoU64(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1386,7 +1698,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_echoOptionString(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_echoOptionString(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1420,7 +1735,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_sumLarge(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_sumLarge(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1432,7 +1750,7 @@ public final class TestbedChannelingDispatcher {
       let numbersChannelId = try decodeVarint(from: payload, offset: &cursor)
       let numbersReceiver = await registry.register(
         numbersChannelId, initialCredit: 16,
-        onConsumed: { [taskSender = self.taskSender] additional in
+        onConsumed: { [taskSender] additional in
           taskSender(.grantCredit(channelId: numbersChannelId, bytes: additional))
         })
       let numbers = createServerRx(
@@ -1461,7 +1779,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_generateLarge(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_generateLarge(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1496,7 +1817,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_allColors(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_allColors(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1539,7 +1863,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_describePoint(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_describePoint(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1576,7 +1903,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_echoShape(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_echoShape(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1631,7 +1961,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_echoStatusV1(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_echoStatusV1(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1679,7 +2012,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_echoTagV1(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_echoTagV1(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1715,7 +2051,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_echoProfile(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_echoProfile(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1749,7 +2088,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_echoRecord(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_echoRecord(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1784,7 +2126,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_echoStatus(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_echoStatus(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1832,7 +2177,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_echoTag(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_echoTag(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1868,7 +2216,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_echoMeasurement(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_echoMeasurement(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1902,7 +2253,10 @@ public final class TestbedChannelingDispatcher {
     }
   }
 
-  private func dispatch_echoConfig(methodId: UInt64, requestId: UInt64, payload: Data) async {
+  private func dispatch_echoConfig(
+    methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry,
+    taskSender: @escaping TaskSender
+  ) async {
     guard let methodInfo = methodSchemas[methodId] else {
       taskSender(.response(requestId: requestId, payload: encodeUnknownMethodError()))
       return
@@ -1969,6 +2323,28 @@ public let testbed_schemas: [String: MethodBindingSchema] = [
       element: .enum(variants: [("Circle", [.f64]), ("Rectangle", [.f64, .f64]), ("Point", [])])),
     .enum(variants: [("Red", []), ("Green", []), ("Blue", [])]),
   ]),
+  "echoGnarly": MethodBindingSchema(args: [
+    .struct(fields: [
+      ("revision", .u64), ("mount", .string),
+      (
+        "entries",
+        .vec(
+          element: .struct(fields: [
+            ("id", .u64), ("parent", .option(inner: .u64)), ("name", .string), ("path", .string),
+            ("attrs", .vec(element: .struct(fields: [("key", .string), ("value", .string)]))),
+            ("chunks", .vec(element: .bytes)),
+            (
+              "kind",
+              .enum(variants: [
+                ("File", [.string, .vec(element: .string)]),
+                ("Directory", [.u32, .vec(element: .string)]),
+                ("Symlink", [.string, .vec(element: .u32)]),
+              ])
+            ),
+          ]))
+      ), ("footer", .option(inner: .string)), ("digest", .bytes),
+    ])
+  ]),
   "processMessage": MethodBindingSchema(args: [
     .enum(variants: [("Text", [.string]), ("Number", [.i64]), ("Data", [.bytes])])
   ]),
@@ -2006,7 +2382,7 @@ public let testbed_schemas: [String: MethodBindingSchema] = [
 ]
 
 /// Global schema registry containing all schemas for this service.
-public let testbed_schema_registry: [UInt64: Schema] = [
+nonisolated(unsafe) public let testbed_schema_registry: [UInt64: Schema] = [
   0x0154_2aaa_833a_2511: Schema(
     id: 0x0154_2aaa_833a_2511, typeParams: [],
     kind: .enum(
@@ -2034,6 +2410,14 @@ public let testbed_schema_registry: [UInt64: Schema] = [
         VariantSchema(name: "AccessDenied", index: 1, payload: .unit),
       ])),
   0x1783_67a8_7f66_fb46: Schema(id: 0x1783_67a8_7f66_fb46, typeParams: [], kind: .primitive(.bool)),
+  0x1b46_261b_ad2c_62c9: Schema(
+    id: 0x1b46_261b_ad2c_62c9, typeParams: [],
+    kind: .struct(
+      name: "GnarlyAttr",
+      fields: [
+        FieldSchema(name: "key", typeRef: .concrete(0x6d7d_ce91_4ee1_50e8), required: true),
+        FieldSchema(name: "value", typeRef: .concrete(0x6d7d_ce91_4ee1_50e8), required: true),
+      ])),
   0x1b57_cc77_42fa_beb0: Schema(
     id: 0x1b57_cc77_42fa_beb0, typeParams: [],
     kind: .enum(
@@ -2054,6 +2438,40 @@ public let testbed_schema_registry: [UInt64: Schema] = [
           typeRef: .generic(0x0a96_b404_b4d7_9d67, args: [.concrete(0xe407_302c_560d_a502)]),
           required: true),
         FieldSchema(name: "background", typeRef: .concrete(0x1b57_cc77_42fa_beb0), required: true),
+      ])),
+  0x2404_fbaa_0448_2121: Schema(
+    id: 0x2404_fbaa_0448_2121, typeParams: [],
+    kind: .enum(
+      name: "GnarlyKind",
+      variants: [
+        VariantSchema(
+          name: "File", index: 0,
+          payload: .struct(fields: [
+            FieldSchema(name: "mime", typeRef: .concrete(0x6d7d_ce91_4ee1_50e8), required: true),
+            FieldSchema(
+              name: "tags",
+              typeRef: .generic(0x0a96_b404_b4d7_9d67, args: [.concrete(0x6d7d_ce91_4ee1_50e8)]),
+              required: true),
+          ])),
+        VariantSchema(
+          name: "Directory", index: 1,
+          payload: .struct(fields: [
+            FieldSchema(
+              name: "child_count", typeRef: .concrete(0x281c_5be4_f2ee_63b4), required: true),
+            FieldSchema(
+              name: "children",
+              typeRef: .generic(0x0a96_b404_b4d7_9d67, args: [.concrete(0x6d7d_ce91_4ee1_50e8)]),
+              required: true),
+          ])),
+        VariantSchema(
+          name: "Symlink", index: 2,
+          payload: .struct(fields: [
+            FieldSchema(name: "target", typeRef: .concrete(0x6d7d_ce91_4ee1_50e8), required: true),
+            FieldSchema(
+              name: "hops",
+              typeRef: .generic(0x0a96_b404_b4d7_9d67, args: [.concrete(0x281c_5be4_f2ee_63b4)]),
+              required: true),
+          ])),
       ])),
   0x281c_5be4_f2ee_63b4: Schema(id: 0x281c_5be4_f2ee_63b4, typeParams: [], kind: .primitive(.u32)),
   0x2c8d_54f2_314d_0f20: Schema(id: 0x2c8d_54f2_314d_0f20, typeParams: [], kind: .primitive(.u8)),
@@ -2130,6 +2548,30 @@ public let testbed_schema_registry: [UInt64: Schema] = [
         FieldSchema(name: "y", typeRef: .concrete(0x361f_4536_eee9_f991), required: true),
         FieldSchema(name: "active", typeRef: .concrete(0x1783_67a8_7f66_fb46), required: true),
       ])),
+  0x903c_92be_6fd7_e0e7: Schema(
+    id: 0x903c_92be_6fd7_e0e7, typeParams: [],
+    kind: .struct(
+      name: "GnarlyEntry",
+      fields: [
+        FieldSchema(name: "id", typeRef: .concrete(0xd935_6298_b816_39ac), required: true),
+        FieldSchema(
+          name: "parent",
+          typeRef: .generic(0xdcaf_d4de_6b79_69bb, args: [.concrete(0xd935_6298_b816_39ac)]),
+          required: true),
+        FieldSchema(name: "name", typeRef: .concrete(0x6d7d_ce91_4ee1_50e8), required: true),
+        FieldSchema(name: "path", typeRef: .concrete(0x6d7d_ce91_4ee1_50e8), required: true),
+        FieldSchema(
+          name: "attrs",
+          typeRef: .generic(0x0a96_b404_b4d7_9d67, args: [.concrete(0x1b46_261b_ad2c_62c9)]),
+          required: true),
+        FieldSchema(
+          name: "chunks",
+          typeRef: .generic(
+            0x0a96_b404_b4d7_9d67,
+            args: [.generic(0x0a96_b404_b4d7_9d67, args: [.concrete(0x2c8d_54f2_314d_0f20)])]),
+          required: true),
+        FieldSchema(name: "kind", typeRef: .concrete(0x2404_fbaa_0448_2121), required: true),
+      ])),
   0x915c_6fb5_b64f_270b: Schema(
     id: 0x915c_6fb5_b64f_270b, typeParams: ["T0", "T1", "T2", "T3"],
     kind: .tuple(elements: [.var(name: "T0"), .var(name: "T1"), .var(name: "T2"), .var(name: "T3")])
@@ -2199,6 +2641,26 @@ public let testbed_schema_registry: [UInt64: Schema] = [
         VariantSchema(name: "DivisionByZero", index: 0, payload: .unit),
         VariantSchema(name: "Overflow", index: 1, payload: .unit),
       ])),
+  0xdc8d_07b0_eaab_99ba: Schema(
+    id: 0xdc8d_07b0_eaab_99ba, typeParams: [],
+    kind: .struct(
+      name: "GnarlyPayload",
+      fields: [
+        FieldSchema(name: "revision", typeRef: .concrete(0xd935_6298_b816_39ac), required: true),
+        FieldSchema(name: "mount", typeRef: .concrete(0x6d7d_ce91_4ee1_50e8), required: true),
+        FieldSchema(
+          name: "entries",
+          typeRef: .generic(0x0a96_b404_b4d7_9d67, args: [.concrete(0x903c_92be_6fd7_e0e7)]),
+          required: true),
+        FieldSchema(
+          name: "footer",
+          typeRef: .generic(0xdcaf_d4de_6b79_69bb, args: [.concrete(0x6d7d_ce91_4ee1_50e8)]),
+          required: true),
+        FieldSchema(
+          name: "digest",
+          typeRef: .generic(0x0a96_b404_b4d7_9d67, args: [.concrete(0x2c8d_54f2_314d_0f20)]),
+          required: true),
+      ])),
   0xdcaf_d4de_6b79_69bb: Schema(
     id: 0xdcaf_d4de_6b79_69bb, typeParams: ["T"], kind: .option(element: .var(name: "T"))),
   0xe407_302c_560d_a502: Schema(
@@ -2229,7 +2691,7 @@ public let testbed_schema_registry: [UInt64: Schema] = [
 ]
 
 /// Per-method schema information for wire protocol.
-public let testbed_method_schemas: [UInt64: MethodSchemaInfo] = [
+nonisolated(unsafe) public let testbed_method_schemas: [UInt64: MethodSchemaInfo] = [
   0x880b_c4ee_e235_74be: MethodSchemaInfo(
     argsSchemaIds: [0x6d7d_ce91_4ee1_50e8, 0x6847_ab90_feda_71c1],
     argsRoot: .generic(0x6847_ab90_feda_71c1, args: [.concrete(0x6d7d_ce91_4ee1_50e8)]),
@@ -2491,6 +2953,26 @@ public let testbed_method_schemas: [UInt64: MethodSchemaInfo] = [
       0x4204_6de6_63be_eef0,
       args: [
         .concrete(0x2218_55c9_65fb_31e1),
+        .generic(0x4cf4_b2ae_b98a_1939, args: [.concrete(0x5db7_0a39_4660_f3e6)]),
+      ])
+  ),
+  0xb6fa_cae6_a7a8_6e99: MethodSchemaInfo(
+    argsSchemaIds: [
+      0xd935_6298_b816_39ac, 0x6d7d_ce91_4ee1_50e8, 0xdcaf_d4de_6b79_69bb, 0x1b46_261b_ad2c_62c9,
+      0x0a96_b404_b4d7_9d67, 0x2c8d_54f2_314d_0f20, 0x281c_5be4_f2ee_63b4, 0x2404_fbaa_0448_2121,
+      0x903c_92be_6fd7_e0e7, 0xdc8d_07b0_eaab_99ba, 0x6847_ab90_feda_71c1,
+    ],
+    argsRoot: .generic(0x6847_ab90_feda_71c1, args: [.concrete(0xdc8d_07b0_eaab_99ba)]),
+    responseSchemaIds: [
+      0x1783_67a8_7f66_fb46, 0x281c_5be4_f2ee_63b4, 0x4204_6de6_63be_eef0, 0x5db7_0a39_4660_f3e6,
+      0x6d7d_ce91_4ee1_50e8, 0x4cf4_b2ae_b98a_1939, 0xd935_6298_b816_39ac, 0xdcaf_d4de_6b79_69bb,
+      0x1b46_261b_ad2c_62c9, 0x0a96_b404_b4d7_9d67, 0x2c8d_54f2_314d_0f20, 0x2404_fbaa_0448_2121,
+      0x903c_92be_6fd7_e0e7, 0xdc8d_07b0_eaab_99ba,
+    ],
+    responseRoot: .generic(
+      0x4204_6de6_63be_eef0,
+      args: [
+        .concrete(0xdc8d_07b0_eaab_99ba),
         .generic(0x4cf4_b2ae_b98a_1939, args: [.concrete(0x5db7_0a39_4660_f3e6)]),
       ])
   ),

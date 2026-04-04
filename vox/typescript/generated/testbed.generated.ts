@@ -63,6 +63,34 @@ export interface Canvas {
   background: Color;
 }
 
+export interface GnarlyAttr {
+  key: string;
+  value: string;
+}
+
+export type GnarlyKind =
+  | { tag: "File"; mime: string; tags: string[] }
+  | { tag: "Directory"; child_count: number; children: string[] }
+  | { tag: "Symlink"; target: string; hops: number[] };
+
+export interface GnarlyEntry {
+  id: bigint;
+  parent: bigint | null;
+  name: string;
+  path: string;
+  attrs: GnarlyAttr[];
+  chunks: Uint8Array[];
+  kind: GnarlyKind;
+}
+
+export interface GnarlyPayload {
+  revision: bigint;
+  mount: string;
+  entries: GnarlyEntry[];
+  footer: string | null;
+  digest: Uint8Array;
+}
+
 export type Message =
   | { tag: "Text"; value: string }
   | { tag: "Number"; value: bigint }
@@ -174,6 +202,9 @@ export type CreateCanvasRequest = [
   Color, // background
 ];
 export type CreateCanvasResponse = Canvas;
+
+export type EchoGnarlyRequest = [GnarlyPayload];
+export type EchoGnarlyResponse = GnarlyPayload;
 
 export type ProcessMessageRequest = [Message];
 export type ProcessMessageResponse = Message;
@@ -301,6 +332,8 @@ export interface TestbedCaller {
   shapeArea(shape: Shape): Promise<number>;
   /** Create a canvas with given shapes. */
   createCanvas(name: string, shapes: Shape[], background: Color): Promise<Canvas>;
+  /** Echo a deeply nested payload back unchanged. */
+  echoGnarly(payload: GnarlyPayload): Promise<GnarlyPayload>;
   /** Process a message and return a response. */
   processMessage(msg: Message): Promise<Message>;
   /** Return multiple points. */
@@ -680,6 +713,19 @@ export class TestbedClient implements TestbedCaller {
     return value as Canvas;
   }
 
+  /** Echo a deeply nested payload back unchanged. */
+  async echoGnarly(payload: GnarlyPayload): Promise<GnarlyPayload> {
+    const descriptor = testbed_echoGnarly_method;
+    const sendSchemas = testbed_descriptor.send_schemas;
+    const value = await this.caller.call({
+      method: "Testbed.echoGnarly",
+      args: { payload },
+      descriptor,
+      sendSchemas,
+    });
+    return value as GnarlyPayload;
+  }
+
   /** Process a message and return a response. */
   async processMessage(msg: Message): Promise<Message> {
     const descriptor = testbed_processMessage_method;
@@ -1028,6 +1074,7 @@ export interface TestbedHandler {
   parseColor(name: string): Promise<Color | null> | Color | null;
   shapeArea(shape: Shape): Promise<number> | number;
   createCanvas(name: string, shapes: Shape[], background: Color): Promise<Canvas> | Canvas;
+  echoGnarly(payload: GnarlyPayload): Promise<GnarlyPayload> | GnarlyPayload;
   processMessage(msg: Message): Promise<Message> | Message;
   getPoints(count: number): Promise<Point[]> | Point[];
   swapPair(pair: [number, string]): Promise<[string, number]> | [string, number];
@@ -1170,6 +1217,13 @@ export class TestbedDispatcher implements Dispatcher {
     } else if (method.id === 0xef421eb5b08c973an) {
       try {
         const result = await this.handler.createCanvas(args[0] as string, args[1] as Shape[], args[2] as Color);
+        call.reply(result);
+      } catch (error) {
+        call.replyInternalError(error instanceof Error ? error.message : String(error));
+      }
+    } else if (method.id === 0xb6facae6a7a86e99n) {
+      try {
+        const result = await this.handler.echoGnarly(args[0] as GnarlyPayload);
         call.reply(result);
       } catch (error) {
         call.replyInternalError(error instanceof Error ? error.message : String(error));
@@ -1604,6 +1658,173 @@ export const testbed_send_schemas: import("@bearcove/vox-core").ServiceSendSchem
         }],
       },
     }],
+    [0xd9356298b81639acn, {
+      id: 0xd9356298b81639acn,
+      type_params: [],
+      kind: { tag: "primitive", primitive_type: "u64" },
+    }],
+    [0x1b46261bad2c62c9n, {
+      id: 0x1b46261bad2c62c9n,
+      type_params: [],
+      kind: {
+        tag: "struct",
+        name: "GnarlyAttr",
+        fields: [
+          { name: "key", type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, required: true },
+          { name: "value", type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, required: true },
+        ],
+      },
+    }],
+    [0x2404fbaa04482121n, {
+      id: 0x2404fbaa04482121n,
+      type_params: [],
+      kind: {
+        tag: "enum",
+        name: "GnarlyKind",
+        variants: [{
+          name: "File",
+          index: 0,
+          payload: {
+            tag: "struct",
+            fields: [{
+              name: "mime",
+              type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] },
+              required: true,
+            }, {
+              name: "tags",
+              type_ref: {
+                tag: "concrete",
+                type_id: 0x0a96b404b4d79d67n,
+                args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
+              },
+              required: true,
+            }],
+          },
+        }, {
+          name: "Directory",
+          index: 1,
+          payload: {
+            tag: "struct",
+            fields: [{
+              name: "child_count",
+              type_ref: { tag: "concrete", type_id: 0x281c5be4f2ee63b4n, args: [] },
+              required: true,
+            }, {
+              name: "children",
+              type_ref: {
+                tag: "concrete",
+                type_id: 0x0a96b404b4d79d67n,
+                args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
+              },
+              required: true,
+            }],
+          },
+        }, {
+          name: "Symlink",
+          index: 2,
+          payload: {
+            tag: "struct",
+            fields: [{
+              name: "target",
+              type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] },
+              required: true,
+            }, {
+              name: "hops",
+              type_ref: {
+                tag: "concrete",
+                type_id: 0x0a96b404b4d79d67n,
+                args: [{ tag: "concrete", type_id: 0x281c5be4f2ee63b4n, args: [] }],
+              },
+              required: true,
+            }],
+          },
+        }],
+      },
+    }],
+    [0x903c92be6fd7e0e7n, {
+      id: 0x903c92be6fd7e0e7n,
+      type_params: [],
+      kind: {
+        tag: "struct",
+        name: "GnarlyEntry",
+        fields: [
+          { name: "id", type_ref: { tag: "concrete", type_id: 0xd9356298b81639acn, args: [] }, required: true },
+          {
+            name: "parent",
+            type_ref: {
+              tag: "concrete",
+              type_id: 0xdcafd4de6b7969bbn,
+              args: [{ tag: "concrete", type_id: 0xd9356298b81639acn, args: [] }],
+            },
+            required: true,
+          },
+          { name: "name", type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, required: true },
+          { name: "path", type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, required: true },
+          {
+            name: "attrs",
+            type_ref: {
+              tag: "concrete",
+              type_id: 0x0a96b404b4d79d67n,
+              args: [{ tag: "concrete", type_id: 0x1b46261bad2c62c9n, args: [] }],
+            },
+            required: true,
+          },
+          {
+            name: "chunks",
+            type_ref: {
+              tag: "concrete",
+              type_id: 0x0a96b404b4d79d67n,
+              args: [{
+                tag: "concrete",
+                type_id: 0x0a96b404b4d79d67n,
+                args: [{ tag: "concrete", type_id: 0x2c8d54f2314d0f20n, args: [] }],
+              }],
+            },
+            required: true,
+          },
+          { name: "kind", type_ref: { tag: "concrete", type_id: 0x2404fbaa04482121n, args: [] }, required: true },
+        ],
+      },
+    }],
+    [0xdc8d07b0eaab99ban, {
+      id: 0xdc8d07b0eaab99ban,
+      type_params: [],
+      kind: {
+        tag: "struct",
+        name: "GnarlyPayload",
+        fields: [
+          { name: "revision", type_ref: { tag: "concrete", type_id: 0xd9356298b81639acn, args: [] }, required: true },
+          { name: "mount", type_ref: { tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }, required: true },
+          {
+            name: "entries",
+            type_ref: {
+              tag: "concrete",
+              type_id: 0x0a96b404b4d79d67n,
+              args: [{ tag: "concrete", type_id: 0x903c92be6fd7e0e7n, args: [] }],
+            },
+            required: true,
+          },
+          {
+            name: "footer",
+            type_ref: {
+              tag: "concrete",
+              type_id: 0xdcafd4de6b7969bbn,
+              args: [{ tag: "concrete", type_id: 0x6d7dce914ee150e8n, args: [] }],
+            },
+            required: true,
+          },
+          {
+            name: "digest",
+            type_ref: {
+              tag: "concrete",
+              type_id: 0x0a96b404b4d79d67n,
+              args: [{ tag: "concrete", type_id: 0x2c8d54f2314d0f20n, args: [] }],
+            },
+            required: true,
+          },
+        ],
+      },
+    }],
     [0xba8125876d6388b4n, {
       id: 0xba8125876d6388b4n,
       type_params: [],
@@ -1629,11 +1850,6 @@ export const testbed_send_schemas: import("@bearcove/vox-core").ServiceSendSchem
           payload: { tag: "newtype", type_ref: { tag: "concrete", type_id: 0xba8125876d6388b4n, args: [] } },
         }],
       },
-    }],
-    [0xd9356298b81639acn, {
-      id: 0xd9356298b81639acn,
-      type_params: [],
-      kind: { tag: "primitive", primitive_type: "u64" },
     }],
     [0x915c6fb5b64f270bn, {
       id: 0x915c6fb5b64f270bn,
@@ -2017,6 +2233,22 @@ export const testbed_send_schemas: import("@bearcove/vox-core").ServiceSendSchem
         tag: "concrete",
         type_id: 0x42046de663beeef0n,
         args: [{ tag: "concrete", type_id: 0x221855c965fb31e1n, args: [] }, {
+          tag: "concrete",
+          type_id: 0x4cf4b2aeb98a1939n,
+          args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
+        }],
+      },
+    }],
+    [0xb6facae6a7a86e99n, {
+      argsRootRef: {
+        tag: "concrete",
+        type_id: 0x6847ab90feda71c1n,
+        args: [{ tag: "concrete", type_id: 0xdc8d07b0eaab99ban, args: [] }],
+      },
+      responseRootRef: {
+        tag: "concrete",
+        type_id: 0x42046de663beeef0n,
+        args: [{ tag: "concrete", type_id: 0xdc8d07b0eaab99ban, args: [] }, {
           tag: "concrete",
           type_id: 0x4cf4b2aeb98a1939n,
           args: [{ tag: "concrete", type_id: 0x5db70a394660f3e6n, args: [] }],
@@ -2477,6 +2709,12 @@ export const testbed_createCanvas_method: MethodDescriptor = {
   retry: { persist: false, idem: false },
 };
 
+export const testbed_echoGnarly_method: MethodDescriptor = {
+  name: "echoGnarly",
+  id: 0xb6facae6a7a86e99n,
+  retry: { persist: false, idem: false },
+};
+
 export const testbed_processMessage_method: MethodDescriptor = {
   name: "processMessage",
   id: 0xe08f0f5254e7a997n,
@@ -2617,6 +2855,7 @@ export const testbed_descriptor: ServiceDescriptor = {
     [testbed_parseColor_method.id, testbed_parseColor_method],
     [testbed_shapeArea_method.id, testbed_shapeArea_method],
     [testbed_createCanvas_method.id, testbed_createCanvas_method],
+    [testbed_echoGnarly_method.id, testbed_echoGnarly_method],
     [testbed_processMessage_method.id, testbed_processMessage_method],
     [testbed_getPoints_method.id, testbed_getPoints_method],
     [testbed_swapPair_method.id, testbed_swapPair_method],
