@@ -20,7 +20,10 @@ let package = Package(
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
             ],
-            path: "swift/vox-runtime/Sources/VoxRuntime"
+            path: "swift/vox-runtime/Sources/VoxRuntime",
+            resources: [
+                .copy("wireMessageSchemas.bin")
+            ]
         ),
         .testTarget(
             name: "VoxRuntimeTests",
