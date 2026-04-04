@@ -352,10 +352,17 @@ fn run() -> Result<()> {
 
     remove_stale_socket(&cfg.addr)?;
 
-    let mut bench_cmd = Command::new(&bench_client_cmd);
-    bench_cmd
-        .current_dir(&workspace_root)
-        .args(&cfg.bench_client_args);
+    let mut bench_cmd = if cfg.samply {
+        let mut cmd = Command::new("samply");
+        cmd.args(["record", "--"]).arg(&bench_client_cmd);
+        cmd.args(&cfg.bench_client_args);
+        cmd
+    } else {
+        let mut cmd = Command::new(&bench_client_cmd);
+        cmd.args(&cfg.bench_client_args);
+        cmd
+    };
+    bench_cmd.current_dir(&workspace_root);
     let bench_client = spawn_child(bench_cmd, "bench_client")?;
     let mut bench_client = ChildGuard::new(bench_client);
 
@@ -365,13 +372,7 @@ fn run() -> Result<()> {
         sleep(Duration::from_millis(100));
     }
 
-    let mut subject_cmd = if cfg.samply {
-        let mut cmd = Command::new("samply");
-        cmd.args(["record", "--"]).arg(&cfg.subject_cmd);
-        cmd
-    } else {
-        Command::new(&cfg.subject_cmd)
-    };
+    let mut subject_cmd = Command::new(&cfg.subject_cmd);
     subject_cmd
         .current_dir(&workspace_root)
         .env("SUBJECT_MODE", &cfg.subject_mode)
@@ -380,31 +381,10 @@ fn run() -> Result<()> {
     let mut subject = ChildGuard::new(subject);
     let mut subject_memory = MemorySampler::start(subject.child_mut().id());
 
-    // Fail fast if the subject exits before the bench client is done.
-    loop {
-        if let Some(status) = bench_client
-            .child_mut()
-            .try_wait()
-            .context("failed to poll bench_client")?
-        {
-            if !status.success() {
-                return Err(exit_error("bench_client", status));
-            }
-            break;
-        }
-        if let Some(status) = subject
-            .child_mut()
-            .try_wait()
-            .context("failed to poll subject")?
-        {
-            return Err(exit_error("subject", status));
-        }
-        sleep(Duration::from_millis(25));
-    }
-
     if cfg.samply {
-        eprintln!("waiting for samply to exit (take your time)...");
-        let status = subject
+        // Subject will exit when the connection closes; samply keeps running
+        // until the user is done viewing the profile. Just wait for samply.
+        let status = bench_client
             .child_mut()
             .wait()
             .context("failed to wait for samply")?;
@@ -412,14 +392,36 @@ fn run() -> Result<()> {
             return Err(exit_error("samply", status));
         }
     } else {
-        match wait_for_exit(subject.child_mut(), "subject", Duration::from_secs(1))? {
-            Some(status) if status.success() => {}
-            Some(status) => return Err(exit_error("subject", status)),
-            None => {
-                eprintln!("subject did not exit promptly; terminating it");
-                let _ = subject.child_mut().kill();
-                let _ = subject.child_mut().wait();
+        // Fail fast if the subject exits before the bench client is done.
+        loop {
+            if let Some(status) = bench_client
+                .child_mut()
+                .try_wait()
+                .context("failed to poll bench_client")?
+            {
+                if !status.success() {
+                    return Err(exit_error("bench_client", status));
+                }
+                break;
             }
+            if let Some(status) = subject
+                .child_mut()
+                .try_wait()
+                .context("failed to poll subject")?
+            {
+                return Err(exit_error("subject", status));
+            }
+            sleep(Duration::from_millis(25));
+        }
+    }
+
+    match wait_for_exit(subject.child_mut(), "subject", Duration::from_secs(1))? {
+        Some(status) if status.success() => {}
+        Some(status) => return Err(exit_error("subject", status)),
+        None => {
+            eprintln!("subject did not exit promptly; terminating it");
+            let _ = subject.child_mut().kill();
+            let _ = subject.child_mut().wait();
         }
     }
     let peak_memory = subject_memory.finish();
