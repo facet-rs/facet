@@ -135,8 +135,8 @@ private final class AcceptState: @unchecked Sendable {
     private let lock = NSLock()
     private var resumed = false
 
-    // A simple semaphore so the cleanup task can wait until the continuation fires.
-    private let resolvedSemaphore = DispatchSemaphore(value: 0)
+    // Continuation to notify waitUntilResolved() when the state is resolved.
+    private var resolvedContinuation: CheckedContinuation<Void, Never>?
 
     init(continuation: CheckedContinuation<NIOFrameLink, Error>) {
         self.continuation = continuation
@@ -146,22 +146,25 @@ private final class AcceptState: @unchecked Sendable {
         lock.lock()
         let shouldResume = !resumed
         if shouldResume { resumed = true }
+        let cont = resolvedContinuation
         lock.unlock()
 
         if shouldResume {
             continuation.resume(with: result)
-            resolvedSemaphore.signal()
+            cont?.resume()
         }
     }
 
     /// Suspends the caller until `resume(with:)` has been called.
     func waitUntilResolved() async {
-        // Use a detached task + checked continuation to await the semaphore without
-        // blocking the cooperative thread pool.
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-            Task.detached {
-                self.resolvedSemaphore.wait()
+            lock.lock()
+            if resumed {
+                lock.unlock()
                 c.resume()
+            } else {
+                resolvedContinuation = c
+                lock.unlock()
             }
         }
     }
