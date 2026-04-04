@@ -350,7 +350,7 @@ public protocol TestbedHandler: Sendable {
   func echoConfig(c: Config) async throws -> Config
 }
 
-public final class TestbedChannelingDispatcher: ServiceDispatcher {
+public final class TestbedDispatcher: ServiceDispatcher {
   private let handler: TestbedHandler
   private let schemaRegistry: [UInt64: Schema]
   private let methodSchemas: [UInt64: MethodSchemaInfo]

@@ -260,7 +260,7 @@ func sameShape(_ lhs: Shape, _ rhs: Shape) -> Bool {
 /// But it CONNECTS TO the test harness (specified by PEER_ADDR).
 func runServer() async throws {
     let handler = TestbedService()
-    let dispatcher = TestbedChannelingDispatcher(handler: handler)
+    let dispatcher = TestbedDispatcher(handler: handler)
     guard let addr = ProcessInfo.processInfo.environment["PEER_ADDR"] else {
         log("PEER_ADDR not set")
         throw SubjectError.missingEnv
@@ -840,7 +840,7 @@ func runClient() async throws {
     log("connecting via \(connector.transport)")
 
     let handler = TestbedService()
-    let dispatcher = TestbedChannelingDispatcher(handler: handler)
+    let dispatcher = TestbedDispatcher(handler: handler)
 
     let session = try await Session.initiator(
         connector,
@@ -1145,7 +1145,7 @@ func runServerListen() async throws {
 
     let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] == "1"
     let handler = TestbedService()
-    let dispatcher = TestbedChannelingDispatcher(handler: handler)
+    let dispatcher = TestbedDispatcher(handler: handler)
     let session = try await Session.acceptFreshLink(
         link,
         conduit: subjectConduit(),

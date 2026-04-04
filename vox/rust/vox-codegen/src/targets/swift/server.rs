@@ -31,7 +31,7 @@ pub fn generate_server(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
     out.push_str(&generate_handler_protocol(service));
     // Emit only the channel-capable dispatcher.
-    out.push_str(&generate_channeling_dispatcher(service));
+    out.push_str(&generate_dispatcher(service));
     out
 }
 
@@ -86,8 +86,8 @@ fn generate_handler_protocol(service: &ServiceDescriptor) -> String {
     out
 }
 
-/// Generate channeling dispatcher for handling incoming calls with channel support.
-fn generate_channeling_dispatcher(service: &ServiceDescriptor) -> String {
+/// Generate dispatcher for handling incoming calls with channel support.
+fn generate_dispatcher(service: &ServiceDescriptor) -> String {
     let mut out = String::new();
     let mut w = CodeWriter::with_indent_spaces(&mut out, 4);
     let service_name = service.service_name.to_upper_camel_case();
@@ -96,7 +96,7 @@ fn generate_channeling_dispatcher(service: &ServiceDescriptor) -> String {
 
     cw_writeln!(
         w,
-        "public final class {service_name}ChannelingDispatcher: ServiceDispatcher {{"
+        "public final class {service_name}Dispatcher: ServiceDispatcher {{"
     )
     .unwrap();
     {
@@ -259,7 +259,7 @@ fn generate_preregister_channels(w: &mut CodeWriter<&mut String>, service: &Serv
     w.writeln("}").unwrap();
 }
 
-/// Generate a single channeling dispatch method.
+/// Generate a single dispatch method.
 fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: &MethodDescriptor) {
     let method_name = method.method_name.to_lower_camel_case();
     let dispatch_name = dispatch_helper_name(&method_name);
@@ -416,7 +416,7 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
     w.writeln("}").unwrap();
 }
 
-/// Generate code to decode a single argument for channeling dispatch.
+/// Generate code to decode a single argument for dispatch.
 fn generate_channeling_decode_arg(
     w: &mut CodeWriter<&mut String>,
     name: &str,

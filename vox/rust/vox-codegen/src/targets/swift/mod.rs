@@ -29,7 +29,7 @@ pub use types::{collect_named_types, generate_named_types};
 pub enum SwiftBindings {
     /// Generate client-side bindings (`*Caller`, `*Client`) and shared support code.
     Client,
-    /// Generate server-side bindings (`*Handler`, `*ChannelingDispatcher`) and shared support code.
+    /// Generate server-side bindings (`*Handler`, `*Dispatcher`) and shared support code.
     Server,
     /// Generate both client and server bindings (legacy default behavior).
     ClientAndServer,
