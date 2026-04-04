@@ -17,6 +17,7 @@ struct Config {
     subject_cmd: PathBuf,
     bench_client_cmd: Option<PathBuf>,
     bench_client_args: Vec<OsString>,
+    samply: bool,
 }
 
 fn workspace_root() -> Result<PathBuf> {
@@ -52,6 +53,7 @@ fn parse_config() -> Result<Config> {
     let mut bench_client_cmd = None;
     let mut bench_client_args = Vec::<OsString>::new();
     let mut addr = "local:///tmp/bench.vox".to_string();
+    let mut samply = false;
 
     let mut positionals = Vec::<String>::new();
     let mut args = std::env::args().skip(1);
@@ -92,6 +94,9 @@ fn parse_config() -> Result<Config> {
             "--json" => {
                 bench_client_args.push(OsString::from(arg));
             }
+            "--samply" => {
+                samply = true;
+            }
             _ if arg.starts_with("--") => {
                 return Err(eyre::eyre!("unknown flag: {arg}"));
             }
@@ -122,6 +127,7 @@ fn parse_config() -> Result<Config> {
         subject_cmd,
         bench_client_cmd,
         bench_client_args,
+        samply,
     })
 }
 
@@ -262,9 +268,9 @@ fn spawn_child(mut command: Command, label: &str) -> Result<Child> {
     command.stdin(Stdio::null());
     command.stdout(Stdio::inherit());
     command.stderr(Stdio::inherit());
-    Ok(command
+    command
         .spawn()
-        .with_context(|| format!("failed to spawn {label}"))?)
+        .with_context(|| format!("failed to spawn {label}"))
 }
 
 fn wait_for_socket_or_exit(child: &mut Child, path: &Path) -> Result<()> {
@@ -359,7 +365,13 @@ fn run() -> Result<()> {
         sleep(Duration::from_millis(100));
     }
 
-    let mut subject_cmd = Command::new(&cfg.subject_cmd);
+    let mut subject_cmd = if cfg.samply {
+        let mut cmd = Command::new("samply");
+        cmd.args(["record", "--"]).arg(&cfg.subject_cmd);
+        cmd
+    } else {
+        Command::new(&cfg.subject_cmd)
+    };
     subject_cmd
         .current_dir(&workspace_root)
         .env("SUBJECT_MODE", &cfg.subject_mode)

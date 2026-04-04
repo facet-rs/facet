@@ -53,6 +53,7 @@ struct Config {
     serve_report: bool,
     bind: String,
     sweep_rps: Option<Vec<usize>>,
+    samply: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -263,6 +264,7 @@ fn parse_args() -> Result<Config> {
     let mut serve_report = false;
     let mut bind = "127.0.0.1:8000".to_string();
     let mut sweep_rps: Option<Vec<usize>> = None;
+    let mut samply = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -389,6 +391,7 @@ fn parse_args() -> Result<Config> {
                 )
             }
             "--serve-report" => serve_report = true,
+            "--samply" => samply = true,
             "--bind" => {
                 bind = args
                     .next()
@@ -483,6 +486,7 @@ fn parse_args() -> Result<Config> {
         serve_report,
         bind,
         sweep_rps,
+        samply,
     })
 }
 
@@ -512,7 +516,8 @@ options:\n\
   --out <path>\n\
   --logs-dir <dir>\n\
   --serve-report       serve the static HTML/JS report after writing JSON\n\
-  --bind <addr>        HTTP bind address for --serve-report"
+  --bind <addr>        HTTP bind address for --serve-report\n\
+  --samply             profile the subject under samply (local transport only)"
     );
 }
 
@@ -658,6 +663,7 @@ fn copy_trial_logs(logs_dir: &Path, from_label: &str, to_label: &str) -> Result<
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_ffi_trial_once(
     root: &Path,
     label: &str,
@@ -733,6 +739,7 @@ fn run_ffi_trial_once(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_trial_once(
     root: &Path,
     label: &str,
@@ -760,13 +767,18 @@ fn run_trial_once(
     }
 
     let addr = addr_for_transport(transport);
-    let args = vec![
+    let mut args = vec![
         "--subject-cmd".to_string(),
         subject_cmd_for(server_impl, root).display().to_string(),
         "--subject-mode".to_string(),
         "server".to_string(),
         "--addr".to_string(),
         addr.to_string(),
+    ];
+    if cfg.samply {
+        args.push("--samply".to_string());
+    }
+    args.extend([
         "--".to_string(),
         "--addr".to_string(),
         addr.to_string(),
@@ -785,7 +797,7 @@ fn run_trial_once(
         "--measure-secs".to_string(),
         measure_secs.to_string(),
         "--json".to_string(),
-    ];
+    ]);
 
     let output = Command::new(bench_runner_cmd(root))
         .current_dir(root)
@@ -830,6 +842,7 @@ fn run_trial_once(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_trial(
     root: &Path,
     label: &str,
@@ -916,6 +929,7 @@ fn choose_best_calibration_probe(probes: &[Probe], min_drop: f64, max_drop: f64)
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_calibration_probe(
     root: &Path,
     cfg: &Config,
@@ -1016,10 +1030,10 @@ fn calibrate_transport_open_loop(
         }
 
         // Converged?
-        if let (Some(lo), Some(hi)) = (&low, &high) {
-            if hi.offered_rps <= lo.offered_rps + 1 {
-                break;
-            }
+        if let (Some(lo), Some(hi)) = (&low, &high)
+            && hi.offered_rps <= lo.offered_rps + 1
+        {
+            break;
         }
 
         offered = match (&low, &high) {
