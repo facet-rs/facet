@@ -402,19 +402,24 @@ fn run() -> Result<()> {
         sleep(Duration::from_millis(25));
     }
 
-    let subject_timeout = if cfg.samply {
-        eprintln!("waiting for samply to finish processing the profile...");
-        Duration::from_secs(300)
+    if cfg.samply {
+        eprintln!("waiting for samply to exit (take your time)...");
+        let status = subject
+            .child_mut()
+            .wait()
+            .context("failed to wait for samply")?;
+        if !status.success() {
+            return Err(exit_error("samply", status));
+        }
     } else {
-        Duration::from_secs(1)
-    };
-    match wait_for_exit(subject.child_mut(), "subject", subject_timeout)? {
-        Some(status) if status.success() => {}
-        Some(status) => return Err(exit_error("subject", status)),
-        None => {
-            eprintln!("subject did not exit promptly; terminating it");
-            let _ = subject.child_mut().kill();
-            let _ = subject.child_mut().wait();
+        match wait_for_exit(subject.child_mut(), "subject", Duration::from_secs(1))? {
+            Some(status) if status.success() => {}
+            Some(status) => return Err(exit_error("subject", status)),
+            None => {
+                eprintln!("subject did not exit promptly; terminating it");
+                let _ = subject.child_mut().kill();
+                let _ = subject.child_mut().wait();
+            }
         }
     }
     let peak_memory = subject_memory.finish();
