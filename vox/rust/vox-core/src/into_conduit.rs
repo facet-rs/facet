@@ -1,32 +1,21 @@
-use vox_types::{Link, MessageFamily, MsgFamily};
+use vox_types::{Link, MsgFamily};
 
 use crate::BareConduit;
 
 /// Converts a value into a [`vox_types::Conduit`].
 ///
 /// Implemented for:
-/// - Any [`Link`] → wraps it in a [`BareConduit`] automatically
 /// - [`BareConduit`] → identity (pass-through)
 /// - [`crate::StableConduit`] → identity (pass-through)
 ///
 /// This allows [`crate::Session`] connection handling methods
-/// to accept raw links directly, without requiring callers to wrap them in
-/// `BareConduit::new()` manually.
+/// to accept already-constructed conduits without additional wrapping.
 pub trait IntoConduit {
     /// The conduit type produced by this conversion.
     type Conduit;
 
     /// Convert into a conduit.
     fn into_conduit(self) -> Self::Conduit;
-}
-
-/// Any [`Link`] becomes a [`BareConduit`] over [`MessageFamily`].
-impl<L: Link> IntoConduit for L {
-    type Conduit = BareConduit<MessageFamily, L>;
-
-    fn into_conduit(self) -> Self::Conduit {
-        BareConduit::new(self)
-    }
 }
 
 /// [`BareConduit`] passes through unchanged.
