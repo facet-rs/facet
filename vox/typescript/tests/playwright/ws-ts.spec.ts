@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
-import { startWsServer } from "./ws-server";
+import { startWsServer } from "../shared/ws-server";
 
 // Root of the vox project
 const projectRoot = new URL("../../../", import.meta.url).pathname;

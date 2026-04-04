@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
-import { startWsServer } from "./ws-server";
+import { startWsServer } from "../../../typescript/tests/shared/ws-server";
 
 // Root of the vox project
 const projectRoot = new URL("../../../", import.meta.url).pathname;
@@ -35,7 +35,7 @@ test.beforeAll(async () => {
   // Start Vite dev server for wasm browser test app
   console.log(`Starting Vite dev server for Wasm tests on port ${vitePort}...`);
   viteServer = spawn("pnpm", ["exec", "vite", "--port", String(vitePort), "--host", "127.0.0.1"], {
-    cwd: `${projectRoot}typescript/tests/browser-wasm`,
+    cwd: `${projectRoot}wasm/tests/browser-wasm`,
     stdio: ["ignore", "pipe", "pipe"],
   });
 

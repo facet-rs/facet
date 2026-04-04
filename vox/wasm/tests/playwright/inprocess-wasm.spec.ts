@@ -26,7 +26,7 @@ test.beforeAll(async () => {
   // No WebSocket server needed - everything is in-process!
   console.log(`Starting Vite dev server for in-process tests on port ${vitePort}...`);
   viteServer = spawn("pnpm", ["exec", "vite", "--port", String(vitePort), "--host", "127.0.0.1"], {
-    cwd: `${projectRoot}typescript/tests/browser-inprocess`,
+    cwd: `${projectRoot}wasm/tests/browser-inprocess`,
     stdio: ["ignore", "pipe", "pipe"],
   });
 

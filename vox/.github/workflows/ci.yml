@@ -197,8 +197,6 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
@@ -206,11 +204,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Install wasm-pack
-        run: cargo install wasm-pack
-
-      - name: Install TypeScript dependencies
-        run: cd typescript && pnpm install
+      - name: Install dependencies
+        run: pnpm install
 
       - name: TypeScript typecheck (tsgo)
         run: cd typescript && pnpm check
@@ -222,10 +217,10 @@ jobs:
         run: cargo xtask codegen --typescript
 
       - name: Install Playwright browsers
-        run: cd typescript && pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium
 
-      - name: Run TypeScript tests
-        run: cd typescript && pnpm test
+      - name: Run TypeScript browser tests
+        run: pnpm --filter "@bearcove/vox-playwright-tests" run test
 
       - name: Run TypeScript TCP subject matrix tests
         run: >
@@ -346,17 +341,19 @@ jobs:
       - name: Install wasm-pack
         run: cargo install wasm-pack
 
-      - name: Build wasm-browser-tests
-        run: wasm-pack build --target web rust/wasm-browser-tests --out-dir ../../typescript/tests/browser-wasm/pkg
+      - name: Build wasm targets
+        run: |
+          wasm-pack build --target web rust/wasm-browser-tests --out-dir ../../wasm/tests/browser-wasm/pkg
+          wasm-pack build --target web rust/wasm-inprocess-tests --out-dir ../../wasm/tests/browser-inprocess/pkg
 
-      - name: Install TypeScript dependencies
-        run: cd typescript && pnpm install
+      - name: Install dependencies
+        run: pnpm install
 
       - name: Install Playwright browsers
-        run: cd typescript && pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium
 
       - name: Run Wasm browser tests
-        run: cd typescript/tests/playwright && pnpm exec playwright test wasm.spec.ts
+        run: pnpm --filter "@bearcove/vox-wasm-playwright-tests" run test
 
   rust-windows:
     name: Rust / Windows

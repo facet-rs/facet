@@ -10,15 +10,15 @@ const wasmTargets = [
     name: "browser-wasm",
     crateDir: join(projectRoot, "rust/wasm-browser-tests"),
     crateArg: "rust/wasm-browser-tests",
-    outDirArg: "../../typescript/tests/browser-wasm/pkg",
-    outputFile: join(projectRoot, "typescript/tests/browser-wasm/pkg/wasm_browser_tests.js"),
+    outDirArg: "../../wasm/tests/browser-wasm/pkg",
+    outputFile: join(projectRoot, "wasm/tests/browser-wasm/pkg/wasm_browser_tests.js"),
   },
   {
     name: "browser-inprocess",
     crateDir: join(projectRoot, "rust/wasm-inprocess-tests"),
     crateArg: "rust/wasm-inprocess-tests",
-    outDirArg: "../../typescript/tests/browser-inprocess/pkg",
-    outputFile: join(projectRoot, "typescript/tests/browser-inprocess/pkg/wasm_inprocess_tests.js"),
+    outDirArg: "../../wasm/tests/browser-inprocess/pkg",
+    outputFile: join(projectRoot, "wasm/tests/browser-inprocess/pkg/wasm_inprocess_tests.js"),
   },
 ];
 

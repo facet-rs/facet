@@ -105,11 +105,14 @@ all *args:
     just examples
 
 wasm-build:
-    wasm-pack build --target web rust/wasm-browser-tests --out-dir ../../typescript/tests/browser-wasm/pkg
+    wasm-pack build --target web rust/wasm-browser-tests --out-dir ../../wasm/tests/browser-wasm/pkg
+    wasm-pack build --target web rust/wasm-inprocess-tests --out-dir ../../wasm/tests/browser-inprocess/pkg
 
 ws-wasm *args:
-    just wasm-build
-    cd typescript/tests/playwright && pnpm exec playwright test ws-wasm.spec.ts {{ args }}
+    cd wasm/tests/playwright && pnpm exec playwright test ws-wasm.spec.ts {{ args }}
+
+inprocess-wasm *args:
+    cd wasm/tests/playwright && pnpm exec playwright test inprocess-wasm.spec.ts {{ args }}
 
 ws-ts *args:
     cd typescript/tests/playwright && pnpm exec playwright test ws-ts.spec.ts {{ args }}
