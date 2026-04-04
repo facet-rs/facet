@@ -182,15 +182,28 @@ where
                 let mut backoff = INITIAL_CONNECT_BACKOFF_MIN;
 
                 loop {
-                    match Self::establish_once(
+                    // r[impl session.initial-connect-waiting.timeout]
+                    // Cap each attempt by the remaining waiting budget so a single
+                    // slow attempt cannot exceed the caller-supplied timeout.
+                    let now = Instant::now();
+                    if now >= deadline {
+                        return Err(SessionError::ConnectTimeout);
+                    }
+                    let remaining = deadline - now;
+
+                    let attempt = Self::establish_once(
                         &parsed,
                         metadata.clone(),
                         on_connection.clone(),
                         connect_timeout,
                         resumable,
-                    )
-                    .await
-                    {
+                    );
+                    let result = match moire::time::timeout(remaining, attempt).await {
+                        Ok(r) => r,
+                        Err(_) => Err(SessionError::ConnectTimeout),
+                    };
+
+                    match result {
                         Ok(client) => return Ok(client),
                         // r[impl session.initial-connect-waiting.non-retryable]
                         Err(e)
@@ -199,7 +212,6 @@ where
                             return Err(e);
                         }
                         // r[impl session.initial-connect-waiting.retryable]
-                        // r[impl session.initial-connect-waiting.timeout]
                         // r[impl session.initial-connect-waiting.backoff]
                         Err(e) => {
                             let now = Instant::now();

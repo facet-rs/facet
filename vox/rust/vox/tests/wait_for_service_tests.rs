@@ -80,6 +80,43 @@ async fn wait_for_service_times_out_when_service_never_starts() {
     );
 }
 
+// r[verify session.initial-connect-waiting.timeout]
+#[tokio::test]
+async fn wait_for_service_deadline_caps_individual_attempt() {
+    // Verifies that a single slow attempt cannot exceed the waiting timeout.
+    // connect_timeout (5s) is much larger than wait_for_service (200ms).
+    // Without the fix, a single attempt would block for up to 5s, violating
+    // the 200ms budget. With the fix, the attempt is capped by remaining budget.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+
+    // Accept connections but never respond — causes connect_timeout to fire.
+    let server = tokio::spawn(async move {
+        loop {
+            let _ = listener.accept().await;
+            // hold the socket open without doing anything
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
+    });
+
+    let start = std::time::Instant::now();
+    let result = vox::connect::<EchoClient>(format!("tcp://{addr}"))
+        .connect_timeout(Duration::from_secs(5)) // much larger than wait_for_service
+        .wait_for_service(Duration::from_millis(200))
+        .establish()
+        .await;
+    let elapsed = start.elapsed();
+    server.abort();
+
+    assert!(result.is_err(), "should fail");
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "waiting timeout must bound individual attempts; elapsed: {elapsed:?}"
+    );
+}
+
 // r[verify session.initial-connect-waiting.non-retryable]
 #[tokio::test]
 async fn wait_for_service_fails_immediately_on_protocol_error() {
