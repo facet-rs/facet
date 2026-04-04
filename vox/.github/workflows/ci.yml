@@ -47,6 +47,9 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Build Rust subject
+        run: cargo build --package subject-rust
+
       - name: Test workspace (Rust-only)
         run: cargo nextest run --workspace -E 'not test(/lang_.*(typescript|swift)/)'
 

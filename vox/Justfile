@@ -14,8 +14,6 @@ rust *args:
 cov *args:
     cargo llvm-cov nextest --summary-only {{ args }}
 
-rust-ffi:
-
 ts-typecheck:
     pnpm check
 
@@ -28,13 +26,11 @@ ts *args:
     SUBJECT_CMD="./typescript/subject/subject-ts.sh" cargo nextest run -p spec-tests {{ quote(args) }}
 
 swift *args:
-    just rust-ffi
     swift test --no-parallel -Xlinker -L$(pwd)/target/release
     swift build -c release --package-path swift/subject
     SUBJECT_CMD="./swift/subject/subject-swift.sh" cargo nextest run -p spec-tests {{ quote(args) }}
 
 swift-subject-cov *args:
-    just rust-ffi
     rm -rf .coverage/swift-subject
     mkdir -p .coverage/swift-subject
     swift build -c debug --package-path swift/subject --product subject-swift \
@@ -62,7 +58,6 @@ swift-subject-cov *args:
         -instr-profile=.coverage/swift-subject/subject.profdata
 
 swift-subject-cov-tcp *args:
-    just rust-ffi
     rm -rf .coverage/swift-subject
     mkdir -p .coverage/swift-subject
     swift build -c debug --package-path swift/subject --product subject-swift \
