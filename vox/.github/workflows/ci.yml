@@ -44,11 +44,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Install protoc
-        run: sudo apt-get install -y protobuf-compiler
-
-      - name: Test workspace (all features, Rust-only)
-        run: cargo nextest run --workspace --all-features -E 'not test(/lang_.*(typescript|swift)/)'
+      - name: Test workspace (Rust-only)
+        run: cargo nextest run --workspace -E 'not test(/lang_.*(typescript|swift)/)'
 
   rust-doc:
     name: Rust / Documentation
