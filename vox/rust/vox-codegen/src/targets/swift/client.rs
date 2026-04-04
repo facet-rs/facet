@@ -10,7 +10,7 @@ use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use vox_types::{MethodDescriptor, ServiceDescriptor, ShapeKind, classify_shape};
 
 use super::decode::generate_decode_stmt_from_with_cursor;
-use super::encode::generate_encode_expr;
+use super::encode::generate_encode_stmt;
 use super::types::{format_doc, is_channel, swift_type_client_arg, swift_type_client_return};
 use crate::code_writer::CodeWriter;
 use crate::cw_writeln;
@@ -210,17 +210,19 @@ fn generate_client_method(
 /// Generate code to encode method arguments (for client).
 fn generate_encode_args(w: &mut CodeWriter<&mut String>, args: &[vox_types::ArgDescriptor]) {
     if args.is_empty() {
-        w.writeln("let payload = Data()").unwrap();
+        w.writeln("let payload: [UInt8] = []").unwrap();
         return;
     }
 
-    w.writeln("var payloadBytes: [UInt8] = []").unwrap();
+    w.writeln("var buffer = ByteBufferAllocator().buffer(capacity: 64)")
+        .unwrap();
     for arg in args {
         let arg_name = arg.name.to_lower_camel_case();
-        let encode_expr = generate_encode_expr(arg.shape, &arg_name);
-        cw_writeln!(w, "payloadBytes += {encode_expr}").unwrap();
+        let stmt = generate_encode_stmt(arg.shape, &arg_name);
+        cw_writeln!(w, "{stmt}").unwrap();
     }
-    w.writeln("let payload = Data(payloadBytes)").unwrap();
+    w.writeln("let payload = buffer.readBytes(length: buffer.readableBytes) ?? []")
+        .unwrap();
 }
 
 /// Generate client body for channel-bearing methods.
@@ -278,7 +280,7 @@ fn generate_streaming_client_body(
         w.writeln(")").unwrap();
         w.blank_line().unwrap();
         generate_encode_args(w, method.args);
-        w.writeln("return PreparedRetryRequest(payload: Array(payload))")
+        w.writeln("return PreparedRetryRequest(payload: payload)")
             .unwrap();
     }
     w.writeln("}").unwrap();
@@ -290,7 +292,7 @@ fn generate_streaming_client_body(
     let _ = ret_type;
     cw_writeln!(
         w,
-        "let response = try await connection.call(methodId: {}, metadata: [], payload: Data(prepared.payload), retry: {retry_policy}, timeout: timeout, prepareRetry: prepareRetry, finalizeChannels: {{ finalizeBoundChannels(schemas: {service_name_lower}_schemas[\"{method_id_name}\"]!.args, args: [{}]) }}, schemaInfo: schemaInfo)",
+        "let response = try await connection.call(methodId: {}, metadata: [], payload: prepared.payload, retry: {retry_policy}, timeout: timeout, prepareRetry: prepareRetry, finalizeChannels: {{ finalizeBoundChannels(schemas: {service_name_lower}_schemas[\"{method_id_name}\"]!.args, args: [{}]) }}, schemaInfo: schemaInfo)",
         hex_u64(method_id),
         arg_names.join(", ")
     )
@@ -323,10 +325,10 @@ fn generate_response_decode(
         ShapeKind::Result { .. }
     );
 
-    cw_writeln!(w, "var {cursor_var} = 0").unwrap();
+    cw_writeln!(w, "var {cursor_var} = {{ var buf = ByteBufferAllocator().buffer(capacity: {response_var}.count); buf.writeBytes({response_var}); return buf }}()").unwrap();
     cw_writeln!(
         w,
-        "let {result_disc_var} = try decodeVarint(from: {response_var}, offset: &{cursor_var})"
+        "let {result_disc_var} = try decodeVarint(from: &{cursor_var})"
     )
     .unwrap();
     cw_writeln!(w, "switch {result_disc_var} {{").unwrap();
@@ -366,7 +368,7 @@ fn generate_response_decode(
         let _indent = w.indent();
         cw_writeln!(
             w,
-            "let {error_code_var} = try decodeU8(from: {response_var}, offset: &{cursor_var})"
+            "let {error_code_var} = try decodeU8(from: &{cursor_var})"
         )
         .unwrap();
         cw_writeln!(w, "switch {error_code_var} {{").unwrap();

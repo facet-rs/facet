@@ -1,10 +1,11 @@
 import Foundation
+@preconcurrency import NIOCore
 
 // MARK: - Re-exports for public API
 
 // Encoding
-public typealias PostcardEncoder<T> = (T) -> [UInt8]
-public typealias PostcardDecoder<T> = ([UInt8]) throws -> T
+public typealias PostcardEncoder<T> = (T, inout ByteBuffer) -> Void
+public typealias PostcardDecoder<T> = (inout ByteBuffer) throws -> T
 
 // MARK: - Client Schema Info
 
@@ -29,13 +30,13 @@ public protocol VoxConnection: Sendable {
     func call(
         methodId: UInt64,
         metadata: [MetadataEntry],
-        payload: Data,
+        payload: [UInt8],
         retry: RetryPolicy,
         timeout: TimeInterval?,
         prepareRetry: (@Sendable () async -> PreparedRetryRequest)?,
         finalizeChannels: (@Sendable () -> Void)?,
         schemaInfo: ClientSchemaInfo?
-    ) async throws -> Data
+    ) async throws -> [UInt8]
 
     /// Get the channel allocator.
     var channelAllocator: ChannelIdAllocator { get }
@@ -47,16 +48,16 @@ public protocol VoxConnection: Sendable {
     var taskSender: TaskSender { get }
 }
 
-public extension VoxConnection {
-    func call(
+extension VoxConnection {
+    public func call(
         methodId: UInt64,
         metadata: [MetadataEntry],
-        payload: Data,
+        payload: [UInt8],
         retry: RetryPolicy,
         timeout: TimeInterval?,
         prepareRetry: (@Sendable () async -> PreparedRetryRequest)?,
         finalizeChannels: (@Sendable () -> Void)?
-    ) async throws -> Data {
+    ) async throws -> [UInt8] {
         try await call(
             methodId: methodId,
             metadata: metadata,
@@ -69,12 +70,12 @@ public extension VoxConnection {
         )
     }
 
-    func call(
+    public func call(
         methodId: UInt64,
-        payload: Data,
+        payload: [UInt8],
         retry: RetryPolicy,
         timeout: TimeInterval?
-    ) async throws -> Data {
+    ) async throws -> [UInt8] {
         try await call(
             methodId: methodId,
             metadata: [],
@@ -87,14 +88,14 @@ public extension VoxConnection {
         )
     }
 
-    func call(
+    public func call(
         methodId: UInt64,
-        payload: Data,
+        payload: [UInt8],
         retry: RetryPolicy,
         timeout: TimeInterval?,
         prepareRetry: (@Sendable () async -> PreparedRetryRequest)?,
         finalizeChannels: (@Sendable () -> Void)?
-    ) async throws -> Data {
+    ) async throws -> [UInt8] {
         try await call(
             methodId: methodId,
             metadata: [],
@@ -107,12 +108,12 @@ public extension VoxConnection {
         )
     }
 
-    func call(
+    public func call(
         methodId: UInt64,
         metadata: [MetadataEntry],
-        payload: Data,
+        payload: [UInt8],
         timeout: TimeInterval?
-    ) async throws -> Data {
+    ) async throws -> [UInt8] {
         try await call(
             methodId: methodId,
             metadata: metadata,
@@ -125,7 +126,7 @@ public extension VoxConnection {
         )
     }
 
-    func call(methodId: UInt64, payload: Data) async throws -> Data {
+    public func call(methodId: UInt64, payload: [UInt8]) async throws -> [UInt8] {
         try await call(
             methodId: methodId,
             metadata: [],
@@ -138,7 +139,9 @@ public extension VoxConnection {
         )
     }
 
-    func call(methodId: UInt64, payload: Data, timeout: TimeInterval?) async throws -> Data {
+    public func call(methodId: UInt64, payload: [UInt8], timeout: TimeInterval?) async throws
+        -> [UInt8]
+    {
         try await call(
             methodId: methodId,
             metadata: [],
@@ -176,9 +179,12 @@ public enum VoxError: Error {
 
 // MARK: - Response Encoding Helpers
 
-/// Encode a successful result.
-public func encodeResultOk<T>(_ value: T, encoder: (T) -> [UInt8]) -> [UInt8] {
-    [0] + encoder(value)  // 0 = Ok discriminant
+/// Encode a successful result into a fresh [UInt8] payload.
+public func encodeResultOk<T>(_ value: T, encoder: (T, inout ByteBuffer) -> Void) -> [UInt8] {
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    buffer.writeInteger(UInt8(0))  // Ok discriminant
+    encoder(value, &buffer)
+    return buffer.readBytes(length: buffer.readableBytes) ?? []
 }
 
 /// Encode a successful unit result.
@@ -218,7 +224,7 @@ public func createServerTx<T: Sendable>(
     taskSender: @escaping TaskSender,
     registry: ChannelRegistry,
     initialCredit: UInt32,
-    serialize: @escaping @Sendable (T) -> [UInt8]
+    serialize: @escaping @Sendable (T, inout ByteBuffer) -> Void
 ) async -> Tx<T> {
     let tx = Tx<T>(serialize: serialize)
     let credit = await registry.registerOutgoing(channelId, initialCredit: initialCredit)
@@ -230,7 +236,7 @@ public func createServerTx<T: Sendable>(
 public func createServerRx<T: Sendable>(
     channelId: ChannelId,
     receiver: ChannelReceiver,
-    deserialize: @escaping @Sendable ([UInt8]) throws -> T
+    deserialize: @escaping @Sendable (inout ByteBuffer) throws -> T
 ) -> Rx<T> {
     let rx = Rx<T>(deserialize: deserialize)
     rx.bind(channelId: channelId, receiver: receiver)

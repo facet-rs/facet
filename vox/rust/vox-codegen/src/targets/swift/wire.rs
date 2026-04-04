@@ -318,9 +318,9 @@ fn generate_struct(name: &str, fields: &[Field], types: &[WireType], is_top_leve
         "\n    {vis}static func decode(from buffer: inout ByteBuffer) throws -> Self {{\n"
     ));
     for f in fields {
-        let field_name = f.name.to_lower_camel_case();
-        let decode_expr = decode_field_expr(f, types);
-        out.push_str(&format!("        let {field_name} = {decode_expr}\n"));
+        for stmt in decode_field_stmts(f, types) {
+            out.push_str(&format!("        {stmt}\n"));
+        }
     }
     let field_names: Vec<String> = fields
         .iter()
@@ -340,7 +340,7 @@ fn generate_struct(name: &str, fields: &[Field], types: &[WireType], is_top_leve
         out.push_str(
             "\n    /// Decode from a `[UInt8]` array (bridge for callers that have raw bytes).\n",
         );
-        out.push_str("    public static func decode(from data: [UInt8]) throws -> Self {\n");
+        out.push_str("    public static func decode(fromBytes data: [UInt8]) throws -> Self {\n");
         out.push_str("        var buffer = ByteBufferAllocator().buffer(capacity: data.count)\n");
         out.push_str("        buffer.writeBytes(data)\n");
         out.push_str("        let result = try decode(from: &buffer)\n");
@@ -476,13 +476,18 @@ fn generate_enum(name: &str, variants: &[facet_core::Variant], types: &[WireType
                 out.push_str(&format!("            return .{variant_name}\n"));
             }
             VariantKind::Newtype { inner } => {
-                let decode = decode_shape_expr(inner, v.data.fields.first(), types);
-                out.push_str(&format!("            return .{variant_name}({decode})\n"));
+                for stmt in decode_stmts_for(inner, v.data.fields.first(), "_newtype_val", types) {
+                    out.push_str(&format!("            {stmt}\n"));
+                }
+                out.push_str(&format!(
+                    "            return .{variant_name}(_newtype_val)\n"
+                ));
             }
             VariantKind::Tuple { fields } => {
                 for (j, f) in fields.iter().enumerate() {
-                    let decode = decode_shape_expr(f.shape(), Some(f), types);
-                    out.push_str(&format!("            let f{j} = {decode}\n"));
+                    for stmt in decode_stmts_for(f.shape(), Some(f), &format!("f{j}"), types) {
+                        out.push_str(&format!("            {stmt}\n"));
+                    }
                 }
                 let args: Vec<String> = (0..fields.len()).map(|j| format!("f{j}")).collect();
                 out.push_str(&format!(
@@ -493,8 +498,9 @@ fn generate_enum(name: &str, variants: &[facet_core::Variant], types: &[WireType
             VariantKind::Struct { fields } => {
                 for f in fields {
                     let field_name = f.name.to_lower_camel_case();
-                    let decode = decode_shape_expr(f.shape(), Some(f), types);
-                    out.push_str(&format!("            let {field_name} = {decode}\n"));
+                    for stmt in decode_stmts_for(f.shape(), Some(f), &field_name, types) {
+                        out.push_str(&format!("            {stmt}\n"));
+                    }
                 }
                 let args: Vec<String> = fields
                     .iter()
@@ -614,9 +620,37 @@ fn encode_element_closure(shape: &'static Shape, types: &[WireType]) -> String {
     }
 }
 
-/// Generate a decode expression for a struct field.
-fn decode_field_expr(field: &Field, types: &[WireType]) -> String {
-    decode_shape_expr(field.shape(), Some(field), types)
+/// Generate decode statements for a struct field into a named variable.
+/// Returns one or two Swift statements (as lines to be written individually).
+fn decode_field_stmts(field: &Field, types: &[WireType]) -> Vec<String> {
+    let field_name = field.name.to_lower_camel_case();
+    decode_stmts_for(field.shape(), Some(field), &field_name, types)
+}
+
+/// Produce one or two Swift statements that decode `shape` into a local named `var_name`.
+/// When the shape (or its pointer-unwrapped inner) is bytes, two statements are needed.
+fn decode_stmts_for(
+    shape: &'static Shape,
+    field: Option<&Field>,
+    var_name: &str,
+    types: &[WireType],
+) -> Vec<String> {
+    // Unwrap pointers transparently
+    if let ShapeKind::Pointer { pointee } = classify_shape(shape) {
+        return decode_stmts_for(pointee, field, var_name, types);
+    }
+    if is_bytes(shape) {
+        return vec![
+            format!("var _{var_name}Buf = try decodeWireBytes(from: &buffer)"),
+            format!(
+                "let {var_name} = _{var_name}Buf.readBytes(length: _{var_name}Buf.readableBytes) ?? []"
+            ),
+        ];
+    }
+    vec![format!(
+        "let {var_name} = {}",
+        decode_shape_expr(shape, field, types)
+    )]
 }
 
 /// Generate a decode expression for a shape.
@@ -631,11 +665,6 @@ fn decode_shape_expr(shape: &'static Shape, field: Option<&Field>, types: &[Wire
         } else {
             "try OpaquePayload.decode(from: &buffer)".into()
         };
-    }
-
-    if is_bytes(shape) {
-        // bytes fields are [UInt8] in Swift; decode the ByteBuffer then read all bytes
-        return "{ var s = try decodeWireBytes(from: &buffer); return s.readBytes(length: s.readableBytes) ?? [] }()".into();
     }
 
     match classify_shape(shape) {
@@ -692,6 +721,7 @@ fn decode_scalar(scalar: ScalarType) -> String {
 /// Closures take `(inout ByteBuffer)` — parameter named `buf`.
 fn decode_element_closure(shape: &'static Shape, types: &[WireType]) -> String {
     if is_bytes(shape) {
+        // The closure is itself throwing so `try` inside is valid here.
         return "{ buf in var s = try decodeWireBytes(from: &buf); return s.readBytes(length: s.readableBytes) ?? [] }".into();
     }
 

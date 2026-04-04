@@ -57,7 +57,7 @@ private actor ResumeScriptedLink: Link {
             }
             return
         }
-        let message = try Message.decode(from: Data(bytes))
+        let message = try Message.decode(fromBytes: bytes)
         sentMessages.append(message)
     }
 

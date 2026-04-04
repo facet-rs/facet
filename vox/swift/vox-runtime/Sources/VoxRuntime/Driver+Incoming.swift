@@ -83,15 +83,18 @@ extension Driver {
         case .requestMessage(let request):
             switch request.body {
             case .call(let call):
+                var argsBuf = call.args.bytes
+                let argsBytes = argsBuf.readBytes(length: argsBuf.readableBytes) ?? []
                 try await handleRequest(
                     connId: msg.connectionId,
                     requestId: request.id,
                     methodId: call.methodId,
                     metadata: call.metadata,
-                    payload: call.args.bytes
+                    payload: argsBytes
                 )
             case .response(let response):
-                let payload = response.ret.bytes
+                var retBuf = response.ret.bytes
+                let payload = retBuf.readBytes(length: retBuf.readableBytes) ?? []
                 guard let pending = await state.claimPendingResponse(request.id, reason: "response")
                 else {
                     if let finalized = await state.takeFinalizedRequest(request.id) {
@@ -131,7 +134,9 @@ extension Driver {
         case .channelMessage(let channel):
             switch channel.body {
             case .item(let item):
-                try await handleData(channelId: channel.id, payload: item.item.bytes)
+                var itemBuf = item.item.bytes
+                let itemBytes = itemBuf.readBytes(length: itemBuf.readableBytes) ?? []
+                try await handleData(channelId: channel.id, payload: itemBytes)
             case .close:
                 try await handleClose(channelId: channel.id)
             case .reset:

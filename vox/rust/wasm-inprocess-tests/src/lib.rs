@@ -8,8 +8,9 @@
 #![cfg(target_arch = "wasm32")]
 
 use spec_proto::{
-    Canvas, Color, Config, LookupError, MathError, Measurement, Message, Person, Point, Profile,
-    Record, Rectangle, Shape, Status, Tag, TaggedPoint, Testbed, TestbedClient, TestbedDispatcher,
+    Canvas, Color, Config, GnarlyPayload, LookupError, MathError, Measurement, Message, Person,
+    Point, Profile, Record, Rectangle, Shape, Status, Tag, TaggedPoint, Testbed, TestbedClient,
+    TestbedDispatcher,
 };
 use vox_core::acceptor_on;
 use vox_inprocess::JsInProcessLink;
@@ -77,7 +78,7 @@ impl Testbed for TestbedService {
     async fn sum(&self, mut numbers: Rx<i32>) -> i64 {
         let mut total = 0_i64;
         while let Ok(Some(n)) = numbers.recv().await {
-            total += *n as i64;
+            total += *n.get() as i64;
         }
         total
     }
@@ -99,7 +100,7 @@ impl Testbed for TestbedService {
 
     async fn transform(&self, mut input: Rx<String>, output: Tx<String>) {
         while let Ok(Some(item)) = input.recv().await {
-            let _ = output.send(item.to_uppercase()).await;
+            let _ = output.send(item.get().to_uppercase()).await;
         }
         let _ = output.close(Default::default()).await;
     }
@@ -180,7 +181,7 @@ impl Testbed for TestbedService {
     async fn sum_large(&self, mut numbers: Rx<i32>) -> i64 {
         let mut total = 0_i64;
         while let Ok(Some(n)) = numbers.recv().await {
-            total += *n as i64;
+            total += *n.get() as i64;
         }
         total
     }
@@ -237,6 +238,10 @@ impl Testbed for TestbedService {
     async fn echo_config(&self, c: Config) -> Config {
         c
     }
+
+    async fn echo_gnarly(&self, payload: GnarlyPayload) -> GnarlyPayload {
+        payload
+    }
 }
 
 /// Start a vox acceptor (server) using the in-process transport.
@@ -254,7 +259,8 @@ pub fn start_acceptor(on_message: js_sys::Function) -> JsInProcessLink {
         console_log!("In-process acceptor: starting handshake...");
 
         match acceptor_on(link)
-            .on_connection(TestbedDispatcher::new(TestbedService).establish::<TestbedClient>())
+            .on_connection(TestbedDispatcher::new(TestbedService))
+            .establish::<TestbedClient>()
             .await
         {
             Ok(_root_caller_guard) => {

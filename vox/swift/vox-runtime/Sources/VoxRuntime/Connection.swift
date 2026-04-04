@@ -24,24 +24,23 @@ public final class Connection: @unchecked Sendable {
     public func call(
         methodId: UInt64,
         metadata: [MetadataEntry],
-        payload: Data,
+        payload: [UInt8],
         retry: RetryPolicy = .volatile,
         timeout: TimeInterval?,
         prepareRetry: (@Sendable () async -> PreparedRetryRequest)? = nil,
         finalizeChannels: (@Sendable () -> Void)? = nil,
         schemaInfo: ClientSchemaInfo? = nil
-    ) async throws -> Data {
-        let response = try await callRaw(
+    ) async throws -> [UInt8] {
+        try await callRaw(
             methodId: methodId,
             metadata: metadata,
-            payload: Array(payload),
+            payload: payload,
             retry: retry,
             timeout: timeout,
             prepareRetry: prepareRetry,
             finalizeChannels: finalizeChannels,
             schemaInfo: schemaInfo
         )
-        return Data(response)
     }
 
     public func callRaw(

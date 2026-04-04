@@ -161,15 +161,15 @@ public enum MetadataValue: Sendable, Equatable {
     let disc = try decodeVarint(from: &buffer)
     switch disc {
     case 0:
-      return .string(try decodeWireString(from: &buffer))
+      let _newtype_val = try decodeWireString(from: &buffer)
+      return .string(_newtype_val)
     case 1:
-      return .bytes(
-        {
-          var s = try decodeWireBytes(from: &buffer)
-          return s.readBytes(length: s.readableBytes) ?? []
-        }())
+      var __newtype_valBuf = try decodeWireBytes(from: &buffer)
+      let _newtype_val = __newtype_valBuf.readBytes(length: __newtype_valBuf.readableBytes) ?? []
+      return .bytes(_newtype_val)
     case 2:
-      return .u64(try decodeVarint(from: &buffer))
+      let _newtype_val = try decodeVarint(from: &buffer)
+      return .u64(_newtype_val)
     default:
       throw WireError.unknownVariant(disc)
     }
@@ -357,10 +357,8 @@ public struct RequestCall: Sendable, Equatable {
     let metadata = try decodeVec(
       from: &buffer, decoder: { buf in try MetadataEntry.decode(from: &buf) })
     let args = try OpaquePayload.decode(from: &buffer)
-    let schemas = {
-      var s = try decodeWireBytes(from: &buffer)
-      return s.readBytes(length: s.readableBytes) ?? []
-    }()
+    var _schemasBuf = try decodeWireBytes(from: &buffer)
+    let schemas = _schemasBuf.readBytes(length: _schemasBuf.readableBytes) ?? []
     return .init(methodId: methodId, metadata: metadata, args: args, schemas: schemas)
   }
 }
@@ -386,10 +384,8 @@ public struct RequestResponse: Sendable, Equatable {
     let metadata = try decodeVec(
       from: &buffer, decoder: { buf in try MetadataEntry.decode(from: &buf) })
     let ret = try OpaquePayload.decode(from: &buffer)
-    let schemas = {
-      var s = try decodeWireBytes(from: &buffer)
-      return s.readBytes(length: s.readableBytes) ?? []
-    }()
+    var _schemasBuf = try decodeWireBytes(from: &buffer)
+    let schemas = _schemasBuf.readBytes(length: _schemasBuf.readableBytes) ?? []
     return .init(metadata: metadata, ret: ret, schemas: schemas)
   }
 }
@@ -435,11 +431,14 @@ public enum RequestBody: Sendable, Equatable {
     let disc = try decodeVarint(from: &buffer)
     switch disc {
     case 0:
-      return .call(try RequestCall.decode(from: &buffer))
+      let _newtype_val = try RequestCall.decode(from: &buffer)
+      return .call(_newtype_val)
     case 1:
-      return .response(try RequestResponse.decode(from: &buffer))
+      let _newtype_val = try RequestResponse.decode(from: &buffer)
+      return .response(_newtype_val)
     case 2:
-      return .cancel(try RequestCancel.decode(from: &buffer))
+      let _newtype_val = try RequestCancel.decode(from: &buffer)
+      return .cancel(_newtype_val)
     default:
       throw WireError.unknownVariant(disc)
     }
@@ -564,13 +563,17 @@ public enum ChannelBody: Sendable, Equatable {
     let disc = try decodeVarint(from: &buffer)
     switch disc {
     case 0:
-      return .item(try ChannelItem.decode(from: &buffer))
+      let _newtype_val = try ChannelItem.decode(from: &buffer)
+      return .item(_newtype_val)
     case 1:
-      return .close(try ChannelClose.decode(from: &buffer))
+      let _newtype_val = try ChannelClose.decode(from: &buffer)
+      return .close(_newtype_val)
     case 2:
-      return .reset(try ChannelReset.decode(from: &buffer))
+      let _newtype_val = try ChannelReset.decode(from: &buffer)
+      return .reset(_newtype_val)
     case 3:
-      return .grantCredit(try ChannelGrantCredit.decode(from: &buffer))
+      let _newtype_val = try ChannelGrantCredit.decode(from: &buffer)
+      return .grantCredit(_newtype_val)
     default:
       throw WireError.unknownVariant(disc)
     }
@@ -645,23 +648,32 @@ public enum MessagePayload: Sendable, Equatable {
     let disc = try decodeVarint(from: &buffer)
     switch disc {
     case 0:
-      return .protocolError(try ProtocolError.decode(from: &buffer))
+      let _newtype_val = try ProtocolError.decode(from: &buffer)
+      return .protocolError(_newtype_val)
     case 1:
-      return .connectionOpen(try ConnectionOpen.decode(from: &buffer))
+      let _newtype_val = try ConnectionOpen.decode(from: &buffer)
+      return .connectionOpen(_newtype_val)
     case 2:
-      return .connectionAccept(try ConnectionAccept.decode(from: &buffer))
+      let _newtype_val = try ConnectionAccept.decode(from: &buffer)
+      return .connectionAccept(_newtype_val)
     case 3:
-      return .connectionReject(try ConnectionReject.decode(from: &buffer))
+      let _newtype_val = try ConnectionReject.decode(from: &buffer)
+      return .connectionReject(_newtype_val)
     case 4:
-      return .connectionClose(try ConnectionClose.decode(from: &buffer))
+      let _newtype_val = try ConnectionClose.decode(from: &buffer)
+      return .connectionClose(_newtype_val)
     case 5:
-      return .requestMessage(try RequestMessage.decode(from: &buffer))
+      let _newtype_val = try RequestMessage.decode(from: &buffer)
+      return .requestMessage(_newtype_val)
     case 6:
-      return .channelMessage(try ChannelMessage.decode(from: &buffer))
+      let _newtype_val = try ChannelMessage.decode(from: &buffer)
+      return .channelMessage(_newtype_val)
     case 7:
-      return .ping(try Ping.decode(from: &buffer))
+      let _newtype_val = try Ping.decode(from: &buffer)
+      return .ping(_newtype_val)
     case 8:
-      return .pong(try Pong.decode(from: &buffer))
+      let _newtype_val = try Pong.decode(from: &buffer)
+      return .pong(_newtype_val)
     default:
       throw WireError.unknownVariant(disc)
     }
@@ -696,7 +708,7 @@ public struct Message: Sendable, Equatable {
   }
 
   /// Decode from a `[UInt8]` array (bridge for callers that have raw bytes).
-  public static func decode(from data: [UInt8]) throws -> Self {
+  public static func decode(fromBytes data: [UInt8]) throws -> Self {
     var buffer = ByteBufferAllocator().buffer(capacity: data.count)
     buffer.writeBytes(data)
     let result = try decode(from: &buffer)

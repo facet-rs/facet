@@ -44,7 +44,7 @@ struct WirePostcardNegativeTests {
         var bytes = Message.protocolError(description: "bad frame sequence").encode()
         bytes.append(0xFF)
         expectWireError(.trailingBytes) {
-            _ = try Message.decode(from: Data(bytes))
+            _ = try Message.decode(fromBytes: bytes)
         }
     }
 
@@ -52,7 +52,7 @@ struct WirePostcardNegativeTests {
     // r[verify session.message.payloads]
     @Test func wireDecodeRejectsUnknownPayloadVariant() {
         expectWireError(.unknownVariant(11)) {
-            _ = try Message.decode(from: Data([0, 11]))
+            _ = try Message.decode(fromBytes: [0, 11])
         }
     }
 
@@ -61,7 +61,7 @@ struct WirePostcardNegativeTests {
     @Test func wireDecodeRejectsTruncatedStringField() {
         let truncatedProtocolError: [UInt8] = [0, 0, 3, 0x41, 0x42]
         expectWireError(.truncated) {
-            _ = try Message.decode(from: Data(truncatedProtocolError))
+            _ = try Message.decode(fromBytes: truncatedProtocolError)
         }
     }
 
@@ -70,7 +70,7 @@ struct WirePostcardNegativeTests {
     @Test func wireDecodeRejectsInvalidParityVariant() {
         let bytes: [UInt8] = [0, 1, 3, 1, 0]
         expectWireError(.unknownVariant(3)) {
-            _ = try Message.decode(from: Data(bytes))
+            _ = try Message.decode(fromBytes: bytes)
         }
     }
 
@@ -85,7 +85,7 @@ struct WirePostcardNegativeTests {
         bytes += encodeVarint(0) // metadata: empty vec
 
         expectWireError(.overflow) {
-            _ = try Message.decode(from: Data(bytes))
+            _ = try Message.decode(fromBytes: bytes)
         }
     }
 
@@ -94,7 +94,7 @@ struct WirePostcardNegativeTests {
     @Test func wireDecodeRejectsInvalidUtf8InStringField() {
         let bytes: [UInt8] = [0, 0, 2, 0xC3, 0x28]
         expectWireError(.invalidUtf8) {
-            _ = try Message.decode(from: Data(bytes))
+            _ = try Message.decode(fromBytes: bytes)
         }
     }
 

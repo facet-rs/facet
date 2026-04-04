@@ -22,7 +22,7 @@ public final class BareConduit: Conduit, @unchecked Sendable {
         guard let bytes = try await link.recvFrame() else {
             return nil
         }
-        return try Message.decode(from: Data(bytes))
+        return try Message.decode(fromBytes: bytes)
     }
 
     public func setMaxFrameSize(_ size: Int) async throws {
@@ -34,8 +34,8 @@ public final class BareConduit: Conduit, @unchecked Sendable {
     }
 }
 
-public extension Link {
-    func bareConduit() -> BareConduit {
+extension Link {
+    public func bareConduit() -> BareConduit {
         BareConduit(link: self)
     }
 }

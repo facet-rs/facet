@@ -290,7 +290,7 @@ private func readFrame(_ fd: Int32) throws -> VoxRuntime.Message? {
     guard let payload = try readRawFrame(fd) else {
         return nil
     }
-    return try VoxRuntime.Message.decode(from: Data(payload))
+    return try VoxRuntime.Message.decode(fromBytes: payload)
 }
 
 private func writeAll(_ fd: Int32, bytes: [UInt8]) throws {

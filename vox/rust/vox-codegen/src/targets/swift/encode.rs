@@ -1,6 +1,8 @@
-//! Swift encoding expression generation.
+//! Swift encoding expression/statement generation.
 //!
-//! Generates Swift code that encodes Rust types into byte arrays.
+//! Generates Swift code that encodes values into an `inout ByteBuffer`.
+//! All encode functions are void — they append into the buffer rather than
+//! returning a new `[UInt8]`.
 
 use facet_core::{ScalarType, Shape};
 use heck::ToLowerCamelCase;
@@ -8,154 +10,185 @@ use vox_types::{
     EnumInfo, ShapeKind, StructInfo, VariantKind, classify_shape, classify_variant, is_bytes,
 };
 
-/// Generate a Swift encode expression for a given shape and value.
-pub fn generate_encode_expr(shape: &'static Shape, value: &str) -> String {
+/// Generate a Swift encode statement for a given shape and value.
+/// The statement appends into the implicit `buffer: inout ByteBuffer` in scope.
+pub fn generate_encode_stmt(shape: &'static Shape, value: &str) -> String {
     if is_bytes(shape) {
-        return format!("encodeBytes(Array({value}))");
+        return format!("encodeByteSeq({value}, into: &buffer)");
     }
 
     match classify_shape(shape) {
         ShapeKind::Scalar(scalar) => {
-            let encode_fn = swift_encode_fn(scalar);
-            format!("{encode_fn}({value})")
+            let fn_name = swift_encode_fn(scalar);
+            format!("{fn_name}({value}, into: &buffer)")
         }
         ShapeKind::List { element }
         | ShapeKind::Slice { element }
         | ShapeKind::Array { element, .. } => {
-            let inner_encode = generate_encode_closure(element);
-            format!("encodeVec({value}, encoder: {inner_encode})")
+            let inner = generate_encode_closure(element);
+            format!("encodeVec({value}, into: &buffer, encoder: {inner})")
         }
         ShapeKind::Option { inner } => {
-            let inner_encode = generate_encode_closure(inner);
-            format!("encodeOption({value}, encoder: {inner_encode})")
+            let inner = generate_encode_closure(inner);
+            format!("encodeOption({value}, into: &buffer, encoder: {inner})")
         }
         ShapeKind::Tx { .. } | ShapeKind::Rx { .. } => {
-            format!("encodeVarint({value}.channelId)")
+            format!("encodeVarint({value}.channelId, into: &buffer)")
         }
         ShapeKind::Tuple { elements } if elements.len() == 2 => {
-            let a_encode = generate_encode_closure(elements[0].shape);
-            let b_encode = generate_encode_closure(elements[1].shape);
-            format!("{a_encode}({value}.0) + {b_encode}({value}.1)")
+            let a = generate_encode_closure(elements[0].shape);
+            let b = generate_encode_closure(elements[1].shape);
+            format!("{a}({value}.0, &buffer)\n{b}({value}.1, &buffer)")
         }
         ShapeKind::TupleStruct { fields } if fields.len() == 2 => {
-            let a_encode = generate_encode_closure(fields[0].shape());
-            let b_encode = generate_encode_closure(fields[1].shape());
-            format!("{a_encode}({value}.0) + {b_encode}({value}.1)")
+            let a = generate_encode_closure(fields[0].shape());
+            let b = generate_encode_closure(fields[1].shape());
+            format!("{a}({value}.0, &buffer)\n{b}({value}.1, &buffer)")
         }
-        ShapeKind::Struct(StructInfo { fields, .. }) => {
-            // Encode each field and concatenate
-            let field_encodes: Vec<String> = fields
+        ShapeKind::Struct(StructInfo {
+            name: Some(name), ..
+        }) => {
+            let fn_name = named_type_encode_fn_name(name);
+            format!("{fn_name}({value}, into: &buffer)")
+        }
+        ShapeKind::Struct(StructInfo {
+            name: None, fields, ..
+        }) => {
+            // Anonymous struct — encode each field inline
+            let stmts: Vec<String> = fields
                 .iter()
                 .map(|f| {
                     let field_name = f.name.to_lower_camel_case();
-                    generate_encode_expr(f.shape(), &format!("{value}.{field_name}"))
+                    generate_encode_stmt(f.shape(), &format!("{value}.{field_name}"))
                 })
                 .collect();
-            if field_encodes.is_empty() {
-                "[]".into()
-            } else {
-                field_encodes.join(" + ")
-            }
+            stmts.join("\n")
         }
-        ShapeKind::Enum(EnumInfo { .. }) => {
-            let encode_closure = generate_encode_closure(shape);
-            format!("{encode_closure}({value})")
+        ShapeKind::Enum(EnumInfo {
+            name: Some(name), ..
+        }) => {
+            let fn_name = named_type_encode_fn_name(name);
+            format!("{fn_name}({value}, into: &buffer)")
         }
-        ShapeKind::Pointer { pointee } => generate_encode_expr(pointee, value),
+        ShapeKind::Enum(EnumInfo { name: None, .. }) => {
+            // Anonymous enum — fall back to closure call
+            let closure = generate_encode_closure(shape);
+            format!("{closure}({value}, &buffer)")
+        }
+        ShapeKind::Pointer { pointee } => generate_encode_stmt(pointee, value),
         ShapeKind::Result { ok, err } => {
-            // Encode Result<T, E> - discriminant 0 = Ok, 1 = Err
-            let ok_encode = generate_encode_closure(ok);
-            let err_encode = generate_encode_closure(err);
+            let ok_closure = generate_encode_closure(ok);
+            let err_closure = generate_encode_closure(err);
             format!(
-                "{{ switch {value} {{ case .success(let v): return encodeVarint(UInt64(0)) + {ok_encode}(v); case .failure(let e): return encodeVarint(UInt64(1)) + {err_encode}(e) }} }}()"
+                "switch {value} {{ case .success(let v): encodeVarint(UInt64(0), into: &buffer); {ok_closure}(v, &buffer); case .failure(let e): encodeVarint(UInt64(1), into: &buffer); {err_closure}(e, &buffer) }}"
             )
         }
-        _ => "[]".into(), // fallback
+        _ => format!("/* unsupported encode for {value} */"),
     }
 }
 
-/// Generate a Swift encode closure for use with encodeVec, encodeOption, etc.
+/// Generate a Swift encode closure `(T, inout ByteBuffer) -> Void` for use with
+/// `encodeVec`, `encodeOption`, etc.
 pub fn generate_encode_closure(shape: &'static Shape) -> String {
     if is_bytes(shape) {
-        return "{ encodeBytes(Array($0)) }".into();
+        return "{ val, buf in encodeByteSeq(val, into: &buf) }".into();
     }
 
     match classify_shape(shape) {
         ShapeKind::Scalar(scalar) => {
-            let encode_fn = swift_encode_fn(scalar);
-            format!("{{ {encode_fn}($0) }}")
+            let fn_name = swift_encode_fn(scalar);
+            format!("{{ val, buf in {fn_name}(val, into: &buf) }}")
         }
         ShapeKind::List { element } | ShapeKind::Slice { element } => {
             let inner = generate_encode_closure(element);
-            format!("{{ encodeVec($0, encoder: {inner}) }}")
+            format!("{{ val, buf in encodeVec(val, into: &buf, encoder: {inner}) }}")
         }
         ShapeKind::Option { inner } => {
-            let inner_closure = generate_encode_closure(inner);
-            format!("{{ encodeOption($0, encoder: {inner_closure}) }}")
+            let inner = generate_encode_closure(inner);
+            format!("{{ val, buf in encodeOption(val, into: &buf, encoder: {inner}) }}")
         }
-        ShapeKind::Tx { .. } | ShapeKind::Rx { .. } => "{ encodeVarint($0.channelId) }".into(),
+        ShapeKind::Tx { .. } | ShapeKind::Rx { .. } => {
+            "{ val, buf in encodeVarint(val.channelId, into: &buf) }".into()
+        }
         ShapeKind::Tuple { elements } if elements.len() == 2 => {
-            let a_encode = generate_encode_closure(elements[0].shape);
-            let b_encode = generate_encode_closure(elements[1].shape);
-            format!("{{ {a_encode}($0.0) + {b_encode}($0.1) }}")
+            let a = generate_encode_closure(elements[0].shape);
+            let b = generate_encode_closure(elements[1].shape);
+            format!("{{ val, buf in {a}(val.0, &buf); {b}(val.1, &buf) }}")
         }
         ShapeKind::TupleStruct { fields } if fields.len() == 2 => {
-            let a_encode = generate_encode_closure(fields[0].shape());
-            let b_encode = generate_encode_closure(fields[1].shape());
-            format!("{{ {a_encode}($0.0) + {b_encode}($0.1) }}")
+            let a = generate_encode_closure(fields[0].shape());
+            let b = generate_encode_closure(fields[1].shape());
+            format!("{{ val, buf in {a}(val.0, &buf); {b}(val.1, &buf) }}")
         }
-        ShapeKind::Struct(StructInfo { fields, .. }) => {
-            // Generate inline struct encode closure
-            let field_encodes: Vec<String> = fields
+        ShapeKind::Struct(StructInfo {
+            name: Some(name), ..
+        }) => {
+            let fn_name = named_type_encode_fn_name(name);
+            format!("{{ val, buf in {fn_name}(val, into: &buf) }}")
+        }
+        ShapeKind::Struct(StructInfo {
+            name: None, fields, ..
+        }) => {
+            // Anonymous struct — inline all field encodes
+            let stmts: Vec<String> = fields
                 .iter()
                 .map(|f| {
                     let field_name = f.name.to_lower_camel_case();
-                    generate_encode_expr(f.shape(), &format!("$0.{field_name}"))
+                    let inner = generate_encode_closure(f.shape());
+                    format!("{inner}(val.{field_name}, &buf)")
                 })
                 .collect();
-            if field_encodes.is_empty() {
-                "{ _ in [] }".into()
+            if stmts.is_empty() {
+                "{ _, _ in }".into()
             } else {
-                format!("{{ {} }}", field_encodes.join(" + "))
+                format!("{{ val, buf in {} }}", stmts.join("; "))
             }
         }
         ShapeKind::Enum(EnumInfo {
-            name: Some(_name),
-            variants,
-            ..
+            name: Some(name), ..
         }) => {
-            // Generate inline enum encode closure with switch
-            let mut code = "{ v in\n    switch v {\n".to_string();
+            let fn_name = named_type_encode_fn_name(name);
+            format!("{{ val, buf in {fn_name}(val, into: &buf) }}")
+        }
+        ShapeKind::Enum(EnumInfo {
+            name: None,
+            variants,
+        }) => {
+            // Anonymous enum — inline switch
+            let mut code = "{ val, buf in\nswitch val {\n".to_string();
             for (i, v) in variants.iter().enumerate() {
                 let variant_name = v.name.to_lower_camel_case();
                 match classify_variant(v) {
                     VariantKind::Unit => {
                         code.push_str(&format!(
-                            "    case .{variant_name}:\n        return encodeVarint(UInt64({i}))\n"
+                            "case .{variant_name}: encodeVarint(UInt64({i}), into: &buf)\n"
                         ));
                     }
                     VariantKind::Newtype { inner } => {
-                        let inner_encode = generate_encode_expr(inner, "val");
+                        let inner_closure = generate_encode_closure(inner);
                         code.push_str(&format!(
-                            "    case .{variant_name}(let val):\n        return encodeVarint(UInt64({i})) + {inner_encode}\n"
+                            "case .{variant_name}(let v): encodeVarint(UInt64({i}), into: &buf); {inner_closure}(v, &buf)\n"
                         ));
                     }
                     VariantKind::Tuple { fields } => {
                         let bindings: Vec<String> =
                             (0..fields.len()).map(|j| format!("f{j}")).collect();
-                        let field_encodes: Vec<String> = fields
+                        let stmts: Vec<String> = fields
                             .iter()
                             .enumerate()
-                            .map(|(j, f)| generate_encode_expr(f.shape(), &format!("f{j}")))
+                            .map(|(j, f)| {
+                                let c = generate_encode_closure(f.shape());
+                                format!("{c}(f{j}, &buf)")
+                            })
                             .collect();
                         code.push_str(&format!(
-                            "    case .{variant_name}({}):\n        return encodeVarint(UInt64({i})) + {}\n",
+                            "case .{variant_name}({}): encodeVarint(UInt64({i}), into: &buf); {}\n",
                             bindings
                                 .iter()
                                 .map(|b| format!("let {b}"))
                                 .collect::<Vec<_>>()
                                 .join(", "),
-                            field_encodes.join(" + ")
+                            stmts.join("; ")
                         ));
                     }
                     VariantKind::Struct { fields } => {
@@ -163,38 +196,141 @@ pub fn generate_encode_closure(shape: &'static Shape) -> String {
                             .iter()
                             .map(|f| f.name.to_lower_camel_case())
                             .collect();
-                        let field_encodes: Vec<String> = fields
+                        let stmts: Vec<String> = fields
                             .iter()
                             .map(|f| {
                                 let field_name = f.name.to_lower_camel_case();
-                                generate_encode_expr(f.shape(), &field_name)
+                                let c = generate_encode_closure(f.shape());
+                                format!("{c}({field_name}, &buf)")
                             })
                             .collect();
                         code.push_str(&format!(
-                            "    case .{variant_name}({}):\n        return encodeVarint(UInt64({i})) + {}\n",
+                            "case .{variant_name}({}): encodeVarint(UInt64({i}), into: &buf); {}\n",
                             bindings
                                 .iter()
                                 .map(|b| format!("let {b}"))
                                 .collect::<Vec<_>>()
                                 .join(", "),
-                            field_encodes.join(" + ")
+                            stmts.join("; ")
                         ));
                     }
                 }
             }
-            code.push_str("    }\n}");
+            code.push_str("} }");
             code
         }
         ShapeKind::Pointer { pointee } => generate_encode_closure(pointee),
         ShapeKind::Result { ok, err } => {
-            let ok_encode = generate_encode_closure(ok);
-            let err_encode = generate_encode_closure(err);
+            let ok_closure = generate_encode_closure(ok);
+            let err_closure = generate_encode_closure(err);
             format!(
-                "{{ switch $0 {{ case .success(let v): return encodeVarint(UInt64(0)) + {ok_encode}(v); case .failure(let e): return encodeVarint(UInt64(1)) + {err_encode}(e) }} }}"
+                "{{ val, buf in switch val {{ case .success(let v): encodeVarint(UInt64(0), into: &buf); {ok_closure}(v, &buf); case .failure(let e): encodeVarint(UInt64(1), into: &buf); {err_closure}(e, &buf) }} }}"
             )
         }
-        _ => "{ _ in [] }".into(), // fallback
+        _ => "{ _, _ in /* unsupported */ }".into(),
     }
+}
+
+/// Generate a top-level Swift encode function for a named struct or enum.
+/// e.g. `internal func encodeGnarlyPayload(_ value: GnarlyPayload, into buffer: inout ByteBuffer)`
+pub fn generate_named_type_encode_fn(name: &str, shape: &'static Shape) -> String {
+    let fn_name = named_type_encode_fn_name(name);
+    let mut out = String::new();
+    out.push_str(&format!(
+        "internal func {fn_name}(_ value: {name}, into buffer: inout ByteBuffer) {{\n"
+    ));
+
+    match classify_shape(shape) {
+        ShapeKind::Struct(StructInfo { fields, .. }) => {
+            for f in fields {
+                let field_name = f.name.to_lower_camel_case();
+                let stmt = generate_encode_stmt(f.shape(), &format!("value.{field_name}"));
+                for line in stmt.lines() {
+                    out.push_str(&format!("    {line}\n"));
+                }
+            }
+        }
+        ShapeKind::Enum(EnumInfo { variants, .. }) => {
+            out.push_str("    switch value {\n");
+            for (i, v) in variants.iter().enumerate() {
+                let variant_name = v.name.to_lower_camel_case();
+                match classify_variant(v) {
+                    VariantKind::Unit => {
+                        out.push_str(&format!(
+                            "    case .{variant_name}:\n        encodeVarint(UInt64({i}), into: &buffer)\n"
+                        ));
+                    }
+                    VariantKind::Newtype { inner } => {
+                        let stmt = generate_encode_stmt(inner, "val");
+                        out.push_str(&format!(
+                            "    case .{variant_name}(let val):\n        encodeVarint(UInt64({i}), into: &buffer)\n"
+                        ));
+                        for line in stmt.lines() {
+                            out.push_str(&format!("        {line}\n"));
+                        }
+                    }
+                    VariantKind::Tuple { fields } => {
+                        let bindings: Vec<String> =
+                            (0..fields.len()).map(|j| format!("f{j}")).collect();
+                        let binding_str = bindings
+                            .iter()
+                            .map(|b| format!("let {b}"))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        out.push_str(&format!(
+                            "    case .{variant_name}({binding_str}):\n        encodeVarint(UInt64({i}), into: &buffer)\n"
+                        ));
+                        for (j, f) in fields.iter().enumerate() {
+                            let stmt = generate_encode_stmt(f.shape(), &format!("f{j}"));
+                            for line in stmt.lines() {
+                                out.push_str(&format!("        {line}\n"));
+                            }
+                        }
+                    }
+                    VariantKind::Struct { fields } => {
+                        let bindings: Vec<String> = fields
+                            .iter()
+                            .map(|f| f.name.to_lower_camel_case())
+                            .collect();
+                        let binding_str = bindings
+                            .iter()
+                            .map(|b| format!("let {b}"))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        out.push_str(&format!(
+                            "    case .{variant_name}({binding_str}):\n        encodeVarint(UInt64({i}), into: &buffer)\n"
+                        ));
+                        for f in fields {
+                            let field_name = f.name.to_lower_camel_case();
+                            let stmt = generate_encode_stmt(f.shape(), &field_name);
+                            for line in stmt.lines() {
+                                out.push_str(&format!("        {line}\n"));
+                            }
+                        }
+                    }
+                }
+            }
+            out.push_str("    }\n");
+        }
+        _ => {}
+    }
+
+    out.push_str("}\n");
+    out
+}
+
+/// Generate encode functions for all named types.
+pub fn generate_named_type_encode_fns(named_types: &[(String, &'static Shape)]) -> String {
+    named_types
+        .iter()
+        .map(|(name, shape)| generate_named_type_encode_fn(name, shape))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The name of the generated encode function for a named type.
+pub fn named_type_encode_fn_name(name: &str) -> String {
+    format!("encode{name}")
 }
 
 /// Get the Swift encode function name for a scalar type.
@@ -214,7 +350,7 @@ pub fn swift_encode_fn(scalar: ScalarType) -> &'static str {
         ScalarType::Char | ScalarType::Str | ScalarType::CowStr | ScalarType::String => {
             "encodeString"
         }
-        ScalarType::Unit => "{ _ in [] }",
-        _ => "encodeBytes", // fallback
+        ScalarType::Unit => "{ _, _ in }",
+        _ => "encodeByteSeq",
     }
 }

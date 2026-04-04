@@ -2,6 +2,7 @@
 // DO NOT EDIT - regenerate with `cargo xtask codegen --swift`
 
 import Foundation
+@preconcurrency import NIOCore
 import VoxRuntime
 
 // MARK: - Testbed Method IDs
@@ -251,6 +252,171 @@ public struct Config: Codable, Sendable {
   }
 }
 
+// MARK: - Testbed Encoders
+
+internal func encodeMathError(_ value: MathError, into buffer: inout ByteBuffer) {
+  switch value {
+  case .divisionByZero:
+    encodeVarint(UInt64(0), into: &buffer)
+  case .overflow:
+    encodeVarint(UInt64(1), into: &buffer)
+  }
+}
+
+internal func encodePerson(_ value: Person, into buffer: inout ByteBuffer) {
+  encodeString(value.name, into: &buffer)
+  encodeU8(value.age, into: &buffer)
+  encodeOption(value.email, into: &buffer, encoder: { val, buf in encodeString(val, into: &buf) })
+}
+
+internal func encodeLookupError(_ value: LookupError, into buffer: inout ByteBuffer) {
+  switch value {
+  case .notFound:
+    encodeVarint(UInt64(0), into: &buffer)
+  case .accessDenied:
+    encodeVarint(UInt64(1), into: &buffer)
+  }
+}
+
+internal func encodePoint(_ value: Point, into buffer: inout ByteBuffer) {
+  encodeI32(value.x, into: &buffer)
+  encodeI32(value.y, into: &buffer)
+}
+
+internal func encodeRectangle(_ value: Rectangle, into buffer: inout ByteBuffer) {
+  encodePoint(value.topLeft, into: &buffer)
+  encodePoint(value.bottomRight, into: &buffer)
+  encodeOption(value.label, into: &buffer, encoder: { val, buf in encodeString(val, into: &buf) })
+}
+
+internal func encodeColor(_ value: Color, into buffer: inout ByteBuffer) {
+  switch value {
+  case .red:
+    encodeVarint(UInt64(0), into: &buffer)
+  case .green:
+    encodeVarint(UInt64(1), into: &buffer)
+  case .blue:
+    encodeVarint(UInt64(2), into: &buffer)
+  }
+}
+
+internal func encodeShape(_ value: Shape, into buffer: inout ByteBuffer) {
+  switch value {
+  case .circle(let radius):
+    encodeVarint(UInt64(0), into: &buffer)
+    encodeF64(radius, into: &buffer)
+  case .rectangle(let width, let height):
+    encodeVarint(UInt64(1), into: &buffer)
+    encodeF64(width, into: &buffer)
+    encodeF64(height, into: &buffer)
+  case .point:
+    encodeVarint(UInt64(2), into: &buffer)
+  }
+}
+
+internal func encodeCanvas(_ value: Canvas, into buffer: inout ByteBuffer) {
+  encodeString(value.name, into: &buffer)
+  encodeVec(value.shapes, into: &buffer, encoder: { val, buf in encodeShape(val, into: &buf) })
+  encodeColor(value.background, into: &buffer)
+}
+
+internal func encodeGnarlyAttr(_ value: GnarlyAttr, into buffer: inout ByteBuffer) {
+  encodeString(value.key, into: &buffer)
+  encodeString(value.value, into: &buffer)
+}
+
+internal func encodeGnarlyKind(_ value: GnarlyKind, into buffer: inout ByteBuffer) {
+  switch value {
+  case .file(let mime, let tags):
+    encodeVarint(UInt64(0), into: &buffer)
+    encodeString(mime, into: &buffer)
+    encodeVec(tags, into: &buffer, encoder: { val, buf in encodeString(val, into: &buf) })
+  case .directory(let childCount, let children):
+    encodeVarint(UInt64(1), into: &buffer)
+    encodeU32(childCount, into: &buffer)
+    encodeVec(children, into: &buffer, encoder: { val, buf in encodeString(val, into: &buf) })
+  case .symlink(let target, let hops):
+    encodeVarint(UInt64(2), into: &buffer)
+    encodeString(target, into: &buffer)
+    encodeVec(hops, into: &buffer, encoder: { val, buf in encodeU32(val, into: &buf) })
+  }
+}
+
+internal func encodeGnarlyEntry(_ value: GnarlyEntry, into buffer: inout ByteBuffer) {
+  encodeVarint(value.id, into: &buffer)
+  encodeOption(value.parent, into: &buffer, encoder: { val, buf in encodeVarint(val, into: &buf) })
+  encodeString(value.name, into: &buffer)
+  encodeString(value.path, into: &buffer)
+  encodeVec(value.attrs, into: &buffer, encoder: { val, buf in encodeGnarlyAttr(val, into: &buf) })
+  encodeVec(value.chunks, into: &buffer, encoder: { val, buf in encodeByteSeq(val, into: &buf) })
+  encodeGnarlyKind(value.kind, into: &buffer)
+}
+
+internal func encodeGnarlyPayload(_ value: GnarlyPayload, into buffer: inout ByteBuffer) {
+  encodeVarint(value.revision, into: &buffer)
+  encodeString(value.mount, into: &buffer)
+  encodeVec(
+    value.entries, into: &buffer, encoder: { val, buf in encodeGnarlyEntry(val, into: &buf) })
+  encodeOption(value.footer, into: &buffer, encoder: { val, buf in encodeString(val, into: &buf) })
+  encodeByteSeq(value.digest, into: &buffer)
+}
+
+internal func encodeMessage(_ value: Message, into buffer: inout ByteBuffer) {
+  switch value {
+  case .text(let val):
+    encodeVarint(UInt64(0), into: &buffer)
+    encodeString(val, into: &buffer)
+  case .number(let val):
+    encodeVarint(UInt64(1), into: &buffer)
+    encodeI64(val, into: &buffer)
+  case .data(let val):
+    encodeVarint(UInt64(2), into: &buffer)
+    encodeByteSeq(val, into: &buffer)
+  }
+}
+
+internal func encodeTaggedPoint(_ value: TaggedPoint, into buffer: inout ByteBuffer) {
+  encodeString(value.label, into: &buffer)
+  encodeI32(value.x, into: &buffer)
+  encodeI32(value.y, into: &buffer)
+  encodeBool(value.active, into: &buffer)
+}
+
+internal func encodeStatus(_ value: Status, into buffer: inout ByteBuffer) {
+  switch value {
+  case .active:
+    encodeVarint(UInt64(0), into: &buffer)
+  case .inactive:
+    encodeVarint(UInt64(1), into: &buffer)
+  }
+}
+
+internal func encodeTag(_ value: Tag, into buffer: inout ByteBuffer) {
+  encodeString(value.label, into: &buffer)
+  encodeU32(value.priority, into: &buffer)
+  encodeString(value.note, into: &buffer)
+}
+
+internal func encodeProfile(_ value: Profile, into buffer: inout ByteBuffer) {
+  encodeString(value.name, into: &buffer)
+  encodeString(value.bio, into: &buffer)
+}
+
+internal func encodeRecord(_ value: Record, into buffer: inout ByteBuffer) {
+  encodeI32(value.alpha, into: &buffer)
+  encodeString(value.beta, into: &buffer)
+  encodeF64(value.gamma, into: &buffer)
+}
+
+internal func encodeMeasurement(_ value: Measurement, into buffer: inout ByteBuffer) {
+  encodeString(value.unit, into: &buffer)
+  encodeF64(value.value, into: &buffer)
+}
+
+internal func encodeConfig(_ value: Config, into buffer: inout ByteBuffer) {
+  encodeString(value.key, into: &buffer)
+  encodeString(value.value, into: &buffer)
+}
 // MARK: - Testbed Client
 
 ///  Testbed service for conformance testing.
@@ -360,23 +526,27 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func echo(message: String) async throws -> String {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeString(message)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeString(message, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x880b_c4ee_e235_74be]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x880b_c4ee_e235_74be, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeString(from: response, offset: &cursor)
+      let result = try decodeString(from: &buffer)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -397,23 +567,27 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func reverse(message: String) async throws -> String {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeString(message)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeString(message, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x1c22_3f30_e180_392a]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x1c22_3f30_e180_392a, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeString(from: response, offset: &cursor)
+      let result = try decodeString(from: &buffer)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -434,27 +608,31 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func divide(dividend: Int64, divisor: Int64) async throws -> Result<Int64, MathError> {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeI64(dividend)
-    payloadBytes += encodeI64(divisor)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeI64(dividend, into: &buffer)
+    encodeI64(divisor, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0xfb68_d931_8f83_0875]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0xfb68_d931_8f83_0875, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let value = try decodeI64(from: response, offset: &cursor)
+      let value = try decodeI64(from: &buffer)
       return .success(value)
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
-        let _userError_disc = try decodeVarint(from: response, offset: &cursor)
+        let _userError_disc = try decodeVarint(from: &buffer)
         let userError: MathError
         switch _userError_disc {
         case 0:
@@ -482,31 +660,34 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func lookup(id: UInt32) async throws -> Result<Person, LookupError> {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeU32(id)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeU32(id, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0xa15f_f520_9471_2a3b]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0xa15f_f520_9471_2a3b, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _value_name = try decodeString(from: response, offset: &cursor)
-      let _value_age = try decodeU8(from: response, offset: &cursor)
+      let _value_name = try decodeString(from: &buffer)
+      let _value_age = try decodeU8(from: &buffer)
       let _value_email = try decodeOption(
-        from: response, offset: &cursor,
-        decoder: { data, off in try decodeString(from: data, offset: &off) })
+        from: &buffer, decoder: { buf in try decodeString(from: &buf) })
       let value = Person(name: _value_name, age: _value_age, email: _value_email)
       return .success(value)
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
-        let _userError_disc = try decodeVarint(from: response, offset: &cursor)
+        let _userError_disc = try decodeVarint(from: &buffer)
         let userError: LookupError
         switch _userError_disc {
         case 0:
@@ -547,27 +728,31 @@ public final class TestbedClient: TestbedCaller, Sendable {
         serializers: TestbedSerializers()
       )
 
-      var payloadBytes: [UInt8] = []
-      payloadBytes += encodeVarint(numbers.channelId)
-      let payload = Data(payloadBytes)
-      return PreparedRetryRequest(payload: Array(payload))
+      var buffer = ByteBufferAllocator().buffer(capacity: 64)
+      encodeVarint(numbers.channelId, into: &buffer)
+      let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
+      return PreparedRetryRequest(payload: payload)
     }
     let prepared = await prepareRetry()
 
     let response = try await connection.call(
-      methodId: 0x51f9_cfd8_e865_77c9, metadata: [], payload: Data(prepared.payload),
-      retry: .volatile, timeout: timeout, prepareRetry: prepareRetry,
+      methodId: 0x51f9_cfd8_e865_77c9, metadata: [], payload: prepared.payload, retry: .volatile,
+      timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
         finalizeBoundChannels(schemas: testbed_schemas["sum"]!.args, args: [numbers])
       }, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeI64(from: response, offset: &cursor)
+      let result = try decodeI64(from: &buffer)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -601,27 +786,31 @@ public final class TestbedClient: TestbedCaller, Sendable {
         serializers: TestbedSerializers()
       )
 
-      var payloadBytes: [UInt8] = []
-      payloadBytes += encodeU32(count)
-      payloadBytes += encodeVarint(output.channelId)
-      let payload = Data(payloadBytes)
-      return PreparedRetryRequest(payload: Array(payload))
+      var buffer = ByteBufferAllocator().buffer(capacity: 64)
+      encodeU32(count, into: &buffer)
+      encodeVarint(output.channelId, into: &buffer)
+      let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
+      return PreparedRetryRequest(payload: payload)
     }
     let prepared = await prepareRetry()
 
     let response = try await connection.call(
-      methodId: 0x239e_5b99_b1f8_207a, metadata: [], payload: Data(prepared.payload),
-      retry: .volatile, timeout: timeout, prepareRetry: prepareRetry,
+      methodId: 0x239e_5b99_b1f8_207a, metadata: [], payload: prepared.payload, retry: .volatile,
+      timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
         finalizeBoundChannels(schemas: testbed_schemas["generate"]!.args, args: [count, output])
       }, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
       return
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -655,28 +844,32 @@ public final class TestbedClient: TestbedCaller, Sendable {
         serializers: TestbedSerializers()
       )
 
-      var payloadBytes: [UInt8] = []
-      payloadBytes += encodeU32(count)
-      payloadBytes += encodeVarint(output.channelId)
-      let payload = Data(payloadBytes)
-      return PreparedRetryRequest(payload: Array(payload))
+      var buffer = ByteBufferAllocator().buffer(capacity: 64)
+      encodeU32(count, into: &buffer)
+      encodeVarint(output.channelId, into: &buffer)
+      let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
+      return PreparedRetryRequest(payload: payload)
     }
     let prepared = await prepareRetry()
 
     let response = try await connection.call(
-      methodId: 0x3441_9529_478c_c7b8, metadata: [], payload: Data(prepared.payload),
-      retry: .volatile, timeout: timeout, prepareRetry: prepareRetry,
+      methodId: 0x3441_9529_478c_c7b8, metadata: [], payload: prepared.payload, retry: .volatile,
+      timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
         finalizeBoundChannels(
           schemas: testbed_schemas["generateRetryNonIdem"]!.args, args: [count, output])
       }, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
       return
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -710,28 +903,32 @@ public final class TestbedClient: TestbedCaller, Sendable {
         serializers: TestbedSerializers()
       )
 
-      var payloadBytes: [UInt8] = []
-      payloadBytes += encodeU32(count)
-      payloadBytes += encodeVarint(output.channelId)
-      let payload = Data(payloadBytes)
-      return PreparedRetryRequest(payload: Array(payload))
+      var buffer = ByteBufferAllocator().buffer(capacity: 64)
+      encodeU32(count, into: &buffer)
+      encodeVarint(output.channelId, into: &buffer)
+      let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
+      return PreparedRetryRequest(payload: payload)
     }
     let prepared = await prepareRetry()
 
     let response = try await connection.call(
-      methodId: 0xe2d2_7fd9_098c_6ea2, metadata: [], payload: Data(prepared.payload), retry: .idem,
+      methodId: 0xe2d2_7fd9_098c_6ea2, metadata: [], payload: prepared.payload, retry: .idem,
       timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
         finalizeBoundChannels(
           schemas: testbed_schemas["generateRetryIdem"]!.args, args: [count, output])
       }, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
       return
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -765,27 +962,31 @@ public final class TestbedClient: TestbedCaller, Sendable {
         serializers: TestbedSerializers()
       )
 
-      var payloadBytes: [UInt8] = []
-      payloadBytes += encodeVarint(input.channelId)
-      payloadBytes += encodeVarint(output.channelId)
-      let payload = Data(payloadBytes)
-      return PreparedRetryRequest(payload: Array(payload))
+      var buffer = ByteBufferAllocator().buffer(capacity: 64)
+      encodeVarint(input.channelId, into: &buffer)
+      encodeVarint(output.channelId, into: &buffer)
+      let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
+      return PreparedRetryRequest(payload: payload)
     }
     let prepared = await prepareRetry()
 
     let response = try await connection.call(
-      methodId: 0xcb46_9cff_8d79_8feb, metadata: [], payload: Data(prepared.payload),
-      retry: .volatile, timeout: timeout, prepareRetry: prepareRetry,
+      methodId: 0xcb46_9cff_8d79_8feb, metadata: [], payload: prepared.payload, retry: .volatile,
+      timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
         finalizeBoundChannels(schemas: testbed_schemas["transform"]!.args, args: [input, output])
       }, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
       return
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -806,25 +1007,29 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func echoPoint(point: Point) async throws -> Point {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeI32(point.x) + encodeI32(point.y)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodePoint(point, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x81f5_386d_589d_fbe4]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x81f5_386d_589d_fbe4, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_x = try decodeI32(from: response, offset: &cursor)
-      let _result_y = try decodeI32(from: response, offset: &cursor)
+      let _result_x = try decodeI32(from: &buffer)
+      let _result_y = try decodeI32(from: &buffer)
       let result = Point(x: _result_x, y: _result_y)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -845,30 +1050,33 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func createPerson(name: String, age: UInt8, email: String?) async throws -> Person {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeString(name)
-    payloadBytes += encodeU8(age)
-    payloadBytes += encodeOption(email, encoder: { encodeString($0) })
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeString(name, into: &buffer)
+    encodeU8(age, into: &buffer)
+    encodeOption(email, into: &buffer, encoder: { val, buf in encodeString(val, into: &buf) })
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x68ff_a90b_7728_bde7]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x68ff_a90b_7728_bde7, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_name = try decodeString(from: response, offset: &cursor)
-      let _result_age = try decodeU8(from: response, offset: &cursor)
+      let _result_name = try decodeString(from: &buffer)
+      let _result_age = try decodeU8(from: &buffer)
       let _result_email = try decodeOption(
-        from: response, offset: &cursor,
-        decoder: { data, off in try decodeString(from: data, offset: &off) })
+        from: &buffer, decoder: { buf in try decodeString(from: &buf) })
       let result = Person(name: _result_name, age: _result_age, email: _result_email)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -889,25 +1097,27 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func rectangleArea(rect: Rectangle) async throws -> Double {
-    var payloadBytes: [UInt8] = []
-    payloadBytes +=
-      encodeI32(rect.topLeft.x) + encodeI32(rect.topLeft.y) + encodeI32(rect.bottomRight.x)
-      + encodeI32(rect.bottomRight.y) + encodeOption(rect.label, encoder: { encodeString($0) })
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeRectangle(rect, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x223f_e028_2d26_3107]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x223f_e028_2d26_3107, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeF64(from: response, offset: &cursor)
+      let result = try decodeF64(from: &buffer)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -928,23 +1138,27 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func parseColor(name: String) async throws -> Color? {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeString(name)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeString(name, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0xd4f1_6ea9_eca1_32e6]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0xd4f1_6ea9_eca1_32e6, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
       let result = try decodeOption(
-        from: response, offset: &cursor,
-        decoder: { data, off in
-          let disc = try decodeVarint(from: data, offset: &off)
+        from: &buffer,
+        decoder: { buf in
+          let disc = try decodeVarint(from: &buf)
           let result: Color
           switch disc {
           case 0:
@@ -960,7 +1174,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
         })
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -981,32 +1195,27 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func shapeArea(shape: Shape) async throws -> Double {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += { v in
-      switch v {
-      case .circle(let radius):
-        return encodeVarint(UInt64(0)) + encodeF64(radius)
-      case .rectangle(let width, let height):
-        return encodeVarint(UInt64(1)) + encodeF64(width) + encodeF64(height)
-      case .point:
-        return encodeVarint(UInt64(2))
-      }
-    }(shape)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeShape(shape, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x0438_5a4b_e2a8_82f5]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x0438_5a4b_e2a8_82f5, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeF64(from: response, offset: &cursor)
+      let result = try decodeF64(from: &buffer)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1028,54 +1237,38 @@ public final class TestbedClient: TestbedCaller, Sendable {
 
   public func createCanvas(name: String, shapes: [Shape], background: Color) async throws -> Canvas
   {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeString(name)
-    payloadBytes += encodeVec(
-      shapes,
-      encoder: { v in
-        switch v {
-        case .circle(let radius):
-          return encodeVarint(UInt64(0)) + encodeF64(radius)
-        case .rectangle(let width, let height):
-          return encodeVarint(UInt64(1)) + encodeF64(width) + encodeF64(height)
-        case .point:
-          return encodeVarint(UInt64(2))
-        }
-      })
-    payloadBytes += { v in
-      switch v {
-      case .red:
-        return encodeVarint(UInt64(0))
-      case .green:
-        return encodeVarint(UInt64(1))
-      case .blue:
-        return encodeVarint(UInt64(2))
-      }
-    }(background)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeString(name, into: &buffer)
+    encodeVec(shapes, into: &buffer, encoder: { val, buf in encodeShape(val, into: &buf) })
+    encodeColor(background, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0xef42_1eb5_b08c_973a]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0xef42_1eb5_b08c_973a, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_name = try decodeString(from: response, offset: &cursor)
+      let _result_name = try decodeString(from: &buffer)
       let _result_shapes = try decodeVec(
-        from: response, offset: &cursor,
-        decoder: { data, off in
-          let disc = try decodeVarint(from: data, offset: &off)
+        from: &buffer,
+        decoder: { buf in
+          let disc = try decodeVarint(from: &buf)
           let result: Shape
           switch disc {
           case 0:
-            let _radius = try decodeF64(from: data, offset: &off)
+            let _radius = try ({ buf in try decodeF64(from: &buf) })(&buf)
             result = .circle(radius: _radius)
           case 1:
-            let _width = try decodeF64(from: data, offset: &off)
-            let _height = try decodeF64(from: data, offset: &off)
+            let _width = try ({ buf in try decodeF64(from: &buf) })(&buf)
+            let _height = try ({ buf in try decodeF64(from: &buf) })(&buf)
             result = .rectangle(width: _width, height: _height)
           case 2:
             result = .point
@@ -1084,7 +1277,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
           }
           return result
         })
-      let __result_background_disc = try decodeVarint(from: response, offset: &cursor)
+      let __result_background_disc = try decodeVarint(from: &buffer)
       let _result_background: Color
       switch __result_background_disc {
       case 0:
@@ -1100,7 +1293,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
         name: _result_name, shapes: _result_shapes, background: _result_background)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1121,105 +1314,90 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func echoGnarly(payload: GnarlyPayload) async throws -> GnarlyPayload {
-    var payloadBytes: [UInt8] = []
-    payloadBytes +=
-      encodeVarint(payload.revision) + encodeString(payload.mount)
-      + encodeVec(
-        payload.entries,
-        encoder: {
-          encodeVarint($0.id) + encodeOption($0.parent, encoder: { encodeVarint($0) })
-            + encodeString($0.name) + encodeString($0.path)
-            + encodeVec($0.attrs, encoder: { encodeString($0.key) + encodeString($0.value) })
-            + encodeVec($0.chunks, encoder: { encodeBytes(Array($0)) })
-            + { v in
-              switch v {
-              case .file(let mime, let tags):
-                return encodeVarint(UInt64(0)) + encodeString(mime)
-                  + encodeVec(tags, encoder: { encodeString($0) })
-              case .directory(let childCount, let children):
-                return encodeVarint(UInt64(1)) + encodeU32(childCount)
-                  + encodeVec(children, encoder: { encodeString($0) })
-              case .symlink(let target, let hops):
-                return encodeVarint(UInt64(2)) + encodeString(target)
-                  + encodeVec(hops, encoder: { encodeU32($0) })
-              }
-            }($0.kind)
-        }) + encodeOption(payload.footer, encoder: { encodeString($0) })
-      + encodeBytes(Array(payload.digest))
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeGnarlyPayload(payload, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0xb6fa_cae6_a7a8_6e99]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0xb6fa_cae6_a7a8_6e99, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_revision = try decodeVarint(from: response, offset: &cursor)
-      let _result_mount = try decodeString(from: response, offset: &cursor)
+      let _result_revision = try decodeVarint(from: &buffer)
+      let _result_mount = try decodeString(from: &buffer)
       let _result_entries = try decodeVec(
-        from: response, offset: &cursor,
-        decoder: { data, off in
-          let _id = try decodeVarint(from: data, offset: &off)
-          let _parent = try decodeOption(
-            from: data, offset: &off,
-            decoder: { data, off in try decodeVarint(from: data, offset: &off) })
-          let _name = try decodeString(from: data, offset: &off)
-          let _path = try decodeString(from: data, offset: &off)
-          let _attrs = try decodeVec(
-            from: data, offset: &off,
-            decoder: { data, off in
-              let _key = try decodeString(from: data, offset: &off)
-              let _value = try decodeString(from: data, offset: &off)
-              return GnarlyAttr(key: _key, value: _value)
-            })
-          let _chunks = try decodeVec(
-            from: data, offset: &off,
-            decoder: { data, off in try decodeBytes(from: data, offset: &off) })
+        from: &buffer,
+        decoder: { buf in
+          let _id = try ({ buf in try decodeVarint(from: &buf) })(&buf)
+          let _parent = try
+            ({ buf in try decodeOption(from: &buf, decoder: { buf in try decodeVarint(from: &buf) })
+            })(&buf)
+          let _name = try ({ buf in try decodeString(from: &buf) })(&buf)
+          let _path = try ({ buf in try decodeString(from: &buf) })(&buf)
+          let _attrs = try
+            ({ buf in
+              try decodeVec(
+                from: &buf,
+                decoder: { buf in
+                  let _key = try ({ buf in try decodeString(from: &buf) })(&buf)
+                  let _value = try ({ buf in try decodeString(from: &buf) })(&buf)
+                  return GnarlyAttr(key: _key, value: _value)
+                })
+            })(&buf)
+          let _chunks = try
+            ({ buf in try decodeVec(from: &buf, decoder: { buf in try decodeBytes(from: &buf) }) })(
+              &buf)
           let _kind = try
-            ({ data, off in
-              let disc = try decodeVarint(from: data, offset: &off)
+            ({ buf in
+              let disc = try decodeVarint(from: &buf)
               let result: GnarlyKind
               switch disc {
               case 0:
-                let _mime = try decodeString(from: data, offset: &off)
-                let _tags = try decodeVec(
-                  from: data, offset: &off,
-                  decoder: { data, off in try decodeString(from: data, offset: &off) })
+                let _mime = try ({ buf in try decodeString(from: &buf) })(&buf)
+                let _tags = try
+                  ({ buf in
+                    try decodeVec(from: &buf, decoder: { buf in try decodeString(from: &buf) })
+                  })(&buf)
                 result = .file(mime: _mime, tags: _tags)
               case 1:
-                let _childCount = try decodeU32(from: data, offset: &off)
-                let _children = try decodeVec(
-                  from: data, offset: &off,
-                  decoder: { data, off in try decodeString(from: data, offset: &off) })
+                let _childCount = try ({ buf in try decodeU32(from: &buf) })(&buf)
+                let _children = try
+                  ({ buf in
+                    try decodeVec(from: &buf, decoder: { buf in try decodeString(from: &buf) })
+                  })(&buf)
                 result = .directory(childCount: _childCount, children: _children)
               case 2:
-                let _target = try decodeString(from: data, offset: &off)
-                let _hops = try decodeVec(
-                  from: data, offset: &off,
-                  decoder: { data, off in try decodeU32(from: data, offset: &off) })
+                let _target = try ({ buf in try decodeString(from: &buf) })(&buf)
+                let _hops = try
+                  ({ buf in try decodeVec(from: &buf, decoder: { buf in try decodeU32(from: &buf) })
+                  })(&buf)
                 result = .symlink(target: _target, hops: _hops)
               default:
                 throw VoxError.decodeError("unknown enum variant")
               }
               return result
-            })(data, &off)
+            })(&buf)
           return GnarlyEntry(
             id: _id, parent: _parent, name: _name, path: _path, attrs: _attrs, chunks: _chunks,
             kind: _kind)
         })
       let _result_footer = try decodeOption(
-        from: response, offset: &cursor,
-        decoder: { data, off in try decodeString(from: data, offset: &off) })
-      let _result_digest = try decodeBytes(from: response, offset: &cursor)
+        from: &buffer, decoder: { buf in try decodeString(from: &buf) })
+      let _result_digest = try decodeBytes(from: &buffer)
       let result = GnarlyPayload(
         revision: _result_revision, mount: _result_mount, entries: _result_entries,
         footer: _result_footer, digest: _result_digest)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1240,46 +1418,41 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func processMessage(msg: Message) async throws -> Message {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += { v in
-      switch v {
-      case .text(let val):
-        return encodeVarint(UInt64(0)) + encodeString(val)
-      case .number(let val):
-        return encodeVarint(UInt64(1)) + encodeI64(val)
-      case .data(let val):
-        return encodeVarint(UInt64(2)) + encodeBytes(Array(val))
-      }
-    }(msg)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeMessage(msg, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0xe08f_0f52_54e7_a997]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0xe08f_0f52_54e7_a997, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_disc = try decodeVarint(from: response, offset: &cursor)
+      let _result_disc = try decodeVarint(from: &buffer)
       let result: Message
       switch _result_disc {
       case 0:
-        let _result_val = try decodeString(from: response, offset: &cursor)
+        let _result_val = try decodeString(from: &buffer)
         result = .text(_result_val)
       case 1:
-        let _result_val = try decodeI64(from: response, offset: &cursor)
+        let _result_val = try decodeI64(from: &buffer)
         result = .number(_result_val)
       case 2:
-        let _result_val = try decodeBytes(from: response, offset: &cursor)
+        let _result_val = try decodeBytes(from: &buffer)
         result = .data(_result_val)
       default:
         throw VoxError.decodeError("unknown enum variant")
       }
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1300,29 +1473,33 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func getPoints(count: UInt32) async throws -> [Point] {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeU32(count)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeU32(count, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x5985_1852_3a62_66bf]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x5985_1852_3a62_66bf, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
       let result = try decodeVec(
-        from: response, offset: &cursor,
-        decoder: { data, off in
-          let _x = try decodeI32(from: data, offset: &off)
-          let _y = try decodeI32(from: data, offset: &off)
+        from: &buffer,
+        decoder: { buf in
+          let _x = try ({ buf in try decodeI32(from: &buf) })(&buf)
+          let _y = try ({ buf in try decodeI32(from: &buf) })(&buf)
           return Point(x: _x, y: _y)
         })
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1343,26 +1520,29 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func swapPair(pair: (Int32, String)) async throws -> (String, Int32) {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += { encodeI32($0) }(pair.0) + { encodeString($0) }(pair.1)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64) { val, buf in encodeI32(val, into: &buf)
+    }(pair.0, &buffer) { val, buf in encodeString(val, into: &buf) }(pair.1, &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x7d55_a713_ad61_2bf2]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x7d55_a713_ad61_2bf2, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
       let result = try decodeTuple2(
-        from: response, offset: &cursor,
-        decoderA: { data, off in try decodeString(from: data, offset: &off) },
-        decoderB: { data, off in try decodeI32(from: data, offset: &off) })
+        from: &buffer, decoderA: { buf in try decodeString(from: &buf) },
+        decoderB: { buf in try decodeI32(from: &buf) })
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1383,23 +1563,27 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func echoBytes(data: Data) async throws -> Data {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeBytes(Array(data))
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeByteSeq(data, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x4405_6c78_42fa_336c]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x4405_6c78_42fa_336c, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeBytes(from: response, offset: &cursor)
+      let result = try decodeBytes(from: &buffer)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1420,23 +1604,27 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func echoBool(b: Bool) async throws -> Bool {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeBool(b)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeBool(b, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x5136_d8f0_1a5f_496c]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x5136_d8f0_1a5f_496c, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeBool(from: response, offset: &cursor)
+      let result = try decodeBool(from: &buffer)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1457,23 +1645,27 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func echoU64(n: UInt64) async throws -> UInt64 {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeVarint(n)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeVarint(n, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x85e2_380d_bf7f_fe65]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x85e2_380d_bf7f_fe65, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeVarint(from: response, offset: &cursor)
+      let result = try decodeVarint(from: &buffer)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1494,25 +1686,27 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func echoOptionString(s: String?) async throws -> String? {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeOption(s, encoder: { encodeString($0) })
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeOption(s, into: &buffer, encoder: { val, buf in encodeString(val, into: &buf) })
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0xb1a5_bfd2_05b3_fbfc]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0xb1a5_bfd2_05b3_fbfc, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeOption(
-        from: response, offset: &cursor,
-        decoder: { data, off in try decodeString(from: data, offset: &off) })
+      let result = try decodeOption(from: &buffer, decoder: { buf in try decodeString(from: &buf) })
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1546,27 +1740,31 @@ public final class TestbedClient: TestbedCaller, Sendable {
         serializers: TestbedSerializers()
       )
 
-      var payloadBytes: [UInt8] = []
-      payloadBytes += encodeVarint(numbers.channelId)
-      let payload = Data(payloadBytes)
-      return PreparedRetryRequest(payload: Array(payload))
+      var buffer = ByteBufferAllocator().buffer(capacity: 64)
+      encodeVarint(numbers.channelId, into: &buffer)
+      let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
+      return PreparedRetryRequest(payload: payload)
     }
     let prepared = await prepareRetry()
 
     let response = try await connection.call(
-      methodId: 0x9a7b_ed54_5e08_8054, metadata: [], payload: Data(prepared.payload),
-      retry: .volatile, timeout: timeout, prepareRetry: prepareRetry,
+      methodId: 0x9a7b_ed54_5e08_8054, metadata: [], payload: prepared.payload, retry: .volatile,
+      timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
         finalizeBoundChannels(schemas: testbed_schemas["sumLarge"]!.args, args: [numbers])
       }, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeI64(from: response, offset: &cursor)
+      let result = try decodeI64(from: &buffer)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1600,28 +1798,32 @@ public final class TestbedClient: TestbedCaller, Sendable {
         serializers: TestbedSerializers()
       )
 
-      var payloadBytes: [UInt8] = []
-      payloadBytes += encodeU32(count)
-      payloadBytes += encodeVarint(output.channelId)
-      let payload = Data(payloadBytes)
-      return PreparedRetryRequest(payload: Array(payload))
+      var buffer = ByteBufferAllocator().buffer(capacity: 64)
+      encodeU32(count, into: &buffer)
+      encodeVarint(output.channelId, into: &buffer)
+      let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
+      return PreparedRetryRequest(payload: payload)
     }
     let prepared = await prepareRetry()
 
     let response = try await connection.call(
-      methodId: 0x8edf_bd65_d162_f685, metadata: [], payload: Data(prepared.payload),
-      retry: .volatile, timeout: timeout, prepareRetry: prepareRetry,
+      methodId: 0x8edf_bd65_d162_f685, metadata: [], payload: prepared.payload, retry: .volatile,
+      timeout: timeout, prepareRetry: prepareRetry,
       finalizeChannels: {
         finalizeBoundChannels(
           schemas: testbed_schemas["generateLarge"]!.args, args: [count, output])
       }, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
       return
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1642,21 +1844,25 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func allColors() async throws -> [Color] {
-    let payload = Data()
+    let payload: [UInt8] = []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0xfbfb_05bb_caad_e4a0]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0xfbfb_05bb_caad_e4a0, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
       let result = try decodeVec(
-        from: response, offset: &cursor,
-        decoder: { data, off in
-          let disc = try decodeVarint(from: data, offset: &off)
+        from: &buffer,
+        decoder: { buf in
+          let disc = try decodeVarint(from: &buf)
           let result: Color
           switch disc {
           case 0:
@@ -1672,7 +1878,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
         })
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1695,31 +1901,35 @@ public final class TestbedClient: TestbedCaller, Sendable {
   public func describePoint(label: String, x: Int32, y: Int32, active: Bool) async throws
     -> TaggedPoint
   {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeString(label)
-    payloadBytes += encodeI32(x)
-    payloadBytes += encodeI32(y)
-    payloadBytes += encodeBool(active)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeString(label, into: &buffer)
+    encodeI32(x, into: &buffer)
+    encodeI32(y, into: &buffer)
+    encodeBool(active, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x62fe_b14a_8fcf_9b6d]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x62fe_b14a_8fcf_9b6d, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_label = try decodeString(from: response, offset: &cursor)
-      let _result_x = try decodeI32(from: response, offset: &cursor)
-      let _result_y = try decodeI32(from: response, offset: &cursor)
-      let _result_active = try decodeBool(from: response, offset: &cursor)
+      let _result_label = try decodeString(from: &buffer)
+      let _result_x = try decodeI32(from: &buffer)
+      let _result_y = try decodeI32(from: &buffer)
+      let _result_active = try decodeBool(from: &buffer)
       let result = TaggedPoint(
         label: _result_label, x: _result_x, y: _result_y, active: _result_active)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1740,37 +1950,32 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func echoShape(shape: Shape) async throws -> Shape {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += { v in
-      switch v {
-      case .circle(let radius):
-        return encodeVarint(UInt64(0)) + encodeF64(radius)
-      case .rectangle(let width, let height):
-        return encodeVarint(UInt64(1)) + encodeF64(width) + encodeF64(height)
-      case .point:
-        return encodeVarint(UInt64(2))
-      }
-    }(shape)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeShape(shape, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x4125_b5e6_78b7_b4a5]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x4125_b5e6_78b7_b4a5, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_disc = try decodeVarint(from: response, offset: &cursor)
+      let _result_disc = try decodeVarint(from: &buffer)
       let result: Shape
       switch _result_disc {
       case 0:
-        let _result_radius = try decodeF64(from: response, offset: &cursor)
+        let _result_radius = try decodeF64(from: &buffer)
         result = .circle(radius: _result_radius)
       case 1:
-        let _result_width = try decodeF64(from: response, offset: &cursor)
-        let _result_height = try decodeF64(from: response, offset: &cursor)
+        let _result_width = try decodeF64(from: &buffer)
+        let _result_height = try decodeF64(from: &buffer)
         result = .rectangle(width: _result_width, height: _result_height)
       case 2:
         result = .point
@@ -1779,7 +1984,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
       }
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1800,27 +2005,24 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func echoStatusV1(status: Status) async throws -> Status {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += { v in
-      switch v {
-      case .active:
-        return encodeVarint(UInt64(0))
-      case .inactive:
-        return encodeVarint(UInt64(1))
-      }
-    }(status)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeStatus(status, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0xc7c5_aa84_5cfb_8bf6]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0xc7c5_aa84_5cfb_8bf6, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_disc = try decodeVarint(from: response, offset: &cursor)
+      let _result_disc = try decodeVarint(from: &buffer)
       let result: Status
       switch _result_disc {
       case 0:
@@ -1832,7 +2034,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
       }
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1853,26 +2055,30 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func echoTagV1(tag: Tag) async throws -> Tag {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeString(tag.label) + encodeU32(tag.priority) + encodeString(tag.note)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeTag(tag, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x6619_071b_e5d5_c259]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x6619_071b_e5d5_c259, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_label = try decodeString(from: response, offset: &cursor)
-      let _result_priority = try decodeU32(from: response, offset: &cursor)
-      let _result_note = try decodeString(from: response, offset: &cursor)
+      let _result_label = try decodeString(from: &buffer)
+      let _result_priority = try decodeU32(from: &buffer)
+      let _result_note = try decodeString(from: &buffer)
       let result = Tag(label: _result_label, priority: _result_priority, note: _result_note)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1893,25 +2099,29 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func echoProfile(profile: Profile) async throws -> Profile {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeString(profile.name) + encodeString(profile.bio)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeProfile(profile, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0xbd9b_cabd_deeb_eb04]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0xbd9b_cabd_deeb_eb04, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_name = try decodeString(from: response, offset: &cursor)
-      let _result_bio = try decodeString(from: response, offset: &cursor)
+      let _result_name = try decodeString(from: &buffer)
+      let _result_bio = try decodeString(from: &buffer)
       let result = Profile(name: _result_name, bio: _result_bio)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1932,26 +2142,30 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func echoRecord(record: Record) async throws -> Record {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeI32(record.alpha) + encodeString(record.beta) + encodeF64(record.gamma)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeRecord(record, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x100b_0e08_da4b_8f1a]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x100b_0e08_da4b_8f1a, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_alpha = try decodeI32(from: response, offset: &cursor)
-      let _result_beta = try decodeString(from: response, offset: &cursor)
-      let _result_gamma = try decodeF64(from: response, offset: &cursor)
+      let _result_alpha = try decodeI32(from: &buffer)
+      let _result_beta = try decodeString(from: &buffer)
+      let _result_gamma = try decodeF64(from: &buffer)
       let result = Record(alpha: _result_alpha, beta: _result_beta, gamma: _result_gamma)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -1972,27 +2186,24 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func echoStatus(status: Status) async throws -> Status {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += { v in
-      switch v {
-      case .active:
-        return encodeVarint(UInt64(0))
-      case .inactive:
-        return encodeVarint(UInt64(1))
-      }
-    }(status)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeStatus(status, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x6975_90d3_ffc3_6703]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x6975_90d3_ffc3_6703, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_disc = try decodeVarint(from: response, offset: &cursor)
+      let _result_disc = try decodeVarint(from: &buffer)
       let result: Status
       switch _result_disc {
       case 0:
@@ -2004,7 +2215,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
       }
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -2025,26 +2236,30 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func echoTag(tag: Tag) async throws -> Tag {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeString(tag.label) + encodeU32(tag.priority) + encodeString(tag.note)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeTag(tag, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x2bd1_b314_9d73_ce97]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x2bd1_b314_9d73_ce97, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_label = try decodeString(from: response, offset: &cursor)
-      let _result_priority = try decodeU32(from: response, offset: &cursor)
-      let _result_note = try decodeString(from: response, offset: &cursor)
+      let _result_label = try decodeString(from: &buffer)
+      let _result_priority = try decodeU32(from: &buffer)
+      let _result_note = try decodeString(from: &buffer)
       let result = Tag(label: _result_label, priority: _result_priority, note: _result_note)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -2065,25 +2280,29 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func echoMeasurement(m: Measurement) async throws -> Measurement {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeString(m.unit) + encodeF64(m.value)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeMeasurement(m, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x3b3d_22b0_15fa_1a3f]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0x3b3d_22b0_15fa_1a3f, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_unit = try decodeString(from: response, offset: &cursor)
-      let _result_value = try decodeF64(from: response, offset: &cursor)
+      let _result_unit = try decodeString(from: &buffer)
+      let _result_value = try decodeF64(from: &buffer)
       let result = Measurement(unit: _result_unit, value: _result_value)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")
@@ -2104,25 +2323,29 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func echoConfig(c: Config) async throws -> Config {
-    var payloadBytes: [UInt8] = []
-    payloadBytes += encodeString(c.key) + encodeString(c.value)
-    let payload = Data(payloadBytes)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeConfig(c, into: &buffer)
+    let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0xe13a_477f_b964_ce28]!,
       schemaRegistry: testbed_schema_registry)
     let response = try await connection.call(
       methodId: 0xe13a_477f_b964_ce28, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = 0
-    let _cursor_resultDisc = try decodeVarint(from: response, offset: &cursor)
+    var cursor = {
+      var buf = ByteBufferAllocator().buffer(capacity: response.count)
+      buf.writeBytes(response)
+      return buf
+    }()
+    let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_key = try decodeString(from: response, offset: &cursor)
-      let _result_value = try decodeString(from: response, offset: &cursor)
+      let _result_key = try decodeString(from: &buffer)
+      let _result_value = try decodeString(from: &buffer)
       let result = Config(key: _result_key, value: _result_value)
       return result
     case 1:
-      let _cursor_errorCode = try decodeU8(from: response, offset: &cursor)
+      let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
         throw VoxError.decodeError("unexpected user error for infallible method")

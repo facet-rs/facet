@@ -6,8 +6,8 @@ use facet_core::Shape;
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use vox_types::{MethodDescriptor, ServiceDescriptor, ShapeKind, classify_shape, is_rx, is_tx};
 
-use super::decode::{generate_decode_stmt_with_cursor, generate_inline_decode};
-use super::encode::generate_encode_closure;
+use super::decode::generate_decode_stmt_with_cursor;
+use super::encode::{generate_encode_closure, generate_encode_stmt};
 use super::types::{format_doc, is_channel, swift_type_server_arg, swift_type_server_return};
 use crate::code_writer::CodeWriter;
 use crate::cw_writeln;
@@ -127,7 +127,9 @@ fn generate_dispatcher(service: &ServiceDescriptor) -> String {
         .unwrap();
         {
             let _indent = w.indent();
-            w.writeln("let payload = Data(payload)").unwrap();
+            w.writeln("var buffer = ByteBufferAllocator().buffer(capacity: payload.count)")
+                .unwrap();
+            w.writeln("buffer.writeBytes(payload)").unwrap();
             w.writeln("let taskSender: TaskSender = taskTx").unwrap();
             w.writeln("switch methodId {").unwrap();
             for method in service.methods {
@@ -137,7 +139,7 @@ fn generate_dispatcher(service: &ServiceDescriptor) -> String {
                 cw_writeln!(w, "case {}:", hex_u64(method_id)).unwrap();
                 cw_writeln!(
                     w,
-                    "    await {dispatch_name}(methodId: methodId, requestId: requestId, payload: payload, registry: registry, taskSender: taskSender)"
+                    "    await {dispatch_name}(methodId: methodId, requestId: requestId, buffer: &buffer, registry: registry, taskSender: taskSender)"
                 )
                 .unwrap();
             }
@@ -199,10 +201,9 @@ fn generate_preregister_channels(w: &mut CodeWriter<&mut String>, service: &Serv
         .unwrap();
     {
         let _indent = w.indent();
-        w.writeln("let payload = Data(payload)").unwrap();
-    }
-    {
-        let _indent = w.indent();
+        w.writeln("var buffer = ByteBufferAllocator().buffer(capacity: payload.count)")
+            .unwrap();
+        w.writeln("buffer.writeBytes(payload)").unwrap();
         w.writeln("switch methodId {").unwrap();
 
         for method in service.methods {
@@ -214,31 +215,25 @@ fn generate_preregister_channels(w: &mut CodeWriter<&mut String>, service: &Serv
                 w.writeln("    do {").unwrap();
                 {
                     let _indent = w.indent();
-                    if !method.args.is_empty() {
-                        w.writeln("var preregisterCursor = 0").unwrap();
-                    }
                     for arg in method.args {
                         let arg_name = arg.name.to_lower_camel_case();
                         if is_rx(arg.shape) {
                             cw_writeln!(
                                 w,
-                                "let {arg_name}ChannelId = try decodeVarint(from: payload, offset: &preregisterCursor)"
+                                "let {arg_name}ChannelId = try decodeVarint(from: &buffer)"
                             )
                             .unwrap();
                             cw_writeln!(w, "await registry.markKnown({arg_name}ChannelId)")
                                 .unwrap();
                         } else if is_tx(arg.shape) {
-                            w.writeln(
-                                "_ = try decodeVarint(from: payload, offset: &preregisterCursor)",
-                            )
-                            .unwrap();
+                            w.writeln("_ = try decodeVarint(from: &buffer)").unwrap();
                         } else {
                             let discard_name = format!("_discard_{arg_name}");
                             let decode_stmt = generate_decode_stmt_with_cursor(
                                 arg.shape,
                                 &discard_name,
                                 "",
-                                "preregisterCursor",
+                                "buffer",
                             );
                             for line in decode_stmt.lines() {
                                 w.writeln(line).unwrap();
@@ -272,7 +267,7 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
 
     cw_writeln!(
         w,
-        "private func {dispatch_name}(methodId: UInt64, requestId: UInt64, payload: Data, registry: IncomingChannelRegistry, taskSender: @escaping TaskSender) async {{"
+        "private func {dispatch_name}(methodId: UInt64, requestId: UInt64, buffer: inout ByteBuffer, registry: IncomingChannelRegistry, taskSender: @escaping TaskSender) async {{"
     )
     .unwrap();
     {
@@ -293,17 +288,9 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
         w.writeln("do {").unwrap();
         {
             let _indent = w.indent();
-            let cursor_var = if !method.args.is_empty() {
-                let name = unique_decode_cursor_name(method.args);
-                cw_writeln!(w, "var {name} = 0").unwrap();
-                Some(name)
-            } else {
-                None
-            };
-
             for arg in method.args {
                 let arg_name = arg.name.to_lower_camel_case();
-                generate_channeling_decode_arg(w, &arg_name, arg.shape, cursor_var.as_deref());
+                generate_channeling_decode_arg(w, &arg_name, arg.shape);
             }
             let arg_names: Vec<String> = method
                 .args
@@ -345,7 +332,7 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
 
                     if ret_type == "Void" {
                         w.writeln(
-                            "taskSender(.response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] }), methodId: methodId, schemaPayload: responseSchemaPayload))",
+                            "taskSender(.response(requestId: requestId, payload: encodeResultOkUnit(), methodId: methodId, schemaPayload: responseSchemaPayload))",
                         )
                         .unwrap();
                     } else {
@@ -368,7 +355,7 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
                     )
                     .unwrap();
                     w.writeln(
-                        "taskSender(.response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] }), methodId: methodId, schemaPayload: responseSchemaPayload))",
+                        "taskSender(.response(requestId: requestId, payload: encodeResultOkUnit(), methodId: methodId, schemaPayload: responseSchemaPayload))",
                     )
                     .unwrap();
                 } else {
@@ -383,7 +370,11 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
                         let err_encode = generate_encode_closure(err);
                         cw_writeln!(
                             w,
-                            "taskSender(.response(requestId: requestId, payload: {{ switch result {{ case .success(let v): return [UInt8(0)] + {ok_encode}(v); case .failure(let e): return [UInt8(1), UInt8(0)] + {err_encode}(e) }} }}(), methodId: methodId, schemaPayload: responseSchemaPayload))"
+                            "let _encoded: [UInt8] = {{ var buf = ByteBufferAllocator().buffer(capacity: 64); switch result {{ case .success(let v): encodeVarint(UInt64(0), into: &buf); {ok_encode}(v, &buf); case .failure(let e): encodeVarint(UInt64(1), into: &buf); encodeU8(0, into: &buf); {err_encode}(e, &buf) }}; return buf.readBytes(length: buf.readableBytes) ?? [] }}()"
+                        )
+                        .unwrap();
+                        w.writeln(
+                            "taskSender(.response(requestId: requestId, payload: _encoded, methodId: methodId, schemaPayload: responseSchemaPayload))",
                         )
                         .unwrap();
                     } else {
@@ -425,23 +416,16 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
 }
 
 /// Generate code to decode a single argument for dispatch.
+/// All decodes read from `buffer: inout ByteBuffer` in scope.
 fn generate_channeling_decode_arg(
     w: &mut CodeWriter<&mut String>,
     name: &str,
     shape: &'static Shape,
-    cursor_var: Option<&str>,
 ) {
     match classify_shape(shape) {
         ShapeKind::Rx { inner } => {
-            // Schema Rx = client passes Rx to method, sends via paired Tx
-            // Server needs to receive → create server Rx
-            let inline_decode = generate_inline_decode(inner, "Data(bytes)", "off");
-            let cursor_var = cursor_var.expect("payload cursor required for channeling args");
-            cw_writeln!(
-                w,
-                "let {name}ChannelId = try decodeVarint(from: payload, offset: &{cursor_var})"
-            )
-            .unwrap();
+            let decode_closure = generate_decode_closure_for_channel(inner);
+            cw_writeln!(w, "let {name}ChannelId = try decodeVarint(from: &buffer)").unwrap();
             cw_writeln!(
                 w,
                 "let {name}Receiver = await registry.register({name}ChannelId, initialCredit: 16, onConsumed: {{ [taskSender] additional in taskSender(.grantCredit(channelId: {name}ChannelId, bytes: additional)) }})"
@@ -449,33 +433,21 @@ fn generate_channeling_decode_arg(
             .unwrap();
             cw_writeln!(
                 w,
-                "let {name} = createServerRx(channelId: {name}ChannelId, receiver: {name}Receiver, deserialize: {{ bytes in"
+                "let {name} = createServerRx(channelId: {name}ChannelId, receiver: {name}Receiver, deserialize: {decode_closure})"
             )
             .unwrap();
-            cw_writeln!(w, "    var off = 0").unwrap();
-            cw_writeln!(w, "    return try {inline_decode}").unwrap();
-            w.writeln("})").unwrap();
         }
         ShapeKind::Tx { inner } => {
-            // Schema Tx = client passes Tx to method, receives via paired Rx
-            // Server needs to send → create server Tx
             let encode_closure = generate_encode_closure(inner);
-            let cursor_var = cursor_var.expect("payload cursor required for channeling args");
+            cw_writeln!(w, "let {name}ChannelId = try decodeVarint(from: &buffer)").unwrap();
             cw_writeln!(
                 w,
-                "let {name}ChannelId = try decodeVarint(from: payload, offset: &{cursor_var})"
-            )
-            .unwrap();
-            cw_writeln!(
-                w,
-                "let {name} = await createServerTx(channelId: {name}ChannelId, taskSender: taskSender, registry: registry, initialCredit: 16, serialize: ({encode_closure}))"
+                "let {name} = await createServerTx(channelId: {name}ChannelId, taskSender: taskSender, registry: registry, initialCredit: 16, serialize: {encode_closure})"
             )
             .unwrap();
         }
         _ => {
-            // Non-channeling argument - use standard decode
-            let cursor_var = cursor_var.expect("payload cursor required for non-channel args");
-            let decode_stmt = generate_decode_stmt_with_cursor(shape, name, "", cursor_var);
+            let decode_stmt = generate_decode_stmt_with_cursor(shape, name, "", "buffer");
             for line in decode_stmt.lines() {
                 w.writeln(line).unwrap();
             }
@@ -483,8 +455,16 @@ fn generate_channeling_decode_arg(
     }
 }
 
-fn unique_decode_cursor_name(args: &[vox_types::ArgDescriptor]) -> String {
-    let arg_names: Vec<String> = args.iter().map(|a| a.name.to_lower_camel_case()).collect();
+/// Generate a deserialize closure for use with createServerRx.
+/// The closure takes `inout ByteBuffer` and returns the decoded value.
+fn generate_decode_closure_for_channel(inner: &'static Shape) -> String {
+    use super::decode::generate_decode_closure;
+    generate_decode_closure(inner)
+}
+
+fn unique_decode_cursor_name(_args: &[vox_types::ArgDescriptor]) -> String {
+    // kept for any remaining call sites; buffer is always named `buffer` now
+    let arg_names: Vec<String> = _args.iter().map(|a| a.name.to_lower_camel_case()).collect();
     let mut candidate = String::from("cursor");
     while arg_names.iter().any(|name| name == &candidate) {
         candidate.push('_');

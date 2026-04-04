@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import NIOCore
 
 // MARK: - Channel ID
 
@@ -226,8 +227,8 @@ public final class ChannelReceiver: @unchecked Sendable {
     }
 }
 
-private extension NSLock {
-    func withLock<T>(_ body: () throws -> T) rethrows -> T {
+extension NSLock {
+    fileprivate func withLock<T>(_ body: () throws -> T) rethrows -> T {
         lock()
         defer { unlock() }
         return try body()
@@ -245,11 +246,11 @@ public final class Tx<T: Sendable>: @unchecked Sendable {
     public var channelId: ChannelId = 0
     private var taskTx: (@Sendable (TaskMessage) -> Void)?
     private var credit: ChannelCreditController?
-    private let serialize: @Sendable (T) -> [UInt8]
+    private let serialize: @Sendable (T, inout ByteBuffer) -> Void
     private let lock = NSLock()
     private var closed = false
 
-    public init(serialize: @escaping @Sendable (T) -> [UInt8]) {
+    public init(serialize: @escaping @Sendable (T, inout ByteBuffer) -> Void) {
         self.serialize = serialize
     }
 
@@ -275,7 +276,9 @@ public final class Tx<T: Sendable>: @unchecked Sendable {
             throw ChannelError.closed
         }
         try await credit.consume()
-        let bytes = serialize(value)
+        var buf = ByteBufferAllocator().buffer(capacity: 64)
+        serialize(value, &buf)
+        let bytes = buf.readBytes(length: buf.readableBytes) ?? []
         taskTx(.data(channelId: channelId, payload: bytes))
     }
 
@@ -313,9 +316,9 @@ public final class Tx<T: Sendable>: @unchecked Sendable {
 public final class Rx<T: Sendable>: @unchecked Sendable {
     public var channelId: ChannelId = 0
     private var receiver: ChannelReceiver?
-    private let deserialize: @Sendable ([UInt8]) throws -> T
+    private let deserialize: @Sendable (inout ByteBuffer) throws -> T
 
-    public init(deserialize: @escaping @Sendable ([UInt8]) throws -> T) {
+    public init(deserialize: @escaping @Sendable (inout ByteBuffer) throws -> T) {
         self.deserialize = deserialize
     }
 
@@ -333,7 +336,9 @@ public final class Rx<T: Sendable>: @unchecked Sendable {
         guard let bytes = await receiver.recv() else {
             return nil
         }
-        return try deserialize(bytes)
+        var buf = ByteBufferAllocator().buffer(capacity: bytes.count)
+        buf.writeBytes(bytes)
+        return try deserialize(&buf)
     }
 }
 
@@ -407,7 +412,8 @@ public actor ChannelRegistry {
         return receiver
     }
 
-    func registerOutgoing(_ channelId: ChannelId, initialCredit: UInt32) -> ChannelCreditController {
+    func registerOutgoing(_ channelId: ChannelId, initialCredit: UInt32) -> ChannelCreditController
+    {
         let controller = ChannelCreditController(initialCredit: initialCredit)
         outgoingCredits[channelId] = controller
         knownChannels.insert(channelId)
