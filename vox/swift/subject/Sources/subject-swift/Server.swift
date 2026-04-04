@@ -13,11 +13,11 @@ public struct Server {
         guard let peerAddr = ProcessInfo.processInfo.environment["PEER_ADDR"] else {
             throw ServerError.missingPeerAddr
         }
-        fputs("[subject-server] PEER_ADDR=\(peerAddr)\n", stderr)
+        FileHandle.standardError.write(Data("[subject-server] PEER_ADDR=\(peerAddr)\n".utf8))
 
         let transport: ConduitKind =
             ProcessInfo.processInfo.environment["SPEC_CONDUIT"] == "stable" ? .stable : .bare
-        fputs("[subject-server] transport=\(transport)\n", stderr)
+        FileHandle.standardError.write(Data("[subject-server] transport=\(transport)\n".utf8))
 
         // r[impl transport.unix]
         // r[impl hosted.peer-addr]
@@ -28,12 +28,15 @@ public struct Server {
             guard !path.isEmpty else {
                 throw ServerError.invalidPeerAddr(peerAddr)
             }
-            fputs("[subject-server] connector=unix path=\(path)\n", stderr)
+            FileHandle.standardError.write(
+                Data("[subject-server] connector=unix path=\(path)\n".utf8))
             let connector = UnixConnector(path: path, transport: transport)
             // r[impl core.conn.accept-required] - Check if we should accept incoming virtual connections.
             let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] != "0"
-            fputs("[subject-server] acceptConnections=\(acceptConnections)\n", stderr)
-            fputs("[subject-server] creating initiator session\n", stderr)
+            FileHandle.standardError.write(
+                Data("[subject-server] acceptConnections=\(acceptConnections)\n".utf8))
+            FileHandle.standardError.write(
+                Data("[subject-server] creating initiator session\n".utf8))
             session = try await Session.initiator(
                 connector,
                 dispatcher: dispatcher,
@@ -52,12 +55,15 @@ public struct Server {
                 throw ServerError.invalidPeerAddr(peerAddr)
             }
 
-            fputs("[subject-server] connector=tcp host=\(host) port=\(port)\n", stderr)
+            FileHandle.standardError.write(
+                Data("[subject-server] connector=tcp host=\(host) port=\(port)\n".utf8))
             let connector = TcpConnector(host: host, port: port, transport: transport)
             // r[impl core.conn.accept-required] - Check if we should accept incoming virtual connections.
             let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] != "0"
-            fputs("[subject-server] acceptConnections=\(acceptConnections)\n", stderr)
-            fputs("[subject-server] creating initiator session\n", stderr)
+            FileHandle.standardError.write(
+                Data("[subject-server] acceptConnections=\(acceptConnections)\n".utf8))
+            FileHandle.standardError.write(
+                Data("[subject-server] creating initiator session\n".utf8))
             session = try await Session.initiator(
                 connector,
                 dispatcher: dispatcher,
@@ -69,11 +75,12 @@ public struct Server {
 
         let rootConnection = session.connection
         _ = rootConnection
-        fputs(
-            "[subject-server] session created, root connection retained, entering run loop\n",
-            stderr)
+        FileHandle.standardError.write(
+            Data(
+                "[subject-server] session created, root connection retained, entering run loop\n"
+                    .utf8))
         try await session.run()
-        fputs("[subject-server] run loop exited\n", stderr)
+        FileHandle.standardError.write(Data("[subject-server] run loop exited\n".utf8))
     }
 }
 
