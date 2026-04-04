@@ -39,8 +39,6 @@ swift-subject-cov *args:
     LLVM_PROFILE_FILE="$(pwd)/.coverage/swift-subject/tcp-%p%c.profraw" \
       SUBJECT_CMD="$(pwd)/swift/subject/.build/debug/subject-swift" \
       cargo nextest run -P coverage --test-threads=1 -p spec-tests {{ quote(args) }}
-      SUBJECT_CMD="$(pwd)/swift/subject/.build/debug/subject-swift" \
-      cargo nextest run -P coverage --test-threads=1 -p spec-tests {{ quote(args) }}
     LLVM_PROFILE_FILE="$(pwd)/.coverage/swift-subject/subject-tests-%p%c.profraw" \
       swift test --package-path swift/subject --no-parallel \
         -Xswiftc -profile-generate \
@@ -115,7 +113,6 @@ ws-wasm *args:
 
 ws-ts *args:
     cd typescript/tests/playwright && pnpm exec playwright test ws-ts.spec.ts {{ args }}
-
 
 fuzz-targets:
     @echo "Available fuzz targets:"

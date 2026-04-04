@@ -221,13 +221,13 @@ private actor DeferredStableAcceptorAttachmentSource: LinkSource {
     }
 }
 
-public func establishInitiator(
+func establishInitiator(
     attachment: LinkAttachment,
     transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,
-    keepalive: DriverKeepaliveConfig? = nil,
+    keepalive: SessionKeepaliveConfig? = nil,
     resumable: Bool = false,
     recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
     metadata: [MetadataEntry] = []
@@ -267,13 +267,13 @@ public func establishInitiator(
     return (connection, driver, handle, handshake.sessionResumeKey, handshake.peerMetadata)
 }
 
-public func establishInitiator(
+func establishInitiator(
     link: any Link,
     transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,
-    keepalive: DriverKeepaliveConfig? = nil,
+    keepalive: SessionKeepaliveConfig? = nil,
     resumable: Bool = false,
     recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
     metadata: [MetadataEntry] = []
@@ -291,13 +291,13 @@ public func establishInitiator(
     )
 }
 
-public func establishInitiator(
+func establishInitiator(
     conduit: any Link,
     transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,
-    keepalive: DriverKeepaliveConfig? = nil,
+    keepalive: SessionKeepaliveConfig? = nil,
     resumable: Bool = false,
     recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
     metadata: [MetadataEntry] = []
@@ -315,13 +315,13 @@ public func establishInitiator(
     )
 }
 
-public func establishAcceptor(
+func establishAcceptor(
     attachment: LinkAttachment,
     transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,
-    keepalive: DriverKeepaliveConfig? = nil,
+    keepalive: SessionKeepaliveConfig? = nil,
     resumable: Bool = false,
     metadata: [MetadataEntry] = []
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
@@ -371,13 +371,13 @@ public func establishAcceptor(
     return (connection, driver, handle, handshake.sessionResumeKey, handshake.peerMetadata)
 }
 
-public func establishAcceptor(
+func establishAcceptor(
     link: any Link,
     transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,
-    keepalive: DriverKeepaliveConfig? = nil,
+    keepalive: SessionKeepaliveConfig? = nil,
     resumable: Bool = false,
     metadata: [MetadataEntry] = []
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
@@ -393,13 +393,13 @@ public func establishAcceptor(
     )
 }
 
-public func establishAcceptor(
+func establishAcceptor(
     conduit: any Link,
     transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,
-    keepalive: DriverKeepaliveConfig? = nil,
+    keepalive: SessionKeepaliveConfig? = nil,
     resumable: Bool = false,
     metadata: [MetadataEntry] = []
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {

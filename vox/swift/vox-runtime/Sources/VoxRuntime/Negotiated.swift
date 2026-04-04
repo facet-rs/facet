@@ -17,7 +17,7 @@ public struct Negotiated: Sendable {
 }
 
 /// Driver-level protocol keepalive configuration.
-public struct DriverKeepaliveConfig: Sendable {
+public struct SessionKeepaliveConfig: Sendable {
     public let pingInterval: TimeInterval
     public let pongTimeout: TimeInterval
 

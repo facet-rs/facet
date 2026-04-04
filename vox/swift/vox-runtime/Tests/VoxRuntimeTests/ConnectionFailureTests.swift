@@ -1098,7 +1098,7 @@ struct ConnectionFailureTests {
         let (handle, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher(),
-            keepalive: DriverKeepaliveConfig(pingInterval: 0.02, pongTimeout: 0.05)
+            keepalive: SessionKeepaliveConfig(pingInterval: 0.02, pongTimeout: 0.05)
         )
         let driverTask = Task {
             try await driver.run()
@@ -1131,7 +1131,7 @@ struct ConnectionFailureTests {
         let (_, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher(),
-            keepalive: DriverKeepaliveConfig(pingInterval: 0.02, pongTimeout: 0.05)
+            keepalive: SessionKeepaliveConfig(pingInterval: 0.02, pongTimeout: 0.05)
         )
         let driverTask: Task<Void, Error> = Task {
             try await driver.run()
@@ -1157,7 +1157,7 @@ struct ConnectionFailureTests {
         let (handle, driver, _, _, _) = try await establishInitiator(
             conduit: transport,
             dispatcher: NoopDispatcher(),
-            keepalive: DriverKeepaliveConfig(pingInterval: 0.02, pongTimeout: 0.05)
+            keepalive: SessionKeepaliveConfig(pingInterval: 0.02, pongTimeout: 0.05)
         )
         let driverTask: Task<Void, Error> = Task {
             try await driver.run()

@@ -279,15 +279,14 @@ func runServer() async throws {
             throw SubjectError.invalidAddr
         }
         let connector = UnixConnector(path: path, transport: transport)
-        let attachment = try await connector.openAttachment()
-        (connection, driver, _, _, _) = try await establishInitiator(
-            attachment: attachment,
-            transport: transport,
+        let session = try await Session.initiator(
+            connector,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             resumable: false,
             metadata: rootMetadata
         )
+        (connection, driver) = (session.rootConnection, session.driver)
     } else {
         let parts = addr.split(separator: ":")
         guard parts.count == 2, let port = Int(parts[1]) else {
@@ -296,15 +295,14 @@ func runServer() async throws {
         }
         let host = String(parts[0])
         let connector = TcpConnector(host: host, port: port, transport: transport)
-        let attachment = try await connector.openAttachment()
-        (connection, driver, _, _, _) = try await establishInitiator(
-            attachment: attachment,
-            transport: transport,
+        let session = try await Session.initiator(
+            connector,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             resumable: false,
             metadata: rootMetadata
         )
+        (connection, driver) = (session.rootConnection, session.driver)
     }
 
     let rootConnection = connection

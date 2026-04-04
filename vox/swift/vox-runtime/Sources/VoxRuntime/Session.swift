@@ -4,7 +4,7 @@ public protocol ExpectedRootClient {
     static var voxServiceName: String { get }
 }
 
-public enum NoopRootClient: ExpectedRootClient {
+public enum NoopClient: ExpectedRootClient {
     public static let voxServiceName = "Noop"
 }
 
@@ -54,8 +54,9 @@ public final class Session: @unchecked Sendable {
         _ connector: some SessionConnector,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
-        resumable: Bool = true
+        keepalive: SessionKeepaliveConfig? = nil,
+        resumable: Bool = true,
+        metadata: [MetadataEntry] = []
     ) async throws -> Session {
         let attachment = try await connector.openAttachment()
         let recoverAttachment: (@Sendable () async throws -> LinkAttachment)?
@@ -74,7 +75,8 @@ public final class Session: @unchecked Sendable {
                 acceptConnections: acceptConnections,
                 keepalive: keepalive,
                 resumable: resumable,
-                recoverAttachment: recoverAttachment
+                recoverAttachment: recoverAttachment,
+                metadata: metadata
             )
         return Session(
             role: .initiator,
@@ -91,7 +93,7 @@ public final class Session: @unchecked Sendable {
         expecting _: ExpectedClient.Type,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
+        keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
     ) async throws -> Session {
@@ -112,13 +114,13 @@ public final class Session: @unchecked Sendable {
         _ connector: some SessionConnector,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
+        keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
     ) async throws -> Session {
         try await acceptor(
             connector,
-            expecting: NoopRootClient.self,
+            expecting: NoopClient.self,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             keepalive: keepalive,
@@ -133,7 +135,7 @@ public final class Session: @unchecked Sendable {
         registry: SessionRegistry,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
+        keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
     ) async throws -> SessionAcceptOutcome {
@@ -156,13 +158,13 @@ public final class Session: @unchecked Sendable {
         registry: SessionRegistry,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
+        keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
     ) async throws -> SessionAcceptOutcome {
         try await acceptorOrResume(
             connector,
-            expecting: NoopRootClient.self,
+            expecting: NoopClient.self,
             registry: registry,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
@@ -177,7 +179,7 @@ public final class Session: @unchecked Sendable {
         conduit: ConduitKind = .bare,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
+        keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false
     ) async throws -> Session {
         let (connection, driver, handle, sessionResumeKey, peerMetadata) =
@@ -205,7 +207,7 @@ public final class Session: @unchecked Sendable {
         expecting _: ExpectedClient.Type,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
+        keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
     ) async throws -> Session {
@@ -237,14 +239,14 @@ public final class Session: @unchecked Sendable {
         conduit: ConduitKind? = nil,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
+        keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
     ) async throws -> Session {
         try await acceptFreshAttachment(
             attachment,
             conduit: conduit,
-            expecting: NoopRootClient.self,
+            expecting: NoopClient.self,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             keepalive: keepalive,
@@ -259,7 +261,7 @@ public final class Session: @unchecked Sendable {
         expecting _: ExpectedClient.Type,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
+        keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
     ) async throws -> Session {
@@ -280,14 +282,14 @@ public final class Session: @unchecked Sendable {
         conduit: ConduitKind = .bare,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
+        keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
     ) async throws -> Session {
         try await acceptFreshLink(
             link,
             conduit: conduit,
-            expecting: NoopRootClient.self,
+            expecting: NoopClient.self,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             keepalive: keepalive,
@@ -303,7 +305,7 @@ public final class Session: @unchecked Sendable {
         registry: SessionRegistry,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
+        keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
     ) async throws -> SessionAcceptOutcome {
@@ -372,14 +374,14 @@ public final class Session: @unchecked Sendable {
         registry: SessionRegistry,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
+        keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
     ) async throws -> SessionAcceptOutcome {
         try await acceptFreshAttachmentOrResume(
             attachment,
             conduit: conduit,
-            expecting: NoopRootClient.self,
+            expecting: NoopClient.self,
             registry: registry,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
@@ -396,7 +398,7 @@ public final class Session: @unchecked Sendable {
         registry: SessionRegistry,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
+        keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
     ) async throws -> SessionAcceptOutcome {
@@ -419,14 +421,14 @@ public final class Session: @unchecked Sendable {
         registry: SessionRegistry,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
+        keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
     ) async throws -> SessionAcceptOutcome {
         try await acceptFreshLinkOrResume(
             link,
             conduit: conduit,
-            expecting: NoopRootClient.self,
+            expecting: NoopClient.self,
             registry: registry,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,

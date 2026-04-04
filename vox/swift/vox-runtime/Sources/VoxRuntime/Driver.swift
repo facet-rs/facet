@@ -19,7 +19,7 @@ public final class Driver: @unchecked Sendable {
     let handle: ConnectionHandle
     let operations: OperationRegistry
     let acceptConnections: Bool
-    let keepalive: DriverKeepaliveConfig?
+    let keepalive: SessionKeepaliveConfig?
 
     let serverRegistry: ChannelRegistry
     let state: DriverState
@@ -49,7 +49,7 @@ public final class Driver: @unchecked Sendable {
         handle: ConnectionHandle,
         operations: OperationRegistry,
         acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil
+        keepalive: SessionKeepaliveConfig? = nil
     ) {
         self.conduit = conduit
         self.dispatcher = dispatcher
@@ -89,7 +89,7 @@ public final class Driver: @unchecked Sendable {
         handle: ConnectionHandle,
         operations: OperationRegistry,
         acceptConnections: Bool,
-        keepalive: DriverKeepaliveConfig?,
+        keepalive: SessionKeepaliveConfig?,
         eventStream: AsyncStream<DriverEvent>,
         eventContinuation: AsyncStream<DriverEvent>.Continuation,
         commandQueue: LockedQueue<HandleCommand>,
