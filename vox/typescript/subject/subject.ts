@@ -21,6 +21,7 @@ import type {
   Measurement,
   Config,
   TaggedPoint,
+  GnarlyPayload,
 } from "@bearcove/vox-generated/testbed.generated.ts";
 import { TestbedClient, TestbedDispatcher } from "@bearcove/vox-generated/testbed.generated.ts";
 import { tcpConnector, acceptTcp } from "@bearcove/vox-tcp";
@@ -164,6 +165,10 @@ class TestbedService implements TestbedHandler {
 
   createCanvas(name: string, shapes: Shape[], background: Color): Canvas {
     return { name, shapes, background };
+  }
+
+  echoGnarly(payload: GnarlyPayload): GnarlyPayload {
+    return payload;
   }
 
   processMessage(msg: Message): Message {

@@ -25,6 +25,9 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install protoc
+        run: sudo apt-get install -y protobuf-compiler
+
       - name: Run clippy (strict)
         run: cargo clippy --all-features --all-targets -- -D warnings
 
@@ -133,7 +136,7 @@ jobs:
         run: cargo install wasm-pack
 
       - name: Build subject
-        run: cargo build -p subject-rust
+        run: cargo build -p subject-rust --release
 
       - name: Run Rust TCP subject matrix tests
         run: >
