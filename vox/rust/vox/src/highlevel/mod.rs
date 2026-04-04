@@ -198,6 +198,7 @@ where
                 }
                 builder.metadata(metadata).establish::<Client>().await
             }
+            #[allow(unreachable_patterns)]
             _ => Err(SessionError::Protocol(
                 "transport not enabled in this vox build".to_string(),
             )),

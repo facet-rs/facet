@@ -97,10 +97,10 @@ impl InFlightTracker {
     /// Decrement the in-flight count and wake a pending sender.
     fn release(&self) {
         self.count.fetch_sub(1, Ordering::AcqRel);
-        if let Ok(mut guard) = self.waker.lock() {
-            if let Some(w) = guard.take() {
-                w.wake();
-            }
+        if let Ok(mut guard) = self.waker.lock()
+            && let Some(w) = guard.take()
+        {
+            w.wake();
         }
     }
 }
@@ -127,10 +127,10 @@ impl FfiRxInner {
     /// Push a frame and wake the receiver.
     fn push(&self, frame: Arc<FfiFrameBacking>) {
         self.queue.lock().unwrap().push_back(frame);
-        if let Ok(mut guard) = self.waker.lock() {
-            if let Some(w) = guard.take() {
-                w.wake();
-            }
+        if let Ok(mut guard) = self.waker.lock()
+            && let Some(w) = guard.take()
+        {
+            w.wake();
         }
     }
 }
@@ -262,10 +262,10 @@ impl LinkTx for FfiLinkTx {
 
     async fn close(self) -> std::io::Result<()> {
         self.peer.closed.store(true, Ordering::Release);
-        if let Ok(mut guard) = self.peer.waker.lock() {
-            if let Some(w) = guard.take() {
-                w.wake();
-            }
+        if let Ok(mut guard) = self.peer.waker.lock()
+            && let Some(w) = guard.take()
+        {
+            w.wake();
         }
         Ok(())
     }

@@ -24,7 +24,12 @@ transport-tcp = ["dep:vox-stream"]
 transport-local = ["dep:vox-stream"]
 transport-ffi = ["dep:vox-ffi"]
 transport-websocket = ["dep:vox-websocket"]
-transport-websocket-tls = ["transport-websocket", "dep:tokio-rustls", "dep:rustls", "dep:rustls-pemfile"]
+transport-websocket-tls = [
+  "transport-websocket",
+  "dep:tokio-rustls",
+  "dep:rustls",
+  "dep:rustls-pemfile",
+]
 transport-all = ["transport-tcp", "transport-local", "transport-websocket"]
 
 [dependencies]
@@ -38,6 +43,7 @@ facet.workspace = true
 facet-pretty.workspace = true
 facet-reflect.workspace = true
 vox-postcard.workspace = true
+moire.workspace = true
 tracing.workspace = true
 tokio = { workspace = true, features = ["net"] }
 tokio-rustls = { workspace = true, optional = true }

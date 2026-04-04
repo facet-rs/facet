@@ -1,19 +1,12 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use moire::task::FutureExt;
-use vox_types::{
-    ConnectionSettings, MetadataEntry, MethodId, Parity, Payload, RequestCall, RetryPolicy,
-    VoxError,
-};
+use vox_types::{MetadataEntry, MethodId, Payload, RequestCall};
 
 use super::utils::*;
-use crate::session::{
-    SessionAcceptOutcome, SessionRegistry, acceptor_conduit, acceptor_on, initiator_conduit,
-    initiator_on,
-};
-use crate::{Attachment, BareConduit, NoopClient, TransportMode, initiate_transport};
+use crate::session::{SessionAcceptOutcome, SessionRegistry, acceptor_on};
+use crate::{Attachment, NoopClient, TransportMode};
 
 #[tokio::test]
 async fn resumable_acceptor_registry_keeps_pending_call_alive_across_auto_resume() {

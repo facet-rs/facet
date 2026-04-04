@@ -355,6 +355,7 @@ pub(crate) struct ResumableReplyingHandler {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub(crate) struct RetryAfterResumeHandler {
     pub(crate) retry: RetryPolicy,
     pub(crate) runs: Arc<AtomicUsize>,

@@ -97,7 +97,7 @@ impl TrialAccumulator {
     }
 
     fn record_ok(&mut self, elapsed: Duration) {
-        let latency_us = elapsed.as_micros().max(1).min(60_000_000u128) as u64;
+        let latency_us = elapsed.as_micros().clamp(1, 60_000_000u128) as u64;
         let _ = self.histogram.record(latency_us);
         self.completed += 1;
     }
@@ -297,10 +297,10 @@ fn parse_config() -> Result<Config> {
     in_flights.sort_unstable();
     in_flights.dedup();
 
-    if payload_sizes.iter().any(|&n| n == 0) {
+    if payload_sizes.contains(&0) {
         return Err(eyre::eyre!("payload sizes must be > 0"));
     }
-    if in_flights.iter().any(|&n| n == 0) {
+    if in_flights.contains(&0) {
         return Err(eyre::eyre!("in-flight values must be > 0"));
     }
     if let Some(count) = count

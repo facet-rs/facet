@@ -5,7 +5,7 @@ use super::VoxListener;
 /// Use this when you control how connections arrive (e.g. from an axum
 /// WebSocket upgrade handler) and want to feed them into [`super::serve_listener()`].
 pub struct ChannelListener<L> {
-    rx: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<L>>,
+    rx: moire::sync::Mutex<tokio::sync::mpsc::Receiver<L>>,
 }
 
 /// Sender half of a [`ChannelListener`].
@@ -20,7 +20,7 @@ impl<L: vox_types::Link + Send + 'static> ChannelListener<L> {
         let (tx, rx) = tokio::sync::mpsc::channel(buffer);
         (
             Self {
-                rx: tokio::sync::Mutex::new(rx),
+                rx: moire::sync::Mutex::new("channel-listener.rx", rx),
             },
             ChannelListenerSender { tx },
         )
