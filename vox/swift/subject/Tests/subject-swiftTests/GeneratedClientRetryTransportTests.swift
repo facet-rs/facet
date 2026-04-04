@@ -221,12 +221,12 @@ private struct RetryProbeDispatcher: ServiceDispatcher {
         registry: ChannelRegistry,
         schemaSendTracker: SchemaSendTracker,
         taskTx: @escaping @Sendable (TaskMessage) -> Void
-        ) async {
-            _ = schemaSendTracker
-            do {
-                var cursor = 0
-                let payloadData = Data(payload)
-                let count = try decodeU32(from: payloadData, offset: &cursor)
+    ) async {
+        _ = schemaSendTracker
+        do {
+            var cursor = 0
+            let payloadData = Data(payload)
+            let count = try decodeU32(from: payloadData, offset: &cursor)
             let outputChannelId = try decodeVarint(from: payloadData, offset: &cursor)
             let output = await createServerTx(
                 channelId: outputChannelId,
@@ -249,7 +249,8 @@ private struct RetryProbeDispatcher: ServiceDispatcher {
                 try await output.send(i)
                 try await Task.sleep(nanoseconds: 20_000_000)
             }
-            taskTx(.response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))
+            taskTx(
+                .response(requestId: requestId, payload: encodeResultOk((), encoder: { _ in [] })))
         } catch {
             if error is ChannelError || error is ConnectionError {
                 return
@@ -272,7 +273,7 @@ private actor QueuedStableClientConnector: SessionConnector {
             throw TransportError.connectionClosed
         }
         let link = links.removeFirst()
-        try await performInitiatorTransportPrologue(transport: link, conduit: .bare)
+        try await performInitiatorLinkPrologue(link: link, conduit: .bare)
         return .negotiated(link, conduit: .bare)
     }
 }
@@ -477,7 +478,10 @@ struct GeneratedClientRetryTransportTests {
                 try await receiveTask.value
             }
             retryTestLog("idem: received \(received.count) values")
-            guard let restart = received.enumerated().dropFirst().first(where: { $0.element == 0 })?.offset else {
+            guard
+                let restart = received.enumerated().dropFirst().first(where: { $0.element == 0 })?
+                    .offset
+            else {
                 Issue.record("expected retry restart in stream")
                 return
             }

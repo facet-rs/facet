@@ -65,14 +65,14 @@ public final class SessionHandle: @unchecked Sendable {
         if attachment.negotiatedConduit == nil {
             switch role {
             case .initiator:
-                try await performInitiatorTransportPrologue(
-                    transport: attachment.link,
+                try await performInitiatorLinkPrologue(
+                    link: attachment.link,
                     conduit: transport
                 )
                 readyAttachment = .negotiated(attachment.link, conduit: transport)
             case .acceptor:
-                let negotiatedTransport = try await performAcceptorTransportPrologue(
-                    transport: attachment.link,
+                let negotiatedTransport = try await performAcceptorLinkPrologue(
+                    link: attachment.link,
                     supportedConduit: transport
                 )
                 guard negotiatedTransport == transport else {

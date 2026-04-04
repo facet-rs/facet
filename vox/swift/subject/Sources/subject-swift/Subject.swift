@@ -1138,8 +1138,8 @@ func runServerListen() async throws {
 
     let clientFd = try await acceptTcpConnection(listenerFd: listenerFd)
     let link = SocketLink(fd: clientFd)
-    _ = try await performAcceptorTransportPrologue(
-        transport: link,
+    _ = try await performAcceptorLinkPrologue(
+        link: link,
         supportedConduit: subjectConduit()
     )
 

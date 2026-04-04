@@ -72,7 +72,7 @@ struct TransportTests {
         let server = try await startLocalServer()
         do {
             let link = try await connectLink(host: "127.0.0.1", port: server.port)
-            try await performInitiatorTransportPrologue(transport: link, conduit: .bare)
+            try await performInitiatorLinkPrologue(link: link, conduit: .bare)
             let keepalive = try await link.socketKeepaliveEnabled()
             #expect(keepalive)
             try? await link.close()

@@ -88,7 +88,9 @@ func connect(
     return try await StableConduit.connect(source: source)
 }
 
-public func connect(host: String, port: Int, conduit: ConduitKind = .bare) async throws -> any Conduit {
+public func connect(host: String, port: Int, conduit: ConduitKind = .bare) async throws
+    -> any Conduit
+{
     try await connect(
         host: host,
         port: port,
@@ -138,8 +140,8 @@ private struct TimedTransportedLinkSource<Base: LinkSource>: LinkSource {
         do {
             try await withThrowingTaskGroup(of: Void.self) { group in
                 group.addTask {
-                    try await performInitiatorTransportPrologue(
-                        transport: attachment.link,
+                    try await performInitiatorLinkPrologue(
+                        link: attachment.link,
                         conduit: conduit
                     )
                 }

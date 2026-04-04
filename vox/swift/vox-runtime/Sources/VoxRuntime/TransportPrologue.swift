@@ -7,7 +7,8 @@ let defaultTransportPrologueTimeoutNs: UInt64 = 5_000_000_000
 
 func encodeTransportHello(_ conduit: ConduitKind) -> [UInt8] {
     [
-        transportHelloMagic[0], transportHelloMagic[1], transportHelloMagic[2], transportHelloMagic[3],
+        transportHelloMagic[0], transportHelloMagic[1], transportHelloMagic[2],
+        transportHelloMagic[3],
         transportVersion,
         conduit == .stable ? 1 : 0,
         0,
@@ -17,7 +18,8 @@ func encodeTransportHello(_ conduit: ConduitKind) -> [UInt8] {
 
 public func encodeTransportAccept(_ conduit: ConduitKind) -> [UInt8] {
     [
-        transportAcceptMagic[0], transportAcceptMagic[1], transportAcceptMagic[2], transportAcceptMagic[3],
+        transportAcceptMagic[0], transportAcceptMagic[1], transportAcceptMagic[2],
+        transportAcceptMagic[3],
         transportVersion,
         conduit == .stable ? 1 : 0,
         0,
@@ -27,7 +29,8 @@ public func encodeTransportAccept(_ conduit: ConduitKind) -> [UInt8] {
 
 func encodeTransportRejectUnsupported() -> [UInt8] {
     [
-        transportRejectMagic[0], transportRejectMagic[1], transportRejectMagic[2], transportRejectMagic[3],
+        transportRejectMagic[0], transportRejectMagic[1], transportRejectMagic[2],
+        transportRejectMagic[3],
         transportVersion,
         rejectUnsupportedMode,
         0,
@@ -65,7 +68,8 @@ func validateTransportAccept(_ bytes: [UInt8], requested: ConduitKind) throws {
         }
         let selected = bytes[5] == 1 ? ConduitKind.stable : ConduitKind.bare
         guard selected == requested else {
-            throw TransportError.protocolViolation("transport selected \(selected) for requested \(requested)")
+            throw TransportError.protocolViolation(
+                "transport selected \(selected) for requested \(requested)")
         }
         return
     }
@@ -78,29 +82,29 @@ func validateTransportAccept(_ bytes: [UInt8], requested: ConduitKind) throws {
     throw TransportError.protocolViolation("expected TransportAccept or TransportReject")
 }
 
-public func performInitiatorTransportPrologue(
-    transport: some Link,
+public func performInitiatorLinkPrologue(
+    link: some Link,
     conduit: ConduitKind
 ) async throws {
-    try await transport.sendRawPrologue(encodeTransportHello(conduit))
-    guard let response = try await transport.recvRawPrologue() else {
+    try await link.sendRawPrologue(encodeTransportHello(conduit))
+    guard let response = try await link.recvRawPrologue() else {
         throw TransportError.connectionClosed
     }
     try validateTransportAccept(response, requested: conduit)
 }
 
-public func performAcceptorTransportPrologue(
-    transport: some Link,
+public func performAcceptorLinkPrologue(
+    link: some Link,
     supportedConduit: ConduitKind = .bare
 ) async throws -> ConduitKind {
-    guard let request = try await transport.recvRawPrologue() else {
+    guard let request = try await link.recvRawPrologue() else {
         throw TransportError.connectionClosed
     }
     let requested = try decodeTransportHello(request)
     guard requested == supportedConduit else {
-        try await transport.sendRawPrologue(encodeTransportRejectUnsupported())
+        try await link.sendRawPrologue(encodeTransportRejectUnsupported())
         throw TransportError.protocolViolation("transport rejected unsupported conduit mode")
     }
-    try await transport.sendRawPrologue(encodeTransportAccept(requested))
+    try await link.sendRawPrologue(encodeTransportAccept(requested))
     return requested
 }

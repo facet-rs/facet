@@ -326,8 +326,8 @@ public func establishAcceptor(
     metadata: [MetadataEntry] = []
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
     if attachment.negotiatedConduit == nil {
-        let negotiatedTransport = try await performAcceptorTransportPrologue(
-            transport: attachment.link,
+        let negotiatedTransport = try await performAcceptorLinkPrologue(
+            link: attachment.link,
             supportedConduit: transport
         )
         guard negotiatedTransport == transport else {

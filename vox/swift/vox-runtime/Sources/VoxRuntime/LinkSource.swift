@@ -120,8 +120,8 @@ struct TransportedLinkSource<Base: LinkSource>: LinkSource {
         }
 
         do {
-            try await performInitiatorTransportPrologue(
-                transport: attachment.link,
+            try await performInitiatorLinkPrologue(
+                link: attachment.link,
                 conduit: conduit
             )
             return .negotiated(attachment.link, conduit: conduit)

@@ -66,15 +66,16 @@ public final class Session: @unchecked Sendable {
         } else {
             recoverAttachment = nil
         }
-        let (connection, driver, handle, sessionResumeKey, peerMetadata) = try await establishInitiator(
-            attachment: attachment,
-            transport: connector.transport,
-            dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
-            keepalive: keepalive,
-            resumable: resumable,
-            recoverAttachment: recoverAttachment
-        )
+        let (connection, driver, handle, sessionResumeKey, peerMetadata) =
+            try await establishInitiator(
+                attachment: attachment,
+                transport: connector.transport,
+                dispatcher: dispatcher,
+                acceptConnections: acceptConnections,
+                keepalive: keepalive,
+                resumable: resumable,
+                recoverAttachment: recoverAttachment
+            )
         return Session(
             role: .initiator,
             rootConnection: connection,
@@ -179,14 +180,15 @@ public final class Session: @unchecked Sendable {
         keepalive: DriverKeepaliveConfig? = nil,
         resumable: Bool = false
     ) async throws -> Session {
-        let (connection, driver, handle, sessionResumeKey, peerMetadata) = try await establishInitiator(
-            attachment: .fresh(link),
-            transport: conduit,
-            dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
-            keepalive: keepalive,
-            resumable: resumable
-        )
+        let (connection, driver, handle, sessionResumeKey, peerMetadata) =
+            try await establishInitiator(
+                attachment: .fresh(link),
+                transport: conduit,
+                dispatcher: dispatcher,
+                acceptConnections: acceptConnections,
+                keepalive: keepalive,
+                resumable: resumable
+            )
         return Session(
             role: .initiator,
             rootConnection: connection,
@@ -208,16 +210,18 @@ public final class Session: @unchecked Sendable {
         metadata: [MetadataEntry] = []
     ) async throws -> Session {
         let selectedConduit = conduit ?? attachment.negotiatedConduit ?? .bare
-        let metadata = injectExpectedRootService(metadata, serviceName: ExpectedClient.voxServiceName)
-        let (connection, driver, handle, sessionResumeKey, peerMetadata) = try await establishAcceptor(
-            attachment: attachment,
-            transport: selectedConduit,
-            dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
-            keepalive: keepalive,
-            resumable: resumable,
-            metadata: metadata
-        )
+        let metadata = injectExpectedRootService(
+            metadata, serviceName: ExpectedClient.voxServiceName)
+        let (connection, driver, handle, sessionResumeKey, peerMetadata) =
+            try await establishAcceptor(
+                attachment: attachment,
+                transport: selectedConduit,
+                dispatcher: dispatcher,
+                acceptConnections: acceptConnections,
+                keepalive: keepalive,
+                resumable: resumable,
+                metadata: metadata
+            )
         return Session(
             role: .acceptor,
             rootConnection: connection,
@@ -306,8 +310,8 @@ public final class Session: @unchecked Sendable {
         let selectedConduit = conduit ?? attachment.negotiatedConduit ?? .bare
         let readyAttachment: LinkAttachment
         if attachment.negotiatedConduit == nil {
-            let negotiatedTransport = try await performAcceptorTransportPrologue(
-                transport: attachment.link,
+            let negotiatedTransport = try await performAcceptorLinkPrologue(
+                link: attachment.link,
                 supportedConduit: selectedConduit
             )
             guard negotiatedTransport == selectedConduit else {
