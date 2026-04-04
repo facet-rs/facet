@@ -597,7 +597,7 @@ fn encode_scalar_stmt(scalar: ScalarType, value: &str) -> String {
 
 /// Generate an encode closure for use with encodeVec / encodeOption.
 /// Closures take `(T, inout ByteBuffer)` — parameters named `val` and `buf`.
-fn encode_element_closure(shape: &'static Shape, types: &[WireType]) -> String {
+fn encode_element_closure(shape: &'static Shape, _types: &[WireType]) -> String {
     if is_bytes(shape) {
         return "{ val, buf in encodeByteSeq(val, into: &buf) }".into();
     }
@@ -611,11 +611,11 @@ fn encode_element_closure(shape: &'static Shape, types: &[WireType]) -> String {
             "{ val, buf in val.encode(into: &buf) }".into()
         }
         ShapeKind::List { element } | ShapeKind::Slice { element } => {
-            let inner = encode_element_closure(element, types);
+            let inner = encode_element_closure(element, _types);
             format!("{{ val, buf in encodeVec(val, into: &buf, encoder: {inner}) }}")
         }
         ShapeKind::Opaque => "{ val, buf in val.encode(into: &buf) }".into(),
-        ShapeKind::Pointer { pointee } => encode_element_closure(pointee, types),
+        ShapeKind::Pointer { pointee } => encode_element_closure(pointee, _types),
         _ => "{ _, _ in /* unsupported */ }".into(),
     }
 }

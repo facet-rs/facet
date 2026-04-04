@@ -486,13 +486,3 @@ fn generate_decode_closure_for_channel(inner: &'static Shape) -> String {
     use super::decode::generate_decode_closure;
     generate_decode_closure(inner)
 }
-
-fn unique_decode_cursor_name(_args: &[vox_types::ArgDescriptor]) -> String {
-    // kept for any remaining call sites; buffer is always named `buffer` now
-    let arg_names: Vec<String> = _args.iter().map(|a| a.name.to_lower_camel_case()).collect();
-    let mut candidate = String::from("cursor");
-    while arg_names.iter().any(|name| name == &candidate) {
-        candidate.push('_');
-    }
-    candidate
-}

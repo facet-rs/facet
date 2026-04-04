@@ -9,7 +9,7 @@
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use vox_types::{MethodDescriptor, ServiceDescriptor, ShapeKind, classify_shape};
 
-use super::decode::{generate_decode_stmt_from_with_cursor, generate_decode_stmt_with_buf};
+use super::decode::generate_decode_stmt_with_buf;
 use super::encode::generate_encode_stmt;
 use super::types::{format_doc, is_channel, swift_type_client_arg, swift_type_client_return};
 use crate::code_writer::CodeWriter;
