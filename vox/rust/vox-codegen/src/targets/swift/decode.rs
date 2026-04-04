@@ -12,7 +12,7 @@ use vox_types::{
 /// Generate a Swift decode statement for a given shape.
 /// Returns code that decodes from `buffer` into a variable named `var_name`.
 pub fn generate_decode_stmt(shape: &'static Shape, var_name: &str, indent: &str) -> String {
-    generate_decode_stmt_impl(shape, var_name, indent)
+    generate_decode_stmt_impl(shape, var_name, indent, "buffer")
 }
 
 /// Generate a Swift decode statement for a given shape using a custom cursor variable name.
@@ -23,7 +23,7 @@ pub fn generate_decode_stmt_with_cursor(
     indent: &str,
     _cursor_var: &str,
 ) -> String {
-    generate_decode_stmt_impl(shape, var_name, indent)
+    generate_decode_stmt_impl(shape, var_name, indent, "buffer")
 }
 
 /// Generate a Swift decode statement from a specific data variable.
@@ -34,7 +34,7 @@ pub fn generate_decode_stmt_from(
     indent: &str,
     _data_var: &str,
 ) -> String {
-    generate_decode_stmt_impl(shape, var_name, indent)
+    generate_decode_stmt_impl(shape, var_name, indent, "buffer")
 }
 
 /// Generate a Swift decode statement from a specific data variable and cursor.
@@ -46,43 +46,61 @@ pub fn generate_decode_stmt_from_with_cursor(
     _data_var: &str,
     _cursor_var: &str,
 ) -> String {
-    generate_decode_stmt_impl(shape, var_name, indent)
+    generate_decode_stmt_impl(shape, var_name, indent, "buffer")
 }
 
-/// Core implementation: generate a decode statement that reads from `buffer: inout ByteBuffer`.
-fn generate_decode_stmt_impl(shape: &'static Shape, var_name: &str, indent: &str) -> String {
-    // bytes → ByteBuffer slice, presented as ByteBuffer to callers that need it
+/// Core implementation: generate a decode statement that reads from the named buffer variable.
+pub fn generate_decode_stmt_with_buf(
+    shape: &'static Shape,
+    var_name: &str,
+    indent: &str,
+    buf_name: &str,
+) -> String {
+    generate_decode_stmt_impl(shape, var_name, indent, buf_name)
+}
+
+fn generate_decode_stmt_impl(
+    shape: &'static Shape,
+    var_name: &str,
+    indent: &str,
+    buf_name: &str,
+) -> String {
+    // bytes → ByteBuffer slice, presented as Data for the user-facing type
     if is_bytes(shape) {
-        return format!("{indent}let {var_name} = try decodeBytes(from: &buffer)\n");
+        return format!(
+            "{indent}var _{var_name}_buf = try decodeBytes(from: &{buf_name})\n{indent}let {var_name} = Data(_{var_name}_buf.readBytes(length: _{var_name}_buf.readableBytes) ?? [])\n"
+        );
     }
 
     match classify_shape(shape) {
         ShapeKind::Scalar(scalar) => {
             let decode_fn = swift_decode_fn(scalar);
-            format!("{indent}let {var_name} = try {decode_fn}(from: &buffer)\n")
+            format!("{indent}let {var_name} = try {decode_fn}(from: &{buf_name})\n")
         }
         ShapeKind::List { element }
         | ShapeKind::Slice { element }
         | ShapeKind::Array { element, .. } => {
             let inner = generate_decode_closure(element);
-            format!("{indent}let {var_name} = try decodeVec(from: &buffer, decoder: {inner})\n")
+            format!("{indent}let {var_name} = try decodeVec(from: &{buf_name}, decoder: {inner})\n")
         }
         ShapeKind::Option { inner } => {
             let inner = generate_decode_closure(inner);
-            format!("{indent}let {var_name} = try decodeOption(from: &buffer, decoder: {inner})\n")
+            format!(
+                "{indent}let {var_name} = try decodeOption(from: &{buf_name}, decoder: {inner})\n"
+            )
         }
         ShapeKind::Tuple { elements } if elements.len() == 2 => {
             let a = generate_decode_closure(elements[0].shape);
             let b = generate_decode_closure(elements[1].shape);
             format!(
-                "{indent}let {var_name} = try decodeTuple2(from: &buffer, decoderA: {a}, decoderB: {b})\n"
+                "{indent}let {var_name} = try decodeTuple2(from: &{buf_name}, decoderA: {a}, decoderB: {b})\n"
             )
         }
         ShapeKind::TupleStruct { fields } if fields.len() == 2 => {
             let a = generate_decode_closure(fields[0].shape());
             let b = generate_decode_closure(fields[1].shape());
             format!(
-                "{indent}let {var_name} = try decodeTuple2(from: &buffer, decoderA: {a}, decoderB: {b})\n"
+                "{indent}let {var_name} = try decodeTuple2(from: &{buf_name}, decoderA: {a}, decoderB: {b})\n"
             )
         }
         ShapeKind::Struct(StructInfo {
@@ -98,6 +116,7 @@ fn generate_decode_stmt_impl(shape: &'static Shape, var_name: &str, indent: &str
                     f.shape(),
                     &format!("_{var_name}_{field_name}"),
                     indent,
+                    buf_name,
                 ));
             }
             let field_inits: Vec<String> = fields
@@ -120,7 +139,7 @@ fn generate_decode_stmt_impl(shape: &'static Shape, var_name: &str, indent: &str
         }) => {
             let mut out = String::new();
             out.push_str(&format!(
-                "{indent}let _{var_name}_disc = try decodeVarint(from: &buffer)\n"
+                "{indent}let _{var_name}_disc = try decodeVarint(from: &{buf_name})\n"
             ));
             out.push_str(&format!("{indent}let {var_name}: {name}\n"));
             out.push_str(&format!("{indent}switch _{var_name}_disc {{\n"));
@@ -139,6 +158,7 @@ fn generate_decode_stmt_impl(shape: &'static Shape, var_name: &str, indent: &str
                             inner,
                             &format!("_{var_name}_val"),
                             &inner_indent,
+                            buf_name,
                         ));
                         out.push_str(&format!(
                             "{inner_indent}{var_name} = .{}(_{var_name}_val)\n",
@@ -151,6 +171,7 @@ fn generate_decode_stmt_impl(shape: &'static Shape, var_name: &str, indent: &str
                                 f.shape(),
                                 &format!("_{var_name}_f{j}"),
                                 &inner_indent,
+                                buf_name,
                             ));
                         }
                         let args: Vec<String> = (0..fields.len())
@@ -169,6 +190,7 @@ fn generate_decode_stmt_impl(shape: &'static Shape, var_name: &str, indent: &str
                                 f.shape(),
                                 &format!("_{var_name}_{field_name}"),
                                 &inner_indent,
+                                buf_name,
                             ));
                         }
                         let args: Vec<String> = fields
@@ -193,13 +215,15 @@ fn generate_decode_stmt_impl(shape: &'static Shape, var_name: &str, indent: &str
             out.push_str(&format!("{indent}}}\n"));
             out
         }
-        ShapeKind::Pointer { pointee } => generate_decode_stmt_impl(pointee, var_name, indent),
+        ShapeKind::Pointer { pointee } => {
+            generate_decode_stmt_impl(pointee, var_name, indent, buf_name)
+        }
         ShapeKind::Result { ok, err } => {
             let ok_type = super::types::swift_type_base(ok);
             let err_type = super::types::swift_type_base(err);
             let mut out = String::new();
             out.push_str(&format!(
-                "{indent}let _{var_name}_disc = try decodeVarint(from: &buffer)\n"
+                "{indent}let _{var_name}_disc = try decodeVarint(from: &{buf_name})\n"
             ));
             out.push_str(&format!(
                 "{indent}let {var_name}: Result<{ok_type}, {err_type}>\n"
@@ -211,6 +235,7 @@ fn generate_decode_stmt_impl(shape: &'static Shape, var_name: &str, indent: &str
                 ok,
                 &format!("_{var_name}_ok"),
                 &inner_indent,
+                buf_name,
             ));
             out.push_str(&format!(
                 "{inner_indent}{var_name} = .success(_{var_name}_ok)\n"
@@ -220,6 +245,7 @@ fn generate_decode_stmt_impl(shape: &'static Shape, var_name: &str, indent: &str
                 err,
                 &format!("_{var_name}_err"),
                 &inner_indent,
+                buf_name,
             ));
             out.push_str(&format!(
                 "{inner_indent}{var_name} = .failure(_{var_name}_err)\n"
@@ -241,7 +267,8 @@ fn generate_decode_stmt_impl(shape: &'static Shape, var_name: &str, indent: &str
 /// `decodeVec`, `decodeOption`, etc.
 pub fn generate_decode_closure(shape: &'static Shape) -> String {
     if is_bytes(shape) {
-        return "{ buf in try decodeBytes(from: &buf) }".into();
+        // decodeBytes returns ByteBuffer; convert to Data for user-facing type
+        return "{ buf in var _b = try decodeBytes(from: &buf); return Data(_b.readBytes(length: _b.readableBytes) ?? []) }".into();
     }
 
     match classify_shape(shape) {

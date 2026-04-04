@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import NIOCore
 import Testing
 
 @testable import VoxRuntime
@@ -43,13 +44,15 @@ struct ChannelFlowControlTests {
         let registry = ChannelRegistry()
         let payloads = PayloadInbox()
         let credit = await registry.registerOutgoing(1, initialCredit: 1)
-        let tx = Tx<Int32>(serialize: { encodeI32($0) })
-        tx.bind(channelId: 1, taskTx: { message in
-            guard case .data(_, let payload) = message else {
-                return
-            }
-            payloads.append(payload)
-        }, credit: credit)
+        let tx = Tx<Int32>(serialize: { val, buf in encodeI32(val, into: &buf) })
+        tx.bind(
+            channelId: 1,
+            taskTx: { message in
+                guard case .data(_, let payload) = message else {
+                    return
+                }
+                payloads.append(payload)
+            }, credit: credit)
 
         try await tx.send(1)
 
@@ -63,16 +66,16 @@ struct ChannelFlowControlTests {
 
         let beforeGrant = payloads.snapshot()
         #expect(beforeGrant.count == 1)
-        var offset = 0
-        #expect(try decodeI32(from: Data(beforeGrant[0]), offset: &offset) == 1)
+        var beforeBuf = ByteBufferAllocator().buffer(bytes: beforeGrant[0])
+        #expect(try decodeI32(from: &beforeBuf) == 1)
 
         await registry.deliverCredit(channelId: 1, bytes: 1)
         try await secondSend.value
 
         let afterGrant = payloads.snapshot()
         #expect(afterGrant.count == 2)
-        offset = 0
-        #expect(try decodeI32(from: Data(afterGrant[1]), offset: &offset) == 2)
+        var afterBuf = ByteBufferAllocator().buffer(bytes: afterGrant[1])
+        #expect(try decodeI32(from: &afterBuf) == 2)
     }
 
     @Test func receiverBatchesGrantCreditAtHalfWindow() async throws {
@@ -83,14 +86,16 @@ struct ChannelFlowControlTests {
         }
 
         for i in 0..<8 {
-            receiver.deliver(encodeI32(Int32(i)))
+            var buf = ByteBufferAllocator().buffer(capacity: 4)
+            encodeI32(Int32(i), into: &buf)
+            receiver.deliver(buf.readBytes(length: buf.readableBytes) ?? [])
         }
 
         for i in 0..<8 {
             let bytes = await receiver.recv()
             #expect(bytes != nil)
-            var offset = 0
-            let value = try decodeI32(from: Data(bytes!), offset: &offset)
+            var itemBuf = ByteBufferAllocator().buffer(bytes: bytes!)
+            let value = try decodeI32(from: &itemBuf)
             #expect(value == Int32(i))
         }
 

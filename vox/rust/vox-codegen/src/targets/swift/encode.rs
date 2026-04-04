@@ -36,14 +36,14 @@ pub fn generate_encode_stmt(shape: &'static Shape, value: &str) -> String {
             format!("encodeVarint({value}.channelId, into: &buffer)")
         }
         ShapeKind::Tuple { elements } if elements.len() == 2 => {
-            let a = generate_encode_closure(elements[0].shape);
-            let b = generate_encode_closure(elements[1].shape);
-            format!("{a}({value}.0, &buffer)\n{b}({value}.1, &buffer)")
+            let a = generate_encode_stmt(elements[0].shape, &format!("{value}.0"));
+            let b = generate_encode_stmt(elements[1].shape, &format!("{value}.1"));
+            format!("{a}\n{b}")
         }
         ShapeKind::TupleStruct { fields } if fields.len() == 2 => {
-            let a = generate_encode_closure(fields[0].shape());
-            let b = generate_encode_closure(fields[1].shape());
-            format!("{a}({value}.0, &buffer)\n{b}({value}.1, &buffer)")
+            let a = generate_encode_stmt(fields[0].shape(), &format!("{value}.0"));
+            let b = generate_encode_stmt(fields[1].shape(), &format!("{value}.1"));
+            format!("{a}\n{b}")
         }
         ShapeKind::Struct(StructInfo {
             name: Some(name), ..
@@ -71,16 +71,16 @@ pub fn generate_encode_stmt(shape: &'static Shape, value: &str) -> String {
             format!("{fn_name}({value}, into: &buffer)")
         }
         ShapeKind::Enum(EnumInfo { name: None, .. }) => {
-            // Anonymous enum — fall back to closure call
+            // Anonymous enum — inline switch
             let closure = generate_encode_closure(shape);
             format!("{closure}({value}, &buffer)")
         }
         ShapeKind::Pointer { pointee } => generate_encode_stmt(pointee, value),
         ShapeKind::Result { ok, err } => {
-            let ok_closure = generate_encode_closure(ok);
-            let err_closure = generate_encode_closure(err);
+            let ok_stmt = generate_encode_stmt(ok, "v");
+            let err_stmt = generate_encode_stmt(err, "e");
             format!(
-                "switch {value} {{ case .success(let v): encodeVarint(UInt64(0), into: &buffer); {ok_closure}(v, &buffer); case .failure(let e): encodeVarint(UInt64(1), into: &buffer); {err_closure}(e, &buffer) }}"
+                "switch {value} {{\ncase .success(let v):\n    encodeVarint(UInt64(0), into: &buffer)\n    {ok_stmt}\ncase .failure(let e):\n    encodeVarint(UInt64(1), into: &buffer)\n    {err_stmt}\n}}"
             )
         }
         _ => format!("/* unsupported encode for {value} */"),
@@ -111,14 +111,14 @@ pub fn generate_encode_closure(shape: &'static Shape) -> String {
             "{ val, buf in encodeVarint(val.channelId, into: &buf) }".into()
         }
         ShapeKind::Tuple { elements } if elements.len() == 2 => {
-            let a = generate_encode_closure(elements[0].shape);
-            let b = generate_encode_closure(elements[1].shape);
-            format!("{{ val, buf in {a}(val.0, &buf); {b}(val.1, &buf) }}")
+            let a = encode_call_expr(elements[0].shape, "val.0", "buf");
+            let b = encode_call_expr(elements[1].shape, "val.1", "buf");
+            format!("{{ val, buf in {a}; {b} }}")
         }
         ShapeKind::TupleStruct { fields } if fields.len() == 2 => {
-            let a = generate_encode_closure(fields[0].shape());
-            let b = generate_encode_closure(fields[1].shape());
-            format!("{{ val, buf in {a}(val.0, &buf); {b}(val.1, &buf) }}")
+            let a = encode_call_expr(fields[0].shape(), "val.0", "buf");
+            let b = encode_call_expr(fields[1].shape(), "val.1", "buf");
+            format!("{{ val, buf in {a}; {b} }}")
         }
         ShapeKind::Struct(StructInfo {
             name: Some(name), ..
@@ -331,6 +331,46 @@ pub fn generate_named_type_encode_fns(named_types: &[(String, &'static Shape)]) 
 /// The name of the generated encode function for a named type.
 pub fn named_type_encode_fn_name(name: &str) -> String {
     format!("encode{name}")
+}
+
+/// Generate a direct encode call expression (not a closure) for a value into a named buffer.
+/// Used inside closure bodies where closure IIFEs would be invalid Swift.
+fn encode_call_expr(shape: &'static Shape, value: &str, buf: &str) -> String {
+    if is_bytes(shape) {
+        return format!("encodeByteSeq({value}, into: &{buf})");
+    }
+    match classify_shape(shape) {
+        ShapeKind::Scalar(scalar) => {
+            let fn_name = swift_encode_fn(scalar);
+            format!("{fn_name}({value}, into: &{buf})")
+        }
+        ShapeKind::Struct(StructInfo {
+            name: Some(name), ..
+        })
+        | ShapeKind::Enum(EnumInfo {
+            name: Some(name), ..
+        }) => {
+            let fn_name = named_type_encode_fn_name(name);
+            format!("{fn_name}({value}, into: &{buf})")
+        }
+        ShapeKind::List { element } | ShapeKind::Slice { element } => {
+            let inner = generate_encode_closure(element);
+            format!("encodeVec({value}, into: &{buf}, encoder: {inner})")
+        }
+        ShapeKind::Option { inner } => {
+            let inner = generate_encode_closure(inner);
+            format!("encodeOption({value}, into: &{buf}, encoder: {inner})")
+        }
+        ShapeKind::Pointer { pointee } => encode_call_expr(pointee, value, buf),
+        ShapeKind::Tx { .. } | ShapeKind::Rx { .. } => {
+            format!("encodeVarint({value}.channelId, into: &{buf})")
+        }
+        _ => {
+            // Fallback: wrap in a named function call via closure
+            let closure = generate_encode_closure(shape);
+            format!("({closure})({value}, &{buf})")
+        }
+    }
 }
 
 /// Get the Swift encode function name for a scalar type.

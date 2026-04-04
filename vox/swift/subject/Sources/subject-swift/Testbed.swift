@@ -543,7 +543,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeString(from: &buffer)
+      let result = try decodeString(from: &cursor)
       return result
     case 1:
       let _cursor_errorCode = try decodeU8(from: &cursor)
@@ -584,7 +584,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeString(from: &buffer)
+      let result = try decodeString(from: &cursor)
       return result
     case 1:
       let _cursor_errorCode = try decodeU8(from: &cursor)
@@ -626,13 +626,13 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let value = try decodeI64(from: &buffer)
+      let value = try decodeI64(from: &cursor)
       return .success(value)
     case 1:
       let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
-        let _userError_disc = try decodeVarint(from: &buffer)
+        let _userError_disc = try decodeVarint(from: &cursor)
         let userError: MathError
         switch _userError_disc {
         case 0:
@@ -677,17 +677,17 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _value_name = try decodeString(from: &buffer)
-      let _value_age = try decodeU8(from: &buffer)
+      let _value_name = try decodeString(from: &cursor)
+      let _value_age = try decodeU8(from: &cursor)
       let _value_email = try decodeOption(
-        from: &buffer, decoder: { buf in try decodeString(from: &buf) })
+        from: &cursor, decoder: { buf in try decodeString(from: &buf) })
       let value = Person(name: _value_name, age: _value_age, email: _value_email)
       return .success(value)
     case 1:
       let _cursor_errorCode = try decodeU8(from: &cursor)
       switch _cursor_errorCode {
       case 0:
-        let _userError_disc = try decodeVarint(from: &buffer)
+        let _userError_disc = try decodeVarint(from: &cursor)
         let userError: LookupError
         switch _userError_disc {
         case 0:
@@ -749,7 +749,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeI64(from: &buffer)
+      let result = try decodeI64(from: &cursor)
       return result
     case 1:
       let _cursor_errorCode = try decodeU8(from: &cursor)
@@ -1024,8 +1024,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_x = try decodeI32(from: &buffer)
-      let _result_y = try decodeI32(from: &buffer)
+      let _result_x = try decodeI32(from: &cursor)
+      let _result_y = try decodeI32(from: &cursor)
       let result = Point(x: _result_x, y: _result_y)
       return result
     case 1:
@@ -1069,10 +1069,10 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_name = try decodeString(from: &buffer)
-      let _result_age = try decodeU8(from: &buffer)
+      let _result_name = try decodeString(from: &cursor)
+      let _result_age = try decodeU8(from: &cursor)
       let _result_email = try decodeOption(
-        from: &buffer, decoder: { buf in try decodeString(from: &buf) })
+        from: &cursor, decoder: { buf in try decodeString(from: &buf) })
       let result = Person(name: _result_name, age: _result_age, email: _result_email)
       return result
     case 1:
@@ -1114,7 +1114,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeF64(from: &buffer)
+      let result = try decodeF64(from: &cursor)
       return result
     case 1:
       let _cursor_errorCode = try decodeU8(from: &cursor)
@@ -1156,7 +1156,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     switch _cursor_resultDisc {
     case 0:
       let result = try decodeOption(
-        from: &buffer,
+        from: &cursor,
         decoder: { buf in
           let disc = try decodeVarint(from: &buf)
           let result: Color
@@ -1212,7 +1212,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeF64(from: &buffer)
+      let result = try decodeF64(from: &cursor)
       return result
     case 1:
       let _cursor_errorCode = try decodeU8(from: &cursor)
@@ -1256,9 +1256,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_name = try decodeString(from: &buffer)
+      let _result_name = try decodeString(from: &cursor)
       let _result_shapes = try decodeVec(
-        from: &buffer,
+        from: &cursor,
         decoder: { buf in
           let disc = try decodeVarint(from: &buf)
           let result: Shape
@@ -1277,7 +1277,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
           }
           return result
         })
-      let __result_background_disc = try decodeVarint(from: &buffer)
+      let __result_background_disc = try decodeVarint(from: &cursor)
       let _result_background: Color
       switch __result_background_disc {
       case 0:
@@ -1331,10 +1331,10 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_revision = try decodeVarint(from: &buffer)
-      let _result_mount = try decodeString(from: &buffer)
+      let _result_revision = try decodeVarint(from: &cursor)
+      let _result_mount = try decodeString(from: &cursor)
       let _result_entries = try decodeVec(
-        from: &buffer,
+        from: &cursor,
         decoder: { buf in
           let _id = try ({ buf in try decodeVarint(from: &buf) })(&buf)
           let _parent = try
@@ -1353,8 +1353,14 @@ public final class TestbedClient: TestbedCaller, Sendable {
                 })
             })(&buf)
           let _chunks = try
-            ({ buf in try decodeVec(from: &buf, decoder: { buf in try decodeBytes(from: &buf) }) })(
-              &buf)
+            ({ buf in
+              try decodeVec(
+                from: &buf,
+                decoder: { buf in
+                  var _b = try decodeBytes(from: &buf)
+                  return Data(_b.readBytes(length: _b.readableBytes) ?? [])
+                })
+            })(&buf)
           let _kind = try
             ({ buf in
               let disc = try decodeVarint(from: &buf)
@@ -1390,8 +1396,10 @@ public final class TestbedClient: TestbedCaller, Sendable {
             kind: _kind)
         })
       let _result_footer = try decodeOption(
-        from: &buffer, decoder: { buf in try decodeString(from: &buf) })
-      let _result_digest = try decodeBytes(from: &buffer)
+        from: &cursor, decoder: { buf in try decodeString(from: &buf) })
+      var __result_digest_buf = try decodeBytes(from: &cursor)
+      let _result_digest = Data(
+        __result_digest_buf.readBytes(length: __result_digest_buf.readableBytes) ?? [])
       let result = GnarlyPayload(
         revision: _result_revision, mount: _result_mount, entries: _result_entries,
         footer: _result_footer, digest: _result_digest)
@@ -1435,17 +1443,19 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_disc = try decodeVarint(from: &buffer)
+      let _result_disc = try decodeVarint(from: &cursor)
       let result: Message
       switch _result_disc {
       case 0:
-        let _result_val = try decodeString(from: &buffer)
+        let _result_val = try decodeString(from: &cursor)
         result = .text(_result_val)
       case 1:
-        let _result_val = try decodeI64(from: &buffer)
+        let _result_val = try decodeI64(from: &cursor)
         result = .number(_result_val)
       case 2:
-        let _result_val = try decodeBytes(from: &buffer)
+        var __result_val_buf = try decodeBytes(from: &cursor)
+        let _result_val = Data(
+          __result_val_buf.readBytes(length: __result_val_buf.readableBytes) ?? [])
         result = .data(_result_val)
       default:
         throw VoxError.decodeError("unknown enum variant")
@@ -1491,7 +1501,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     switch _cursor_resultDisc {
     case 0:
       let result = try decodeVec(
-        from: &buffer,
+        from: &cursor,
         decoder: { buf in
           let _x = try ({ buf in try decodeI32(from: &buf) })(&buf)
           let _y = try ({ buf in try decodeI32(from: &buf) })(&buf)
@@ -1520,8 +1530,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
   }
 
   public func swapPair(pair: (Int32, String)) async throws -> (String, Int32) {
-    var buffer = ByteBufferAllocator().buffer(capacity: 64) { val, buf in encodeI32(val, into: &buf)
-    }(pair.0, &buffer) { val, buf in encodeString(val, into: &buf) }(pair.1, &buffer)
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encodeI32(pair.0, into: &buffer)
+    encodeString(pair.1, into: &buffer)
     let payload = buffer.readBytes(length: buffer.readableBytes) ?? []
     let schemaInfo = ClientSchemaInfo(
       methodInfo: testbed_method_schemas[0x7d55_a713_ad61_2bf2]!,
@@ -1538,7 +1549,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     switch _cursor_resultDisc {
     case 0:
       let result = try decodeTuple2(
-        from: &buffer, decoderA: { buf in try decodeString(from: &buf) },
+        from: &cursor, decoderA: { buf in try decodeString(from: &buf) },
         decoderB: { buf in try decodeI32(from: &buf) })
       return result
     case 1:
@@ -1580,7 +1591,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeBytes(from: &buffer)
+      var _result_buf = try decodeBytes(from: &cursor)
+      let result = Data(_result_buf.readBytes(length: _result_buf.readableBytes) ?? [])
       return result
     case 1:
       let _cursor_errorCode = try decodeU8(from: &cursor)
@@ -1621,7 +1633,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeBool(from: &buffer)
+      let result = try decodeBool(from: &cursor)
       return result
     case 1:
       let _cursor_errorCode = try decodeU8(from: &cursor)
@@ -1662,7 +1674,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeVarint(from: &buffer)
+      let result = try decodeVarint(from: &cursor)
       return result
     case 1:
       let _cursor_errorCode = try decodeU8(from: &cursor)
@@ -1703,7 +1715,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeOption(from: &buffer, decoder: { buf in try decodeString(from: &buf) })
+      let result = try decodeOption(from: &cursor, decoder: { buf in try decodeString(from: &buf) })
       return result
     case 1:
       let _cursor_errorCode = try decodeU8(from: &cursor)
@@ -1761,7 +1773,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let result = try decodeI64(from: &buffer)
+      let result = try decodeI64(from: &cursor)
       return result
     case 1:
       let _cursor_errorCode = try decodeU8(from: &cursor)
@@ -1860,7 +1872,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     switch _cursor_resultDisc {
     case 0:
       let result = try decodeVec(
-        from: &buffer,
+        from: &cursor,
         decoder: { buf in
           let disc = try decodeVarint(from: &buf)
           let result: Color
@@ -1921,10 +1933,10 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_label = try decodeString(from: &buffer)
-      let _result_x = try decodeI32(from: &buffer)
-      let _result_y = try decodeI32(from: &buffer)
-      let _result_active = try decodeBool(from: &buffer)
+      let _result_label = try decodeString(from: &cursor)
+      let _result_x = try decodeI32(from: &cursor)
+      let _result_y = try decodeI32(from: &cursor)
+      let _result_active = try decodeBool(from: &cursor)
       let result = TaggedPoint(
         label: _result_label, x: _result_x, y: _result_y, active: _result_active)
       return result
@@ -1967,15 +1979,15 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_disc = try decodeVarint(from: &buffer)
+      let _result_disc = try decodeVarint(from: &cursor)
       let result: Shape
       switch _result_disc {
       case 0:
-        let _result_radius = try decodeF64(from: &buffer)
+        let _result_radius = try decodeF64(from: &cursor)
         result = .circle(radius: _result_radius)
       case 1:
-        let _result_width = try decodeF64(from: &buffer)
-        let _result_height = try decodeF64(from: &buffer)
+        let _result_width = try decodeF64(from: &cursor)
+        let _result_height = try decodeF64(from: &cursor)
         result = .rectangle(width: _result_width, height: _result_height)
       case 2:
         result = .point
@@ -2022,7 +2034,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_disc = try decodeVarint(from: &buffer)
+      let _result_disc = try decodeVarint(from: &cursor)
       let result: Status
       switch _result_disc {
       case 0:
@@ -2072,9 +2084,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_label = try decodeString(from: &buffer)
-      let _result_priority = try decodeU32(from: &buffer)
-      let _result_note = try decodeString(from: &buffer)
+      let _result_label = try decodeString(from: &cursor)
+      let _result_priority = try decodeU32(from: &cursor)
+      let _result_note = try decodeString(from: &cursor)
       let result = Tag(label: _result_label, priority: _result_priority, note: _result_note)
       return result
     case 1:
@@ -2116,8 +2128,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_name = try decodeString(from: &buffer)
-      let _result_bio = try decodeString(from: &buffer)
+      let _result_name = try decodeString(from: &cursor)
+      let _result_bio = try decodeString(from: &cursor)
       let result = Profile(name: _result_name, bio: _result_bio)
       return result
     case 1:
@@ -2159,9 +2171,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_alpha = try decodeI32(from: &buffer)
-      let _result_beta = try decodeString(from: &buffer)
-      let _result_gamma = try decodeF64(from: &buffer)
+      let _result_alpha = try decodeI32(from: &cursor)
+      let _result_beta = try decodeString(from: &cursor)
+      let _result_gamma = try decodeF64(from: &cursor)
       let result = Record(alpha: _result_alpha, beta: _result_beta, gamma: _result_gamma)
       return result
     case 1:
@@ -2203,7 +2215,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_disc = try decodeVarint(from: &buffer)
+      let _result_disc = try decodeVarint(from: &cursor)
       let result: Status
       switch _result_disc {
       case 0:
@@ -2253,9 +2265,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_label = try decodeString(from: &buffer)
-      let _result_priority = try decodeU32(from: &buffer)
-      let _result_note = try decodeString(from: &buffer)
+      let _result_label = try decodeString(from: &cursor)
+      let _result_priority = try decodeU32(from: &cursor)
+      let _result_note = try decodeString(from: &cursor)
       let result = Tag(label: _result_label, priority: _result_priority, note: _result_note)
       return result
     case 1:
@@ -2297,8 +2309,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_unit = try decodeString(from: &buffer)
-      let _result_value = try decodeF64(from: &buffer)
+      let _result_unit = try decodeString(from: &cursor)
+      let _result_value = try decodeF64(from: &cursor)
       let result = Measurement(unit: _result_unit, value: _result_value)
       return result
     case 1:
@@ -2340,8 +2352,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let _cursor_resultDisc = try decodeVarint(from: &cursor)
     switch _cursor_resultDisc {
     case 0:
-      let _result_key = try decodeString(from: &buffer)
-      let _result_value = try decodeString(from: &buffer)
+      let _result_key = try decodeString(from: &cursor)
+      let _result_value = try decodeString(from: &cursor)
       let result = Config(key: _result_key, value: _result_value)
       return result
     case 1:
@@ -2861,17 +2873,17 @@ public final class TestbedDispatcher: ServiceDispatcher {
       do {
         let result = try await handler.divide(dividend: dividend, divisor: divisor)
         let _encoded: [UInt8] = {
-          var buf = ByteBufferAllocator().buffer(capacity: 64)
+          var buffer = ByteBufferAllocator().buffer(capacity: 64)
           switch result {
           case .success(let v):
-            encodeVarint(UInt64(0), into: &buf)
-            { val, buf in encodeI64(val, into: &buf) }(v, &buf)
+            encodeVarint(UInt64(0), into: &buffer)
+            encodeI64(v, into: &buffer)
           case .failure(let e):
-            encodeVarint(UInt64(1), into: &buf)
-            encodeU8(0, into: &buf)
-            { val, buf in encodeMathError(val, into: &buf) }(e, &buf)
+            encodeVarint(UInt64(1), into: &buffer)
+            encodeU8(0, into: &buffer)
+            encodeMathError(e, into: &buffer)
           }
-          return buf.readBytes(length: buf.readableBytes) ?? []
+          return buffer.readBytes(length: buffer.readableBytes) ?? []
         }()
         taskSender(
           .response(
@@ -2906,17 +2918,17 @@ public final class TestbedDispatcher: ServiceDispatcher {
       do {
         let result = try await handler.lookup(id: id)
         let _encoded: [UInt8] = {
-          var buf = ByteBufferAllocator().buffer(capacity: 64)
+          var buffer = ByteBufferAllocator().buffer(capacity: 64)
           switch result {
           case .success(let v):
-            encodeVarint(UInt64(0), into: &buf)
-            { val, buf in encodePerson(val, into: &buf) }(v, &buf)
+            encodeVarint(UInt64(0), into: &buffer)
+            encodePerson(v, into: &buffer)
           case .failure(let e):
-            encodeVarint(UInt64(1), into: &buf)
-            encodeU8(0, into: &buf)
-            { val, buf in encodeLookupError(val, into: &buf) }(e, &buf)
+            encodeVarint(UInt64(1), into: &buffer)
+            encodeU8(0, into: &buffer)
+            encodeLookupError(e, into: &buffer)
           }
-          return buf.readBytes(length: buf.readableBytes) ?? []
+          return buffer.readBytes(length: buffer.readableBytes) ?? []
         }()
         taskSender(
           .response(
@@ -3430,8 +3442,14 @@ public final class TestbedDispatcher: ServiceDispatcher {
                 })
             })(&buf)
           let _chunks = try
-            ({ buf in try decodeVec(from: &buf, decoder: { buf in try decodeBytes(from: &buf) }) })(
-              &buf)
+            ({ buf in
+              try decodeVec(
+                from: &buf,
+                decoder: { buf in
+                  var _b = try decodeBytes(from: &buf)
+                  return Data(_b.readBytes(length: _b.readableBytes) ?? [])
+                })
+            })(&buf)
           let _kind = try
             ({ buf in
               let disc = try decodeVarint(from: &buf)
@@ -3468,7 +3486,9 @@ public final class TestbedDispatcher: ServiceDispatcher {
         })
       let _payload_footer = try decodeOption(
         from: &buffer, decoder: { buf in try decodeString(from: &buf) })
-      let _payload_digest = try decodeBytes(from: &buffer)
+      var __payload_digest_buf = try decodeBytes(from: &buffer)
+      let _payload_digest = Data(
+        __payload_digest_buf.readBytes(length: __payload_digest_buf.readableBytes) ?? [])
       let payload = GnarlyPayload(
         revision: _payload_revision, mount: _payload_mount, entries: _payload_entries,
         footer: _payload_footer, digest: _payload_digest)
@@ -3515,7 +3535,8 @@ public final class TestbedDispatcher: ServiceDispatcher {
         let _msg_val = try decodeI64(from: &buffer)
         msg = .number(_msg_val)
       case 2:
-        let _msg_val = try decodeBytes(from: &buffer)
+        var __msg_val_buf = try decodeBytes(from: &buffer)
+        let _msg_val = Data(__msg_val_buf.readBytes(length: __msg_val_buf.readableBytes) ?? [])
         msg = .data(_msg_val)
       default:
         throw VoxError.decodeError("unknown enum variant")
@@ -3598,8 +3619,8 @@ public final class TestbedDispatcher: ServiceDispatcher {
         let _encoded = encodeResultOk(
           result,
           encoder: { val, buf in
-            { val, buf in encodeString(val, into: &buf) }(val.0, &buf)
-            { val, buf in encodeI32(val, into: &buf) }(val.1, &buf)
+            encodeString(val.0, into: &buf)
+            encodeI32(val.1, into: &buf)
           })
         taskSender(
           .response(
@@ -3630,7 +3651,8 @@ public final class TestbedDispatcher: ServiceDispatcher {
     let responseSchemaPayload = methodInfo.buildPayload(
       direction: .response, registry: schemaRegistry)
     do {
-      let data = try decodeBytes(from: &buffer)
+      var _data_buf = try decodeBytes(from: &buffer)
+      let data = Data(_data_buf.readBytes(length: _data_buf.readableBytes) ?? [])
       do {
         let result = try await handler.echoBytes(data: data)
         let _encoded = encodeResultOk(
@@ -5274,18 +5296,78 @@ public struct TestbedSerializers: BindingSerializers {
 
   public func txSerializer(for schema: BindingSchema) -> @Sendable (Any) -> [UInt8] {
     switch schema {
-    case .bool: return { encodeBool($0 as! Bool) }
-    case .u8: return { encodeU8($0 as! UInt8) }
-    case .i8: return { encodeI8($0 as! Int8) }
-    case .u16: return { encodeU16($0 as! UInt16) }
-    case .i16: return { encodeI16($0 as! Int16) }
-    case .u32: return { encodeU32($0 as! UInt32) }
-    case .i32: return { encodeI32($0 as! Int32) }
-    case .u64: return { encodeVarint($0 as! UInt64) }
-    case .i64: return { encodeI64($0 as! Int64) }
-    case .f32: return { encodeF32($0 as! Float) }
-    case .f64: return { encodeF64($0 as! Double) }
-    case .string: return { encodeString($0 as! String) }
+    case .bool:
+      return {
+        var b = ByteBufferAllocator().buffer(capacity: 1)
+        encodeBool($0 as! Bool, into: &b)
+        return b.readBytes(length: b.readableBytes) ?? []
+      }
+    case .u8:
+      return {
+        var b = ByteBufferAllocator().buffer(capacity: 1)
+        encodeU8($0 as! UInt8, into: &b)
+        return b.readBytes(length: b.readableBytes) ?? []
+      }
+    case .i8:
+      return {
+        var b = ByteBufferAllocator().buffer(capacity: 1)
+        encodeI8($0 as! Int8, into: &b)
+        return b.readBytes(length: b.readableBytes) ?? []
+      }
+    case .u16:
+      return {
+        var b = ByteBufferAllocator().buffer(capacity: 2)
+        encodeU16($0 as! UInt16, into: &b)
+        return b.readBytes(length: b.readableBytes) ?? []
+      }
+    case .i16:
+      return {
+        var b = ByteBufferAllocator().buffer(capacity: 2)
+        encodeI16($0 as! Int16, into: &b)
+        return b.readBytes(length: b.readableBytes) ?? []
+      }
+    case .u32:
+      return {
+        var b = ByteBufferAllocator().buffer(capacity: 4)
+        encodeU32($0 as! UInt32, into: &b)
+        return b.readBytes(length: b.readableBytes) ?? []
+      }
+    case .i32:
+      return {
+        var b = ByteBufferAllocator().buffer(capacity: 4)
+        encodeI32($0 as! Int32, into: &b)
+        return b.readBytes(length: b.readableBytes) ?? []
+      }
+    case .u64:
+      return {
+        var b = ByteBufferAllocator().buffer(capacity: 9)
+        encodeVarint($0 as! UInt64, into: &b)
+        return b.readBytes(length: b.readableBytes) ?? []
+      }
+    case .i64:
+      return {
+        var b = ByteBufferAllocator().buffer(capacity: 9)
+        encodeI64($0 as! Int64, into: &b)
+        return b.readBytes(length: b.readableBytes) ?? []
+      }
+    case .f32:
+      return {
+        var b = ByteBufferAllocator().buffer(capacity: 4)
+        encodeF32($0 as! Float, into: &b)
+        return b.readBytes(length: b.readableBytes) ?? []
+      }
+    case .f64:
+      return {
+        var b = ByteBufferAllocator().buffer(capacity: 8)
+        encodeF64($0 as! Double, into: &b)
+        return b.readBytes(length: b.readableBytes) ?? []
+      }
+    case .string:
+      return {
+        var b = ByteBufferAllocator().buffer(capacity: 64)
+        encodeString($0 as! String, into: &b)
+        return b.readBytes(length: b.readableBytes) ?? []
+      }
     case .bytes: return { [UInt8]($0 as! Data) }
     case .tx(_, _), .rx(_, _): fatalError("Channel schemas are not serialized directly")
     default: fatalError("Unsupported schema for Tx serialization: \(schema)")
@@ -5296,63 +5378,63 @@ public struct TestbedSerializers: BindingSerializers {
     switch schema {
     case .bool:
       return {
-        var o = 0
-        return try decodeBool(from: Data($0), offset: &o)
+        var b = ByteBufferAllocator().buffer(bytes: $0)
+        return try decodeBool(from: &b)
       }
     case .u8:
       return {
-        var o = 0
-        return try decodeU8(from: Data($0), offset: &o)
+        var b = ByteBufferAllocator().buffer(bytes: $0)
+        return try decodeU8(from: &b)
       }
     case .i8:
       return {
-        var o = 0
-        return try decodeI8(from: Data($0), offset: &o)
+        var b = ByteBufferAllocator().buffer(bytes: $0)
+        return try decodeI8(from: &b)
       }
     case .u16:
       return {
-        var o = 0
-        return try decodeU16(from: Data($0), offset: &o)
+        var b = ByteBufferAllocator().buffer(bytes: $0)
+        return try decodeU16(from: &b)
       }
     case .i16:
       return {
-        var o = 0
-        return try decodeI16(from: Data($0), offset: &o)
+        var b = ByteBufferAllocator().buffer(bytes: $0)
+        return try decodeI16(from: &b)
       }
     case .u32:
       return {
-        var o = 0
-        return try decodeU32(from: Data($0), offset: &o)
+        var b = ByteBufferAllocator().buffer(bytes: $0)
+        return try decodeU32(from: &b)
       }
     case .i32:
       return {
-        var o = 0
-        return try decodeI32(from: Data($0), offset: &o)
+        var b = ByteBufferAllocator().buffer(bytes: $0)
+        return try decodeI32(from: &b)
       }
     case .u64:
       return {
-        var o = 0
-        return try decodeVarint(from: Data($0), offset: &o)
+        var b = ByteBufferAllocator().buffer(bytes: $0)
+        return try decodeVarint(from: &b)
       }
     case .i64:
       return {
-        var o = 0
-        return try decodeI64(from: Data($0), offset: &o)
+        var b = ByteBufferAllocator().buffer(bytes: $0)
+        return try decodeI64(from: &b)
       }
     case .f32:
       return {
-        var o = 0
-        return try decodeF32(from: Data($0), offset: &o)
+        var b = ByteBufferAllocator().buffer(bytes: $0)
+        return try decodeF32(from: &b)
       }
     case .f64:
       return {
-        var o = 0
-        return try decodeF64(from: Data($0), offset: &o)
+        var b = ByteBufferAllocator().buffer(bytes: $0)
+        return try decodeF64(from: &b)
       }
     case .string:
       return {
-        var o = 0
-        return try decodeString(from: Data($0), offset: &o)
+        var b = ByteBufferAllocator().buffer(bytes: $0)
+        return try decodeString(from: &b)
       }
     case .bytes: return { Data($0) }
     case .tx(_, _), .rx(_, _): fatalError("Channel schemas are not deserialized directly")

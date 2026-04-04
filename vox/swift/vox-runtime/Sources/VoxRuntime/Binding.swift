@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import NIOCore
 
 // MARK: - Unbound Channel Types
 
@@ -7,14 +8,14 @@ public final class UnboundTx<T: Sendable>: @unchecked Sendable {
     public private(set) var channelId: ChannelId = 0
     private var taskTx: (@Sendable (TaskMessage) -> Void)?
     private var credit: ChannelCreditController?
-    private let serialize: @Sendable (T) -> [UInt8]
+    private let serialize: @Sendable (T, inout ByteBuffer) -> Void
     private var bound = false
     private var closed = false
     private let lock = NSLock()
     private var bindingWaiters: [CheckedContinuation<Void, Never>] = []
     weak var pairedRx: AnyObject?
 
-    public init(serialize: @escaping @Sendable (T) -> [UInt8]) {
+    public init(serialize: @escaping @Sendable (T, inout ByteBuffer) -> Void) {
         self.serialize = serialize
     }
 
@@ -26,7 +27,8 @@ public final class UnboundTx<T: Sendable>: @unchecked Sendable {
         taskTx: @escaping @Sendable (TaskMessage) -> Void,
         credit: ChannelCreditController
     ) {
-        let (waiters, shouldCloseImmediately) = lock.withLock { () -> ([CheckedContinuation<Void, Never>], Bool) in
+        let (waiters, shouldCloseImmediately) = lock.withLock {
+            () -> ([CheckedContinuation<Void, Never>], Bool) in
             self.channelId = channelId
             self.taskTx = taskTx
             self.credit = credit
@@ -69,7 +71,9 @@ public final class UnboundTx<T: Sendable>: @unchecked Sendable {
             throw ChannelError.closed
         }
         try await credit.consume()
-        let bytes = serialize(value)
+        var buf = ByteBufferAllocator().buffer(capacity: 64)
+        serialize(value, &buf)
+        let bytes = buf.readBytes(length: buf.readableBytes) ?? []
         taskTx(.data(channelId: channelId, payload: bytes))
     }
 
@@ -102,12 +106,13 @@ public final class UnboundTx<T: Sendable>: @unchecked Sendable {
         -> (@Sendable (TaskMessage) -> Void, ChannelCreditController)
     {
         while true {
-            let state = lock.withLock { () -> (
-                taskTx: (@Sendable (TaskMessage) -> Void)?,
-                credit: ChannelCreditController?,
-                bound: Bool,
-                closed: Bool
-            ) in
+            let state = lock.withLock {
+                () -> (
+                    taskTx: (@Sendable (TaskMessage) -> Void)?,
+                    credit: ChannelCreditController?,
+                    bound: Bool,
+                    closed: Bool
+                ) in
                 (taskTx, credit, bound, closed)
             }
 
@@ -140,7 +145,7 @@ public final class UnboundTx<T: Sendable>: @unchecked Sendable {
 /// Unbound Rx - created by `channel()`, bound at call time.
 public final class UnboundRx<T: Sendable>: @unchecked Sendable {
     public private(set) var channelId: ChannelId = 0
-    private let deserialize: @Sendable ([UInt8]) throws -> T
+    private let deserialize: @Sendable (inout ByteBuffer) throws -> T
     private var bound = false
     private let lock = NSLock()
     private var bindingWaiters: [CheckedContinuation<Void, Never>] = []
@@ -150,7 +155,7 @@ public final class UnboundRx<T: Sendable>: @unchecked Sendable {
     // Weak reference to paired Tx
     weak var pairedTx: AnyObject?
 
-    public init(deserialize: @escaping @Sendable ([UInt8]) throws -> T) {
+    public init(deserialize: @escaping @Sendable (inout ByteBuffer) throws -> T) {
         self.deserialize = deserialize
     }
 
@@ -191,7 +196,9 @@ public final class UnboundRx<T: Sendable>: @unchecked Sendable {
             let receiver = lock.withLock { receivers.first }
             if let receiver {
                 if let bytes = await receiver.recv() {
-                    return try deserialize(bytes)
+                    var buf = ByteBufferAllocator().buffer(capacity: bytes.count)
+                    buf.writeBytes(bytes)
+                    return try deserialize(&buf)
                 }
 
                 let shouldEnd = lock.withLock { () -> Bool in
@@ -260,8 +267,8 @@ extension UnboundRx: AsyncSequence {
 
 /// Create paired unbound channels.
 public func channel<T: Sendable>(
-    serialize: @escaping @Sendable (T) -> [UInt8],
-    deserialize: @escaping @Sendable ([UInt8]) throws -> T
+    serialize: @escaping @Sendable (T, inout ByteBuffer) -> Void,
+    deserialize: @escaping @Sendable (inout ByteBuffer) throws -> T
 ) -> (UnboundTx<T>, UnboundRx<T>) {
     let tx = UnboundTx<T>(serialize: serialize)
     let rx = UnboundRx<T>(deserialize: deserialize)
@@ -369,7 +376,8 @@ private func bindValue(
         // The value is the Rx; find its paired Tx
         if let rx = value as? AnyUnboundRx {
             let channelId = allocator.allocate()
-            let credit = await incomingRegistry.registerOutgoing(channelId, initialCredit: initialCredit)
+            let credit = await incomingRegistry.registerOutgoing(
+                channelId, initialCredit: initialCredit)
             rx.bindForSchema(channelId: channelId, taskSender: taskSender, credit: credit)
         }
 

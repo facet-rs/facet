@@ -241,7 +241,8 @@ private func awaitResumeResponsePayload(
                 case .response(let response) = request.body,
                 request.id == requestId
             {
-                return response.ret.bytes
+                var retBuf = response.ret.bytes
+                return retBuf.readBytes(length: retBuf.readableBytes) ?? []
             }
         }
         try? await Task.sleep(nanoseconds: 5_000_000)

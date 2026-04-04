@@ -9,7 +9,7 @@
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
 use vox_types::{MethodDescriptor, ServiceDescriptor, ShapeKind, classify_shape};
 
-use super::decode::generate_decode_stmt_from_with_cursor;
+use super::decode::{generate_decode_stmt_from_with_cursor, generate_decode_stmt_with_buf};
 use super::encode::generate_encode_stmt;
 use super::types::{format_doc, is_channel, swift_type_client_arg, swift_type_client_return};
 use crate::code_writer::CodeWriter;
@@ -219,7 +219,9 @@ fn generate_encode_args(w: &mut CodeWriter<&mut String>, args: &[vox_types::ArgD
     for arg in args {
         let arg_name = arg.name.to_lower_camel_case();
         let stmt = generate_encode_stmt(arg.shape, &arg_name);
-        cw_writeln!(w, "{stmt}").unwrap();
+        for line in stmt.lines() {
+            w.writeln(line).unwrap();
+        }
     }
     w.writeln("let payload = buffer.readBytes(length: buffer.readableBytes) ?? []")
         .unwrap();
@@ -340,8 +342,7 @@ fn generate_response_decode(
             let ShapeKind::Result { ok, .. } = classify_shape(method.return_shape) else {
                 unreachable!()
             };
-            let decode_ok =
-                generate_decode_stmt_from_with_cursor(ok, "value", "", response_var, cursor_var);
+            let decode_ok = generate_decode_stmt_with_buf(ok, "value", "", cursor_var);
             for line in decode_ok.lines() {
                 w.writeln(line).unwrap();
             }
@@ -349,13 +350,8 @@ fn generate_response_decode(
         } else if ret_type == "Void" {
             w.writeln("return").unwrap();
         } else {
-            let decode_stmt = generate_decode_stmt_from_with_cursor(
-                method.return_shape,
-                "result",
-                "",
-                response_var,
-                cursor_var,
-            );
+            let decode_stmt =
+                generate_decode_stmt_with_buf(method.return_shape, "result", "", cursor_var);
             for line in decode_stmt.lines() {
                 w.writeln(line).unwrap();
             }
@@ -380,13 +376,7 @@ fn generate_response_decode(
                 let ShapeKind::Result { err, .. } = classify_shape(method.return_shape) else {
                     unreachable!()
                 };
-                let decode_err = generate_decode_stmt_from_with_cursor(
-                    err,
-                    "userError",
-                    "",
-                    response_var,
-                    cursor_var,
-                );
+                let decode_err = generate_decode_stmt_with_buf(err, "userError", "", cursor_var);
                 for line in decode_err.lines() {
                     w.writeln(line).unwrap();
                 }
@@ -410,7 +400,7 @@ fn generate_response_decode(
         w.writeln("default:").unwrap();
         cw_writeln!(
             w,
-            "    throw VoxError.decodeError(\"invalid VoxError discriminant: \\({error_code_var})\")"
+            "    throw VoxError.decodeError(\"invalid VoxError discriminant: \\({error_code_var})\")",
         )
         .unwrap();
         w.writeln("}").unwrap();
@@ -419,7 +409,7 @@ fn generate_response_decode(
     w.writeln("default:").unwrap();
     cw_writeln!(
         w,
-        "    throw VoxError.decodeError(\"invalid Result discriminant: \\({result_disc_var})\")"
+        "    throw VoxError.decodeError(\"invalid Result discriminant: \\({result_disc_var})\")",
     )
     .unwrap();
     w.writeln("}").unwrap();

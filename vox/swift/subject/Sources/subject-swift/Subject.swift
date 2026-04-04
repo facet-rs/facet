@@ -351,11 +351,8 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
         log("divide_overflow OK")
     case "sum":
         let (tx, rx) = channel(
-            serialize: { encodeI32($0) },
-            deserialize: { bytes in
-                var offset = 0
-                return try decodeI32(from: Data(bytes), offset: &offset)
-            }
+            serialize: { val, buf in encodeI32(val, into: &buf) },
+            deserialize: { buf in try decodeI32(from: &buf) }
         )
 
         let sender = Task {
@@ -377,11 +374,8 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
         log("sum result: \(result)")
     case "sum_client_to_server":
         let (tx, rx) = channel(
-            serialize: { encodeI32($0) },
-            deserialize: { bytes in
-                var offset = 0
-                return try decodeI32(from: Data(bytes), offset: &offset)
-            }
+            serialize: { val, buf in encodeI32(val, into: &buf) },
+            deserialize: { buf in try decodeI32(from: &buf) }
         )
 
         let callTask = Task {
@@ -399,11 +393,8 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
         log("sum_client_to_server OK")
     case "sum_large":
         let (tx, rx) = channel(
-            serialize: { encodeI32($0) },
-            deserialize: { bytes in
-                var offset = 0
-                return try decodeI32(from: Data(bytes), offset: &offset)
-            }
+            serialize: { val, buf in encodeI32(val, into: &buf) },
+            deserialize: { buf in try decodeI32(from: &buf) }
         )
 
         let n = 100
@@ -423,11 +414,8 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
         log("sum_large OK")
     case "generate":
         let (tx, rx) = channel(
-            serialize: { encodeI32($0) },
-            deserialize: { bytes in
-                var offset = 0
-                return try decodeI32(from: Data(bytes), offset: &offset)
-            }
+            serialize: { val, buf in encodeI32(val, into: &buf) },
+            deserialize: { buf in try decodeI32(from: &buf) }
         )
 
         try await client.generate(count: 5, output: tx)
@@ -443,11 +431,8 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
         log("generate result OK: \(received)")
     case "generate_large":
         let (tx, rx) = channel(
-            serialize: { encodeI32($0) },
-            deserialize: { bytes in
-                var offset = 0
-                return try decodeI32(from: Data(bytes), offset: &offset)
-            }
+            serialize: { val, buf in encodeI32(val, into: &buf) },
+            deserialize: { buf in try decodeI32(from: &buf) }
         )
 
         let count: UInt32 = 100
@@ -468,11 +453,8 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
         log("generate_large OK")
     case "channel_retry_non_idem":
         let (tx, rx) = channel(
-            serialize: { encodeI32($0) },
-            deserialize: { bytes in
-                var offset = 0
-                return try decodeI32(from: Data(bytes), offset: &offset)
-            }
+            serialize: { val, buf in encodeI32(val, into: &buf) },
+            deserialize: { buf in try decodeI32(from: &buf) }
         )
 
         let callTask = Task {
@@ -504,11 +486,8 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
         }
     case "channel_retry_idem":
         let (tx, rx) = channel(
-            serialize: { encodeI32($0) },
-            deserialize: { bytes in
-                var offset = 0
-                return try decodeI32(from: Data(bytes), offset: &offset)
-            }
+            serialize: { val, buf in encodeI32(val, into: &buf) },
+            deserialize: { buf in try decodeI32(from: &buf) }
         )
 
         let callTask = Task {
@@ -774,18 +753,12 @@ func runClientScenario(client: TestbedClient, scenario: String) async throws {
         log("process_message result OK")
     case "transform_bidi":
         let (inputTx, inputRx) = channel(
-            serialize: { encodeString($0) },
-            deserialize: { bytes in
-                var offset = 0
-                return try decodeString(from: Data(bytes), offset: &offset)
-            }
+            serialize: { val, buf in encodeString(val, into: &buf) },
+            deserialize: { buf in try decodeString(from: &buf) }
         )
         let (outputTx, outputRx) = channel(
-            serialize: { encodeString($0) },
-            deserialize: { bytes in
-                var offset = 0
-                return try decodeString(from: Data(bytes), offset: &offset)
-            }
+            serialize: { val, buf in encodeString(val, into: &buf) },
+            deserialize: { buf in try decodeString(from: &buf) }
         )
         let messages = ["alpha", "beta", "gamma"]
         async let call: Void = client.transform(input: inputRx, output: outputTx)

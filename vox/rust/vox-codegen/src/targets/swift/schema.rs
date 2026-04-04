@@ -499,7 +499,7 @@ fn generate_serializers(service: &ServiceDescriptor) -> String {
         w.writeln("public init() {}").unwrap();
         w.blank_line().unwrap();
 
-        // txSerializer
+        // txSerializer — returns (Any) -> [UInt8] by wrapping the ByteBuffer-based encoders
         w.writeln(
             "public func txSerializer(for schema: BindingSchema) -> @Sendable (Any) -> [UInt8] {",
         )
@@ -507,30 +507,18 @@ fn generate_serializers(service: &ServiceDescriptor) -> String {
         {
             let _indent = w.indent();
             w.writeln("switch schema {").unwrap();
-            w.writeln("case .bool: return { encodeBool($0 as! Bool) }")
-                .unwrap();
-            w.writeln("case .u8: return { encodeU8($0 as! UInt8) }")
-                .unwrap();
-            w.writeln("case .i8: return { encodeI8($0 as! Int8) }")
-                .unwrap();
-            w.writeln("case .u16: return { encodeU16($0 as! UInt16) }")
-                .unwrap();
-            w.writeln("case .i16: return { encodeI16($0 as! Int16) }")
-                .unwrap();
-            w.writeln("case .u32: return { encodeU32($0 as! UInt32) }")
-                .unwrap();
-            w.writeln("case .i32: return { encodeI32($0 as! Int32) }")
-                .unwrap();
-            w.writeln("case .u64: return { encodeVarint($0 as! UInt64) }")
-                .unwrap();
-            w.writeln("case .i64: return { encodeI64($0 as! Int64) }")
-                .unwrap();
-            w.writeln("case .f32: return { encodeF32($0 as! Float) }")
-                .unwrap();
-            w.writeln("case .f64: return { encodeF64($0 as! Double) }")
-                .unwrap();
-            w.writeln("case .string: return { encodeString($0 as! String) }")
-                .unwrap();
+            w.writeln("case .bool: return { var b = ByteBufferAllocator().buffer(capacity: 1); encodeBool($0 as! Bool, into: &b); return b.readBytes(length: b.readableBytes) ?? [] }").unwrap();
+            w.writeln("case .u8: return { var b = ByteBufferAllocator().buffer(capacity: 1); encodeU8($0 as! UInt8, into: &b); return b.readBytes(length: b.readableBytes) ?? [] }").unwrap();
+            w.writeln("case .i8: return { var b = ByteBufferAllocator().buffer(capacity: 1); encodeI8($0 as! Int8, into: &b); return b.readBytes(length: b.readableBytes) ?? [] }").unwrap();
+            w.writeln("case .u16: return { var b = ByteBufferAllocator().buffer(capacity: 2); encodeU16($0 as! UInt16, into: &b); return b.readBytes(length: b.readableBytes) ?? [] }").unwrap();
+            w.writeln("case .i16: return { var b = ByteBufferAllocator().buffer(capacity: 2); encodeI16($0 as! Int16, into: &b); return b.readBytes(length: b.readableBytes) ?? [] }").unwrap();
+            w.writeln("case .u32: return { var b = ByteBufferAllocator().buffer(capacity: 4); encodeU32($0 as! UInt32, into: &b); return b.readBytes(length: b.readableBytes) ?? [] }").unwrap();
+            w.writeln("case .i32: return { var b = ByteBufferAllocator().buffer(capacity: 4); encodeI32($0 as! Int32, into: &b); return b.readBytes(length: b.readableBytes) ?? [] }").unwrap();
+            w.writeln("case .u64: return { var b = ByteBufferAllocator().buffer(capacity: 9); encodeVarint($0 as! UInt64, into: &b); return b.readBytes(length: b.readableBytes) ?? [] }").unwrap();
+            w.writeln("case .i64: return { var b = ByteBufferAllocator().buffer(capacity: 9); encodeI64($0 as! Int64, into: &b); return b.readBytes(length: b.readableBytes) ?? [] }").unwrap();
+            w.writeln("case .f32: return { var b = ByteBufferAllocator().buffer(capacity: 4); encodeF32($0 as! Float, into: &b); return b.readBytes(length: b.readableBytes) ?? [] }").unwrap();
+            w.writeln("case .f64: return { var b = ByteBufferAllocator().buffer(capacity: 8); encodeF64($0 as! Double, into: &b); return b.readBytes(length: b.readableBytes) ?? [] }").unwrap();
+            w.writeln("case .string: return { var b = ByteBufferAllocator().buffer(capacity: 64); encodeString($0 as! String, into: &b); return b.readBytes(length: b.readableBytes) ?? [] }").unwrap();
             w.writeln("case .bytes: return { [UInt8]($0 as! Data) }")
                 .unwrap();
             w.writeln(
@@ -546,7 +534,7 @@ fn generate_serializers(service: &ServiceDescriptor) -> String {
         w.writeln("}").unwrap();
         w.blank_line().unwrap();
 
-        // rxDeserializer
+        // rxDeserializer — takes [UInt8], wraps in ByteBuffer for decoding
         w.writeln(
             "public func rxDeserializer(for schema: BindingSchema) -> @Sendable ([UInt8]) throws -> Any {",
         )
@@ -554,45 +542,18 @@ fn generate_serializers(service: &ServiceDescriptor) -> String {
         {
             let _indent = w.indent();
             w.writeln("switch schema {").unwrap();
-            w.writeln("case .bool: return { var o = 0; return try decodeBool(from: Data($0), offset: &o) }").unwrap();
-            w.writeln(
-                "case .u8: return { var o = 0; return try decodeU8(from: Data($0), offset: &o) }",
-            )
-            .unwrap();
-            w.writeln(
-                "case .i8: return { var o = 0; return try decodeI8(from: Data($0), offset: &o) }",
-            )
-            .unwrap();
-            w.writeln(
-                "case .u16: return { var o = 0; return try decodeU16(from: Data($0), offset: &o) }",
-            )
-            .unwrap();
-            w.writeln(
-                "case .i16: return { var o = 0; return try decodeI16(from: Data($0), offset: &o) }",
-            )
-            .unwrap();
-            w.writeln(
-                "case .u32: return { var o = 0; return try decodeU32(from: Data($0), offset: &o) }",
-            )
-            .unwrap();
-            w.writeln(
-                "case .i32: return { var o = 0; return try decodeI32(from: Data($0), offset: &o) }",
-            )
-            .unwrap();
-            w.writeln("case .u64: return { var o = 0; return try decodeVarint(from: Data($0), offset: &o) }").unwrap();
-            w.writeln(
-                "case .i64: return { var o = 0; return try decodeI64(from: Data($0), offset: &o) }",
-            )
-            .unwrap();
-            w.writeln(
-                "case .f32: return { var o = 0; return try decodeF32(from: Data($0), offset: &o) }",
-            )
-            .unwrap();
-            w.writeln(
-                "case .f64: return { var o = 0; return try decodeF64(from: Data($0), offset: &o) }",
-            )
-            .unwrap();
-            w.writeln("case .string: return { var o = 0; return try decodeString(from: Data($0), offset: &o) }").unwrap();
+            w.writeln("case .bool: return { var b = ByteBufferAllocator().buffer(bytes: $0); return try decodeBool(from: &b) }").unwrap();
+            w.writeln("case .u8: return { var b = ByteBufferAllocator().buffer(bytes: $0); return try decodeU8(from: &b) }").unwrap();
+            w.writeln("case .i8: return { var b = ByteBufferAllocator().buffer(bytes: $0); return try decodeI8(from: &b) }").unwrap();
+            w.writeln("case .u16: return { var b = ByteBufferAllocator().buffer(bytes: $0); return try decodeU16(from: &b) }").unwrap();
+            w.writeln("case .i16: return { var b = ByteBufferAllocator().buffer(bytes: $0); return try decodeI16(from: &b) }").unwrap();
+            w.writeln("case .u32: return { var b = ByteBufferAllocator().buffer(bytes: $0); return try decodeU32(from: &b) }").unwrap();
+            w.writeln("case .i32: return { var b = ByteBufferAllocator().buffer(bytes: $0); return try decodeI32(from: &b) }").unwrap();
+            w.writeln("case .u64: return { var b = ByteBufferAllocator().buffer(bytes: $0); return try decodeVarint(from: &b) }").unwrap();
+            w.writeln("case .i64: return { var b = ByteBufferAllocator().buffer(bytes: $0); return try decodeI64(from: &b) }").unwrap();
+            w.writeln("case .f32: return { var b = ByteBufferAllocator().buffer(bytes: $0); return try decodeF32(from: &b) }").unwrap();
+            w.writeln("case .f64: return { var b = ByteBufferAllocator().buffer(bytes: $0); return try decodeF64(from: &b) }").unwrap();
+            w.writeln("case .string: return { var b = ByteBufferAllocator().buffer(bytes: $0); return try decodeString(from: &b) }").unwrap();
             w.writeln("case .bytes: return { Data($0) }").unwrap();
             w.writeln(
                 "case .tx(_, _), .rx(_, _): fatalError(\"Channel schemas are not deserialized directly\")",

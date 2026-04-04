@@ -104,9 +104,9 @@ private actor ScriptedTransport: Link {
 
     func sendFrame(_ bytes: [UInt8]) async throws {
         if bytes.count == 8,
-            (Array(bytes[0..<4]) == Array("VOTH".utf8)
+            Array(bytes[0..<4]) == Array("VOTH".utf8)
                 || Array(bytes[0..<4]) == Array("VOTA".utf8)
-                || Array(bytes[0..<4]) == Array("VOTR".utf8))
+                || Array(bytes[0..<4]) == Array("VOTR".utf8)
         {
             sentFrames.append(.raw(bytes))
             return
@@ -218,7 +218,6 @@ private struct NoopDispatcher: ServiceDispatcher {
         taskTx _: @escaping @Sendable (TaskMessage) -> Void
     ) async {}
 }
-
 
 @Test func acceptorSessionExposesPeerHandshakeMetadata() async throws {
     let metadata = [
@@ -422,7 +421,8 @@ private func awaitResponsePayload(
                 case .response(let response) = request.body,
                 request.id == requestId
             {
-                return response.ret.bytes
+                var retBuf = response.ret.bytes
+                return retBuf.readBytes(length: retBuf.readableBytes) ?? []
             }
         }
         try? await Task.sleep(nanoseconds: 5_000_000)
@@ -535,7 +535,8 @@ struct ConnectionFailureTests {
             autoRespondRequestCount: 1,
             initialHandshake: .helloYourself(
                 HandshakeHelloYourself(
-                    connectionSettings: ConnectionSettings(parity: .even, maxConcurrentRequests: 64),
+                    connectionSettings: ConnectionSettings(
+                        parity: .even, maxConcurrentRequests: 64),
                     messagePayloadSchemaCbor: wireMessageSchemasCbor,
                     supportsRetry: true,
                     resumeKey: nil,
@@ -552,17 +553,20 @@ struct ConnectionFailureTests {
             try? await transport.close()
             await cancelAndDrain(driverTask)
         }) {
-            _ = try await handle.callRaw(methodId: 1, payload: [0x01], retry: .persist, timeout: 1.0)
+            _ = try await handle.callRaw(
+                methodId: 1, payload: [0x01], retry: .persist, timeout: 1.0)
 
             let sent = await transport.sent()
-            guard let request = sent.first(where: { message in
-                if case .requestMessage(let request) = message.payload,
-                    case .call = request.body
-                {
-                    return request.id == 1
-                }
-                return false
-            }) else {
+            guard
+                let request = sent.first(where: { message in
+                    if case .requestMessage(let request) = message.payload,
+                        case .call = request.body
+                    {
+                        return request.id == 1
+                    }
+                    return false
+                })
+            else {
                 Issue.record("expected request to be sent")
                 return
             }
@@ -723,9 +727,11 @@ struct ConnectionFailureTests {
                 return
             }
 
-            #expect(metadataString(responseMetadata, key: peepsMethodNameMetadataKey) == "DemoRpc.test")
             #expect(
-                metadataString(responseMetadata, key: peepsRequestEntityIdMetadataKey) == "request:abc")
+                metadataString(responseMetadata, key: peepsMethodNameMetadataKey) == "DemoRpc.test")
+            #expect(
+                metadataString(responseMetadata, key: peepsRequestEntityIdMetadataKey)
+                    == "request:abc")
             #expect(metadataString(responseMetadata, key: "unrelated") == nil)
         }
     }
@@ -888,7 +894,9 @@ struct ConnectionFailureTests {
             try await driver.run()
         }
 
-        let timedOutCall = Task { try await handle.callRaw(methodId: 42, payload: [4, 2], timeout: 0.05) }
+        let timedOutCall = Task {
+            try await handle.callRaw(methodId: 42, payload: [4, 2], timeout: 0.05)
+        }
         guard let timedOutRequestId = await awaitRequestId(transport, index: 0) else {
             Issue.record("expected first request to be sent")
             return
@@ -1043,11 +1051,13 @@ struct ConnectionFailureTests {
             try? await transport.close()
             await cancelAndDrain(driverTask)
         }) {
-            let results = try await withThrowingTaskGroup(of: Result<[UInt8], Error>.self) { group in
+            let results = try await withThrowingTaskGroup(of: Result<[UInt8], Error>.self) {
+                group in
                 for _ in 0..<100 {
                     group.addTask {
                         do {
-                            let response = try await handle.callRaw(methodId: 1, payload: [], timeout: 1.0)
+                            let response = try await handle.callRaw(
+                                methodId: 1, payload: [], timeout: 1.0)
                             return .success(response)
                         } catch {
                             return .failure(error)

@@ -366,13 +366,38 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
                     )
                     .unwrap();
                     if let ShapeKind::Result { ok, err } = classify_shape(method.return_shape) {
-                        let ok_encode = generate_encode_closure(ok);
-                        let err_encode = generate_encode_closure(err);
-                        cw_writeln!(
-                            w,
-                            "let _encoded: [UInt8] = {{ var buf = ByteBufferAllocator().buffer(capacity: 64); switch result {{ case .success(let v): encodeVarint(UInt64(0), into: &buf); {ok_encode}(v, &buf); case .failure(let e): encodeVarint(UInt64(1), into: &buf); encodeU8(0, into: &buf); {err_encode}(e, &buf) }}; return buf.readBytes(length: buf.readableBytes) ?? [] }}()"
-                        )
-                        .unwrap();
+                        let ok_stmt = generate_encode_stmt(ok, "v");
+                        let err_stmt = generate_encode_stmt(err, "e");
+                        w.writeln("let _encoded: [UInt8] = {").unwrap();
+                        {
+                            let _indent = w.indent();
+                            w.writeln("var buffer = ByteBufferAllocator().buffer(capacity: 64)")
+                                .unwrap();
+                            w.writeln("switch result {").unwrap();
+                            w.writeln("case .success(let v):").unwrap();
+                            {
+                                let _indent = w.indent();
+                                w.writeln("encodeVarint(UInt64(0), into: &buffer)").unwrap();
+                                for line in ok_stmt.lines() {
+                                    w.writeln(line).unwrap();
+                                }
+                            }
+                            w.writeln("case .failure(let e):").unwrap();
+                            {
+                                let _indent = w.indent();
+                                w.writeln("encodeVarint(UInt64(1), into: &buffer)").unwrap();
+                                w.writeln("encodeU8(0, into: &buffer)").unwrap();
+                                for line in err_stmt.lines() {
+                                    w.writeln(line).unwrap();
+                                }
+                            }
+                            w.writeln("}").unwrap();
+                            w.writeln(
+                                "return buffer.readBytes(length: buffer.readableBytes) ?? []",
+                            )
+                            .unwrap();
+                        }
+                        w.writeln("}()").unwrap();
                         w.writeln(
                             "taskSender(.response(requestId: requestId, payload: _encoded, methodId: methodId, schemaPayload: responseSchemaPayload))",
                         )
