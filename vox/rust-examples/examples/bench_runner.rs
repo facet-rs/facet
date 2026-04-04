@@ -402,7 +402,13 @@ fn run() -> Result<()> {
         sleep(Duration::from_millis(25));
     }
 
-    match wait_for_exit(subject.child_mut(), "subject", Duration::from_secs(1))? {
+    let subject_timeout = if cfg.samply {
+        eprintln!("waiting for samply to finish processing the profile...");
+        Duration::from_secs(300)
+    } else {
+        Duration::from_secs(1)
+    };
+    match wait_for_exit(subject.child_mut(), "subject", subject_timeout)? {
         Some(status) if status.success() => {}
         Some(status) => return Err(exit_error("subject", status)),
         None => {

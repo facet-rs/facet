@@ -775,9 +775,6 @@ fn run_trial_once(
         "--addr".to_string(),
         addr.to_string(),
     ];
-    if cfg.samply {
-        args.push("--samply".to_string());
-    }
     args.extend([
         "--".to_string(),
         "--addr".to_string(),
@@ -1221,6 +1218,71 @@ fn shuffle<T>(items: &mut [T], rng: &mut SimpleRng) {
     }
 }
 
+fn run_samply_session(root: &Path, cfg: &Config) -> Result<()> {
+    let server_impl = *cfg
+        .server_impls
+        .first()
+        .ok_or_else(|| eyre::eyre!("--samply requires at least one --server-impls"))?;
+    let transport = cfg
+        .transports
+        .iter()
+        .find(|&&t| t != Transport::Ffi || server_impl == ServerImpl::Rust)
+        .copied()
+        .ok_or_else(|| eyre::eyre!("no valid transport for samply session (ffi requires rust)"))?;
+    if transport == Transport::Ffi {
+        return Err(eyre::eyre!(
+            "--samply does not support ffi transport (subject runs in-process)"
+        ));
+    }
+    let payload_size = cfg.payload_sizes[0];
+    let in_flight = cfg.in_flights[0];
+    let addr = addr_for_transport(transport);
+
+    eprintln!(
+        "samply session: srv={} transport={} payload={} in_flight={} warmup={:.1}s measure={:.1}s",
+        server_impl_name(server_impl),
+        transport_name(transport),
+        payload_size,
+        in_flight,
+        cfg.warmup_secs,
+        cfg.measure_secs,
+    );
+
+    let args = vec![
+        "--subject-cmd".to_string(),
+        subject_cmd_for(server_impl, root).display().to_string(),
+        "--subject-mode".to_string(),
+        "server".to_string(),
+        "--addr".to_string(),
+        addr.to_string(),
+        "--samply".to_string(),
+        "--".to_string(),
+        "--addr".to_string(),
+        addr.to_string(),
+        "--workload".to_string(),
+        workload_name(cfg.workload).to_string(),
+        "--payload-sizes".to_string(),
+        payload_size.to_string(),
+        "--in-flights".to_string(),
+        in_flight.to_string(),
+        "--warmup-secs".to_string(),
+        cfg.warmup_secs.to_string(),
+        "--measure-secs".to_string(),
+        cfg.measure_secs.to_string(),
+    ];
+
+    let status = Command::new(bench_runner_cmd(root))
+        .current_dir(root)
+        .args(&args)
+        .status()
+        .context("failed to run bench_runner for samply session")?;
+
+    if !status.success() {
+        return Err(eyre::eyre!("samply session failed with {status}"));
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cfg = parse_args()?;
     let root = workspace_root()?;
@@ -1239,6 +1301,11 @@ fn main() -> Result<()> {
         quick_summary(&cfg)
     ));
     build_release_binaries(&root)?;
+
+    if cfg.samply {
+        pb.finish_and_clear();
+        return run_samply_session(&root, &cfg);
+    }
 
     let mut calibrations = Vec::<Calibration>::new();
     let mut rng = SimpleRng::new();
