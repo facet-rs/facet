@@ -9,6 +9,7 @@
 use vox_core::{BareConduit, MemoryLink, acceptor_conduit, initiator_conduit, memory_link_pair};
 use vox_types::{
     ConnectionSettings, HandshakeResult, MessageFamily, MetadataEntry, Parity, SessionRole,
+    VoxError,
 };
 
 type MessageConduit = BareConduit<MessageFamily, MemoryLink>;
@@ -341,6 +342,93 @@ async fn evolved_schema_combined_changes() {
     assert_eq!(result.name, "prod");
     assert_eq!(result.retries, 3);
     assert_eq!(result.priority, 0); // default
+
+    server_task.abort();
+}
+
+// ============================================================================
+// Incompatible: missing required field without default
+// ============================================================================
+
+/// Old daemon: only has basic fields.
+mod status_old {
+    #[derive(Debug, Clone, PartialEq, facet::Facet)]
+    pub struct DaemonStatus {
+        pub uptime_ms: u64,
+        pub listen: String,
+    }
+
+    #[vox::service]
+    pub trait Daemon {
+        async fn status(&self) -> DaemonStatus;
+    }
+}
+
+/// New client: expects additional required fields that the old daemon doesn't have.
+mod status_new {
+    #[derive(Debug, Clone, PartialEq, facet::Facet)]
+    pub struct DaemonStatus {
+        pub uptime_ms: u64,
+        pub listen: String,
+        pub pid: u32,                // required, no default — incompatible
+        pub executable_path: String, // required, no default — incompatible
+    }
+
+    #[vox::service]
+    pub trait Daemon {
+        async fn status(&self) -> DaemonStatus;
+    }
+}
+
+#[derive(Clone)]
+struct OldDaemonService;
+
+impl status_old::Daemon for OldDaemonService {
+    async fn status(&self) -> status_old::DaemonStatus {
+        status_old::DaemonStatus {
+            uptime_ms: 12345,
+            listen: "local:///tmp/daemon.vox".into(),
+        }
+    }
+}
+
+// r[verify schema.errors.missing-required]
+// r[verify schema.errors.non-retryable]
+// r[verify rpc.fallible.vox-error.retryable]
+#[tokio::test]
+async fn missing_required_field_is_non_retryable() {
+    let (client_conduit, server_conduit) = conduit_pair();
+
+    let server_task = tokio::task::spawn(async move {
+        let _server_caller = acceptor_conduit(server_conduit, test_acceptor_handshake("Daemon"))
+            .on_connection(status_old::DaemonDispatcher::new(OldDaemonService))
+            .establish::<status_old::DaemonClient>()
+            .await
+            .expect("server handshake failed");
+        std::future::pending::<()>().await;
+    });
+
+    let client = initiator_conduit(client_conduit, test_initiator_handshake("Daemon"))
+        .establish::<status_new::DaemonClient>()
+        .await
+        .expect("client handshake failed");
+
+    // New client calls old daemon. The response has DaemonStatus with only
+    // {uptime_ms, listen}, but the client expects {uptime_ms, listen, pid,
+    // executable_path}. Translation plan fails on the missing required fields.
+    let err = client.status().await.expect_err("call should fail");
+
+    // The error must be InvalidPayload (translation plan failure).
+    assert!(
+        matches!(&err, VoxError::InvalidPayload(msg) if msg.contains("translation plan failed")),
+        "expected InvalidPayload with translation plan failure, got: {err:?}"
+    );
+
+    // And it must be non-retryable.
+    assert!(
+        !err.is_retryable(),
+        "schema incompatibility must be non-retryable"
+    );
 
     server_task.abort();
 }
