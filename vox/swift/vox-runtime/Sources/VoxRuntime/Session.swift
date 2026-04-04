@@ -53,7 +53,7 @@ public final class Session: @unchecked Sendable {
     public static func initiator(
         _ connector: some SessionConnector,
         dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
+        onConnection: (any ConnectionAcceptor)? = nil,
         keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = true,
         metadata: [MetadataEntry] = []
@@ -72,7 +72,7 @@ public final class Session: @unchecked Sendable {
                 attachment: attachment,
                 transport: connector.transport,
                 dispatcher: dispatcher,
-                acceptConnections: acceptConnections,
+                connectionAcceptor: onConnection,
                 keepalive: keepalive,
                 resumable: resumable,
                 recoverAttachment: recoverAttachment,
@@ -92,7 +92,7 @@ public final class Session: @unchecked Sendable {
         _ connector: some SessionConnector,
         expecting _: ExpectedClient.Type,
         dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
+        onConnection: (any ConnectionAcceptor)? = nil,
         keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
@@ -103,7 +103,7 @@ public final class Session: @unchecked Sendable {
             conduit: connector.transport,
             expecting: ExpectedClient.self,
             dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
+            onConnection: onConnection,
             keepalive: keepalive,
             resumable: resumable,
             metadata: metadata
@@ -113,7 +113,7 @@ public final class Session: @unchecked Sendable {
     public static func acceptor(
         _ connector: some SessionConnector,
         dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
+        onConnection: (any ConnectionAcceptor)? = nil,
         keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
@@ -122,7 +122,7 @@ public final class Session: @unchecked Sendable {
             connector,
             expecting: NoopClient.self,
             dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
+            onConnection: onConnection,
             keepalive: keepalive,
             resumable: resumable,
             metadata: metadata
@@ -134,7 +134,7 @@ public final class Session: @unchecked Sendable {
         expecting _: ExpectedClient.Type,
         registry: SessionRegistry,
         dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
+        onConnection: (any ConnectionAcceptor)? = nil,
         keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
@@ -146,7 +146,7 @@ public final class Session: @unchecked Sendable {
             expecting: ExpectedClient.self,
             registry: registry,
             dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
+            onConnection: onConnection,
             keepalive: keepalive,
             resumable: resumable,
             metadata: metadata
@@ -157,7 +157,7 @@ public final class Session: @unchecked Sendable {
         _ connector: some SessionConnector,
         registry: SessionRegistry,
         dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
+        onConnection: (any ConnectionAcceptor)? = nil,
         keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
@@ -167,7 +167,7 @@ public final class Session: @unchecked Sendable {
             expecting: NoopClient.self,
             registry: registry,
             dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
+            onConnection: onConnection,
             keepalive: keepalive,
             resumable: resumable,
             metadata: metadata
@@ -178,7 +178,7 @@ public final class Session: @unchecked Sendable {
         _ link: any Link,
         conduit: ConduitKind = .bare,
         dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
+        onConnection: (any ConnectionAcceptor)? = nil,
         keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false
     ) async throws -> Session {
@@ -187,7 +187,7 @@ public final class Session: @unchecked Sendable {
                 attachment: .fresh(link),
                 transport: conduit,
                 dispatcher: dispatcher,
-                acceptConnections: acceptConnections,
+                connectionAcceptor: onConnection,
                 keepalive: keepalive,
                 resumable: resumable
             )
@@ -206,7 +206,7 @@ public final class Session: @unchecked Sendable {
         conduit: ConduitKind? = nil,
         expecting _: ExpectedClient.Type,
         dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
+        onConnection: (any ConnectionAcceptor)? = nil,
         keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
@@ -219,7 +219,7 @@ public final class Session: @unchecked Sendable {
                 attachment: attachment,
                 transport: selectedConduit,
                 dispatcher: dispatcher,
-                acceptConnections: acceptConnections,
+                connectionAcceptor: onConnection,
                 keepalive: keepalive,
                 resumable: resumable,
                 metadata: metadata
@@ -238,7 +238,7 @@ public final class Session: @unchecked Sendable {
         _ attachment: LinkAttachment,
         conduit: ConduitKind? = nil,
         dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
+        onConnection: (any ConnectionAcceptor)? = nil,
         keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
@@ -248,7 +248,7 @@ public final class Session: @unchecked Sendable {
             conduit: conduit,
             expecting: NoopClient.self,
             dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
+            onConnection: onConnection,
             keepalive: keepalive,
             resumable: resumable,
             metadata: metadata
@@ -260,7 +260,7 @@ public final class Session: @unchecked Sendable {
         conduit: ConduitKind = .bare,
         expecting _: ExpectedClient.Type,
         dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
+        onConnection: (any ConnectionAcceptor)? = nil,
         keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
@@ -270,7 +270,7 @@ public final class Session: @unchecked Sendable {
             conduit: conduit,
             expecting: ExpectedClient.self,
             dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
+            onConnection: onConnection,
             keepalive: keepalive,
             resumable: resumable,
             metadata: metadata
@@ -281,7 +281,7 @@ public final class Session: @unchecked Sendable {
         _ link: any Link,
         conduit: ConduitKind = .bare,
         dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
+        onConnection: (any ConnectionAcceptor)? = nil,
         keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
@@ -291,7 +291,7 @@ public final class Session: @unchecked Sendable {
             conduit: conduit,
             expecting: NoopClient.self,
             dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
+            onConnection: onConnection,
             keepalive: keepalive,
             resumable: resumable,
             metadata: metadata
@@ -304,7 +304,7 @@ public final class Session: @unchecked Sendable {
         expecting _: ExpectedClient.Type,
         registry: SessionRegistry,
         dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
+        onConnection: (any ConnectionAcceptor)? = nil,
         keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
@@ -357,7 +357,7 @@ public final class Session: @unchecked Sendable {
             conduit: selectedConduit,
             expecting: ExpectedClient.self,
             dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
+            onConnection: onConnection,
             keepalive: keepalive,
             resumable: resumable,
             metadata: metadata
@@ -373,7 +373,7 @@ public final class Session: @unchecked Sendable {
         conduit: ConduitKind? = nil,
         registry: SessionRegistry,
         dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
+        onConnection: (any ConnectionAcceptor)? = nil,
         keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
@@ -384,7 +384,7 @@ public final class Session: @unchecked Sendable {
             expecting: NoopClient.self,
             registry: registry,
             dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
+            onConnection: onConnection,
             keepalive: keepalive,
             resumable: resumable,
             metadata: metadata
@@ -397,7 +397,7 @@ public final class Session: @unchecked Sendable {
         expecting _: ExpectedClient.Type,
         registry: SessionRegistry,
         dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
+        onConnection: (any ConnectionAcceptor)? = nil,
         keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
@@ -408,7 +408,7 @@ public final class Session: @unchecked Sendable {
             expecting: ExpectedClient.self,
             registry: registry,
             dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
+            onConnection: onConnection,
             keepalive: keepalive,
             resumable: resumable,
             metadata: metadata
@@ -420,7 +420,7 @@ public final class Session: @unchecked Sendable {
         conduit: ConduitKind = .bare,
         registry: SessionRegistry,
         dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
+        onConnection: (any ConnectionAcceptor)? = nil,
         keepalive: SessionKeepaliveConfig? = nil,
         resumable: Bool = false,
         metadata: [MetadataEntry] = []
@@ -431,7 +431,7 @@ public final class Session: @unchecked Sendable {
             expecting: NoopClient.self,
             registry: registry,
             dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
+            onConnection: onConnection,
             keepalive: keepalive,
             resumable: resumable,
             metadata: metadata

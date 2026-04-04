@@ -282,7 +282,8 @@ func runServer() async throws {
         let session = try await Session.initiator(
             connector,
             dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
+            onConnection: acceptConnections
+                ? DefaultConnectionAcceptor(dispatcher: dispatcher) : nil,
             resumable: false,
             metadata: rootMetadata
         )
@@ -298,7 +299,8 @@ func runServer() async throws {
         let session = try await Session.initiator(
             connector,
             dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
+            onConnection: acceptConnections
+                ? DefaultConnectionAcceptor(dispatcher: dispatcher) : nil,
             resumable: false,
             metadata: rootMetadata
         )
@@ -866,7 +868,8 @@ func runServerListen() async throws {
     let session = try await Session.acceptor(
         acceptor,
         dispatcher: dispatcher,
-        acceptConnections: acceptConnections,
+        onConnection: acceptConnections
+            ? DefaultConnectionAcceptor(dispatcher: dispatcher) : nil,
         resumable: true
     )
     try await session.run()

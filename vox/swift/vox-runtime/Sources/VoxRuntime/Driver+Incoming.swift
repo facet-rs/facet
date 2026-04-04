@@ -1,8 +1,8 @@
 import Foundation
 
 extension Driver {
-    func addVirtualConnection(_ connId: UInt64) async {
-        await virtualConnState.addConnection(connId)
+    func addVirtualConnection(_ connId: UInt64, dispatcher: any ServiceDispatcher) async {
+        await virtualConnState.addConnection(connId, dispatcher: dispatcher)
     }
 
     func removeVirtualConnection(_ connId: UInt64) async {
@@ -32,14 +32,41 @@ extension Driver {
             await failAllPending()
             throw ConnectionError.protocolViolation(rule: error.description)
         case .connectionOpen(let open):
-            if acceptConnections {
-                await addVirtualConnection(msg.connectionId)
-                try await conduit.send(
-                    .connectionAccept(
-                        connId: msg.connectionId,
-                        settings: open.connectionSettings,
-                        metadata: []
-                    ))
+            if let acceptor = connectionAcceptor {
+                let metadata = open.metadata
+                guard let serviceEntry = metadata.first(where: { $0.key == "vox-service" }),
+                    case .string(let service) = serviceEntry.value
+                else {
+                    // Missing or non-string vox-service metadata — reject
+                    try await conduit.send(
+                        .connectionReject(connId: msg.connectionId, metadata: []))
+                    return
+                }
+                let request = ConnectionRequest(metadata: metadata, service: service)
+                let connId = msg.connectionId
+                let connectionSettings = open.connectionSettings
+                let pending = PendingConnection(
+                    accept: { [weak self] dispatcher in
+                        guard let self else { return }
+                        Task {
+                            await self.addVirtualConnection(connId, dispatcher: dispatcher)
+                            try? await self.conduit.send(
+                                .connectionAccept(
+                                    connId: connId,
+                                    settings: connectionSettings,
+                                    metadata: []
+                                ))
+                        }
+                    },
+                    reject: { [weak self] in
+                        guard let self else { return }
+                        Task {
+                            try? await self.conduit.send(
+                                .connectionReject(connId: connId, metadata: []))
+                        }
+                    }
+                )
+                acceptor.accept(request: request, connection: pending)
             } else {
                 try await conduit.send(.connectionReject(connId: msg.connectionId, metadata: []))
             }
@@ -83,7 +110,8 @@ extension Driver {
                             + "pending_task_messages=\(pendingTaskMessages.count)}; closing connection"
                     )
                     try await sendProtocolError("call.lifecycle.unknown-request-id")
-                    throw ConnectionError.protocolViolation(rule: "call.lifecycle.unknown-request-id")
+                    throw ConnectionError.protocolViolation(
+                        rule: "call.lifecycle.unknown-request-id")
                 }
                 pending.timeoutTask?.cancel()
                 pending.responseTx(.success(payload))
@@ -111,7 +139,8 @@ extension Driver {
                 await handle.channelRegistry.deliverReset(channelId: channel.id)
             case .grantCredit(let credit):
                 await serverRegistry.deliverCredit(channelId: channel.id, bytes: credit.additional)
-                await handle.channelRegistry.deliverCredit(channelId: channel.id, bytes: credit.additional)
+                await handle.channelRegistry.deliverCredit(
+                    channelId: channel.id, bytes: credit.additional)
             }
         }
     }
@@ -126,7 +155,19 @@ extension Driver {
         metadata: [MetadataEntry],
         payload: [UInt8]
     ) async throws {
-        let retry = dispatcher.retryPolicy(methodId: methodId)
+        // Resolve which dispatcher handles this connection.
+        let effectiveDispatcher: any ServiceDispatcher
+        if connId == 0 {
+            effectiveDispatcher = dispatcher
+        } else if let vconnDispatcher = await virtualConnState.dispatcher(for: connId) {
+            effectiveDispatcher = vconnDispatcher
+        } else {
+            try await sendProtocolError("call.lifecycle.unknown-connection-id")
+            throw ConnectionError.protocolViolation(
+                rule: "call.lifecycle.unknown-connection-id")
+        }
+
+        let retry = effectiveDispatcher.retryPolicy(methodId: methodId)
         let inserted = await state.addInFlight(
             requestId,
             connectionId: connId,
@@ -168,14 +209,14 @@ extension Driver {
             }
         }
 
-        await dispatcher.preregister(
+        await effectiveDispatcher.preregister(
             methodId: methodId,
             payload: payload,
             registry: serverRegistry
         )
 
         Task {
-            await dispatcher.dispatch(
+            await effectiveDispatcher.dispatch(
                 methodId: methodId,
                 payload: payload,
                 requestId: requestId,

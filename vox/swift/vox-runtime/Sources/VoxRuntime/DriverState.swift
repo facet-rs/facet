@@ -154,7 +154,7 @@ actor DriverState {
 /// Actor for virtual connection state.
 actor VirtualConnectionState {
     private var nextConnId: UInt64 = 1
-    private var virtualConnections: Set<UInt64> = []
+    private var virtualConnections: [UInt64: any ServiceDispatcher] = [:]
 
     func allocateConnId() -> UInt64 {
         let id = nextConnId
@@ -162,11 +162,15 @@ actor VirtualConnectionState {
         return id
     }
 
-    func addConnection(_ connId: UInt64) {
-        virtualConnections.insert(connId)
+    func addConnection(_ connId: UInt64, dispatcher: any ServiceDispatcher) {
+        virtualConnections[connId] = dispatcher
     }
 
     func removeConnection(_ connId: UInt64) {
-        virtualConnections.remove(connId)
+        virtualConnections.removeValue(forKey: connId)
+    }
+
+    func dispatcher(for connId: UInt64) -> (any ServiceDispatcher)? {
+        virtualConnections[connId]
     }
 }

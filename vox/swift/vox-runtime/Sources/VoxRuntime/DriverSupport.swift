@@ -54,7 +54,7 @@ func makeDriverAndConnection(
     role: Role,
     negotiated: Negotiated,
     peerSupportsRetry: Bool,
-    acceptConnections: Bool,
+    connectionAcceptor: (any ConnectionAcceptor)? = nil,
     keepalive: SessionKeepaliveConfig? = nil
 ) -> (Connection, Driver) {
     let commandQueue = LockedQueue<HandleCommand>()
@@ -101,7 +101,7 @@ func makeDriverAndConnection(
         negotiated: negotiated,
         handle: handle,
         operations: OperationRegistry(),
-        acceptConnections: acceptConnections,
+        connectionAcceptor: connectionAcceptor,
         keepalive: keepalive,
         eventStream: eventStream,
         eventContinuation: continuation,
@@ -118,7 +118,7 @@ func makeSessionDriverAndConnection(
     role: Role,
     negotiated: Negotiated,
     peerSupportsRetry: Bool,
-    acceptConnections: Bool,
+    connectionAcceptor: (any ConnectionAcceptor)? = nil,
     keepalive: SessionKeepaliveConfig? = nil,
     resumable: Bool,
     sessionResumeKey: [UInt8]?,
@@ -171,7 +171,7 @@ func makeSessionDriverAndConnection(
         negotiated: negotiated,
         handle: handle,
         operations: OperationRegistry(),
-        acceptConnections: acceptConnections,
+        connectionAcceptor: connectionAcceptor,
         keepalive: keepalive,
         eventStream: eventStream,
         eventContinuation: continuation,

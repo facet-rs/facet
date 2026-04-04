@@ -37,7 +37,8 @@ public struct Server {
             session = try await Session.initiator(
                 connector,
                 dispatcher: dispatcher,
-                acceptConnections: acceptConnections,
+                onConnection: acceptConnections
+                    ? DefaultConnectionAcceptor(dispatcher: dispatcher) : nil,
                 resumable: false
             )
         } else {
@@ -60,14 +61,17 @@ public struct Server {
             session = try await Session.initiator(
                 connector,
                 dispatcher: dispatcher,
-                acceptConnections: acceptConnections,
+                onConnection: acceptConnections
+                    ? DefaultConnectionAcceptor(dispatcher: dispatcher) : nil,
                 resumable: false
             )
         }
 
         let rootConnection = session.connection
         _ = rootConnection
-        fputs("[subject-server] session created, root connection retained, entering run loop\n", stderr)
+        fputs(
+            "[subject-server] session created, root connection retained, entering run loop\n",
+            stderr)
         try await session.run()
         fputs("[subject-server] run loop exited\n", stderr)
     }

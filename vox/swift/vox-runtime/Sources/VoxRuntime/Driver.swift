@@ -18,7 +18,7 @@ public final class Driver: @unchecked Sendable {
     let negotiated: Negotiated
     let handle: ConnectionHandle
     let operations: OperationRegistry
-    let acceptConnections: Bool
+    let connectionAcceptor: (any ConnectionAcceptor)?
     let keepalive: SessionKeepaliveConfig?
 
     let serverRegistry: ChannelRegistry
@@ -48,7 +48,7 @@ public final class Driver: @unchecked Sendable {
         negotiated: Negotiated,
         handle: ConnectionHandle,
         operations: OperationRegistry,
-        acceptConnections: Bool = false,
+        connectionAcceptor: (any ConnectionAcceptor)? = nil,
         keepalive: SessionKeepaliveConfig? = nil
     ) {
         self.conduit = conduit
@@ -57,7 +57,7 @@ public final class Driver: @unchecked Sendable {
         self.negotiated = negotiated
         self.handle = handle
         self.operations = operations
-        self.acceptConnections = acceptConnections
+        self.connectionAcceptor = connectionAcceptor
         self.keepalive = keepalive
         self.serverRegistry = ChannelRegistry()
         self.state = DriverState()
@@ -88,7 +88,7 @@ public final class Driver: @unchecked Sendable {
         negotiated: Negotiated,
         handle: ConnectionHandle,
         operations: OperationRegistry,
-        acceptConnections: Bool,
+        connectionAcceptor: (any ConnectionAcceptor)?,
         keepalive: SessionKeepaliveConfig?,
         eventStream: AsyncStream<DriverEvent>,
         eventContinuation: AsyncStream<DriverEvent>.Continuation,
@@ -108,7 +108,7 @@ public final class Driver: @unchecked Sendable {
         self.negotiated = negotiated
         self.handle = handle
         self.operations = operations
-        self.acceptConnections = acceptConnections
+        self.connectionAcceptor = connectionAcceptor
         self.keepalive = keepalive
         self.serverRegistry = ChannelRegistry()
         self.state = DriverState()

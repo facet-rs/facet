@@ -45,7 +45,7 @@ facet-reflect.workspace = true
 vox-postcard.workspace = true
 moire.workspace = true
 tracing.workspace = true
-tokio = { workspace = true, features = ["net"] }
+tokio.workspace = true
 tokio-rustls = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rustls-pemfile = { workspace = true, optional = true }
