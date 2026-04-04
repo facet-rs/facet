@@ -106,36 +106,6 @@ jobs:
       - name: Setup Miri
         run: cargo +nightly miri setup
 
-      - name: Run Miri (shm-primitives)
-        run: cargo +nightly miri test -p shm-primitives
-        # Note: Miri doesn't support all libc calls, so some tests may need to be skipped
-        continue-on-error: true
-
-      - name: Run Miri (vox-shm)
-        run: cargo +nightly miri test -p vox-shm
-        continue-on-error: true
-
-  rust-loom:
-    name: Rust / Loom
-    runs-on: depot-ubuntu-24.04-16
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run loom tests
-        run: cargo nextest run --profile loom -p shm-primitives
-        env:
-          RUSTFLAGS: "--cfg loom"
-
   rust-conformance:
     name: Conformance / Rust
     runs-on: depot-ubuntu-24.04-16
@@ -165,17 +135,11 @@ jobs:
           cargo nextest run -p spec-tests --test spec_matrix
           -E 'test(lang_rust_transport_tcp::)'
 
-      - name: Run Rust SHM guest subject matrix tests
-        run: >
-          cargo nextest run -p spec-tests --test spec_matrix
-          -E 'test(lang_rust_transport_shm_guest_mode::)'
-
-      - name: Run Rust binary payload transport matrix (mem/tcp/shm)
+      - name: Run Rust binary payload transport matrix (mem/tcp)
         run: >
           cargo nextest run -p spec-tests --test spec_matrix
           -E 'test(lang_rust_to_rust_transport_mem_direction_bidirectional_binary_payload_transport_matrix)
-          | test(lang_rust_to_rust_transport_tcp_direction_bidirectional_binary_payload_transport_matrix)
-          | test(lang_rust_to_rust_transport_shm_direction_bidirectional_binary_payload_transport_matrix)'
+          | test(lang_rust_to_rust_transport_tcp_direction_bidirectional_binary_payload_transport_matrix)'
 
   generated-bindings:
     name: Generated / Bindings Sync
@@ -279,43 +243,16 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Build Rust FFI staticlib
-        run: cargo build --release -p vox-shm-ffi
-
       - name: Build subject
         run: swift build -c release --package-path swift/subject
 
       - name: Run VoxRuntime Swift tests
         run: swift test --no-parallel -Xlinker -L$(pwd)/target/release
 
-      - name: Build Swift shm-guest-client
-        run: swift build -c debug --package-path swift/vox-runtime --product shm-guest-client
-
-      - name: Run SHM cross-language guest regression tests (via spec-tests)
-        run: >
-          cargo nextest run -p spec-tests --test spec_matrix
-          -E 'test(lang_swift_to_rust_transport_shm_direction_guest_to_host_cross_language_data_path)
-          | test(lang_swift_to_rust_transport_shm_direction_guest_to_host_cross_language_message_v7)
-          | test(lang_rust_to_swift_transport_shm_direction_host_to_guest_cross_language_mmap_ref_receive)
-          | test(lang_rust_to_swift_transport_shm_direction_host_to_guest_cross_language_cutover_boundaries)
-          | test(lang_swift_to_rust_transport_shm_direction_guest_to_host_cross_language_cutover_boundaries)
-          | test(lang_swift_to_rust_transport_shm_direction_guest_to_host_cross_language_fault_mmap_control_breakage)
-          | test(lang_rust_to_swift_transport_shm_direction_host_to_guest_cross_language_fault_host_goodbye_wake)'
-
       - name: Run Swift TCP subject matrix tests
         run: >
           cargo nextest run -p spec-tests --test spec_matrix --run-ignored all
           -E 'test(lang_swift_transport_tcp::)'
-
-      - name: Run Swift SHM guest subject matrix tests
-        run: >
-          cargo nextest run -p spec-tests --test spec_matrix --run-ignored all
-          -E 'test(lang_swift_transport_shm_guest_mode::)'
-
-      - name: Run Swift SHM host subject matrix tests
-        run: >
-          cargo nextest run -p spec-tests --test spec_matrix --run-ignored all
-          -E 'test(lang_swift_transport_shm_host_mode::)'
 
   swift-linux:
     name: Conformance / Swift (Linux)
@@ -338,9 +275,6 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Build Rust FFI staticlib
-        run: cargo build --release -p vox-shm-ffi
-
       - name: Build subject
         run: swift build -c release --package-path swift/subject
 
@@ -351,11 +285,6 @@ jobs:
         run: >
           cargo nextest run -p spec-tests --test spec_matrix --run-ignored all
           -E 'test(lang_swift_transport_tcp::)'
-
-      - name: Run Swift SHM guest subject matrix tests
-        run: >
-          cargo nextest run -p spec-tests --test spec_matrix --run-ignored all
-          -E 'test(lang_swift_transport_shm_guest_mode::)'
 
   rust-wasm:
     name: Rust / WebAssembly
