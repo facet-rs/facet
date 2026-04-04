@@ -344,9 +344,9 @@ private final class ResumableStableHarness: @unchecked Sendable {
             resumable: true
         )
         async let serverSession: Session = {
-            return try await Session.acceptorOn(
+            return try await Session.acceptFreshLink(
                 serverLink0,
-                transport: .bare,
+                conduit: .bare,
                 dispatcher: dispatcher,
                 resumable: true
             )

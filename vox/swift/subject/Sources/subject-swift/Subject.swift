@@ -1182,9 +1182,9 @@ func runServerListen() async throws {
     let acceptConnections = ProcessInfo.processInfo.environment["ACCEPT_CONNECTIONS"] == "1"
     let handler = TestbedService()
     let dispatcher = TestbedDispatcherAdapter(handler: handler)
-    let session = try await Session.acceptorOn(
+    let session = try await Session.acceptFreshLink(
         link,
-        transport: subjectConduit(),
+        conduit: subjectConduit(),
         dispatcher: dispatcher,
         acceptConnections: acceptConnections,
         resumable: true

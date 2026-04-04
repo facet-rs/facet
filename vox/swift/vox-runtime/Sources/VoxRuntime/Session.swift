@@ -131,25 +131,6 @@ public final class Session: @unchecked Sendable {
         )
     }
 
-    @available(*, deprecated, renamed: "establishOverFreshLink(_:conduit:dispatcher:acceptConnections:keepalive:resumable:)")
-    public static func initiatorOn(
-        _ link: any Link,
-        transport: ConduitKind = .bare,
-        dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
-        resumable: Bool = false
-    ) async throws -> Session {
-        try await establishOverFreshLink(
-            link,
-            conduit: transport,
-            dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
-            keepalive: keepalive,
-            resumable: resumable
-        )
-    }
-
     public static func acceptFreshAttachment(
         _ attachment: LinkAttachment,
         conduit: ConduitKind? = nil,
@@ -177,25 +158,6 @@ public final class Session: @unchecked Sendable {
         )
     }
 
-    @available(*, deprecated, renamed: "acceptFreshAttachment(_:conduit:dispatcher:acceptConnections:keepalive:resumable:)")
-    public static func acceptorOn(
-        _ attachment: LinkAttachment,
-        transport: ConduitKind? = nil,
-        dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
-        resumable: Bool = false
-    ) async throws -> Session {
-        try await acceptFreshAttachment(
-            attachment,
-            conduit: transport,
-            dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
-            keepalive: keepalive,
-            resumable: resumable
-        )
-    }
-
     public static func acceptFreshLink(
         _ link: any Link,
         conduit: ConduitKind = .bare,
@@ -207,25 +169,6 @@ public final class Session: @unchecked Sendable {
         try await acceptFreshAttachment(
             .fresh(link),
             conduit: conduit,
-            dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
-            keepalive: keepalive,
-            resumable: resumable
-        )
-    }
-
-    @available(*, deprecated, renamed: "acceptFreshLink(_:conduit:dispatcher:acceptConnections:keepalive:resumable:)")
-    public static func acceptorOn(
-        _ link: any Link,
-        transport: ConduitKind = .bare,
-        dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
-        resumable: Bool = false
-    ) async throws -> Session {
-        try await acceptFreshLink(
-            link,
-            conduit: transport,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             keepalive: keepalive,
@@ -299,27 +242,6 @@ public final class Session: @unchecked Sendable {
         return .established(session)
     }
 
-    @available(*, deprecated, renamed: "acceptFreshAttachmentOrResume(_:conduit:registry:dispatcher:acceptConnections:keepalive:resumable:)")
-    public static func acceptorOnOrResume(
-        _ attachment: LinkAttachment,
-        transport: ConduitKind? = nil,
-        registry: SessionRegistry,
-        dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
-        resumable: Bool = false
-    ) async throws -> SessionAcceptOutcome {
-        try await acceptFreshAttachmentOrResume(
-            attachment,
-            conduit: transport,
-            registry: registry,
-            dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
-            keepalive: keepalive,
-            resumable: resumable
-        )
-    }
-
     public static func acceptFreshLinkOrResume(
         _ link: any Link,
         conduit: ConduitKind = .bare,
@@ -340,26 +262,6 @@ public final class Session: @unchecked Sendable {
         )
     }
 
-    @available(*, deprecated, renamed: "acceptFreshLinkOrResume(_:conduit:registry:dispatcher:acceptConnections:keepalive:resumable:)")
-    public static func acceptorOnOrResume(
-        _ link: any Link,
-        transport: ConduitKind = .bare,
-        registry: SessionRegistry,
-        dispatcher: any ServiceDispatcher,
-        acceptConnections: Bool = false,
-        keepalive: DriverKeepaliveConfig? = nil,
-        resumable: Bool = false
-    ) async throws -> SessionAcceptOutcome {
-        try await acceptFreshLinkOrResume(
-            link,
-            conduit: transport,
-            registry: registry,
-            dispatcher: dispatcher,
-            acceptConnections: acceptConnections,
-            keepalive: keepalive,
-            resumable: resumable
-        )
-    }
 }
 
 public enum SessionAcceptOutcome: Sendable {

@@ -326,7 +326,7 @@ struct SessionResumeTests {
                 ))
         )
 
-        let outcome = try await Session.acceptorOnOrResume(
+        let outcome = try await Session.acceptFreshLinkOrResume(
             initial,
             registry: registry,
             dispatcher: ResumeBlockingDispatcher(probe: probe),
@@ -375,7 +375,7 @@ struct SessionResumeTests {
                     ))
             )
 
-            let resumed = try await Session.acceptorOnOrResume(
+            let resumed = try await Session.acceptFreshLinkOrResume(
                 replacement,
                 registry: registry,
                 dispatcher: ResumeBlockingDispatcher(probe: probe),

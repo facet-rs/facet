@@ -237,7 +237,7 @@ private struct NoopDispatcher: ServiceDispatcher {
             ))
     )
 
-    let session = try await Session.acceptorOn(link, dispatcher: NoopDispatcher())
+    let session = try await Session.acceptFreshLink(link, dispatcher: NoopDispatcher())
 
     #expect(session.peerMetadata == metadata)
 }
@@ -262,7 +262,7 @@ private struct NoopDispatcher: ServiceDispatcher {
     )
     await link.enqueueHandshake(.letsGo(HandshakeLetsGo()))
 
-    let session = try await Session.acceptorOn(link, dispatcher: NoopDispatcher())
+    let session = try await Session.acceptFreshLink(link, dispatcher: NoopDispatcher())
 
     #expect(session.peerMetadata == metadata)
 }
