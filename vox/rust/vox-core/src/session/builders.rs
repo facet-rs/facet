@@ -381,10 +381,12 @@ pub struct SessionSourceInitiatorBuilder<'a, S> {
 #[cfg(not(target_arch = "wasm32"))]
 impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
     fn new(source: S, mode: TransportMode) -> Self {
+        let mut config = SessionConfig::default();
+        config.resumable = false;
         Self {
             source,
             mode,
-            config: SessionConfig::default(),
+            config,
         }
     }
 
@@ -569,11 +571,9 @@ pub struct SessionTransportInitiatorBuilder<'a, L> {
 
 impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     fn new(link: L, mode: TransportMode) -> Self {
-        Self {
-            link,
-            mode,
-            config: SessionConfig::default(),
-        }
+        let mut config = SessionConfig::default();
+        config.resumable = false;
+        Self { link, mode, config }
     }
 
     pub fn parity(mut self, parity: Parity) -> Self {
