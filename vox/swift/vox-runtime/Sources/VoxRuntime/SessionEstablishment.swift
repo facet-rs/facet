@@ -325,6 +325,18 @@ public func establishAcceptor(
     resumable: Bool = false,
     metadata: [MetadataEntry] = []
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
+    if attachment.clientHello == nil {
+        let negotiatedTransport = try await performAcceptorTransportPrologue(
+            transport: attachment.link,
+            supportedConduit: transport
+        )
+        guard negotiatedTransport == transport else {
+            throw TransportError.protocolViolation(
+                "transport negotiated \(negotiatedTransport) for requested \(transport)"
+            )
+        }
+    }
+
     let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
     let handshake = try await performAcceptorHandshake(
         link: attachment.link,

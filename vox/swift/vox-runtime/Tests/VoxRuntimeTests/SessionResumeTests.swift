@@ -16,10 +16,32 @@ private actor ResumeScriptedLink: Link {
     private var closed = false
 
     init(initialHandshake: HandshakeMessage? = nil) {
-        self.inboundQueue = initialHandshake.map { [.frame($0.encodeCbor())] } ?? []
+        if let initialHandshake {
+            if case .hello = initialHandshake {
+                self.inboundQueue = [
+                    .frame(encodeTransportHello(.bare)),
+                    .frame(initialHandshake.encodeCbor()),
+                ]
+            } else {
+                self.inboundQueue = [.frame(initialHandshake.encodeCbor())]
+            }
+        } else {
+            self.inboundQueue = []
+        }
     }
 
     func sendFrame(_ bytes: [UInt8]) async throws {
+        if bytes.count == 8,
+            (Array(bytes[0..<4]) == Array("VOTH".utf8)
+                || Array(bytes[0..<4]) == Array("VOTA".utf8)
+                || Array(bytes[0..<4]) == Array("VOTR".utf8))
+        {
+            if Array(bytes[0..<4]) == Array("VOTA".utf8) {
+                return
+            }
+            throw TransportError.protocolViolation("unexpected raw transport frame in scripted link")
+        }
+
         if let handshake = try? HandshakeMessage.decodeCbor(bytes) {
             sentHandshakes.append(handshake)
             if case .helloYourself = handshake {

@@ -185,6 +185,19 @@ public final class Session: @unchecked Sendable {
         keepalive: DriverKeepaliveConfig? = nil,
         resumable: Bool = false
     ) async throws -> SessionAcceptOutcome {
+        let selectedTransport = transport ?? (attachment.clientHello == nil ? .bare : .stable)
+        if attachment.clientHello == nil {
+            let negotiatedTransport = try await performAcceptorTransportPrologue(
+                transport: attachment.link,
+                supportedConduit: selectedTransport
+            )
+            guard negotiatedTransport == selectedTransport else {
+                throw TransportError.protocolViolation(
+                    "transport negotiated \(negotiatedTransport) for requested \(selectedTransport)"
+                )
+            }
+        }
+
         guard let firstBytes = try await attachment.link.recvRawPrologue() else {
             throw ConnectionError.connectionClosed
         }
@@ -195,9 +208,8 @@ public final class Session: @unchecked Sendable {
 
         let prefetchedAttachment = LinkAttachment(
             link: PrefetchedLink(firstRawPrologue: firstBytes, base: attachment.link),
-            clientHello: attachment.clientHello
+            clientHello: attachment.clientHello ?? []
         )
-        let selectedTransport = transport ?? (attachment.clientHello == nil ? .bare : .stable)
 
         if let resumeKey = hello.resumeKey?.bytes {
             guard let handle = registry.get(resumeKey) else {

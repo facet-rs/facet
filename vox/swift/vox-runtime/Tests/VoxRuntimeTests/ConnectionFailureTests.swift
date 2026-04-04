@@ -21,6 +21,7 @@ private enum InboundEvent: Sendable {
 }
 
 private enum SentFrame: Sendable {
+    case raw([UInt8])
     case handshake(HandshakeMessage)
     case message(Message)
 }
@@ -56,6 +57,9 @@ private actor ScriptedTransport: Link {
         self.dropAfterRequestCount = dropAfterRequestCount
         self.autoRespondPing = autoRespondPing
         if let initialHandshake {
+            if case .hello = initialHandshake {
+                inboundQueue.append(.frame(encodeTransportHello(.bare)))
+            }
             inboundQueue.append(.frame(initialHandshake.encodeCbor()))
             if case .hello = initialHandshake {
                 inboundQueue.append(.frame(HandshakeMessage.letsGo(HandshakeLetsGo()).encodeCbor()))
@@ -69,6 +73,10 @@ private actor ScriptedTransport: Link {
 
     func enqueueMessage(_ message: Message) {
         enqueueInbound(.frame(message.encode()))
+    }
+
+    func enqueueRaw(_ bytes: [UInt8]) {
+        enqueueInbound(.frame(bytes))
     }
 
     func enqueueHandshake(_ handshake: HandshakeMessage) {
@@ -95,6 +103,15 @@ private actor ScriptedTransport: Link {
     }
 
     func sendFrame(_ bytes: [UInt8]) async throws {
+        if bytes.count == 8,
+            (Array(bytes[0..<4]) == Array("VOTH".utf8)
+                || Array(bytes[0..<4]) == Array("VOTA".utf8)
+                || Array(bytes[0..<4]) == Array("VOTR".utf8))
+        {
+            sentFrames.append(.raw(bytes))
+            return
+        }
+
         if let handshake = try? HandshakeMessage.decodeCbor(bytes) {
             sentFrames.append(.handshake(handshake))
             sentHandshakes.append(handshake)
@@ -219,6 +236,31 @@ private struct NoopDispatcher: ServiceDispatcher {
                 metadata: metadata
             ))
     )
+
+    let session = try await Session.acceptorOn(link, dispatcher: NoopDispatcher())
+
+    #expect(session.peerMetadata == metadata)
+}
+
+@Test func acceptorSessionConsumesTransportPrologueBeforeHandshake() async throws {
+    let metadata = [
+        MetadataEntry(key: "vox-service", value: .string("Noop"), flags: 0),
+        MetadataEntry(key: "vixenfs-sid", value: .string("abc123"), flags: 0),
+    ]
+    let link = ScriptedTransport(initialHandshake: nil)
+    await link.enqueueRaw(encodeTransportHello(.bare))
+    await link.enqueueHandshake(
+        .hello(
+            HandshakeHello(
+                parity: .odd,
+                connectionSettings: ConnectionSettings(parity: .odd, maxConcurrentRequests: 64),
+                messagePayloadSchemaCbor: wireMessageSchemasCbor,
+                supportsRetry: true,
+                resumeKey: nil,
+                metadata: metadata
+            ))
+    )
+    await link.enqueueHandshake(.letsGo(HandshakeLetsGo()))
 
     let session = try await Session.acceptorOn(link, dispatcher: NoopDispatcher())
 
