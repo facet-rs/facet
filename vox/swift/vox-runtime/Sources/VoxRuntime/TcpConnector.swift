@@ -1,14 +1,14 @@
 public protocol SessionConnector: Sendable {
-    var transport: TransportConduitKind { get }
+    var transport: ConduitKind { get }
     func openAttachment() async throws -> LinkAttachment
 }
 
 public struct TcpConnector: SessionConnector, LinkSource, Sendable {
     public let host: String
     public let port: Int
-    public let transport: TransportConduitKind
+    public let transport: ConduitKind
 
-    public init(host: String, port: Int, transport: TransportConduitKind = .bare) {
+    public init(host: String, port: Int, transport: ConduitKind = .bare) {
         self.host = host
         self.port = port
         self.transport = transport
@@ -33,9 +33,9 @@ public struct TcpConnector: SessionConnector, LinkSource, Sendable {
 
 public struct UnixConnector: SessionConnector, LinkSource, Sendable {
     public let path: String
-    public let transport: TransportConduitKind
+    public let transport: ConduitKind
 
-    public init(path: String, transport: TransportConduitKind = .bare) {
+    public init(path: String, transport: ConduitKind = .bare) {
         self.path = path
         self.transport = transport
     }
@@ -57,7 +57,7 @@ public struct UnixConnector: SessionConnector, LinkSource, Sendable {
     }
 }
 
-public func connect(unixPath: String, conduit: TransportConduitKind = .bare) async throws -> any Conduit {
+public func connect(unixPath: String, conduit: ConduitKind = .bare) async throws -> any Conduit {
     try await connect(
         unixPath: unixPath,
         conduit: conduit,
@@ -67,7 +67,7 @@ public func connect(unixPath: String, conduit: TransportConduitKind = .bare) asy
 
 func connect(
     unixPath: String,
-    conduit: TransportConduitKind = .bare,
+    conduit: ConduitKind = .bare,
     prologueTimeoutNs: UInt64
 ) async throws -> any Conduit {
     let connector = UnixConnector(path: unixPath, transport: conduit)
@@ -88,7 +88,7 @@ func connect(
     return try await StableConduit.connect(source: source)
 }
 
-public func connect(host: String, port: Int, conduit: TransportConduitKind = .bare) async throws -> any Conduit {
+public func connect(host: String, port: Int, conduit: ConduitKind = .bare) async throws -> any Conduit {
     try await connect(
         host: host,
         port: port,
@@ -100,7 +100,7 @@ public func connect(host: String, port: Int, conduit: TransportConduitKind = .ba
 func connect(
     host: String,
     port: Int,
-    conduit: TransportConduitKind = .bare,
+    conduit: ConduitKind = .bare,
     prologueTimeoutNs: UInt64
 ) async throws -> any Conduit {
     let connector = TcpConnector(host: host, port: port, transport: conduit)
@@ -123,12 +123,12 @@ func connect(
 
 private struct TimedTransportedLinkSource<Base: LinkSource>: LinkSource {
     let source: Base
-    let conduit: TransportConduitKind
+    let conduit: ConduitKind
     let timeoutNs: UInt64
 
     func nextLink() async throws -> LinkAttachment {
         let attachment = try await source.nextLink()
-        guard attachment.clientHello == nil else {
+        guard attachment.negotiatedConduit == nil else {
             try? await attachment.link.close()
             throw TransportError.protocolViolation(
                 "initiator transport source cannot yield acceptor-prepared attachments"

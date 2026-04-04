@@ -175,7 +175,7 @@ public func prepareStableAcceptorAttachment(link: any Link) async throws -> Link
         throw TransportError.connectionClosed
     }
     _ = try decodeStableClientHello(clientHello)
-    return LinkAttachment(link: link, clientHello: clientHello)
+    return .stableAccepted(link, clientHello: clientHello)
 }
 
 actor StableConduitState {
@@ -214,7 +214,7 @@ actor StableConduitState {
 
         let attachment = try await source.nextLink()
         let link = attachment.link
-        if let clientHello = attachment.clientHello {
+        if let clientHello = attachment.stableClientHello {
             try await attachAcceptor(link: link, clientHelloBytes: clientHello)
         } else {
             try await attachInitiator(link: link)

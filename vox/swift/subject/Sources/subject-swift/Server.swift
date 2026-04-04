@@ -15,7 +15,7 @@ public struct Server {
         }
         fputs("[subject-server] PEER_ADDR=\(peerAddr)\n", stderr)
 
-        let transport: TransportConduitKind =
+        let transport: ConduitKind =
             ProcessInfo.processInfo.environment["SPEC_CONDUIT"] == "stable" ? .stable : .bare
         fputs("[subject-server] transport=\(transport)\n", stderr)
 

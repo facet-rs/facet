@@ -1,7 +1,10 @@
-public enum TransportConduitKind: Sendable {
+public enum ConduitKind: Sendable {
     case bare
     case stable
 }
+
+@available(*, deprecated, renamed: "ConduitKind")
+public typealias TransportConduitKind = ConduitKind
 
 public enum TransportError: Error {
     case connectionClosed

@@ -180,7 +180,7 @@ func performAcceptorHandshake(
 
 func buildEstablishedConduit(
     role: Role,
-    transport: TransportConduitKind,
+    transport: ConduitKind,
     attachment: LinkAttachment,
     recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil
 ) async throws -> any Conduit {
@@ -196,7 +196,7 @@ func buildEstablishedConduit(
                 )
             )
         }
-        if role == .acceptor && attachment.clientHello == nil {
+        if role == .acceptor && attachment.negotiatedConduit == .stable {
             return try await StableConduit.connect(
                 source: DeferredStableAcceptorAttachmentSource(link: attachment.link)
             )
@@ -223,7 +223,7 @@ private actor DeferredStableAcceptorAttachmentSource: LinkSource {
 
 public func establishInitiator(
     attachment: LinkAttachment,
-    transport: TransportConduitKind = .bare,
+    transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,
@@ -269,7 +269,7 @@ public func establishInitiator(
 
 public func establishInitiator(
     link: any Link,
-    transport: TransportConduitKind = .bare,
+    transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,
@@ -293,7 +293,7 @@ public func establishInitiator(
 
 public func establishInitiator(
     conduit: any Link,
-    transport: TransportConduitKind = .bare,
+    transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,
@@ -317,7 +317,7 @@ public func establishInitiator(
 
 public func establishAcceptor(
     attachment: LinkAttachment,
-    transport: TransportConduitKind = .bare,
+    transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,
@@ -325,7 +325,7 @@ public func establishAcceptor(
     resumable: Bool = false,
     metadata: [MetadataEntry] = []
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
-    if attachment.clientHello == nil {
+    if attachment.negotiatedConduit == nil {
         let negotiatedTransport = try await performAcceptorTransportPrologue(
             transport: attachment.link,
             supportedConduit: transport
@@ -373,7 +373,7 @@ public func establishAcceptor(
 
 public func establishAcceptor(
     link: any Link,
-    transport: TransportConduitKind = .bare,
+    transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,
@@ -395,7 +395,7 @@ public func establishAcceptor(
 
 public func establishAcceptor(
     conduit: any Link,
-    transport: TransportConduitKind = .bare,
+    transport: ConduitKind = .bare,
     dispatcher: any ServiceDispatcher,
     acceptConnections: Bool = false,
     maxPayloadSize: UInt32? = nil,

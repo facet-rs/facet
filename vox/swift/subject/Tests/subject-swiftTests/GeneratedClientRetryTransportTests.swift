@@ -260,7 +260,7 @@ private struct RetryProbeDispatcher: ServiceDispatcher {
 }
 
 private actor QueuedStableClientConnector: SessionConnector {
-    let transport: TransportConduitKind = .bare
+    let transport: ConduitKind = .bare
     private var links: [RetryTestLink]
 
     init(links: [RetryTestLink]) {

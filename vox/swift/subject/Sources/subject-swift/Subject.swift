@@ -284,7 +284,7 @@ func log(_ message: String) {
     NSLog("%@", "[\(pid)] \(message)")
 }
 
-func subjectConduit() -> TransportConduitKind {
+func subjectConduit() -> ConduitKind {
     ProcessInfo.processInfo.environment["SPEC_CONDUIT"] == "stable" ? .stable : .bare
 }
 

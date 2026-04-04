@@ -10,7 +10,7 @@ public final class SessionHandle: @unchecked Sendable {
     private let role: Role
     private let localRootSettings: ConnectionSettings
     private let peerRootSettings: ConnectionSettings
-    private let transport: TransportConduitKind
+    private let transport: ConduitKind
     let sessionResumeKey: [UInt8]?
 
     init(
@@ -18,7 +18,7 @@ public final class SessionHandle: @unchecked Sendable {
         role: Role,
         localRootSettings: ConnectionSettings,
         peerRootSettings: ConnectionSettings,
-        transport: TransportConduitKind,
+        transport: ConduitKind,
         sessionResumeKey: [UInt8]?
     ) {
         self.eventContinuation = eventContinuation

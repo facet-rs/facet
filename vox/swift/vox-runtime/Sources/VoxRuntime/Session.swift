@@ -75,9 +75,9 @@ public final class Session: @unchecked Sendable {
         resumable: Bool = false
     ) async throws -> Session {
         let attachment = try await connector.openAttachment()
-        return try await acceptorOn(
+        return try await acceptFreshAttachment(
             attachment,
-            transport: connector.transport,
+            conduit: connector.transport,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             keepalive: keepalive,
@@ -94,9 +94,9 @@ public final class Session: @unchecked Sendable {
         resumable: Bool = false
     ) async throws -> SessionAcceptOutcome {
         let attachment = try await connector.openAttachment()
-        return try await acceptorOnOrResume(
+        return try await acceptFreshAttachmentOrResume(
             attachment,
-            transport: connector.transport,
+            conduit: connector.transport,
             registry: registry,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
@@ -105,17 +105,17 @@ public final class Session: @unchecked Sendable {
         )
     }
 
-    public static func initiatorOn(
+    public static func establishOverFreshLink(
         _ link: any Link,
-        transport: TransportConduitKind = .bare,
+        conduit: ConduitKind = .bare,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
         keepalive: DriverKeepaliveConfig? = nil,
         resumable: Bool = false
     ) async throws -> Session {
         let (connection, driver, handle, sessionResumeKey, peerMetadata) = try await establishInitiator(
-            attachment: .initiator(link),
-            transport: transport,
+            attachment: .fresh(link),
+            transport: conduit,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             keepalive: keepalive,
@@ -131,18 +131,37 @@ public final class Session: @unchecked Sendable {
         )
     }
 
-    public static func acceptorOn(
-        _ attachment: LinkAttachment,
-        transport: TransportConduitKind? = nil,
+    @available(*, deprecated, renamed: "establishOverFreshLink(_:conduit:dispatcher:acceptConnections:keepalive:resumable:)")
+    public static func initiatorOn(
+        _ link: any Link,
+        transport: ConduitKind = .bare,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
         keepalive: DriverKeepaliveConfig? = nil,
         resumable: Bool = false
     ) async throws -> Session {
-        let selectedTransport = transport ?? (attachment.clientHello == nil ? .bare : .stable)
+        try await establishOverFreshLink(
+            link,
+            conduit: transport,
+            dispatcher: dispatcher,
+            acceptConnections: acceptConnections,
+            keepalive: keepalive,
+            resumable: resumable
+        )
+    }
+
+    public static func acceptFreshAttachment(
+        _ attachment: LinkAttachment,
+        conduit: ConduitKind? = nil,
+        dispatcher: any ServiceDispatcher,
+        acceptConnections: Bool = false,
+        keepalive: DriverKeepaliveConfig? = nil,
+        resumable: Bool = false
+    ) async throws -> Session {
+        let selectedConduit = conduit ?? attachment.negotiatedConduit ?? .bare
         let (connection, driver, handle, sessionResumeKey, peerMetadata) = try await establishAcceptor(
             attachment: attachment,
-            transport: selectedTransport,
+            transport: selectedConduit,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             keepalive: keepalive,
@@ -158,17 +177,18 @@ public final class Session: @unchecked Sendable {
         )
     }
 
+    @available(*, deprecated, renamed: "acceptFreshAttachment(_:conduit:dispatcher:acceptConnections:keepalive:resumable:)")
     public static func acceptorOn(
-        _ link: any Link,
-        transport: TransportConduitKind = .bare,
+        _ attachment: LinkAttachment,
+        transport: ConduitKind? = nil,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
         keepalive: DriverKeepaliveConfig? = nil,
         resumable: Bool = false
     ) async throws -> Session {
-        try await acceptorOn(
-            .init(link: link),
-            transport: transport,
+        try await acceptFreshAttachment(
+            attachment,
+            conduit: transport,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             keepalive: keepalive,
@@ -176,29 +196,70 @@ public final class Session: @unchecked Sendable {
         )
     }
 
-    public static func acceptorOnOrResume(
+    public static func acceptFreshLink(
+        _ link: any Link,
+        conduit: ConduitKind = .bare,
+        dispatcher: any ServiceDispatcher,
+        acceptConnections: Bool = false,
+        keepalive: DriverKeepaliveConfig? = nil,
+        resumable: Bool = false
+    ) async throws -> Session {
+        try await acceptFreshAttachment(
+            .fresh(link),
+            conduit: conduit,
+            dispatcher: dispatcher,
+            acceptConnections: acceptConnections,
+            keepalive: keepalive,
+            resumable: resumable
+        )
+    }
+
+    @available(*, deprecated, renamed: "acceptFreshLink(_:conduit:dispatcher:acceptConnections:keepalive:resumable:)")
+    public static func acceptorOn(
+        _ link: any Link,
+        transport: ConduitKind = .bare,
+        dispatcher: any ServiceDispatcher,
+        acceptConnections: Bool = false,
+        keepalive: DriverKeepaliveConfig? = nil,
+        resumable: Bool = false
+    ) async throws -> Session {
+        try await acceptFreshLink(
+            link,
+            conduit: transport,
+            dispatcher: dispatcher,
+            acceptConnections: acceptConnections,
+            keepalive: keepalive,
+            resumable: resumable
+        )
+    }
+
+    public static func acceptFreshAttachmentOrResume(
         _ attachment: LinkAttachment,
-        transport: TransportConduitKind? = nil,
+        conduit: ConduitKind? = nil,
         registry: SessionRegistry,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
         keepalive: DriverKeepaliveConfig? = nil,
         resumable: Bool = false
     ) async throws -> SessionAcceptOutcome {
-        let selectedTransport = transport ?? (attachment.clientHello == nil ? .bare : .stable)
-        if attachment.clientHello == nil {
+        let selectedConduit = conduit ?? attachment.negotiatedConduit ?? .bare
+        let readyAttachment: LinkAttachment
+        if attachment.negotiatedConduit == nil {
             let negotiatedTransport = try await performAcceptorTransportPrologue(
                 transport: attachment.link,
-                supportedConduit: selectedTransport
+                supportedConduit: selectedConduit
             )
-            guard negotiatedTransport == selectedTransport else {
+            guard negotiatedTransport == selectedConduit else {
                 throw TransportError.protocolViolation(
-                    "transport negotiated \(negotiatedTransport) for requested \(selectedTransport)"
+                    "transport negotiated \(negotiatedTransport) for requested \(selectedConduit)"
                 )
             }
+            readyAttachment = .negotiated(attachment.link, conduit: negotiatedTransport)
+        } else {
+            readyAttachment = attachment
         }
 
-        guard let firstBytes = try await attachment.link.recvRawPrologue() else {
+        guard let firstBytes = try await readyAttachment.link.recvRawPrologue() else {
             throw ConnectionError.connectionClosed
         }
         let firstMessage = try HandshakeMessage.decodeCbor(firstBytes)
@@ -207,8 +268,8 @@ public final class Session: @unchecked Sendable {
         }
 
         let prefetchedAttachment = LinkAttachment(
-            link: PrefetchedLink(firstRawPrologue: firstBytes, base: attachment.link),
-            clientHello: attachment.clientHello ?? []
+            link: PrefetchedLink(firstRawPrologue: firstBytes, base: readyAttachment.link),
+            state: .conduitNegotiated(selectedConduit)
         )
 
         if let resumeKey = hello.resumeKey?.bytes {
@@ -224,9 +285,9 @@ public final class Session: @unchecked Sendable {
             return .resumed
         }
 
-        let session = try await acceptorOn(
+        let session = try await acceptFreshAttachment(
             prefetchedAttachment,
-            transport: selectedTransport,
+            conduit: selectedConduit,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,
             keepalive: keepalive,
@@ -238,18 +299,60 @@ public final class Session: @unchecked Sendable {
         return .established(session)
     }
 
+    @available(*, deprecated, renamed: "acceptFreshAttachmentOrResume(_:conduit:registry:dispatcher:acceptConnections:keepalive:resumable:)")
     public static func acceptorOnOrResume(
-        _ link: any Link,
-        transport: TransportConduitKind = .bare,
+        _ attachment: LinkAttachment,
+        transport: ConduitKind? = nil,
         registry: SessionRegistry,
         dispatcher: any ServiceDispatcher,
         acceptConnections: Bool = false,
         keepalive: DriverKeepaliveConfig? = nil,
         resumable: Bool = false
     ) async throws -> SessionAcceptOutcome {
-        try await acceptorOnOrResume(
-            .init(link: link),
-            transport: transport,
+        try await acceptFreshAttachmentOrResume(
+            attachment,
+            conduit: transport,
+            registry: registry,
+            dispatcher: dispatcher,
+            acceptConnections: acceptConnections,
+            keepalive: keepalive,
+            resumable: resumable
+        )
+    }
+
+    public static func acceptFreshLinkOrResume(
+        _ link: any Link,
+        conduit: ConduitKind = .bare,
+        registry: SessionRegistry,
+        dispatcher: any ServiceDispatcher,
+        acceptConnections: Bool = false,
+        keepalive: DriverKeepaliveConfig? = nil,
+        resumable: Bool = false
+    ) async throws -> SessionAcceptOutcome {
+        try await acceptFreshAttachmentOrResume(
+            .fresh(link),
+            conduit: conduit,
+            registry: registry,
+            dispatcher: dispatcher,
+            acceptConnections: acceptConnections,
+            keepalive: keepalive,
+            resumable: resumable
+        )
+    }
+
+    @available(*, deprecated, renamed: "acceptFreshLinkOrResume(_:conduit:registry:dispatcher:acceptConnections:keepalive:resumable:)")
+    public static func acceptorOnOrResume(
+        _ link: any Link,
+        transport: ConduitKind = .bare,
+        registry: SessionRegistry,
+        dispatcher: any ServiceDispatcher,
+        acceptConnections: Bool = false,
+        keepalive: DriverKeepaliveConfig? = nil,
+        resumable: Bool = false
+    ) async throws -> SessionAcceptOutcome {
+        try await acceptFreshLinkOrResume(
+            link,
+            conduit: transport,
             registry: registry,
             dispatcher: dispatcher,
             acceptConnections: acceptConnections,

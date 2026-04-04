@@ -124,7 +124,7 @@ func makeSessionDriverAndConnection(
     sessionResumeKey: [UInt8]?,
     localRootSettings: ConnectionSettings,
     peerRootSettings: ConnectionSettings,
-    transport: TransportConduitKind,
+    transport: ConduitKind,
     recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil
 ) -> (Connection, Driver, SessionHandle) {
     let commandQueue = LockedQueue<HandleCommand>()

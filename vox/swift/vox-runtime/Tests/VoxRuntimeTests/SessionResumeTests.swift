@@ -119,7 +119,7 @@ private actor ResumeScriptedLink: Link {
 }
 
 private actor ResumeScriptedConnector: SessionConnector {
-    let transport: TransportConduitKind = .bare
+    let transport: ConduitKind = .bare
     private var links: [ResumeScriptedLink]
 
     init(_ links: [ResumeScriptedLink]) {

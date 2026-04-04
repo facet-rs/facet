@@ -5,7 +5,7 @@ let transportVersion: UInt8 = 9
 let rejectUnsupportedMode: UInt8 = 1
 let defaultTransportPrologueTimeoutNs: UInt64 = 5_000_000_000
 
-func encodeTransportHello(_ conduit: TransportConduitKind) -> [UInt8] {
+func encodeTransportHello(_ conduit: ConduitKind) -> [UInt8] {
     [
         transportHelloMagic[0], transportHelloMagic[1], transportHelloMagic[2], transportHelloMagic[3],
         transportVersion,
@@ -15,7 +15,7 @@ func encodeTransportHello(_ conduit: TransportConduitKind) -> [UInt8] {
     ]
 }
 
-public func encodeTransportAccept(_ conduit: TransportConduitKind) -> [UInt8] {
+public func encodeTransportAccept(_ conduit: ConduitKind) -> [UInt8] {
     [
         transportAcceptMagic[0], transportAcceptMagic[1], transportAcceptMagic[2], transportAcceptMagic[3],
         transportVersion,
@@ -35,7 +35,7 @@ func encodeTransportRejectUnsupported() -> [UInt8] {
     ]
 }
 
-public func decodeTransportHello(_ bytes: [UInt8]) throws -> TransportConduitKind {
+public func decodeTransportHello(_ bytes: [UInt8]) throws -> ConduitKind {
     guard bytes.count == 8 else {
         throw TransportError.protocolViolation("invalid transport hello size")
     }
@@ -55,7 +55,7 @@ public func decodeTransportHello(_ bytes: [UInt8]) throws -> TransportConduitKin
     }
 }
 
-func validateTransportAccept(_ bytes: [UInt8], requested: TransportConduitKind) throws {
+func validateTransportAccept(_ bytes: [UInt8], requested: ConduitKind) throws {
     guard bytes.count == 8 else {
         throw TransportError.protocolViolation("invalid transport prologue response size")
     }
@@ -63,7 +63,7 @@ func validateTransportAccept(_ bytes: [UInt8], requested: TransportConduitKind) 
         guard bytes[4] == transportVersion else {
             throw TransportError.protocolViolation("unsupported transport version \(bytes[4])")
         }
-        let selected = bytes[5] == 1 ? TransportConduitKind.stable : TransportConduitKind.bare
+        let selected = bytes[5] == 1 ? ConduitKind.stable : ConduitKind.bare
         guard selected == requested else {
             throw TransportError.protocolViolation("transport selected \(selected) for requested \(requested)")
         }
@@ -80,7 +80,7 @@ func validateTransportAccept(_ bytes: [UInt8], requested: TransportConduitKind) 
 
 public func performInitiatorTransportPrologue(
     transport: some Link,
-    conduit: TransportConduitKind
+    conduit: ConduitKind
 ) async throws {
     try await transport.sendRawPrologue(encodeTransportHello(conduit))
     guard let response = try await transport.recvRawPrologue() else {
@@ -91,8 +91,8 @@ public func performInitiatorTransportPrologue(
 
 public func performAcceptorTransportPrologue(
     transport: some Link,
-    supportedConduit: TransportConduitKind = .bare
-) async throws -> TransportConduitKind {
+    supportedConduit: ConduitKind = .bare
+) async throws -> ConduitKind {
     guard let request = try await transport.recvRawPrologue() else {
         throw TransportError.connectionClosed
     }
