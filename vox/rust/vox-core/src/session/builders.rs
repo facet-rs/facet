@@ -866,8 +866,10 @@ where
                     None => attempt.await,
                 };
 
-                if let Ok(conduit) = result {
-                    return Ok(conduit);
+                match result {
+                    Ok(conduit) => return Ok(conduit),
+                    Err(e) if !e.is_retryable() => return Err(e),
+                    Err(_) => {}
                 }
 
                 if use_resume_key {

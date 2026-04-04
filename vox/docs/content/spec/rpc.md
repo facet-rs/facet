@@ -244,6 +244,22 @@ identity described in [Retry](./retry/).
 >   * `Indeterminate` — recovery completed, but the runtime could not safely
 >     continue, replay, or re-execute the logical operation
 
+> r[rpc.fallible.vox-error.retryable]
+>
+> `VoxError` variants differ in retryability:
+>
+>   * **Retryable** — the failure is transient; retrying the same operation on a
+>     fresh connection may succeed: `ConnectionClosed`, `SessionShutdown`,
+>     `SendFailed`
+>   * **Non-retryable** — the failure is permanent; retrying the same operation
+>     against the same peer will reproduce the same outcome: `User`,
+>     `UnknownMethod`, `InvalidPayload`, `Cancelled`, `Indeterminate`
+>
+> Callers that loop on error MUST NOT retry non-retryable failures. In
+> particular, retrying a call that failed with `InvalidPayload` due to a schema
+> translation error will always produce the same failure, because the remote
+> peer's schema does not change without a reconnect.
+
 > r[rpc.error.scope]
 >
 > Call errors affect only that call. The connection remains open and other
