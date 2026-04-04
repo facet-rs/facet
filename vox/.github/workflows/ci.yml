@@ -90,7 +90,7 @@ jobs:
           for example in rust-examples/examples/*.rs; do
             name="$(basename "${example}" .rs)"
             # bench_client is a long-running benchmark tool, skip it in CI
-            if [ "${name}" = "bench_client" ] || [ "${name}" = "bench_runner" ]; then
+            if [ "${name}" = "bench_client" ] || [ "${name}" = "bench_runner" ] || [ "${name}" = "shootout" ]; then
               echo "Skipping ${name} (benchmark, would hang)"
               continue
             fi
