@@ -61,10 +61,35 @@ public final class SessionHandle: @unchecked Sendable {
             throw ConnectionError.protocolViolation(rule: "session is not resumable")
         }
 
+        let readyAttachment: LinkAttachment
+        if attachment.negotiatedConduit == nil {
+            switch role {
+            case .initiator:
+                try await performInitiatorTransportPrologue(
+                    transport: attachment.link,
+                    conduit: transport
+                )
+                readyAttachment = .negotiated(attachment.link, conduit: transport)
+            case .acceptor:
+                let negotiatedTransport = try await performAcceptorTransportPrologue(
+                    transport: attachment.link,
+                    supportedConduit: transport
+                )
+                guard negotiatedTransport == transport else {
+                    throw TransportError.protocolViolation(
+                        "transport negotiated \(negotiatedTransport) for requested \(transport)"
+                    )
+                }
+                readyAttachment = .negotiated(attachment.link, conduit: negotiatedTransport)
+            }
+        } else {
+            readyAttachment = attachment
+        }
+
         switch role {
         case .initiator:
             let handshake = try await performInitiatorHandshake(
-                link: attachment.link,
+                link: readyAttachment.link,
                 maxPayloadSize: 1024 * 1024,
                 maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
                 resumable: true,
@@ -88,7 +113,7 @@ public final class SessionHandle: @unchecked Sendable {
 
         case .acceptor:
             let handshake = try await performAcceptorHandshake(
-                link: attachment.link,
+                link: readyAttachment.link,
                 maxPayloadSize: 1024 * 1024,
                 maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
                 resumable: false,
@@ -109,7 +134,7 @@ public final class SessionHandle: @unchecked Sendable {
         return try await buildEstablishedConduit(
             role: role,
             transport: transport,
-            attachment: attachment,
+            attachment: readyAttachment,
             recoverAttachment: nil
         )
     }

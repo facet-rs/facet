@@ -271,7 +271,9 @@ private actor QueuedStableClientConnector: SessionConnector {
         guard !links.isEmpty else {
             throw TransportError.connectionClosed
         }
-        return .initiator(links.removeFirst())
+        let link = links.removeFirst()
+        try await performInitiatorTransportPrologue(transport: link, conduit: .bare)
+        return .negotiated(link, conduit: .bare)
     }
 }
 

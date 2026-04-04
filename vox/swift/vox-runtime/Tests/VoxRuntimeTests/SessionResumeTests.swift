@@ -14,17 +14,16 @@ private actor ResumeScriptedLink: Link {
     private var inboundQueue: [ResumeInboundEvent] = []
     private var recvWaiters: [CheckedContinuation<ResumeInboundEvent, Never>] = []
     private var closed = false
+    private var pendingInitialHandshake: HandshakeMessage?
 
     init(initialHandshake: HandshakeMessage? = nil) {
-        if let initialHandshake {
-            if case .hello = initialHandshake {
-                self.inboundQueue = [
-                    .frame(encodeTransportHello(.bare)),
-                    .frame(initialHandshake.encodeCbor()),
-                ]
-            } else {
-                self.inboundQueue = [.frame(initialHandshake.encodeCbor())]
-            }
+        self.pendingInitialHandshake = initialHandshake
+        if let initialHandshake, case .hello = initialHandshake {
+            self.inboundQueue = [
+                .frame(encodeTransportHello(.bare)),
+                .frame(initialHandshake.encodeCbor()),
+            ]
+            self.pendingInitialHandshake = nil
         } else {
             self.inboundQueue = []
         }
@@ -36,6 +35,10 @@ private actor ResumeScriptedLink: Link {
                 || Array(bytes[0..<4]) == Array("VOTA".utf8)
                 || Array(bytes[0..<4]) == Array("VOTR".utf8))
         {
+            if Array(bytes[0..<4]) == Array("VOTH".utf8) {
+                enqueue(.frame(encodeTransportAccept(.bare)))
+                return
+            }
             if Array(bytes[0..<4]) == Array("VOTA".utf8) {
                 return
             }
@@ -44,6 +47,10 @@ private actor ResumeScriptedLink: Link {
 
         if let handshake = try? HandshakeMessage.decodeCbor(bytes) {
             sentHandshakes.append(handshake)
+            if case .hello = handshake, let initialHandshake = pendingInitialHandshake {
+                pendingInitialHandshake = nil
+                enqueue(.frame(initialHandshake.encodeCbor()))
+            }
             if case .helloYourself = handshake {
                 enqueueHandshake(.letsGo(HandshakeLetsGo()))
             }
@@ -130,7 +137,9 @@ private actor ResumeScriptedConnector: SessionConnector {
         guard !links.isEmpty else {
             throw ConnectionError.connectionClosed
         }
-        return .initiator(links.removeFirst())
+        let link = links.removeFirst()
+        try await performInitiatorTransportPrologue(transport: link, conduit: .bare)
+        return .negotiated(link, conduit: .bare)
     }
 }
 
