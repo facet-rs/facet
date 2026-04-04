@@ -2574,10 +2574,11 @@ public final class TestbedDispatcher: ServiceDispatcher {
       let message = try decodeString(from: payload, offset: &cursor)
       do {
         let result = try await handler.echo(message: message)
+        let _encoded = encodeResultOk(result, encoder: { encodeString($0) })
         taskSender(
           .response(
-            requestId: requestId, payload: encodeResultOk(result, encoder: { encodeString($0) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -2607,10 +2608,11 @@ public final class TestbedDispatcher: ServiceDispatcher {
       let message = try decodeString(from: payload, offset: &cursor)
       do {
         let result = try await handler.reverse(message: message)
+        let _encoded = encodeResultOk(result, encoder: { encodeString($0) })
         taskSender(
           .response(
-            requestId: requestId, payload: encodeResultOk(result, encoder: { encodeString($0) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -2751,10 +2753,11 @@ public final class TestbedDispatcher: ServiceDispatcher {
         })
       do {
         let result = try await handler.sum(numbers: numbers)
+        let _encoded = encodeResultOk(result, encoder: { encodeI64($0) })
         taskSender(
           .response(
-            requestId: requestId, payload: encodeResultOk(result, encoder: { encodeI64($0) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -2949,11 +2952,11 @@ public final class TestbedDispatcher: ServiceDispatcher {
       let point = Point(x: _point_x, y: _point_y)
       do {
         let result = try await handler.echoPoint(point: point)
+        let _encoded = encodeResultOk(result, encoder: { encodeI32($0.x) + encodeI32($0.y) })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(result, encoder: { encodeI32($0.x) + encodeI32($0.y) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -2987,15 +2990,16 @@ public final class TestbedDispatcher: ServiceDispatcher {
         decoder: { data, off in try decodeString(from: data, offset: &off) })
       do {
         let result = try await handler.createPerson(name: name, age: age, email: email)
+        let _encoded = encodeResultOk(
+          result,
+          encoder: {
+            encodeString($0.name) + encodeU8($0.age)
+              + encodeOption($0.email, encoder: { encodeString($0) })
+          })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result,
-              encoder: {
-                encodeString($0.name) + encodeU8($0.age)
-                  + encodeOption($0.email, encoder: { encodeString($0) })
-              }), methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3035,10 +3039,11 @@ public final class TestbedDispatcher: ServiceDispatcher {
         topLeft: _rect_topLeft, bottomRight: _rect_bottomRight, label: _rect_label)
       do {
         let result = try await handler.rectangleArea(rect: rect)
+        let _encoded = encodeResultOk(result, encoder: { encodeF64($0) })
         taskSender(
           .response(
-            requestId: requestId, payload: encodeResultOk(result, encoder: { encodeF64($0) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3068,25 +3073,26 @@ public final class TestbedDispatcher: ServiceDispatcher {
       let name = try decodeString(from: payload, offset: &cursor)
       do {
         let result = try await handler.parseColor(name: name)
+        let _encoded = encodeResultOk(
+          result,
+          encoder: {
+            encodeOption(
+              $0,
+              encoder: { v in
+                switch v {
+                case .red:
+                  return encodeVarint(UInt64(0))
+                case .green:
+                  return encodeVarint(UInt64(1))
+                case .blue:
+                  return encodeVarint(UInt64(2))
+                }
+              })
+          })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result,
-              encoder: {
-                encodeOption(
-                  $0,
-                  encoder: { v in
-                    switch v {
-                    case .red:
-                      return encodeVarint(UInt64(0))
-                    case .green:
-                      return encodeVarint(UInt64(1))
-                    case .blue:
-                      return encodeVarint(UInt64(2))
-                    }
-                  })
-              }), methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3130,10 +3136,11 @@ public final class TestbedDispatcher: ServiceDispatcher {
       }
       do {
         let result = try await handler.shapeArea(shape: shape)
+        let _encoded = encodeResultOk(result, encoder: { encodeF64($0) })
         taskSender(
           .response(
-            requestId: requestId, payload: encodeResultOk(result, encoder: { encodeF64($0) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3196,36 +3203,37 @@ public final class TestbedDispatcher: ServiceDispatcher {
       do {
         let result = try await handler.createCanvas(
           name: name, shapes: shapes, background: background)
+        let _encoded = encodeResultOk(
+          result,
+          encoder: {
+            encodeString($0.name)
+              + encodeVec(
+                $0.shapes,
+                encoder: { v in
+                  switch v {
+                  case .circle(let radius):
+                    return encodeVarint(UInt64(0)) + encodeF64(radius)
+                  case .rectangle(let width, let height):
+                    return encodeVarint(UInt64(1)) + encodeF64(width) + encodeF64(height)
+                  case .point:
+                    return encodeVarint(UInt64(2))
+                  }
+                })
+              + { v in
+                switch v {
+                case .red:
+                  return encodeVarint(UInt64(0))
+                case .green:
+                  return encodeVarint(UInt64(1))
+                case .blue:
+                  return encodeVarint(UInt64(2))
+                }
+              }($0.background)
+          })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result,
-              encoder: {
-                encodeString($0.name)
-                  + encodeVec(
-                    $0.shapes,
-                    encoder: { v in
-                      switch v {
-                      case .circle(let radius):
-                        return encodeVarint(UInt64(0)) + encodeF64(radius)
-                      case .rectangle(let width, let height):
-                        return encodeVarint(UInt64(1)) + encodeF64(width) + encodeF64(height)
-                      case .point:
-                        return encodeVarint(UInt64(2))
-                      }
-                    })
-                  + { v in
-                    switch v {
-                    case .red:
-                      return encodeVarint(UInt64(0))
-                    case .green:
-                      return encodeVarint(UInt64(1))
-                    case .blue:
-                      return encodeVarint(UInt64(2))
-                    }
-                  }($0.background)
-              }), methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3314,37 +3322,38 @@ public final class TestbedDispatcher: ServiceDispatcher {
         footer: _payload_footer, digest: _payload_digest)
       do {
         let result = try await handler.echoGnarly(payload: payload)
+        let _encoded = encodeResultOk(
+          result,
+          encoder: {
+            encodeVarint($0.revision) + encodeString($0.mount)
+              + encodeVec(
+                $0.entries,
+                encoder: {
+                  encodeVarint($0.id) + encodeOption($0.parent, encoder: { encodeVarint($0) })
+                    + encodeString($0.name) + encodeString($0.path)
+                    + encodeVec(
+                      $0.attrs, encoder: { encodeString($0.key) + encodeString($0.value) })
+                    + encodeVec($0.chunks, encoder: { encodeBytes(Array($0)) })
+                    + { v in
+                      switch v {
+                      case .file(let mime, let tags):
+                        return encodeVarint(UInt64(0)) + encodeString(mime)
+                          + encodeVec(tags, encoder: { encodeString($0) })
+                      case .directory(let childCount, let children):
+                        return encodeVarint(UInt64(1)) + encodeU32(childCount)
+                          + encodeVec(children, encoder: { encodeString($0) })
+                      case .symlink(let target, let hops):
+                        return encodeVarint(UInt64(2)) + encodeString(target)
+                          + encodeVec(hops, encoder: { encodeU32($0) })
+                      }
+                    }($0.kind)
+                }) + encodeOption($0.footer, encoder: { encodeString($0) })
+              + encodeBytes(Array($0.digest))
+          })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result,
-              encoder: {
-                encodeVarint($0.revision) + encodeString($0.mount)
-                  + encodeVec(
-                    $0.entries,
-                    encoder: {
-                      encodeVarint($0.id) + encodeOption($0.parent, encoder: { encodeVarint($0) })
-                        + encodeString($0.name) + encodeString($0.path)
-                        + encodeVec(
-                          $0.attrs, encoder: { encodeString($0.key) + encodeString($0.value) })
-                        + encodeVec($0.chunks, encoder: { encodeBytes(Array($0)) })
-                        + { v in
-                          switch v {
-                          case .file(let mime, let tags):
-                            return encodeVarint(UInt64(0)) + encodeString(mime)
-                              + encodeVec(tags, encoder: { encodeString($0) })
-                          case .directory(let childCount, let children):
-                            return encodeVarint(UInt64(1)) + encodeU32(childCount)
-                              + encodeVec(children, encoder: { encodeString($0) })
-                          case .symlink(let target, let hops):
-                            return encodeVarint(UInt64(2)) + encodeString(target)
-                              + encodeVec(hops, encoder: { encodeU32($0) })
-                          }
-                        }($0.kind)
-                    }) + encodeOption($0.footer, encoder: { encodeString($0) })
-                  + encodeBytes(Array($0.digest))
-              }), methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3388,21 +3397,22 @@ public final class TestbedDispatcher: ServiceDispatcher {
       }
       do {
         let result = try await handler.processMessage(msg: msg)
+        let _encoded = encodeResultOk(
+          result,
+          encoder: { v in
+            switch v {
+            case .text(let val):
+              return encodeVarint(UInt64(0)) + encodeString(val)
+            case .number(let val):
+              return encodeVarint(UInt64(1)) + encodeI64(val)
+            case .data(let val):
+              return encodeVarint(UInt64(2)) + encodeBytes(Array(val))
+            }
+          })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result,
-              encoder: { v in
-                switch v {
-                case .text(let val):
-                  return encodeVarint(UInt64(0)) + encodeString(val)
-                case .number(let val):
-                  return encodeVarint(UInt64(1)) + encodeI64(val)
-                case .data(let val):
-                  return encodeVarint(UInt64(2)) + encodeBytes(Array(val))
-                }
-              }), methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3432,12 +3442,12 @@ public final class TestbedDispatcher: ServiceDispatcher {
       let count = try decodeU32(from: payload, offset: &cursor)
       do {
         let result = try await handler.getPoints(count: count)
+        let _encoded = encodeResultOk(
+          result, encoder: { encodeVec($0, encoder: { encodeI32($0.x) + encodeI32($0.y) }) })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result, encoder: { encodeVec($0, encoder: { encodeI32($0.x) + encodeI32($0.y) }) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3470,12 +3480,12 @@ public final class TestbedDispatcher: ServiceDispatcher {
         decoderB: { data, off in try decodeString(from: data, offset: &off) })
       do {
         let result = try await handler.swapPair(pair: pair)
+        let _encoded = encodeResultOk(
+          result, encoder: { { encodeString($0) }($0.0) + { encodeI32($0) }($0.1) })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result, encoder: { { encodeString($0) }($0.0) + { encodeI32($0) }($0.1) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3505,11 +3515,11 @@ public final class TestbedDispatcher: ServiceDispatcher {
       let data = try decodeBytes(from: payload, offset: &cursor)
       do {
         let result = try await handler.echoBytes(data: data)
+        let _encoded = encodeResultOk(result, encoder: { encodeBytes(Array($0)) })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(result, encoder: { encodeBytes(Array($0)) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3539,10 +3549,11 @@ public final class TestbedDispatcher: ServiceDispatcher {
       let b = try decodeBool(from: payload, offset: &cursor)
       do {
         let result = try await handler.echoBool(b: b)
+        let _encoded = encodeResultOk(result, encoder: { encodeBool($0) })
         taskSender(
           .response(
-            requestId: requestId, payload: encodeResultOk(result, encoder: { encodeBool($0) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3572,10 +3583,11 @@ public final class TestbedDispatcher: ServiceDispatcher {
       let n = try decodeVarint(from: payload, offset: &cursor)
       do {
         let result = try await handler.echoU64(n: n)
+        let _encoded = encodeResultOk(result, encoder: { encodeVarint($0) })
         taskSender(
           .response(
-            requestId: requestId, payload: encodeResultOk(result, encoder: { encodeVarint($0) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3607,12 +3619,12 @@ public final class TestbedDispatcher: ServiceDispatcher {
         decoder: { data, off in try decodeString(from: data, offset: &off) })
       do {
         let result = try await handler.echoOptionString(s: s)
+        let _encoded = encodeResultOk(
+          result, encoder: { encodeOption($0, encoder: { encodeString($0) }) })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result, encoder: { encodeOption($0, encoder: { encodeString($0) }) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3653,10 +3665,11 @@ public final class TestbedDispatcher: ServiceDispatcher {
         })
       do {
         let result = try await handler.sumLarge(numbers: numbers)
+        let _encoded = encodeResultOk(result, encoder: { encodeI64($0) })
         taskSender(
           .response(
-            requestId: requestId, payload: encodeResultOk(result, encoder: { encodeI64($0) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3722,25 +3735,26 @@ public final class TestbedDispatcher: ServiceDispatcher {
     do {
       do {
         let result = try await handler.allColors()
+        let _encoded = encodeResultOk(
+          result,
+          encoder: {
+            encodeVec(
+              $0,
+              encoder: { v in
+                switch v {
+                case .red:
+                  return encodeVarint(UInt64(0))
+                case .green:
+                  return encodeVarint(UInt64(1))
+                case .blue:
+                  return encodeVarint(UInt64(2))
+                }
+              })
+          })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result,
-              encoder: {
-                encodeVec(
-                  $0,
-                  encoder: { v in
-                    switch v {
-                    case .red:
-                      return encodeVarint(UInt64(0))
-                    case .green:
-                      return encodeVarint(UInt64(1))
-                    case .blue:
-                      return encodeVarint(UInt64(2))
-                    }
-                  })
-              }), methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3773,14 +3787,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       let active = try decodeBool(from: payload, offset: &cursor)
       do {
         let result = try await handler.describePoint(label: label, x: x, y: y, active: active)
+        let _encoded = encodeResultOk(
+          result,
+          encoder: {
+            encodeString($0.label) + encodeI32($0.x) + encodeI32($0.y) + encodeBool($0.active)
+          })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result,
-              encoder: {
-                encodeString($0.label) + encodeI32($0.x) + encodeI32($0.y) + encodeBool($0.active)
-              }), methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3824,21 +3839,22 @@ public final class TestbedDispatcher: ServiceDispatcher {
       }
       do {
         let result = try await handler.echoShape(shape: shape)
+        let _encoded = encodeResultOk(
+          result,
+          encoder: { v in
+            switch v {
+            case .circle(let radius):
+              return encodeVarint(UInt64(0)) + encodeF64(radius)
+            case .rectangle(let width, let height):
+              return encodeVarint(UInt64(1)) + encodeF64(width) + encodeF64(height)
+            case .point:
+              return encodeVarint(UInt64(2))
+            }
+          })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result,
-              encoder: { v in
-                switch v {
-                case .circle(let radius):
-                  return encodeVarint(UInt64(0)) + encodeF64(radius)
-                case .rectangle(let width, let height):
-                  return encodeVarint(UInt64(1)) + encodeF64(width) + encodeF64(height)
-                case .point:
-                  return encodeVarint(UInt64(2))
-                }
-              }), methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3877,19 +3893,20 @@ public final class TestbedDispatcher: ServiceDispatcher {
       }
       do {
         let result = try await handler.echoStatusV1(status: status)
+        let _encoded = encodeResultOk(
+          result,
+          encoder: { v in
+            switch v {
+            case .active:
+              return encodeVarint(UInt64(0))
+            case .inactive:
+              return encodeVarint(UInt64(1))
+            }
+          })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result,
-              encoder: { v in
-                switch v {
-                case .active:
-                  return encodeVarint(UInt64(0))
-                case .inactive:
-                  return encodeVarint(UInt64(1))
-                }
-              }), methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3922,13 +3939,13 @@ public final class TestbedDispatcher: ServiceDispatcher {
       let tag = Tag(label: _tag_label, priority: _tag_priority, note: _tag_note)
       do {
         let result = try await handler.echoTagV1(tag: tag)
+        let _encoded = encodeResultOk(
+          result,
+          encoder: { encodeString($0.label) + encodeU32($0.priority) + encodeString($0.note) })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result,
-              encoder: { encodeString($0.label) + encodeU32($0.priority) + encodeString($0.note) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3960,12 +3977,12 @@ public final class TestbedDispatcher: ServiceDispatcher {
       let profile = Profile(name: _profile_name, bio: _profile_bio)
       do {
         let result = try await handler.echoProfile(profile: profile)
+        let _encoded = encodeResultOk(
+          result, encoder: { encodeString($0.name) + encodeString($0.bio) })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result, encoder: { encodeString($0.name) + encodeString($0.bio) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -3998,12 +4015,12 @@ public final class TestbedDispatcher: ServiceDispatcher {
       let record = Record(alpha: _record_alpha, beta: _record_beta, gamma: _record_gamma)
       do {
         let result = try await handler.echoRecord(record: record)
+        let _encoded = encodeResultOk(
+          result, encoder: { encodeI32($0.alpha) + encodeString($0.beta) + encodeF64($0.gamma) })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result, encoder: { encodeI32($0.alpha) + encodeString($0.beta) + encodeF64($0.gamma) }
-            ), methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -4042,19 +4059,20 @@ public final class TestbedDispatcher: ServiceDispatcher {
       }
       do {
         let result = try await handler.echoStatus(status: status)
+        let _encoded = encodeResultOk(
+          result,
+          encoder: { v in
+            switch v {
+            case .active:
+              return encodeVarint(UInt64(0))
+            case .inactive:
+              return encodeVarint(UInt64(1))
+            }
+          })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result,
-              encoder: { v in
-                switch v {
-                case .active:
-                  return encodeVarint(UInt64(0))
-                case .inactive:
-                  return encodeVarint(UInt64(1))
-                }
-              }), methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -4087,13 +4105,13 @@ public final class TestbedDispatcher: ServiceDispatcher {
       let tag = Tag(label: _tag_label, priority: _tag_priority, note: _tag_note)
       do {
         let result = try await handler.echoTag(tag: tag)
+        let _encoded = encodeResultOk(
+          result,
+          encoder: { encodeString($0.label) + encodeU32($0.priority) + encodeString($0.note) })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result,
-              encoder: { encodeString($0.label) + encodeU32($0.priority) + encodeString($0.note) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(
@@ -4125,11 +4143,11 @@ public final class TestbedDispatcher: ServiceDispatcher {
       let m = Measurement(unit: _m_unit, value: _m_value)
       do {
         let result = try await handler.echoMeasurement(m: m)
+        let _encoded = encodeResultOk(
+          result, encoder: { encodeString($0.unit) + encodeF64($0.value) })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result, encoder: { encodeString($0.unit) + encodeF64($0.value) }), methodId: methodId,
+            requestId: requestId, payload: _encoded, methodId: methodId,
             schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
@@ -4162,12 +4180,12 @@ public final class TestbedDispatcher: ServiceDispatcher {
       let c = Config(key: _c_key, value: _c_value)
       do {
         let result = try await handler.echoConfig(c: c)
+        let _encoded = encodeResultOk(
+          result, encoder: { encodeString($0.key) + encodeString($0.value) })
         taskSender(
           .response(
-            requestId: requestId,
-            payload: encodeResultOk(
-              result, encoder: { encodeString($0.key) + encodeString($0.value) }),
-            methodId: methodId, schemaPayload: responseSchemaPayload))
+            requestId: requestId, payload: _encoded, methodId: methodId,
+            schemaPayload: responseSchemaPayload))
       } catch {
         taskSender(
           .response(

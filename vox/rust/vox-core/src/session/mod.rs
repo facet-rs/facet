@@ -216,7 +216,7 @@ impl Drop for PendingConnection {
 }
 
 // r[impl rpc.virtual-connection.accept]
-pub trait ConnectionAcceptor: Send + Sync + 'static {
+pub trait ConnectionAcceptor: Send + MaybeSync + 'static {
     fn accept(
         &self,
         request: &ConnectionRequest,
@@ -227,7 +227,7 @@ pub trait ConnectionAcceptor: Send + Sync + 'static {
 /// Any `Handler<DriverReplySink>` is automatically a `ConnectionAcceptor`.
 impl<H> ConnectionAcceptor for H
 where
-    H: Handler<crate::DriverReplySink> + Clone + Send + 'static,
+    H: Handler<crate::DriverReplySink> + Clone + Send + MaybeSync + 'static,
 {
     fn accept(
         &self,

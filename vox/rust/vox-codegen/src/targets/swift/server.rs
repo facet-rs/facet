@@ -352,7 +352,11 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
                         let encode_closure = generate_encode_closure(method.return_shape);
                         cw_writeln!(
                             w,
-                            "taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: {encode_closure}), methodId: methodId, schemaPayload: responseSchemaPayload))"
+                            "let _encoded = encodeResultOk(result, encoder: {encode_closure})"
+                        )
+                        .unwrap();
+                        w.writeln(
+                            "taskSender(.response(requestId: requestId, payload: _encoded, methodId: methodId, schemaPayload: responseSchemaPayload))",
                         )
                         .unwrap();
                     }
@@ -386,7 +390,11 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
                         let encode_closure = generate_encode_closure(method.return_shape);
                         cw_writeln!(
                             w,
-                            "taskSender(.response(requestId: requestId, payload: encodeResultOk(result, encoder: {encode_closure}), methodId: methodId, schemaPayload: responseSchemaPayload))"
+                            "let _encoded = encodeResultOk(result, encoder: {encode_closure})"
+                        )
+                        .unwrap();
+                        w.writeln(
+                            "taskSender(.response(requestId: requestId, payload: _encoded, methodId: methodId, schemaPayload: responseSchemaPayload))",
                         )
                         .unwrap();
                     }

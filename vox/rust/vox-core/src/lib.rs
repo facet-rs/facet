@@ -24,9 +24,7 @@ pub use operation_store::*;
 mod transport_prologue;
 pub use transport_prologue::*;
 
-#[cfg(not(target_arch = "wasm32"))]
 mod stable_conduit;
-#[cfg(not(target_arch = "wasm32"))]
 pub use stable_conduit::*;
 
 #[cfg(not(target_arch = "wasm32"))]
