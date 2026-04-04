@@ -83,6 +83,11 @@ jobs:
         run: |
           for example in rust-examples/examples/*.rs; do
             name="$(basename "${example}" .rs)"
+            # bench_client is a long-running benchmark tool, skip it in CI
+            if [ "${name}" = "bench_client" ]; then
+              echo "Skipping ${name} (benchmark, would hang)"
+              continue
+            fi
             echo "::group::${name}"
             cargo run -p rust-examples --example "${name}"
             echo "::endgroup::"
