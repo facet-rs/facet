@@ -428,7 +428,7 @@ mod tests {
                 *self
                     .observed_root
                     .lock()
-                    .expect("observed-root mutex poisoned") = Some(extracted.root);
+                    .expect("observed-root mutex poisoned") = Some(extracted.root.clone());
             }
         }
 

@@ -697,7 +697,8 @@ async fn duplicate_operation_id_on_same_connection_is_rejected() {
 fn message_plan_from_identical_schemas_round_trips() {
     let schemas = vox_types::extract_schemas(<Message<'static> as Facet<'static>>::SHAPE)
         .expect("schema extraction")
-        .schemas;
+        .schemas
+        .clone();
     let handshake_result = HandshakeResult {
         role: SessionRole::Initiator,
         our_settings: ConnectionSettings {

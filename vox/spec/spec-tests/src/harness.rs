@@ -1229,6 +1229,10 @@ pub async fn run_subject_client_scenario_resumable(
 
             match acceptor_on(session_link)
                 .session_registry(registry.clone())
+                .metadata(vec![vox_types::MetadataEntry::str(
+                    "vox-service",
+                    "Testbed",
+                )])
                 .on_connection(TestbedDispatcher::new(service.clone()))
                 .establish_or_resume::<TestbedClient>()
                 .await
@@ -1508,6 +1512,10 @@ async fn accept_subject_tcp_resumable(cmd: &str) -> Result<ResumableSubjectHarne
 
                 match acceptor_on(session_link)
                     .session_registry(registry.clone())
+                    .metadata(vec![vox_types::MetadataEntry::str(
+                        "vox-service",
+                        "Testbed",
+                    )])
                     .on_connection(NoopHandler)
                     .establish_or_resume::<TestbedClient>()
                     .await

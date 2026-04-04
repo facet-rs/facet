@@ -738,6 +738,7 @@ async function runServerListen() {
 
   const established = await session.acceptorOn(acceptTcp(socket), {
     transport: subjectConduit(),
+    metadata: voxServiceMetadata("Testbed"),
     // Provide a session resume key so Rust clients (which default to
     // resumable=true) don't reject the handshake. The key is generated
     // randomly; there is no session registry so reconnection won't work,

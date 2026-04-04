@@ -437,10 +437,15 @@ mod tests {
         local_shape: &'static facet_core::Shape,
     ) -> Result<PlanResult, error::TranslationError> {
         let remote_extracted = vox_types::extract_schemas(remote_shape).expect("schema extraction");
-        let remote =
-            SchemaSet::from_root_and_schemas(remote_extracted.root, remote_extracted.schemas);
+        let remote = SchemaSet::from_root_and_schemas(
+            remote_extracted.root.clone(),
+            remote_extracted.schemas.clone(),
+        );
         let local_extracted = vox_types::extract_schemas(local_shape).expect("schema extraction");
-        let local = SchemaSet::from_root_and_schemas(local_extracted.root, local_extracted.schemas);
+        let local = SchemaSet::from_root_and_schemas(
+            local_extracted.root.clone(),
+            local_extracted.schemas.clone(),
+        );
         let plan = build_plan(&PlanInput {
             remote: &remote,
             local: &local,
@@ -472,7 +477,10 @@ mod tests {
         ]);
         let local_extracted =
             vox_types::extract_schemas(<Vec<u8> as Facet>::SHAPE).expect("schema extraction");
-        let local = SchemaSet::from_root_and_schemas(local_extracted.root, local_extracted.schemas);
+        let local = SchemaSet::from_root_and_schemas(
+            local_extracted.root.clone(),
+            local_extracted.schemas.clone(),
+        );
         let plan = build_plan(&PlanInput {
             remote: &remote,
             local: &local,
@@ -1640,7 +1648,8 @@ mod tests {
     fn schema_set_from_schemas_works() {
         let schemas = vox_types::extract_schemas(<Vec<u32> as Facet>::SHAPE)
             .expect("schema extraction")
-            .schemas;
+            .schemas
+            .clone();
         let set = SchemaSet::from_schemas(schemas);
         assert!(
             matches!(set.root.kind, vox_types::SchemaKind::List { .. }),

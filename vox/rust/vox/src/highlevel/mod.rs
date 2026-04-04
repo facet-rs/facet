@@ -1,10 +1,12 @@
+use std::future::IntoFuture;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use vox_core::{
-    ConnectionAcceptor, FromVoxSession, LinkSource, NoopClient, SessionError, TransportMode,
-    initiator,
+    ConnectionAcceptor, FromVoxSession, NoopClient, SessionError, TransportMode, initiator,
 };
+use vox_types::{Metadata, metadata_into_owned};
 
 mod error;
 pub use error::ServeError;
@@ -59,10 +61,21 @@ pub trait VoxListener: Send + 'static {
 /// # Ok(())
 /// # }
 /// ```
-pub async fn connect<Client: FromVoxSession>(
+// r[impl rpc.session-setup]
+pub fn connect<Client: FromVoxSession>(
     addr: impl std::fmt::Display,
-) -> Result<Client, SessionError> {
-    let addr = addr.to_string();
+) -> ConnectBuilder<'static, Client> {
+    ConnectBuilder::new(addr.to_string())
+}
+
+enum ConnectAddress {
+    Tcp(String),
+    Local(String),
+    #[cfg(feature = "transport-websocket")]
+    Ws(String),
+}
+
+fn parse_connect_address(addr: String) -> Result<ConnectAddress, SessionError> {
     let (scheme, host) = match addr.split_once("://") {
         Some((scheme, host)) => (scheme.to_string(), host.to_string()),
         None => ("tcp".to_string(), addr),
@@ -70,17 +83,137 @@ pub async fn connect<Client: FromVoxSession>(
 
     match scheme.as_str() {
         #[cfg(feature = "transport-tcp")]
-        "tcp" => connect_bare(vox_stream::tcp_link_source(host)).await,
+        "tcp" => Ok(ConnectAddress::Tcp(host)),
         #[cfg(feature = "transport-local")]
-        "local" => connect_bare(vox_stream::local_link_source(host)).await,
+        "local" => Ok(ConnectAddress::Local(host)),
         #[cfg(feature = "transport-websocket")]
-        "ws" | "wss" => {
-            let url = format!("{scheme}://{host}");
-            connect_bare(vox_websocket::ws_link_source(url)).await
-        }
+        "ws" | "wss" => Ok(ConnectAddress::Ws(format!("{scheme}://{host}"))),
         _ => Err(SessionError::Protocol(format!(
             "unknown transport scheme: {scheme:?}"
         ))),
+    }
+}
+
+pub struct ConnectBuilder<'a, Client> {
+    addr: String,
+    metadata: Metadata<'a>,
+    on_connection: Option<Arc<dyn ConnectionAcceptor>>,
+    connect_timeout: Option<Duration>,
+    resumable: bool,
+    _client: std::marker::PhantomData<Client>,
+}
+
+impl<'a, Client> ConnectBuilder<'a, Client> {
+    fn new(addr: String) -> Self {
+        Self {
+            addr,
+            metadata: vec![],
+            on_connection: None,
+            connect_timeout: Some(Duration::from_secs(5)),
+            resumable: false,
+            _client: std::marker::PhantomData,
+        }
+    }
+
+    // r[impl rpc.virtual-connection.accept]
+    pub fn on_connection(mut self, acceptor: impl ConnectionAcceptor) -> Self {
+        self.on_connection = Some(Arc::new(acceptor));
+        self
+    }
+
+    pub fn metadata(mut self, metadata: Metadata<'a>) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
+    pub fn connect_timeout(mut self, timeout: Duration) -> Self {
+        self.connect_timeout = Some(timeout);
+        self
+    }
+
+    pub fn resumable(mut self) -> Self {
+        self.resumable = true;
+        self
+    }
+}
+
+impl<'a, Client> ConnectBuilder<'a, Client>
+where
+    Client: FromVoxSession,
+{
+    pub async fn establish(self) -> Result<Client, SessionError> {
+        let ConnectBuilder {
+            addr,
+            metadata,
+            on_connection,
+            connect_timeout,
+            resumable,
+            _client: _,
+        } = self;
+        let parsed = parse_connect_address(addr)?;
+        let metadata = metadata_into_owned(metadata);
+
+        match parsed {
+            #[cfg(feature = "transport-tcp")]
+            ConnectAddress::Tcp(host) => {
+                let mut builder = initiator(vox_stream::tcp_link_source(host), TransportMode::Bare);
+                if let Some(acceptor) = on_connection.clone() {
+                    builder = builder.on_connection(AcceptorRef(acceptor));
+                }
+                if let Some(timeout) = connect_timeout {
+                    builder = builder.connect_timeout(timeout);
+                }
+                if resumable {
+                    builder = builder.resumable();
+                }
+                builder.metadata(metadata).establish::<Client>().await
+            }
+            #[cfg(feature = "transport-local")]
+            ConnectAddress::Local(host) => {
+                let mut builder =
+                    initiator(vox_stream::local_link_source(host), TransportMode::Bare);
+                if let Some(acceptor) = on_connection.clone() {
+                    builder = builder.on_connection(AcceptorRef(acceptor));
+                }
+                if let Some(timeout) = connect_timeout {
+                    builder = builder.connect_timeout(timeout);
+                }
+                if resumable {
+                    builder = builder.resumable();
+                }
+                builder.metadata(metadata).establish::<Client>().await
+            }
+            #[cfg(feature = "transport-websocket")]
+            ConnectAddress::Ws(url) => {
+                let mut builder =
+                    initiator(vox_websocket::ws_link_source(url), TransportMode::Bare);
+                if let Some(acceptor) = on_connection {
+                    builder = builder.on_connection(AcceptorRef(acceptor));
+                }
+                if let Some(timeout) = connect_timeout {
+                    builder = builder.connect_timeout(timeout);
+                }
+                if resumable {
+                    builder = builder.resumable();
+                }
+                builder.metadata(metadata).establish::<Client>().await
+            }
+            _ => Err(SessionError::Protocol(
+                "transport not enabled in this vox build".to_string(),
+            )),
+        }
+    }
+}
+
+impl<'a, Client> IntoFuture for ConnectBuilder<'a, Client>
+where
+    Client: FromVoxSession + 'a,
+{
+    type Output = Result<Client, SessionError>;
+    type IntoFuture = Pin<Box<dyn Future<Output = Self::Output> + 'a>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.establish())
     }
 }
 
@@ -205,20 +338,4 @@ impl ConnectionAcceptor for AcceptorRef {
     ) -> Result<(), vox_types::Metadata<'static>> {
         self.0.accept(request, connection)
     }
-}
-
-async fn connect_bare<Client, S>(source: S) -> Result<Client, SessionError>
-where
-    Client: FromVoxSession,
-    S: LinkSource,
-    S::Link: vox_types::Link + Send + 'static,
-    <S::Link as vox_types::Link>::Tx: vox_types::MaybeSend + vox_types::MaybeSync + Send + 'static,
-    <<S::Link as vox_types::Link>::Tx as vox_types::LinkTx>::Permit: vox_types::MaybeSend,
-    <S::Link as vox_types::Link>::Rx: vox_types::MaybeSend + Send + 'static,
-{
-    let client = initiator(source, TransportMode::Bare)
-        .connect_timeout(Duration::from_secs(5))
-        .establish::<Client>()
-        .await?;
-    Ok(client)
 }

@@ -1301,7 +1301,10 @@ mod tests {
     // r[verify schema.format.primitive]
     #[test]
     fn primitive_u32() {
-        let schemas = extract_schemas(<u32 as Facet>::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(<u32 as Facet>::SHAPE)
+            .unwrap()
+            .schemas
+            .clone();
         assert_eq!(schemas.len(), 1);
         assert!(matches!(
             schemas[0].kind,
@@ -1313,7 +1316,10 @@ mod tests {
 
     #[test]
     fn primitive_string() {
-        let schemas = extract_schemas(<String as Facet>::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(<String as Facet>::SHAPE)
+            .unwrap()
+            .schemas
+            .clone();
         assert_eq!(schemas.len(), 1);
         assert!(matches!(
             schemas[0].kind,
@@ -1325,7 +1331,10 @@ mod tests {
 
     #[test]
     fn primitive_bool() {
-        let schemas = extract_schemas(<bool as Facet>::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(<bool as Facet>::SHAPE)
+            .unwrap()
+            .schemas
+            .clone();
         assert_eq!(schemas.len(), 1);
         assert!(matches!(
             schemas[0].kind,
@@ -1344,7 +1353,7 @@ mod tests {
             y: f64,
         }
 
-        let schemas = extract_schemas(Point::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(Point::SHAPE).unwrap().schemas.clone();
         assert!(schemas.len() >= 2);
 
         let point_schema = schemas.last().unwrap();
@@ -1375,7 +1384,7 @@ mod tests {
             Blue,
         }
 
-        let schemas = extract_schemas(Color::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(Color::SHAPE).unwrap().schemas.clone();
         let color_schema = schemas.last().unwrap();
         match &color_schema.kind {
             SchemaKind::Enum { variants, .. } => {
@@ -1401,7 +1410,7 @@ mod tests {
             Empty,
         }
 
-        let schemas = extract_schemas(Shape::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(Shape::SHAPE).unwrap().schemas.clone();
         let shape_schema = schemas.last().unwrap();
         match &shape_schema.kind {
             SchemaKind::Enum { variants, .. } => {
@@ -1427,7 +1436,10 @@ mod tests {
     // r[verify schema.format.container]
     #[test]
     fn container_vec() {
-        let schemas = extract_schemas(<Vec<u32> as Facet>::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(<Vec<u32> as Facet>::SHAPE)
+            .unwrap()
+            .schemas
+            .clone();
         assert_eq!(schemas.len(), 2);
         assert!(matches!(
             schemas[0].kind,
@@ -1443,7 +1455,8 @@ mod tests {
     fn container_option() {
         let schemas = extract_schemas(<Option<String> as Facet>::SHAPE)
             .unwrap()
-            .schemas;
+            .schemas
+            .clone();
         assert_eq!(schemas.len(), 2);
         assert!(matches!(
             schemas[0].kind,
@@ -1463,7 +1476,7 @@ mod tests {
             next: Option<Box<Node>>,
         }
 
-        let schemas = extract_schemas(Node::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(Node::SHAPE).unwrap().schemas.clone();
         assert!(schemas.len() >= 2);
 
         let node_schema = schemas.last().unwrap();
@@ -1473,7 +1486,10 @@ mod tests {
     // r[verify schema.format.primitive]
     #[test]
     fn vec_u8_is_bytes() {
-        let schemas = extract_schemas(<Vec<u8> as Facet>::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(<Vec<u8> as Facet>::SHAPE)
+            .unwrap()
+            .schemas
+            .clone();
         assert_eq!(schemas.len(), 1);
         assert!(matches!(
             schemas[0].kind,
@@ -1485,7 +1501,10 @@ mod tests {
 
     #[test]
     fn slice_u8_is_bytes() {
-        let schemas = extract_schemas(<&[u8] as Facet>::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(<&[u8] as Facet>::SHAPE)
+            .unwrap()
+            .schemas
+            .clone();
         assert_eq!(schemas.len(), 1);
         assert!(matches!(
             schemas[0].kind,
@@ -1497,7 +1516,7 @@ mod tests {
 
     #[test]
     fn cbor_payload_is_bytes() {
-        let schemas = extract_schemas(CborPayload::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(CborPayload::SHAPE).unwrap().schemas.clone();
         assert_eq!(schemas.len(), 1);
         assert!(matches!(
             schemas[0].kind,
@@ -1512,7 +1531,8 @@ mod tests {
     fn opaque_payload_is_payload_primitive() {
         let schemas = extract_schemas(crate::Payload::<'static>::SHAPE)
             .unwrap()
-            .schemas;
+            .schemas
+            .clone();
         assert_eq!(schemas.len(), 1);
         assert!(matches!(
             schemas[0].kind,
@@ -1526,7 +1546,8 @@ mod tests {
     fn infallible_is_never_primitive() {
         let schemas = extract_schemas(<std::convert::Infallible as Facet>::SHAPE)
             .unwrap()
-            .schemas;
+            .schemas
+            .clone();
         assert_eq!(schemas.len(), 1);
         assert!(matches!(
             schemas[0].kind,
@@ -1545,7 +1566,7 @@ mod tests {
             b: u32,
         }
 
-        let schemas = extract_schemas(TwoU32::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(TwoU32::SHAPE).unwrap().schemas.clone();
         let u32_count = schemas
             .iter()
             .filter(|s| {
@@ -1566,7 +1587,8 @@ mod tests {
     fn container_map() {
         let schemas = extract_schemas(<std::collections::HashMap<String, u32> as Facet>::SHAPE)
             .unwrap()
-            .schemas;
+            .schemas
+            .clone();
         let map_schema = schemas.last().unwrap();
         assert!(matches!(map_schema.kind, SchemaKind::Map { .. }));
     }
@@ -1574,7 +1596,10 @@ mod tests {
     // r[verify schema.format.container]
     #[test]
     fn container_array() {
-        let schemas = extract_schemas(<[u32; 4] as Facet>::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(<[u32; 4] as Facet>::SHAPE)
+            .unwrap()
+            .schemas
+            .clone();
         let arr_schema = schemas.last().unwrap();
         match &arr_schema.kind {
             SchemaKind::Array { length, .. } => assert_eq!(*length, 4),
@@ -1587,7 +1612,8 @@ mod tests {
     fn tuple_type() {
         let schemas = extract_schemas(<(u32, String) as Facet>::SHAPE)
             .unwrap()
-            .schemas;
+            .schemas
+            .clone();
         let tuple_schema = schemas.last().unwrap();
         match &tuple_schema.kind {
             SchemaKind::Tuple { elements } => {
@@ -1608,7 +1634,7 @@ mod tests {
             pair: (u8, u8),
         }
 
-        let schemas = extract_schemas(Mixed::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(Mixed::SHAPE).unwrap().schemas.clone();
         assert!(schemas.len() >= 4);
     }
 
@@ -1676,7 +1702,10 @@ mod tests {
     #[test]
     fn tracker_record_and_get_received() {
         let tracker = SchemaRecvTracker::new();
-        let schemas = extract_schemas(<u32 as Facet>::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(<u32 as Facet>::SHAPE)
+            .unwrap()
+            .schemas
+            .clone();
         let id = schemas[0].id;
         assert!(tracker.get_received(&id).is_none());
         tracker
@@ -1704,7 +1733,7 @@ mod tests {
         let extracted = tracker
             .extract_schemas(<(u32, String) as Facet>::SHAPE)
             .unwrap();
-        let schemas = extracted.schemas;
+        let schemas = extracted.schemas.clone();
         assert!(schemas.len() >= 3);
 
         // Same type extracted again must produce the same content hash.
@@ -1712,7 +1741,8 @@ mod tests {
         let schemas2 = tracker2
             .extract_schemas(<(u32, String) as Facet>::SHAPE)
             .unwrap()
-            .schemas;
+            .schemas
+            .clone();
         assert_eq!(schemas.len(), schemas2.len());
         for (a, b) in schemas.iter().zip(schemas2.iter()) {
             assert_eq!(a.id, b.id, "content hash should be deterministic");
@@ -1787,8 +1817,8 @@ mod tests {
             y: f64,
         }
 
-        let schemas1 = extract_schemas(Point::SHAPE).unwrap().schemas;
-        let schemas2 = extract_schemas(Point::SHAPE).unwrap().schemas;
+        let schemas1 = extract_schemas(Point::SHAPE).unwrap().schemas.clone();
+        let schemas2 = extract_schemas(Point::SHAPE).unwrap().schemas.clone();
         assert_eq!(
             schemas1.last().unwrap().id,
             schemas2.last().unwrap().id,
@@ -1805,8 +1835,8 @@ mod tests {
             children: Vec<TreeNode>,
         }
 
-        let schemas1 = extract_schemas(TreeNode::SHAPE).unwrap().schemas;
-        let schemas2 = extract_schemas(TreeNode::SHAPE).unwrap().schemas;
+        let schemas1 = extract_schemas(TreeNode::SHAPE).unwrap().schemas.clone();
+        let schemas2 = extract_schemas(TreeNode::SHAPE).unwrap().schemas.clone();
 
         // Must have at least String, Vec<TreeNode>, TreeNode
         assert!(schemas1.len() >= 2);
@@ -1856,7 +1886,10 @@ mod tests {
                 MethodId(42),
                 BindingDirection::Args,
                 SchemaPayload {
-                    schemas: extract_schemas(<u64 as Facet>::SHAPE).unwrap().schemas,
+                    schemas: extract_schemas(<u64 as Facet>::SHAPE)
+                        .unwrap()
+                        .schemas
+                        .clone(),
                     root: TypeRef::concrete(SchemaHash(100)),
                 },
             )
@@ -1885,7 +1918,10 @@ mod tests {
     #[test]
     fn duplicate_schema_is_protocol_error() {
         let tracker = SchemaRecvTracker::new();
-        let schemas = extract_schemas(<u32 as Facet>::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(<u32 as Facet>::SHAPE)
+            .unwrap()
+            .schemas
+            .clone();
         tracker
             .record_received(
                 MethodId(9),
@@ -1936,7 +1972,10 @@ mod tests {
 
     #[test]
     fn generic_vec_uses_var_in_body() {
-        let schemas = extract_schemas(<Vec<u32> as Facet>::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(<Vec<u32> as Facet>::SHAPE)
+            .unwrap()
+            .schemas
+            .clone();
         let list_schema = schemas
             .iter()
             .find(|s| matches!(s.kind, SchemaKind::List { .. }))
@@ -1961,7 +2000,8 @@ mod tests {
     fn generic_option_uses_var_in_body() {
         let schemas = extract_schemas(<Option<String> as Facet>::SHAPE)
             .unwrap()
-            .schemas;
+            .schemas
+            .clone();
         let opt_schema = schemas
             .iter()
             .find(|s| matches!(s.kind, SchemaKind::Option { .. }))
@@ -1986,7 +2026,8 @@ mod tests {
     fn generic_tuple_uses_vars_in_body() {
         let schemas = extract_schemas(<(u32, String) as Facet>::SHAPE)
             .unwrap()
-            .schemas;
+            .schemas
+            .clone();
         let tuple_schema = schemas
             .iter()
             .find(|s| matches!(s.kind, SchemaKind::Tuple { .. }))
@@ -2012,7 +2053,8 @@ mod tests {
 
         let schemas = extract_schemas(<VoxError<::core::convert::Infallible> as Facet>::SHAPE)
             .unwrap()
-            .schemas;
+            .schemas
+            .clone();
         let vox_error_schema = schemas
             .iter()
             .find(|s| matches!(&s.kind, SchemaKind::Enum { name, .. } if name == "VoxError"))
@@ -2041,7 +2083,8 @@ mod tests {
         // NOT: u32, Option<u32>, Vec<Option<u32>>
         let schemas = extract_schemas(<Vec<Option<u32>> as Facet>::SHAPE)
             .unwrap()
-            .schemas;
+            .schemas
+            .clone();
 
         let list_count = schemas
             .iter()
@@ -2063,7 +2106,7 @@ mod tests {
             b: Vec<String>,
         }
 
-        let schemas = extract_schemas(Both::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(Both::SHAPE).unwrap().schemas.clone();
         let list_count = schemas
             .iter()
             .filter(|s| matches!(s.kind, SchemaKind::List { .. }))
@@ -2076,7 +2119,10 @@ mod tests {
 
     #[test]
     fn resolve_kind_substitutes_vars() {
-        let schemas = extract_schemas(<Vec<u32> as Facet>::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(<Vec<u32> as Facet>::SHAPE)
+            .unwrap()
+            .schemas
+            .clone();
         let registry = build_registry(&schemas);
 
         // The root schema is Vec<u32> — find it
@@ -2215,7 +2261,8 @@ mod tests {
         // Vec<Vec<u32>> — should produce u32, Vec<T>, not u32, Vec<u32>, Vec<Vec<u32>>
         let schemas = extract_schemas(<Vec<Vec<u32>> as Facet>::SHAPE)
             .unwrap()
-            .schemas;
+            .schemas
+            .clone();
         let list_count = schemas
             .iter()
             .filter(|s| matches!(s.kind, SchemaKind::List { .. }))
@@ -2234,7 +2281,7 @@ mod tests {
             next: Option<Box<Node>>,
         }
 
-        let schemas = extract_schemas(Node::SHAPE).unwrap().schemas;
+        let schemas = extract_schemas(Node::SHAPE).unwrap().schemas.clone();
         // Should have: u32, Option<T>, Node
         let option_count = schemas
             .iter()
@@ -2267,7 +2314,8 @@ mod tests {
     fn map_schema_is_generic() {
         let schemas = extract_schemas(<std::collections::HashMap<String, u32> as Facet>::SHAPE)
             .unwrap()
-            .schemas;
+            .schemas
+            .clone();
         let map_schema = schemas
             .iter()
             .find(|s| matches!(s.kind, SchemaKind::Map { .. }))

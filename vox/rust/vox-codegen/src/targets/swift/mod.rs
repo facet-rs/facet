@@ -187,7 +187,7 @@ mod tests {
             "generated Swift client should pass retry policy:\n{generated}"
         );
         assert!(
-            generated.contains("public static func retryPolicy(methodId: UInt64) -> RetryPolicy"),
+            generated.contains("public func retryPolicy(methodId: UInt64) -> RetryPolicy"),
             "generated Swift dispatcher should expose retry policy lookup:\n{generated}"
         );
         assert!(
