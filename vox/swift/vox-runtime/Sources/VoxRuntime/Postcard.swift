@@ -1,209 +1,234 @@
-import Foundation
+@preconcurrency import NIOCore
 
 // MARK: - Encoding
 //
 // r[impl rpc.channel.payload-encoding] - Payloads are Postcard-encoded.
 
-public func encodeBool(_ v: Bool) -> [UInt8] { [v ? 1 : 0] }
-public func encodeU8(_ v: UInt8) -> [UInt8] { [v] }
-public func encodeI8(_ v: Int8) -> [UInt8] { [UInt8(bitPattern: v)] }
-
-public func encodeU16(_ v: UInt16) -> [UInt8] {
-    // Postcard uses varint for u16
-    encodeVarint(UInt64(v))
+@inline(__always)
+public func encodeBool(_ v: Bool, into buffer: inout ByteBuffer) {
+    buffer.writeInteger(v ? UInt8(1) : UInt8(0))
 }
 
-public func encodeI16(_ v: Int16) -> [UInt8] {
-    // Postcard uses zigzag + varint for signed integers
+@inline(__always)
+public func encodeU8(_ v: UInt8, into buffer: inout ByteBuffer) {
+    buffer.writeInteger(v)
+}
+
+@inline(__always)
+public func encodeI8(_ v: Int8, into buffer: inout ByteBuffer) {
+    buffer.writeInteger(UInt8(bitPattern: v))
+}
+
+@inline(__always)
+public func encodeU16(_ v: UInt16, into buffer: inout ByteBuffer) {
+    encodeVarint(UInt64(v), into: &buffer)
+}
+
+@inline(__always)
+public func encodeI16(_ v: Int16, into buffer: inout ByteBuffer) {
     let zigzag = UInt16(bitPattern: (v >> 15) ^ (v << 1))
-    return encodeVarint(UInt64(zigzag))
+    encodeVarint(UInt64(zigzag), into: &buffer)
 }
 
-public func encodeU32(_ v: UInt32) -> [UInt8] {
-    // Postcard uses varint for u32
-    encodeVarint(UInt64(v))
+@inline(__always)
+public func encodeU32(_ v: UInt32, into buffer: inout ByteBuffer) {
+    encodeVarint(UInt64(v), into: &buffer)
 }
 
-public func encodeI32(_ v: Int32) -> [UInt8] {
-    // Postcard uses zigzag + varint for signed integers
+@inline(__always)
+public func encodeI32(_ v: Int32, into buffer: inout ByteBuffer) {
     let zigzag = UInt32(bitPattern: (v >> 31) ^ (v << 1))
-    return encodeVarint(UInt64(zigzag))
+    encodeVarint(UInt64(zigzag), into: &buffer)
 }
 
-public func encodeU64(_ v: UInt64) -> [UInt8] {
-    encodeVarint(v)
+@inline(__always)
+public func encodeU64(_ v: UInt64, into buffer: inout ByteBuffer) {
+    encodeVarint(v, into: &buffer)
 }
 
-public func encodeI64(_ v: Int64) -> [UInt8] {
-    // Zigzag encoding for signed
+@inline(__always)
+public func encodeI64(_ v: Int64, into buffer: inout ByteBuffer) {
     let zigzag = UInt64(bitPattern: (v >> 63) ^ (v << 1))
-    return encodeVarint(zigzag)
+    encodeVarint(zigzag, into: &buffer)
 }
 
-public func encodeF32(_ v: Float) -> [UInt8] {
-    withUnsafeBytes(of: v.bitPattern.littleEndian) { Array($0) }
+@inline(__always)
+public func encodeF32(_ v: Float, into buffer: inout ByteBuffer) {
+    buffer.writeInteger(v.bitPattern, endianness: .little)
 }
 
-public func encodeF64(_ v: Double) -> [UInt8] {
-    withUnsafeBytes(of: v.bitPattern.littleEndian) { Array($0) }
+@inline(__always)
+public func encodeF64(_ v: Double, into buffer: inout ByteBuffer) {
+    buffer.writeInteger(v.bitPattern, endianness: .little)
 }
 
-public func encodeString(_ s: String) -> [UInt8] {
-    let bytes = Array(s.utf8)
-    return encodeVarint(UInt64(bytes.count)) + bytes
+@inline(__always)
+public func encodeString(_ s: String, into buffer: inout ByteBuffer) {
+    let utf8 = s.utf8
+    encodeVarint(UInt64(utf8.count), into: &buffer)
+    buffer.writeBytes(utf8)
 }
 
-public func encodeBytes(_ bytes: [UInt8]) -> [UInt8] {
-    encodeVarint(UInt64(bytes.count)) + bytes
+/// Encode raw bytes (a ByteBuffer slice) with a varint length prefix.
+@inline(__always)
+public func encodeBytes(_ bytes: ByteBuffer, into buffer: inout ByteBuffer) {
+    encodeVarint(UInt64(bytes.readableBytes), into: &buffer)
+    var copy = bytes
+    buffer.writeBuffer(&copy)
 }
 
-public func encodeOption<T>(_ value: T?, encoder: (T) -> [UInt8]) -> [UInt8] {
+/// Encode a sequence of bytes with a varint length prefix.
+@inline(__always)
+public func encodeByteSeq(_ bytes: some Collection<UInt8>, into buffer: inout ByteBuffer) {
+    encodeVarint(UInt64(bytes.count), into: &buffer)
+    buffer.writeBytes(bytes)
+}
+
+@inline(__always)
+public func encodeOption<T>(
+    _ value: T?, into buffer: inout ByteBuffer, encoder: (T, inout ByteBuffer) -> Void
+) {
     if let v = value {
-        return [1] + encoder(v)
+        buffer.writeInteger(UInt8(1))
+        encoder(v, &buffer)
     } else {
-        return [0]
+        buffer.writeInteger(UInt8(0))
     }
 }
 
-public func encodeVec<T>(_ values: [T], encoder: (T) -> [UInt8]) -> [UInt8] {
-    var result = encodeVarint(UInt64(values.count))
+@inline(__always)
+public func encodeVec<T>(
+    _ values: [T], into buffer: inout ByteBuffer, encoder: (T, inout ByteBuffer) -> Void
+) {
+    encodeVarint(UInt64(values.count), into: &buffer)
     for v in values {
-        result += encoder(v)
+        encoder(v, &buffer)
     }
-    return result
 }
 
 // MARK: - Decoding
 
-public func decodeBool(from data: Data, offset: inout Int) throws -> Bool {
-    guard offset < data.count else { throw PostcardError.truncated }
-    let v = data[data.startIndex + offset]
-    offset += 1
+@inline(__always)
+public func decodeBool(from buffer: inout ByteBuffer) throws -> Bool {
+    guard let v: UInt8 = buffer.readInteger() else { throw PostcardError.truncated }
     return v != 0
 }
 
-public func decodeU8(from data: Data, offset: inout Int) throws -> UInt8 {
-    guard offset < data.count else { throw PostcardError.truncated }
-    let v = data[data.startIndex + offset]
-    offset += 1
+@inline(__always)
+public func decodeU8(from buffer: inout ByteBuffer) throws -> UInt8 {
+    guard let v: UInt8 = buffer.readInteger() else { throw PostcardError.truncated }
     return v
 }
 
-public func decodeI8(from data: Data, offset: inout Int) throws -> Int8 {
-    guard offset < data.count else { throw PostcardError.truncated }
-    let v = data[data.startIndex + offset]
-    offset += 1
+@inline(__always)
+public func decodeI8(from buffer: inout ByteBuffer) throws -> Int8 {
+    guard let v: UInt8 = buffer.readInteger() else { throw PostcardError.truncated }
     return Int8(bitPattern: v)
 }
 
-public func decodeU16(from data: Data, offset: inout Int) throws -> UInt16 {
-    // Postcard uses varint for u16
-    let v = try decodeVarint(from: data, offset: &offset)
+@inline(__always)
+public func decodeU16(from buffer: inout ByteBuffer) throws -> UInt16 {
+    let v = try decodeVarint(from: &buffer)
     guard v <= UInt64(UInt16.max) else { throw PostcardError.overflow }
     return UInt16(v)
 }
 
-public func decodeI16(from data: Data, offset: inout Int) throws -> Int16 {
-    // Postcard uses zigzag + varint for signed integers
-    let zigzag = try decodeVarint(from: data, offset: &offset)
+@inline(__always)
+public func decodeI16(from buffer: inout ByteBuffer) throws -> Int16 {
+    let zigzag = try decodeVarint(from: &buffer)
     let unsigned = UInt16(truncatingIfNeeded: zigzag)
     return Int16(bitPattern: (unsigned >> 1) ^ (0 &- (unsigned & 1)))
 }
 
-public func decodeU32(from data: Data, offset: inout Int) throws -> UInt32 {
-    // Postcard uses varint for u32
-    let v = try decodeVarint(from: data, offset: &offset)
+@inline(__always)
+public func decodeU32(from buffer: inout ByteBuffer) throws -> UInt32 {
+    let v = try decodeVarint(from: &buffer)
     guard v <= UInt64(UInt32.max) else { throw PostcardError.overflow }
     return UInt32(v)
 }
 
-public func decodeI32(from data: Data, offset: inout Int) throws -> Int32 {
-    // Postcard uses zigzag + varint for signed integers
-    let zigzag = try decodeVarint(from: data, offset: &offset)
+@inline(__always)
+public func decodeI32(from buffer: inout ByteBuffer) throws -> Int32 {
+    let zigzag = try decodeVarint(from: &buffer)
     let unsigned = UInt32(truncatingIfNeeded: zigzag)
     return Int32(bitPattern: (unsigned >> 1) ^ (0 &- (unsigned & 1)))
 }
 
-public func decodeU64(from data: Data, offset: inout Int) throws -> UInt64 {
-    try decodeVarint(from: data, offset: &offset)
+@inline(__always)
+public func decodeU64(from buffer: inout ByteBuffer) throws -> UInt64 {
+    try decodeVarint(from: &buffer)
 }
 
-public func decodeI64(from data: Data, offset: inout Int) throws -> Int64 {
-    // Zigzag decoding
-    let zigzag = try decodeVarint(from: data, offset: &offset)
+@inline(__always)
+public func decodeI64(from buffer: inout ByteBuffer) throws -> Int64 {
+    let zigzag = try decodeVarint(from: &buffer)
     return Int64(bitPattern: (zigzag >> 1) ^ (0 &- (zigzag & 1)))
 }
 
-public func decodeF32(from data: Data, offset: inout Int) throws -> Float {
-    guard offset + 4 <= data.count else { throw PostcardError.truncated }
-    let bits = data.subdata(in: (data.startIndex + offset)..<(data.startIndex + offset + 4))
-        .withUnsafeBytes { $0.load(as: UInt32.self) }
-    offset += 4
-    return Float(bitPattern: UInt32(littleEndian: bits))
-}
-
-public func decodeF64(from data: Data, offset: inout Int) throws -> Double {
-    guard offset + 8 <= data.count else { throw PostcardError.truncated }
-    let bits = data.subdata(in: (data.startIndex + offset)..<(data.startIndex + offset + 8))
-        .withUnsafeBytes { $0.load(as: UInt64.self) }
-    offset += 8
-    return Double(bitPattern: UInt64(littleEndian: bits))
-}
-
-public func decodeString(from data: Data, offset: inout Int) throws -> String {
-    let len = try decodeVarint(from: data, offset: &offset)
-    guard offset + Int(len) <= data.count else { throw PostcardError.truncated }
-    let bytes = data.subdata(in: (data.startIndex + offset)..<(data.startIndex + offset + Int(len)))
-    offset += Int(len)
-    guard let s = String(data: bytes, encoding: .utf8) else {
-        throw PostcardError.invalidUtf8
+@inline(__always)
+public func decodeF32(from buffer: inout ByteBuffer) throws -> Float {
+    guard let bits: UInt32 = buffer.readInteger(endianness: .little) else {
+        throw PostcardError.truncated
     }
+    return Float(bitPattern: bits)
+}
+
+@inline(__always)
+public func decodeF64(from buffer: inout ByteBuffer) throws -> Double {
+    guard let bits: UInt64 = buffer.readInteger(endianness: .little) else {
+        throw PostcardError.truncated
+    }
+    return Double(bitPattern: bits)
+}
+
+@inline(__always)
+public func decodeString(from buffer: inout ByteBuffer) throws -> String {
+    let len = try decodeVarint(from: &buffer)
+    guard let bytes = buffer.readBytes(length: Int(len)) else { throw PostcardError.truncated }
+    guard let s = String(bytes: bytes, encoding: .utf8) else { throw PostcardError.invalidUtf8 }
     return s
 }
 
-public func decodeBytes(from data: Data, offset: inout Int) throws -> Data {
-    let len = try decodeVarint(from: data, offset: &offset)
-    guard offset + Int(len) <= data.count else { throw PostcardError.truncated }
-    let bytes = data.subdata(in: (data.startIndex + offset)..<(data.startIndex + offset + Int(len)))
-    offset += Int(len)
-    return bytes
+/// Decode a length-prefixed byte sequence, returning a ByteBuffer slice (no copy).
+@inline(__always)
+public func decodeBytes(from buffer: inout ByteBuffer) throws -> ByteBuffer {
+    let len = try decodeVarint(from: &buffer)
+    guard let slice = buffer.readSlice(length: Int(len)) else { throw PostcardError.truncated }
+    return slice
 }
 
+@inline(__always)
 public func decodeOption<T>(
-    from data: Data,
-    offset: inout Int,
-    decoder: (Data, inout Int) throws -> T
+    from buffer: inout ByteBuffer,
+    decoder: (inout ByteBuffer) throws -> T
 ) throws -> T? {
-    let tag = try decodeU8(from: data, offset: &offset)
-    if tag == 0 {
-        return nil
-    } else {
-        return try decoder(data, &offset)
-    }
+    guard let tag: UInt8 = buffer.readInteger() else { throw PostcardError.truncated }
+    if tag == 0 { return nil }
+    return try decoder(&buffer)
 }
 
+@inline(__always)
 public func decodeVec<T>(
-    from data: Data,
-    offset: inout Int,
-    decoder: (Data, inout Int) throws -> T
+    from buffer: inout ByteBuffer,
+    decoder: (inout ByteBuffer) throws -> T
 ) throws -> [T] {
-    let count = try decodeVarint(from: data, offset: &offset)
+    let count = try decodeVarint(from: &buffer)
     var result: [T] = []
     result.reserveCapacity(Int(count))
     for _ in 0..<count {
-        result.append(try decoder(data, &offset))
+        result.append(try decoder(&buffer))
     }
     return result
 }
 
+@inline(__always)
 public func decodeTuple2<A, B>(
-    from data: Data,
-    offset: inout Int,
-    decoderA: (Data, inout Int) throws -> A,
-    decoderB: (Data, inout Int) throws -> B
+    from buffer: inout ByteBuffer,
+    decoderA: (inout ByteBuffer) throws -> A,
+    decoderB: (inout ByteBuffer) throws -> B
 ) throws -> (A, B) {
-    let a = try decoderA(data, &offset)
-    let b = try decoderB(data, &offset)
+    let a = try decoderA(&buffer)
+    let b = try decoderB(&buffer)
     return (a, b)
 }
 

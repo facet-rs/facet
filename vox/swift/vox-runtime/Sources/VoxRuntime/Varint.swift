@@ -1,47 +1,36 @@
-import Foundation
+@preconcurrency import NIOCore
 
-/// Encode a 64-bit unsigned integer as a varint.
-public func encodeVarint(_ value: UInt64) -> [UInt8] {
-    var result: [UInt8] = []
+/// Encode a 64-bit unsigned integer as a varint into a ByteBuffer.
+@inline(__always)
+public func encodeVarint(_ value: UInt64, into buffer: inout ByteBuffer) {
     var v = value
     while v >= 0x80 {
-        result.append(UInt8(v & 0x7F) | 0x80)
+        buffer.writeInteger(UInt8(v & 0x7F) | 0x80)
         v >>= 7
     }
-    result.append(UInt8(v))
-    return result
+    buffer.writeInteger(UInt8(v))
 }
 
-/// Decode a varint from data, returning the value and advancing the offset.
-public func decodeVarint(from data: Data, offset: inout Int) throws -> UInt64 {
+/// Decode a varint from a ByteBuffer, advancing the reader index.
+@inline(__always)
+public func decodeVarint(from buffer: inout ByteBuffer) throws -> UInt64 {
     var result: UInt64 = 0
     var shift: UInt64 = 0
-
-    while offset < data.count {
-        let byte = data[data.startIndex + offset]
-        offset += 1
-
+    while buffer.readableBytes > 0 {
+        guard let byte: UInt8 = buffer.readInteger() else { throw VarintError.truncated }
         result |= UInt64(byte & 0x7F) << shift
-
-        if byte & 0x80 == 0 {
-            return result
-        }
-
+        if byte & 0x80 == 0 { return result }
         shift += 7
-        if shift >= 64 {
-            throw VarintError.overflow
-        }
+        if shift >= 64 { throw VarintError.overflow }
     }
-
     throw VarintError.truncated
 }
 
 /// Decode a varint as UInt32, checking for overflow.
-public func decodeVarintU32(from data: Data, offset: inout Int) throws -> UInt32 {
-    let value = try decodeVarint(from: data, offset: &offset)
-    guard value <= UInt32.max else {
-        throw VarintError.overflow
-    }
+@inline(__always)
+public func decodeVarintU32(from buffer: inout ByteBuffer) throws -> UInt32 {
+    let value = try decodeVarint(from: &buffer)
+    guard value <= UInt32.max else { throw VarintError.overflow }
     return UInt32(value)
 }
 

@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import NIOCore
 
 public typealias SchemaHash = UInt64
 public typealias TypeParamName = String
@@ -18,28 +19,27 @@ public indirect enum TypeRef: Sendable, Equatable {
 
     // MARK: - Postcard encoding (for internal use)
 
-    func encode() -> [UInt8] {
+    func encode(into buffer: inout ByteBuffer) {
         switch self {
         case .concrete(let typeId, let args):
-            return encodeVarint(0) + encodeVarint(typeId) + encodeVec(args, encoder: { $0.encode() })
+            encodeVarint(0, into: &buffer)
+            encodeVarint(typeId, into: &buffer)
+            encodeVec(args, into: &buffer, encoder: { $0.encode(into: &$1) })
         case .var(let name):
-            return encodeVarint(1) + encodeString(name)
+            encodeVarint(1, into: &buffer)
+            encodeString(name, into: &buffer)
         }
     }
 
-    static func decode(from data: Data, offset: inout Int) throws -> Self {
-        let disc = try decodeVarint(from: data, offset: &offset)
+    static func decode(from buffer: inout ByteBuffer) throws -> Self {
+        let disc = try decodeVarint(from: &buffer)
         switch disc {
         case 0:
-            let typeId = try decodeVarint(from: data, offset: &offset)
-            let args = try decodeVec(
-                from: data,
-                offset: &offset,
-                decoder: { data, off in try TypeRef.decode(from: data, offset: &off) }
-            )
+            let typeId = try decodeVarint(from: &buffer)
+            let args = try decodeVec(from: &buffer, decoder: { try TypeRef.decode(from: &$0) })
             return .concrete(typeId: typeId, args: args)
         case 1:
-            return .var(name: try decodeString(from: data, offset: &offset))
+            return .var(name: try decodeString(from: &buffer))
         default:
             throw PostcardError.unknownVariant
         }
@@ -150,16 +150,16 @@ public struct Schema: Sendable, Equatable {
 
     // MARK: - Postcard encoding
 
-    func encode() -> [UInt8] {
-        encodeVarint(id)
-            + encodeVec(typeParams, encoder: encodeString)
-            + kind.encode()
+    func encode(into buffer: inout ByteBuffer) {
+        encodeVarint(id, into: &buffer)
+        encodeVec(typeParams, into: &buffer, encoder: { encodeString($0, into: &$1) })
+        kind.encode(into: &buffer)
     }
 
-    static func decode(from data: Data, offset: inout Int) throws -> Self {
-        let id = try decodeVarint(from: data, offset: &offset)
-        let typeParams = try decodeVec(from: data, offset: &offset, decoder: decodeString)
-        let kind = try SchemaKind.decode(from: data, offset: &offset)
+    static func decode(from buffer: inout ByteBuffer) throws -> Self {
+        let id = try decodeVarint(from: &buffer)
+        let typeParams = try decodeVec(from: &buffer, decoder: { try decodeString(from: &$0) })
+        let kind = try SchemaKind.decode(from: &buffer)
         return .init(id: id, typeParams: typeParams, kind: kind)
     }
 
@@ -241,79 +241,82 @@ public indirect enum SchemaKind: Sendable, Equatable {
 
     // MARK: - Postcard encoding
 
-    func encode() -> [UInt8] {
+    func encode(into buffer: inout ByteBuffer) {
         switch self {
         case .struct(let name, let fields):
-            return encodeVarint(0) + encodeString(name) + encodeVec(fields, encoder: { $0.encode() })
+            encodeVarint(0, into: &buffer)
+            encodeString(name, into: &buffer)
+            encodeVec(fields, into: &buffer, encoder: { $0.encode(into: &$1) })
         case .enum(let name, let variants):
-            return encodeVarint(1) + encodeString(name) + encodeVec(variants, encoder: { $0.encode() })
+            encodeVarint(1, into: &buffer)
+            encodeString(name, into: &buffer)
+            encodeVec(variants, into: &buffer, encoder: { $0.encode(into: &$1) })
         case .tuple(let elements):
-            return encodeVarint(2) + encodeVec(elements, encoder: { $0.encode() })
+            encodeVarint(2, into: &buffer)
+            encodeVec(elements, into: &buffer, encoder: { $0.encode(into: &$1) })
         case .list(let element):
-            return encodeVarint(3) + element.encode()
+            encodeVarint(3, into: &buffer)
+            element.encode(into: &buffer)
         case .map(let key, let value):
-            return encodeVarint(4) + key.encode() + value.encode()
+            encodeVarint(4, into: &buffer)
+            key.encode(into: &buffer)
+            value.encode(into: &buffer)
         case .array(let element, let length):
-            return encodeVarint(5) + element.encode() + encodeVarint(length)
+            encodeVarint(5, into: &buffer)
+            element.encode(into: &buffer)
+            encodeVarint(length, into: &buffer)
         case .option(let element):
-            return encodeVarint(6) + element.encode()
+            encodeVarint(6, into: &buffer)
+            element.encode(into: &buffer)
         case .channel(let direction, let element):
-            return encodeVarint(7) + direction.encode() + element.encode()
+            encodeVarint(7, into: &buffer)
+            direction.encode(into: &buffer)
+            element.encode(into: &buffer)
         case .primitive(let primitiveType):
-            return encodeVarint(8) + primitiveType.encode()
+            encodeVarint(8, into: &buffer)
+            primitiveType.encode(into: &buffer)
         }
     }
 
-    static func decode(from data: Data, offset: inout Int) throws -> Self {
-        let disc = try decodeVarint(from: data, offset: &offset)
+    static func decode(from buffer: inout ByteBuffer) throws -> Self {
+        let disc = try decodeVarint(from: &buffer)
         switch disc {
         case 0:
             return .struct(
-                name: try decodeString(from: data, offset: &offset),
-                fields: try decodeVec(
-                    from: data,
-                    offset: &offset,
-                    decoder: { data, off in try FieldSchema.decode(from: data, offset: &off) }
-                )
+                name: try decodeString(from: &buffer),
+                fields: try decodeVec(from: &buffer, decoder: { try FieldSchema.decode(from: &$0) })
             )
         case 1:
             return .enum(
-                name: try decodeString(from: data, offset: &offset),
+                name: try decodeString(from: &buffer),
                 variants: try decodeVec(
-                    from: data,
-                    offset: &offset,
-                    decoder: { data, off in try VariantSchema.decode(from: data, offset: &off) }
-                )
+                    from: &buffer, decoder: { try VariantSchema.decode(from: &$0) })
             )
         case 2:
             return .tuple(
-                elements: try decodeVec(
-                    from: data,
-                    offset: &offset,
-                    decoder: { data, off in try TypeRef.decode(from: data, offset: &off) }
-                )
+                elements: try decodeVec(from: &buffer, decoder: { try TypeRef.decode(from: &$0) })
             )
         case 3:
-            return .list(element: try TypeRef.decode(from: data, offset: &offset))
+            return .list(element: try TypeRef.decode(from: &buffer))
         case 4:
             return .map(
-                key: try TypeRef.decode(from: data, offset: &offset),
-                value: try TypeRef.decode(from: data, offset: &offset)
+                key: try TypeRef.decode(from: &buffer),
+                value: try TypeRef.decode(from: &buffer)
             )
         case 5:
             return .array(
-                element: try TypeRef.decode(from: data, offset: &offset),
-                length: try decodeVarint(from: data, offset: &offset)
+                element: try TypeRef.decode(from: &buffer),
+                length: try decodeVarint(from: &buffer)
             )
         case 6:
-            return .option(element: try TypeRef.decode(from: data, offset: &offset))
+            return .option(element: try TypeRef.decode(from: &buffer))
         case 7:
             return .channel(
-                direction: try ChannelDirection.decode(from: data, offset: &offset),
-                element: try TypeRef.decode(from: data, offset: &offset)
+                direction: try ChannelDirection.decode(from: &buffer),
+                element: try TypeRef.decode(from: &buffer)
             )
         case 8:
-            return .primitive(try PrimitiveType.decode(from: data, offset: &offset))
+            return .primitive(try PrimitiveType.decode(from: &buffer))
         default:
             throw PostcardError.unknownVariant
         }
@@ -547,7 +550,8 @@ public indirect enum SchemaKind: Sendable, Equatable {
             for elem in elements {
                 elem.collectTypeIds(&out)
             }
-        case .list(let element), .option(let element), .array(let element, _), .channel(_, let element):
+        case .list(let element), .option(let element), .array(let element, _),
+            .channel(_, let element):
             element.collectTypeIds(&out)
         case .map(let key, let value):
             key.collectTypeIds(&out)
@@ -562,17 +566,17 @@ public enum ChannelDirection: Sendable, Equatable {
     case tx
     case rx
 
-    func encode() -> [UInt8] {
+    func encode(into buffer: inout ByteBuffer) {
         switch self {
         case .tx:
-            return encodeVarint(0)
+            encodeVarint(0, into: &buffer)
         case .rx:
-            return encodeVarint(1)
+            encodeVarint(1, into: &buffer)
         }
     }
 
-    static func decode(from data: Data, offset: inout Int) throws -> Self {
-        switch try decodeVarint(from: data, offset: &offset) {
+    static func decode(from buffer: inout ByteBuffer) throws -> Self {
+        switch try decodeVarint(from: &buffer) {
         case 0:
             return .tx
         case 1:
@@ -618,15 +622,17 @@ public struct FieldSchema: Sendable, Equatable {
         self.required = required
     }
 
-    func encode() -> [UInt8] {
-        encodeString(name) + typeRef.encode() + encodeBool(required)
+    func encode(into buffer: inout ByteBuffer) {
+        encodeString(name, into: &buffer)
+        typeRef.encode(into: &buffer)
+        encodeBool(required, into: &buffer)
     }
 
-    static func decode(from data: Data, offset: inout Int) throws -> Self {
+    static func decode(from buffer: inout ByteBuffer) throws -> Self {
         .init(
-            name: try decodeString(from: data, offset: &offset),
-            typeRef: try TypeRef.decode(from: data, offset: &offset),
-            required: try decodeBool(from: data, offset: &offset)
+            name: try decodeString(from: &buffer),
+            typeRef: try TypeRef.decode(from: &buffer),
+            required: try decodeBool(from: &buffer)
         )
     }
 
@@ -682,20 +688,22 @@ public struct VariantSchema: Sendable, Equatable {
         self.payload = payload
     }
 
-    func encode() -> [UInt8] {
-        encodeString(name) + encodeVarint(UInt64(index)) + payload.encode()
+    func encode(into buffer: inout ByteBuffer) {
+        encodeString(name, into: &buffer)
+        encodeVarint(UInt64(index), into: &buffer)
+        payload.encode(into: &buffer)
     }
 
-    static func decode(from data: Data, offset: inout Int) throws -> Self {
-        let name = try decodeString(from: data, offset: &offset)
-        let rawIndex = try decodeVarint(from: data, offset: &offset)
+    static func decode(from buffer: inout ByteBuffer) throws -> Self {
+        let name = try decodeString(from: &buffer)
+        let rawIndex = try decodeVarint(from: &buffer)
         guard rawIndex <= UInt64(UInt32.max) else {
             throw PostcardError.overflow
         }
         return .init(
             name: name,
             index: UInt32(rawIndex),
-            payload: try VariantPayload.decode(from: data, offset: &offset)
+            payload: try VariantPayload.decode(from: &buffer)
         )
     }
 
@@ -749,41 +757,36 @@ public indirect enum VariantPayload: Sendable, Equatable {
     case tuple(types: [TypeRef])
     case `struct`(fields: [FieldSchema])
 
-    func encode() -> [UInt8] {
+    func encode(into buffer: inout ByteBuffer) {
         switch self {
         case .unit:
-            return encodeVarint(0)
+            encodeVarint(0, into: &buffer)
         case .newtype(let typeRef):
-            return encodeVarint(1) + typeRef.encode()
+            encodeVarint(1, into: &buffer)
+            typeRef.encode(into: &buffer)
         case .tuple(let types):
-            return encodeVarint(2) + encodeVec(types, encoder: { $0.encode() })
+            encodeVarint(2, into: &buffer)
+            encodeVec(types, into: &buffer, encoder: { $0.encode(into: &$1) })
         case .struct(let fields):
-            return encodeVarint(3) + encodeVec(fields, encoder: { $0.encode() })
+            encodeVarint(3, into: &buffer)
+            encodeVec(fields, into: &buffer, encoder: { $0.encode(into: &$1) })
         }
     }
 
-    static func decode(from data: Data, offset: inout Int) throws -> Self {
-        let disc = try decodeVarint(from: data, offset: &offset)
+    static func decode(from buffer: inout ByteBuffer) throws -> Self {
+        let disc = try decodeVarint(from: &buffer)
         switch disc {
         case 0:
             return .unit
         case 1:
-            return .newtype(typeRef: try TypeRef.decode(from: data, offset: &offset))
+            return .newtype(typeRef: try TypeRef.decode(from: &buffer))
         case 2:
             return .tuple(
-                types: try decodeVec(
-                    from: data,
-                    offset: &offset,
-                    decoder: { data, off in try TypeRef.decode(from: data, offset: &off) }
-                )
+                types: try decodeVec(from: &buffer, decoder: { try TypeRef.decode(from: &$0) })
             )
         case 3:
             return .struct(
-                fields: try decodeVec(
-                    from: data,
-                    offset: &offset,
-                    decoder: { data, off in try FieldSchema.decode(from: data, offset: &off) }
-                )
+                fields: try decodeVec(from: &buffer, decoder: { try FieldSchema.decode(from: &$0) })
             )
         default:
             throw PostcardError.unknownVariant
@@ -954,33 +957,34 @@ public enum PrimitiveType: Sendable, Equatable {
     case bytes
     case payload
 
-    func encode() -> [UInt8] {
-        let disc: UInt64 = switch self {
-        case .bool: 0
-        case .u8: 1
-        case .u16: 2
-        case .u32: 3
-        case .u64: 4
-        case .u128: 5
-        case .i8: 6
-        case .i16: 7
-        case .i32: 8
-        case .i64: 9
-        case .i128: 10
-        case .f32: 11
-        case .f64: 12
-        case .char: 13
-        case .string: 14
-        case .unit: 15
-        case .never: 16
-        case .bytes: 17
-        case .payload: 18
-        }
-        return encodeVarint(disc)
+    func encode(into buffer: inout ByteBuffer) {
+        let disc: UInt64 =
+            switch self {
+            case .bool: 0
+            case .u8: 1
+            case .u16: 2
+            case .u32: 3
+            case .u64: 4
+            case .u128: 5
+            case .i8: 6
+            case .i16: 7
+            case .i32: 8
+            case .i64: 9
+            case .i128: 10
+            case .f32: 11
+            case .f64: 12
+            case .char: 13
+            case .string: 14
+            case .unit: 15
+            case .never: 16
+            case .bytes: 17
+            case .payload: 18
+            }
+        encodeVarint(disc, into: &buffer)
     }
 
-    static func decode(from data: Data, offset: inout Int) throws -> Self {
-        switch try decodeVarint(from: data, offset: &offset) {
+    static func decode(from buffer: inout ByteBuffer) throws -> Self {
+        switch try decodeVarint(from: &buffer) {
         case 0: return .bool
         case 1: return .u8
         case 2: return .u16
@@ -1009,27 +1013,28 @@ public enum PrimitiveType: Sendable, Equatable {
 
     func encodeCbor() -> [UInt8] {
         // Unit variants as simple strings
-        let name: String = switch self {
-        case .bool: "bool"
-        case .u8: "u8"
-        case .u16: "u16"
-        case .u32: "u32"
-        case .u64: "u64"
-        case .u128: "u128"
-        case .i8: "i8"
-        case .i16: "i16"
-        case .i32: "i32"
-        case .i64: "i64"
-        case .i128: "i128"
-        case .f32: "f32"
-        case .f64: "f64"
-        case .char: "char"
-        case .string: "string"
-        case .unit: "unit"
-        case .never: "never"
-        case .bytes: "bytes"
-        case .payload: "payload"
-        }
+        let name: String =
+            switch self {
+            case .bool: "bool"
+            case .u8: "u8"
+            case .u16: "u16"
+            case .u32: "u32"
+            case .u64: "u64"
+            case .u128: "u128"
+            case .i8: "i8"
+            case .i16: "i16"
+            case .i32: "i32"
+            case .i64: "i64"
+            case .i128: "i128"
+            case .f32: "f32"
+            case .f64: "f64"
+            case .char: "char"
+            case .string: "string"
+            case .unit: "unit"
+            case .never: "never"
+            case .bytes: "bytes"
+            case .payload: "payload"
+            }
         return cborEncodeText(name)
     }
 
@@ -1210,7 +1215,8 @@ public final class SchemaSendTracker: @unchecked Sendable {
     ///
     /// When `methodId` is provided, this tracker keeps a fast path for methods that
     /// have already sent all their schemas on this connection.
-    public func filterForSending(_ payload: SchemaPayload, methodId: UInt64? = nil) -> SchemaPayload {
+    public func filterForSending(_ payload: SchemaPayload, methodId: UInt64? = nil) -> SchemaPayload
+    {
         lock.lock()
         defer { lock.unlock() }
 
@@ -1410,24 +1416,31 @@ private func substituteTypeRef(_ ref: TypeRef, substitutions: [TypeParamName: Ty
     case .var(let name):
         return substitutions[name] ?? ref
     case .concrete(let typeId, let args):
-        return .concrete(typeId: typeId, args: args.map { substituteTypeRef($0, substitutions: substitutions) })
+        return .concrete(
+            typeId: typeId, args: args.map { substituteTypeRef($0, substitutions: substitutions) })
     }
 }
 
-private func substituteTypeRefs(in kind: SchemaKind, substitutions: [TypeParamName: TypeRef]) -> SchemaKind {
+private func substituteTypeRefs(in kind: SchemaKind, substitutions: [TypeParamName: TypeRef])
+    -> SchemaKind
+{
     let sub = { substituteTypeRef($0, substitutions: substitutions) }
 
     switch kind {
     case .struct(let name, let fields):
         return .struct(
             name: name,
-            fields: fields.map { FieldSchema(name: $0.name, typeRef: sub($0.typeRef), required: $0.required) }
+            fields: fields.map {
+                FieldSchema(name: $0.name, typeRef: sub($0.typeRef), required: $0.required)
+            }
         )
     case .enum(let name, let variants):
         return .enum(
             name: name,
             variants: variants.map {
-                VariantSchema(name: $0.name, index: $0.index, payload: substituteVariantPayload($0.payload, substitutions: substitutions))
+                VariantSchema(
+                    name: $0.name, index: $0.index,
+                    payload: substituteVariantPayload($0.payload, substitutions: substitutions))
             }
         )
     case .tuple(let elements):
@@ -1462,7 +1475,9 @@ private func substituteVariantPayload(
         return .tuple(types: types.map(sub))
     case .struct(let fields):
         return .struct(
-            fields: fields.map { FieldSchema(name: $0.name, typeRef: sub($0.typeRef), required: $0.required) }
+            fields: fields.map {
+                FieldSchema(name: $0.name, typeRef: sub($0.typeRef), required: $0.required)
+            }
         )
     }
 }

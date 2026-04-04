@@ -7,10 +7,10 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .library(name: "VoxRuntime", targets: ["VoxRuntime"]),
+        .library(name: "VoxRuntime", targets: ["VoxRuntime"])
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.92.0"),
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.92.0")
     ],
     targets: [
         .target(
@@ -20,7 +20,10 @@ let package = Package(
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
             ],
-            path: "Sources/VoxRuntime"
+            path: "Sources/VoxRuntime",
+            resources: [
+                .copy("wireMessageSchemas.bin")
+            ]
         ),
         .testTarget(
             name: "VoxRuntimeTests",

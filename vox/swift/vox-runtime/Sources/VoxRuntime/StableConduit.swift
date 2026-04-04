@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import NIOCore
 
 private let stableClientHelloMagic = Array("VOCH".utf8)
 private let stableServerHelloMagic = Array("VOSH".utf8)
@@ -93,7 +94,8 @@ private func decodeStableClientHello(_ bytes: [UInt8]) throws -> StableClientHel
 
     let flags = bytes[4]
     let resumeKey = (flags & stableClientHelloHasResumeKey) == 0 ? nil : Array(bytes[5..<21])
-    let lastReceived = (flags & stableClientHelloHasLastReceived) == 0
+    let lastReceived =
+        (flags & stableClientHelloHasLastReceived) == 0
         ? nil
         : try stableReadFixedU32(bytes, offset: 21)
     return StableClientHello(resumeKey: resumeKey, lastReceived: lastReceived)
@@ -144,23 +146,20 @@ private func encodeStableFrame(
     ack: UInt32?,
     itemBytes: [UInt8]
 ) -> [UInt8] {
-    var bytes = [UInt8]()
-    bytes.reserveCapacity(itemBytes.count + 16)
-    bytes += encodeU32(seq)
-    bytes += encodeOption(ack) { encodeU32($0) }
-    bytes += itemBytes
-    return bytes
+    var buffer = ByteBufferAllocator().buffer(capacity: itemBytes.count + 16)
+    encodeU32(seq, into: &buffer)
+    encodeOption(ack, into: &buffer, encoder: { encodeU32($0, into: &$1) })
+    buffer.writeBytes(itemBytes)
+    return buffer.readBytes(length: buffer.readableBytes) ?? []
 }
 
 private func decodeStableFrame(_ bytes: [UInt8]) throws -> StableFrame {
-    let data = Data(bytes)
-    var offset = 0
-    let seq = try decodeU32(from: data, offset: &offset)
-    let ackValue = try decodeOption(from: data, offset: &offset) { data, offset in
-        try decodeU32(from: data, offset: &offset)
-    }
-    let item = try Message.decode(from: data, offset: &offset)
-    guard offset == data.count else {
+    var buffer = ByteBufferAllocator().buffer(capacity: bytes.count)
+    buffer.writeBytes(bytes)
+    let seq = try decodeU32(from: &buffer)
+    let ackValue = try decodeOption(from: &buffer) { try decodeU32(from: &$0) }
+    let item = try Message.decode(from: &buffer)
+    guard buffer.readableBytes == 0 else {
         throw WireError.trailingBytes
     }
     return StableFrame(

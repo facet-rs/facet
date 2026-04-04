@@ -459,8 +459,17 @@ fn codegen_swift_wire(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
         wire_type!("Message", rt::Message<'static>),
     ];
 
-    let code = generate_wire_types(&types);
+    let (code, cbor_bytes) = generate_wire_types(&types);
     write_if_changed(&out_path, fmt_swift(&out_path, code))?;
+
+    let bin_path = workspace_root
+        .join("swift")
+        .join("vox-runtime")
+        .join("Sources")
+        .join("VoxRuntime")
+        .join("wireMessageSchemas.bin");
+    write_if_changed(&bin_path, cbor_bytes)?;
+
     Ok(())
 }
 

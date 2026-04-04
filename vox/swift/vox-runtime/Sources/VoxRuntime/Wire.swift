@@ -2,6 +2,7 @@
 // DO NOT EDIT — regenerate with `cargo xtask codegen --swift-wire`
 
 import Foundation
+@preconcurrency import NIOCore
 
 public enum WireError: Error, Equatable {
   case truncated
@@ -12,54 +13,52 @@ public enum WireError: Error, Equatable {
 }
 
 public struct OpaquePayload: Sendable, Equatable {
-  public var bytes: [UInt8]
+  public var bytes: ByteBuffer
 
-  public init(_ bytes: [UInt8]) {
+  public init(_ bytes: ByteBuffer) {
     self.bytes = bytes
   }
 
-  func encode() -> [UInt8] {
-    let len = UInt32(bytes.count)
-    return [
-      UInt8(truncatingIfNeeded: len),
-      UInt8(truncatingIfNeeded: len >> 8),
-      UInt8(truncatingIfNeeded: len >> 16),
-      UInt8(truncatingIfNeeded: len >> 24),
-    ] + bytes
+  /// Init from a [UInt8] for convenience (e.g. from legacy code)
+  public init(_ bytes: [UInt8]) {
+    var buf = ByteBufferAllocator().buffer(capacity: bytes.count)
+    buf.writeBytes(bytes)
+    self.bytes = buf
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    guard offset + 4 <= data.count else { throw WireError.truncated }
-    let start = data.startIndex + offset
-    let len = Int(
-      UInt32(data[start]) | (UInt32(data[start + 1]) << 8) | (UInt32(data[start + 2]) << 16)
-        | (UInt32(data[start + 3]) << 24))
-    offset += 4
-    guard offset + len <= data.count else { throw WireError.truncated }
-    let payloadStart = data.startIndex + offset
-    let payloadEnd = payloadStart + len
-    let payload = Array(data[payloadStart..<payloadEnd])
-    offset += len
-    return .init(payload)
+  func encode(into buffer: inout ByteBuffer) {
+    let len = UInt32(bytes.readableBytes)
+    buffer.writeInteger(len, endianness: .little)
+    var copy = bytes
+    buffer.writeBuffer(&copy)
+  }
+
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    guard let len: UInt32 = buffer.readInteger(endianness: .little) else {
+      throw WireError.truncated
+    }
+    guard let slice = buffer.readSlice(length: Int(len)) else {
+      throw WireError.truncated
+    }
+    return .init(slice)
   }
 
   /// Encode without a length prefix — for trailing fields only.
-  func encodeTrailing() -> [UInt8] {
-    bytes
+  func encodeTrailing(into buffer: inout ByteBuffer) {
+    var copy = bytes
+    buffer.writeBuffer(&copy)
   }
 
   /// Decode by consuming all remaining bytes — for trailing fields only.
-  static func decodeTrailing(from data: Data, offset: inout Int) -> Self {
-    let start = data.startIndex + offset
-    let remaining = Array(data[start...])
-    offset = data.count
-    return .init(remaining)
+  static func decodeTrailing(from buffer: inout ByteBuffer) -> Self {
+    let slice = buffer.readSlice(length: buffer.readableBytes) ?? ByteBuffer()
+    return .init(slice)
   }
 }
 
 @inline(__always)
-private func decodeWireVarintU32(from data: Data, offset: inout Int) throws -> UInt32 {
-  let value = try decodeVarint(from: data, offset: &offset)
+private func decodeWireVarintU32(from buffer: inout ByteBuffer) throws -> UInt32 {
+  let value = try decodeVarint(from: &buffer)
   guard value <= UInt64(UInt32.max) else {
     throw WireError.overflow
   }
@@ -67,9 +66,9 @@ private func decodeWireVarintU32(from data: Data, offset: inout Int) throws -> U
 }
 
 @inline(__always)
-private func decodeWireString(from data: Data, offset: inout Int) throws -> String {
+private func decodeWireString(from buffer: inout ByteBuffer) throws -> String {
   do {
-    return try decodeString(from: data, offset: &offset)
+    return try decodeString(from: &buffer)
   } catch PostcardError.invalidUtf8 {
     throw WireError.invalidUtf8
   } catch PostcardError.truncated {
@@ -80,9 +79,9 @@ private func decodeWireString(from data: Data, offset: inout Int) throws -> Stri
 }
 
 @inline(__always)
-private func decodeWireBytes(from data: Data, offset: inout Int) throws -> Data {
+private func decodeWireBytes(from buffer: inout ByteBuffer) throws -> ByteBuffer {
   do {
-    return try decodeBytes(from: data, offset: &offset)
+    return try decodeBytes(from: &buffer)
   } catch PostcardError.truncated {
     throw WireError.truncated
   } catch {
@@ -96,17 +95,17 @@ public enum Parity: Sendable, Equatable {
   case odd
   case even
 
-  func encode() -> [UInt8] {
+  func encode(into buffer: inout ByteBuffer) {
     switch self {
     case .odd:
-      return encodeVarint(UInt64(0))
+      encodeVarint(UInt64(0), into: &buffer)
     case .even:
-      return encodeVarint(UInt64(1))
+      encodeVarint(UInt64(1), into: &buffer)
     }
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let disc = try decodeVarint(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let disc = try decodeVarint(from: &buffer)
     switch disc {
     case 0:
       return .odd
@@ -127,16 +126,14 @@ public struct ConnectionSettings: Sendable, Equatable {
     self.maxConcurrentRequests = maxConcurrentRequests
   }
 
-  func encode() -> [UInt8] {
-    var out: [UInt8] = []
-    out += parity.encode()
-    out += encodeVarint(UInt64(maxConcurrentRequests))
-    return out
+  func encode(into buffer: inout ByteBuffer) {
+    parity.encode(into: &buffer)
+    encodeVarint(UInt64(maxConcurrentRequests), into: &buffer)
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let parity = try Parity.decode(from: data, offset: &offset)
-    let maxConcurrentRequests = try decodeWireVarintU32(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let parity = try Parity.decode(from: &buffer)
+    let maxConcurrentRequests = try decodeWireVarintU32(from: &buffer)
     return .init(parity: parity, maxConcurrentRequests: maxConcurrentRequests)
   }
 }
@@ -146,26 +143,33 @@ public enum MetadataValue: Sendable, Equatable {
   case bytes([UInt8])
   case u64(UInt64)
 
-  func encode() -> [UInt8] {
+  func encode(into buffer: inout ByteBuffer) {
     switch self {
     case .string(let val):
-      return encodeVarint(UInt64(0)) + encodeString(val)
+      encodeVarint(UInt64(0), into: &buffer)
+      encodeString(val, into: &buffer)
     case .bytes(let val):
-      return encodeVarint(UInt64(1)) + encodeBytes(val)
+      encodeVarint(UInt64(1), into: &buffer)
+      encodeByteSeq(val, into: &buffer)
     case .u64(let val):
-      return encodeVarint(UInt64(2)) + encodeVarint(val)
+      encodeVarint(UInt64(2), into: &buffer)
+      encodeVarint(val, into: &buffer)
     }
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let disc = try decodeVarint(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let disc = try decodeVarint(from: &buffer)
     switch disc {
     case 0:
-      return .string(try decodeWireString(from: data, offset: &offset))
+      return .string(try decodeWireString(from: &buffer))
     case 1:
-      return .bytes(Array(try decodeWireBytes(from: data, offset: &offset)))
+      return .bytes(
+        {
+          var s = try decodeWireBytes(from: &buffer)
+          return s.readBytes(length: s.readableBytes) ?? []
+        }())
     case 2:
-      return .u64(try decodeVarint(from: data, offset: &offset))
+      return .u64(try decodeVarint(from: &buffer))
     default:
       throw WireError.unknownVariant(disc)
     }
@@ -183,18 +187,16 @@ public struct MetadataEntry: Sendable, Equatable {
     self.flags = flags
   }
 
-  func encode() -> [UInt8] {
-    var out: [UInt8] = []
-    out += encodeString(key)
-    out += value.encode()
-    out += encodeVarint(flags)
-    return out
+  func encode(into buffer: inout ByteBuffer) {
+    encodeString(key, into: &buffer)
+    value.encode(into: &buffer)
+    encodeVarint(flags, into: &buffer)
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let key = try decodeWireString(from: data, offset: &offset)
-    let value = try MetadataValue.decode(from: data, offset: &offset)
-    let flags = try decodeVarint(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let key = try decodeWireString(from: &buffer)
+    let value = try MetadataValue.decode(from: &buffer)
+    let flags = try decodeVarint(from: &buffer)
     return .init(key: key, value: value, flags: flags)
   }
 }
@@ -206,12 +208,12 @@ public struct ProtocolError: Sendable, Equatable {
     self.description = description
   }
 
-  func encode() -> [UInt8] {
-    encodeString(description)
+  func encode(into buffer: inout ByteBuffer) {
+    encodeString(description, into: &buffer)
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let description = try decodeWireString(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let description = try decodeWireString(from: &buffer)
     return .init(description: description)
   }
 }
@@ -223,12 +225,12 @@ public struct Ping: Sendable, Equatable {
     self.nonce = nonce
   }
 
-  func encode() -> [UInt8] {
-    encodeVarint(nonce)
+  func encode(into buffer: inout ByteBuffer) {
+    encodeVarint(nonce, into: &buffer)
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let nonce = try decodeVarint(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let nonce = try decodeVarint(from: &buffer)
     return .init(nonce: nonce)
   }
 }
@@ -240,12 +242,12 @@ public struct Pong: Sendable, Equatable {
     self.nonce = nonce
   }
 
-  func encode() -> [UInt8] {
-    encodeVarint(nonce)
+  func encode(into buffer: inout ByteBuffer) {
+    encodeVarint(nonce, into: &buffer)
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let nonce = try decodeVarint(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let nonce = try decodeVarint(from: &buffer)
     return .init(nonce: nonce)
   }
 }
@@ -259,18 +261,15 @@ public struct ConnectionOpen: Sendable, Equatable {
     self.metadata = metadata
   }
 
-  func encode() -> [UInt8] {
-    var out: [UInt8] = []
-    out += connectionSettings.encode()
-    out += encodeVec(metadata, encoder: { $0.encode() })
-    return out
+  func encode(into buffer: inout ByteBuffer) {
+    connectionSettings.encode(into: &buffer)
+    encodeVec(metadata, into: &buffer, encoder: { val, buf in val.encode(into: &buf) })
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let connectionSettings = try ConnectionSettings.decode(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let connectionSettings = try ConnectionSettings.decode(from: &buffer)
     let metadata = try decodeVec(
-      from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
+      from: &buffer, decoder: { buf in try MetadataEntry.decode(from: &buf) })
     return .init(connectionSettings: connectionSettings, metadata: metadata)
   }
 }
@@ -284,18 +283,15 @@ public struct ConnectionAccept: Sendable, Equatable {
     self.metadata = metadata
   }
 
-  func encode() -> [UInt8] {
-    var out: [UInt8] = []
-    out += connectionSettings.encode()
-    out += encodeVec(metadata, encoder: { $0.encode() })
-    return out
+  func encode(into buffer: inout ByteBuffer) {
+    connectionSettings.encode(into: &buffer)
+    encodeVec(metadata, into: &buffer, encoder: { val, buf in val.encode(into: &buf) })
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let connectionSettings = try ConnectionSettings.decode(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let connectionSettings = try ConnectionSettings.decode(from: &buffer)
     let metadata = try decodeVec(
-      from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
+      from: &buffer, decoder: { buf in try MetadataEntry.decode(from: &buf) })
     return .init(connectionSettings: connectionSettings, metadata: metadata)
   }
 }
@@ -307,14 +303,13 @@ public struct ConnectionReject: Sendable, Equatable {
     self.metadata = metadata
   }
 
-  func encode() -> [UInt8] {
-    encodeVec(metadata, encoder: { $0.encode() })
+  func encode(into buffer: inout ByteBuffer) {
+    encodeVec(metadata, into: &buffer, encoder: { val, buf in val.encode(into: &buf) })
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
     let metadata = try decodeVec(
-      from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
+      from: &buffer, decoder: { buf in try MetadataEntry.decode(from: &buf) })
     return .init(metadata: metadata)
   }
 }
@@ -326,14 +321,13 @@ public struct ConnectionClose: Sendable, Equatable {
     self.metadata = metadata
   }
 
-  func encode() -> [UInt8] {
-    encodeVec(metadata, encoder: { $0.encode() })
+  func encode(into buffer: inout ByteBuffer) {
+    encodeVec(metadata, into: &buffer, encoder: { val, buf in val.encode(into: &buf) })
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
     let metadata = try decodeVec(
-      from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
+      from: &buffer, decoder: { buf in try MetadataEntry.decode(from: &buf) })
     return .init(metadata: metadata)
   }
 }
@@ -351,22 +345,22 @@ public struct RequestCall: Sendable, Equatable {
     self.schemas = schemas
   }
 
-  func encode() -> [UInt8] {
-    var out: [UInt8] = []
-    out += encodeVarint(methodId)
-    out += encodeVec(metadata, encoder: { $0.encode() })
-    out += args.encode()
-    out += encodeBytes(schemas)
-    return out
+  func encode(into buffer: inout ByteBuffer) {
+    encodeVarint(methodId, into: &buffer)
+    encodeVec(metadata, into: &buffer, encoder: { val, buf in val.encode(into: &buf) })
+    args.encode(into: &buffer)
+    encodeByteSeq(schemas, into: &buffer)
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let methodId = try decodeVarint(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let methodId = try decodeVarint(from: &buffer)
     let metadata = try decodeVec(
-      from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
-    let args = try OpaquePayload.decode(from: data, offset: &offset)
-    let schemas = Array(try decodeWireBytes(from: data, offset: &offset))
+      from: &buffer, decoder: { buf in try MetadataEntry.decode(from: &buf) })
+    let args = try OpaquePayload.decode(from: &buffer)
+    let schemas = {
+      var s = try decodeWireBytes(from: &buffer)
+      return s.readBytes(length: s.readableBytes) ?? []
+    }()
     return .init(methodId: methodId, metadata: metadata, args: args, schemas: schemas)
   }
 }
@@ -382,20 +376,20 @@ public struct RequestResponse: Sendable, Equatable {
     self.schemas = schemas
   }
 
-  func encode() -> [UInt8] {
-    var out: [UInt8] = []
-    out += encodeVec(metadata, encoder: { $0.encode() })
-    out += ret.encode()
-    out += encodeBytes(schemas)
-    return out
+  func encode(into buffer: inout ByteBuffer) {
+    encodeVec(metadata, into: &buffer, encoder: { val, buf in val.encode(into: &buf) })
+    ret.encode(into: &buffer)
+    encodeByteSeq(schemas, into: &buffer)
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
     let metadata = try decodeVec(
-      from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
-    let ret = try OpaquePayload.decode(from: data, offset: &offset)
-    let schemas = Array(try decodeWireBytes(from: data, offset: &offset))
+      from: &buffer, decoder: { buf in try MetadataEntry.decode(from: &buf) })
+    let ret = try OpaquePayload.decode(from: &buffer)
+    let schemas = {
+      var s = try decodeWireBytes(from: &buffer)
+      return s.readBytes(length: s.readableBytes) ?? []
+    }()
     return .init(metadata: metadata, ret: ret, schemas: schemas)
   }
 }
@@ -407,14 +401,13 @@ public struct RequestCancel: Sendable, Equatable {
     self.metadata = metadata
   }
 
-  func encode() -> [UInt8] {
-    encodeVec(metadata, encoder: { $0.encode() })
+  func encode(into buffer: inout ByteBuffer) {
+    encodeVec(metadata, into: &buffer, encoder: { val, buf in val.encode(into: &buf) })
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
     let metadata = try decodeVec(
-      from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
+      from: &buffer, decoder: { buf in try MetadataEntry.decode(from: &buf) })
     return .init(metadata: metadata)
   }
 }
@@ -424,26 +417,29 @@ public enum RequestBody: Sendable, Equatable {
   case response(RequestResponse)
   case cancel(RequestCancel)
 
-  func encode() -> [UInt8] {
+  func encode(into buffer: inout ByteBuffer) {
     switch self {
     case .call(let val):
-      return encodeVarint(UInt64(0)) + val.encode()
+      encodeVarint(UInt64(0), into: &buffer)
+      val.encode(into: &buffer)
     case .response(let val):
-      return encodeVarint(UInt64(1)) + val.encode()
+      encodeVarint(UInt64(1), into: &buffer)
+      val.encode(into: &buffer)
     case .cancel(let val):
-      return encodeVarint(UInt64(2)) + val.encode()
+      encodeVarint(UInt64(2), into: &buffer)
+      val.encode(into: &buffer)
     }
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let disc = try decodeVarint(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let disc = try decodeVarint(from: &buffer)
     switch disc {
     case 0:
-      return .call(try RequestCall.decode(from: data, offset: &offset))
+      return .call(try RequestCall.decode(from: &buffer))
     case 1:
-      return .response(try RequestResponse.decode(from: data, offset: &offset))
+      return .response(try RequestResponse.decode(from: &buffer))
     case 2:
-      return .cancel(try RequestCancel.decode(from: data, offset: &offset))
+      return .cancel(try RequestCancel.decode(from: &buffer))
     default:
       throw WireError.unknownVariant(disc)
     }
@@ -459,16 +455,14 @@ public struct RequestMessage: Sendable, Equatable {
     self.body = body
   }
 
-  func encode() -> [UInt8] {
-    var out: [UInt8] = []
-    out += encodeVarint(id)
-    out += body.encode()
-    return out
+  func encode(into buffer: inout ByteBuffer) {
+    encodeVarint(id, into: &buffer)
+    body.encode(into: &buffer)
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let id = try decodeVarint(from: data, offset: &offset)
-    let body = try RequestBody.decode(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let id = try decodeVarint(from: &buffer)
+    let body = try RequestBody.decode(from: &buffer)
     return .init(id: id, body: body)
   }
 }
@@ -480,12 +474,12 @@ public struct ChannelItem: Sendable, Equatable {
     self.item = item
   }
 
-  func encode() -> [UInt8] {
-    item.encode()
+  func encode(into buffer: inout ByteBuffer) {
+    item.encode(into: &buffer)
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let item = try OpaquePayload.decode(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let item = try OpaquePayload.decode(from: &buffer)
     return .init(item: item)
   }
 }
@@ -497,14 +491,13 @@ public struct ChannelClose: Sendable, Equatable {
     self.metadata = metadata
   }
 
-  func encode() -> [UInt8] {
-    encodeVec(metadata, encoder: { $0.encode() })
+  func encode(into buffer: inout ByteBuffer) {
+    encodeVec(metadata, into: &buffer, encoder: { val, buf in val.encode(into: &buf) })
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
     let metadata = try decodeVec(
-      from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
+      from: &buffer, decoder: { buf in try MetadataEntry.decode(from: &buf) })
     return .init(metadata: metadata)
   }
 }
@@ -516,14 +509,13 @@ public struct ChannelReset: Sendable, Equatable {
     self.metadata = metadata
   }
 
-  func encode() -> [UInt8] {
-    encodeVec(metadata, encoder: { $0.encode() })
+  func encode(into buffer: inout ByteBuffer) {
+    encodeVec(metadata, into: &buffer, encoder: { val, buf in val.encode(into: &buf) })
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
     let metadata = try decodeVec(
-      from: data, offset: &offset,
-      decoder: { data, off in try MetadataEntry.decode(from: data, offset: &off) })
+      from: &buffer, decoder: { buf in try MetadataEntry.decode(from: &buf) })
     return .init(metadata: metadata)
   }
 }
@@ -535,12 +527,12 @@ public struct ChannelGrantCredit: Sendable, Equatable {
     self.additional = additional
   }
 
-  func encode() -> [UInt8] {
-    encodeVarint(UInt64(additional))
+  func encode(into buffer: inout ByteBuffer) {
+    encodeVarint(UInt64(additional), into: &buffer)
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let additional = try decodeWireVarintU32(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let additional = try decodeWireVarintU32(from: &buffer)
     return .init(additional: additional)
   }
 }
@@ -551,30 +543,34 @@ public enum ChannelBody: Sendable, Equatable {
   case reset(ChannelReset)
   case grantCredit(ChannelGrantCredit)
 
-  func encode() -> [UInt8] {
+  func encode(into buffer: inout ByteBuffer) {
     switch self {
     case .item(let val):
-      return encodeVarint(UInt64(0)) + val.encode()
+      encodeVarint(UInt64(0), into: &buffer)
+      val.encode(into: &buffer)
     case .close(let val):
-      return encodeVarint(UInt64(1)) + val.encode()
+      encodeVarint(UInt64(1), into: &buffer)
+      val.encode(into: &buffer)
     case .reset(let val):
-      return encodeVarint(UInt64(2)) + val.encode()
+      encodeVarint(UInt64(2), into: &buffer)
+      val.encode(into: &buffer)
     case .grantCredit(let val):
-      return encodeVarint(UInt64(3)) + val.encode()
+      encodeVarint(UInt64(3), into: &buffer)
+      val.encode(into: &buffer)
     }
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let disc = try decodeVarint(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let disc = try decodeVarint(from: &buffer)
     switch disc {
     case 0:
-      return .item(try ChannelItem.decode(from: data, offset: &offset))
+      return .item(try ChannelItem.decode(from: &buffer))
     case 1:
-      return .close(try ChannelClose.decode(from: data, offset: &offset))
+      return .close(try ChannelClose.decode(from: &buffer))
     case 2:
-      return .reset(try ChannelReset.decode(from: data, offset: &offset))
+      return .reset(try ChannelReset.decode(from: &buffer))
     case 3:
-      return .grantCredit(try ChannelGrantCredit.decode(from: data, offset: &offset))
+      return .grantCredit(try ChannelGrantCredit.decode(from: &buffer))
     default:
       throw WireError.unknownVariant(disc)
     }
@@ -590,16 +586,14 @@ public struct ChannelMessage: Sendable, Equatable {
     self.body = body
   }
 
-  func encode() -> [UInt8] {
-    var out: [UInt8] = []
-    out += encodeVarint(id)
-    out += body.encode()
-    return out
+  func encode(into buffer: inout ByteBuffer) {
+    encodeVarint(id, into: &buffer)
+    body.encode(into: &buffer)
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let id = try decodeVarint(from: data, offset: &offset)
-    let body = try ChannelBody.decode(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let id = try decodeVarint(from: &buffer)
+    let body = try ChannelBody.decode(from: &buffer)
     return .init(id: id, body: body)
   }
 }
@@ -615,50 +609,59 @@ public enum MessagePayload: Sendable, Equatable {
   case ping(Ping)
   case pong(Pong)
 
-  func encode() -> [UInt8] {
+  func encode(into buffer: inout ByteBuffer) {
     switch self {
     case .protocolError(let val):
-      return encodeVarint(UInt64(0)) + val.encode()
+      encodeVarint(UInt64(0), into: &buffer)
+      val.encode(into: &buffer)
     case .connectionOpen(let val):
-      return encodeVarint(UInt64(1)) + val.encode()
+      encodeVarint(UInt64(1), into: &buffer)
+      val.encode(into: &buffer)
     case .connectionAccept(let val):
-      return encodeVarint(UInt64(2)) + val.encode()
+      encodeVarint(UInt64(2), into: &buffer)
+      val.encode(into: &buffer)
     case .connectionReject(let val):
-      return encodeVarint(UInt64(3)) + val.encode()
+      encodeVarint(UInt64(3), into: &buffer)
+      val.encode(into: &buffer)
     case .connectionClose(let val):
-      return encodeVarint(UInt64(4)) + val.encode()
+      encodeVarint(UInt64(4), into: &buffer)
+      val.encode(into: &buffer)
     case .requestMessage(let val):
-      return encodeVarint(UInt64(5)) + val.encode()
+      encodeVarint(UInt64(5), into: &buffer)
+      val.encode(into: &buffer)
     case .channelMessage(let val):
-      return encodeVarint(UInt64(6)) + val.encode()
+      encodeVarint(UInt64(6), into: &buffer)
+      val.encode(into: &buffer)
     case .ping(let val):
-      return encodeVarint(UInt64(7)) + val.encode()
+      encodeVarint(UInt64(7), into: &buffer)
+      val.encode(into: &buffer)
     case .pong(let val):
-      return encodeVarint(UInt64(8)) + val.encode()
+      encodeVarint(UInt64(8), into: &buffer)
+      val.encode(into: &buffer)
     }
   }
 
-  static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let disc = try decodeVarint(from: data, offset: &offset)
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let disc = try decodeVarint(from: &buffer)
     switch disc {
     case 0:
-      return .protocolError(try ProtocolError.decode(from: data, offset: &offset))
+      return .protocolError(try ProtocolError.decode(from: &buffer))
     case 1:
-      return .connectionOpen(try ConnectionOpen.decode(from: data, offset: &offset))
+      return .connectionOpen(try ConnectionOpen.decode(from: &buffer))
     case 2:
-      return .connectionAccept(try ConnectionAccept.decode(from: data, offset: &offset))
+      return .connectionAccept(try ConnectionAccept.decode(from: &buffer))
     case 3:
-      return .connectionReject(try ConnectionReject.decode(from: data, offset: &offset))
+      return .connectionReject(try ConnectionReject.decode(from: &buffer))
     case 4:
-      return .connectionClose(try ConnectionClose.decode(from: data, offset: &offset))
+      return .connectionClose(try ConnectionClose.decode(from: &buffer))
     case 5:
-      return .requestMessage(try RequestMessage.decode(from: data, offset: &offset))
+      return .requestMessage(try RequestMessage.decode(from: &buffer))
     case 6:
-      return .channelMessage(try ChannelMessage.decode(from: data, offset: &offset))
+      return .channelMessage(try ChannelMessage.decode(from: &buffer))
     case 7:
-      return .ping(try Ping.decode(from: data, offset: &offset))
+      return .ping(try Ping.decode(from: &buffer))
     case 8:
-      return .pong(try Pong.decode(from: data, offset: &offset))
+      return .pong(try Pong.decode(from: &buffer))
     default:
       throw WireError.unknownVariant(disc)
     }
@@ -674,23 +677,30 @@ public struct Message: Sendable, Equatable {
     self.payload = payload
   }
 
-  public func encode() -> [UInt8] {
-    var out: [UInt8] = []
-    out += encodeVarint(connectionId)
-    out += payload.encode()
-    return out
+  public func encode(into buffer: inout ByteBuffer) {
+    encodeVarint(connectionId, into: &buffer)
+    payload.encode(into: &buffer)
   }
 
-  public static func decode(from data: Data, offset: inout Int) throws -> Self {
-    let connectionId = try decodeVarint(from: data, offset: &offset)
-    let payload = try MessagePayload.decode(from: data, offset: &offset)
+  /// Encode to a `[UInt8]` array (bridge for callers that need bytes).
+  public func encode() -> [UInt8] {
+    var buffer = ByteBufferAllocator().buffer(capacity: 64)
+    encode(into: &buffer)
+    return buffer.readBytes(length: buffer.readableBytes) ?? []
+  }
+
+  public static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let connectionId = try decodeVarint(from: &buffer)
+    let payload = try MessagePayload.decode(from: &buffer)
     return .init(connectionId: connectionId, payload: payload)
   }
 
-  public static func decode(from data: Data) throws -> Self {
-    var offset = 0
-    let result = try decode(from: data, offset: &offset)
-    guard offset == data.count else {
+  /// Decode from a `[UInt8]` array (bridge for callers that have raw bytes).
+  public static func decode(from data: [UInt8]) throws -> Self {
+    var buffer = ByteBufferAllocator().buffer(capacity: data.count)
+    buffer.writeBytes(data)
+    let result = try decode(from: &buffer)
+    guard buffer.readableBytes == 0 else {
       throw WireError.trailingBytes
     }
     return result
@@ -844,330 +854,12 @@ extension Message {
   }
 }
 
-public let wireMessageSchemasCbor: [UInt8] = [
-  152, 31, 163, 98, 105, 100, 27, 217, 53, 98, 152, 184, 22, 57, 172, 107, 116, 121, 112, 101, 95,
-  112, 97, 114, 97, 109, 115, 128, 100, 107, 105, 110, 100, 162, 99, 116, 97, 103, 105, 112, 114,
-  105, 109, 105, 116, 105, 118, 101, 110, 112, 114, 105, 109, 105, 116, 105, 118, 101, 95, 116, 121,
-  112, 101, 99, 117, 54, 52, 163, 98, 105, 100, 27, 109, 125, 206, 145, 78, 225, 80, 232, 107, 116,
-  121, 112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100, 107, 105, 110, 100, 162, 99, 116, 97,
-  103, 105, 112, 114, 105, 109, 105, 116, 105, 118, 101, 110, 112, 114, 105, 109, 105, 116, 105,
-  118, 101, 95, 116, 121, 112, 101, 102, 115, 116, 114, 105, 110, 103, 163, 98, 105, 100, 27, 50,
-  251, 81, 24, 243, 33, 117, 53, 107, 116, 121, 112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100,
-  107, 105, 110, 100, 163, 99, 116, 97, 103, 102, 115, 116, 114, 117, 99, 116, 100, 110, 97, 109,
-  101, 109, 80, 114, 111, 116, 111, 99, 111, 108, 69, 114, 114, 111, 114, 102, 102, 105, 101, 108,
-  100, 115, 129, 163, 100, 110, 97, 109, 101, 107, 100, 101, 115, 99, 114, 105, 112, 116, 105, 111,
-  110, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99,
-  114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 109, 125, 206, 145, 78, 225, 80,
-  232, 100, 97, 114, 103, 115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245, 163, 98, 105,
-  100, 27, 91, 18, 235, 93, 247, 0, 103, 82, 107, 116, 121, 112, 101, 95, 112, 97, 114, 97, 109,
-  115, 128, 100, 107, 105, 110, 100, 163, 99, 116, 97, 103, 100, 101, 110, 117, 109, 100, 110, 97,
-  109, 101, 102, 80, 97, 114, 105, 116, 121, 104, 118, 97, 114, 105, 97, 110, 116, 115, 130, 163,
-  100, 110, 97, 109, 101, 99, 79, 100, 100, 101, 105, 110, 100, 101, 120, 0, 103, 112, 97, 121, 108,
-  111, 97, 100, 100, 117, 110, 105, 116, 163, 100, 110, 97, 109, 101, 100, 69, 118, 101, 110, 101,
-  105, 110, 100, 101, 120, 1, 103, 112, 97, 121, 108, 111, 97, 100, 100, 117, 110, 105, 116, 163,
-  98, 105, 100, 27, 40, 28, 91, 228, 242, 238, 99, 180, 107, 116, 121, 112, 101, 95, 112, 97, 114,
-  97, 109, 115, 128, 100, 107, 105, 110, 100, 162, 99, 116, 97, 103, 105, 112, 114, 105, 109, 105,
-  116, 105, 118, 101, 110, 112, 114, 105, 109, 105, 116, 105, 118, 101, 95, 116, 121, 112, 101, 99,
-  117, 51, 50, 163, 98, 105, 100, 27, 229, 252, 97, 139, 181, 198, 162, 57, 107, 116, 121, 112, 101,
-  95, 112, 97, 114, 97, 109, 115, 128, 100, 107, 105, 110, 100, 163, 99, 116, 97, 103, 102, 115,
-  116, 114, 117, 99, 116, 100, 110, 97, 109, 101, 114, 67, 111, 110, 110, 101, 99, 116, 105, 111,
-  110, 83, 101, 116, 116, 105, 110, 103, 115, 102, 102, 105, 101, 108, 100, 115, 130, 163, 100, 110,
-  97, 109, 101, 102, 112, 97, 114, 105, 116, 121, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163,
-  99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105,
-  100, 27, 91, 18, 235, 93, 247, 0, 103, 82, 100, 97, 114, 103, 115, 128, 104, 114, 101, 113, 117,
-  105, 114, 101, 100, 245, 163, 100, 110, 97, 109, 101, 119, 109, 97, 120, 95, 99, 111, 110, 99,
-  117, 114, 114, 101, 110, 116, 95, 114, 101, 113, 117, 101, 115, 116, 115, 104, 116, 121, 112, 101,
-  95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116,
-  121, 112, 101, 95, 105, 100, 27, 40, 28, 91, 228, 242, 238, 99, 180, 100, 97, 114, 103, 115, 128,
-  104, 114, 101, 113, 117, 105, 114, 101, 100, 245, 163, 98, 105, 100, 27, 186, 129, 37, 135, 109,
-  99, 136, 180, 107, 116, 121, 112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100, 107, 105, 110,
-  100, 162, 99, 116, 97, 103, 105, 112, 114, 105, 109, 105, 116, 105, 118, 101, 110, 112, 114, 105,
-  109, 105, 116, 105, 118, 101, 95, 116, 121, 112, 101, 101, 98, 121, 116, 101, 115, 163, 98, 105,
-  100, 27, 185, 120, 197, 23, 42, 136, 135, 125, 107, 116, 121, 112, 101, 95, 112, 97, 114, 97, 109,
-  115, 128, 100, 107, 105, 110, 100, 163, 99, 116, 97, 103, 100, 101, 110, 117, 109, 100, 110, 97,
-  109, 101, 109, 77, 101, 116, 97, 100, 97, 116, 97, 86, 97, 108, 117, 101, 104, 118, 97, 114, 105,
-  97, 110, 116, 115, 131, 163, 100, 110, 97, 109, 101, 102, 83, 116, 114, 105, 110, 103, 101, 105,
-  110, 100, 101, 120, 0, 103, 112, 97, 121, 108, 111, 97, 100, 162, 99, 116, 97, 103, 103, 110, 101,
-  119, 116, 121, 112, 101, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104,
-  99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 109, 125, 206,
-  145, 78, 225, 80, 232, 100, 97, 114, 103, 115, 128, 163, 100, 110, 97, 109, 101, 101, 66, 121,
-  116, 101, 115, 101, 105, 110, 100, 101, 120, 1, 103, 112, 97, 121, 108, 111, 97, 100, 162, 99,
-  116, 97, 103, 103, 110, 101, 119, 116, 121, 112, 101, 104, 116, 121, 112, 101, 95, 114, 101, 102,
-  163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95,
-  105, 100, 27, 186, 129, 37, 135, 109, 99, 136, 180, 100, 97, 114, 103, 115, 128, 163, 100, 110,
-  97, 109, 101, 99, 85, 54, 52, 101, 105, 110, 100, 101, 120, 2, 103, 112, 97, 121, 108, 111, 97,
-  100, 162, 99, 116, 97, 103, 103, 110, 101, 119, 116, 121, 112, 101, 104, 116, 121, 112, 101, 95,
-  114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121,
-  112, 101, 95, 105, 100, 27, 217, 53, 98, 152, 184, 22, 57, 172, 100, 97, 114, 103, 115, 128, 163,
-  98, 105, 100, 27, 162, 81, 150, 141, 51, 155, 58, 63, 107, 116, 121, 112, 101, 95, 112, 97, 114,
-  97, 109, 115, 128, 100, 107, 105, 110, 100, 163, 99, 116, 97, 103, 102, 115, 116, 114, 117, 99,
-  116, 100, 110, 97, 109, 101, 109, 77, 101, 116, 97, 100, 97, 116, 97, 69, 110, 116, 114, 121, 102,
-  102, 105, 101, 108, 100, 115, 131, 163, 100, 110, 97, 109, 101, 99, 107, 101, 121, 104, 116, 121,
-  112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101,
-  103, 116, 121, 112, 101, 95, 105, 100, 27, 109, 125, 206, 145, 78, 225, 80, 232, 100, 97, 114,
-  103, 115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245, 163, 100, 110, 97, 109, 101, 101,
-  118, 97, 108, 117, 101, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104,
-  99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 185, 120, 197,
-  23, 42, 136, 135, 125, 100, 97, 114, 103, 115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100,
-  245, 163, 100, 110, 97, 109, 101, 101, 102, 108, 97, 103, 115, 104, 116, 121, 112, 101, 95, 114,
-  101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112,
-  101, 95, 105, 100, 27, 217, 53, 98, 152, 184, 22, 57, 172, 100, 97, 114, 103, 115, 128, 104, 114,
-  101, 113, 117, 105, 114, 101, 100, 245, 163, 98, 105, 100, 27, 10, 150, 180, 4, 180, 215, 157,
-  103, 107, 116, 121, 112, 101, 95, 112, 97, 114, 97, 109, 115, 129, 97, 84, 100, 107, 105, 110,
-  100, 162, 99, 116, 97, 103, 100, 108, 105, 115, 116, 103, 101, 108, 101, 109, 101, 110, 116, 162,
-  99, 116, 97, 103, 99, 118, 97, 114, 100, 110, 97, 109, 101, 97, 84, 163, 98, 105, 100, 27, 97, 18,
-  53, 103, 234, 84, 80, 85, 107, 116, 121, 112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100, 107,
-  105, 110, 100, 163, 99, 116, 97, 103, 102, 115, 116, 114, 117, 99, 116, 100, 110, 97, 109, 101,
-  110, 67, 111, 110, 110, 101, 99, 116, 105, 111, 110, 79, 112, 101, 110, 102, 102, 105, 101, 108,
-  100, 115, 130, 163, 100, 110, 97, 109, 101, 115, 99, 111, 110, 110, 101, 99, 116, 105, 111, 110,
-  95, 115, 101, 116, 116, 105, 110, 103, 115, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99,
-  116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100,
-  27, 229, 252, 97, 139, 181, 198, 162, 57, 100, 97, 114, 103, 115, 128, 104, 114, 101, 113, 117,
-  105, 114, 101, 100, 245, 163, 100, 110, 97, 109, 101, 104, 109, 101, 116, 97, 100, 97, 116, 97,
-  104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114,
-  101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 10, 150, 180, 4, 180, 215, 157, 103,
-  100, 97, 114, 103, 115, 129, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101,
-  103, 116, 121, 112, 101, 95, 105, 100, 27, 162, 81, 150, 141, 51, 155, 58, 63, 100, 97, 114, 103,
-  115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245, 163, 98, 105, 100, 27, 212, 230, 193,
-  250, 112, 73, 117, 152, 107, 116, 121, 112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100, 107,
-  105, 110, 100, 163, 99, 116, 97, 103, 102, 115, 116, 114, 117, 99, 116, 100, 110, 97, 109, 101,
-  112, 67, 111, 110, 110, 101, 99, 116, 105, 111, 110, 65, 99, 99, 101, 112, 116, 102, 102, 105,
-  101, 108, 100, 115, 130, 163, 100, 110, 97, 109, 101, 115, 99, 111, 110, 110, 101, 99, 116, 105,
-  111, 110, 95, 115, 101, 116, 116, 105, 110, 103, 115, 104, 116, 121, 112, 101, 95, 114, 101, 102,
-  163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95,
-  105, 100, 27, 229, 252, 97, 139, 181, 198, 162, 57, 100, 97, 114, 103, 115, 128, 104, 114, 101,
-  113, 117, 105, 114, 101, 100, 245, 163, 100, 110, 97, 109, 101, 104, 109, 101, 116, 97, 100, 97,
-  116, 97, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99,
-  114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 10, 150, 180, 4, 180, 215, 157,
-  103, 100, 97, 114, 103, 115, 129, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116,
-  101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 162, 81, 150, 141, 51, 155, 58, 63, 100, 97, 114,
-  103, 115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245, 163, 98, 105, 100, 27, 5, 107,
-  35, 180, 194, 41, 54, 100, 107, 116, 121, 112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100, 107,
-  105, 110, 100, 163, 99, 116, 97, 103, 102, 115, 116, 114, 117, 99, 116, 100, 110, 97, 109, 101,
-  112, 67, 111, 110, 110, 101, 99, 116, 105, 111, 110, 82, 101, 106, 101, 99, 116, 102, 102, 105,
-  101, 108, 100, 115, 129, 163, 100, 110, 97, 109, 101, 104, 109, 101, 116, 97, 100, 97, 116, 97,
-  104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114,
-  101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 10, 150, 180, 4, 180, 215, 157, 103,
-  100, 97, 114, 103, 115, 129, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101,
-  103, 116, 121, 112, 101, 95, 105, 100, 27, 162, 81, 150, 141, 51, 155, 58, 63, 100, 97, 114, 103,
-  115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245, 163, 98, 105, 100, 27, 232, 45, 226,
-  80, 158, 94, 150, 252, 107, 116, 121, 112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100, 107,
-  105, 110, 100, 163, 99, 116, 97, 103, 102, 115, 116, 114, 117, 99, 116, 100, 110, 97, 109, 101,
-  111, 67, 111, 110, 110, 101, 99, 116, 105, 111, 110, 67, 108, 111, 115, 101, 102, 102, 105, 101,
-  108, 100, 115, 129, 163, 100, 110, 97, 109, 101, 104, 109, 101, 116, 97, 100, 97, 116, 97, 104,
-  116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101,
-  116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 10, 150, 180, 4, 180, 215, 157, 103, 100, 97,
-  114, 103, 115, 129, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116,
-  121, 112, 101, 95, 105, 100, 27, 162, 81, 150, 141, 51, 155, 58, 63, 100, 97, 114, 103, 115, 128,
-  104, 114, 101, 113, 117, 105, 114, 101, 100, 245, 163, 98, 105, 100, 27, 137, 126, 230, 9, 111,
-  123, 183, 38, 107, 116, 121, 112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100, 107, 105, 110,
-  100, 162, 99, 116, 97, 103, 105, 112, 114, 105, 109, 105, 116, 105, 118, 101, 110, 112, 114, 105,
-  109, 105, 116, 105, 118, 101, 95, 116, 121, 112, 101, 103, 112, 97, 121, 108, 111, 97, 100, 163,
-  98, 105, 100, 27, 44, 141, 84, 242, 49, 77, 15, 32, 107, 116, 121, 112, 101, 95, 112, 97, 114, 97,
-  109, 115, 128, 100, 107, 105, 110, 100, 162, 99, 116, 97, 103, 105, 112, 114, 105, 109, 105, 116,
-  105, 118, 101, 110, 112, 114, 105, 109, 105, 116, 105, 118, 101, 95, 116, 121, 112, 101, 98, 117,
-  56, 163, 98, 105, 100, 27, 32, 78, 9, 158, 51, 209, 180, 155, 107, 116, 121, 112, 101, 95, 112,
-  97, 114, 97, 109, 115, 128, 100, 107, 105, 110, 100, 163, 99, 116, 97, 103, 102, 115, 116, 114,
-  117, 99, 116, 100, 110, 97, 109, 101, 107, 82, 101, 113, 117, 101, 115, 116, 67, 97, 108, 108,
-  102, 102, 105, 101, 108, 100, 115, 132, 163, 100, 110, 97, 109, 101, 105, 109, 101, 116, 104, 111,
-  100, 95, 105, 100, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99,
-  111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 217, 53, 98, 152,
-  184, 22, 57, 172, 100, 97, 114, 103, 115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245,
-  163, 100, 110, 97, 109, 101, 104, 109, 101, 116, 97, 100, 97, 116, 97, 104, 116, 121, 112, 101,
-  95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116,
-  121, 112, 101, 95, 105, 100, 27, 10, 150, 180, 4, 180, 215, 157, 103, 100, 97, 114, 103, 115, 129,
-  163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95,
-  105, 100, 27, 162, 81, 150, 141, 51, 155, 58, 63, 100, 97, 114, 103, 115, 128, 104, 114, 101, 113,
-  117, 105, 114, 101, 100, 245, 163, 100, 110, 97, 109, 101, 100, 97, 114, 103, 115, 104, 116, 121,
-  112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101,
-  103, 116, 121, 112, 101, 95, 105, 100, 27, 137, 126, 230, 9, 111, 123, 183, 38, 100, 97, 114, 103,
-  115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245, 163, 100, 110, 97, 109, 101, 103, 115,
-  99, 104, 101, 109, 97, 115, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103,
-  104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 10, 150,
-  180, 4, 180, 215, 157, 103, 100, 97, 114, 103, 115, 129, 163, 99, 116, 97, 103, 104, 99, 111, 110,
-  99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 44, 141, 84, 242, 49, 77, 15,
-  32, 100, 97, 114, 103, 115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245, 163, 98, 105,
-  100, 27, 109, 118, 215, 135, 225, 15, 243, 241, 107, 116, 121, 112, 101, 95, 112, 97, 114, 97,
-  109, 115, 128, 100, 107, 105, 110, 100, 163, 99, 116, 97, 103, 102, 115, 116, 114, 117, 99, 116,
-  100, 110, 97, 109, 101, 111, 82, 101, 113, 117, 101, 115, 116, 82, 101, 115, 112, 111, 110, 115,
-  101, 102, 102, 105, 101, 108, 100, 115, 131, 163, 100, 110, 97, 109, 101, 104, 109, 101, 116, 97,
-  100, 97, 116, 97, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111,
-  110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 10, 150, 180, 4, 180, 215,
-  157, 103, 100, 97, 114, 103, 115, 129, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101,
-  116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 162, 81, 150, 141, 51, 155, 58, 63, 100, 97,
-  114, 103, 115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245, 163, 100, 110, 97, 109, 101,
-  99, 114, 101, 116, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99,
-  111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 137, 126, 230, 9,
-  111, 123, 183, 38, 100, 97, 114, 103, 115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245,
-  163, 100, 110, 97, 109, 101, 103, 115, 99, 104, 101, 109, 97, 115, 104, 116, 121, 112, 101, 95,
-  114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121,
-  112, 101, 95, 105, 100, 27, 10, 150, 180, 4, 180, 215, 157, 103, 100, 97, 114, 103, 115, 129, 163,
-  99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105,
-  100, 27, 44, 141, 84, 242, 49, 77, 15, 32, 100, 97, 114, 103, 115, 128, 104, 114, 101, 113, 117,
-  105, 114, 101, 100, 245, 163, 98, 105, 100, 27, 216, 86, 236, 99, 32, 17, 195, 235, 107, 116, 121,
-  112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100, 107, 105, 110, 100, 163, 99, 116, 97, 103,
-  102, 115, 116, 114, 117, 99, 116, 100, 110, 97, 109, 101, 109, 82, 101, 113, 117, 101, 115, 116,
-  67, 97, 110, 99, 101, 108, 102, 102, 105, 101, 108, 100, 115, 129, 163, 100, 110, 97, 109, 101,
-  104, 109, 101, 116, 97, 100, 97, 116, 97, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99,
-  116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100,
-  27, 10, 150, 180, 4, 180, 215, 157, 103, 100, 97, 114, 103, 115, 129, 163, 99, 116, 97, 103, 104,
-  99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 162, 81, 150,
-  141, 51, 155, 58, 63, 100, 97, 114, 103, 115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100,
-  245, 163, 98, 105, 100, 27, 218, 191, 138, 90, 102, 37, 209, 50, 107, 116, 121, 112, 101, 95, 112,
-  97, 114, 97, 109, 115, 128, 100, 107, 105, 110, 100, 163, 99, 116, 97, 103, 100, 101, 110, 117,
-  109, 100, 110, 97, 109, 101, 107, 82, 101, 113, 117, 101, 115, 116, 66, 111, 100, 121, 104, 118,
-  97, 114, 105, 97, 110, 116, 115, 131, 163, 100, 110, 97, 109, 101, 100, 67, 97, 108, 108, 101,
-  105, 110, 100, 101, 120, 0, 103, 112, 97, 121, 108, 111, 97, 100, 162, 99, 116, 97, 103, 103, 110,
-  101, 119, 116, 121, 112, 101, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103,
-  104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 32, 78, 9,
-  158, 51, 209, 180, 155, 100, 97, 114, 103, 115, 128, 163, 100, 110, 97, 109, 101, 104, 82, 101,
-  115, 112, 111, 110, 115, 101, 101, 105, 110, 100, 101, 120, 1, 103, 112, 97, 121, 108, 111, 97,
-  100, 162, 99, 116, 97, 103, 103, 110, 101, 119, 116, 121, 112, 101, 104, 116, 121, 112, 101, 95,
-  114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121,
-  112, 101, 95, 105, 100, 27, 109, 118, 215, 135, 225, 15, 243, 241, 100, 97, 114, 103, 115, 128,
-  163, 100, 110, 97, 109, 101, 102, 67, 97, 110, 99, 101, 108, 101, 105, 110, 100, 101, 120, 2, 103,
-  112, 97, 121, 108, 111, 97, 100, 162, 99, 116, 97, 103, 103, 110, 101, 119, 116, 121, 112, 101,
-  104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114,
-  101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 216, 86, 236, 99, 32, 17, 195, 235, 100,
-  97, 114, 103, 115, 128, 163, 98, 105, 100, 27, 206, 182, 199, 84, 201, 181, 85, 84, 107, 116, 121,
-  112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100, 107, 105, 110, 100, 163, 99, 116, 97, 103,
-  102, 115, 116, 114, 117, 99, 116, 100, 110, 97, 109, 101, 110, 82, 101, 113, 117, 101, 115, 116,
-  77, 101, 115, 115, 97, 103, 101, 102, 102, 105, 101, 108, 100, 115, 130, 163, 100, 110, 97, 109,
-  101, 98, 105, 100, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99,
-  111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 217, 53, 98, 152,
-  184, 22, 57, 172, 100, 97, 114, 103, 115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245,
-  163, 100, 110, 97, 109, 101, 100, 98, 111, 100, 121, 104, 116, 121, 112, 101, 95, 114, 101, 102,
-  163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95,
-  105, 100, 27, 218, 191, 138, 90, 102, 37, 209, 50, 100, 97, 114, 103, 115, 128, 104, 114, 101,
-  113, 117, 105, 114, 101, 100, 245, 163, 98, 105, 100, 27, 11, 52, 113, 197, 81, 45, 179, 224, 107,
-  116, 121, 112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100, 107, 105, 110, 100, 163, 99, 116,
-  97, 103, 102, 115, 116, 114, 117, 99, 116, 100, 110, 97, 109, 101, 107, 67, 104, 97, 110, 110,
-  101, 108, 73, 116, 101, 109, 102, 102, 105, 101, 108, 100, 115, 129, 163, 100, 110, 97, 109, 101,
-  100, 105, 116, 101, 109, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104,
-  99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 137, 126, 230, 9,
-  111, 123, 183, 38, 100, 97, 114, 103, 115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245,
-  163, 98, 105, 100, 27, 32, 125, 22, 87, 196, 175, 225, 231, 107, 116, 121, 112, 101, 95, 112, 97,
-  114, 97, 109, 115, 128, 100, 107, 105, 110, 100, 163, 99, 116, 97, 103, 102, 115, 116, 114, 117,
-  99, 116, 100, 110, 97, 109, 101, 108, 67, 104, 97, 110, 110, 101, 108, 67, 108, 111, 115, 101,
-  102, 102, 105, 101, 108, 100, 115, 129, 163, 100, 110, 97, 109, 101, 104, 109, 101, 116, 97, 100,
-  97, 116, 97, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110,
-  99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 10, 150, 180, 4, 180, 215, 157,
-  103, 100, 97, 114, 103, 115, 129, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116,
-  101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 162, 81, 150, 141, 51, 155, 58, 63, 100, 97, 114,
-  103, 115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245, 163, 98, 105, 100, 27, 192, 206,
-  79, 10, 69, 254, 175, 85, 107, 116, 121, 112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100, 107,
-  105, 110, 100, 163, 99, 116, 97, 103, 102, 115, 116, 114, 117, 99, 116, 100, 110, 97, 109, 101,
-  108, 67, 104, 97, 110, 110, 101, 108, 82, 101, 115, 101, 116, 102, 102, 105, 101, 108, 100, 115,
-  129, 163, 100, 110, 97, 109, 101, 104, 109, 101, 116, 97, 100, 97, 116, 97, 104, 116, 121, 112,
-  101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103,
-  116, 121, 112, 101, 95, 105, 100, 27, 10, 150, 180, 4, 180, 215, 157, 103, 100, 97, 114, 103, 115,
-  129, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101,
-  95, 105, 100, 27, 162, 81, 150, 141, 51, 155, 58, 63, 100, 97, 114, 103, 115, 128, 104, 114, 101,
-  113, 117, 105, 114, 101, 100, 245, 163, 98, 105, 100, 27, 156, 163, 139, 76, 254, 245, 34, 83,
-  107, 116, 121, 112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100, 107, 105, 110, 100, 163, 99,
-  116, 97, 103, 102, 115, 116, 114, 117, 99, 116, 100, 110, 97, 109, 101, 114, 67, 104, 97, 110,
-  110, 101, 108, 71, 114, 97, 110, 116, 67, 114, 101, 100, 105, 116, 102, 102, 105, 101, 108, 100,
-  115, 129, 163, 100, 110, 97, 109, 101, 106, 97, 100, 100, 105, 116, 105, 111, 110, 97, 108, 104,
-  116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101,
-  116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 40, 28, 91, 228, 242, 238, 99, 180, 100, 97,
-  114, 103, 115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245, 163, 98, 105, 100, 27, 193,
-  215, 79, 76, 45, 119, 50, 148, 107, 116, 121, 112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100,
-  107, 105, 110, 100, 163, 99, 116, 97, 103, 100, 101, 110, 117, 109, 100, 110, 97, 109, 101, 107,
-  67, 104, 97, 110, 110, 101, 108, 66, 111, 100, 121, 104, 118, 97, 114, 105, 97, 110, 116, 115,
-  132, 163, 100, 110, 97, 109, 101, 100, 73, 116, 101, 109, 101, 105, 110, 100, 101, 120, 0, 103,
-  112, 97, 121, 108, 111, 97, 100, 162, 99, 116, 97, 103, 103, 110, 101, 119, 116, 121, 112, 101,
-  104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114,
-  101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 11, 52, 113, 197, 81, 45, 179, 224, 100,
-  97, 114, 103, 115, 128, 163, 100, 110, 97, 109, 101, 101, 67, 108, 111, 115, 101, 101, 105, 110,
-  100, 101, 120, 1, 103, 112, 97, 121, 108, 111, 97, 100, 162, 99, 116, 97, 103, 103, 110, 101, 119,
-  116, 121, 112, 101, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99,
-  111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 32, 125, 22, 87, 196,
-  175, 225, 231, 100, 97, 114, 103, 115, 128, 163, 100, 110, 97, 109, 101, 101, 82, 101, 115, 101,
-  116, 101, 105, 110, 100, 101, 120, 2, 103, 112, 97, 121, 108, 111, 97, 100, 162, 99, 116, 97, 103,
-  103, 110, 101, 119, 116, 121, 112, 101, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116,
-  97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27,
-  192, 206, 79, 10, 69, 254, 175, 85, 100, 97, 114, 103, 115, 128, 163, 100, 110, 97, 109, 101, 107,
-  71, 114, 97, 110, 116, 67, 114, 101, 100, 105, 116, 101, 105, 110, 100, 101, 120, 3, 103, 112, 97,
-  121, 108, 111, 97, 100, 162, 99, 116, 97, 103, 103, 110, 101, 119, 116, 121, 112, 101, 104, 116,
-  121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116,
-  101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 156, 163, 139, 76, 254, 245, 34, 83, 100, 97, 114,
-  103, 115, 128, 163, 98, 105, 100, 27, 4, 186, 101, 102, 23, 67, 146, 179, 107, 116, 121, 112, 101,
-  95, 112, 97, 114, 97, 109, 115, 128, 100, 107, 105, 110, 100, 163, 99, 116, 97, 103, 102, 115,
-  116, 114, 117, 99, 116, 100, 110, 97, 109, 101, 110, 67, 104, 97, 110, 110, 101, 108, 77, 101,
-  115, 115, 97, 103, 101, 102, 102, 105, 101, 108, 100, 115, 130, 163, 100, 110, 97, 109, 101, 98,
-  105, 100, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110,
-  99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 217, 53, 98, 152, 184, 22, 57,
-  172, 100, 97, 114, 103, 115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245, 163, 100, 110,
-  97, 109, 101, 100, 98, 111, 100, 121, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116,
-  97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27,
-  193, 215, 79, 76, 45, 119, 50, 148, 100, 97, 114, 103, 115, 128, 104, 114, 101, 113, 117, 105,
-  114, 101, 100, 245, 163, 98, 105, 100, 27, 108, 228, 102, 192, 108, 48, 77, 60, 107, 116, 121,
-  112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100, 107, 105, 110, 100, 163, 99, 116, 97, 103,
-  102, 115, 116, 114, 117, 99, 116, 100, 110, 97, 109, 101, 100, 80, 105, 110, 103, 102, 102, 105,
-  101, 108, 100, 115, 129, 163, 100, 110, 97, 109, 101, 101, 110, 111, 110, 99, 101, 104, 116, 121,
-  112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101,
-  103, 116, 121, 112, 101, 95, 105, 100, 27, 217, 53, 98, 152, 184, 22, 57, 172, 100, 97, 114, 103,
-  115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245, 163, 98, 105, 100, 27, 83, 117, 239,
-  210, 134, 51, 52, 16, 107, 116, 121, 112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100, 107, 105,
-  110, 100, 163, 99, 116, 97, 103, 102, 115, 116, 114, 117, 99, 116, 100, 110, 97, 109, 101, 100,
-  80, 111, 110, 103, 102, 102, 105, 101, 108, 100, 115, 129, 163, 100, 110, 97, 109, 101, 101, 110,
-  111, 110, 99, 101, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99,
-  111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 217, 53, 98, 152,
-  184, 22, 57, 172, 100, 97, 114, 103, 115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245,
-  163, 98, 105, 100, 27, 82, 231, 147, 203, 88, 14, 232, 221, 107, 116, 121, 112, 101, 95, 112, 97,
-  114, 97, 109, 115, 128, 100, 107, 105, 110, 100, 163, 99, 116, 97, 103, 100, 101, 110, 117, 109,
-  100, 110, 97, 109, 101, 110, 77, 101, 115, 115, 97, 103, 101, 80, 97, 121, 108, 111, 97, 100, 104,
-  118, 97, 114, 105, 97, 110, 116, 115, 137, 163, 100, 110, 97, 109, 101, 109, 80, 114, 111, 116,
-  111, 99, 111, 108, 69, 114, 114, 111, 114, 101, 105, 110, 100, 101, 120, 0, 103, 112, 97, 121,
-  108, 111, 97, 100, 162, 99, 116, 97, 103, 103, 110, 101, 119, 116, 121, 112, 101, 104, 116, 121,
-  112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101,
-  103, 116, 121, 112, 101, 95, 105, 100, 27, 50, 251, 81, 24, 243, 33, 117, 53, 100, 97, 114, 103,
-  115, 128, 163, 100, 110, 97, 109, 101, 110, 67, 111, 110, 110, 101, 99, 116, 105, 111, 110, 79,
-  112, 101, 110, 101, 105, 110, 100, 101, 120, 1, 103, 112, 97, 121, 108, 111, 97, 100, 162, 99,
-  116, 97, 103, 103, 110, 101, 119, 116, 121, 112, 101, 104, 116, 121, 112, 101, 95, 114, 101, 102,
-  163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95,
-  105, 100, 27, 97, 18, 53, 103, 234, 84, 80, 85, 100, 97, 114, 103, 115, 128, 163, 100, 110, 97,
-  109, 101, 112, 67, 111, 110, 110, 101, 99, 116, 105, 111, 110, 65, 99, 99, 101, 112, 116, 101,
-  105, 110, 100, 101, 120, 2, 103, 112, 97, 121, 108, 111, 97, 100, 162, 99, 116, 97, 103, 103, 110,
-  101, 119, 116, 121, 112, 101, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103,
-  104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 212, 230,
-  193, 250, 112, 73, 117, 152, 100, 97, 114, 103, 115, 128, 163, 100, 110, 97, 109, 101, 112, 67,
-  111, 110, 110, 101, 99, 116, 105, 111, 110, 82, 101, 106, 101, 99, 116, 101, 105, 110, 100, 101,
-  120, 3, 103, 112, 97, 121, 108, 111, 97, 100, 162, 99, 116, 97, 103, 103, 110, 101, 119, 116, 121,
-  112, 101, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110,
-  99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 5, 107, 35, 180, 194, 41, 54,
-  100, 100, 97, 114, 103, 115, 128, 163, 100, 110, 97, 109, 101, 111, 67, 111, 110, 110, 101, 99,
-  116, 105, 111, 110, 67, 108, 111, 115, 101, 101, 105, 110, 100, 101, 120, 4, 103, 112, 97, 121,
-  108, 111, 97, 100, 162, 99, 116, 97, 103, 103, 110, 101, 119, 116, 121, 112, 101, 104, 116, 121,
-  112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101,
-  103, 116, 121, 112, 101, 95, 105, 100, 27, 232, 45, 226, 80, 158, 94, 150, 252, 100, 97, 114, 103,
-  115, 128, 163, 100, 110, 97, 109, 101, 110, 82, 101, 113, 117, 101, 115, 116, 77, 101, 115, 115,
-  97, 103, 101, 101, 105, 110, 100, 101, 120, 5, 103, 112, 97, 121, 108, 111, 97, 100, 162, 99, 116,
-  97, 103, 103, 110, 101, 119, 116, 121, 112, 101, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163,
-  99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105,
-  100, 27, 206, 182, 199, 84, 201, 181, 85, 84, 100, 97, 114, 103, 115, 128, 163, 100, 110, 97, 109,
-  101, 110, 67, 104, 97, 110, 110, 101, 108, 77, 101, 115, 115, 97, 103, 101, 101, 105, 110, 100,
-  101, 120, 6, 103, 112, 97, 121, 108, 111, 97, 100, 162, 99, 116, 97, 103, 103, 110, 101, 119, 116,
-  121, 112, 101, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111,
-  110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 4, 186, 101, 102, 23, 67,
-  146, 179, 100, 97, 114, 103, 115, 128, 163, 100, 110, 97, 109, 101, 100, 80, 105, 110, 103, 101,
-  105, 110, 100, 101, 120, 7, 103, 112, 97, 121, 108, 111, 97, 100, 162, 99, 116, 97, 103, 103, 110,
-  101, 119, 116, 121, 112, 101, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103,
-  104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 108, 228,
-  102, 192, 108, 48, 77, 60, 100, 97, 114, 103, 115, 128, 163, 100, 110, 97, 109, 101, 100, 80, 111,
-  110, 103, 101, 105, 110, 100, 101, 120, 8, 103, 112, 97, 121, 108, 111, 97, 100, 162, 99, 116, 97,
-  103, 103, 110, 101, 119, 116, 121, 112, 101, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99,
-  116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100,
-  27, 83, 117, 239, 210, 134, 51, 52, 16, 100, 97, 114, 103, 115, 128, 163, 98, 105, 100, 27, 171,
-  220, 7, 102, 250, 145, 32, 191, 107, 116, 121, 112, 101, 95, 112, 97, 114, 97, 109, 115, 128, 100,
-  107, 105, 110, 100, 163, 99, 116, 97, 103, 102, 115, 116, 114, 117, 99, 116, 100, 110, 97, 109,
-  101, 103, 77, 101, 115, 115, 97, 103, 101, 102, 102, 105, 101, 108, 100, 115, 130, 163, 100, 110,
-  97, 109, 101, 109, 99, 111, 110, 110, 101, 99, 116, 105, 111, 110, 95, 105, 100, 104, 116, 121,
-  112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103, 104, 99, 111, 110, 99, 114, 101, 116, 101,
-  103, 116, 121, 112, 101, 95, 105, 100, 27, 217, 53, 98, 152, 184, 22, 57, 172, 100, 97, 114, 103,
-  115, 128, 104, 114, 101, 113, 117, 105, 114, 101, 100, 245, 163, 100, 110, 97, 109, 101, 103, 112,
-  97, 121, 108, 111, 97, 100, 104, 116, 121, 112, 101, 95, 114, 101, 102, 163, 99, 116, 97, 103,
-  104, 99, 111, 110, 99, 114, 101, 116, 101, 103, 116, 121, 112, 101, 95, 105, 100, 27, 82, 231,
-  147, 203, 88, 14, 232, 221, 100, 97, 114, 103, 115, 128, 104, 114, 101, 113, 117, 105, 114, 101,
-  100, 245,
-]
+/// CBOR-encoded wire message schemas, loaded from the bundled binary resource.
+public let wireMessageSchemasCbor: [UInt8] = {
+  guard let url = Bundle.module.url(forResource: "wireMessageSchemas", withExtension: "bin"),
+    let data = try? Data(contentsOf: url)
+  else {
+    preconditionFailure("wireMessageSchemas.bin resource not found in Bundle.module")
+  }
+  return Array(data)
+}()
