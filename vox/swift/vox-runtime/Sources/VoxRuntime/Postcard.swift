@@ -258,3 +258,82 @@ public enum RpcErrorCode: UInt8, Sendable {
     /// Runtime refused to guess after recovery
     case indeterminate = 4
 }
+
+// MARK: - Response Envelope Decoding
+
+/// Decode a response for an infallible method (one that cannot return a user-level error).
+///
+/// The wire envelope is:
+///   - varint discriminant: 0 = success, 1 = VoxError
+///   - If 0: success payload, decoded by `decode`
+///   - If 1: u8 VoxError code (system errors only; code 0 throws decodeError)
+@inline(__always)
+public func decodeInfallibleResponse<T>(
+    _ response: [UInt8],
+    decode: (inout ByteBuffer) throws -> T
+) throws -> T {
+    var buf = ByteBufferAllocator().buffer(capacity: response.count)
+    buf.writeBytes(response)
+    let resultDisc = try decodeVarint(from: &buf)
+    switch resultDisc {
+    case 0:
+        return try decode(&buf)
+    case 1:
+        let errorCode = try decodeU8(from: &buf)
+        switch errorCode {
+        case 0:
+            throw VoxError.decodeError("unexpected user error for infallible method")
+        case 1:
+            throw VoxError.unknownMethod
+        case 2:
+            throw VoxError.decodeError("invalid payload")
+        case 3:
+            throw VoxError.cancelled
+        case 4:
+            throw VoxError.indeterminate
+        default:
+            throw VoxError.decodeError("invalid VoxError discriminant: \(errorCode)")
+        }
+    default:
+        throw VoxError.decodeError("invalid Result discriminant: \(resultDisc)")
+    }
+}
+
+/// Decode a response for a fallible method (one that can return a user-level error).
+///
+/// The wire envelope is:
+///   - varint discriminant: 0 = success, 1 = VoxError
+///   - If 0: success payload, decoded by `decodeOk`
+///   - If 1: u8 VoxError code; code 0 (user error) is decoded by `decodeErr`
+@inline(__always)
+public func decodeFallibleResponse<T, E>(
+    _ response: [UInt8],
+    decodeOk: (inout ByteBuffer) throws -> T,
+    decodeErr: (inout ByteBuffer) throws -> E
+) throws -> Result<T, E> {
+    var buf = ByteBufferAllocator().buffer(capacity: response.count)
+    buf.writeBytes(response)
+    let resultDisc = try decodeVarint(from: &buf)
+    switch resultDisc {
+    case 0:
+        return .success(try decodeOk(&buf))
+    case 1:
+        let errorCode = try decodeU8(from: &buf)
+        switch errorCode {
+        case 0:
+            return .failure(try decodeErr(&buf))
+        case 1:
+            throw VoxError.unknownMethod
+        case 2:
+            throw VoxError.decodeError("invalid payload")
+        case 3:
+            throw VoxError.cancelled
+        case 4:
+            throw VoxError.indeterminate
+        default:
+            throw VoxError.decodeError("invalid VoxError discriminant: \(errorCode)")
+        }
+    default:
+        throw VoxError.decodeError("invalid Result discriminant: \(resultDisc)")
+    }
+}

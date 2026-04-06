@@ -535,34 +535,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x880b_c4ee_e235_74be, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let result = try decodeString(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let result = try decodeString(from: &buf)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -576,34 +551,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x1c22_3f30_e180_392a, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let result = try decodeString(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let result = try decodeString(from: &buf)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -618,21 +568,14 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0xfb68_d931_8f83_0875, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let value = try decodeI64(from: &cursor)
-      return .success(value)
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        let _userError_disc = try decodeVarint(from: &cursor)
+    return try decodeFallibleResponse(
+      response,
+      decodeOk: { buf in
+        let value = try decodeI64(from: &buf)
+        return value
+      },
+      decodeErr: { buf in
+        let _userError_disc = try decodeVarint(from: &buf)
         let userError: MathError
         switch _userError_disc {
         case 0:
@@ -642,21 +585,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         default:
           throw VoxError.decodeError("unknown enum variant")
         }
-        return .failure(userError)
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
-    }
+        return userError
+      })
   }
 
   public func lookup(id: UInt32) async throws -> Result<Person, LookupError> {
@@ -669,25 +599,18 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0xa15f_f520_9471_2a3b, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let _value_name = try decodeString(from: &cursor)
-      let _value_age = try decodeU8(from: &cursor)
-      let _value_email = try decodeOption(
-        from: &cursor, decoder: { buf in try decodeString(from: &buf) })
-      let value = Person(name: _value_name, age: _value_age, email: _value_email)
-      return .success(value)
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        let _userError_disc = try decodeVarint(from: &cursor)
+    return try decodeFallibleResponse(
+      response,
+      decodeOk: { buf in
+        let _value_name = try decodeString(from: &buf)
+        let _value_age = try decodeU8(from: &buf)
+        let _value_email = try decodeOption(
+          from: &buf, decoder: { buf in try decodeString(from: &buf) })
+        let value = Person(name: _value_name, age: _value_age, email: _value_email)
+        return value
+      },
+      decodeErr: { buf in
+        let _userError_disc = try decodeVarint(from: &buf)
         let userError: LookupError
         switch _userError_disc {
         case 0:
@@ -697,21 +620,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
         default:
           throw VoxError.decodeError("unknown enum variant")
         }
-        return .failure(userError)
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
-    }
+        return userError
+      })
   }
 
   public func sum(numbers: UnboundRx<Int32>) async throws -> Int64 {
@@ -741,34 +651,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
       finalizeChannels: {
         finalizeBoundChannels(schemas: testbed_schemas["sum"]!.args, args: [numbers])
       }, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let result = try decodeI64(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let result = try decodeI64(from: &buf)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -800,34 +685,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
       finalizeChannels: {
         finalizeBoundChannels(schemas: testbed_schemas["generate"]!.args, args: [count, output])
       }, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      return
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
-    }
+    try decodeInfallibleResponse(response) { _ in }
   }
 
   public func generateRetryNonIdem(count: UInt32, output: UnboundTx<Int32>) async throws {
@@ -859,34 +717,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
         finalizeBoundChannels(
           schemas: testbed_schemas["generateRetryNonIdem"]!.args, args: [count, output])
       }, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      return
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
-    }
+    try decodeInfallibleResponse(response) { _ in }
   }
 
   public func generateRetryIdem(count: UInt32, output: UnboundTx<Int32>) async throws {
@@ -918,34 +749,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
         finalizeBoundChannels(
           schemas: testbed_schemas["generateRetryIdem"]!.args, args: [count, output])
       }, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      return
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
-    }
+    try decodeInfallibleResponse(response) { _ in }
   }
 
   public func transform(input: UnboundRx<String>, output: UnboundTx<String>) async throws {
@@ -976,34 +780,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
       finalizeChannels: {
         finalizeBoundChannels(schemas: testbed_schemas["transform"]!.args, args: [input, output])
       }, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      return
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
-    }
+    try decodeInfallibleResponse(response) { _ in }
   }
 
   public func echoPoint(point: Point) async throws -> Point {
@@ -1016,36 +793,11 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x81f5_386d_589d_fbe4, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let _result_x = try decodeI32(from: &cursor)
-      let _result_y = try decodeI32(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let _result_x = try decodeI32(from: &buf)
+      let _result_y = try decodeI32(from: &buf)
       let result = Point(x: _result_x, y: _result_y)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1061,38 +813,13 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x68ff_a90b_7728_bde7, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let _result_name = try decodeString(from: &cursor)
-      let _result_age = try decodeU8(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let _result_name = try decodeString(from: &buf)
+      let _result_age = try decodeU8(from: &buf)
       let _result_email = try decodeOption(
-        from: &cursor, decoder: { buf in try decodeString(from: &buf) })
+        from: &buf, decoder: { buf in try decodeString(from: &buf) })
       let result = Person(name: _result_name, age: _result_age, email: _result_email)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1106,34 +833,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x223f_e028_2d26_3107, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let result = try decodeF64(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let result = try decodeF64(from: &buf)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1147,16 +849,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0xd4f1_6ea9_eca1_32e6, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
+    return try decodeInfallibleResponse(response) { buf in
       let result = try decodeOption(
-        from: &cursor,
+        from: &buf,
         decoder: { buf in
           let disc = try decodeVarint(from: &buf)
           let result: Color
@@ -1173,24 +868,6 @@ public final class TestbedClient: TestbedCaller, Sendable {
           return result
         })
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1204,34 +881,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x0438_5a4b_e2a8_82f5, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let result = try decodeF64(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let result = try decodeF64(from: &buf)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1248,17 +900,10 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0xef42_1eb5_b08c_973a, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let _result_name = try decodeString(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let _result_name = try decodeString(from: &buf)
       let _result_shapes = try decodeVec(
-        from: &cursor,
+        from: &buf,
         decoder: { buf in
           let disc = try decodeVarint(from: &buf)
           let result: Shape
@@ -1277,7 +922,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
           }
           return result
         })
-      let __result_background_disc = try decodeVarint(from: &cursor)
+      let __result_background_disc = try decodeVarint(from: &buf)
       let _result_background: Color
       switch __result_background_disc {
       case 0:
@@ -1292,24 +937,6 @@ public final class TestbedClient: TestbedCaller, Sendable {
       let result = Canvas(
         name: _result_name, shapes: _result_shapes, background: _result_background)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1323,18 +950,11 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0xb6fa_cae6_a7a8_6e99, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let _result_revision = try decodeVarint(from: &cursor)
-      let _result_mount = try decodeString(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let _result_revision = try decodeVarint(from: &buf)
+      let _result_mount = try decodeString(from: &buf)
       let _result_entries = try decodeVec(
-        from: &cursor,
+        from: &buf,
         decoder: { buf in
           let _id = try ({ buf in try decodeVarint(from: &buf) })(&buf)
           let _parent = try
@@ -1396,32 +1016,14 @@ public final class TestbedClient: TestbedCaller, Sendable {
             kind: _kind)
         })
       let _result_footer = try decodeOption(
-        from: &cursor, decoder: { buf in try decodeString(from: &buf) })
-      var __result_digest_buf = try decodeBytes(from: &cursor)
+        from: &buf, decoder: { buf in try decodeString(from: &buf) })
+      var __result_digest_buf = try decodeBytes(from: &buf)
       let _result_digest = Data(
         __result_digest_buf.readBytes(length: __result_digest_buf.readableBytes) ?? [])
       let result = GnarlyPayload(
         revision: _result_revision, mount: _result_mount, entries: _result_entries,
         footer: _result_footer, digest: _result_digest)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1435,25 +1037,18 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0xe08f_0f52_54e7_a997, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let _result_disc = try decodeVarint(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let _result_disc = try decodeVarint(from: &buf)
       let result: Message
       switch _result_disc {
       case 0:
-        let _result_val = try decodeString(from: &cursor)
+        let _result_val = try decodeString(from: &buf)
         result = .text(_result_val)
       case 1:
-        let _result_val = try decodeI64(from: &cursor)
+        let _result_val = try decodeI64(from: &buf)
         result = .number(_result_val)
       case 2:
-        var __result_val_buf = try decodeBytes(from: &cursor)
+        var __result_val_buf = try decodeBytes(from: &buf)
         let _result_val = Data(
           __result_val_buf.readBytes(length: __result_val_buf.readableBytes) ?? [])
         result = .data(_result_val)
@@ -1461,24 +1056,6 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw VoxError.decodeError("unknown enum variant")
       }
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1492,40 +1069,15 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x5985_1852_3a62_66bf, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
+    return try decodeInfallibleResponse(response) { buf in
       let result = try decodeVec(
-        from: &cursor,
+        from: &buf,
         decoder: { buf in
           let _x = try ({ buf in try decodeI32(from: &buf) })(&buf)
           let _y = try ({ buf in try decodeI32(from: &buf) })(&buf)
           return Point(x: _x, y: _y)
         })
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1540,36 +1092,11 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x7d55_a713_ad61_2bf2, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
+    return try decodeInfallibleResponse(response) { buf in
       let result = try decodeTuple2(
-        from: &cursor, decoderA: { buf in try decodeString(from: &buf) },
+        from: &buf, decoderA: { buf in try decodeString(from: &buf) },
         decoderB: { buf in try decodeI32(from: &buf) })
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1583,35 +1110,10 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x4405_6c78_42fa_336c, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      var _result_buf = try decodeBytes(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      var _result_buf = try decodeBytes(from: &buf)
       let result = Data(_result_buf.readBytes(length: _result_buf.readableBytes) ?? [])
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1625,34 +1127,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x5136_d8f0_1a5f_496c, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let result = try decodeBool(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let result = try decodeBool(from: &buf)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1666,34 +1143,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x85e2_380d_bf7f_fe65, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let result = try decodeVarint(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let result = try decodeVarint(from: &buf)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1707,34 +1159,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0xb1a5_bfd2_05b3_fbfc, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let result = try decodeOption(from: &cursor, decoder: { buf in try decodeString(from: &buf) })
+    return try decodeInfallibleResponse(response) { buf in
+      let result = try decodeOption(from: &buf, decoder: { buf in try decodeString(from: &buf) })
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1765,34 +1192,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
       finalizeChannels: {
         finalizeBoundChannels(schemas: testbed_schemas["sumLarge"]!.args, args: [numbers])
       }, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let result = try decodeI64(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let result = try decodeI64(from: &buf)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1825,34 +1227,7 @@ public final class TestbedClient: TestbedCaller, Sendable {
         finalizeBoundChannels(
           schemas: testbed_schemas["generateLarge"]!.args, args: [count, output])
       }, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      return
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
-    }
+    try decodeInfallibleResponse(response) { _ in }
   }
 
   public func allColors() async throws -> [Color] {
@@ -1863,16 +1238,9 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0xfbfb_05bb_caad_e4a0, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
+    return try decodeInfallibleResponse(response) { buf in
       let result = try decodeVec(
-        from: &cursor,
+        from: &buf,
         decoder: { buf in
           let disc = try decodeVarint(from: &buf)
           let result: Color
@@ -1889,24 +1257,6 @@ public final class TestbedClient: TestbedCaller, Sendable {
           return result
         })
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1925,39 +1275,14 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x62fe_b14a_8fcf_9b6d, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let _result_label = try decodeString(from: &cursor)
-      let _result_x = try decodeI32(from: &cursor)
-      let _result_y = try decodeI32(from: &cursor)
-      let _result_active = try decodeBool(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let _result_label = try decodeString(from: &buf)
+      let _result_x = try decodeI32(from: &buf)
+      let _result_y = try decodeI32(from: &buf)
+      let _result_active = try decodeBool(from: &buf)
       let result = TaggedPoint(
         label: _result_label, x: _result_x, y: _result_y, active: _result_active)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -1971,23 +1296,16 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x4125_b5e6_78b7_b4a5, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let _result_disc = try decodeVarint(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let _result_disc = try decodeVarint(from: &buf)
       let result: Shape
       switch _result_disc {
       case 0:
-        let _result_radius = try decodeF64(from: &cursor)
+        let _result_radius = try decodeF64(from: &buf)
         result = .circle(radius: _result_radius)
       case 1:
-        let _result_width = try decodeF64(from: &cursor)
-        let _result_height = try decodeF64(from: &cursor)
+        let _result_width = try decodeF64(from: &buf)
+        let _result_height = try decodeF64(from: &buf)
         result = .rectangle(width: _result_width, height: _result_height)
       case 2:
         result = .point
@@ -1995,24 +1313,6 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw VoxError.decodeError("unknown enum variant")
       }
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -2026,15 +1326,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0xc7c5_aa84_5cfb_8bf6, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let _result_disc = try decodeVarint(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let _result_disc = try decodeVarint(from: &buf)
       let result: Status
       switch _result_disc {
       case 0:
@@ -2045,24 +1338,6 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw VoxError.decodeError("unknown enum variant")
       }
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -2076,37 +1351,12 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x6619_071b_e5d5_c259, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let _result_label = try decodeString(from: &cursor)
-      let _result_priority = try decodeU32(from: &cursor)
-      let _result_note = try decodeString(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let _result_label = try decodeString(from: &buf)
+      let _result_priority = try decodeU32(from: &buf)
+      let _result_note = try decodeString(from: &buf)
       let result = Tag(label: _result_label, priority: _result_priority, note: _result_note)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -2120,36 +1370,11 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0xbd9b_cabd_deeb_eb04, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let _result_name = try decodeString(from: &cursor)
-      let _result_bio = try decodeString(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let _result_name = try decodeString(from: &buf)
+      let _result_bio = try decodeString(from: &buf)
       let result = Profile(name: _result_name, bio: _result_bio)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -2163,37 +1388,12 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x100b_0e08_da4b_8f1a, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let _result_alpha = try decodeI32(from: &cursor)
-      let _result_beta = try decodeString(from: &cursor)
-      let _result_gamma = try decodeF64(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let _result_alpha = try decodeI32(from: &buf)
+      let _result_beta = try decodeString(from: &buf)
+      let _result_gamma = try decodeF64(from: &buf)
       let result = Record(alpha: _result_alpha, beta: _result_beta, gamma: _result_gamma)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -2207,15 +1407,8 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x6975_90d3_ffc3_6703, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let _result_disc = try decodeVarint(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let _result_disc = try decodeVarint(from: &buf)
       let result: Status
       switch _result_disc {
       case 0:
@@ -2226,24 +1419,6 @@ public final class TestbedClient: TestbedCaller, Sendable {
         throw VoxError.decodeError("unknown enum variant")
       }
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -2257,37 +1432,12 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x2bd1_b314_9d73_ce97, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let _result_label = try decodeString(from: &cursor)
-      let _result_priority = try decodeU32(from: &cursor)
-      let _result_note = try decodeString(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let _result_label = try decodeString(from: &buf)
+      let _result_priority = try decodeU32(from: &buf)
+      let _result_note = try decodeString(from: &buf)
       let result = Tag(label: _result_label, priority: _result_priority, note: _result_note)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -2301,36 +1451,11 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0x3b3d_22b0_15fa_1a3f, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let _result_unit = try decodeString(from: &cursor)
-      let _result_value = try decodeF64(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let _result_unit = try decodeString(from: &buf)
+      let _result_value = try decodeF64(from: &buf)
       let result = Measurement(unit: _result_unit, value: _result_value)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 
@@ -2344,36 +1469,11 @@ public final class TestbedClient: TestbedCaller, Sendable {
     let response = try await connection.call(
       methodId: 0xe13a_477f_b964_ce28, metadata: [], payload: payload, retry: .volatile,
       timeout: timeout, prepareRetry: nil, finalizeChannels: nil, schemaInfo: schemaInfo)
-    var cursor = {
-      var buf = ByteBufferAllocator().buffer(capacity: response.count)
-      buf.writeBytes(response)
-      return buf
-    }()
-    let _cursor_resultDisc = try decodeVarint(from: &cursor)
-    switch _cursor_resultDisc {
-    case 0:
-      let _result_key = try decodeString(from: &cursor)
-      let _result_value = try decodeString(from: &cursor)
+    return try decodeInfallibleResponse(response) { buf in
+      let _result_key = try decodeString(from: &buf)
+      let _result_value = try decodeString(from: &buf)
       let result = Config(key: _result_key, value: _result_value)
       return result
-    case 1:
-      let _cursor_errorCode = try decodeU8(from: &cursor)
-      switch _cursor_errorCode {
-      case 0:
-        throw VoxError.decodeError("unexpected user error for infallible method")
-      case 1:
-        throw VoxError.unknownMethod
-      case 2:
-        throw VoxError.decodeError("invalid payload")
-      case 3:
-        throw VoxError.cancelled
-      case 4:
-        throw VoxError.indeterminate
-      default:
-        throw VoxError.decodeError("invalid VoxError discriminant: \(_cursor_errorCode)")
-      }
-    default:
-      throw VoxError.decodeError("invalid Result discriminant: \(_cursor_resultDisc)")
     }
   }
 }

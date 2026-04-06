@@ -311,106 +311,62 @@ fn unique_decode_cursor_name(args: &[vox_types::ArgDescriptor]) -> String {
     candidate
 }
 
-/// Generate code to decode the wire response payload for one request attempt:
-/// `Result<T, VoxError<E>>`.
+/// Generate code to decode the wire response payload for one request attempt
+/// by delegating to a VoxRuntime helper (`decodeInfallibleResponse` or
+/// `decodeFallibleResponse`).
 fn generate_response_decode(
     w: &mut CodeWriter<&mut String>,
     method: &MethodDescriptor,
-    cursor_var: &str,
+    _cursor_var: &str,
     response_var: &str,
 ) {
     let ret_type = swift_type_client_return(method.return_shape);
-    let result_disc_var = format!("_{cursor_var}_resultDisc");
-    let error_code_var = format!("_{cursor_var}_errorCode");
-    let is_fallible = matches!(
-        classify_shape(method.return_shape),
-        ShapeKind::Result { .. }
-    );
 
-    cw_writeln!(w, "var {cursor_var} = {{ var buf = ByteBufferAllocator().buffer(capacity: {response_var}.count); buf.writeBytes({response_var}); return buf }}()").unwrap();
-    cw_writeln!(
-        w,
-        "let {result_disc_var} = try decodeVarint(from: &{cursor_var})"
-    )
-    .unwrap();
-    cw_writeln!(w, "switch {result_disc_var} {{").unwrap();
+    if let ShapeKind::Result { ok, err } = classify_shape(method.return_shape) {
+        // Case 1: Fallible – delegate to decodeFallibleResponse
+        let decode_ok = generate_decode_stmt_with_buf(ok, "value", "", "buf");
+        let decode_err = generate_decode_stmt_with_buf(err, "userError", "", "buf");
 
-    w.writeln("case 0:").unwrap();
-    {
-        let _indent = w.indent();
-        if is_fallible {
-            let ShapeKind::Result { ok, .. } = classify_shape(method.return_shape) else {
-                unreachable!()
-            };
-            let decode_ok = generate_decode_stmt_with_buf(ok, "value", "", cursor_var);
-            for line in decode_ok.lines() {
-                w.writeln(line).unwrap();
+        cw_writeln!(w, "return try decodeFallibleResponse({response_var},").unwrap();
+        {
+            let _indent = w.indent();
+            w.writeln("decodeOk: { buf in").unwrap();
+            {
+                let _indent = w.indent();
+                for line in decode_ok.lines() {
+                    w.writeln(line).unwrap();
+                }
+                w.writeln("return value").unwrap();
             }
-            w.writeln("return .success(value)").unwrap();
-        } else if ret_type == "Void" {
-            w.writeln("return").unwrap();
-        } else {
-            let decode_stmt =
-                generate_decode_stmt_with_buf(method.return_shape, "result", "", cursor_var);
+            w.writeln("},").unwrap();
+            w.writeln("decodeErr: { buf in").unwrap();
+            {
+                let _indent = w.indent();
+                for line in decode_err.lines() {
+                    w.writeln(line).unwrap();
+                }
+                w.writeln("return userError").unwrap();
+            }
+            w.writeln("})").unwrap();
+        }
+    } else if ret_type == "Void" {
+        // Case 2: Infallible Void
+        cw_writeln!(w, "try decodeInfallibleResponse({response_var}) {{ _ in }}").unwrap();
+    } else {
+        // Case 3: Infallible non-Void
+        let decode_stmt = generate_decode_stmt_with_buf(method.return_shape, "result", "", "buf");
+        cw_writeln!(
+            w,
+            "return try decodeInfallibleResponse({response_var}) {{ buf in"
+        )
+        .unwrap();
+        {
+            let _indent = w.indent();
             for line in decode_stmt.lines() {
                 w.writeln(line).unwrap();
             }
             w.writeln("return result").unwrap();
         }
-    }
-
-    w.writeln("case 1:").unwrap();
-    {
-        let _indent = w.indent();
-        cw_writeln!(
-            w,
-            "let {error_code_var} = try decodeU8(from: &{cursor_var})"
-        )
-        .unwrap();
-        cw_writeln!(w, "switch {error_code_var} {{").unwrap();
-
-        w.writeln("case 0:").unwrap();
-        {
-            let _indent = w.indent();
-            if is_fallible {
-                let ShapeKind::Result { err, .. } = classify_shape(method.return_shape) else {
-                    unreachable!()
-                };
-                let decode_err = generate_decode_stmt_with_buf(err, "userError", "", cursor_var);
-                for line in decode_err.lines() {
-                    w.writeln(line).unwrap();
-                }
-                w.writeln("return .failure(userError)").unwrap();
-            } else {
-                w.writeln(
-                    "throw VoxError.decodeError(\"unexpected user error for infallible method\")",
-                )
-                .unwrap();
-            }
-        }
-        w.writeln("case 1:").unwrap();
-        w.writeln("    throw VoxError.unknownMethod").unwrap();
-        w.writeln("case 2:").unwrap();
-        w.writeln("    throw VoxError.decodeError(\"invalid payload\")")
-            .unwrap();
-        w.writeln("case 3:").unwrap();
-        w.writeln("    throw VoxError.cancelled").unwrap();
-        w.writeln("case 4:").unwrap();
-        w.writeln("    throw VoxError.indeterminate").unwrap();
-        w.writeln("default:").unwrap();
-        cw_writeln!(
-            w,
-            "    throw VoxError.decodeError(\"invalid VoxError discriminant: \\({error_code_var})\")",
-        )
-        .unwrap();
         w.writeln("}").unwrap();
     }
-
-    w.writeln("default:").unwrap();
-    cw_writeln!(
-        w,
-        "    throw VoxError.decodeError(\"invalid Result discriminant: \\({result_disc_var})\")",
-    )
-    .unwrap();
-    w.writeln("}").unwrap();
 }
