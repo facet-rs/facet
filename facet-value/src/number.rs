@@ -269,20 +269,12 @@ impl VNumber {
 
 impl PartialEq for VNumber {
     fn eq(&self, other: &Self) -> bool {
-        self.cmp(other) == Ordering::Equal
+        self.partial_cmp(other) == Some(Ordering::Equal)
     }
 }
-
-impl Eq for VNumber {}
 
 impl PartialOrd for VNumber {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for VNumber {
-    fn cmp(&self, other: &Self) -> Ordering {
         let h1 = self.header();
         let h2 = other.header();
 
@@ -290,16 +282,14 @@ impl Ord for VNumber {
             // Fast path: same type
             if h1.type_ == h2.type_ {
                 match h1.type_ {
-                    NumberType::I64 => h1.data.i.cmp(&h2.data.i),
-                    NumberType::U64 => h1.data.u.cmp(&h2.data.u),
-                    NumberType::F64 => h1.data.f.partial_cmp(&h2.data.f).unwrap_or(Ordering::Equal),
+                    NumberType::I64 => Some(h1.data.i.cmp(&h2.data.i)),
+                    NumberType::U64 => Some(h1.data.u.cmp(&h2.data.u)),
+                    NumberType::F64 => h1.data.f.partial_cmp(&h2.data.f),
                 }
             } else {
                 // Cross-type comparison: convert to f64 for simplicity
                 // (This loses precision for very large integers, but is simple)
-                self.to_f64_lossy()
-                    .partial_cmp(&other.to_f64_lossy())
-                    .unwrap_or(Ordering::Equal)
+                self.to_f64_lossy().partial_cmp(&other.to_f64_lossy())
             }
         }
     }
