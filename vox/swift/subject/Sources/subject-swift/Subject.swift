@@ -11,9 +11,13 @@ import VoxRuntime
 /// Implementation of the Testbed service.
 struct TestbedService: TestbedHandler {
     private func streamRetryProbeValues(count: UInt32, output: Tx<Int32>) async throws {
+        let pauseAfter = min(3, Int32(count))
         for i in 0..<Int32(count) {
             log("  sending: \(i)")
             try await output.send(i)
+            if i + 1 == pauseAfter && count > 3 {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+            }
         }
     }
 

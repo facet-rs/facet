@@ -11,17 +11,49 @@ public typealias VoxFreeFn = @convention(c) (
 
 public typealias VoxAttachFn = @convention(c) (
     _ peer: UnsafeRawPointer?
-) -> Void
+) -> VoxStatus
 
+public typealias VoxStatus = Int32
+
+public let VoxStatusOK: VoxStatus = 0
+public let VoxStatusAlreadyAttached: VoxStatus = -1
+public let VoxStatusBadABI: VoxStatus = -2
+public let VoxStatusInvalidPeer: VoxStatus = -3
+
+public let VoxLinkVtableMagic: UInt64 = 0x564F_584C_494E_4B31
+public let VoxLinkVtableAbiVersion: UInt32 = 1
+
+@frozen
 public struct VoxLinkVtable {
+    public var magic: UInt64
+    public var abiVersion: UInt32
+    public var size: UInt32
     public var send: VoxSendFn?
     public var free: VoxFreeFn?
     public var attach: VoxAttachFn?
 
     public init(send: VoxSendFn?, free: VoxFreeFn?, attach: VoxAttachFn?) {
+        self.magic = VoxLinkVtableMagic
+        self.abiVersion = VoxLinkVtableAbiVersion
+        self.size = UInt32(MemoryLayout<VoxLinkVtable>.stride)
         self.send = send
         self.free = free
         self.attach = attach
+    }
+
+    func validate() throws {
+        guard magic == VoxLinkVtableMagic else {
+            throw TransportError.protocolViolation("ffi vtable magic mismatch")
+        }
+        guard abiVersion == VoxLinkVtableAbiVersion else {
+            throw TransportError.protocolViolation("ffi vtable abi version mismatch")
+        }
+        guard size == UInt32(MemoryLayout<VoxLinkVtable>.stride) else {
+            throw TransportError.protocolViolation("ffi vtable size mismatch")
+        }
+        guard send != nil, free != nil, attach != nil else {
+            throw TransportError.protocolViolation("ffi vtable missing callbacks")
+        }
     }
 }
 
@@ -76,16 +108,18 @@ private final class EndpointCore: @unchecked Sendable {
     }
 
     func connect(to peer: UnsafePointer<VoxLinkVtable>) throws -> FfiLink {
-        lock.lock()
-        if self.peer != nil {
-            lock.unlock()
-            throw TransportError.protocolViolation("ffi endpoint already attached")
-        }
-        self.peer = peer
+        try validate(peer: peer)
+        try attach(peer: peer)
         let local = UnsafePointer(vtableStorage!)
-        lock.unlock()
-
-        peer.pointee.attach?(UnsafeRawPointer(local))
+        guard let attach = peer.pointee.attach else {
+            clearPeerIf(peer)
+            throw TransportError.protocolViolation("ffi vtable missing attach callback")
+        }
+        let status = attach(UnsafeRawPointer(local))
+        guard status == VoxStatusOK else {
+            clearPeerIf(peer)
+            throw statusError(status)
+        }
         return try takeLink()
     }
 
@@ -105,16 +139,54 @@ private final class EndpointCore: @unchecked Sendable {
         return try takeLink()
     }
 
-    func attach(peer: UnsafePointer<VoxLinkVtable>) {
+    func attach(peer: UnsafePointer<VoxLinkVtable>) throws {
+        try validate(peer: peer)
         lock.lock()
-        if self.peer == nil {
-            self.peer = peer
+        if let existing = self.peer {
+            if existing == peer {
+                lock.unlock()
+                return
+            }
+            lock.unlock()
+            throw TransportError.protocolViolation("ffi endpoint already attached")
         }
+        self.peer = peer
         let waiter = acceptWaiter
         acceptWaiter = nil
         lock.unlock()
 
         waiter?.resume(returning: ())
+    }
+
+    func attachStatus(peer: UnsafePointer<VoxLinkVtable>?) -> VoxStatus {
+        guard let peer else {
+            return VoxStatusInvalidPeer
+        }
+        do {
+            try attach(peer: peer)
+            return VoxStatusOK
+        } catch let error as TransportError {
+            switch error {
+            case .protocolViolation(let message) where message == "ffi endpoint already attached":
+                return VoxStatusAlreadyAttached
+            case .protocolViolation(let message) where message == "ffi peer pointer was invalid":
+                return VoxStatusInvalidPeer
+            case .protocolViolation(let message) where message.contains("ABI"):
+                return VoxStatusBadABI
+            default:
+                return VoxStatusBadABI
+            }
+        } catch {
+            return VoxStatusBadABI
+        }
+    }
+
+    func clearPeerIf(_ peer: UnsafePointer<VoxLinkVtable>) {
+        lock.lock()
+        if self.peer == peer {
+            self.peer = nil
+        }
+        lock.unlock()
     }
 
     func send(_ bytes: [UInt8]) throws {
@@ -130,7 +202,10 @@ private final class EndpointCore: @unchecked Sendable {
         outbound[UInt(bitPattern: ptr)] = loan
         lock.unlock()
 
-        peer.pointee.send?(UnsafePointer(ptr), len)
+        guard let send = peer.pointee.send else {
+            throw TransportError.protocolViolation("ffi vtable missing send callback")
+        }
+        send(UnsafePointer(ptr), len)
     }
 
     func nextFrame() async -> IncomingFrame {
@@ -152,7 +227,10 @@ private final class EndpointCore: @unchecked Sendable {
         lock.lock()
         let peer = self.peer
         lock.unlock()
-        peer?.pointee.free?(ptr)
+        guard let peer, let free = peer.pointee.free else {
+            return
+        }
+        free(ptr)
     }
 
     func receive(_ ptr: UnsafePointer<UInt8>?, len: Int) {
@@ -195,6 +273,23 @@ private final class EndpointCore: @unchecked Sendable {
         linkTaken = true
         return FfiLink(core: self)
     }
+
+    private func validate(peer: UnsafePointer<VoxLinkVtable>) throws {
+        try peer.pointee.validate()
+    }
+
+    private func statusError(_ status: VoxStatus) -> Error {
+        switch status {
+        case VoxStatusAlreadyAttached:
+            return TransportError.protocolViolation("ffi endpoint already attached")
+        case VoxStatusInvalidPeer:
+            return TransportError.protocolViolation("ffi peer pointer was invalid")
+        case VoxStatusBadABI:
+            return TransportError.protocolViolation("ffi peer ABI mismatch")
+        default:
+            return TransportError.protocolViolation("ffi attach failed with status \(status)")
+        }
+    }
 }
 
 private final class EndpointHostState: @unchecked Sendable {
@@ -229,9 +324,11 @@ private enum EndpointHost0 {
         activeEndpointCore(for: state).free(buf)
     }
 
-    static func attach(_ peer: UnsafeRawPointer?) {
-        guard let peer else { return }
-        activeEndpointCore(for: state).attach(peer: peer.assumingMemoryBound(to: VoxLinkVtable.self))
+    static func attach(_ peer: UnsafeRawPointer?) -> VoxStatus {
+        guard let peer else { return VoxStatusInvalidPeer }
+        return activeEndpointCore(for: state).attachStatus(
+            peer: peer.assumingMemoryBound(to: VoxLinkVtable.self)
+        )
     }
 
     static let sendFn: VoxSendFn = { buf, len in send(buf, len) }
@@ -250,9 +347,11 @@ private enum EndpointHost1 {
         activeEndpointCore(for: state).free(buf)
     }
 
-    static func attach(_ peer: UnsafeRawPointer?) {
-        guard let peer else { return }
-        activeEndpointCore(for: state).attach(peer: peer.assumingMemoryBound(to: VoxLinkVtable.self))
+    static func attach(_ peer: UnsafeRawPointer?) -> VoxStatus {
+        guard let peer else { return VoxStatusInvalidPeer }
+        return activeEndpointCore(for: state).attachStatus(
+            peer: peer.assumingMemoryBound(to: VoxLinkVtable.self)
+        )
     }
 
     static let sendFn: VoxSendFn = { buf, len in send(buf, len) }
@@ -271,9 +370,11 @@ private enum EndpointHost2 {
         activeEndpointCore(for: state).free(buf)
     }
 
-    static func attach(_ peer: UnsafeRawPointer?) {
-        guard let peer else { return }
-        activeEndpointCore(for: state).attach(peer: peer.assumingMemoryBound(to: VoxLinkVtable.self))
+    static func attach(_ peer: UnsafeRawPointer?) -> VoxStatus {
+        guard let peer else { return VoxStatusInvalidPeer }
+        return activeEndpointCore(for: state).attachStatus(
+            peer: peer.assumingMemoryBound(to: VoxLinkVtable.self)
+        )
     }
 
     static let sendFn: VoxSendFn = { buf, len in send(buf, len) }
@@ -292,9 +393,11 @@ private enum EndpointHost3 {
         activeEndpointCore(for: state).free(buf)
     }
 
-    static func attach(_ peer: UnsafeRawPointer?) {
-        guard let peer else { return }
-        activeEndpointCore(for: state).attach(peer: peer.assumingMemoryBound(to: VoxLinkVtable.self))
+    static func attach(_ peer: UnsafeRawPointer?) -> VoxStatus {
+        guard let peer else { return VoxStatusInvalidPeer }
+        return activeEndpointCore(for: state).attachStatus(
+            peer: peer.assumingMemoryBound(to: VoxLinkVtable.self)
+        )
     }
 
     static let sendFn: VoxSendFn = { buf, len in send(buf, len) }

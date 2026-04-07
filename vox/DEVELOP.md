@@ -23,7 +23,8 @@ cargo build --package subject-rust
 # 2. Install TypeScript dependencies (needed by TS spec tests)
 cd typescript && pnpm install && cd ..
 
-# 3. Build Rust FFI staticlib (needed by Swift)
+# 3. Build Rust FFI dylib (needed by Swift dlopen tests)
+cargo build --release -p subject-rust
 
 #    the shm-guest-client binary is only looked up under .build/debug/)
 swift build --package-path swift/vox-runtime
@@ -87,7 +88,7 @@ just ts-codegen
 # Run spec tests with Swift subject (builds Rust FFI lib automatically)
 just swift
 
-# Build just the Rust FFI staticlib
+# Build just the Rust FFI dylib
 just rust-ffi
 
 # Run root Swift package tests the same way CI does
