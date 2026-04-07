@@ -104,18 +104,13 @@ impl VNumber {
     }
 
     /// Creates a number from an f64.
-    ///
-    /// Returns `None` if the value is NaN or infinite.
     #[cfg(feature = "alloc")]
     #[must_use]
-    pub fn from_f64(v: f64) -> Option<Self> {
-        if !v.is_finite() {
-            return None;
-        }
+    pub fn from_f64(v: f64) -> Self {
         unsafe {
             let ptr = Self::alloc(NumberType::F64);
             (*ptr).data.f = v;
-            Some(VNumber(Value::new_ptr(ptr.cast(), TypeTag::Number)))
+            VNumber(Value::new_ptr(ptr.cast(), TypeTag::Number))
         }
     }
 
@@ -260,7 +255,7 @@ impl VNumber {
                     (*ptr).data.u = hd.data.u;
                     Value::new_ptr(ptr.cast(), TypeTag::Number)
                 }
-                NumberType::F64 => Self::from_f64(hd.data.f).unwrap().0,
+                NumberType::F64 => Self::from_f64(hd.data.f).0,
             }
         }
     }
@@ -382,36 +377,30 @@ impl_from_int! {
 }
 
 #[cfg(feature = "alloc")]
-impl TryFrom<f32> for VNumber {
-    type Error = ();
-
-    fn try_from(v: f32) -> Result<Self, Self::Error> {
-        Self::from_f64(f64::from(v)).ok_or(())
+impl From<f32> for VNumber {
+    fn from(v: f32) -> Self {
+        Self::from_f64(f64::from(v))
     }
 }
 
 #[cfg(feature = "alloc")]
-impl TryFrom<f64> for VNumber {
-    type Error = ();
-
-    fn try_from(v: f64) -> Result<Self, Self::Error> {
-        Self::from_f64(v).ok_or(())
+impl From<f64> for VNumber {
+    fn from(v: f64) -> Self {
+        Self::from_f64(v)
     }
 }
 
 #[cfg(feature = "alloc")]
 impl From<f32> for Value {
     fn from(v: f32) -> Self {
-        VNumber::from_f64(f64::from(v))
-            .map(|n| n.0)
-            .unwrap_or(Value::NULL)
+        VNumber::from_f64(f64::from(v)).into_value()
     }
 }
 
 #[cfg(feature = "alloc")]
 impl From<f64> for Value {
     fn from(v: f64) -> Self {
-        VNumber::from_f64(v).map(|n| n.0).unwrap_or(Value::NULL)
+        VNumber::from_f64(v).into_value()
     }
 }
 

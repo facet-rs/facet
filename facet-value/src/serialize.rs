@@ -164,7 +164,7 @@ impl FormatSerializer for ValueSerializer {
             ScalarValue::U64(n) => VNumber::from_u64(n).into(),
             ScalarValue::I128(n) => VString::new(&n.to_string()).into(),
             ScalarValue::U128(n) => VString::new(&n.to_string()).into(),
-            ScalarValue::F64(n) => VNumber::from_f64(n).map(Into::into).unwrap_or(Value::NULL),
+            ScalarValue::F64(n) => VNumber::from_f64(n).into(),
             ScalarValue::Str(s) => VString::new(&s).into(),
             ScalarValue::Bytes(b) => VBytes::new(b.as_ref()).into(),
         };

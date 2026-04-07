@@ -42,18 +42,9 @@ unsafe fn dyn_set_u64(dst: PtrUninit, value: u64) {
 unsafe fn dyn_set_f64(dst: PtrUninit, value: f64) -> bool {
     unsafe {
         let ptr = dst.as_mut_byte_ptr() as *mut Value;
-        match VNumber::from_f64(value) {
-            Some(num) => {
-                ptr.write(num.into_value());
-                true
-            }
-            None => {
-                // NaN or infinity - write null as fallback and return false
-                ptr.write(Value::NULL);
-                false
-            }
-        }
+        ptr.write(VNumber::from_f64(value).into_value());
     }
+    true
 }
 
 unsafe fn dyn_set_str(dst: PtrUninit, value: &str) {
