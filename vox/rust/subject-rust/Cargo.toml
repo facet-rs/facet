@@ -9,6 +9,7 @@ description = "Rust subject binary for the compliance suite"
 [lib]
 name = "subject_rust"
 path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
 
 [package.metadata]
 

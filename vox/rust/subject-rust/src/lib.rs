@@ -8,6 +8,8 @@ use spec_proto::{
 use tracing::{debug, error, info, instrument};
 use vox::{Rx, Tx};
 
+mod ffi;
+
 #[derive(Clone)]
 pub struct TestbedService;
 

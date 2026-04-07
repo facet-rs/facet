@@ -343,15 +343,15 @@ macro_rules! declare_link_endpoint {
             static __ENDPOINT: $crate::Endpoint = $crate::Endpoint::new(__vox_link_vtable);
 
             unsafe extern "C" fn __vox_send(buf: *const u8, len: usize) {
-                $crate::__endpoint_send(&__ENDPOINT, buf, len);
+                unsafe { $crate::__endpoint_send(&__ENDPOINT, buf, len) };
             }
 
             unsafe extern "C" fn __vox_free(buf: *const u8) {
-                $crate::__endpoint_free(&__ENDPOINT, buf);
+                unsafe { $crate::__endpoint_free(&__ENDPOINT, buf) };
             }
 
             unsafe extern "C" fn __vox_attach(peer: *const $crate::vox_link_vtable) {
-                $crate::__endpoint_attach(&__ENDPOINT, peer);
+                unsafe { $crate::__endpoint_attach(&__ENDPOINT, peer) };
             }
 
             static __VOX_LINK_VTABLE: $crate::vox_link_vtable = $crate::vox_link_vtable {
@@ -364,12 +364,14 @@ macro_rules! declare_link_endpoint {
                 __vox_link_vtable()
             }
 
+            #[cfg_attr(test, allow(dead_code))]
             pub fn connect(
                 peer: &'static $crate::vox_link_vtable,
             ) -> std::io::Result<$crate::FfiLink> {
                 __ENDPOINT.connect(peer)
             }
 
+            #[cfg_attr(test, allow(dead_code))]
             pub async fn accept() -> std::io::Result<$crate::FfiLink> {
                 __ENDPOINT.accept().await
             }

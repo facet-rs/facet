@@ -53,5 +53,6 @@ rustls-pemfile = { workspace = true, optional = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
 vox-core = { path = "../vox-core" }
+vox-ffi = { path = "../vox-ffi" }
 tempfile.workspace = true
 tracing-subscriber.workspace = true

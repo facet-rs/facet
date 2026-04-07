@@ -179,6 +179,12 @@ private final class EndpointCore: @unchecked Sendable {
         lock.unlock()
     }
 
+    func outstandingLoanCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return outbound.count
+    }
+
     private func takeLink() throws -> FfiLink {
         lock.lock()
         defer { lock.unlock() }
@@ -191,15 +197,12 @@ private final class EndpointCore: @unchecked Sendable {
     }
 }
 
-private final class ActiveFfiEndpointState: @unchecked Sendable {
-    static let shared = ActiveFfiEndpointState()
-
+private final class EndpointHostState: @unchecked Sendable {
     let lock = NSLock()
     var core: EndpointCore?
 }
 
-private func activeEndpointCore() -> EndpointCore {
-    let state = ActiveFfiEndpointState.shared
+private func activeEndpointCore(for state: EndpointHostState) -> EndpointCore {
     state.lock.lock()
     defer { state.lock.unlock() }
     guard let core = state.core else {
@@ -208,63 +211,157 @@ private func activeEndpointCore() -> EndpointCore {
     return core
 }
 
-private func voxFfiSendCallback(
-    _ buf: UnsafePointer<UInt8>?,
-    _ len: Int
-) {
-    activeEndpointCore().receive(buf, len: len)
+private struct EndpointHostSlot {
+    let state: EndpointHostState
+    let send: VoxSendFn
+    let free: VoxFreeFn
+    let attach: VoxAttachFn
 }
 
-private func voxFfiFreeCallback(
-    _ buf: UnsafePointer<UInt8>?
-) {
-    activeEndpointCore().free(buf)
-}
+private enum EndpointHost0 {
+    static let state = EndpointHostState()
 
-private func voxFfiAttachCallback(
-    _ peer: UnsafeRawPointer?
-) {
-    guard let peer else {
-        return
+    static func send(_ buf: UnsafePointer<UInt8>?, _ len: Int) {
+        activeEndpointCore(for: state).receive(buf, len: len)
     }
-    activeEndpointCore().attach(peer: peer.assumingMemoryBound(to: VoxLinkVtable.self))
+
+    static func free(_ buf: UnsafePointer<UInt8>?) {
+        activeEndpointCore(for: state).free(buf)
+    }
+
+    static func attach(_ peer: UnsafeRawPointer?) {
+        guard let peer else { return }
+        activeEndpointCore(for: state).attach(peer: peer.assumingMemoryBound(to: VoxLinkVtable.self))
+    }
+}
+
+private enum EndpointHost1 {
+    static let state = EndpointHostState()
+
+    static func send(_ buf: UnsafePointer<UInt8>?, _ len: Int) {
+        activeEndpointCore(for: state).receive(buf, len: len)
+    }
+
+    static func free(_ buf: UnsafePointer<UInt8>?) {
+        activeEndpointCore(for: state).free(buf)
+    }
+
+    static func attach(_ peer: UnsafeRawPointer?) {
+        guard let peer else { return }
+        activeEndpointCore(for: state).attach(peer: peer.assumingMemoryBound(to: VoxLinkVtable.self))
+    }
+}
+
+private enum EndpointHost2 {
+    static let state = EndpointHostState()
+
+    static func send(_ buf: UnsafePointer<UInt8>?, _ len: Int) {
+        activeEndpointCore(for: state).receive(buf, len: len)
+    }
+
+    static func free(_ buf: UnsafePointer<UInt8>?) {
+        activeEndpointCore(for: state).free(buf)
+    }
+
+    static func attach(_ peer: UnsafeRawPointer?) {
+        guard let peer else { return }
+        activeEndpointCore(for: state).attach(peer: peer.assumingMemoryBound(to: VoxLinkVtable.self))
+    }
+}
+
+private enum EndpointHost3 {
+    static let state = EndpointHostState()
+
+    static func send(_ buf: UnsafePointer<UInt8>?, _ len: Int) {
+        activeEndpointCore(for: state).receive(buf, len: len)
+    }
+
+    static func free(_ buf: UnsafePointer<UInt8>?) {
+        activeEndpointCore(for: state).free(buf)
+    }
+
+    static func attach(_ peer: UnsafeRawPointer?) {
+        guard let peer else { return }
+        activeEndpointCore(for: state).attach(peer: peer.assumingMemoryBound(to: VoxLinkVtable.self))
+    }
+}
+
+private enum EndpointHosts {
+    static let all: [EndpointHostSlot] = [
+        EndpointHostSlot(
+            state: EndpointHost0.state,
+            send: EndpointHost0.send,
+            free: EndpointHost0.free,
+            attach: EndpointHost0.attach
+        ),
+        EndpointHostSlot(
+            state: EndpointHost1.state,
+            send: EndpointHost1.send,
+            free: EndpointHost1.free,
+            attach: EndpointHost1.attach
+        ),
+        EndpointHostSlot(
+            state: EndpointHost2.state,
+            send: EndpointHost2.send,
+            free: EndpointHost2.free,
+            attach: EndpointHost2.attach
+        ),
+        EndpointHostSlot(
+            state: EndpointHost3.state,
+            send: EndpointHost3.send,
+            free: EndpointHost3.free,
+            attach: EndpointHost3.attach
+        ),
+    ]
+
+    static func claim(for core: EndpointCore) -> EndpointHostSlot {
+        for host in all {
+            host.state.lock.lock()
+            if host.state.core == nil {
+                host.state.core = core
+                host.state.lock.unlock()
+                return host
+            }
+            host.state.lock.unlock()
+        }
+        fatalError("no available FFI endpoint host slots")
+    }
+
+    static func release(_ host: EndpointHostSlot, core: EndpointCore) {
+        host.state.lock.lock()
+        if host.state.core === core {
+            host.state.core = nil
+        }
+        host.state.lock.unlock()
+    }
 }
 
 public final class FfiEndpoint: @unchecked Sendable {
     private let core: EndpointCore
     private let storage: UnsafeMutablePointer<VoxLinkVtable>
+    private let host: EndpointHostSlot
 
     public init() {
         let core = EndpointCore()
+        let host = EndpointHosts.claim(for: core)
         let storage = UnsafeMutablePointer<VoxLinkVtable>.allocate(capacity: 1)
         storage.initialize(
             to: VoxLinkVtable(
-                send: voxFfiSendCallback,
-                free: voxFfiFreeCallback,
-                attach: voxFfiAttachCallback
+                send: host.send,
+                free: host.free,
+                attach: host.attach
             )
         )
-
-        let state = ActiveFfiEndpointState.shared
-        state.lock.lock()
-        precondition(state.core == nil, "only one FFI endpoint may be installed")
-        state.core = core
-        state.lock.unlock()
 
         core.install(vtableStorage: storage)
 
         self.core = core
         self.storage = storage
+        self.host = host
     }
 
     deinit {
-        let state = ActiveFfiEndpointState.shared
-        state.lock.lock()
-        if state.core === core {
-            state.core = nil
-        }
-        state.lock.unlock()
-
+        EndpointHosts.release(host, core: core)
         storage.deinitialize(count: 1)
         storage.deallocate()
     }
@@ -279,6 +376,10 @@ public final class FfiEndpoint: @unchecked Sendable {
 
     public func accept() async throws -> FfiLink {
         try await core.accept()
+    }
+
+    func outstandingLoanCount() -> Int {
+        core.outstandingLoanCount()
     }
 }
 
