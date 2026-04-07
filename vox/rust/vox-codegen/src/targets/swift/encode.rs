@@ -237,7 +237,7 @@ pub fn generate_named_type_encode_fn(name: &str, shape: &'static Shape) -> Strin
     let fn_name = named_type_encode_fn_name(name);
     let mut out = String::new();
     out.push_str(&format!(
-        "internal func {fn_name}(_ value: {name}, into buffer: inout ByteBuffer) {{\n"
+        "nonisolated internal func {fn_name}(_ value: {name}, into buffer: inout ByteBuffer) {{\n"
     ));
 
     match classify_shape(shape) {

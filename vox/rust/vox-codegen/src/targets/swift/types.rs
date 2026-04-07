@@ -110,7 +110,7 @@ pub fn generate_named_types(named_types: &[(String, &'static Shape)]) -> String 
                 }
                 out.push('\n');
                 // Generate initializer
-                out.push_str("    public init(");
+                out.push_str("    nonisolated public init(");
                 for (i, field) in fields.iter().enumerate() {
                     if i > 0 {
                         out.push_str(", ");
