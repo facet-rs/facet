@@ -10,17 +10,35 @@ private struct FfiAttachmentConnector: SessionConnector {
     let transport: ConduitKind = .bare
 
     func openAttachment() async throws -> LinkAttachment {
-        attachment
+        guard attachment.negotiatedConduit == nil else {
+            return attachment
+        }
+        try await performInitiatorLinkPrologue(
+            link: attachment.link,
+            conduit: transport
+        )
+        return .negotiated(attachment.link, conduit: transport)
     }
 }
 
 private func dlopenTestLog(_ message: String) {
-    FileHandle.standardError.write(Data("[DlopenFfiTransportTests] \(message)\n".utf8))
+    let line = "[DlopenFfiTransportTests] \(message)\n"
+    FileHandle.standardError.write(Data(line.utf8))
+    let url = URL(fileURLWithPath: "/tmp/dlopen-swift-test.trace")
+    if !FileManager.default.fileExists(atPath: url.path) {
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+    }
+    if let handle = try? FileHandle(forWritingTo: url) {
+        defer { try? handle.close() }
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: Data(line.utf8))
+    }
 }
 
 private final class RustSubjectLibrary {
     let handle: UnsafeMutableRawPointer
     let vtable: UnsafePointer<VoxLinkVtable>
+    private let shutdownFn: @convention(c) () -> Void
 
     init() throws {
         let path = try RustSubjectLibrary.libraryPath()
@@ -43,13 +61,23 @@ private final class RustSubjectLibrary {
             throw TransportError.protocolViolation(
                 "subject_rust_v1_vtable returned a null pointer")
         }
+        guard let shutdownSymbol = dlsym(handle, "subject_rust_v1_shutdown") else {
+            dlclose(handle)
+            throw TransportError.protocolViolation(
+                "missing subject_rust_v1_shutdown in \(path.path)")
+        }
 
         self.handle = handle
         self.vtable = UnsafePointer(vtable.assumingMemoryBound(to: VoxLinkVtable.self))
+        self.shutdownFn = unsafeBitCast(shutdownSymbol, to: (@convention(c) () -> Void).self)
     }
 
     deinit {
         dlclose(handle)
+    }
+
+    func shutdown() {
+        shutdownFn()
     }
 
     private static func libraryPath() throws -> URL {
@@ -116,6 +144,8 @@ struct DlopenFfiTransportTests {
         let divided = try await client.divide(dividend: 10, divisor: 2)
         #expect(divided == .success(5))
 
+        dlopenTestLog("requesting rust shutdown")
+        rust.shutdown()
         dlopenTestLog("shutting down session")
         session.handle.shutdown()
         dlopenTestLog("awaiting driver task")

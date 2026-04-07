@@ -1,5 +1,19 @@
 import Foundation
 
+private func ffiWireLog(_ message: String) {
+    let line = "[swift ffi] \(message)\n"
+    FileHandle.standardError.write(Data(line.utf8))
+    let url = URL(fileURLWithPath: "/tmp/swift-ffi-wire.trace")
+    if !FileManager.default.fileExists(atPath: url.path) {
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+    }
+    if let handle = try? FileHandle(forWritingTo: url) {
+        defer { try? handle.close() }
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: Data(line.utf8))
+    }
+}
+
 public typealias VoxSendFn = @convention(c) (
     _ buf: UnsafePointer<UInt8>?,
     _ len: Int
@@ -190,6 +204,7 @@ private final class EndpointCore: @unchecked Sendable {
     }
 
     func send(_ bytes: [UInt8]) throws {
+        ffiWireLog("send len=\(bytes.count)")
         lock.lock()
         guard let peer else {
             lock.unlock()
@@ -234,6 +249,7 @@ private final class EndpointCore: @unchecked Sendable {
     }
 
     func receive(_ ptr: UnsafePointer<UInt8>?, len: Int) {
+        ffiWireLog("receive len=\(len)")
         let frame = IncomingFrame(ptr: ptr, len: len)
 
         lock.lock()

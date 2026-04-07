@@ -10,13 +10,17 @@ import VoxRuntime
 
 /// Implementation of the Testbed service.
 struct TestbedService: TestbedHandler {
-    private func streamRetryProbeValues(count: UInt32, output: Tx<Int32>) async throws {
-        let pauseAfter = min(3, Int32(count))
+    private func streamValues(
+        count: UInt32,
+        output: Tx<Int32>,
+        pauseAfter: Int32? = nil,
+        pauseNanoseconds: UInt64 = 0
+    ) async throws {
         for i in 0..<Int32(count) {
             log("  sending: \(i)")
             try await output.send(i)
-            if i + 1 == pauseAfter && count > 3 {
-                try await Task.sleep(nanoseconds: 5_000_000_000)
+            if let pauseAfter, i + 1 == pauseAfter, count > UInt32(pauseAfter), pauseNanoseconds > 0 {
+                try await Task.sleep(nanoseconds: pauseNanoseconds)
             }
         }
     }
@@ -70,19 +74,29 @@ struct TestbedService: TestbedHandler {
 
     func generate(count: UInt32, output: Tx<Int32>) async throws {
         log("generate called: count=\(count)")
-        try await streamRetryProbeValues(count: count, output: output)
+        try await streamValues(count: count, output: output)
         log("generate complete, about to return (close will be sent by dispatcher)")
     }
 
     func generateRetryNonIdem(count: UInt32, output: Tx<Int32>) async throws {
         log("generateRetryNonIdem called: count=\(count)")
-        try await streamRetryProbeValues(count: count, output: output)
+        try await streamValues(
+            count: count,
+            output: output,
+            pauseAfter: min(3, Int32(count)),
+            pauseNanoseconds: 5_000_000_000
+        )
         log("generateRetryNonIdem complete, about to return (close will be sent by dispatcher)")
     }
 
     func generateRetryIdem(count: UInt32, output: Tx<Int32>) async throws {
         log("generateRetryIdem called: count=\(count)")
-        try await streamRetryProbeValues(count: count, output: output)
+        try await streamValues(
+            count: count,
+            output: output,
+            pauseAfter: min(3, Int32(count)),
+            pauseNanoseconds: 5_000_000_000
+        )
         log("generateRetryIdem complete, about to return (close will be sent by dispatcher)")
     }
 
