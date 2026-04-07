@@ -11,6 +11,10 @@ use spec_proto::{
 };
 use subject_rust::TestbedService;
 use tokio::task::JoinSet;
+use vox_ffi::declare_link_endpoint;
+
+declare_link_endpoint!(mod ffi_bench_client { export = vox_ffi_bench_client_v1; });
+declare_link_endpoint!(mod ffi_bench_server { export = vox_ffi_bench_server_v1; });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Workload {
@@ -927,12 +931,10 @@ fn print_json(results: &[BenchResult]) {
 }
 
 async fn run_ffi_bench(cfg: Config) -> Result<()> {
-    let max_in_flight = cfg.in_flights.iter().copied().max().unwrap_or(1);
-    let (link_a, link_b) = vox_ffi::ffi_link_pair(max_in_flight);
-
     // Server side: serve the Testbed service in a spawned task.
     let _server = tokio::spawn(async move {
-        let _conn = vox::acceptor_on(link_b)
+        let link = ffi_bench_server::accept().await.expect("accept ffi link");
+        let _conn = vox::acceptor_on(link)
             .on_connection(TestbedDispatcher::new(TestbedService))
             .establish::<vox::NoopClient>()
             .await
@@ -941,8 +943,9 @@ async fn run_ffi_bench(cfg: Config) -> Result<()> {
     });
 
     // Client side: establish initiator and get a TestbedClient caller.
+    let link = ffi_bench_client::connect(ffi_bench_server::vtable()).context("connect ffi link")?;
     let client = Arc::new(
-        vox::initiator_on(link_a, vox::TransportMode::Bare)
+        vox::initiator_on(link, vox::TransportMode::Bare)
             .establish::<TestbedClient>()
             .await
             .context("ffi client establish")?,

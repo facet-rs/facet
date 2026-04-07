@@ -14,6 +14,10 @@ private struct FfiAttachmentConnector: SessionConnector {
     }
 }
 
+private func dlopenTestLog(_ message: String) {
+    FileHandle.standardError.write(Data("[DlopenFfiTransportTests] \(message)\n".utf8))
+}
+
 private final class RustSubjectLibrary {
     let handle: UnsafeMutableRawPointer
     let vtable: UnsafePointer<VoxLinkVtable>
@@ -82,30 +86,40 @@ struct DlopenFfiTransportTests {
     // r[verify link.order]
     // r[verify link.rx.recv]
     @Test func swiftCanDriveRustSubjectLoadedViaDlopen() async throws {
+        dlopenTestLog("loading RustSubjectLibrary")
         let rust = try RustSubjectLibrary()
+        dlopenTestLog("creating FfiEndpoint")
         let endpoint = FfiEndpoint()
+        dlopenTestLog("connecting endpoint to rust vtable")
         let link = try endpoint.connect(peer: rust.vtable)
         let attachment = LinkAttachment.initiator(link)
         let connector = FfiAttachmentConnector(attachment: attachment)
         let dispatcher = TestbedDispatcher(handler: TestbedService())
 
+        dlopenTestLog("establishing initiator session")
         let session = try await Session.initiator(
             connector,
             dispatcher: dispatcher,
             resumable: false
         )
+        dlopenTestLog("spawning session.run task")
         let driverTask = Task {
             try await session.run()
         }
 
         let client = TestbedClient(connection: session.connection)
+        dlopenTestLog("calling echo")
         let echoed = try await client.echo(message: "hello from swift")
         #expect(echoed == "hello from swift")
 
+        dlopenTestLog("calling divide")
         let divided = try await client.divide(dividend: 10, divisor: 2)
         #expect(divided == .success(5))
 
+        dlopenTestLog("shutting down session")
         session.handle.shutdown()
+        dlopenTestLog("awaiting driver task")
         try await driverTask.value
+        dlopenTestLog("test complete")
     }
 }
