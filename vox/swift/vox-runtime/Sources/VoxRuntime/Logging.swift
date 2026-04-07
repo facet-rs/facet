@@ -36,7 +36,7 @@ private func logger(category: String) -> Logger {
 }
 #endif
 
-private func writeStderr(_ line: String) {
+func writeStderr(_ line: String) {
     guard let data = (line + "\n").data(using: .utf8) else {
         return
     }

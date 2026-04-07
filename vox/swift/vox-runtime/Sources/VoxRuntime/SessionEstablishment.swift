@@ -232,6 +232,7 @@ func establishInitiator(
     recoverAttachment: (@Sendable () async throws -> LinkAttachment)? = nil,
     metadata: [MetadataEntry] = []
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
+    warnLog("[vox-establish] initiator: starting handshake")
     let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
     let handshake = try await performInitiatorHandshake(
         link: attachment.link,
@@ -240,6 +241,7 @@ func establishInitiator(
         resumable: resumable,
         metadata: metadata
     )
+    warnLog("[vox-establish] initiator: handshake done")
 
     let conduit = try await buildEstablishedConduit(
         role: .initiator,
@@ -325,11 +327,14 @@ func establishAcceptor(
     resumable: Bool = false,
     metadata: [MetadataEntry] = []
 ) async throws -> (Connection, Driver, SessionHandle, [UInt8]?, [MetadataEntry]) {
+    warnLog("[vox-establish] acceptor: negotiatedConduit=\(String(describing: attachment.negotiatedConduit)) transport=\(transport)")
     if attachment.negotiatedConduit == nil {
+        warnLog("[vox-establish] acceptor: running link prologue")
         let negotiatedTransport = try await performAcceptorLinkPrologue(
             link: attachment.link,
             supportedConduit: transport
         )
+        warnLog("[vox-establish] acceptor: prologue done, negotiated=\(negotiatedTransport)")
         guard negotiatedTransport == transport else {
             throw TransportError.protocolViolation(
                 "transport negotiated \(negotiatedTransport) for requested \(transport)"
@@ -338,6 +343,7 @@ func establishAcceptor(
     }
 
     let ourMaxPayload = maxPayloadSize ?? (1024 * 1024)
+    warnLog("[vox-establish] acceptor: starting handshake")
     let handshake = try await performAcceptorHandshake(
         link: attachment.link,
         maxPayloadSize: ourMaxPayload,

@@ -86,25 +86,35 @@ public func performInitiatorLinkPrologue(
     link: some Link,
     conduit: ConduitKind
 ) async throws {
+    warnLog("[vox-prologue] initiator: sending TransportHello conduit=\(conduit)")
     try await link.sendRawPrologue(encodeTransportHello(conduit))
+    warnLog("[vox-prologue] initiator: waiting for TransportAccept")
     guard let response = try await link.recvRawPrologue() else {
+        warnLog("[vox-prologue] initiator: recvRawPrologue returned nil (connection closed)")
         throw TransportError.connectionClosed
     }
+    warnLog("[vox-prologue] initiator: got response (\(response.count) bytes)")
     try validateTransportAccept(response, requested: conduit)
+    warnLog("[vox-prologue] initiator: transport accepted")
 }
 
 public func performAcceptorLinkPrologue(
     link: some Link,
     supportedConduit: ConduitKind = .bare
 ) async throws -> ConduitKind {
+    warnLog("[vox-prologue] acceptor: waiting for TransportHello")
     guard let request = try await link.recvRawPrologue() else {
+        warnLog("[vox-prologue] acceptor: recvRawPrologue returned nil (connection closed)")
         throw TransportError.connectionClosed
     }
+    warnLog("[vox-prologue] acceptor: got request (\(request.count) bytes)")
     let requested = try decodeTransportHello(request)
+    warnLog("[vox-prologue] acceptor: peer wants conduit=\(requested), we support=\(supportedConduit)")
     guard requested == supportedConduit else {
         try await link.sendRawPrologue(encodeTransportRejectUnsupported())
         throw TransportError.protocolViolation("transport rejected unsupported conduit mode")
     }
     try await link.sendRawPrologue(encodeTransportAccept(requested))
+    warnLog("[vox-prologue] acceptor: transport accepted")
     return requested
 }

@@ -8,6 +8,9 @@ use std::task::Waker;
 
 use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, SharedBacking, WriteSlot};
 
+mod bridge;
+pub use bridge::*;
+
 // ---------------------------------------------------------------------------
 // C-ABI types (Swift-compatible)
 // ---------------------------------------------------------------------------
