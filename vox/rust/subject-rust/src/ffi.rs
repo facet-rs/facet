@@ -1,26 +1,19 @@
 //! FFI endpoint export for the Rust subject runtime.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::{fs::OpenOptions, io::Write};
 
 use spec_proto::{TestbedClient, TestbedDispatcher};
 use tokio::runtime::Builder;
 use tracing::info;
-use vox::{SessionHandle, acceptor_on};
+use vox::acceptor_on;
 use vox_ffi::{Endpoint, VOX_STATUS_OK, vox_link_vtable, vox_status_t};
 
 use crate::TestbedService;
 
 static BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
 static TRACING_INITIALIZED: AtomicBool = AtomicBool::new(false);
-static SESSION_HANDLE: OnceLock<Mutex<Option<SessionHandle>>> = OnceLock::new();
-
-fn session_slot() -> &'static Mutex<Option<SessionHandle>> {
-    SESSION_HANDLE.get_or_init(|| Mutex::new(None))
-}
-
 fn ffi_log(message: &str) {
     eprintln!("{message}");
     if let Ok(mut file) = OpenOptions::new()
@@ -86,22 +79,6 @@ pub unsafe extern "C" fn subject_rust_v1_vtable() -> *const vox_link_vtable {
     endpoint_vtable() as *const vox_link_vtable
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn subject_rust_v1_shutdown() {
-    init_ffi_tracing_once();
-    ffi_log("[subject-rust ffi] subject_rust_v1_shutdown()");
-    if let Some(handle) = session_slot()
-        .lock()
-        .expect("session handle mutex poisoned")
-        .take()
-    {
-        let _ = handle.shutdown();
-        ffi_log("[subject-rust ffi] subject_rust_v1_shutdown: session shutdown requested");
-    } else {
-        ffi_log("[subject-rust ffi] subject_rust_v1_shutdown: no active session");
-    }
-}
-
 fn bootstrap_service_once(peer: *const vox_link_vtable) {
     init_ffi_tracing_once();
     if peer.is_null() {
@@ -147,12 +124,6 @@ fn bootstrap_service_once(peer: *const vox_link_vtable) {
                 Ok(client) => {
                     info!("ffi runtime: acceptor established");
                     ffi_log("[subject-rust ffi] runtime thread: establish succeeded");
-                    if let Some(handle) = client.session.clone() {
-                        *session_slot()
-                            .lock()
-                            .expect("session handle mutex poisoned") = Some(handle);
-                        ffi_log("[subject-rust ffi] runtime thread: stored session handle");
-                    }
                     ffi_log("[subject-rust ffi] runtime thread: waiting for caller close");
                     client.caller.closed().await;
                     ffi_log("[subject-rust ffi] runtime thread: caller closed");
@@ -160,10 +131,6 @@ fn bootstrap_service_once(peer: *const vox_link_vtable) {
                         let _ = session.shutdown();
                         ffi_log("[subject-rust ffi] runtime thread: session shutdown requested");
                     }
-                    session_slot()
-                        .lock()
-                        .expect("session handle mutex poisoned")
-                        .take();
                 }
                 Err(error) => {
                     ffi_log(&format!(

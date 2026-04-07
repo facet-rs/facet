@@ -38,7 +38,6 @@ private func dlopenTestLog(_ message: String) {
 private final class RustSubjectLibrary {
     let handle: UnsafeMutableRawPointer
     let vtable: UnsafePointer<VoxLinkVtable>
-    private let shutdownFn: @convention(c) () -> Void
 
     init() throws {
         let path = try RustSubjectLibrary.libraryPath()
@@ -61,25 +60,14 @@ private final class RustSubjectLibrary {
             throw TransportError.protocolViolation(
                 "subject_rust_v1_vtable returned a null pointer")
         }
-        guard let shutdownSymbol = dlsym(handle, "subject_rust_v1_shutdown") else {
-            dlclose(handle)
-            throw TransportError.protocolViolation(
-                "missing subject_rust_v1_shutdown in \(path.path)")
-        }
 
         self.handle = handle
         self.vtable = UnsafePointer(vtable.assumingMemoryBound(to: VoxLinkVtable.self))
-        self.shutdownFn = unsafeBitCast(shutdownSymbol, to: (@convention(c) () -> Void).self)
     }
 
     deinit {
         dlclose(handle)
     }
-
-    func shutdown() {
-        shutdownFn()
-    }
-
     private static func libraryPath() throws -> URL {
         let env = ProcessInfo.processInfo.environment["VOX_RUST_FFI_DYLIB_PATH"]
         let candidates: [URL]
@@ -144,8 +132,6 @@ struct DlopenFfiTransportTests {
         let divided = try await client.divide(dividend: 10, divisor: 2)
         #expect(divided == .success(5))
 
-        dlopenTestLog("requesting rust shutdown")
-        rust.shutdown()
         dlopenTestLog("shutting down session")
         session.handle.shutdown()
         dlopenTestLog("awaiting driver task")
