@@ -454,7 +454,7 @@ mod tests {
 
     #[test]
     fn test_f64() {
-        let n = VNumber::from_f64(2.5).unwrap();
+        let n = VNumber::from_f64(2.5);
         assert_eq!(n.to_f64(), Some(2.5));
         assert_eq!(n.to_i64(), None); // has fractional part
         assert!(n.is_float());
@@ -463,36 +463,51 @@ mod tests {
 
     #[test]
     fn test_f64_whole() {
-        let n = VNumber::from_f64(42.0).unwrap();
+        let n = VNumber::from_f64(42.0);
         assert_eq!(n.to_f64(), Some(42.0));
         assert_eq!(n.to_i64(), Some(42)); // whole number
     }
 
     #[test]
-    fn test_nan_rejected() {
-        assert!(VNumber::from_f64(f64::NAN).is_none());
-        assert!(VNumber::from_f64(f64::INFINITY).is_none());
-        assert!(VNumber::from_f64(f64::NEG_INFINITY).is_none());
+    fn test_nan_roundtrip() {
+        assert!(VNumber::from_f64(f64::NAN).to_f64().unwrap().is_nan());
+        assert_eq!(
+            VNumber::from_f64(f64::INFINITY).to_f64().unwrap(),
+            f64::INFINITY
+        );
+        assert_eq!(
+            VNumber::from_f64(f64::NEG_INFINITY).to_f64().unwrap(),
+            f64::NEG_INFINITY
+        );
     }
 
     #[test]
     fn test_equality() {
         let a = VNumber::from_i64(42);
         let b = VNumber::from_i64(42);
-        let c = VNumber::from_f64(42.0).unwrap();
+        let c = VNumber::from_f64(42.0);
+        let nan = VNumber::from_f64(f64::NAN);
 
         assert_eq!(a, b);
         assert_eq!(a, c); // integer 42 equals float 42.0
+
+        // nan should != any value including itself
+        assert_ne!(c, nan);
+        assert_ne!(nan, nan);
     }
 
     #[test]
     fn test_ordering() {
         let a = VNumber::from_i64(1);
         let b = VNumber::from_i64(2);
-        let c = VNumber::from_f64(1.5).unwrap();
+        let c = VNumber::from_f64(1.5);
+        let nan = VNumber::from_f64(f64::NAN);
+        let inf = VNumber::from_f64(f64::INFINITY);
 
         assert!(a < b);
         assert!(a < c);
         assert!(c < b);
+        assert!(b < inf);
+        assert!(!(c > nan || c < nan));
     }
 }
