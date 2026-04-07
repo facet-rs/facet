@@ -216,9 +216,11 @@ extension Driver {
             return
         }
 
+        traceLog(.resume, "flushPendingCalls: count=\(pendingCalls.count)")
         while let call = pendingCalls.first {
             let replayCall: DriverQueuedCall
             if let prepareRetry = call.prepareRetry {
+                traceLog(.resume, "flushPendingCalls: rebuilding requestId=\(call.requestId) methodId=\(call.methodId)")
                 let rebuilt = await prepareRetry()
                 let replayMetadata =
                     if call.retry.idem {
@@ -265,13 +267,16 @@ extension Driver {
                 payload: replayCall.payload
             )
 
+            traceLog(.resume, "flushPendingCalls: sending replay requestId=\(replayCall.requestId) methodId=\(replayCall.methodId)")
             do {
                 try await conduit.send(msg)
             } catch TransportError.wouldBlock {
+                traceLog(.resume, "flushPendingCalls: conduit would block requestId=\(replayCall.requestId)")
                 pendingCalls[0] = replayCall
                 return
             } catch {
                 if resumable {
+                    traceLog(.resume, "flushPendingCalls: send failed requestId=\(replayCall.requestId) error=\(String(describing: error))")
                     pendingCalls[0] = replayCall
                     _ = eventContinuation.yield(.conduitFailed(String(describing: error)))
                     return
@@ -325,8 +330,10 @@ extension Driver {
     func replayPendingCallsAfterResume() async {
         let inFlight = await state.pendingCallsSnapshot()
         pendingCalls.removeAll()
+        traceLog(.resume, "replayPendingCallsAfterResume: inFlight=\(inFlight.count)")
         for call in inFlight {
             if call.prepareRetry != nil && !call.retry.idem {
+                traceLog(.resume, "replayPendingCallsAfterResume: indeterminate requestId=\(call.requestId)")
                 guard let pending = await state.claimPendingResponse(
                     call.requestId,
                     reason: "resume-channel-indeterminate"
@@ -337,6 +344,7 @@ extension Driver {
                 pending.responseTx(.success(encodeIndeterminateError()))
                 continue
             }
+            traceLog(.resume, "replayPendingCallsAfterResume: queueing requestId=\(call.requestId) methodId=\(call.methodId)")
             pendingCalls.append(call)
         }
     }

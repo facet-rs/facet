@@ -50,6 +50,7 @@ extension Driver {
         do {
             traceLog(.resume, "trying recoverAttachment with session key")
             let attachment = try await recoverAttachment()
+            traceLog(.resume, "recoverAttachment returned; beginning resumed handshake")
 
             // Perform handshake on the recovered link with resume key
             let handshake = try await performInitiatorHandshake(
@@ -156,6 +157,7 @@ extension Driver {
                         if needsRecoveryAttempt {
                             needsRecoveryAttempt = false
                             if let recovered = await tryRecoverConduit() {
+                                traceLog(.resume, "recovery succeeded while disconnected")
                                 self.conduit = recovered
                                 readerTask.cancel()
                                 await handleSuccessfulResume(keepaliveRuntime: &keepaliveRuntime)
@@ -212,6 +214,7 @@ extension Driver {
                         // Enter disconnected state
                         isConnected = false
                         needsRecoveryAttempt = true
+                        traceLog(.resume, "entered disconnected state; scheduling recovery")
                         // Trigger a wake to attempt recovery
                         cont.yield(.wake)
                     } else {

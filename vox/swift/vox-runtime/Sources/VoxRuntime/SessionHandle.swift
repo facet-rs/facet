@@ -36,6 +36,7 @@ public final class SessionHandle: @unchecked Sendable {
 
     /// Resume the session with a new attachment (client-side).
     public func resume(_ attachment: LinkAttachment) async throws {
+        traceLog(.resume, "SessionHandle.resume: role=\(role) transport=\(transport)")
         let conduit = try await buildResumedConduit(from: attachment)
         eventContinuation.yield(.resumeConduit(conduit))
     }
@@ -47,6 +48,7 @@ public final class SessionHandle: @unchecked Sendable {
 
     /// Accept a resumed attachment from a reconnecting client (server-side).
     public func acceptResumedAttachment(_ attachment: LinkAttachment) async throws {
+        traceLog(.resume, "SessionHandle.acceptResumedAttachment: role=\(role) transport=\(transport)")
         let conduit = try await buildResumedConduit(from: attachment)
         eventContinuation.yield(.resumeConduit(conduit))
     }
