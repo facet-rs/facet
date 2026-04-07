@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@preconcurrency import NIOCore
 
 @testable import VoxRuntime
 @testable import subject_swift
@@ -102,7 +103,7 @@ private final class LoopbackConnection: VoxConnection, @unchecked Sendable {
     let channelAllocator = ChannelIdAllocator(role: .initiator)
     let incomingChannelRegistry = ChannelRegistry()
 
-    private let adapter: TestbedDispatcherAdapter
+    private let dispatcher: TestbedDispatcher
     private let serverRegistry = ChannelRegistry()
     private let schemaSendTracker = SchemaSendTracker()
     private let lock = NSLock()
@@ -119,7 +120,7 @@ private final class LoopbackConnection: VoxConnection, @unchecked Sendable {
     }
 
     init(handler: TestbedHandler = TestbedService()) {
-        self.adapter = TestbedDispatcherAdapter(handler: handler)
+        self.dispatcher = TestbedDispatcher(handler: handler)
     }
 
     var taskSender: TaskSender {
@@ -132,13 +133,13 @@ private final class LoopbackConnection: VoxConnection, @unchecked Sendable {
     func call(
         methodId: UInt64,
         metadata _: [MetadataEntry],
-        payload: Data,
+        payload: [UInt8],
         retry _: RetryPolicy,
         timeout _: TimeInterval?,
         prepareRetry _: (@Sendable () async -> PreparedRetryRequest)?,
         finalizeChannels: (@Sendable () -> Void)?,
         schemaInfo _: ClientSchemaInfo?
-    ) async throws -> Data {
+    ) async throws -> [UInt8] {
         let requestId: UInt64 = lock.withLock {
             let id = nextRequestId
             nextRequestId += 1
@@ -147,15 +148,15 @@ private final class LoopbackConnection: VoxConnection, @unchecked Sendable {
 
         let inbox = TaskResponseInbox()
 
-        await adapter.preregister(
+        await dispatcher.preregister(
             methodId: methodId,
-            payload: Array(payload),
+            payload: payload,
             registry: serverRegistry
         )
 
-        await adapter.dispatch(
+        await dispatcher.dispatch(
             methodId: methodId,
-            payload: Array(payload),
+            payload: payload,
             requestId: requestId,
             registry: serverRegistry,
             schemaSendTracker: schemaSendTracker,
@@ -169,7 +170,7 @@ private final class LoopbackConnection: VoxConnection, @unchecked Sendable {
             await inbox.nextResponse(for: requestId)
         }
         finalizeChannels?()
-        return Data(responsePayload)
+        return responsePayload
     }
 
     private func routeClientTaskMessage(_ message: TaskMessage) async {
@@ -208,14 +209,14 @@ private extension NSLock {
 }
 
 private func rpcErrorCode(from payload: [UInt8]) -> RpcErrorCode? {
-    var offset = 0
     do {
-        let response = Data(payload)
-        let resultDiscriminant = try decodeVarint(from: response, offset: &offset)
+        var response = ByteBufferAllocator().buffer(capacity: payload.count)
+        response.writeBytes(payload)
+        let resultDiscriminant = try decodeVarint(from: &response)
         guard resultDiscriminant == 1 else {
             return nil
         }
-        let rawCode = try decodeU8(from: response, offset: &offset)
+        let rawCode = try decodeU8(from: &response)
         return RpcErrorCode(rawValue: rawCode)
     } catch {
         return nil
@@ -322,11 +323,11 @@ struct TestbedServiceCoverageTests {
 
 struct TestbedDispatcherCoverageTests {
     @Test func unknownMethodReturnsUnknownMethodError() async {
-        let adapter = TestbedDispatcherAdapter(handler: TestbedService())
+        let dispatcher = TestbedDispatcher(handler: TestbedService())
         let registry = ChannelRegistry()
         let inbox = TaskResponseInbox()
 
-        await adapter.dispatch(
+        await dispatcher.dispatch(
             methodId: 0xFFFF_FFFF_FFFF_FFFF,
             payload: [],
             requestId: 11,
@@ -340,11 +341,11 @@ struct TestbedDispatcherCoverageTests {
     }
 
     @Test func malformedPayloadReturnsInvalidPayloadError() async {
-        let adapter = TestbedDispatcherAdapter(handler: TestbedService())
+        let dispatcher = TestbedDispatcher(handler: TestbedService())
         let registry = ChannelRegistry()
         let inbox = TaskResponseInbox()
 
-        await adapter.dispatch(
+        await dispatcher.dispatch(
             methodId: TestbedMethodId.parseColor,
             payload: [0x80],
             requestId: 12,
@@ -573,11 +574,8 @@ struct GeneratedClientUnitCoverageTests {
 
         try await withTimeout(milliseconds: 1_000) {
             let (tx, rx) = channel(
-                serialize: { encodeI32($0) },
-                deserialize: { bytes in
-                    var offset = 0
-                    return try decodeI32(from: Data(bytes), offset: &offset)
-                }
+                serialize: { value, buf in encodeI32(value, into: &buf) },
+                deserialize: { buf in try decodeI32(from: &buf) }
             )
 
             async let call: Int64 = client.sum(numbers: rx)
@@ -596,11 +594,8 @@ struct GeneratedClientUnitCoverageTests {
 
         try await withTimeout(milliseconds: 1_000) {
             let (tx, rx) = channel(
-                serialize: { encodeI32($0) },
-                deserialize: { bytes in
-                    var offset = 0
-                    return try decodeI32(from: Data(bytes), offset: &offset)
-                }
+                serialize: { value, buf in encodeI32(value, into: &buf) },
+                deserialize: { buf in try decodeI32(from: &buf) }
             )
 
             async let call: Void = client.generate(count: 64, output: tx)
@@ -619,18 +614,12 @@ struct GeneratedClientUnitCoverageTests {
 
         try await withTimeout(milliseconds: 1_000) {
             let (inputTx, inputRx) = channel(
-                serialize: { encodeString($0) },
-                deserialize: { bytes in
-                    var offset = 0
-                    return try decodeString(from: Data(bytes), offset: &offset)
-                }
+                serialize: { value, buf in encodeString(value, into: &buf) },
+                deserialize: { buf in try decodeString(from: &buf) }
             )
             let (outputTx, outputRx) = channel(
-                serialize: { encodeString($0) },
-                deserialize: { bytes in
-                    var offset = 0
-                    return try decodeString(from: Data(bytes), offset: &offset)
-                }
+                serialize: { value, buf in encodeString(value, into: &buf) },
+                deserialize: { buf in try decodeString(from: &buf) }
             )
 
             async let call: Void = client.transform(input: inputRx, output: outputTx)

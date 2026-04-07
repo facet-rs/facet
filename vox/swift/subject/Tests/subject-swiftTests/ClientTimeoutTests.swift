@@ -27,23 +27,25 @@ private final class CapturingConnection: VoxConnection, @unchecked Sendable {
     func call(
         methodId: UInt64,
         metadata _: [MetadataEntry],
-        payload _: Data,
+        payload _: [UInt8],
         retry _: RetryPolicy,
         timeout: TimeInterval?,
         prepareRetry _: (@Sendable () async -> PreparedRetryRequest)?,
         finalizeChannels: (@Sendable () -> Void)?,
         schemaInfo _: ClientSchemaInfo?
-    ) async throws -> Data {
+    ) async throws -> [UInt8] {
         await recorder.append(methodId: methodId, timeout: timeout)
         finalizeChannels?()
-        return Data([0] + encodeString("ok"))
+        return encodeResultOk("ok", encoder: { value, buf in
+            encodeString(value, into: &buf)
+        })
     }
 
     func timeouts() async -> [TimeInterval?] { await recorder.timeouts() }
     func methodIds() async -> [UInt64] { await recorder.methodIds() }
 }
 
-struct GeneratedClientTimeoutTests {
+struct ClientTimeoutTests {
     @Test func generatedClientUsesDefaultTimeout() async throws {
         let connection = CapturingConnection()
         let client = TestbedClient(connection: connection)

@@ -349,7 +349,7 @@ struct ServerAndDispatcherIntegrationTests {
         let server = Server()
         await SubjectEnvGate.shared.withEnvironment([("PEER_ADDR", nil)]) {
             do {
-                try await server.runSubject(dispatcher: TestbedDispatcherAdapter(handler: TestbedService()))
+                try await server.runSubject(dispatcher: TestbedDispatcher(handler: TestbedService()))
                 Issue.record("expected missingPeerAddr")
             } catch let error as ServerError {
                 guard case .missingPeerAddr = error else {
@@ -367,7 +367,7 @@ struct ServerAndDispatcherIntegrationTests {
         let server = Server()
         await SubjectEnvGate.shared.withEnvironment([("PEER_ADDR", "127.0.0.1")]) {
             do {
-                try await server.runSubject(dispatcher: TestbedDispatcherAdapter(handler: TestbedService()))
+                try await server.runSubject(dispatcher: TestbedDispatcher(handler: TestbedService()))
                 Issue.record("expected invalidPeerAddr")
             } catch let error as ServerError {
                 guard case .invalidPeerAddr(let value) = error else {
@@ -393,7 +393,7 @@ struct ServerAndDispatcherIntegrationTests {
             do {
                 try await withTimeout(milliseconds: 2_000) {
                     try await Server().runSubject(
-                        dispatcher: TestbedDispatcherAdapter(handler: TestbedService())
+                        dispatcher: TestbedDispatcher(handler: TestbedService())
                     )
                 }
                 return .success(())
@@ -425,59 +425,4 @@ struct ServerAndDispatcherIntegrationTests {
         }
     }
 
-    // r[verify transport.message.binary]
-    @Test func dispatcherAdapterEchoRoundTripProducesResponse() async throws {
-        let recorder = TaskMessageRecorder()
-        let registry = ChannelRegistry()
-        let adapter = TestbedDispatcherAdapter(handler: TestbedService())
-        let requestId: UInt64 = 42
-
-        await adapter.dispatch(
-            methodId: TestbedMethodId.echo,
-            payload: encodeString("swift-subject"),
-            requestId: requestId,
-            registry: registry,
-            schemaSendTracker: SchemaSendTracker(),
-            taskTx: { msg in
-                Task { await recorder.append(msg) }
-            }
-        )
-
-        let response = try await withTimeout(milliseconds: 500) {
-            while true {
-                if let response = await recorder.firstResponse() {
-                    return response
-                }
-                try await Task.sleep(nanoseconds: 1_000_000)
-            }
-        }
-        #expect(response.0 == requestId)
-        var offset = 0
-        let payload = Data(response.1)
-        let resultDiscriminant = try decodeVarint(from: payload, offset: &offset)
-        #expect(resultDiscriminant == 0)
-        let echoed = try decodeString(from: payload, offset: &offset)
-        #expect(echoed == "swift-subject")
-    }
-
-    // r[verify rpc.channel.allocation]
-    @Test func dispatcherAdapterPreregisterMarksIncomingChannelsKnown() async {
-        let adapter = TestbedDispatcherAdapter(handler: TestbedService())
-        let registry = ChannelRegistry()
-
-        await adapter.preregister(
-            methodId: TestbedMethodId.sum,
-            payload: encodeVarint(1001),
-            registry: registry
-        )
-        #expect(await registry.isKnown(1001))
-
-        await adapter.preregister(
-            methodId: TestbedMethodId.transform,
-            payload: encodeVarint(2001) + encodeVarint(2002),
-            registry: registry
-        )
-        #expect(await registry.isKnown(2001))
-        #expect(!(await registry.isKnown(2002)))
-    }
 }

@@ -1,0 +1,111 @@
+import Darwin
+import Foundation
+import Testing
+
+@testable import VoxRuntime
+@testable import subject_swift
+
+private struct FfiAttachmentConnector: SessionConnector {
+    let attachment: LinkAttachment
+    let transport: ConduitKind = .bare
+
+    func openAttachment() async throws -> LinkAttachment {
+        attachment
+    }
+}
+
+private final class RustSubjectLibrary {
+    let handle: UnsafeMutableRawPointer
+    let vtable: UnsafePointer<VoxLinkVtable>
+
+    init() throws {
+        let path = try RustSubjectLibrary.libraryPath()
+        let handle = path.path.withCString { dlopen($0, RTLD_NOW | RTLD_LOCAL) }
+        guard let handle else {
+            throw TransportError.protocolViolation(
+                "failed to dlopen \(path.path): \(String(cString: dlerror()))")
+        }
+
+        guard let symbol = dlsym(handle, "subject_rust_v1_vtable") else {
+            dlclose(handle)
+            throw TransportError.protocolViolation(
+                "missing subject_rust_v1_vtable in \(path.path)")
+        }
+
+        typealias ExportFn = @convention(c) () -> UnsafeMutableRawPointer?
+        let export = unsafeBitCast(symbol, to: ExportFn.self)
+        guard let vtable = export() else {
+            dlclose(handle)
+            throw TransportError.protocolViolation(
+                "subject_rust_v1_vtable returned a null pointer")
+        }
+
+        self.handle = handle
+        self.vtable = UnsafePointer(vtable.assumingMemoryBound(to: VoxLinkVtable.self))
+    }
+
+    deinit {
+        dlclose(handle)
+    }
+
+    private static func libraryPath() throws -> URL {
+        let env = ProcessInfo.processInfo.environment["VOX_RUST_FFI_DYLIB_PATH"]
+        let candidates: [URL]
+        if let env, !env.isEmpty {
+            candidates = [URL(fileURLWithPath: env)]
+        } else {
+            let repoRoot = URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent() // subject-swiftTests
+                .deletingLastPathComponent() // Tests
+                .deletingLastPathComponent() // subject-swift
+                .deletingLastPathComponent() // swift
+                .deletingLastPathComponent() // repo root
+            candidates = [
+                repoRoot.appendingPathComponent("target/release/libsubject_rust.dylib"),
+                repoRoot.appendingPathComponent("target/debug/libsubject_rust.dylib"),
+            ]
+        }
+
+        for candidate in candidates where FileManager.default.fileExists(atPath: candidate.path) {
+            return candidate
+        }
+
+        throw TransportError.protocolViolation(
+            "could not find libsubject_rust.dylib; build it with `cargo build --release -p subject-rust`"
+        )
+    }
+}
+
+@Suite(.serialized)
+struct DlopenFfiTransportTests {
+    // r[verify link.message]
+    // r[verify link.order]
+    // r[verify link.rx.recv]
+    @Test func swiftCanDriveRustSubjectLoadedViaDlopen() async throws {
+        let rust = try RustSubjectLibrary()
+        let endpoint = FfiEndpoint()
+        let link = try endpoint.connect(peer: rust.vtable)
+        let attachment = LinkAttachment.initiator(link)
+        let connector = FfiAttachmentConnector(attachment: attachment)
+        let dispatcher = TestbedDispatcher(handler: TestbedService())
+
+        let session = try await Session.initiator(
+            connector,
+            dispatcher: dispatcher,
+            resumable: false
+        )
+        let driverTask = Task {
+            try await session.run()
+        }
+
+        let client = TestbedClient(connection: session.connection)
+        let echoed = try await client.echo(message: "hello from swift")
+        #expect(echoed == "hello from swift")
+
+        let divided = try await client.divide(dividend: 10, divisor: 2)
+        #expect(divided == .success(5))
+
+        session.handle.shutdown()
+        try await driverTask.value
+    }
+}
