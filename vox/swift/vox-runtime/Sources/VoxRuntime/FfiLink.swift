@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 private func ffiWireLog(_ message: String) {
@@ -509,12 +510,83 @@ public final class FfiEndpoint: @unchecked Sendable {
         try core.connect(to: peer)
     }
 
+    public func connector(
+        peer: UnsafePointer<VoxLinkVtable>,
+        transport: ConduitKind = .bare
+    ) throws -> FfiConnector {
+        FfiConnector(
+            attachment: .initiator(try connect(peer: peer)),
+            transport: transport
+        )
+    }
+
     public func accept() async throws -> FfiLink {
         try await core.accept()
     }
 
     func outstandingLoanCount() -> Int {
         core.outstandingLoanCount()
+    }
+}
+
+public struct FfiConnector: SessionConnector, Sendable {
+    public let attachment: LinkAttachment
+    public let transport: ConduitKind
+
+    public init(attachment: LinkAttachment, transport: ConduitKind = .bare) {
+        self.attachment = attachment
+        self.transport = transport
+    }
+
+    public func openAttachment() async throws -> LinkAttachment {
+        guard attachment.negotiatedConduit == nil else {
+            return attachment
+        }
+
+        try await performInitiatorLinkPrologue(
+            link: attachment.link,
+            conduit: transport
+        )
+        return .negotiated(attachment.link, conduit: transport)
+    }
+}
+
+public final class FfiDynamicLibrary: @unchecked Sendable {
+    public let path: URL
+    private let handle: UnsafeMutableRawPointer
+
+    public init(path: URL) throws {
+        self.path = path
+        guard let handle = path.path.withCString({ dlopen($0, RTLD_NOW | RTLD_LOCAL) }) else {
+            throw TransportError.protocolViolation(
+                "failed to dlopen \(path.path): \(String(cString: dlerror()))"
+            )
+        }
+        self.handle = handle
+    }
+
+    deinit {
+        dlclose(handle)
+    }
+
+    public func loadVtable(
+        symbol: String
+    ) throws -> UnsafePointer<VoxLinkVtable> {
+        guard let rawSymbol = dlsym(handle, symbol) else {
+            throw TransportError.protocolViolation(
+                "missing \(symbol) in \(path.path)"
+            )
+        }
+
+        typealias ExportFn = @convention(c) () -> UnsafeMutableRawPointer?
+        let export = unsafeBitCast(rawSymbol, to: ExportFn.self)
+        guard let vtable = export() else {
+            throw TransportError.protocolViolation(
+                "\(symbol) returned a null pointer"
+            )
+        }
+
+        return UnsafePointer(vtable.assumingMemoryBound(to: VoxLinkVtable.self))
     }
 }
 
