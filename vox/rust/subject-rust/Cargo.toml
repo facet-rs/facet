@@ -21,6 +21,7 @@ vox = { workspace = true }
 vox-core = { workspace = true }
 vox-local.workspace = true
 vox-stream = { workspace = true }
+vox-ffi = { workspace = true }
 vox-types = { workspace = true }
 spec-proto.workspace = true
 tokio = { workspace = true, features = ["rt", "net"] }

@@ -2812,6 +2812,7 @@ dependencies = [
  "tracing-subscriber",
  "vox",
  "vox-core",
+ "vox-ffi",
  "vox-local",
  "vox-stream",
  "vox-types",

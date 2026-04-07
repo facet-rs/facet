@@ -233,6 +233,10 @@ private enum EndpointHost0 {
         guard let peer else { return }
         activeEndpointCore(for: state).attach(peer: peer.assumingMemoryBound(to: VoxLinkVtable.self))
     }
+
+    static let sendFn: VoxSendFn = { buf, len in send(buf, len) }
+    static let freeFn: VoxFreeFn = { buf in free(buf) }
+    static let attachFn: VoxAttachFn = { peer in attach(peer) }
 }
 
 private enum EndpointHost1 {
@@ -250,6 +254,10 @@ private enum EndpointHost1 {
         guard let peer else { return }
         activeEndpointCore(for: state).attach(peer: peer.assumingMemoryBound(to: VoxLinkVtable.self))
     }
+
+    static let sendFn: VoxSendFn = { buf, len in send(buf, len) }
+    static let freeFn: VoxFreeFn = { buf in free(buf) }
+    static let attachFn: VoxAttachFn = { peer in attach(peer) }
 }
 
 private enum EndpointHost2 {
@@ -267,6 +275,10 @@ private enum EndpointHost2 {
         guard let peer else { return }
         activeEndpointCore(for: state).attach(peer: peer.assumingMemoryBound(to: VoxLinkVtable.self))
     }
+
+    static let sendFn: VoxSendFn = { buf, len in send(buf, len) }
+    static let freeFn: VoxFreeFn = { buf in free(buf) }
+    static let attachFn: VoxAttachFn = { peer in attach(peer) }
 }
 
 private enum EndpointHost3 {
@@ -284,33 +296,37 @@ private enum EndpointHost3 {
         guard let peer else { return }
         activeEndpointCore(for: state).attach(peer: peer.assumingMemoryBound(to: VoxLinkVtable.self))
     }
+
+    static let sendFn: VoxSendFn = { buf, len in send(buf, len) }
+    static let freeFn: VoxFreeFn = { buf in free(buf) }
+    static let attachFn: VoxAttachFn = { peer in attach(peer) }
 }
 
 private enum EndpointHosts {
     static let all: [EndpointHostSlot] = [
         EndpointHostSlot(
             state: EndpointHost0.state,
-            send: EndpointHost0.send,
-            free: EndpointHost0.free,
-            attach: EndpointHost0.attach
+            send: EndpointHost0.sendFn,
+            free: EndpointHost0.freeFn,
+            attach: EndpointHost0.attachFn
         ),
         EndpointHostSlot(
             state: EndpointHost1.state,
-            send: EndpointHost1.send,
-            free: EndpointHost1.free,
-            attach: EndpointHost1.attach
+            send: EndpointHost1.sendFn,
+            free: EndpointHost1.freeFn,
+            attach: EndpointHost1.attachFn
         ),
         EndpointHostSlot(
             state: EndpointHost2.state,
-            send: EndpointHost2.send,
-            free: EndpointHost2.free,
-            attach: EndpointHost2.attach
+            send: EndpointHost2.sendFn,
+            free: EndpointHost2.freeFn,
+            attach: EndpointHost2.attachFn
         ),
         EndpointHostSlot(
             state: EndpointHost3.state,
-            send: EndpointHost3.send,
-            free: EndpointHost3.free,
-            attach: EndpointHost3.attach
+            send: EndpointHost3.sendFn,
+            free: EndpointHost3.freeFn,
+            attach: EndpointHost3.attachFn
         ),
     ]
 
