@@ -108,10 +108,24 @@ private final class EndpointCore: @unchecked Sendable {
     private var recvWaiter: CheckedContinuation<IncomingFrame, Never>?
     private var acceptWaiter: CheckedContinuation<Void, Error>?
     private var vtableStorage: UnsafeMutablePointer<VoxLinkVtable>?
+    private var hostSlot: EndpointHostSlot?
 
-    func install(vtableStorage: UnsafeMutablePointer<VoxLinkVtable>) {
+    deinit {
+        // Release the host slot so it can be reused
+        if let host = hostSlot {
+            EndpointHosts.release(host, core: self)
+        }
+        // Deallocate the vtable storage
+        if let storage = vtableStorage {
+            storage.deinitialize(count: 1)
+            storage.deallocate()
+        }
+    }
+
+    func install(vtableStorage: UnsafeMutablePointer<VoxLinkVtable>, host: EndpointHostSlot) {
         lock.lock()
         self.vtableStorage = vtableStorage
+        self.hostSlot = host
         lock.unlock()
     }
 
@@ -474,8 +488,6 @@ private enum EndpointHosts {
 
 public final class FfiEndpoint: @unchecked Sendable {
     private let core: EndpointCore
-    private let storage: UnsafeMutablePointer<VoxLinkVtable>
-    private let host: EndpointHostSlot
 
     public init() {
         let core = EndpointCore()
@@ -489,17 +501,11 @@ public final class FfiEndpoint: @unchecked Sendable {
             )
         )
 
-        core.install(vtableStorage: storage)
+        // Core owns the vtable storage and host slot — they stay alive
+        // as long as any FfiLink (which holds a strong ref to core) exists.
+        core.install(vtableStorage: storage, host: host)
 
         self.core = core
-        self.storage = storage
-        self.host = host
-    }
-
-    deinit {
-        EndpointHosts.release(host, core: core)
-        storage.deinitialize(count: 1)
-        storage.deallocate()
     }
 
     public func exportedVtable() -> UnsafePointer<VoxLinkVtable> {
