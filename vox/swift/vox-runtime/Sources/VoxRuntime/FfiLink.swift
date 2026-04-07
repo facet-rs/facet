@@ -1,201 +1,323 @@
 import Foundation
 
-// ---------------------------------------------------------------------------
-// C types matching vox-ffi's bridge.rs
-// ---------------------------------------------------------------------------
-
-/// Release callback: called when the receiver is done with a loaned buffer.
-public typealias VoxFfiReleaseFn = @convention(c) (UnsafeMutableRawPointer?) -> Void
-
-/// Receive callback: delivers a frame to the receiver.
-public typealias VoxFfiRecvFn = @convention(c) (
-    _ ctx: UnsafeMutableRawPointer?,
+public typealias VoxSendFn = @convention(c) (
     _ buf: UnsafePointer<UInt8>?,
-    _ len: Int,
-    _ release: VoxFfiReleaseFn?,
-    _ releaseCtx: UnsafeMutableRawPointer?
+    _ len: Int
 ) -> Void
 
-/// Drop callback: called when the peer closes permanently.
-public typealias VoxFfiDropFn = @convention(c) (UnsafeMutableRawPointer?) -> Void
+public typealias VoxFreeFn = @convention(c) (
+    _ buf: UnsafePointer<UInt8>?
+) -> Void
 
-/// C-ABI vtable for one direction of an FFI link.
-public struct VoxFfiVtable {
-    public var ctx: UnsafeMutableRawPointer?
-    public var recv_fn: VoxFfiRecvFn?
-    public var drop_fn: VoxFfiDropFn?
+public typealias VoxAttachFn = @convention(c) (
+    _ peer: UnsafeRawPointer?
+) -> Void
+
+public struct VoxLinkVtable {
+    public var send: VoxSendFn?
+    public var free: VoxFreeFn?
+    public var attach: VoxAttachFn?
+
+    public init(send: VoxSendFn?, free: VoxFreeFn?, attach: VoxAttachFn?) {
+        self.send = send
+        self.free = free
+        self.attach = attach
+    }
 }
 
-// ---------------------------------------------------------------------------
-// Imports from vox-ffi Rust bridge (linked via bee-ffi static lib)
-// ---------------------------------------------------------------------------
+private struct IncomingFrame: @unchecked Sendable {
+    let ptr: UnsafePointer<UInt8>?
+    let len: Int
+}
 
-/// Create a bridge link. Swift passes its receive vtable; Rust returns a handle.
-@_silgen_name("vox_ffi_link_create")
-func vox_ffi_link_create(_ swiftVtable: VoxFfiVtable) -> OpaquePointer
+private final class OutboundLoan {
+    let ptr: UnsafeMutablePointer<UInt8>
+    let len: Int
 
-/// Get the vtable Swift uses to send frames into Rust.
-@_silgen_name("vox_ffi_link_rust_vtable")
-func vox_ffi_link_rust_vtable(_ handle: OpaquePointer) -> VoxFfiVtable
-
-/// Extract the Rust-side vox Link from the handle (one-shot).
-@_silgen_name("vox_ffi_link_take_link")
-func vox_ffi_link_take_link(_ handle: OpaquePointer) -> OpaquePointer?
-
-/// Destroy the bridge handle.
-@_silgen_name("vox_ffi_link_destroy")
-func vox_ffi_link_destroy(_ handle: OpaquePointer)
-
-// ---------------------------------------------------------------------------
-// FfiLink — Swift Link backed by vox-ffi bridge
-// ---------------------------------------------------------------------------
-
-/// In-process Link that communicates with a Rust vox peer via C-ABI vtables.
-///
-/// Usage:
-/// ```swift
-/// let (swiftLink, rustLinkPtr) = FfiLink.create()
-/// // Pass rustLinkPtr to Rust for use with a vox session
-/// // Use swiftLink as a normal Link for the Swift-side session
-/// ```
-public final class FfiLink: Link, @unchecked Sendable {
-    /// The bridge handle (owns the Swift vtable + Rust rx mailbox)
-    private let handle: OpaquePointer
-    /// Vtable for sending frames Swift → Rust
-    private let rustVtable: VoxFfiVtable
-    /// Inbound frames from Rust → Swift
-    private var inboundIterator: AsyncStream<[UInt8]>.Iterator
-    /// The continuation Rust calls into (via recv_fn callback)
-    private let inboundContinuation: AsyncStream<[UInt8]>.Continuation
-
-    /// The context object that the C recv_fn callback captures.
-    /// Must be allocated on the heap so the pointer remains stable.
-    private let callbackCtx: FfiLinkCallbackCtx
-
-    private init(
-        handle: OpaquePointer,
-        rustVtable: VoxFfiVtable,
-        inboundStream: AsyncStream<[UInt8]>,
-        inboundContinuation: AsyncStream<[UInt8]>.Continuation,
-        callbackCtx: FfiLinkCallbackCtx
-    ) {
-        self.handle = handle
-        self.rustVtable = rustVtable
-        self.inboundIterator = inboundStream.makeAsyncIterator()
-        self.inboundContinuation = inboundContinuation
-        self.callbackCtx = callbackCtx
+    init(bytes: [UInt8]) {
+        len = bytes.count
+        ptr = UnsafeMutablePointer<UInt8>.allocate(capacity: max(bytes.count, 1))
+        if !bytes.isEmpty {
+            bytes.withUnsafeBufferPointer { source in
+                ptr.initialize(from: source.baseAddress!, count: bytes.count)
+            }
+        }
     }
 
     deinit {
-        inboundContinuation.finish()
-        vox_ffi_link_destroy(handle)
+        if len > 0 {
+            ptr.deinitialize(count: len)
+        }
+        ptr.deallocate()
+    }
+}
+
+private final class EndpointCore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var peer: UnsafePointer<VoxLinkVtable>?
+    private var linkTaken = false
+    private var inbox: [IncomingFrame] = []
+    private var outbound: [UInt: OutboundLoan] = [:]
+    private var recvWaiter: CheckedContinuation<IncomingFrame, Never>?
+    private var acceptWaiter: CheckedContinuation<Void, Error>?
+    private var vtableStorage: UnsafeMutablePointer<VoxLinkVtable>?
+
+    func install(vtableStorage: UnsafeMutablePointer<VoxLinkVtable>) {
+        lock.lock()
+        self.vtableStorage = vtableStorage
+        lock.unlock()
     }
 
-    /// Create a linked pair: a Swift-side FfiLink and an opaque pointer to
-    /// the Rust-side BridgeLink (for use with vox sessions on the Rust side).
-    ///
-    /// The caller must pass `rustLink` to Rust code that will use it as a
-    /// `vox_types::Link`. Rust takes ownership of that pointer.
-    public static func create() -> (swiftLink: FfiLink, rustLink: OpaquePointer) {
-        // 1. Create the Swift receive side
-        let (stream, continuation) = AsyncStream<[UInt8]>.makeStream()
-        let ctx = FfiLinkCallbackCtx(continuation: continuation)
-        let ctxPtr = Unmanaged.passRetained(ctx).toOpaque()
+    func exportedVtable() -> UnsafePointer<VoxLinkVtable> {
+        lock.lock()
+        let storage = vtableStorage
+        lock.unlock()
+        return UnsafePointer(storage!)
+    }
 
-        // 2. Build the Swift vtable (Rust→Swift delivery)
-        let swiftVtable = VoxFfiVtable(
-            ctx: ctxPtr,
-            recv_fn: ffiLinkRecvCallback,
-            drop_fn: ffiLinkDropCallback
-        )
+    func connect(to peer: UnsafePointer<VoxLinkVtable>) throws -> FfiLink {
+        lock.lock()
+        if self.peer != nil {
+            lock.unlock()
+            throw TransportError.protocolViolation("ffi endpoint already attached")
+        }
+        self.peer = peer
+        let local = UnsafePointer(vtableStorage!)
+        lock.unlock()
 
-        // 3. Create the bridge handle (passing Swift vtable to Rust)
-        let handle = vox_ffi_link_create(swiftVtable)
+        peer.pointee.attach?(UnsafeRawPointer(local))
+        return try takeLink()
+    }
 
-        // 4. Get the Rust vtable (Swift→Rust delivery)
-        let rustVtable = vox_ffi_link_rust_vtable(handle)
+    func accept() async throws -> FfiLink {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.lock()
+            if peer != nil {
+                lock.unlock()
+                continuation.resume(returning: ())
+                return
+            }
 
-        // 5. Take the Rust-side Link
-        guard let rustLink = vox_ffi_link_take_link(handle) else {
-            fatalError("vox_ffi_link_take_link returned null")
+            acceptWaiter = continuation
+            lock.unlock()
         }
 
-        let link = FfiLink(
-            handle: handle,
-            rustVtable: rustVtable,
-            inboundStream: stream,
-            inboundContinuation: continuation,
-            callbackCtx: ctx
-        )
-
-        return (link, rustLink)
+        return try takeLink()
     }
 
-    // MARK: - Link protocol
+    func attach(peer: UnsafePointer<VoxLinkVtable>) {
+        lock.lock()
+        if self.peer == nil {
+            self.peer = peer
+        }
+        let waiter = acceptWaiter
+        acceptWaiter = nil
+        lock.unlock()
+
+        waiter?.resume(returning: ())
+    }
+
+    func send(_ bytes: [UInt8]) throws {
+        lock.lock()
+        guard let peer else {
+            lock.unlock()
+            throw TransportError.connectionClosed
+        }
+
+        let loan = OutboundLoan(bytes: bytes)
+        let ptr = loan.ptr
+        let len = loan.len
+        outbound[UInt(bitPattern: ptr)] = loan
+        lock.unlock()
+
+        peer.pointee.send?(UnsafePointer(ptr), len)
+    }
+
+    func nextFrame() async -> IncomingFrame {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if !inbox.isEmpty {
+                let frame = inbox.removeFirst()
+                lock.unlock()
+                continuation.resume(returning: frame)
+                return
+            }
+
+            recvWaiter = continuation
+            lock.unlock()
+        }
+    }
+
+    func releaseIncoming(_ ptr: UnsafePointer<UInt8>?) {
+        lock.lock()
+        let peer = self.peer
+        lock.unlock()
+        peer?.pointee.free?(ptr)
+    }
+
+    func receive(_ ptr: UnsafePointer<UInt8>?, len: Int) {
+        let frame = IncomingFrame(ptr: ptr, len: len)
+
+        lock.lock()
+        if let waiter = recvWaiter {
+            recvWaiter = nil
+            lock.unlock()
+            waiter.resume(returning: frame)
+            return
+        }
+
+        inbox.append(frame)
+        lock.unlock()
+    }
+
+    func free(_ ptr: UnsafePointer<UInt8>?) {
+        guard let ptr else {
+            return
+        }
+        lock.lock()
+        outbound.removeValue(forKey: UInt(bitPattern: ptr))
+        lock.unlock()
+    }
+
+    private func takeLink() throws -> FfiLink {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard !linkTaken else {
+            throw TransportError.protocolViolation("ffi endpoint already connected")
+        }
+        linkTaken = true
+        return FfiLink(core: self)
+    }
+}
+
+private final class ActiveFfiEndpointState: @unchecked Sendable {
+    static let shared = ActiveFfiEndpointState()
+
+    let lock = NSLock()
+    var core: EndpointCore?
+}
+
+private func activeEndpointCore() -> EndpointCore {
+    let state = ActiveFfiEndpointState.shared
+    state.lock.lock()
+    defer { state.lock.unlock() }
+    guard let core = state.core else {
+        fatalError("FFI endpoint is not installed")
+    }
+    return core
+}
+
+private func voxFfiSendCallback(
+    _ buf: UnsafePointer<UInt8>?,
+    _ len: Int
+) {
+    activeEndpointCore().receive(buf, len: len)
+}
+
+private func voxFfiFreeCallback(
+    _ buf: UnsafePointer<UInt8>?
+) {
+    activeEndpointCore().free(buf)
+}
+
+private func voxFfiAttachCallback(
+    _ peer: UnsafeRawPointer?
+) {
+    guard let peer else {
+        return
+    }
+    activeEndpointCore().attach(peer: peer.assumingMemoryBound(to: VoxLinkVtable.self))
+}
+
+public final class FfiEndpoint: @unchecked Sendable {
+    private let core: EndpointCore
+    private let storage: UnsafeMutablePointer<VoxLinkVtable>
+
+    public init() {
+        let core = EndpointCore()
+        let storage = UnsafeMutablePointer<VoxLinkVtable>.allocate(capacity: 1)
+        storage.initialize(
+            to: VoxLinkVtable(
+                send: voxFfiSendCallback,
+                free: voxFfiFreeCallback,
+                attach: voxFfiAttachCallback
+            )
+        )
+
+        let state = ActiveFfiEndpointState.shared
+        state.lock.lock()
+        precondition(state.core == nil, "only one FFI endpoint may be installed")
+        state.core = core
+        state.lock.unlock()
+
+        core.install(vtableStorage: storage)
+
+        self.core = core
+        self.storage = storage
+    }
+
+    deinit {
+        let state = ActiveFfiEndpointState.shared
+        state.lock.lock()
+        if state.core === core {
+            state.core = nil
+        }
+        state.lock.unlock()
+
+        storage.deinitialize(count: 1)
+        storage.deallocate()
+    }
+
+    public func exportedVtable() -> UnsafePointer<VoxLinkVtable> {
+        core.exportedVtable()
+    }
+
+    public func connect(peer: UnsafePointer<VoxLinkVtable>) throws -> FfiLink {
+        try core.connect(to: peer)
+    }
+
+    public func accept() async throws -> FfiLink {
+        try await core.accept()
+    }
+}
+
+/// r[impl link] - FFI callbacks provide a message-oriented bidirectional link.
+/// r[impl link.message] - Each callback-delivered payload stays separate.
+public final class FfiLink: Link, @unchecked Sendable {
+    private let core: EndpointCore
+    private let frameLimit = FrameLimit(Int.max)
+
+    fileprivate init(core: EndpointCore) {
+        self.core = core
+    }
 
     public func sendFrame(_ bytes: [UInt8]) async throws {
-        bytes.withUnsafeBufferPointer { buf in
-            guard let baseAddress = buf.baseAddress else { return }
-            rustVtable.recv_fn?(
-                rustVtable.ctx,
-                baseAddress,
-                buf.count,
-                noopRelease,
-                nil
-            )
-        }
+        try core.send(bytes)
     }
 
+    /// r[impl link.rx.recv] - Swift copies bytes before calling the peer free callback.
     public func recvFrame() async throws -> [UInt8]? {
-        await inboundIterator.next()
+        let frame = await core.nextFrame()
+        defer { core.releaseIncoming(frame.ptr) }
+
+        if frame.len > frameLimit.maxFrameBytes {
+            throw TransportError.frameDecoding("ffi frame exceeded configured limit")
+        }
+        if frame.len == 0 {
+            return []
+        }
+        guard let ptr = frame.ptr else {
+            throw TransportError.protocolViolation("ffi frame pointer was null")
+        }
+
+        return Array(UnsafeBufferPointer(start: ptr, count: frame.len))
     }
 
     public func setMaxFrameSize(_ size: Int) async throws {
-        // No frame size limit for in-process link
+        frameLimit.maxFrameBytes = size
     }
 
     public func close() async throws {
-        inboundContinuation.finish()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Callback context + C function pointers
-// ---------------------------------------------------------------------------
-
-/// Heap-allocated context captured by the C callbacks.
-final class FfiLinkCallbackCtx {
-    let continuation: AsyncStream<[UInt8]>.Continuation
-
-    init(continuation: AsyncStream<[UInt8]>.Continuation) {
-        self.continuation = continuation
-    }
-}
-
-/// C callback: Rust delivers a frame to Swift.
-///
-/// Copies the bytes into a Swift array, then immediately calls release.
-private func ffiLinkRecvCallback(
-    ctx: UnsafeMutableRawPointer?,
-    buf: UnsafePointer<UInt8>?,
-    len: Int,
-    release: VoxFfiReleaseFn?,
-    releaseCtx: UnsafeMutableRawPointer?
-) {
-    guard let ctx, let buf else { return }
-    let callbackCtx = Unmanaged<FfiLinkCallbackCtx>.fromOpaque(ctx).takeUnretainedValue()
-    let bytes = Array(UnsafeBufferPointer(start: buf, count: len))
-    // Release the Rust buffer immediately since we copied
-    release?(releaseCtx)
-    callbackCtx.continuation.yield(bytes)
-}
-
-/// C callback: Rust is closing its send direction.
-private func ffiLinkDropCallback(ctx: UnsafeMutableRawPointer?) {
-    guard let ctx else { return }
-    let callbackCtx = Unmanaged<FfiLinkCallbackCtx>.fromOpaque(ctx).takeRetainedValue()
-    callbackCtx.continuation.finish()
-}
-
-/// No-op release for Swift→Rust sends (Rust copies the data).
-private func noopRelease(_ ctx: UnsafeMutableRawPointer?) {}

@@ -1,325 +1,385 @@
-//! C-ABI bridge for Swift ↔ Rust in-process vox links.
-//!
-//! Each side owns a receive mailbox. The peer sends into it via a vtable.
-//!
-//! ## Ownership
-//!
-//! `vox_ffi_link_create` takes a Swift-provided vtable (for Rust→Swift delivery)
-//! and returns an opaque handle. The handle contains:
-//!
-//! - The Rust rx mailbox (frames from Swift→Rust)
-//! - The Swift vtable (for Rust→Swift tx)
-//!
-//! The caller retrieves the Rust-rx vtable via `vox_ffi_link_rust_vtable` and
-//! passes it to Swift so Swift can send frames into Rust.
-//!
-//! On the Rust side, call `vox_ffi_link_take_link` to extract the vox `Link`
-//! for use with a vox session. This can only be called once per handle.
-
 use std::collections::VecDeque;
 use std::future::poll_fn;
+use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::task::Waker;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::task::{Poll, Waker};
 
-use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
+use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, SharedBacking, WriteSlot};
 
-use crate::{FfiReleaseFn, FfiVtable};
+pub type vox_send_fn = unsafe extern "C" fn(buf: *const u8, len: usize);
+pub type vox_free_fn = unsafe extern "C" fn(buf: *const u8);
+pub type vox_attach_fn = unsafe extern "C" fn(peer: *const vox_link_vtable);
 
-// ---------------------------------------------------------------------------
-// Mailbox — receives frames from the foreign side
-// ---------------------------------------------------------------------------
-
-struct Mailbox {
-    queue: Mutex<VecDeque<Vec<u8>>>,
-    waker: Mutex<Option<Waker>>,
-    closed: AtomicBool,
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct vox_link_vtable {
+    pub send: vox_send_fn,
+    pub free: vox_free_fn,
+    pub attach: vox_attach_fn,
 }
 
-impl Mailbox {
-    fn new() -> Arc<Self> {
-        Arc::new(Self {
-            queue: Mutex::new(VecDeque::new()),
-            waker: Mutex::new(None),
-            closed: AtomicBool::new(false),
+#[derive(Clone, Copy)]
+struct IncomingFrame {
+    ptr: *const u8,
+    len: usize,
+}
+
+unsafe impl Send for IncomingFrame {}
+unsafe impl Sync for IncomingFrame {}
+
+struct OutboundLoan {
+    ptr: *const u8,
+    len: usize,
+    storage: Box<[u8]>,
+}
+
+unsafe impl Send for OutboundLoan {}
+unsafe impl Sync for OutboundLoan {}
+
+impl OutboundLoan {
+    fn new(bytes: Vec<u8>) -> Self {
+        let len = bytes.len();
+        let storage = if len == 0 {
+            vec![0u8].into_boxed_slice()
+        } else {
+            bytes.into_boxed_slice()
+        };
+        let ptr = storage.as_ptr();
+        Self { ptr, len, storage }
+    }
+}
+
+struct FfiBacking {
+    frame: IncomingFrame,
+    free: vox_free_fn,
+}
+
+unsafe impl Send for FfiBacking {}
+unsafe impl Sync for FfiBacking {}
+
+impl SharedBacking for FfiBacking {
+    fn as_bytes(&self) -> &[u8] {
+        if self.frame.len == 0 {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(self.frame.ptr, self.frame.len) }
+        }
+    }
+}
+
+impl Drop for FfiBacking {
+    fn drop(&mut self) {
+        unsafe { (self.free)(self.frame.ptr) }
+    }
+}
+
+/// In-process FFI endpoint.
+///
+/// This owns the callback bridge state. Providers export one static vtable and
+/// then use `connect` or `accept` to obtain a normal Vox `Link`.
+pub struct Endpoint {
+    vtable: fn() -> &'static vox_link_vtable,
+    peer: OnceLock<vox_link_vtable>,
+    link_taken: AtomicBool,
+    inbox: Mutex<VecDeque<IncomingFrame>>,
+    outbound: Mutex<Vec<OutboundLoan>>,
+    recv_waker: Mutex<Option<Waker>>,
+    accept_waker: Mutex<Option<Waker>>,
+    send_lock: Mutex<()>,
+}
+
+impl Endpoint {
+    pub const fn new(vtable: fn() -> &'static vox_link_vtable) -> Self {
+        Self {
+            vtable,
+            peer: OnceLock::new(),
+            link_taken: AtomicBool::new(false),
+            inbox: Mutex::new(VecDeque::new()),
+            outbound: Mutex::new(Vec::new()),
+            recv_waker: Mutex::new(None),
+            accept_waker: Mutex::new(None),
+            send_lock: Mutex::new(()),
+        }
+    }
+
+    pub fn vtable(&'static self) -> &'static vox_link_vtable {
+        (self.vtable)()
+    }
+
+    pub fn connect(&'static self, peer: &'static vox_link_vtable) -> io::Result<FfiLink> {
+        self.attach_peer(*peer);
+        unsafe { (peer.attach)(self.vtable() as *const vox_link_vtable) };
+        self.take_link()
+    }
+
+    pub async fn accept(&'static self) -> io::Result<FfiLink> {
+        poll_fn(|cx| {
+            if self.peer.get().is_some() {
+                Poll::Ready(())
+            } else {
+                *self.accept_waker.lock().expect("accept_waker poisoned") =
+                    Some(cx.waker().clone());
+                Poll::Pending
+            }
+        })
+        .await;
+
+        self.take_link()
+    }
+
+    fn take_link(&'static self) -> io::Result<FfiLink> {
+        if self
+            .link_taken
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "ffi endpoint already connected",
+            ));
+        }
+
+        Ok(FfiLink { endpoint: self })
+    }
+
+    fn attach_peer(&'static self, peer: vox_link_vtable) {
+        let _ = self.peer.set(peer);
+        if let Some(waker) = self
+            .accept_waker
+            .lock()
+            .expect("accept_waker poisoned")
+            .take()
+        {
+            waker.wake();
+        }
+    }
+
+    fn peer(&'static self) -> io::Result<vox_link_vtable> {
+        self.peer.get().copied().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotConnected,
+                "ffi endpoint has no attached peer",
+            )
         })
     }
 
-    fn push(&self, data: Vec<u8>) {
-        self.queue.lock().unwrap().push_back(data);
-        if let Some(w) = self.waker.lock().unwrap().take() {
-            w.wake();
-        }
+    fn send_bytes(&'static self, bytes: Vec<u8>) -> io::Result<()> {
+        let peer = self.peer()?;
+        let loan = OutboundLoan::new(bytes);
+        let ptr = loan.ptr;
+        let len = loan.len;
+
+        let _send_guard = self.send_lock.lock().expect("send_lock poisoned");
+        self.outbound.lock().expect("outbound poisoned").push(loan);
+        unsafe { (peer.send)(ptr, len) };
+
+        Ok(())
     }
 
-    fn close(&self) {
-        self.closed.store(true, Ordering::Release);
-        if let Some(w) = self.waker.lock().unwrap().take() {
-            w.wake();
+    fn poll_recv(&'static self, cx: &mut std::task::Context<'_>) -> Poll<IncomingFrame> {
+        if let Some(frame) = self.inbox.lock().expect("inbox poisoned").pop_front() {
+            Poll::Ready(frame)
+        } else {
+            *self.recv_waker.lock().expect("recv_waker poisoned") = Some(cx.waker().clone());
+            Poll::Pending
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// C callbacks that Swift calls to send frames into Rust's mailbox
-// ---------------------------------------------------------------------------
-
-/// C callback: Swift sends a frame into the Rust mailbox.
-///
-/// Copies `buf[..len]` into Rust-owned memory, then immediately calls
-/// `release(release_ctx)` to free the Swift side's buffer.
-unsafe extern "C" fn rust_rx_recv_fn(
-    ctx: *mut (),
-    buf: *const u8,
-    len: usize,
-    release: FfiReleaseFn,
-    release_ctx: *mut (),
-) {
-    let mailbox = unsafe { &*(ctx as *const Mailbox) };
-    let data = unsafe { std::slice::from_raw_parts(buf, len) }.to_vec();
-    // Release Swift's buffer immediately since we copied
-    unsafe { release(release_ctx) };
-    mailbox.push(data);
+#[doc(hidden)]
+pub unsafe fn __endpoint_send(endpoint: &'static Endpoint, buf: *const u8, len: usize) {
+    endpoint
+        .inbox
+        .lock()
+        .expect("inbox poisoned")
+        .push_back(IncomingFrame { ptr: buf, len });
+    if let Some(waker) = endpoint
+        .recv_waker
+        .lock()
+        .expect("recv_waker poisoned")
+        .take()
+    {
+        waker.wake();
+    }
 }
 
-/// C callback: Swift is closing its send direction.
-unsafe extern "C" fn rust_rx_drop_fn(ctx: *mut ()) {
-    let mailbox = unsafe { Arc::from_raw(ctx as *const Mailbox) };
-    mailbox.close();
-    // Arc drops here, but Rust rx side also holds a clone
+#[doc(hidden)]
+pub unsafe fn __endpoint_free(endpoint: &'static Endpoint, buf: *const u8) {
+    let mut outbound = endpoint.outbound.lock().expect("outbound poisoned");
+    if let Some(index) = outbound.iter().position(|loan| loan.ptr == buf) {
+        let loan = outbound.swap_remove(index);
+        let _ = loan.storage.len();
+    }
 }
 
-// ---------------------------------------------------------------------------
-// Bridge handle
-// ---------------------------------------------------------------------------
-
-/// Opaque handle returned to Swift from `vox_ffi_link_create`.
-pub struct VoxFfiBridgeHandle {
-    /// Rust's receive mailbox (Swift sends into this via the rust_rx vtable)
-    rust_rx: Arc<Mailbox>,
-    /// Swift's receive vtable (Rust sends into this)
-    swift_vtable: Option<FfiVtable>,
-    /// The vox Link, available until taken via `vox_ffi_link_take_link`
-    link: Option<BridgeLink>,
+#[doc(hidden)]
+pub unsafe fn __endpoint_attach(endpoint: &'static Endpoint, peer: *const vox_link_vtable) {
+    if let Some(peer) = unsafe { peer.as_ref() } {
+        endpoint.attach_peer(*peer);
+    }
 }
 
-// ---------------------------------------------------------------------------
-// BridgeLink — implements vox Link for use with vox sessions
-// ---------------------------------------------------------------------------
-
-pub struct BridgeLink {
-    rust_rx: Arc<Mailbox>,
-    swift_vtable: *const FfiVtable,
+// r[impl link]
+// r[impl link.message]
+// r[impl link.order]
+pub struct FfiLink {
+    endpoint: &'static Endpoint,
 }
 
-// SAFETY: The swift_vtable pointer is valid for the lifetime of the handle,
-// and we only access it from the vox session's task.
-unsafe impl Send for BridgeLink {}
-unsafe impl Sync for BridgeLink {}
-
-pub struct BridgeLinkTx {
-    swift_vtable: *const FfiVtable,
+pub struct FfiLinkTx {
+    endpoint: &'static Endpoint,
 }
 
-unsafe impl Send for BridgeLinkTx {}
-unsafe impl Sync for BridgeLinkTx {}
-
-pub struct BridgeLinkRx {
-    mailbox: Arc<Mailbox>,
+pub struct FfiLinkRx {
+    endpoint: &'static Endpoint,
 }
 
-pub struct BridgeTxPermit {
-    swift_vtable: *const FfiVtable,
+pub struct FfiLinkTxPermit {
+    endpoint: &'static Endpoint,
 }
 
-unsafe impl Send for BridgeTxPermit {}
-
-pub struct BridgeWriteSlot {
+pub struct FfiWriteSlot {
+    endpoint: &'static Endpoint,
     buf: Vec<u8>,
-    swift_vtable: *const FfiVtable,
 }
 
-impl Link for BridgeLink {
-    type Tx = BridgeLinkTx;
-    type Rx = BridgeLinkRx;
+impl Link for FfiLink {
+    type Tx = FfiLinkTx;
+    type Rx = FfiLinkRx;
 
+    // r[impl link.split]
     fn split(self) -> (Self::Tx, Self::Rx) {
         (
-            BridgeLinkTx {
-                swift_vtable: self.swift_vtable,
+            FfiLinkTx {
+                endpoint: self.endpoint,
             },
-            BridgeLinkRx {
-                mailbox: self.rust_rx,
+            FfiLinkRx {
+                endpoint: self.endpoint,
             },
         )
     }
 }
 
-impl LinkTx for BridgeLinkTx {
-    type Permit = BridgeTxPermit;
+impl LinkTx for FfiLinkTx {
+    type Permit = FfiLinkTxPermit;
 
-    async fn reserve(&self) -> std::io::Result<Self::Permit> {
-        // No backpressure for now — always ready
-        Ok(BridgeTxPermit {
-            swift_vtable: self.swift_vtable,
+    // r[impl link.tx.reserve]
+    // r[impl link.tx.cancel-safe]
+    async fn reserve(&self) -> io::Result<Self::Permit> {
+        self.endpoint.peer()?;
+        Ok(FfiLinkTxPermit {
+            endpoint: self.endpoint,
         })
     }
 
-    async fn close(self) -> std::io::Result<()> {
-        // Don't drop the vtable here — the handle owns it
+    async fn close(self) -> io::Result<()> {
         Ok(())
     }
 }
 
-impl LinkTxPermit for BridgeTxPermit {
-    type Slot = BridgeWriteSlot;
+impl LinkTxPermit for FfiLinkTxPermit {
+    type Slot = FfiWriteSlot;
 
-    fn alloc(self, len: usize) -> std::io::Result<Self::Slot> {
-        Ok(BridgeWriteSlot {
+    // r[impl link.tx.alloc.limits]
+    // r[impl link.message.empty]
+    fn alloc(self, len: usize) -> io::Result<Self::Slot> {
+        Ok(FfiWriteSlot {
+            endpoint: self.endpoint,
             buf: vec![0u8; len],
-            swift_vtable: self.swift_vtable,
         })
     }
 }
 
-impl WriteSlot for BridgeWriteSlot {
+impl WriteSlot for FfiWriteSlot {
+    // r[impl link.tx.slot.len]
     fn as_mut_slice(&mut self) -> &mut [u8] {
         &mut self.buf
     }
 
+    // r[impl link.tx.commit]
     fn commit(self) {
-        let vtable = unsafe { &*self.swift_vtable };
-        // We pass a no-op release since Swift will copy the data anyway
-        unsafe {
-            (vtable.recv_fn)(
-                vtable.ctx,
-                self.buf.as_ptr(),
-                self.buf.len(),
-                noop_release,
-                std::ptr::null_mut(),
-            );
+        self.endpoint
+            .send_bytes(self.buf)
+            .expect("ffi peer must be attached before commit");
+    }
+}
+
+#[derive(Debug)]
+pub struct FfiLinkRxError;
+
+impl std::fmt::Display for FfiLinkRxError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ffi link receive error")
+    }
+}
+
+impl std::error::Error for FfiLinkRxError {}
+
+impl LinkRx for FfiLinkRx {
+    type Error = FfiLinkRxError;
+
+    // r[impl link.rx.recv]
+    fn recv(
+        &mut self,
+    ) -> impl std::future::Future<Output = Result<Option<Backing>, Self::Error>> + Send + '_ {
+        async move {
+            let frame = poll_fn(|cx| self.endpoint.poll_recv(cx)).await;
+            let peer = self.endpoint.peer().map_err(|_| FfiLinkRxError)?;
+            Ok(Some(Backing::shared(Arc::new(FfiBacking {
+                frame,
+                free: peer.free,
+            }))))
         }
     }
 }
 
-unsafe extern "C" fn noop_release(_ctx: *mut ()) {}
-
-#[derive(Debug)]
-pub struct BridgeLinkRxError;
-
-impl std::fmt::Display for BridgeLinkRxError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "bridge link closed")
-    }
-}
-
-impl std::error::Error for BridgeLinkRxError {}
-
-impl LinkRx for BridgeLinkRx {
-    type Error = BridgeLinkRxError;
-
-    async fn recv(&mut self) -> Result<Option<Backing>, Self::Error> {
-        poll_fn(|cx| {
-            if let Some(data) = self.mailbox.queue.lock().unwrap().pop_front() {
-                return std::task::Poll::Ready(Ok(Some(Backing::Boxed(data.into_boxed_slice()))));
+#[macro_export]
+macro_rules! declare_link_endpoint {
+    ($vis:vis mod $module:ident { export = $export:ident; }) => {
+        $vis mod $module {
+            fn __vox_link_vtable() -> &'static $crate::vox_link_vtable {
+                &__VOX_LINK_VTABLE
             }
-            if self.mailbox.closed.load(Ordering::Acquire) {
-                return std::task::Poll::Ready(Ok(None));
+
+            static __ENDPOINT: $crate::Endpoint = $crate::Endpoint::new(__vox_link_vtable);
+
+            unsafe extern "C" fn __vox_send(buf: *const u8, len: usize) {
+                $crate::__endpoint_send(&__ENDPOINT, buf, len);
             }
-            *self.mailbox.waker.lock().unwrap() = Some(cx.waker().clone());
-            if let Some(data) = self.mailbox.queue.lock().unwrap().pop_front() {
-                return std::task::Poll::Ready(Ok(Some(Backing::Boxed(data.into_boxed_slice()))));
+
+            unsafe extern "C" fn __vox_free(buf: *const u8) {
+                $crate::__endpoint_free(&__ENDPOINT, buf);
             }
-            if self.mailbox.closed.load(Ordering::Acquire) {
-                return std::task::Poll::Ready(Ok(None));
+
+            unsafe extern "C" fn __vox_attach(peer: *const $crate::vox_link_vtable) {
+                $crate::__endpoint_attach(&__ENDPOINT, peer);
             }
-            std::task::Poll::Pending
-        })
-        .await
-    }
-}
 
-// ---------------------------------------------------------------------------
-// C-ABI exports
-// ---------------------------------------------------------------------------
+            static __VOX_LINK_VTABLE: $crate::vox_link_vtable = $crate::vox_link_vtable {
+                send: __vox_send,
+                free: __vox_free,
+                attach: __vox_attach,
+            };
 
-/// Create a bridge link.
-///
-/// `swift_vtable` is the vtable Rust will use to send frames TO Swift.
-/// Rust takes ownership of the vtable (will call `drop_fn` on destroy).
-///
-/// Returns an opaque handle. The caller must:
-/// 1. Call `vox_ffi_link_rust_vtable` to get the vtable for Swift→Rust.
-/// 2. On the Rust side, call `vox_ffi_link_take_link` to get the vox Link.
-/// 3. Call `vox_ffi_link_destroy` when done.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn vox_ffi_link_create(swift_vtable: FfiVtable) -> *mut VoxFfiBridgeHandle {
-    let rust_rx = Mailbox::new();
+            pub fn vtable() -> &'static $crate::vox_link_vtable {
+                __vox_link_vtable()
+            }
 
-    // Create the BridgeLink — it borrows the swift_vtable pointer,
-    // which will live inside the handle.
-    let handle = Box::new(VoxFfiBridgeHandle {
-        rust_rx: Arc::clone(&rust_rx),
-        swift_vtable: Some(swift_vtable),
-        link: None, // set after we have a stable pointer to the vtable
-    });
+            pub fn connect(
+                peer: &'static $crate::vox_link_vtable,
+            ) -> std::io::Result<$crate::FfiLink> {
+                __ENDPOINT.connect(peer)
+            }
 
-    let handle_ptr = Box::into_raw(handle);
+            pub async fn accept() -> std::io::Result<$crate::FfiLink> {
+                __ENDPOINT.accept().await
+            }
 
-    // Now that the handle is at a stable address, create the BridgeLink
-    // pointing at the vtable inside the handle.
-    let vtable_ptr = unsafe { (*handle_ptr).swift_vtable.as_ref().unwrap() as *const FfiVtable };
-    unsafe {
-        (*handle_ptr).link = Some(BridgeLink {
-            rust_rx,
-            swift_vtable: vtable_ptr,
-        });
-    }
-
-    handle_ptr
-}
-
-/// Get the vtable that Swift should use to send frames into Rust.
-///
-/// The returned vtable is valid until `vox_ffi_link_destroy` is called.
-/// Swift must NOT free or drop this — it points into the handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn vox_ffi_link_rust_vtable(handle: *mut VoxFfiBridgeHandle) -> FfiVtable {
-    let handle = unsafe { &*handle };
-    let mailbox_ptr = Arc::into_raw(Arc::clone(&handle.rust_rx));
-
-    FfiVtable {
-        ctx: mailbox_ptr as *mut (),
-        recv_fn: rust_rx_recv_fn,
-        drop_fn: rust_rx_drop_fn,
-    }
-}
-
-/// Extract the vox `Link` from the handle for use with a vox session.
-///
-/// Can only be called once. Returns null if already taken.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn vox_ffi_link_take_link(
-    handle: *mut VoxFfiBridgeHandle,
-) -> *mut BridgeLink {
-    let handle = unsafe { &mut *handle };
-    match handle.link.take() {
-        Some(link) => Box::into_raw(Box::new(link)),
-        None => std::ptr::null_mut(),
-    }
-}
-
-/// Destroy the bridge handle.
-///
-/// This drops the Swift vtable (calling its `drop_fn`) and closes
-/// the Rust rx mailbox.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn vox_ffi_link_destroy(handle: *mut VoxFfiBridgeHandle) {
-    if !handle.is_null() {
-        let handle = unsafe { Box::from_raw(handle) };
-        // Closing the mailbox wakes any pending Rust recv
-        handle.rust_rx.close();
-        // Drop of swift_vtable calls drop_fn
-        drop(handle);
-    }
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn $export() -> *const $crate::vox_link_vtable {
+                vtable() as *const $crate::vox_link_vtable
+            }
+        }
+    };
 }
