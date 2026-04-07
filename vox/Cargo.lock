@@ -3644,6 +3644,7 @@ dependencies = [
 name = "vox-ffi"
 version = "0.3.1"
 dependencies = [
+ "tracing",
  "vox-types",
 ]
 

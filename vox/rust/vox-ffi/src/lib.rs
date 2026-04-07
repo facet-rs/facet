@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Poll, Waker};
 
+use tracing::trace;
 use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, SharedBacking, WriteSlot};
 
 pub type vox_status_t = i32;
@@ -178,7 +179,9 @@ impl Endpoint {
     }
 
     pub fn connect(&'static self, peer: &'static vox_link_vtable) -> io::Result<FfiLink> {
+        trace!("ffi endpoint connect: validating peer");
         peer.validate()?;
+        trace!("ffi endpoint connect: attaching peer");
         self.attach_peer(PeerPtr(peer as *const vox_link_vtable))?;
         let attach = peer.attach.ok_or_else(|| {
             io::Error::new(
@@ -186,19 +189,25 @@ impl Endpoint {
                 "ffi vtable missing attach callback",
             )
         })?;
+        trace!("ffi endpoint connect: calling peer attach");
         let status = unsafe { attach(self.vtable() as *const vox_link_vtable) };
         if status != VOX_STATUS_OK {
+            trace!("ffi endpoint connect: peer attach failed status={status}");
             self.clear_peer_if(PeerPtr(peer as *const vox_link_vtable));
             return Err(status_error(status));
         }
+        trace!("ffi endpoint connect: taking link");
         self.take_link()
     }
 
     pub async fn accept(&'static self) -> io::Result<FfiLink> {
+        trace!("ffi endpoint accept: waiting for peer");
         poll_fn(|cx| {
             if self.peer.lock().expect("peer poisoned").is_some() {
+                trace!("ffi endpoint accept: peer present, ready");
                 Poll::Ready(())
             } else {
+                trace!("ffi endpoint accept: no peer yet, parking");
                 *self.accept_waker.lock().expect("accept_waker poisoned") =
                     Some(cx.waker().clone());
                 Poll::Pending
@@ -206,6 +215,7 @@ impl Endpoint {
         })
         .await;
 
+        trace!("ffi endpoint accept: taking link");
         self.take_link()
     }
 
@@ -215,12 +225,14 @@ impl Endpoint {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
+            trace!("ffi endpoint take_link: already connected");
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "ffi endpoint already connected",
             ));
         }
 
+        trace!("ffi endpoint take_link: ok");
         Ok(FfiLink { endpoint: self })
     }
 
@@ -228,13 +240,16 @@ impl Endpoint {
         let mut slot = self.peer.lock().expect("peer poisoned");
         if let Some(existing) = *slot {
             if existing == peer {
+                trace!("ffi endpoint attach_peer: same peer, ok");
                 return Ok(());
             }
+            trace!("ffi endpoint attach_peer: different peer, already attached");
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "ffi endpoint already attached",
             ));
         }
+        trace!("ffi endpoint attach_peer: attached peer={:p}", peer.0);
         *slot = Some(peer);
         if let Some(waker) = self
             .accept_waker
@@ -242,6 +257,7 @@ impl Endpoint {
             .expect("accept_waker poisoned")
             .take()
         {
+            trace!("ffi endpoint attach_peer: waking accept waiter");
             waker.wake();
         }
         Ok(())
@@ -250,6 +266,7 @@ impl Endpoint {
     fn clear_peer_if(&'static self, peer: PeerPtr) {
         let mut slot = self.peer.lock().expect("peer poisoned");
         if slot.as_ref().is_some_and(|existing| *existing == peer) {
+            trace!("ffi endpoint clear_peer_if: cleared");
             *slot = None;
         }
     }
@@ -257,6 +274,7 @@ impl Endpoint {
     fn peer(&'static self) -> io::Result<&'static vox_link_vtable> {
         let peer = *self.peer.lock().expect("peer poisoned");
         let peer = peer.ok_or_else(|| {
+            trace!("ffi endpoint peer: no peer attached");
             io::Error::new(
                 io::ErrorKind::NotConnected,
                 "ffi endpoint has no attached peer",
@@ -279,6 +297,7 @@ impl Endpoint {
                 "ffi vtable missing send callback",
             )
         })?;
+        trace!("ffi endpoint send_bytes: len={len}");
         unsafe { send(ptr, len) };
 
         Ok(())
@@ -286,6 +305,7 @@ impl Endpoint {
 
     fn poll_recv(&'static self, cx: &mut std::task::Context<'_>) -> Poll<IncomingFrame> {
         if let Some(frame) = self.inbox.lock().expect("inbox poisoned").pop_front() {
+            trace!("ffi endpoint poll_recv: got frame len={}", frame.len);
             Poll::Ready(frame)
         } else {
             *self.recv_waker.lock().expect("recv_waker poisoned") = Some(cx.waker().clone());
@@ -296,6 +316,7 @@ impl Endpoint {
 
 #[doc(hidden)]
 pub unsafe fn __endpoint_send(endpoint: &'static Endpoint, buf: *const u8, len: usize) {
+    trace!("ffi __endpoint_send: len={len}");
     endpoint
         .inbox
         .lock()
@@ -307,6 +328,7 @@ pub unsafe fn __endpoint_send(endpoint: &'static Endpoint, buf: *const u8, len: 
         .expect("recv_waker poisoned")
         .take()
     {
+        trace!("ffi __endpoint_send: waking recv waiter");
         waker.wake();
     }
 }
@@ -316,7 +338,9 @@ pub unsafe fn __endpoint_free(endpoint: &'static Endpoint, buf: *const u8) {
     let mut outbound = endpoint.outbound.lock().expect("outbound poisoned");
     if let Some(index) = outbound.iter().position(|loan| loan.ptr == buf) {
         let loan = outbound.swap_remove(index);
-        let _ = loan.storage.len();
+        trace!("ffi __endpoint_free: freed loan len={}", loan.storage.len());
+    } else {
+        trace!("ffi __endpoint_free: loan not found for ptr={buf:p}");
     }
 }
 
@@ -325,22 +349,29 @@ pub unsafe fn __endpoint_attach(
     endpoint: &'static Endpoint,
     peer: *const vox_link_vtable,
 ) -> vox_status_t {
+    trace!("ffi __endpoint_attach: peer={peer:p}");
     let peer = match unsafe { peer.as_ref() } {
-        None => return VOX_STATUS_INVALID_PEER,
+        None => {
+            trace!("ffi __endpoint_attach: null peer");
+            return VOX_STATUS_INVALID_PEER;
+        }
         Some(peer) => peer,
     };
     if let Err(error) = peer.validate() {
+        trace!("ffi __endpoint_attach: validation failed: {error}");
         return match error.kind() {
             io::ErrorKind::InvalidInput => VOX_STATUS_INVALID_PEER,
             io::ErrorKind::InvalidData => VOX_STATUS_BAD_ABI,
             _ => VOX_STATUS_BAD_ABI,
         };
     }
-    match endpoint.attach_peer(PeerPtr(peer as *const vox_link_vtable)) {
+    let result = match endpoint.attach_peer(PeerPtr(peer as *const vox_link_vtable)) {
         Ok(()) => VOX_STATUS_OK,
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => VOX_STATUS_ALREADY_ATTACHED,
         Err(_) => VOX_STATUS_BAD_ABI,
-    }
+    };
+    trace!("ffi __endpoint_attach: result={result}");
+    result
 }
 
 // r[impl link]
@@ -373,6 +404,7 @@ impl Link for FfiLink {
 
     // r[impl link.split]
     fn split(self) -> (Self::Tx, Self::Rx) {
+        trace!("ffi link split");
         (
             FfiLinkTx {
                 endpoint: self.endpoint,
@@ -445,7 +477,11 @@ impl LinkRx for FfiLinkRx {
     // r[impl link.rx.recv]
     async fn recv(&mut self) -> Result<Option<Backing>, Self::Error> {
         let frame = poll_fn(|cx| self.endpoint.poll_recv(cx)).await;
-        let peer = self.endpoint.peer().map_err(|_| FfiLinkRxError)?;
+        trace!("ffi link rx recv: got frame len={}", frame.len);
+        let peer = self.endpoint.peer().map_err(|e| {
+            trace!("ffi link rx recv: peer lookup failed: {e}");
+            FfiLinkRxError
+        })?;
         Ok(Some(Backing::shared(Arc::new(FfiBacking {
             frame,
             free: peer.free.ok_or(FfiLinkRxError)?,

@@ -16,3 +16,4 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 vox-types.workspace = true
+tracing.workspace = true
