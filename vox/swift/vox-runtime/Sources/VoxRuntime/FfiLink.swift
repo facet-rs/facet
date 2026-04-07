@@ -2,17 +2,7 @@ import Darwin
 import Foundation
 
 private func ffiWireLog(_ message: String) {
-    let line = "[swift ffi] \(message)\n"
-    FileHandle.standardError.write(Data(line.utf8))
-    let url = URL(fileURLWithPath: "/tmp/swift-ffi-wire.trace")
-    if !FileManager.default.fileExists(atPath: url.path) {
-        FileManager.default.createFile(atPath: url.path, contents: nil)
-    }
-    if let handle = try? FileHandle(forWritingTo: url) {
-        defer { try? handle.close() }
-        _ = try? handle.seekToEnd()
-        try? handle.write(contentsOf: Data(line.utf8))
-    }
+    debugLog("[ffi] \(message)")
 }
 
 public typealias VoxSendFn = @convention(c) (
