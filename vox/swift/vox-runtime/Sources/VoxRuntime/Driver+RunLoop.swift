@@ -175,8 +175,9 @@ extension Driver {
                         }
 
                     case .retryTick:
-                        // Ignore retry ticks while disconnected
-                        break
+                        // Retry recovery on each tick while disconnected
+                        needsRecoveryAttempt = true
+                        cont.yield(.wake)
 
                     case .incomingMessage, .conduitClosed, .conduitFailed:
                         // These shouldn't happen while disconnected, ignore
