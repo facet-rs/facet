@@ -39,36 +39,50 @@ extension Driver {
     }
 
     /// Try to recover the conduit using the recovery callback.
+    ///
+    /// If the original session had a resume key (peer supports resumption),
+    /// we do a protocol-level resume handshake. If not (peer only supports
+    /// fresh sessions), we do a plain fresh handshake and rely on in-flight
+    /// request replay to recover pending calls.
     private func tryRecoverConduit() async -> (any Conduit)? {
-        guard let recoverAttachment, let localRootSettings, let peerRootSettings, let transport,
-              let sessionResumeKey
+        guard let recoverAttachment, let localRootSettings, let peerRootSettings, let transport
         else {
             traceLog(.resume, "tryRecoverConduit: missing required fields")
             return nil
         }
 
         do {
-            traceLog(.resume, "trying recoverAttachment with session key")
             let attachment = try await recoverAttachment()
-            traceLog(.resume, "recoverAttachment returned; beginning resumed handshake")
 
-            // Perform handshake on the recovered link with resume key
-            let handshake = try await performInitiatorHandshake(
-                link: attachment.link,
-                maxPayloadSize: 1024 * 1024,
-                maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
-                resumable: true,
-                resumeKey: sessionResumeKey
-            )
-
-            guard handshake.localRootSettings == localRootSettings else {
-                throw ConnectionError.protocolViolation(
-                    rule: "local root settings changed across session resume"
+            if let sessionResumeKey {
+                // True protocol-level resume: send our key and expect it echoed back.
+                traceLog(.resume, "trying recoverAttachment with session key")
+                let handshake = try await performInitiatorHandshake(
+                    link: attachment.link,
+                    maxPayloadSize: 1024 * 1024,
+                    maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
+                    resumable: true,
+                    resumeKey: sessionResumeKey
                 )
-            }
-            guard handshake.peerRootSettings == peerRootSettings else {
-                throw ConnectionError.protocolViolation(
-                    rule: "peer root settings changed across session resume"
+                guard handshake.localRootSettings == localRootSettings else {
+                    throw ConnectionError.protocolViolation(
+                        rule: "local root settings changed across session resume"
+                    )
+                }
+                guard handshake.peerRootSettings == peerRootSettings else {
+                    throw ConnectionError.protocolViolation(
+                        rule: "peer root settings changed across session resume"
+                    )
+                }
+            } else {
+                // Fresh-session recovery: peer doesn't support resumption.
+                // Do a plain handshake; in-flight requests will be replayed.
+                traceLog(.resume, "trying recoverAttachment with fresh handshake (no session key)")
+                _ = try await performInitiatorHandshake(
+                    link: attachment.link,
+                    maxPayloadSize: 1024 * 1024,
+                    maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
+                    resumable: false
                 )
             }
 

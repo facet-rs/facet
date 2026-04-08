@@ -68,10 +68,9 @@ func performInitiatorHandshake(
     try await requireIdentityMessageSchema(peerHello.messagePayloadSchemaCbor, on: link)
 
     let sessionResumeKey = peerHello.resumeKey?.bytes
-    if resumable && sessionResumeKey == nil {
-        await sendHandshakeSorry(link, reason: "peer did not advertise session resumption")
-        throw ConnectionError.handshakeFailed("peer did not advertise session resumption")
-    }
+    // If we requested resumable but the peer doesn't echo a resume key, that's
+    // fine: we'll recover by establishing a fresh session and replaying in-flight
+    // requests, rather than doing a true protocol-level resume.
 
     try await sendHandshake(link, .letsGo(HandshakeLetsGo()))
     traceLog(.handshake, "initiator sent LetsGo")
