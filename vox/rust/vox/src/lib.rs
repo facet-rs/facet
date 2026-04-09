@@ -141,7 +141,6 @@ pub use vox_types::{
     ConduitAcceptor,
     ConduitRx,
     ConduitTx,
-    ConduitTxPermit,
     // Types
     ConnectionId,
     ConnectionSettings,
@@ -151,7 +150,6 @@ pub use vox_types::{
     Link,
     LinkRx,
     LinkTx,
-    LinkTxPermit,
     MaybeSend,
     MaybeSync,
     MessageFamily,
@@ -192,7 +190,6 @@ pub use vox_types::{
     TxError,
     VoxError,
     WithTracker,
-    WriteSlot,
     // Channels
     channel,
     ensure_channel_retry_mode,
@@ -255,9 +252,7 @@ pub use vox_core::{
 
 // In-memory links for testing (not available on wasm)
 #[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
-pub use vox_core::{
-    MemoryLink, MemoryLinkRx, MemoryLinkRxError, MemoryLinkTx, MemoryLinkTxPermit, memory_link_pair,
-};
+pub use vox_core::{MemoryLink, MemoryLinkRx, MemoryLinkRxError, MemoryLinkTx, memory_link_pair};
 
 // Handshake (low-level)
 #[cfg(feature = "runtime")]

@@ -18,6 +18,7 @@ struct Config {
     bench_client_cmd: Option<PathBuf>,
     bench_client_args: Vec<OsString>,
     samply: bool,
+    server_samply: bool,
 }
 
 fn workspace_root() -> Result<PathBuf> {
@@ -54,6 +55,7 @@ fn parse_config() -> Result<Config> {
     let mut bench_client_args = Vec::<OsString>::new();
     let mut addr = "local:///tmp/bench.vox".to_string();
     let mut samply = false;
+    let mut server_samply = false;
 
     let mut positionals = Vec::<String>::new();
     let mut args = std::env::args().skip(1);
@@ -97,6 +99,9 @@ fn parse_config() -> Result<Config> {
             "--samply" => {
                 samply = true;
             }
+            "--server-samply" => {
+                server_samply = true;
+            }
             _ if arg.starts_with("--") => {
                 return Err(eyre::eyre!("unknown flag: {arg}"));
             }
@@ -121,6 +126,12 @@ fn parse_config() -> Result<Config> {
         *path = workspace_root.join(path.clone());
     }
 
+    if samply && server_samply {
+        return Err(eyre::eyre!(
+            "--samply and --server-samply are mutually exclusive"
+        ));
+    }
+
     Ok(Config {
         addr,
         subject_mode,
@@ -128,6 +139,7 @@ fn parse_config() -> Result<Config> {
         bench_client_cmd,
         bench_client_args,
         samply,
+        server_samply,
     })
 }
 
@@ -342,6 +354,7 @@ fn run() -> Result<()> {
     let cfg = parse_config()?;
     let workspace_root = workspace_root()?;
     let bench_client_cmd = resolve_bench_client_cmd(&workspace_root, &cfg.bench_client_cmd)?;
+    let samply_output = std::env::var_os("VOX_SAMPLY_OUTPUT").map(PathBuf::from);
 
     eprintln!(
         "starting benchmark runner: addr={}, subject_cmd={}, bench_client_cmd={}",
@@ -354,7 +367,11 @@ fn run() -> Result<()> {
 
     let mut bench_cmd = if cfg.samply {
         let mut cmd = Command::new("samply");
-        cmd.args(["record", "--"]).arg(&bench_client_cmd);
+        cmd.arg("record");
+        if let Some(path) = samply_output.as_ref() {
+            cmd.args(["--save-only", "--no-open", "--output"]).arg(path);
+        }
+        cmd.arg("--").arg(&bench_client_cmd);
         cmd.args(&cfg.bench_client_args);
         cmd
     } else {
@@ -372,14 +389,25 @@ fn run() -> Result<()> {
         sleep(Duration::from_millis(100));
     }
 
-    let mut subject_cmd = Command::new(&cfg.subject_cmd);
+    let mut subject_cmd = if cfg.server_samply {
+        let mut cmd = Command::new("samply");
+        cmd.arg("record");
+        if let Some(path) = samply_output.as_ref() {
+            cmd.args(["--save-only", "--no-open", "--output"]).arg(path);
+        }
+        cmd.arg("--").arg(&cfg.subject_cmd);
+        cmd
+    } else {
+        Command::new(&cfg.subject_cmd)
+    };
     subject_cmd
         .current_dir(&workspace_root)
         .env("SUBJECT_MODE", &cfg.subject_mode)
         .env("PEER_ADDR", &cfg.addr);
     let subject = spawn_child(subject_cmd, "subject")?;
     let mut subject = ChildGuard::new(subject);
-    let mut subject_memory = MemorySampler::start(subject.child_mut().id());
+    let mut subject_memory =
+        (!cfg.server_samply).then(|| MemorySampler::start(subject.child_mut().id()));
 
     if cfg.samply {
         // Subject will exit when the connection closes; samply keeps running
@@ -390,6 +418,36 @@ fn run() -> Result<()> {
             .context("failed to wait for samply")?;
         if !status.success() {
             return Err(exit_error("samply", status));
+        }
+    } else if cfg.server_samply {
+        loop {
+            if let Some(status) = bench_client
+                .child_mut()
+                .try_wait()
+                .context("failed to poll bench_client")?
+            {
+                if !status.success() {
+                    return Err(exit_error("bench_client", status));
+                }
+                break;
+            }
+            if let Some(status) = subject
+                .child_mut()
+                .try_wait()
+                .context("failed to poll samply(subject)")?
+            {
+                return Err(exit_error("samply(subject)", status));
+            }
+            sleep(Duration::from_millis(25));
+        }
+
+        let _ = subject.child_mut().kill();
+        let status = subject
+            .child_mut()
+            .wait()
+            .context("failed to wait for samply(subject)")?;
+        if !status.success() {
+            return Err(exit_error("samply(subject)", status));
         }
     } else {
         // Fail fast if the subject exits before the bench client is done.
@@ -424,8 +482,10 @@ fn run() -> Result<()> {
             let _ = subject.child_mut().wait();
         }
     }
-    let peak_memory = subject_memory.finish();
-    let peak_rss_kib = peak_memory.peak_rss_kib;
+    let peak_rss_kib = subject_memory
+        .as_mut()
+        .map(|sampler| sampler.finish().peak_rss_kib)
+        .unwrap_or(0);
     eprintln!(
         "subject peak_rss_kib={} peak_rss_mib={:.2}",
         peak_rss_kib,

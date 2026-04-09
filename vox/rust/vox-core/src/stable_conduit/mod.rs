@@ -6,8 +6,7 @@ use facet::Facet;
 use facet_core::PtrConst;
 use facet_reflect::Peek;
 use vox_types::{
-    Conduit, ConduitRx, ConduitTx, ConduitTxPermit, Link, LinkRx, LinkTx, LinkTxPermit, MaybeSend,
-    MsgFamily, Payload, SelfRef, WriteSlot,
+    Conduit, ConduitRx, ConduitTx, Link, LinkRx, LinkTx, MaybeSend, MsgFamily, Payload, SelfRef,
 };
 
 use crate::MessagePlan;
@@ -377,12 +376,10 @@ impl<LS: LinkSource> Shared<LS> {
                 if peer_last_received.is_some_and(|last| seq <= last) {
                     continue;
                 }
-                let permit = new_tx.reserve().await.map_err(StableConduitError::Io)?;
-                let mut slot = permit
-                    .alloc(frame_bytes.len())
+                new_tx
+                    .send(frame_bytes.clone())
+                    .await
                     .map_err(StableConduitError::Io)?;
-                slot.as_mut_slice().copy_from_slice(&frame_bytes);
-                slot.commit();
             }
 
             Ok::<_, StableConduitError>((new_tx, new_rx, new_resume_key))
@@ -481,12 +478,9 @@ async fn send_handshake<LTx: LinkTx, M: zerocopy::IntoBytes + zerocopy::Immutabl
     tx: &LTx,
     msg: &M,
 ) -> Result<(), StableConduitError> {
-    let bytes = msg.as_bytes();
-    let permit = tx.reserve().await.map_err(StableConduitError::Io)?;
-    let mut slot = permit.alloc(bytes.len()).map_err(StableConduitError::Io)?;
-    slot.as_mut_slice().copy_from_slice(bytes);
-    slot.commit();
-    Ok(())
+    tx.send(msg.as_bytes().to_vec())
+        .await
+        .map_err(StableConduitError::Io)
 }
 
 async fn recv_handshake<
@@ -565,31 +559,27 @@ where
     LS: MaybeSend + 'static,
 {
     type Msg = F;
-    type Permit<'a>
-        = StableConduitPermit<F, LS>
-    where
-        Self: 'a;
+    type Prepared = StablePreparedMessage;
+    type Error = StableConduitError;
 
-    async fn reserve(&self) -> std::io::Result<Self::Permit<'_>> {
+    fn prepare_send(&self, item: F::Msg<'_>) -> Result<Self::Prepared, Self::Error> {
+        prepare_frame::<F, LS>(&self.shared, item)
+    }
+
+    async fn send_prepared(&self, mut prepared: Self::Prepared) -> Result<(), Self::Error> {
         enum TxReservation<Tx> {
-            CheckedOut { tx: Tx, generation: u64 },
+            CheckedOut { tx: Tx },
             Wait,
             Reconnect { generation: u64 },
         }
 
         loop {
             let reservation = {
-                let mut inner = self
-                    .shared
-                    .lock_inner()
-                    .map_err(|e| std::io::Error::other(e.to_string()))?;
+                let mut inner = self.shared.lock_inner()?;
                 match inner.tx.take() {
                     Some(tx) => {
                         inner.tx_checked_out = true;
-                        TxReservation::CheckedOut {
-                            tx,
-                            generation: inner.link_generation,
-                        }
+                        TxReservation::CheckedOut { tx }
                     }
                     None if inner.tx_checked_out => TxReservation::Wait,
                     None => TxReservation::Reconnect {
@@ -598,64 +588,59 @@ where
                 }
             };
 
-            let (tx, generation) = match reservation {
-                TxReservation::CheckedOut { tx, generation } => (tx, generation),
+            let tx = match reservation {
+                TxReservation::CheckedOut { tx } => tx,
                 TxReservation::Wait => {
                     self.shared.tx_ready.notified().await;
                     continue;
                 }
                 TxReservation::Reconnect { generation } => {
-                    self.shared
-                        .ensure_reconnected(generation)
-                        .await
-                        .map_err(|e| std::io::Error::other(e.to_string()))?;
+                    self.shared.ensure_reconnected(generation).await?;
                     continue;
                 }
             };
 
-            match tx.reserve().await {
-                Ok(link_permit) => {
-                    let restore_ok = {
-                        let mut inner = self
-                            .shared
-                            .lock_inner()
-                            .map_err(|e| std::io::Error::other(e.to_string()))?;
-                        let restore_ok = inner.link_generation == generation && inner.tx.is_none();
-                        if restore_ok {
-                            inner.tx = Some(tx);
-                        }
-                        inner.tx_checked_out = false;
-                        self.shared.tx_ready.notify_waiters();
-                        restore_ok
-                    };
+            if prepared.framed.is_none() {
+                let framed = {
+                    let mut inner = self.shared.lock_inner()?;
+                    let seq = inner.next_send_seq;
+                    inner.next_send_seq = PacketSeq(seq.0.wrapping_add(1));
+                    let ack = inner
+                        .last_received
+                        .map(|max_delivered| PacketAck { max_delivered });
+                    let frame_bytes = encode_frame_bytes(seq, ack, &prepared.item_bytes)?;
+                    (seq, frame_bytes)
+                };
+                prepared.framed = Some(framed);
+            }
 
-                    if !restore_ok {
-                        drop(link_permit);
-                        continue;
-                    }
+            let (seq, frame_bytes) = prepared
+                .framed
+                .as_ref()
+                .expect("stable prepared messages should be framed before send");
 
-                    return Ok(StableConduitPermit {
-                        shared: Arc::clone(&self.shared),
-                        link_permit,
-                        generation,
-                        _phantom: PhantomData,
-                    });
+            let send_result = tx.send(frame_bytes.clone()).await;
+            let generation = {
+                let mut inner = self.shared.lock_inner()?;
+                let generation = inner.link_generation;
+                if inner.tx.is_none() {
+                    inner.tx = Some(tx);
+                }
+                inner.tx_checked_out = false;
+                self.shared.tx_ready.notify_waiters();
+                generation
+            };
+
+            match send_result {
+                Ok(()) => {
+                    self.shared
+                        .lock_inner()?
+                        .replay
+                        .push(*seq, frame_bytes.clone());
+                    return Ok(());
                 }
                 Err(_) => {
-                    {
-                        let mut inner = self
-                            .shared
-                            .lock_inner()
-                            .map_err(|e| std::io::Error::other(e.to_string()))?;
-                        if inner.link_generation == generation {
-                            inner.tx_checked_out = false;
-                        }
-                        self.shared.tx_ready.notify_waiters();
-                    }
-                    self.shared
-                        .ensure_reconnected(generation)
-                        .await
-                        .map_err(|e| std::io::Error::other(e.to_string()))?;
+                    self.shared.ensure_reconnected(generation).await?;
                 }
             }
         }
@@ -676,90 +661,53 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Permit
-// ---------------------------------------------------------------------------
-
-pub struct StableConduitPermit<F: MsgFamily, LS: LinkSource> {
-    shared: Arc<Shared<LS>>,
-    link_permit: <<LS::Link as Link>::Tx as LinkTx>::Permit,
-    generation: u64,
-    _phantom: PhantomData<fn(F)>,
+fn encode_frame_bytes(
+    seq: PacketSeq,
+    ack: Option<PacketAck>,
+    item_bytes: &[u8],
+) -> Result<Vec<u8>, StableConduitError> {
+    let frame = Frame {
+        seq,
+        ack,
+        item: Payload::PostcardBytes(item_bytes),
+    };
+    #[allow(unsafe_code)]
+    let peek = unsafe {
+        Peek::unchecked_new(
+            PtrConst::new((&raw const frame).cast::<u8>()),
+            <Frame<'static> as Facet<'static>>::SHAPE,
+        )
+    };
+    let plan = vox_postcard::peek_to_scatter_plan(peek).map_err(StableConduitError::Encode)?;
+    let mut frame_bytes = vec![0u8; plan.total_size()];
+    plan.write_into(&mut frame_bytes);
+    Ok(frame_bytes)
 }
 
-impl<F: MsgFamily, LS: LinkSource> ConduitTxPermit for StableConduitPermit<F, LS> {
-    type Msg = F;
-    type Error = StableConduitError;
-
-    // r[impl zerocopy.framing.single-pass]
-    // r[impl zerocopy.framing.no-double-serialize]
-    // r[impl zerocopy.scatter]
-    // r[impl zerocopy.scatter.plan]
-    // r[impl zerocopy.scatter.plan.size]
-    // r[impl zerocopy.scatter.write]
-    // r[impl zerocopy.scatter.lifetime]
-    // r[impl zerocopy.scatter.replay]
-    fn send(self, item: F::Msg<'_>) -> Result<(), StableConduitError> {
-        let StableConduitPermit {
-            shared,
-            link_permit,
-            generation,
-            _phantom: _,
-        } = self;
-
-        let (seq, ack) = {
-            let mut inner = shared.lock_inner()?;
-            if inner.link_generation != generation {
-                return Err(StableConduitError::LinkDead);
-            }
-            let seq = inner.next_send_seq;
-            inner.next_send_seq = PacketSeq(seq.0.wrapping_add(1));
-            let ack = inner
-                .last_received
-                .map(|max_delivered| PacketAck { max_delivered });
-            (seq, ack)
-        };
-
-        // Wrap the message as an outgoing Payload — the opaque adapter
-        // serializes its bytes inline, giving us one scatter pass for the
-        // whole frame (header + message bytes).
-        let msg_shape = F::shape();
-        // SAFETY: item is a valid F::Msg<'_> and msg_shape matches it.
-        #[allow(unsafe_code)]
-        let payload = unsafe {
-            Payload::outgoing_unchecked(PtrConst::new((&raw const item).cast::<u8>()), msg_shape)
-        };
-
-        let frame = Frame {
-            seq,
-            ack,
-            item: payload,
-        };
-
-        // SAFETY: Frame<'_> shape is lifetime-independent.
-        #[allow(unsafe_code)]
-        let peek = unsafe {
-            Peek::unchecked_new(
-                PtrConst::new((&raw const frame).cast::<u8>()),
-                <Frame<'static> as Facet<'static>>::SHAPE,
-            )
-        };
-        let plan = vox_postcard::peek_to_scatter_plan(peek).map_err(StableConduitError::Encode)?;
-
-        let mut slot = link_permit
-            .alloc(plan.total_size())
-            .map_err(StableConduitError::Io)?;
-        let slot_bytes = slot.as_mut_slice();
-        plan.write_into(slot_bytes);
-
-        // Keep an owned copy for replay after reconnect.
-        shared.lock_inner()?.replay.push(seq, slot_bytes.to_vec());
-        slot.commit();
-
-        Ok(())
-    }
+pub struct StablePreparedMessage {
+    item_bytes: Vec<u8>,
+    framed: Option<(PacketSeq, Vec<u8>)>,
 }
 
+// r[impl zerocopy.framing.single-pass]
+// r[impl zerocopy.framing.no-double-serialize]
+// r[impl zerocopy.scatter]
+// r[impl zerocopy.scatter.plan]
+// r[impl zerocopy.scatter.plan.size]
+// r[impl zerocopy.scatter.write]
+// r[impl zerocopy.scatter.lifetime]
+// r[impl zerocopy.scatter.replay]
+fn prepare_frame<F: MsgFamily, LS: LinkSource>(
+    shared: &Arc<Shared<LS>>,
+    item: F::Msg<'_>,
+) -> Result<StablePreparedMessage, StableConduitError> {
+    let _ = shared;
+    let item_bytes = vox_postcard::to_vec(&item).map_err(StableConduitError::Encode)?;
+    Ok(StablePreparedMessage {
+        item_bytes,
+        framed: None,
+    })
+}
 // ---------------------------------------------------------------------------
 // Rx
 // ---------------------------------------------------------------------------

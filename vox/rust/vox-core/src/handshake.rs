@@ -1,6 +1,6 @@
 use vox_types::{
-    ConnectionSettings, HandshakeMessage, HandshakeResult, LinkRx, LinkTx, LinkTxPermit,
-    ResumeKeyBytes, Schema, SessionResumeKey, SessionRole, WriteSlot,
+    ConnectionSettings, HandshakeMessage, HandshakeResult, LinkRx, LinkTx, ResumeKeyBytes, Schema,
+    SessionResumeKey, SessionRole,
 };
 
 #[derive(Debug)]
@@ -46,11 +46,7 @@ async fn send_handshake<Tx: LinkTx>(tx: &Tx, msg: &HandshakeMessage) -> Result<(
         handshake_tag(msg),
         bytes.len()
     );
-    let permit = tx.reserve().await.map_err(HandshakeError::Io)?;
-    let mut slot = permit.alloc(bytes.len()).map_err(HandshakeError::Io)?;
-    slot.as_mut_slice().copy_from_slice(&bytes);
-    slot.commit();
-    Ok(())
+    tx.send(bytes).await.map_err(HandshakeError::Io)
 }
 
 /// Receive and decode a CBOR handshake message from a raw link.

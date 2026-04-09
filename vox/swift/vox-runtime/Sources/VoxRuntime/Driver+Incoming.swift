@@ -19,6 +19,8 @@ extension Driver {
         keepaliveRuntime: inout DriverKeepaliveRuntime?
     ) async throws {
         switch msg.payload {
+        case .schemaMessage:
+            break
         case .ping(let ping):
             do {
                 try await conduit.send(.pong(.init(nonce: ping.nonce)))

@@ -1,13 +1,52 @@
 //! WASM in-process transport implementing [`Link`].
 
-use std::cell::RefCell;
 use std::io;
-use std::mem::ManuallyDrop;
 
 use futures_channel::mpsc;
-use futures_util::StreamExt;
-use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
+use futures_util::{StreamExt, lock::Mutex};
+use vox_types::{Backing, Link, LinkRx, LinkTx};
 use wasm_bindgen::prelude::*;
+
+struct ScratchBuffer {
+    buf_tx: mpsc::Sender<Vec<u8>>,
+    buf: Option<Vec<u8>>,
+}
+
+impl ScratchBuffer {
+    fn new(buf_tx: mpsc::Sender<Vec<u8>>, buf: Vec<u8>) -> Self {
+        Self {
+            buf_tx,
+            buf: Some(buf),
+        }
+    }
+}
+
+impl std::ops::Deref for ScratchBuffer {
+    type Target = Vec<u8>;
+
+    fn deref(&self) -> &Self::Target {
+        self.buf
+            .as_ref()
+            .expect("scratch buffer should exist while borrowed")
+    }
+}
+
+impl std::ops::DerefMut for ScratchBuffer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.buf
+            .as_mut()
+            .expect("scratch buffer should exist while mutably borrowed")
+    }
+}
+
+impl Drop for ScratchBuffer {
+    fn drop(&mut self) {
+        if let Some(mut buf) = self.buf.take() {
+            buf.clear();
+            let _ = self.buf_tx.clone().try_send(buf);
+        }
+    }
+}
 
 /// JS-visible handle for an in-process link.
 ///
@@ -40,7 +79,7 @@ impl JsInProcessLink {
                 InProcessLinkTx {
                     on_message,
                     buf_tx,
-                    buf_rx: RefCell::new(buf_rx),
+                    buf_rx: Mutex::new(buf_rx),
                 },
                 InProcessLinkRx { rx: rust_rx },
             )),
@@ -93,111 +132,29 @@ impl Link for InProcessLink {
 /// Sending half of an [`InProcessLink`].
 pub struct InProcessLinkTx {
     on_message: js_sys::Function,
-    /// Returned here after each send to be reused by the next permit.
     buf_tx: mpsc::Sender<Vec<u8>>,
-    /// Awaited to obtain the reusable buffer (and provide backpressure).
-    /// RefCell is safe: wasm is single-threaded, MaybeSync removes Sync bound.
-    buf_rx: RefCell<mpsc::Receiver<Vec<u8>>>,
-}
-
-/// Permit for one outbound send.
-///
-/// Uses `ManuallyDrop` for its fields so that `alloc` can move them out
-/// into `InProcessWriteSlot` without conflicting with the `Drop` impl.
-pub struct InProcessLinkTxPermit {
-    on_message: ManuallyDrop<js_sys::Function>,
-    buf: ManuallyDrop<Vec<u8>>,
-    buf_tx: ManuallyDrop<mpsc::Sender<Vec<u8>>>,
-    consumed: bool,
-}
-
-/// Write slot backed by the reusable send buffer.
-// r[impl zerocopy.send.inprocess]
-pub struct InProcessWriteSlot {
-    on_message: js_sys::Function,
-    buf: Vec<u8>,
-    buf_tx: mpsc::Sender<Vec<u8>>,
-    committed: bool,
+    buf_rx: Mutex<mpsc::Receiver<Vec<u8>>>,
 }
 
 impl LinkTx for InProcessLinkTx {
-    type Permit = InProcessLinkTxPermit;
-
-    async fn reserve(&self) -> io::Result<Self::Permit> {
-        let buf = self
-            .buf_rx
-            .borrow_mut()
-            .next()
-            .await
-            .ok_or_else(|| io::Error::other("in-process send buffer channel closed"))?;
-        Ok(InProcessLinkTxPermit {
-            on_message: ManuallyDrop::new(self.on_message.clone()),
-            buf: ManuallyDrop::new(buf),
-            buf_tx: ManuallyDrop::new(self.buf_tx.clone()),
-            consumed: false,
-        })
+    async fn send(&self, bytes: Vec<u8>) -> io::Result<()> {
+        let scratch = {
+            let mut buf_rx = self.buf_rx.lock().await;
+            buf_rx.next().await
+        }
+        .ok_or_else(|| io::Error::other("in-process send buffer channel closed"))?;
+        let mut scratch = ScratchBuffer::new(self.buf_tx.clone(), scratch);
+        scratch.clear();
+        scratch.extend_from_slice(&bytes);
+        let array = js_sys::Uint8Array::from(scratch.as_slice());
+        self.on_message
+            .call1(&JsValue::NULL, &array)
+            .map_err(|e| io::Error::other(format!("in-process send failed: {e:?}")))?;
+        Ok(())
     }
 
     async fn close(self) -> io::Result<()> {
         Ok(())
-    }
-}
-
-impl LinkTxPermit for InProcessLinkTxPermit {
-    type Slot = InProcessWriteSlot;
-
-    fn alloc(mut self, len: usize) -> io::Result<InProcessWriteSlot> {
-        self.consumed = true;
-        // SAFETY: we set `consumed`, so Drop will not touch these fields.
-        let on_message = unsafe { ManuallyDrop::take(&mut self.on_message) };
-        let mut buf = unsafe { ManuallyDrop::take(&mut self.buf) };
-        let buf_tx = unsafe { ManuallyDrop::take(&mut self.buf_tx) };
-        buf.clear();
-        buf.resize(len, 0);
-        Ok(InProcessWriteSlot {
-            on_message,
-            buf,
-            buf_tx,
-            committed: false,
-        })
-    }
-}
-
-impl Drop for InProcessLinkTxPermit {
-    fn drop(&mut self) {
-        if self.consumed {
-            return;
-        }
-        // SAFETY: not consumed, so fields are still valid.
-        unsafe {
-            let buf = ManuallyDrop::take(&mut self.buf);
-            let _ = self.buf_tx.try_send(buf);
-            ManuallyDrop::drop(&mut self.on_message);
-            ManuallyDrop::drop(&mut self.buf_tx);
-        }
-    }
-}
-
-impl WriteSlot for InProcessWriteSlot {
-    fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.buf
-    }
-
-    fn commit(mut self) {
-        self.committed = true;
-        let array = js_sys::Uint8Array::from(self.buf.as_slice());
-        let _ = self.on_message.call1(&JsValue::NULL, &array);
-        self.buf.clear();
-        let _ = self.buf_tx.try_send(std::mem::take(&mut self.buf));
-    }
-}
-
-impl Drop for InProcessWriteSlot {
-    fn drop(&mut self) {
-        if self.committed {
-            return;
-        }
-        let _ = self.buf_tx.try_send(std::mem::take(&mut self.buf));
     }
 }
 

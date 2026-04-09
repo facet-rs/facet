@@ -44,38 +44,30 @@ pub trait Conduit {
 
 /// Sending half of a [`Conduit`].
 ///
-/// Permit-based: `reserve()` is the backpressure point, `permit.send()`
-/// serializes and writes.
-// r[impl conduit.permit]
+/// Sending is split into a synchronous preparation phase and an async enqueue
+/// phase. Preparation may borrow from the input value, but it must produce an
+/// owned representation that survives across the first await point.
 pub trait ConduitTx {
     type Msg: MsgFamily;
-    type Permit<'a>: for<'m> ConduitTxPermit<Msg = Self::Msg> + MaybeSend
-    where
-        Self: 'a;
+    type Prepared: MaybeSend + 'static;
+    type Error: std::error::Error + MaybeSend + 'static;
 
-    /// Reserve capacity for one outbound message.
-    ///
-    /// Backpressure lives here — this may block waiting for:
-    /// - StableConduit: replay buffer capacity (bounded outstanding)
-    /// - Flow control from the peer
-    ///
-    /// Dropping the permit without sending releases the reservation.
-    fn reserve(&self) -> impl Future<Output = std::io::Result<Self::Permit<'_>>> + MaybeSend + '_;
+    /// Serialize one outbound message into an owned representation.
+    fn prepare_send(
+        &self,
+        item: <Self::Msg as MsgFamily>::Msg<'_>,
+    ) -> Result<Self::Prepared, Self::Error>;
+
+    /// Enqueue a previously prepared outbound message.
+    fn send_prepared(
+        &self,
+        prepared: Self::Prepared,
+    ) -> impl Future<Output = Result<(), Self::Error>> + MaybeSend + '_;
 
     /// Graceful close of the outbound direction.
     async fn close(self) -> std::io::Result<()>
     where
         Self: Sized;
-}
-
-/// Permit for sending exactly one message through a [`ConduitTx`].
-// r[impl conduit.permit.send]
-// r[impl zerocopy.framing.conduit]
-pub trait ConduitTxPermit {
-    type Msg: MsgFamily;
-    type Error: std::error::Error + MaybeSend + 'static;
-
-    fn send(self, item: <Self::Msg as MsgFamily>::Msg<'_>) -> Result<(), Self::Error>;
 }
 
 /// Receiving half of a [`Conduit`].

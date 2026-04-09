@@ -110,16 +110,14 @@ impl Link for KillableMemoryLink {
 }
 
 impl LinkTx for KillableMemoryLinkTx {
-    type Permit = vox::MemoryLinkTxPermit;
-
-    async fn reserve(&self) -> std::io::Result<Self::Permit> {
+    async fn send(&self, bytes: Vec<u8>) -> std::io::Result<()> {
         if self.kill_switch.is_tripped() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionReset,
                 "link intentionally cut",
             ));
         }
-        self.inner.reserve().await
+        self.inner.send(bytes).await
     }
 
     async fn close(self) -> std::io::Result<()> {

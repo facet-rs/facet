@@ -1,4 +1,4 @@
-use vox_types::{Link, LinkRx, LinkTx, LinkTxPermit, SplitLink, TransportMode, WriteSlot};
+use vox_types::{Link, LinkRx, LinkTx, SplitLink, TransportMode};
 use zerocopy::FromBytes;
 use zerocopy::little_endian::U32 as LeU32;
 
@@ -235,14 +235,9 @@ async fn send_message<LTx: LinkTx, M: zerocopy::IntoBytes + zerocopy::Immutable>
     tx: &LTx,
     message: &M,
 ) -> Result<(), TransportPrologueError> {
-    let bytes = message.as_bytes();
-    let permit = tx.reserve().await.map_err(TransportPrologueError::Io)?;
-    let mut slot = permit
-        .alloc(bytes.len())
-        .map_err(TransportPrologueError::Io)?;
-    slot.as_mut_slice().copy_from_slice(bytes);
-    slot.commit();
-    Ok(())
+    tx.send(message.as_bytes().to_vec())
+        .await
+        .map_err(TransportPrologueError::Io)
 }
 
 async fn recv_message<

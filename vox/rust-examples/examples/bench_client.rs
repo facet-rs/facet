@@ -997,7 +997,7 @@ async fn run_ffi_bench(cfg: Config) -> Result<()> {
     std::process::exit(0);
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let cfg = parse_config()?;
 

@@ -20,7 +20,7 @@ use vox_core::{
     acceptor_on, acceptor_transport, memory_link_pair,
 };
 use vox_stream::StreamLink;
-use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, RequestCall, SelfRef, WriteSlot};
+use vox_types::{Backing, Link, LinkRx, LinkTx, RequestCall, SelfRef};
 use vox_websocket::WsLink;
 
 const SUBJECT_WAIT_HEARTBEAT: Duration = Duration::from_millis(500);
@@ -153,49 +153,16 @@ struct BreakableLinkTx {
     tx: moire::sync::mpsc::Sender<Option<Vec<u8>>>,
 }
 
-struct BreakableLinkTxPermit {
-    permit: moire::sync::mpsc::OwnedPermit<Option<Vec<u8>>>,
-}
-
 impl LinkTx for BreakableLinkTx {
-    type Permit = BreakableLinkTxPermit;
-
-    async fn reserve(&self) -> std::io::Result<Self::Permit> {
-        let permit = self.tx.clone().reserve_owned().await.map_err(|_| {
+    async fn send(&self, bytes: Vec<u8>) -> std::io::Result<()> {
+        self.tx.clone().send(Some(bytes)).await.map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::ConnectionReset, "receiver dropped")
-        })?;
-        Ok(BreakableLinkTxPermit { permit })
+        })
     }
 
     async fn close(self) -> std::io::Result<()> {
         drop(self.tx);
         Ok(())
-    }
-}
-
-struct BreakableWriteSlot {
-    buf: Vec<u8>,
-    permit: moire::sync::mpsc::OwnedPermit<Option<Vec<u8>>>,
-}
-
-impl LinkTxPermit for BreakableLinkTxPermit {
-    type Slot = BreakableWriteSlot;
-
-    fn alloc(self, len: usize) -> std::io::Result<Self::Slot> {
-        Ok(BreakableWriteSlot {
-            buf: vec![0u8; len],
-            permit: self.permit,
-        })
-    }
-}
-
-impl WriteSlot for BreakableWriteSlot {
-    fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.buf
-    }
-
-    fn commit(self) {
-        drop(self.permit.send(Some(self.buf)));
     }
 }
 
@@ -235,16 +202,9 @@ where
         let Some(frame) = rx.recv().await.map_err(|e| format!("recv frame: {e}"))? else {
             return Ok(());
         };
-        let permit = tx
-            .reserve()
+        tx.send(frame.as_bytes().to_vec())
             .await
-            .map_err(|e| format!("reserve frame: {e}"))?;
-        let bytes = frame.as_bytes();
-        let mut slot = permit
-            .alloc(bytes.len())
-            .map_err(|e| format!("alloc frame: {e}"))?;
-        slot.as_mut_slice().copy_from_slice(bytes);
-        slot.commit();
+            .map_err(|e| format!("send frame: {e}"))?;
     }
 }
 

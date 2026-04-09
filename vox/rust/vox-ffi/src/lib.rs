@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Poll, Waker};
 
 use tracing::trace;
-use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, SharedBacking, WriteSlot};
+use vox_types::{Backing, Link, LinkRx, LinkTx, SharedBacking};
 
 pub type vox_status_t = i32;
 pub type vox_send_fn = unsafe extern "C" fn(buf: *const u8, len: usize);
@@ -75,6 +75,10 @@ impl vox_link_vtable {
         Ok(())
     }
 
+    /// # Safety
+    ///
+    /// `peer` must point to a valid `FfiVtable` instance that remains alive
+    /// for the duration of the returned reference.
     pub unsafe fn validate_ptr(peer: *const Self) -> io::Result<&'static Self> {
         let peer = unsafe { peer.as_ref() }.ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "ffi vtable pointer was null")
@@ -389,15 +393,6 @@ pub struct FfiLinkRx {
     endpoint: &'static Endpoint,
 }
 
-pub struct FfiLinkTxPermit {
-    endpoint: &'static Endpoint,
-}
-
-pub struct FfiWriteSlot {
-    endpoint: &'static Endpoint,
-    buf: Vec<u8>,
-}
-
 impl Link for FfiLink {
     type Tx = FfiLinkTx;
     type Rx = FfiLinkRx;
@@ -417,46 +412,13 @@ impl Link for FfiLink {
 }
 
 impl LinkTx for FfiLinkTx {
-    type Permit = FfiLinkTxPermit;
-
-    // r[impl link.tx.reserve]
-    // r[impl link.tx.cancel-safe]
-    async fn reserve(&self) -> io::Result<Self::Permit> {
+    async fn send(&self, bytes: Vec<u8>) -> io::Result<()> {
         self.endpoint.peer()?;
-        Ok(FfiLinkTxPermit {
-            endpoint: self.endpoint,
-        })
+        self.endpoint.send_bytes(bytes)
     }
 
     async fn close(self) -> io::Result<()> {
         Ok(())
-    }
-}
-
-impl LinkTxPermit for FfiLinkTxPermit {
-    type Slot = FfiWriteSlot;
-
-    // r[impl link.tx.alloc.limits]
-    // r[impl link.message.empty]
-    fn alloc(self, len: usize) -> io::Result<Self::Slot> {
-        Ok(FfiWriteSlot {
-            endpoint: self.endpoint,
-            buf: vec![0u8; len],
-        })
-    }
-}
-
-impl WriteSlot for FfiWriteSlot {
-    // r[impl link.tx.slot.len]
-    fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.buf
-    }
-
-    // r[impl link.tx.commit]
-    fn commit(self) {
-        self.endpoint
-            .send_bytes(self.buf)
-            .expect("ffi peer must be attached before commit");
     }
 }
 

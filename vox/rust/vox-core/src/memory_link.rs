@@ -1,5 +1,5 @@
 use moire::sync::mpsc;
-use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
+use vox_types::{Backing, Link, LinkRx, LinkTx};
 
 /// In-process [`Link`] backed by tokio mpsc channels.
 ///
@@ -45,53 +45,18 @@ pub struct MemoryLinkTx {
     tx: mpsc::Sender<Vec<u8>>,
 }
 
-pub struct MemoryLinkTxPermit {
-    permit: mpsc::OwnedPermit<Vec<u8>>,
-}
-
 impl LinkTx for MemoryLinkTx {
-    type Permit = MemoryLinkTxPermit;
-
-    async fn reserve(&self) -> std::io::Result<Self::Permit> {
+    async fn send(&self, bytes: Vec<u8>) -> std::io::Result<()> {
         let permit = self.tx.clone().reserve_owned().await.map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::ConnectionReset, "receiver dropped")
         })?;
-        Ok(MemoryLinkTxPermit { permit })
+        drop(permit.send(bytes));
+        Ok(())
     }
 
     async fn close(self) -> std::io::Result<()> {
         drop(self.tx);
         Ok(())
-    }
-}
-
-impl LinkTxPermit for MemoryLinkTxPermit {
-    type Slot = MemoryWriteSlot;
-
-    fn alloc(self, len: usize) -> std::io::Result<Self::Slot> {
-        Ok(MemoryWriteSlot {
-            buf: vec![0u8; len],
-            permit: self.permit,
-        })
-    }
-}
-
-/// Write slot for [`MemoryLinkTx`].
-///
-/// Holds a `Vec<u8>` buffer and a channel permit. Writing fills the buffer;
-/// commit sends it through the channel.
-pub struct MemoryWriteSlot {
-    buf: Vec<u8>,
-    permit: mpsc::OwnedPermit<Vec<u8>>,
-}
-
-impl WriteSlot for MemoryWriteSlot {
-    fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.buf
-    }
-
-    fn commit(self) {
-        drop(self.permit.send(self.buf));
     }
 }
 

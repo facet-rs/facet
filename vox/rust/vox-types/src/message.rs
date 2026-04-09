@@ -4,7 +4,9 @@
 
 use std::marker::PhantomData;
 
-use crate::{CborPayload, ChannelId, ConnectionId, Metadata, MethodId, RequestId};
+use crate::{
+    BindingDirection, CborPayload, ChannelId, ConnectionId, Metadata, MethodId, RequestId,
+};
 use facet::{Facet, FacetOpaqueAdapter, OpaqueDeserialize, OpaqueSerialize, PtrConst, Shape};
 use vox_schema::opaque_encoded_borrowed;
 
@@ -174,6 +176,21 @@ structstruck::strike! {
                             },
                     }
                 ),
+
+                /// Advertise schemas for a method binding on this connection.
+                ///
+                /// This is sent ahead of payload-bearing messages so a batch can
+                /// establish all required schema bindings before their first use.
+                SchemaMessage(pub struct SchemaMessage {
+                    /// Unique method identifier the binding applies to.
+                    pub method_id: MethodId,
+
+                    /// Whether the binding applies to request args or responses.
+                    pub direction: BindingDirection,
+
+                    /// CBOR-encoded schema payload for this binding.
+                    pub schemas: CborPayload,
+                }),
 
                 // ========================================================================
                 // Channels

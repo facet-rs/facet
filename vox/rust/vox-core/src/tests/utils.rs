@@ -8,9 +8,9 @@ use facet::Facet;
 use moire::sync::mpsc;
 use vox_types::{
     Backing, Conduit, ConduitRx, ConnectionSettings, Handler, HandshakeResult, Link, LinkRx,
-    LinkTx, LinkTxPermit, Message, MessageFamily, MessagePayload, MethodId, Parity, Payload,
-    ReplySink, RequestCall, RequestResponse, RetryPolicy, SelfRef, SessionResumeKey, SessionRole,
-    Tx, WriteSlot, metadata_operation_id,
+    LinkTx, Message, MessageFamily, MessagePayload, MethodId, Parity, Payload, ReplySink,
+    RequestCall, RequestResponse, RetryPolicy, SelfRef, SessionResumeKey, SessionRole, Tx,
+    metadata_operation_id,
 };
 
 use crate::{
@@ -119,49 +119,18 @@ pub(crate) struct BreakableLinkTx {
     tx: mpsc::Sender<Option<Vec<u8>>>,
 }
 
-pub(crate) struct BreakableLinkTxPermit {
-    permit: mpsc::OwnedPermit<Option<Vec<u8>>>,
-}
-
 impl LinkTx for BreakableLinkTx {
-    type Permit = BreakableLinkTxPermit;
-
-    async fn reserve(&self) -> std::io::Result<Self::Permit> {
+    async fn send(&self, bytes: Vec<u8>) -> std::io::Result<()> {
         let permit = self.tx.clone().reserve_owned().await.map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::ConnectionReset, "receiver dropped")
         })?;
-        Ok(BreakableLinkTxPermit { permit })
+        drop(permit.send(Some(bytes)));
+        Ok(())
     }
 
     async fn close(self) -> std::io::Result<()> {
         drop(self.tx);
         Ok(())
-    }
-}
-
-pub(crate) struct BreakableWriteSlot {
-    buf: Vec<u8>,
-    permit: mpsc::OwnedPermit<Option<Vec<u8>>>,
-}
-
-impl LinkTxPermit for BreakableLinkTxPermit {
-    type Slot = BreakableWriteSlot;
-
-    fn alloc(self, len: usize) -> std::io::Result<Self::Slot> {
-        Ok(BreakableWriteSlot {
-            buf: vec![0u8; len],
-            permit: self.permit,
-        })
-    }
-}
-
-impl WriteSlot for BreakableWriteSlot {
-    fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.buf
-    }
-
-    fn commit(self) {
-        drop(self.permit.send(Some(self.buf)));
     }
 }
 

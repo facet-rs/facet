@@ -7,7 +7,7 @@ use vox_core::{
     ConnectionAcceptor, ConnectionRequest, FromVoxSession, NoopClient, PendingConnection,
     SessionError, TransportMode, initiator,
 };
-use vox_types::{Link, LinkTx, MaybeSend, MaybeSync, Metadata, metadata_into_owned};
+use vox_types::{Link, MaybeSend, MaybeSync, Metadata, metadata_into_owned};
 
 mod error;
 pub use error::ServeError;
@@ -403,7 +403,6 @@ pub async fn serve_listener<L>(
 where
     L: VoxListener,
     <L::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
-    <<L::Link as Link>::Tx as LinkTx>::Permit: MaybeSend,
     <L::Link as Link>::Rx: MaybeSend + 'static,
 {
     let acceptor: Arc<dyn ConnectionAcceptor> = Arc::new(acceptor);

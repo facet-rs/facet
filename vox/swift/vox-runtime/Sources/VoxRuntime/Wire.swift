@@ -466,6 +466,32 @@ public struct RequestMessage: Sendable, Equatable {
   }
 }
 
+public struct SchemaMessage: Sendable, Equatable {
+  public var methodId: UInt64
+  public var direction: BindingDirection
+  public var schemas: [UInt8]
+
+  public init(methodId: UInt64, direction: BindingDirection, schemas: [UInt8]) {
+    self.methodId = methodId
+    self.direction = direction
+    self.schemas = schemas
+  }
+
+  func encode(into buffer: inout ByteBuffer) {
+    encodeVarint(methodId, into: &buffer)
+    direction.encode(into: &buffer)
+    encodeByteSeq(schemas, into: &buffer)
+  }
+
+  static func decode(from buffer: inout ByteBuffer) throws -> Self {
+    let methodId = try decodeVarint(from: &buffer)
+    let direction = try BindingDirection.decode(from: &buffer)
+    var _schemasBuf = try decodeWireBytes(from: &buffer)
+    let schemas = _schemasBuf.readBytes(length: _schemasBuf.readableBytes) ?? []
+    return .init(methodId: methodId, direction: direction, schemas: schemas)
+  }
+}
+
 public struct ChannelItem: Sendable, Equatable {
   public var item: OpaquePayload
 
@@ -608,6 +634,7 @@ public enum MessagePayload: Sendable, Equatable {
   case connectionReject(ConnectionReject)
   case connectionClose(ConnectionClose)
   case requestMessage(RequestMessage)
+  case schemaMessage(SchemaMessage)
   case channelMessage(ChannelMessage)
   case ping(Ping)
   case pong(Pong)
@@ -632,14 +659,17 @@ public enum MessagePayload: Sendable, Equatable {
     case .requestMessage(let val):
       encodeVarint(UInt64(5), into: &buffer)
       val.encode(into: &buffer)
-    case .channelMessage(let val):
+    case .schemaMessage(let val):
       encodeVarint(UInt64(6), into: &buffer)
       val.encode(into: &buffer)
-    case .ping(let val):
+    case .channelMessage(let val):
       encodeVarint(UInt64(7), into: &buffer)
       val.encode(into: &buffer)
-    case .pong(let val):
+    case .ping(let val):
       encodeVarint(UInt64(8), into: &buffer)
+      val.encode(into: &buffer)
+    case .pong(let val):
+      encodeVarint(UInt64(9), into: &buffer)
       val.encode(into: &buffer)
     }
   }
@@ -666,12 +696,15 @@ public enum MessagePayload: Sendable, Equatable {
       let _newtype_val = try RequestMessage.decode(from: &buffer)
       return .requestMessage(_newtype_val)
     case 6:
+      let _newtype_val = try SchemaMessage.decode(from: &buffer)
+      return .schemaMessage(_newtype_val)
+    case 7:
       let _newtype_val = try ChannelMessage.decode(from: &buffer)
       return .channelMessage(_newtype_val)
-    case 7:
+    case 8:
       let _newtype_val = try Ping.decode(from: &buffer)
       return .ping(_newtype_val)
-    case 8:
+    case 9:
       let _newtype_val = try Pong.decode(from: &buffer)
       return .pong(_newtype_val)
     default:
@@ -742,6 +775,10 @@ extension Message {
 
   public static func requestMessage(connId: UInt64, _ value: RequestMessage) -> Message {
     Message(connectionId: connId, payload: .requestMessage(value))
+  }
+
+  public static func schemaMessage(connId: UInt64, _ value: SchemaMessage) -> Message {
+    Message(connectionId: connId, payload: .schemaMessage(value))
   }
 
   public static func channelMessage(connId: UInt64, _ value: ChannelMessage) -> Message {

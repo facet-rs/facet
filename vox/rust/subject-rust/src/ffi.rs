@@ -95,7 +95,7 @@ fn bootstrap_service_once(peer: *const vox_link_vtable) {
     let peer = peer as usize;
     thread::spawn(move || {
         ffi_log("[subject-rust ffi] runtime thread: starting");
-        let runtime = Builder::new_current_thread().enable_all().build();
+        let runtime = Builder::new_multi_thread().enable_all().build();
         let Ok(runtime) = runtime else {
             ffi_log("[subject-rust ffi] runtime thread: failed to create tokio runtime");
             return;

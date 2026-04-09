@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use vox_types::{Conduit, ConduitRx, ConduitTx, ConduitTxPermit, LinkRx, LinkTx, MsgFamily};
+use vox_types::{Conduit, ConduitRx, ConduitTx, LinkRx, LinkTx, MsgFamily};
 
 use crate::{MemoryLink, memory_link_pair};
 
@@ -74,10 +74,14 @@ async fn send_frame<LTx: LinkTx>(tx: &LTx, seq: u32, ack: Option<u32>, item: &st
     };
     let plan = vox_postcard::peek_to_scatter_plan(peek).unwrap();
 
-    let permit = tx.reserve().await.unwrap();
-    let mut slot = permit.alloc(plan.total_size()).unwrap();
-    plan.write_into(slot.as_mut_slice());
-    slot.commit();
+    let mut frame_bytes = vec![0u8; plan.total_size()];
+    plan.write_into(&mut frame_bytes);
+    tx.send(frame_bytes).await.unwrap();
+}
+
+async fn send_item<Tx: ConduitTx<Msg = StringFamily>>(tx: &Tx, item: &str) {
+    let prepared = tx.prepare_send(item.to_string()).unwrap();
+    tx.send_prepared(prepared).await.unwrap();
 }
 
 // Decode a raw frame payload into (seq, ack_max, item_string).
@@ -129,8 +133,7 @@ async fn stable_send_recv_single() {
     let client = StableConduit::<StringFamily, _>::new(source).await.unwrap();
     let (client_tx, _client_rx) = client.split();
 
-    let permit = client_tx.reserve().await.unwrap();
-    permit.send("hello".to_string()).unwrap();
+    send_item(&client_tx, "hello").await;
 
     let (seq, item) = server.await.unwrap();
     assert_eq!(seq, 0);
@@ -220,18 +223,8 @@ async fn reconnect_replays_unacked_frames() {
     let (client_tx, mut client_rx) = client.split();
 
     // Send A and B.
-    client_tx
-        .reserve()
-        .await
-        .unwrap()
-        .send("alpha".to_string())
-        .unwrap();
-    client_tx
-        .reserve()
-        .await
-        .unwrap()
-        .send("beta".to_string())
-        .unwrap();
+    send_item(&client_tx, "alpha").await;
+    send_item(&client_tx, "beta").await;
 
     // Receive the ack frame from server1. This trims seq 0 from replay buffer,
     // leaving only seq 1 (beta) buffered.
@@ -241,12 +234,7 @@ async fn reconnect_replays_unacked_frames() {
 
     // server1 drops — recv triggers reconnect transparently.
     // After reconnect, client replays beta, then we send gamma.
-    client_tx
-        .reserve()
-        .await
-        .unwrap()
-        .send("gamma".to_string())
-        .unwrap();
+    send_item(&client_tx, "gamma").await;
 
     server1.await.unwrap();
     server2.await.unwrap();
@@ -297,29 +285,14 @@ async fn reconnect_no_replay_when_all_acked() {
     let client = StableConduit::<StringFamily, _>::new(source).await.unwrap();
     let (client_tx, mut client_rx) = client.split();
 
-    client_tx
-        .reserve()
-        .await
-        .unwrap()
-        .send("alpha".to_string())
-        .unwrap();
-    client_tx
-        .reserve()
-        .await
-        .unwrap()
-        .send("beta".to_string())
-        .unwrap();
+    send_item(&client_tx, "alpha").await;
+    send_item(&client_tx, "beta").await;
 
     let msg = client_rx.recv().await.unwrap().unwrap();
     assert_eq!(&**msg.get(), "ack-both");
 
     // Reconnect happens transparently here.
-    client_tx
-        .reserve()
-        .await
-        .unwrap()
-        .send("gamma".to_string())
-        .unwrap();
+    send_item(&client_tx, "gamma").await;
 
     server1.await.unwrap();
     server2.await.unwrap();
@@ -397,12 +370,7 @@ async fn reconnect_failure_surfaces_session_lost() {
     let client = StableConduit::<StringFamily, _>::new(source).await.unwrap();
     let (client_tx, mut client_rx) = client.split();
 
-    client_tx
-        .reserve()
-        .await
-        .unwrap()
-        .send("hello".to_string())
-        .unwrap();
+    send_item(&client_tx, "hello").await;
 
     // server1 drops → reconnect → server2 rejects → SessionLost
     match client_rx.recv().await {

@@ -67,7 +67,7 @@ insert_anchor_links = "left"
 > A call like `client.method(&buf[..12]).await` passes a borrowed slice.
 > The future returned by `method()` captures the reference. The caller's
 > `.await` keeps the borrow alive for the future's entire lifetime —
-> including across yield points (e.g. `reserve()` for backpressure).
+> including across yield points (e.g. waiting for outbound queue capacity).
 
 > r[zerocopy.send.borrowed-in-struct]
 >
@@ -84,13 +84,12 @@ insert_anchor_links = "left"
 > completion by the caller's `.await`, which guarantees all borrows remain
 > valid. The actual sequence is:
 >
-> 1. The future calls `reserve().await` — yields until the link has capacity
-> 2. The future calls `alloc(len)` — obtains a write slot
-> 3. The future serializes the borrowed value into the write slot
-> 4. The future calls `commit()` — publishes the bytes
+> 1. The future synchronously serializes the borrowed value into an owned
+>    prepared buffer
+> 2. The future awaits enqueue/send of that prepared buffer
 >
-> Serialization happens in step 3, after the backpressure yield. The
-> borrowed data is valid because the caller is still awaiting.
+> Serialization happens before the backpressure yield. The borrowed data is
+> valid because the caller is still awaiting.
 
 ### Link-specific send behavior
 
@@ -293,30 +292,31 @@ insert_anchor_links = "left"
 
 > r[zerocopy.framing.single-pass]
 >
-> Despite the three logical layers, serialization happens exactly once.
+> Despite the three logical layers, serialization of the payload happens
+> exactly once.
 > The conduit is generic over the value type `T`, so:
 >
-> - **BareConduit** serializes `T` directly into the write slot.
-> - **StableConduit** serializes `Frame<T>` directly into the write slot.
+> - **BareConduit** serializes `T` into one owned outbound buffer.
+> - **StableConduit** serializes `Frame<T>` into one owned outbound buffer.
 >
-> In both cases, postcard writes the output into the buffer provided by
-> `LinkTx::alloc`. There is no intermediate buffer between layers — the
-> value encoding and conduit framing are a single serialization pass, and
-> the link framing (length prefix, SHM frame header, etc.) is applied by
-> the link at `commit()` time around the already-written bytes.
+> In both cases, postcard writes the output into the prepared buffer owned by
+> the conduit. There is no intermediate re-serialization between layers —
+> value encoding and conduit framing are a single serialization pass, and the
+> link applies transport framing (length prefix, WebSocket frame boundary,
+> etc.) when sending those bytes.
 
 > r[zerocopy.framing.no-double-serialize]
 >
 > The conduit MUST NOT serialize the value into a temporary buffer and
-> then copy it into the write slot. The conduit serializes the value (or
-> `Frame<T>`) directly into the link's write slot in one pass.
+> then re-serialize it into another buffer. The conduit serializes the value
+> (or `Frame<T>`) into its prepared outbound buffer in one pass.
 
 ### Scatter/gather serialization
 
 > r[zerocopy.scatter]
 >
-> Serializing directly into the write slot requires knowing the total
-> encoded size before calling `LinkTx::alloc(len)`. Postcard's encoding
+> Serializing into a prepared outbound buffer requires knowing the total
+> encoded size before allocating that buffer. Postcard's encoding
 > is sequential and deterministic, so the serializer can compute the
 > exact output size and collect copy instructions without writing to a
 > final destination buffer.
@@ -345,14 +345,14 @@ insert_anchor_links = "left"
 >
 > To write the scatter plan into a destination buffer:
 >
-> 1. Call `LinkTx::alloc(total_size)` to obtain a `WriteSlot`.
+> 1. Allocate an owned buffer of `total_size`.
 > 2. Walk the segment list in order. For each segment, `memcpy` its bytes
->    (from staging buffer or from the referenced source) into the write
->    slot at the current offset.
-> 3. Call `commit()` on the write slot.
+>    (from staging buffer or from the referenced source) into the buffer at
+>    the current offset.
+> 3. Enqueue/send that buffer through the link.
 >
-> This is the only point where bytes are copied into the link's buffer.
-> Blob data goes directly from the caller's memory to the write slot —
+> This is the only point where bytes are copied into the prepared outbound
+> buffer. Blob data goes directly from the caller's memory to that buffer —
 > one copy total.
 
 > r[zerocopy.scatter.lifetime]

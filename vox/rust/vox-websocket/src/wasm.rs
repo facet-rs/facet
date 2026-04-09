@@ -2,12 +2,11 @@
 
 use std::cell::RefCell;
 use std::io;
-use std::mem::ManuallyDrop;
 
 use futures_channel::mpsc;
-use futures_util::StreamExt;
+use futures_util::{StreamExt, lock::Mutex};
 use js_sys::ArrayBuffer;
-use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
+use vox_types::{Backing, Link, LinkRx, LinkTx};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{BinaryType, CloseEvent, ErrorEvent, MessageEvent, WebSocket};
@@ -22,6 +21,47 @@ struct WsClosures {
     _onmessage: Closure<dyn FnMut(MessageEvent)>,
     _onclose: Closure<dyn FnMut(CloseEvent)>,
     _onerror: Closure<dyn FnMut(ErrorEvent)>,
+}
+
+struct ScratchBuffer {
+    buf_tx: mpsc::Sender<Vec<u8>>,
+    buf: Option<Vec<u8>>,
+}
+
+impl ScratchBuffer {
+    fn new(buf_tx: mpsc::Sender<Vec<u8>>, buf: Vec<u8>) -> Self {
+        Self {
+            buf_tx,
+            buf: Some(buf),
+        }
+    }
+}
+
+impl std::ops::Deref for ScratchBuffer {
+    type Target = Vec<u8>;
+
+    fn deref(&self) -> &Self::Target {
+        self.buf
+            .as_ref()
+            .expect("scratch buffer should exist while borrowed")
+    }
+}
+
+impl std::ops::DerefMut for ScratchBuffer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.buf
+            .as_mut()
+            .expect("scratch buffer should exist while mutably borrowed")
+    }
+}
+
+impl Drop for ScratchBuffer {
+    fn drop(&mut self) {
+        if let Some(mut buf) = self.buf.take() {
+            buf.clear();
+            let _ = self.buf_tx.clone().try_send(buf);
+        }
+    }
 }
 
 /// A [`Link`] over a browser WebSocket.
@@ -65,7 +105,7 @@ impl WsLink {
             WsLinkTx {
                 ws,
                 buf_tx,
-                buf_rx: RefCell::new(buf_rx),
+                buf_rx: Mutex::new(buf_rx),
             },
             WsLinkRx {
                 rx,
@@ -139,51 +179,27 @@ impl Link for WsLink {
 /// Sending half of a [`WsLink`].
 pub struct WsLinkTx {
     ws: WebSocket,
-    /// Returned here after each send to be reused by the next permit.
     buf_tx: mpsc::Sender<Vec<u8>>,
-    /// Awaited to obtain the reusable buffer (and provide backpressure).
-    /// RefCell is safe: wasm is single-threaded, MaybeSync removes Sync bound.
-    buf_rx: RefCell<mpsc::Receiver<Vec<u8>>>,
-}
-
-/// Permit for one outbound send.
-///
-/// Uses `ManuallyDrop` for its fields so that `alloc` can move them out
-/// into `WsWriteSlot` without conflicting with the `Drop` impl.
-pub struct WsLinkTxPermit {
-    ws: ManuallyDrop<WebSocket>,
-    buf: ManuallyDrop<Vec<u8>>,
-    buf_tx: ManuallyDrop<mpsc::Sender<Vec<u8>>>,
-    /// Set to true by `alloc`; tells `Drop` not to return the buffer.
-    consumed: bool,
-}
-
-/// Write slot backed by the reusable send buffer.
-// r[impl zerocopy.send.websocket]
-pub struct WsWriteSlot {
-    ws: WebSocket,
-    buf: Vec<u8>,
-    buf_tx: mpsc::Sender<Vec<u8>>,
-    /// Set to true by `commit`; tells `Drop` not to return the buffer.
-    committed: bool,
+    buf_rx: Mutex<mpsc::Receiver<Vec<u8>>>,
 }
 
 impl LinkTx for WsLinkTx {
-    type Permit = WsLinkTxPermit;
+    async fn send(&self, bytes: Vec<u8>) -> io::Result<()> {
+        let scratch = {
+            let mut buf_rx = self.buf_rx.lock().await;
+            buf_rx.next().await
+        }
+        .ok_or_else(|| io::Error::other("ws send buffer channel closed"))?;
+        let mut scratch = ScratchBuffer::new(self.buf_tx.clone(), scratch);
+        scratch.clear();
+        scratch.extend_from_slice(&bytes);
 
-    async fn reserve(&self) -> io::Result<Self::Permit> {
-        let buf = self
-            .buf_rx
-            .borrow_mut()
-            .next()
-            .await
-            .ok_or_else(|| io::Error::other("ws send buffer channel closed"))?;
-        Ok(WsLinkTxPermit {
-            ws: ManuallyDrop::new(self.ws.clone()),
-            buf: ManuallyDrop::new(buf),
-            buf_tx: ManuallyDrop::new(self.buf_tx.clone()),
-            consumed: false,
-        })
+        // Copy into a JS-owned typed array before recycling the Rust buffer.
+        let payload = js_sys::Uint8Array::from(scratch.as_slice());
+        self.ws
+            .send_with_array_buffer(&payload.buffer())
+            .map_err(|e| io::Error::other(format!("ws send failed: {e:?}")))?;
+        Ok(())
     }
 
     async fn close(self) -> io::Result<()> {
@@ -196,69 +212,6 @@ impl LinkTx for WsLinkTx {
 impl Drop for WsLinkTx {
     fn drop(&mut self) {
         let _ = self.ws.close();
-    }
-}
-
-impl LinkTxPermit for WsLinkTxPermit {
-    type Slot = WsWriteSlot;
-
-    fn alloc(mut self, len: usize) -> io::Result<WsWriteSlot> {
-        self.consumed = true;
-        // SAFETY: we set `consumed`, so Drop will not touch these fields.
-        let ws = unsafe { ManuallyDrop::take(&mut self.ws) };
-        let mut buf = unsafe { ManuallyDrop::take(&mut self.buf) };
-        let buf_tx = unsafe { ManuallyDrop::take(&mut self.buf_tx) };
-        buf.clear();
-        buf.resize(len, 0);
-        Ok(WsWriteSlot {
-            ws,
-            buf,
-            buf_tx,
-            committed: false,
-        })
-    }
-}
-
-impl Drop for WsLinkTxPermit {
-    fn drop(&mut self) {
-        if self.consumed {
-            return;
-        }
-        // SAFETY: not consumed, so fields are still valid.
-        unsafe {
-            let buf = ManuallyDrop::take(&mut self.buf);
-            let _ = self.buf_tx.try_send(buf);
-            ManuallyDrop::drop(&mut self.ws);
-            ManuallyDrop::drop(&mut self.buf_tx);
-        }
-    }
-}
-
-impl WriteSlot for WsWriteSlot {
-    fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.buf
-    }
-
-    fn commit(mut self) {
-        self.committed = true;
-        // Copy into a JS-owned typed array before reusing the Rust buffer.
-        // The browser WebSocket implementation is free to enqueue the payload
-        // asynchronously, so clearing/recycling the Rust Vec immediately after
-        // `send_with_u8_array` can corrupt the outbound frame.
-        let payload = js_sys::Uint8Array::from(self.buf.as_slice());
-        let _ = self.ws.send_with_array_buffer(&payload.buffer());
-        self.buf.clear();
-        let _ = self.buf_tx.try_send(std::mem::take(&mut self.buf));
-    }
-}
-
-impl Drop for WsWriteSlot {
-    fn drop(&mut self) {
-        if self.committed {
-            return;
-        }
-        // Slot dropped without commit — return buf without sending.
-        let _ = self.buf_tx.try_send(std::mem::take(&mut self.buf));
     }
 }
 

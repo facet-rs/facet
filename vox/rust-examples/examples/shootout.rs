@@ -54,6 +54,7 @@ struct Config {
     bind: String,
     sweep_rps: Option<Vec<usize>>,
     samply: bool,
+    server_samply: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -265,6 +266,7 @@ fn parse_args() -> Result<Config> {
     let mut bind = "127.0.0.1:8000".to_string();
     let mut sweep_rps: Option<Vec<usize>> = None;
     let mut samply = false;
+    let mut server_samply = false;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -392,6 +394,7 @@ fn parse_args() -> Result<Config> {
             }
             "--serve-report" => serve_report = true,
             "--samply" => samply = true,
+            "--server-samply" => server_samply = true,
             "--bind" => {
                 bind = args
                     .next()
@@ -428,6 +431,11 @@ fn parse_args() -> Result<Config> {
     }
     if calibration_deadline_secs <= 0.0 {
         return Err(eyre::eyre!("--calibration-deadline-secs must be > 0"));
+    }
+    if samply && server_samply {
+        return Err(eyre::eyre!(
+            "--samply and --server-samply are mutually exclusive"
+        ));
     }
 
     if quick {
@@ -487,6 +495,7 @@ fn parse_args() -> Result<Config> {
         bind,
         sweep_rps,
         samply,
+        server_samply,
     })
 }
 
@@ -517,7 +526,8 @@ options:\n\
   --logs-dir <dir>\n\
   --serve-report       serve the static HTML/JS report after writing JSON\n\
   --bind <addr>        HTTP bind address for --serve-report\n\
-  --samply             profile the subject under samply (local transport only)"
+  --samply             profile the bench client under samply (local transport only)\n\
+  --server-samply      profile the subject under samply (local transport only)"
     );
 }
 
@@ -1239,7 +1249,12 @@ fn run_samply_session(root: &Path, cfg: &Config) -> Result<()> {
     let addr = addr_for_transport(transport);
 
     eprintln!(
-        "samply session: srv={} transport={} payload={} in_flight={} warmup={:.1}s measure={:.1}s",
+        "samply session: target={} srv={} transport={} payload={} in_flight={} warmup={:.1}s measure={:.1}s",
+        if cfg.server_samply {
+            "server"
+        } else {
+            "client"
+        },
         server_impl_name(server_impl),
         transport_name(transport),
         payload_size,
@@ -1248,14 +1263,13 @@ fn run_samply_session(root: &Path, cfg: &Config) -> Result<()> {
         cfg.measure_secs,
     );
 
-    let args = vec![
+    let mut args = vec![
         "--subject-cmd".to_string(),
         subject_cmd_for(server_impl, root).display().to_string(),
         "--subject-mode".to_string(),
         "server".to_string(),
         "--addr".to_string(),
         addr.to_string(),
-        "--samply".to_string(),
         "--".to_string(),
         "--addr".to_string(),
         addr.to_string(),
@@ -1270,6 +1284,11 @@ fn run_samply_session(root: &Path, cfg: &Config) -> Result<()> {
         "--measure-secs".to_string(),
         cfg.measure_secs.to_string(),
     ];
+    if cfg.server_samply {
+        args.insert(6, "--server-samply".to_string());
+    } else {
+        args.insert(6, "--samply".to_string());
+    }
 
     let status = Command::new(bench_runner_cmd(root))
         .current_dir(root)
@@ -1302,7 +1321,7 @@ fn main() -> Result<()> {
     ));
     build_release_binaries(&root)?;
 
-    if cfg.samply {
+    if cfg.samply || cfg.server_samply {
         pb.finish_and_clear();
         return run_samply_session(&root, &cfg);
     }

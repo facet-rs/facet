@@ -449,6 +449,7 @@ fn codegen_swift_wire(workspace_root: &std::path::Path) -> Result<(), Box<dyn st
         wire_type!("RequestCancel", rt::RequestCancel<'static>),
         wire_type!("RequestBody", rt::RequestBody<'static>),
         wire_type!("RequestMessage", rt::RequestMessage<'static>),
+        wire_type!("SchemaMessage", rt::SchemaMessage),
         wire_type!("ChannelItem", rt::ChannelItem<'static>),
         wire_type!("ChannelClose", rt::ChannelClose<'static>),
         wire_type!("ChannelReset", rt::ChannelReset<'static>),

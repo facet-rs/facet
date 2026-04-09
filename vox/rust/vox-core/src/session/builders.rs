@@ -9,8 +9,8 @@ use std::{
 use moire::sync::mpsc;
 use moire::time;
 use vox_types::{
-    Conduit, ConduitTx, ConnectionSettings, HandshakeResult, Link, MaybeSend, MaybeSync,
-    MessageFamily, Metadata, Parity, SessionResumeKey, SplitLink, metadata_into_owned,
+    Conduit, ConnectionSettings, HandshakeResult, Link, MaybeSend, MaybeSync, MessageFamily,
+    Metadata, Parity, SessionResumeKey, SplitLink, metadata_into_owned,
 };
 
 use crate::{Attachment, LinkSource, StableConduit};
@@ -307,7 +307,6 @@ impl<'a, C> SessionInitiatorBuilder<'a, C> {
     where
         C: Conduit<Msg = MessageFamily> + 'static,
         C::Tx: MaybeSend + MaybeSync + 'static,
-        for<'p> <C::Tx as ConduitTx>::Permit<'p>: MaybeSend,
         C::Rx: MaybeSend + 'static,
     {
         let Self {
@@ -459,7 +458,6 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
         S: LinkSource,
         S::Link: Link + MaybeSend + 'static,
         <S::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
-        <<S::Link as Link>::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         <S::Link as Link>::Rx: MaybeSend + 'static,
     {
         let connect_timeout = self.config.connect_timeout;
@@ -477,7 +475,6 @@ impl<'a, S> SessionSourceInitiatorBuilder<'a, S> {
         S: LinkSource,
         S::Link: Link + MaybeSend + 'static,
         <S::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
-        <<S::Link as Link>::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         <S::Link as Link>::Rx: MaybeSend + 'static,
     {
         let Self {
@@ -647,7 +644,6 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     where
         L: Link + Send + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
-        <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
         let connect_timeout = self.config.connect_timeout;
@@ -665,7 +661,6 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     where
         L: Link + Send + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
-        <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
         let Self {
@@ -695,7 +690,6 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     where
         L: Link + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
-        <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
         let Self {
@@ -724,7 +718,6 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     where
         L: Link + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
-        <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
         let handshake_result = handshake_as_initiator(
@@ -756,7 +749,6 @@ impl<'a, L> SessionTransportInitiatorBuilder<'a, L> {
     where
         L: Link + Send + 'static,
         L::Tx: MaybeSend + MaybeSync + Send + 'static,
-        for<'p> <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + Send + 'static,
     {
         let handshake_result = handshake_as_initiator(
@@ -813,7 +805,6 @@ where
     S: LinkSource,
     S::Link: Link + MaybeSend + 'static,
     <S::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
-    <<S::Link as Link>::Tx as vox_types::LinkTx>::Permit: MaybeSend,
     <S::Link as Link>::Rx: MaybeSend + 'static,
 {
     fn next_conduit<'a>(
@@ -888,7 +879,6 @@ where
     S: LinkSource,
     S::Link: Link + MaybeSend + 'static,
     <S::Link as Link>::Tx: MaybeSend + MaybeSync + 'static,
-    <<S::Link as Link>::Tx as vox_types::LinkTx>::Permit: MaybeSend,
     <S::Link as Link>::Rx: MaybeSend + 'static,
 {
     type Link = SplitLink<<S::Link as Link>::Tx, <S::Link as Link>::Rx>;
@@ -977,7 +967,6 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
     where
         C: Conduit<Msg = MessageFamily> + 'static,
         C::Tx: MaybeSend + MaybeSync + 'static,
-        for<'p> <C::Tx as ConduitTx>::Permit<'p>: MaybeSend,
         C::Rx: MaybeSend + 'static,
     {
         let Self {
@@ -1052,7 +1041,6 @@ impl<'a, C> SessionAcceptorBuilder<'a, C> {
     where
         C: Conduit<Msg = MessageFamily> + 'static,
         C::Tx: MaybeSend + MaybeSync + 'static,
-        for<'p> <C::Tx as ConduitTx>::Permit<'p>: MaybeSend,
         C::Rx: MaybeSend + 'static,
     {
         // With the CBOR handshake, resume detection happens at the link level
@@ -1162,7 +1150,6 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     where
         L: Link + MaybeSend + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
-        <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
         let Self { link, mut config } = self;
@@ -1202,7 +1189,6 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     where
         L: Link + MaybeSend + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
-        <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
         let Self { link, config } = self;
@@ -1245,7 +1231,6 @@ impl<'a, L: Link> SessionTransportAcceptorBuilder<'a, L> {
     where
         L: Link + MaybeSend + 'static,
         L::Tx: MaybeSend + MaybeSync + 'static,
-        <L::Tx as vox_types::LinkTx>::Permit: MaybeSend,
         L::Rx: MaybeSend + 'static,
     {
         let handshake_result = handshake_as_acceptor(

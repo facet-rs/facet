@@ -58,7 +58,7 @@ public struct Person: Codable, Sendable {
   public var age: UInt8
   public var email: String?
 
-  public init(name: String, age: UInt8, email: String?) {
+  nonisolated public init(name: String, age: UInt8, email: String?) {
     self.name = name
     self.age = age
     self.email = email
@@ -74,7 +74,7 @@ public struct Point: Codable, Sendable {
   public var x: Int32
   public var y: Int32
 
-  public init(x: Int32, y: Int32) {
+  nonisolated public init(x: Int32, y: Int32) {
     self.x = x
     self.y = y
   }
@@ -85,7 +85,7 @@ public struct Rectangle: Codable, Sendable {
   public var bottomRight: Point
   public var label: String?
 
-  public init(topLeft: Point, bottomRight: Point, label: String?) {
+  nonisolated public init(topLeft: Point, bottomRight: Point, label: String?) {
     self.topLeft = topLeft
     self.bottomRight = bottomRight
     self.label = label
@@ -109,7 +109,7 @@ public struct Canvas: Codable, Sendable {
   public var shapes: [Shape]
   public var background: Color
 
-  public init(name: String, shapes: [Shape], background: Color) {
+  nonisolated public init(name: String, shapes: [Shape], background: Color) {
     self.name = name
     self.shapes = shapes
     self.background = background
@@ -120,7 +120,7 @@ public struct GnarlyAttr: Codable, Sendable {
   public var key: String
   public var value: String
 
-  public init(key: String, value: String) {
+  nonisolated public init(key: String, value: String) {
     self.key = key
     self.value = value
   }
@@ -141,7 +141,7 @@ public struct GnarlyEntry: Codable, Sendable {
   public var chunks: [Data]
   public var kind: GnarlyKind
 
-  public init(
+  nonisolated public init(
     id: UInt64, parent: UInt64?, name: String, path: String, attrs: [GnarlyAttr], chunks: [Data],
     kind: GnarlyKind
   ) {
@@ -162,7 +162,7 @@ public struct GnarlyPayload: Codable, Sendable {
   public var footer: String?
   public var digest: Data
 
-  public init(
+  nonisolated public init(
     revision: UInt64, mount: String, entries: [GnarlyEntry], footer: String?, digest: Data
   ) {
     self.revision = revision
@@ -185,7 +185,7 @@ public struct TaggedPoint: Codable, Sendable {
   public var y: Int32
   public var active: Bool
 
-  public init(label: String, x: Int32, y: Int32, active: Bool) {
+  nonisolated public init(label: String, x: Int32, y: Int32, active: Bool) {
     self.label = label
     self.x = x
     self.y = y
@@ -203,7 +203,7 @@ public struct Tag: Codable, Sendable {
   public var priority: UInt32
   public var note: String
 
-  public init(label: String, priority: UInt32, note: String) {
+  nonisolated public init(label: String, priority: UInt32, note: String) {
     self.label = label
     self.priority = priority
     self.note = note
@@ -214,7 +214,7 @@ public struct Profile: Codable, Sendable {
   public var name: String
   public var bio: String
 
-  public init(name: String, bio: String) {
+  nonisolated public init(name: String, bio: String) {
     self.name = name
     self.bio = bio
   }
@@ -225,7 +225,7 @@ public struct Record: Codable, Sendable {
   public var beta: String
   public var gamma: Double
 
-  public init(alpha: Int32, beta: String, gamma: Double) {
+  nonisolated public init(alpha: Int32, beta: String, gamma: Double) {
     self.alpha = alpha
     self.beta = beta
     self.gamma = gamma
@@ -236,7 +236,7 @@ public struct Measurement: Codable, Sendable {
   public var unit: String
   public var value: Double
 
-  public init(unit: String, value: Double) {
+  nonisolated public init(unit: String, value: Double) {
     self.unit = unit
     self.value = value
   }
@@ -246,7 +246,7 @@ public struct Config: Codable, Sendable {
   public var key: String
   public var value: String
 
-  public init(key: String, value: String) {
+  nonisolated public init(key: String, value: String) {
     self.key = key
     self.value = value
   }
@@ -254,7 +254,7 @@ public struct Config: Codable, Sendable {
 
 // MARK: - Testbed Encoders
 
-internal func encodeMathError(_ value: MathError, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeMathError(_ value: MathError, into buffer: inout ByteBuffer) {
   switch value {
   case .divisionByZero:
     encodeVarint(UInt64(0), into: &buffer)
@@ -263,13 +263,13 @@ internal func encodeMathError(_ value: MathError, into buffer: inout ByteBuffer)
   }
 }
 
-internal func encodePerson(_ value: Person, into buffer: inout ByteBuffer) {
+nonisolated internal func encodePerson(_ value: Person, into buffer: inout ByteBuffer) {
   encodeString(value.name, into: &buffer)
   encodeU8(value.age, into: &buffer)
   encodeOption(value.email, into: &buffer, encoder: { val, buf in encodeString(val, into: &buf) })
 }
 
-internal func encodeLookupError(_ value: LookupError, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeLookupError(_ value: LookupError, into buffer: inout ByteBuffer) {
   switch value {
   case .notFound:
     encodeVarint(UInt64(0), into: &buffer)
@@ -278,18 +278,18 @@ internal func encodeLookupError(_ value: LookupError, into buffer: inout ByteBuf
   }
 }
 
-internal func encodePoint(_ value: Point, into buffer: inout ByteBuffer) {
+nonisolated internal func encodePoint(_ value: Point, into buffer: inout ByteBuffer) {
   encodeI32(value.x, into: &buffer)
   encodeI32(value.y, into: &buffer)
 }
 
-internal func encodeRectangle(_ value: Rectangle, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeRectangle(_ value: Rectangle, into buffer: inout ByteBuffer) {
   encodePoint(value.topLeft, into: &buffer)
   encodePoint(value.bottomRight, into: &buffer)
   encodeOption(value.label, into: &buffer, encoder: { val, buf in encodeString(val, into: &buf) })
 }
 
-internal func encodeColor(_ value: Color, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeColor(_ value: Color, into buffer: inout ByteBuffer) {
   switch value {
   case .red:
     encodeVarint(UInt64(0), into: &buffer)
@@ -300,7 +300,7 @@ internal func encodeColor(_ value: Color, into buffer: inout ByteBuffer) {
   }
 }
 
-internal func encodeShape(_ value: Shape, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeShape(_ value: Shape, into buffer: inout ByteBuffer) {
   switch value {
   case .circle(let radius):
     encodeVarint(UInt64(0), into: &buffer)
@@ -314,18 +314,18 @@ internal func encodeShape(_ value: Shape, into buffer: inout ByteBuffer) {
   }
 }
 
-internal func encodeCanvas(_ value: Canvas, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeCanvas(_ value: Canvas, into buffer: inout ByteBuffer) {
   encodeString(value.name, into: &buffer)
   encodeVec(value.shapes, into: &buffer, encoder: { val, buf in encodeShape(val, into: &buf) })
   encodeColor(value.background, into: &buffer)
 }
 
-internal func encodeGnarlyAttr(_ value: GnarlyAttr, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeGnarlyAttr(_ value: GnarlyAttr, into buffer: inout ByteBuffer) {
   encodeString(value.key, into: &buffer)
   encodeString(value.value, into: &buffer)
 }
 
-internal func encodeGnarlyKind(_ value: GnarlyKind, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeGnarlyKind(_ value: GnarlyKind, into buffer: inout ByteBuffer) {
   switch value {
   case .file(let mime, let tags):
     encodeVarint(UInt64(0), into: &buffer)
@@ -342,7 +342,7 @@ internal func encodeGnarlyKind(_ value: GnarlyKind, into buffer: inout ByteBuffe
   }
 }
 
-internal func encodeGnarlyEntry(_ value: GnarlyEntry, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeGnarlyEntry(_ value: GnarlyEntry, into buffer: inout ByteBuffer) {
   encodeVarint(value.id, into: &buffer)
   encodeOption(value.parent, into: &buffer, encoder: { val, buf in encodeVarint(val, into: &buf) })
   encodeString(value.name, into: &buffer)
@@ -352,7 +352,8 @@ internal func encodeGnarlyEntry(_ value: GnarlyEntry, into buffer: inout ByteBuf
   encodeGnarlyKind(value.kind, into: &buffer)
 }
 
-internal func encodeGnarlyPayload(_ value: GnarlyPayload, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeGnarlyPayload(_ value: GnarlyPayload, into buffer: inout ByteBuffer)
+{
   encodeVarint(value.revision, into: &buffer)
   encodeString(value.mount, into: &buffer)
   encodeVec(
@@ -361,7 +362,7 @@ internal func encodeGnarlyPayload(_ value: GnarlyPayload, into buffer: inout Byt
   encodeByteSeq(value.digest, into: &buffer)
 }
 
-internal func encodeMessage(_ value: Message, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeMessage(_ value: Message, into buffer: inout ByteBuffer) {
   switch value {
   case .text(let val):
     encodeVarint(UInt64(0), into: &buffer)
@@ -375,14 +376,14 @@ internal func encodeMessage(_ value: Message, into buffer: inout ByteBuffer) {
   }
 }
 
-internal func encodeTaggedPoint(_ value: TaggedPoint, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeTaggedPoint(_ value: TaggedPoint, into buffer: inout ByteBuffer) {
   encodeString(value.label, into: &buffer)
   encodeI32(value.x, into: &buffer)
   encodeI32(value.y, into: &buffer)
   encodeBool(value.active, into: &buffer)
 }
 
-internal func encodeStatus(_ value: Status, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeStatus(_ value: Status, into buffer: inout ByteBuffer) {
   switch value {
   case .active:
     encodeVarint(UInt64(0), into: &buffer)
@@ -391,29 +392,29 @@ internal func encodeStatus(_ value: Status, into buffer: inout ByteBuffer) {
   }
 }
 
-internal func encodeTag(_ value: Tag, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeTag(_ value: Tag, into buffer: inout ByteBuffer) {
   encodeString(value.label, into: &buffer)
   encodeU32(value.priority, into: &buffer)
   encodeString(value.note, into: &buffer)
 }
 
-internal func encodeProfile(_ value: Profile, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeProfile(_ value: Profile, into buffer: inout ByteBuffer) {
   encodeString(value.name, into: &buffer)
   encodeString(value.bio, into: &buffer)
 }
 
-internal func encodeRecord(_ value: Record, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeRecord(_ value: Record, into buffer: inout ByteBuffer) {
   encodeI32(value.alpha, into: &buffer)
   encodeString(value.beta, into: &buffer)
   encodeF64(value.gamma, into: &buffer)
 }
 
-internal func encodeMeasurement(_ value: Measurement, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeMeasurement(_ value: Measurement, into buffer: inout ByteBuffer) {
   encodeString(value.unit, into: &buffer)
   encodeF64(value.value, into: &buffer)
 }
 
-internal func encodeConfig(_ value: Config, into buffer: inout ByteBuffer) {
+nonisolated internal func encodeConfig(_ value: Config, into buffer: inout ByteBuffer) {
   encodeString(value.key, into: &buffer)
   encodeString(value.value, into: &buffer)
 }

@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 
-use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
+use vox_types::{Backing, Link, LinkRx, LinkTx};
 
 /// A [`Link`](vox_types::Link) over a WebSocket connection.
 ///
@@ -190,55 +190,21 @@ pub struct WsLinkTx {
     io_task: JoinHandle<()>,
 }
 
-/// Permit for sending one payload through a [`WsLinkTx`].
-pub struct WsLinkTxPermit {
-    permit: mpsc::OwnedPermit<Vec<u8>>,
-}
-
-/// Write slot for [`WsLinkTx`].
-pub struct WsWriteSlot {
-    buf: Vec<u8>,
-    permit: mpsc::OwnedPermit<Vec<u8>>,
-}
-
 impl LinkTx for WsLinkTx {
-    type Permit = WsLinkTxPermit;
-
-    async fn reserve(&self) -> io::Result<Self::Permit> {
+    async fn send(&self, bytes: Vec<u8>) -> io::Result<()> {
         let permit = self.tx.clone().reserve_owned().await.map_err(|_| {
             io::Error::new(
                 io::ErrorKind::ConnectionReset,
                 "websocket writer task stopped",
             )
         })?;
-        Ok(WsLinkTxPermit { permit })
+        drop(permit.send(bytes));
+        Ok(())
     }
 
     async fn close(self) -> io::Result<()> {
         drop(self.tx);
         self.io_task.await.map_err(io::Error::other)
-    }
-}
-
-// r[impl zerocopy.send.websocket]
-impl LinkTxPermit for WsLinkTxPermit {
-    type Slot = WsWriteSlot;
-
-    fn alloc(self, len: usize) -> io::Result<Self::Slot> {
-        Ok(WsWriteSlot {
-            buf: vec![0u8; len],
-            permit: self.permit,
-        })
-    }
-}
-
-impl WriteSlot for WsWriteSlot {
-    fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.buf
-    }
-
-    fn commit(self) {
-        drop(self.permit.send(self.buf));
     }
 }
 
@@ -305,7 +271,7 @@ impl LinkRx for WsLinkRx {
 mod tests {
     use tokio_tungstenite::WebSocketStream;
     use tokio_tungstenite::tungstenite::protocol::Role;
-    use vox_types::{Backing, Link, LinkRx, LinkTx, LinkTxPermit, WriteSlot};
+    use vox_types::{Backing, Link, LinkRx, LinkTx};
 
     use super::*;
 
@@ -332,10 +298,7 @@ mod tests {
         let (tx_a, _rx_a) = a.split();
         let (_tx_b, mut rx_b) = b.split();
 
-        let permit = tx_a.reserve().await.unwrap();
-        let mut slot = permit.alloc(5).unwrap();
-        slot.as_mut_slice().copy_from_slice(b"hello");
-        slot.commit();
+        tx_a.send(b"hello".to_vec()).await.unwrap();
 
         let msg = rx_b.recv().await.unwrap().unwrap();
         assert_eq!(payload(&msg), b"hello");
@@ -349,10 +312,7 @@ mod tests {
 
         let payloads: &[&[u8]] = &[b"one", b"two", b"three", b"four"];
         for p in payloads {
-            let permit = tx_a.reserve().await.unwrap();
-            let mut slot = permit.alloc(p.len()).unwrap();
-            slot.as_mut_slice().copy_from_slice(p);
-            slot.commit();
+            tx_a.send(p.to_vec()).await.unwrap();
         }
 
         for expected in payloads {
@@ -368,9 +328,7 @@ mod tests {
         let (tx_a, _rx_a) = a.split();
         let (_tx_b, mut rx_b) = b.split();
 
-        let permit = tx_a.reserve().await.unwrap();
-        let slot = permit.alloc(0).unwrap();
-        slot.commit();
+        tx_a.send(Vec::new()).await.unwrap();
 
         let msg = rx_b.recv().await.unwrap().unwrap();
         assert_eq!(payload(&msg), b"");
@@ -388,48 +346,5 @@ mod tests {
         assert!(rx_b.recv().await.unwrap().is_none());
         // Subsequent calls also return None
         assert!(rx_b.recv().await.unwrap().is_none());
-    }
-
-    // r[verify link.tx.permit.drop]
-    #[tokio::test]
-    async fn dropped_permit_sends_nothing() {
-        let (a, b) = ws_pair().await;
-        let (tx_a, _rx_a) = a.split();
-        let (_tx_b, mut rx_b) = b.split();
-
-        // Drop permit without allocating — nothing should be sent
-        let permit = tx_a.reserve().await.unwrap();
-        drop(permit);
-
-        // Then send a real message
-        let permit = tx_a.reserve().await.unwrap();
-        let mut slot = permit.alloc(3).unwrap();
-        slot.as_mut_slice().copy_from_slice(b"yep");
-        slot.commit();
-
-        let msg = rx_b.recv().await.unwrap().unwrap();
-        assert_eq!(payload(&msg), b"yep");
-    }
-
-    // r[verify link.tx.discard]
-    #[tokio::test]
-    async fn dropped_slot_sends_nothing() {
-        let (a, b) = ws_pair().await;
-        let (tx_a, _rx_a) = a.split();
-        let (_tx_b, mut rx_b) = b.split();
-
-        // Drop slot without committing — nothing should be sent
-        let permit = tx_a.reserve().await.unwrap();
-        let slot = permit.alloc(3).unwrap();
-        drop(slot);
-
-        // Then send a real message
-        let permit = tx_a.reserve().await.unwrap();
-        let mut slot = permit.alloc(2).unwrap();
-        slot.as_mut_slice().copy_from_slice(b"ok");
-        slot.commit();
-
-        let msg = rx_b.recv().await.unwrap().unwrap();
-        assert_eq!(payload(&msg), b"ok");
     }
 }

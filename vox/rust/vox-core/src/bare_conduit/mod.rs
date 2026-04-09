@@ -3,10 +3,7 @@ use std::marker::PhantomData;
 use facet_core::{PtrConst, Shape};
 use facet_reflect::Peek;
 
-use vox_types::{
-    Conduit, ConduitRx, ConduitTx, ConduitTxPermit, Link, LinkTx, LinkTxPermit, MaybeSend,
-    MsgFamily, SelfRef, WriteSlot,
-};
+use vox_types::{Conduit, ConduitRx, ConduitTx, Link, LinkTx, MaybeSend, MsgFamily, SelfRef};
 
 use crate::MessagePlan;
 
@@ -88,18 +85,18 @@ pub struct BareConduitTx<F: MsgFamily, LTx: LinkTx> {
 
 impl<F: MsgFamily, LTx: LinkTx + MaybeSend + 'static> ConduitTx for BareConduitTx<F, LTx> {
     type Msg = F;
-    type Permit<'a>
-        = BareConduitPermit<'a, F, LTx>
-    where
-        Self: 'a;
+    type Prepared = Vec<u8>;
+    type Error = BareConduitError;
 
-    async fn reserve(&self) -> std::io::Result<Self::Permit<'_>> {
-        let permit = self.link_tx.reserve().await?;
-        Ok(BareConduitPermit {
-            permit,
-            shape: self.shape,
-            _phantom: PhantomData,
-        })
+    fn prepare_send(&self, item: F::Msg<'_>) -> Result<Self::Prepared, Self::Error> {
+        encode_message::<F>(self.shape, item)
+    }
+
+    async fn send_prepared(&self, prepared: Self::Prepared) -> Result<(), Self::Error> {
+        self.link_tx
+            .send(prepared)
+            .await
+            .map_err(BareConduitError::Io)
     }
 
     async fn close(self) -> std::io::Result<()> {
@@ -107,45 +104,23 @@ impl<F: MsgFamily, LTx: LinkTx + MaybeSend + 'static> ConduitTx for BareConduitT
     }
 }
 
-// ---------------------------------------------------------------------------
-// Permit
-// ---------------------------------------------------------------------------
-
-pub struct BareConduitPermit<'a, F: MsgFamily, LTx: LinkTx> {
-    permit: LTx::Permit,
+// r[impl zerocopy.framing.single-pass]
+// r[impl zerocopy.framing.no-double-serialize]
+// r[impl zerocopy.scatter]
+// r[impl zerocopy.scatter.plan]
+// r[impl zerocopy.scatter.plan.size]
+// r[impl zerocopy.scatter.write]
+// r[impl zerocopy.scatter.lifetime]
+fn encode_message<F: MsgFamily>(
     shape: &'static Shape,
-    _phantom: PhantomData<fn(F, &'a ())>,
-}
-
-impl<F: MsgFamily, LTx: LinkTx> ConduitTxPermit for BareConduitPermit<'_, F, LTx> {
-    type Msg = F;
-    type Error = BareConduitError;
-
-    // r[impl zerocopy.framing.single-pass]
-    // r[impl zerocopy.framing.no-double-serialize]
-    // r[impl zerocopy.scatter]
-    // r[impl zerocopy.scatter.plan]
-    // r[impl zerocopy.scatter.plan.size]
-    // r[impl zerocopy.scatter.write]
-    // r[impl zerocopy.scatter.lifetime]
-    fn send(self, item: F::Msg<'_>) -> Result<(), Self::Error> {
-        // SAFETY: shape was set from F::shape() at construction time.
-        // The item is a valid instance of F::Msg<'_>, which shares the same
-        // layout and shape as F::Msg<'static>.
-        #[allow(unsafe_code)]
-        let peek = unsafe {
-            Peek::unchecked_new(PtrConst::new((&raw const item).cast::<u8>()), self.shape)
-        };
-        let plan = vox_postcard::peek_to_scatter_plan(peek).map_err(BareConduitError::Encode)?;
-
-        let mut slot = self
-            .permit
-            .alloc(plan.total_size())
-            .map_err(BareConduitError::Io)?;
-        plan.write_into(slot.as_mut_slice());
-        slot.commit();
-        Ok(())
-    }
+    item: F::Msg<'_>,
+) -> Result<Vec<u8>, BareConduitError> {
+    #[allow(unsafe_code)]
+    let peek = unsafe { Peek::unchecked_new(PtrConst::new((&raw const item).cast::<u8>()), shape) };
+    let plan = vox_postcard::peek_to_scatter_plan(peek).map_err(BareConduitError::Encode)?;
+    let mut bytes = vec![0u8; plan.total_size()];
+    plan.write_into(&mut bytes);
+    Ok(bytes)
 }
 
 // ---------------------------------------------------------------------------
@@ -236,7 +211,6 @@ mod tests {
         let (_b_tx, mut b_rx) = b_conduit.split();
 
         // Send a ConnectionReject with non-empty metadata
-        let permit = a_tx.reserve().await.unwrap();
         let msg = Message {
             connection_id: ConnectionId(1),
             payload: MessagePayload::ConnectionReject(ConnectionReject {
@@ -246,7 +220,8 @@ mod tests {
                 )],
             }),
         };
-        permit.send(msg).unwrap();
+        let prepared = a_tx.prepare_send(msg).unwrap();
+        a_tx.send_prepared(prepared).await.unwrap();
 
         // Receive and verify
         let received = b_rx.recv().await.unwrap().unwrap();

@@ -641,72 +641,58 @@ types in a recursive group simply reference each other by hash.
 
 ## Schema delivery
 
-Schemas are not sent as standalone messages. They are bundled with
-the `Request` or `Response` that needs them, along with a method
-binding that tells the receiver which type is the root for this
-method's arguments or response.
+Application-level schemas are sent as standalone `SchemaMessage`
+frames. Each frame introduces exactly one `(method_id, direction)`
+binding and carries the root type for that binding plus any newly
+introduced schemas the receiver needs before it can deserialize the
+subsequent `Request` or `Response`.
 
 ```rust
-/// A method binding maps a method ID to the root type for its
-/// arguments or response type.
-struct MethodSchemaBinding {
-    method_id: MethodId,
-    /// The root type for this method's args or response. This is a
-    /// TypeRef because the root type may be a generic instantiation
-    /// (e.g. `Result<Profile, VoxError<Infallible>>`).
-    root_type: TypeRef,
-    direction: BindingDirection,
-}
-
 enum BindingDirection {
-    /// This binding is for the method's argument type.
     Args,
-    /// This binding is for the method's response type.
     Response,
 }
 
-/// The CBOR-encoded payload attached to a Request or Response.
+/// The CBOR-encoded payload carried by a SchemaMessage.
 struct SchemaPayload {
     /// All schemas needed by the receiver that have not been
     /// previously sent on this connection.
     schemas: Vec<Schema>,
-    /// Method bindings that map method ID + direction to a root
-    /// TypeRef in the schema set. Tells the receiver which schema
-    /// describes the postcard payload it is about to deserialize.
-    method_bindings: Vec<MethodSchemaBinding>,
+    /// The root type for one method's args or response. This is a
+    /// TypeRef because the root type may be a generic instantiation
+    /// (e.g. `Result<Profile, VoxError<Infallible>>`).
+    root: TypeRef,
 }
 ```
 
 > r[schema.format.self-contained]
 >
-> When a `Request` or `Response` includes schemas, the set of schemas
-> MUST be self-contained. Every `TypeSchemaId` referenced by any schema in
-> the set MUST either be defined in the same set or have been previously
-> sent on this connection. The receiver MUST be able to build translation
-> plans for all included types before deserializing the payload.
+> When a `SchemaMessage` includes schemas, the set of schemas MUST be
+> self-contained. Every `TypeSchemaId` referenced by any schema in the set
+> MUST either be defined in the same set or have been previously sent on
+> this connection. The receiver MUST be able to build translation plans for
+> all included types before deserializing the payload.
 
 > r[schema.format.delivery]
 >
-> Schemas are delivered as a CBOR-encoded `SchemaPayload` attached to
-> a `Request` or `Response`. The payload MUST include:
+> Application-level schemas are delivered as a standalone `SchemaMessage`
+> containing a CBOR-encoded `SchemaPayload`. The payload MUST include:
 >
 >   * All schemas needed for the method's types that have not been
 >     previously sent on this connection
->   * A `MethodSchemaBinding` that maps the method ID and direction
->     (`Args` for requests, `Response` for responses) to the root
->     `TypeSchemaId` of the payload being sent
+>   * The root `TypeSchemaId` for one `(method_id, direction)` binding
 >
 > The root type for a response is always the full
 > `Result<T, VoxError<E>>` wire type, regardless of whether the
 > handler succeeded or failed.
 >
-> If all schemas for a method's types have already been sent on this
-> connection, the schemas array MAY be empty — but the method binding
-> MUST still be included if this is the first time this (method_id,
-> direction) pair has been sent on this connection. The receiver needs
-> the binding to know which previously-sent TypeSchemaId is the root for
-> this method. Sending a schema whose `TypeSchemaId` has already been sent
-> on this connection is a protocol error.
+> A `SchemaMessage` binds exactly one `(method_id, direction)` pair. If all
+> schemas for that method's types have already been sent on this connection,
+> the `schemas` array MAY be empty — but the binding message MUST still be sent
+> the first time this `(method_id, direction)` pair is introduced on the
+> connection. The receiver needs the binding to know which previously-sent
+> `TypeSchemaId` is the root for this method. Sending a schema whose
+> `TypeSchemaId` has already been sent on this connection is a protocol error.
 
 # Schema tracking
 
@@ -750,8 +736,8 @@ Schema exchange operates at two levels:
    changes.
 
 2. **Application level (per-connection):** Method argument and response
-   schemas are exchanged lazily, bundled with `Request` and `Response`
-   payloads, scoped to each connection. This allows service types to
+   schemas are exchanged lazily via `SchemaMessage`, scoped to each
+   connection. This allows service types to
    evolve independently.
 
 The rest of this section describes application-level schema exchange.
@@ -767,15 +753,17 @@ for the entire service interface up front.
 >
 > Before sending a `Request`, the caller MUST check whether the schemas for
 > the method's argument types have been sent to this peer on this connection.
-> If any have not, the caller MUST include all unsent schemas in the
-> `Request` (see `r[schema.format.delivery]`).
+> If any have not, the caller MUST send a `SchemaMessage` carrying all unsent
+> schemas and the method binding before sending the `Request`
+> (see `r[schema.format.delivery]`).
 
 > r[schema.exchange.callee]
 >
 > Before sending any `Response` for a method, the callee MUST check whether
 > the schemas for the method's **statically-known response type** have been
 > sent to this peer on this connection. If any have not, the callee MUST
-> include all unsent schemas in the `Response`.
+> send a `SchemaMessage` carrying all unsent schemas and the method binding
+> before sending the `Response`.
 >
 > The response schema is determined by the method signature — it is the
 > full `Result<T, VoxError<E>>` wire type. It MUST NOT vary based on
@@ -795,10 +783,10 @@ for the entire service interface up front.
 > Application-level schema exchange is mandatory. If a peer receives a
 > `Request` or `Response` and either (a) the schemas for any referenced
 > type have not been received on that connection, or (b) no
-> `MethodSchemaBinding` for this (method_id, direction) pair has been
+> method binding for this `(method_id, direction)` pair has been
 > received on this connection, this is a protocol error and the
 > connection MUST be torn down. The sender is always responsible for
-> including both schemas and bindings with the data that needs them.
+> sending both schemas and bindings before the data that needs them.
 
 > r[schema.exchange.idempotent]
 >
@@ -806,8 +794,8 @@ for the entire service interface up front.
 > (from a previous call to the same or different method using the same
 > types), no schemas need to be included. The `r[schema.principles.once-per-type]`
 > rule applies — each type ID is sent at most once. However, the
-> `MethodSchemaBinding` for a new (method_id, direction) pair MUST still
-> be sent even when all schemas are already known
+> binding for a new `(method_id, direction)` pair MUST still
+> be sent in its own `SchemaMessage` even when all schemas are already known
 > (see `r[schema.tracking.bindings]`).
 
 # Method identity without signatures

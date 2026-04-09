@@ -76,23 +76,12 @@ weight = 11
 > before payload B on the sender, then A MUST be observed before B by the
 > receiver, with no duplication.
 
-> r[link.tx.reserve]
+> r[link.tx.send]
 >
-> Sending MUST be a three-step operation:
->
-> 1. `reserve()` awaits until the transport can accept one more payload and
->    yields a send permit.
-> 2. `permit.alloc(len)` allocates a writable slot of exactly `len` bytes backed
->    by transport-owned storage.
-> 3. The caller writes into the slot and then commits it.
->
-> `reserve()` is the backpressure point: it MUST wait until the transport can
-> accept a payload (or error).
-
-> r[link.tx.permit.drop]
->
-> Dropping a send permit without allocating/committing MUST release the
-> reservation and MUST NOT publish any payload.
+> Sending MUST accept one fully-owned payload buffer and enqueue exactly one
+> link-level message. Backpressure is applied at the send/enqueue boundary:
+> if the transport cannot currently accept another payload, the send future
+> MUST wait (or error) before the payload becomes visible to the receiver.
 
 > r[link.message.empty]
 >
@@ -100,29 +89,13 @@ weight = 11
 
 > r[link.tx.alloc.limits]
 >
-> If a transport has a maximum payload size, `permit.alloc(len)` MUST return an
-> error when `len` exceeds that maximum.
-
-> r[link.tx.slot.len]
->
-> A write slot returned by `permit.alloc(len)` MUST expose a writable byte slice
-> of exactly length `len`.
-
-> r[link.tx.discard]
->
-> Dropping a write slot without committing MUST discard it (no bytes become
-> visible to the peer) and MUST release any reserved capacity.
-
-> r[link.tx.commit]
->
-> Committing a write slot MUST publish exactly one payload whose bytes are the
-> contents of the slot at the time of commit. Commit MUST be synchronous (it
-> only makes already-written bytes visible to the transport/receiver).
+> If a transport has a maximum payload size, sending a payload whose length
+> exceeds that maximum MUST return an error.
 
 > r[link.tx.cancel-safe]
 >
-> `reserve()` MUST be cancellation-safe: canceling/dropping the `reserve` future
-> MUST NOT publish a partial payload and MUST NOT leak reserved capacity.
+> Link send MUST be cancellation-safe: canceling/dropping the send future
+> MUST NOT publish a partial payload and MUST NOT leak queued capacity.
 
 > r[link.tx.close]
 >
@@ -204,7 +177,7 @@ weight = 11
 > r[conduit]
 >
 > Conduits provide Postcard serialization/deserialization on top of links.
-> Like links, they use a permit system for sending.
+> Sending is split into synchronous preparation and asynchronous enqueue.
 
 > r[conduit.typeplan]
 >
@@ -236,27 +209,19 @@ semantics are defined in [Retry](./retry/).
 > Conduits can be passed around whole, but before use, they MUST be split into
 > a Sender and a Receiver.
 
-> r[conduit.permit]
+> r[conduit.tx.prepare]
 >
-> A conduit's Sender MUST expose an async `reserve()` that returns a Permit.
->
-> `reserve()` may "block" (be "Pending") for a while, this is how a conduit can
-> apply backpressure. This method may also error out, as conduits can die.
+> A conduit's Sender MUST expose a synchronous preparation step which takes
+> one value and produces an owned prepared representation. Preparation may
+> borrow from the caller's value while it runs, but the returned prepared
+> representation MUST be safe to hold across await points.
 
-> r[conduit.permit.send]
+> r[conduit.tx.send]
 >
-> The returned permit MUST have a synchronous `send()` function, which consumes
-> the permit and enqueues the item for sending.
->
-> The permit guarantees that one item can be sent — it is consumed synchronously.
-> Dropping the permit returns capacity to the conduit.
-
-Crucially, separating `.send()` from `Permit::send()` avoids losing items
-in-transit by accidentally cancelling (dropping) Futures blocked in a dual-purpose
-`send()`.
-
-See tokio's [Sender::reserve](https://docs.rs/tokio/latest/tokio/sync/mpsc/struct.Sender.html#method.reserve)
-documentation for more information.
+> A conduit's Sender MUST expose an async send/enqueue step which consumes a
+> previously prepared item and waits until the underlying link can accept it.
+> This is the conduit-level backpressure point and it MAY error if the conduit
+> has died.
 
 # Sessions
 

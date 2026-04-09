@@ -5,8 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::Notify;
 use vox_types::{
     Backing, ChannelClose, ChannelItem, ChannelReset, ChannelSink, Conduit, ConduitRx, ConduitTx,
-    ConduitTxPermit, IncomingChannelMessage, Metadata, MsgFamily, Payload, Rx, RxError, SelfRef,
-    Tx, TxError,
+    IncomingChannelMessage, Metadata, MsgFamily, Payload, Rx, RxError, SelfRef, Tx, TxError,
 };
 
 use crate::{
@@ -101,8 +100,8 @@ async fn send_recv_single() {
     let (client_tx, _client_rx) = client.split();
     let (_server_tx, mut server_rx) = server.split();
 
-    let permit = client_tx.reserve().await.unwrap();
-    permit.send("hello".to_string()).unwrap();
+    let prepared = client_tx.prepare_send("hello".to_string()).unwrap();
+    client_tx.send_prepared(prepared).await.unwrap();
 
     let received = server_rx.recv().await.unwrap().unwrap();
     let received = received.get();
@@ -116,8 +115,8 @@ async fn send_recv_multiple_in_order() {
     let (_server_tx, mut server_rx) = server.split();
 
     for i in 0..10 {
-        let permit = client_tx.reserve().await.unwrap();
-        permit.send(format!("msg-{i}")).unwrap();
+        let prepared = client_tx.prepare_send(format!("msg-{i}")).unwrap();
+        client_tx.send_prepared(prepared).await.unwrap();
     }
 
     for i in 0..10 {
@@ -133,15 +132,15 @@ async fn bidirectional() {
     let (client_tx, mut client_rx) = client.split();
     let (server_tx, mut server_rx) = server.split();
 
-    let permit = client_tx.reserve().await.unwrap();
-    permit.send("from-client".to_string()).unwrap();
+    let prepared = client_tx.prepare_send("from-client".to_string()).unwrap();
+    client_tx.send_prepared(prepared).await.unwrap();
 
     let received = server_rx.recv().await.unwrap().unwrap();
     let received = received.get();
     assert_eq!(&**received, "from-client");
 
-    let permit = server_tx.reserve().await.unwrap();
-    permit.send("from-server".to_string()).unwrap();
+    let prepared = server_tx.prepare_send("from-server".to_string()).unwrap();
+    server_tx.send_prepared(prepared).await.unwrap();
 
     let received = client_rx.recv().await.unwrap().unwrap();
     let received = received.get();
@@ -154,8 +153,8 @@ async fn close_signals_end() {
     let (client_tx, _client_rx) = client.split();
     let (_server_tx, mut server_rx) = server.split();
 
-    let permit = client_tx.reserve().await.unwrap();
-    permit.send("last".to_string()).unwrap();
+    let prepared = client_tx.prepare_send("last".to_string()).unwrap();
+    client_tx.send_prepared(prepared).await.unwrap();
     client_tx.close().await.unwrap();
 
     let received = server_rx.recv().await.unwrap().unwrap();
@@ -173,15 +172,15 @@ async fn interleaved_send_recv() {
     let (server_tx, mut server_rx) = server.split();
 
     for i in 0..5 {
-        let permit = client_tx.reserve().await.unwrap();
-        permit.send(format!("c2s-{i}")).unwrap();
+        let prepared = client_tx.prepare_send(format!("c2s-{i}")).unwrap();
+        client_tx.send_prepared(prepared).await.unwrap();
 
         let received = server_rx.recv().await.unwrap().unwrap();
         let received = received.get();
         assert_eq!(&**received, &format!("c2s-{i}"));
 
-        let permit = server_tx.reserve().await.unwrap();
-        permit.send(format!("s2c-{i}")).unwrap();
+        let prepared = server_tx.prepare_send(format!("s2c-{i}")).unwrap();
+        server_tx.send_prepared(prepared).await.unwrap();
 
         let received = client_rx.recv().await.unwrap().unwrap();
         let received = received.get();

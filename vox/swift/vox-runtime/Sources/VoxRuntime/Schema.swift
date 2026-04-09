@@ -1131,6 +1131,27 @@ public struct SchemaPayload: Sendable, Equatable {
 public enum BindingDirection: Sendable, Equatable {
     case args
     case response
+
+    func encode(into buffer: inout ByteBuffer) {
+        switch self {
+        case .args:
+            encodeVarint(0, into: &buffer)
+        case .response:
+            encodeVarint(1, into: &buffer)
+        }
+    }
+
+    static func decode(from buffer: inout ByteBuffer) throws -> Self {
+        let disc = try decodeVarint(from: &buffer)
+        switch disc {
+        case 0:
+            return .args
+        case 1:
+            return .response
+        default:
+            throw WireError.unknownVariant(disc)
+        }
+    }
 }
 
 /// Pre-computed CBOR schema payloads for a method's args and response.
