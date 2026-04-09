@@ -277,7 +277,11 @@ public func decodeInfallibleResponse<T>(
     let resultDisc = try decodeVarint(from: &buf)
     switch resultDisc {
     case 0:
-        return try decode(&buf)
+        let value = try decode(&buf)
+        if buf.readableBytes > 0 {
+            throw VoxError.invalidPayload("response payload had trailing bytes")
+        }
+        return value
     case 1:
         let errorCode = try decodeU8(from: &buf)
         switch errorCode {
@@ -286,7 +290,12 @@ public func decodeInfallibleResponse<T>(
         case 1:
             throw VoxError.unknownMethod
         case 2:
-            throw VoxError.decodeError("invalid payload")
+            if buf.readableBytes > 0, let reason = try? decodeString(from: &buf) {
+                if buf.readableBytes == 0 {
+                    throw VoxError.invalidPayload(reason)
+                }
+            }
+            throw VoxError.invalidPayload("invalid payload")
         case 3:
             throw VoxError.cancelled
         case 4:
@@ -316,16 +325,33 @@ public func decodeFallibleResponse<T, E>(
     let resultDisc = try decodeVarint(from: &buf)
     switch resultDisc {
     case 0:
-        return .success(try decodeOk(&buf))
+        let value = try decodeOk(&buf)
+        if buf.readableBytes > 0 {
+            throw VoxError.invalidPayload("response payload had trailing bytes")
+        }
+        return .success(value)
     case 1:
         let errorCode = try decodeU8(from: &buf)
         switch errorCode {
         case 0:
-            return .failure(try decodeErr(&buf))
+            do {
+                let error = try decodeErr(&buf)
+                if buf.readableBytes > 0 {
+                    throw VoxError.invalidPayload("user error payload had trailing bytes")
+                }
+                return .failure(error)
+            } catch let postcardError as PostcardError {
+                throw VoxError.invalidPayload("user error payload: \(String(describing: postcardError))")
+            }
         case 1:
             throw VoxError.unknownMethod
         case 2:
-            throw VoxError.decodeError("invalid payload")
+            if buf.readableBytes > 0, let reason = try? decodeString(from: &buf) {
+                if buf.readableBytes == 0 {
+                    throw VoxError.invalidPayload(reason)
+                }
+            }
+            throw VoxError.invalidPayload("invalid payload")
         case 3:
             throw VoxError.cancelled
         case 4:

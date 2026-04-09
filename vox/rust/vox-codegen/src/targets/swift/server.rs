@@ -259,12 +259,6 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
     let method_name = method.method_name.to_lower_camel_case();
     let dispatch_name = dispatch_helper_name(&method_name);
     let has_channeling = method.args.iter().any(|a| is_channel(a.shape));
-    let handler_error_payload = if method.retry.persist {
-        "encodeIndeterminateError()"
-    } else {
-        "encodeInvalidPayloadError()"
-    };
-
     cw_writeln!(
         w,
         "private func {dispatch_name}(methodId: UInt64, requestId: UInt64, buffer: inout ByteBuffer, registry: IncomingChannelRegistry, taskSender: @escaping TaskSender) async {{"
@@ -419,11 +413,17 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
             w.writeln("} catch {").unwrap();
             {
                 let _indent = w.indent();
-                cw_writeln!(
-                    w,
-                    "taskSender(.response(requestId: requestId, payload: {handler_error_payload}, methodId: methodId, schemaPayload: responseSchemaPayload))"
-                )
-                .unwrap();
+                if method.retry.persist {
+                    w.writeln(
+                        "taskSender(.response(requestId: requestId, payload: encodeIndeterminateError(), methodId: methodId, schemaPayload: responseSchemaPayload))",
+                    )
+                    .unwrap();
+                } else {
+                    w.writeln(
+                        "taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId, schemaPayload: responseSchemaPayload))",
+                    )
+                    .unwrap();
+                }
             }
             w.writeln("}").unwrap();
         }
@@ -431,7 +431,7 @@ fn generate_channeling_dispatch_method(w: &mut CodeWriter<&mut String>, method: 
         {
             let _indent = w.indent();
             w.writeln(
-                "taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId, schemaPayload: responseSchemaPayload))",
+                "taskSender(.response(requestId: requestId, payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId, schemaPayload: responseSchemaPayload))",
             )
             .unwrap();
         }

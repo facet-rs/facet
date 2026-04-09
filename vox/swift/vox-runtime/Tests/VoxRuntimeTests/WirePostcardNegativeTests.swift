@@ -38,6 +38,35 @@
         }
     }
 
+    private func sameVoxError(_ lhs: VoxError, _ rhs: VoxError) -> Bool {
+        switch (lhs, rhs) {
+        case (.unknownMethod, .unknownMethod),
+            (.notImplemented, .notImplemented),
+            (.connectionClosed, .connectionClosed),
+            (.timeout, .timeout),
+            (.cancelled, .cancelled),
+            (.indeterminate, .indeterminate):
+            return true
+        case (.invalidPayload(let l), .invalidPayload(let r)),
+            (.decodeError(let l), .decodeError(let r)),
+            (.encodeError(let l), .encodeError(let r)):
+            return l == r
+        default:
+            return false
+        }
+    }
+
+    private func expectVoxError(_ expected: VoxError, _ body: () throws -> Void) {
+        do {
+            try body()
+            Issue.record("expected VoxError \(expected)")
+        } catch let actual as VoxError {
+            #expect(sameVoxError(actual, expected))
+        } catch {
+            Issue.record("expected VoxError \(expected), got \(error)")
+        }
+    }
+
     @Suite(.serialized)
     struct WirePostcardNegativeTests {
         // r[verify session.message]
@@ -138,6 +167,26 @@
             #expect(RpcErrorCode(rawValue: 1) == .unknownMethod)
             #expect(RpcErrorCode(rawValue: 2) == .invalidPayload)
             #expect(RpcErrorCode(rawValue: 3) == .cancelled)
+        }
+
+        // r[verify rpc.fallible.vox-error]
+        @Test func rpcDecodeInfallibleResponseSurfacesInvalidPayloadReason() {
+            var response: [UInt8] = [1, 2]
+            var buf = ByteBufferAllocator().buffer(capacity: 32)
+            encodeString("truncated string field", into: &buf)
+            response += buf.readBytes(length: buf.readableBytes) ?? []
+
+            expectVoxError(.invalidPayload("truncated string field")) {
+                _ = try decodeInfallibleResponse(response) { _ in () }
+            }
+        }
+
+        // r[verify rpc.fallible.vox-error]
+        @Test func rpcDecodeInfallibleResponseRejectsTrailingBytes() {
+            let response: [UInt8] = [0, 1, 0xFF]
+            expectVoxError(.invalidPayload("response payload had trailing bytes")) {
+                _ = try decodeInfallibleResponse(response) { _ in true }
+            }
         }
     }
 #endif

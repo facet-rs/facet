@@ -208,7 +208,12 @@ extension Driver {
                 taskTx(.response(requestId: requestId, payload: replayPayload))
                 return
             case .conflict:
-                taskTx(.response(requestId: requestId, payload: encodeInvalidPayloadError()))
+                taskTx(
+                    .response(
+                        requestId: requestId,
+                        payload: encodeInvalidPayloadError(reason: "operation ID conflict")
+                    )
+                )
                 return
             case .indeterminate:
                 taskTx(.response(requestId: requestId, payload: encodeIndeterminateError()))

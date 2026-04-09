@@ -169,6 +169,7 @@ extension VoxConnection {
 public enum VoxError: Error {
     case unknownMethod
     case notImplemented
+    case invalidPayload(String)
     case decodeError(String)
     case encodeError(String)
     case connectionClosed
@@ -202,8 +203,12 @@ public func encodeUnknownMethodError() -> [UInt8] {
 /// Encode an invalid payload error.
 ///
 /// r[impl rpc.error.scope] - InvalidPayload when payload fails to decode.
-public func encodeInvalidPayloadError() -> [UInt8] {
-    [1, 2]  // Err discriminant + InvalidPayload variant
+public func encodeInvalidPayloadError(reason: String = "invalid payload") -> [UInt8] {
+    var buffer = ByteBufferAllocator().buffer(capacity: 32)
+    buffer.writeInteger(UInt8(1))
+    buffer.writeInteger(UInt8(2))
+    encodeString(reason, into: &buffer)
+    return buffer.readBytes(length: buffer.readableBytes) ?? []
 }
 
 /// Encode a cancelled error.
