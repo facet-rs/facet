@@ -465,4 +465,88 @@ struct SessionResumeTests {
             #expect(response == [0x24])
         }
     }
+
+    @Test func connectorInitiatorRetriesFreshAfterResumeFailure() async throws {
+        let resumeKey = freshSessionResumeKey()
+        let initial = ResumeScriptedLink(
+            initialHandshake: .helloYourself(
+                HandshakeHelloYourself(
+                    connectionSettings: ConnectionSettings(
+                        parity: .even, maxConcurrentRequests: 64),
+                    messagePayloadSchemaCbor: wireMessageSchemasCbor,
+                    supportsRetry: true,
+                    resumeKey: .init(bytes: resumeKey),
+                    metadata: []
+                ))
+        )
+        let staleResume = ResumeScriptedLink(
+            initialHandshake: .sorry(
+                HandshakeSorry(reason: "stale resume key")
+            )
+        )
+        let fallback = ResumeScriptedLink(
+            initialHandshake: .helloYourself(
+                HandshakeHelloYourself(
+                    connectionSettings: ConnectionSettings(
+                        parity: .even, maxConcurrentRequests: 64),
+                    messagePayloadSchemaCbor: wireMessageSchemasCbor,
+                    supportsRetry: true,
+                    resumeKey: nil,
+                    metadata: []
+                ))
+        )
+        let connector = ResumeScriptedConnector([initial, staleResume, fallback])
+
+        let session = try await Session.initiator(
+            connector,
+            dispatcher: ResumeNoopDispatcher(),
+            resumable: true
+        )
+        let driverTask = Task {
+            try await session.run()
+        }
+        try await withAsyncCleanup({
+            try? await initial.close()
+            try? await staleResume.close()
+            try? await fallback.close()
+            await cancelAndDrain(driverTask)
+        }) {
+            let callTask = Task {
+                try await session.connection.callRaw(
+                    methodId: 17,
+                    payload: [0xEF],
+                    retry: .persistIdem,
+                    timeout: 5.0
+                )
+            }
+
+            guard let requestId = await awaitResumeRequestId(initial, index: 0) else {
+                Issue.record("expected initial request to be sent")
+                return
+            }
+
+            try await initial.close()
+
+            guard let replayedRequestId = await awaitResumeRequestId(fallback, index: 0) else {
+                Issue.record("expected request to be replayed on fallback link")
+                return
+            }
+
+            #expect(replayedRequestId == requestId)
+            await fallback.enqueueMessage(
+                .response(connId: 0, requestId: replayedRequestId, metadata: [], payload: [0x7A])
+            )
+
+            let response = try await callTask.value
+            #expect(response == [0x7A])
+
+            let staleHandshakes = await staleResume.sentHandshakeMessages()
+            #expect(staleHandshakes.contains { message in
+                if case .hello = message {
+                    return true
+                }
+                return false
+            })
+        }
+    }
 }

@@ -53,26 +53,48 @@ extension Driver {
 
         do {
             let attachment = try await recoverAttachment()
+            let freshFallback = {
+                traceLog(.resume, "trying recoverAttachment with fresh handshake fallback")
+                return try await recoverAttachment()
+            }
 
+            let establishedAttachment: LinkAttachment
             if let sessionResumeKey {
-                // True protocol-level resume: send our key and expect it echoed back.
+                // Try protocol-level resume first. If the peer has restarted and
+                // no longer recognizes the key, fall back to a fresh handshake.
                 traceLog(.resume, "trying recoverAttachment with session key")
-                let handshake = try await performInitiatorHandshake(
-                    link: attachment.link,
-                    maxPayloadSize: 1024 * 1024,
-                    maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
-                    resumable: true,
-                    resumeKey: sessionResumeKey
-                )
-                guard handshake.localRootSettings == localRootSettings else {
-                    throw ConnectionError.protocolViolation(
-                        rule: "local root settings changed across session resume"
+                do {
+                    let handshake = try await performInitiatorHandshake(
+                        link: attachment.link,
+                        maxPayloadSize: 1024 * 1024,
+                        maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
+                        resumable: true,
+                        resumeKey: sessionResumeKey
                     )
-                }
-                guard handshake.peerRootSettings == peerRootSettings else {
-                    throw ConnectionError.protocolViolation(
-                        rule: "peer root settings changed across session resume"
+                    guard handshake.localRootSettings == localRootSettings else {
+                        throw ConnectionError.protocolViolation(
+                            rule: "local root settings changed across session resume"
+                        )
+                    }
+                    guard handshake.peerRootSettings == peerRootSettings else {
+                        throw ConnectionError.protocolViolation(
+                            rule: "peer root settings changed across session resume"
+                        )
+                    }
+                    establishedAttachment = attachment
+                } catch {
+                    traceLog(
+                        .resume,
+                        "resume handshake failed, retrying with fresh handshake: \(String(describing: error))"
                     )
+                    let fallbackAttachment = try await freshFallback()
+                    _ = try await performInitiatorHandshake(
+                        link: fallbackAttachment.link,
+                        maxPayloadSize: 1024 * 1024,
+                        maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
+                        resumable: false
+                    )
+                    establishedAttachment = fallbackAttachment
                 }
             } else {
                 // Fresh-session recovery: peer doesn't support resumption.
@@ -84,12 +106,13 @@ extension Driver {
                     maxConcurrentRequests: localRootSettings.maxConcurrentRequests,
                     resumable: false
                 )
+                establishedAttachment = attachment
             }
 
             let conduit = try await buildEstablishedConduit(
                 role: role,
                 transport: transport,
-                attachment: attachment,
+                attachment: establishedAttachment,
                 recoverAttachment: nil
             )
             traceLog(.resume, "recoverAttachment succeeded")
