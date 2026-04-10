@@ -172,4 +172,9 @@ actor OperationRegistry {
         states[operationId] = .released(live.stored)
         return .release(ownerRequestId: live.ownerRequestId, waiters: live.waiters)
     }
+
+    func onConduitReset() {
+        states.removeAll()
+        requestToOperation.removeAll()
+    }
 }

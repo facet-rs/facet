@@ -4,10 +4,11 @@ import Foundation
 final class ConnectionHandle: @unchecked Sendable {
     private let commandTx: @Sendable (HandleCommand) -> Bool
     private let taskTx: @Sendable (TaskMessage) -> Bool
-    private let requestIdAllocator = RequestIdAllocator()
-    private let operationIdAllocator = RequestIdAllocator()
     private let requestSemaphore: AsyncSemaphore?
     private let peerSupportsRetry: Bool
+
+    private var requestIdAllocator = RequestIdAllocator()
+    private var operationIdAllocator = RequestIdAllocator()
 
     let channelAllocator: ChannelIdAllocator
     let channelRegistry: ChannelRegistry
@@ -95,6 +96,13 @@ final class ConnectionHandle: @unchecked Sendable {
         }
         let operationId = await operationIdAllocator.allocate()
         return replacingOperationId(metadata, operationId: operationId)
+    }
+
+    // The session has been started fresh on a new conduit. We must reset all of
+    // the operation and request identifier allocators.
+    func onConduitReset() {
+        self.operationIdAllocator = RequestIdAllocator()
+        self.requestIdAllocator = RequestIdAllocator()
     }
 
     func sendTaskMessage(_ msg: TaskMessage) {

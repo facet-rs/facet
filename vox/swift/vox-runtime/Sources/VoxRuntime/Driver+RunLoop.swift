@@ -124,11 +124,18 @@ extension Driver {
     }
 
     /// Handle successful session resume.
+    /// FIXME: it's not so much "resume" as it is "another fresh session" in reality
     private func handleSuccessfulResume(keepaliveRuntime: inout DriverKeepaliveRuntime?) async {
         traceLog(.resume, "session resumed successfully")
 
         // Reset schema tracker - type IDs are per-connection and must not carry over
         schemaSendTracker.reset()
+
+        // Reset operation ID and request ID allocator
+        self.handle.onConduitReset()
+
+        // Reset operations tracker (the peer will send operation 0, 1, 2 etc. again)
+        self.operations.onConduitReset()
 
         // r[impl retry.channel.disconnect.closes] - Close all channels on resume.
         // Channel handles become invalid on disconnect. When idem methods with channels

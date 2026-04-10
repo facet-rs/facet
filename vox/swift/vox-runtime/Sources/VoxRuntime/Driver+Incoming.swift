@@ -211,7 +211,8 @@ extension Driver {
                 taskTx(
                     .response(
                         requestId: requestId,
-                        payload: encodeInvalidPayloadError(reason: "operation ID conflict")
+                        payload: encodeInvalidPayloadError(
+                            reason: "already received operation with ID \(operationId)")
                     )
                 )
                 return
