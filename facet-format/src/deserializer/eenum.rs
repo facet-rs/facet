@@ -124,25 +124,33 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
         let event = self.expect_peek("value")?;
         trace!(?event, "peeked event");
 
+        let shape = wip.shape();
+        let enum_def = match &shape.ty {
+            Type::User(UserType::Enum(e)) => e,
+            _ => {
+                return Err(self.mk_err(
+                    &wip,
+                    DeserializeErrorKind::TypeMismatch {
+                        expected: shape,
+                        got: "non-enum type".into(),
+                    },
+                ));
+            }
+        };
+        let enum_plan = wip.enum_plan().unwrap();
+
+        let other_variant_captures_payload = enum_plan.other_variant_idx.is_some_and(|other_idx| {
+            let other_variant = &enum_def.variants[other_idx];
+            other_variant.data.fields.iter().any(|f| f.is_variant_tag())
+                || other_variant
+                    .data
+                    .fields
+                    .iter()
+                    .any(|f| f.is_variant_content())
+        });
+
         // Check for any bare scalar (string, bool, int, etc.)
         if let ParseEventKind::Scalar(scalar) = &event.kind {
-            let shape = wip.shape();
-            let enum_def = match &shape.ty {
-                Type::User(UserType::Enum(e)) => e,
-                _ => {
-                    return Err(self.mk_err(
-                        &wip,
-                        DeserializeErrorKind::TypeMismatch {
-                            expected: shape,
-                            got: "non-enum type".into(),
-                        },
-                    ));
-                }
-            };
-
-            // Use precomputed lookups from EnumPlan
-            let enum_plan = wip.enum_plan().unwrap();
-
             // For string scalars, first try to match as a unit variant name
             if let ScalarValue::Str(variant_name) = scalar {
                 // Use VariantLookup for fast lookup
@@ -264,6 +272,41 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             return Ok(wip);
         }
 
+        if other_variant_captures_payload {
+            match &event.kind {
+                ParseEventKind::SequenceStart(_) => {
+                    let other_idx = enum_plan.other_variant_idx.expect("checked above");
+                    wip = wip.select_nth_variant(other_idx)?;
+                    wip = self.deserialize_other_variant_with_captured_tag(wip, None)?;
+                    return Ok(wip);
+                }
+                ParseEventKind::StructStart(_) => {
+                    let save_point = self.save();
+                    let looks_like_variant_wrapper: Result<bool, DeserializeError> = (|| {
+                        self.expect_event("value")?; // StructStart
+                        let event = self.expect_event("value")?;
+                        Ok(matches!(
+                            event.kind,
+                            ParseEventKind::FieldKey(ref key)
+                                if key
+                                    .name()
+                                    .is_some_and(|name| enum_plan.variant_lookup.find(name).is_some())
+                        ))
+                    })(
+                    );
+                    self.restore(save_point);
+
+                    if !matches!(looks_like_variant_wrapper, Ok(true)) {
+                        let other_idx = enum_plan.other_variant_idx.expect("checked above");
+                        wip = wip.select_nth_variant(other_idx)?;
+                        wip = self.deserialize_other_variant_with_captured_tag(wip, None)?;
+                        return Ok(wip);
+                    }
+                }
+                _ => {}
+            }
+        }
+
         // Otherwise expect a struct { VariantName: ... }
         if !matches!(event.kind, ParseEventKind::StructStart(_)) {
             return Err(DeserializeError {
@@ -303,19 +346,6 @@ impl<'parser, 'input, const BORROW: bool> FormatDeserializer<'parser, 'input, BO
             }
         };
 
-        let shape = wip.shape();
-        // Verify this is an enum type
-        if !matches!(&shape.ty, Type::User(UserType::Enum(_))) {
-            return Err(self.mk_err(
-                &wip,
-                DeserializeErrorKind::TypeMismatch {
-                    expected: shape,
-                    got: "non-enum type".into(),
-                },
-            ));
-        }
-        // Use precomputed lookups from EnumPlan
-        let enum_plan = wip.enum_plan().unwrap();
         let found_idx = enum_plan.variant_lookup.find(&field_key_name);
         let is_using_other_fallback = found_idx.is_none();
         let variant_idx =
