@@ -1,6 +1,6 @@
 [package]
 name = "facet-json"
-version = "0.44.5"
+version = "0.44.6"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -22,7 +22,7 @@ itoa = { version = "1", optional = true }
 memchr = "2"
 zmij = { version = "1", optional = true }
 facet-core = { workspace = true }
-facet-format = { path = "../facet-format", version = "0.44.5", default-features = false }
+facet-format = { path = "../facet-format", version = "0.44.6", default-features = false }
 facet-reflect = { workspace = true }
 
 # Tracing (optional - compiles to nothing when disabled)
