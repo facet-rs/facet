@@ -46,6 +46,8 @@ mod figue_format;
 #[cfg(test)]
 mod idempotency_test;
 #[cfg(test)]
+mod mixed_expr_test;
+#[cfg(test)]
 mod other_variant_test;
 mod parser;
 mod schema_error;
