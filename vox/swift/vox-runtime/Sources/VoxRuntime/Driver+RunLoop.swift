@@ -135,7 +135,7 @@ extension Driver {
         self.handle.onConduitReset()
 
         // Reset operations tracker (the peer will send operation 0, 1, 2 etc. again)
-        self.operations.onConduitReset()
+        await self.operations.onConduitReset()
 
         // r[impl retry.channel.disconnect.closes] - Close all channels on resume.
         // Channel handles become invalid on disconnect. When idem methods with channels
