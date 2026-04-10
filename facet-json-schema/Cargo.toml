@@ -1,6 +1,6 @@
 [package]
 name = "facet-json-schema"
-version = "0.44.5"
+version = "0.44.6"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -19,7 +19,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 facet = { workspace = true, features = ["doc"] }
 facet-core = { workspace = true }
-facet-json = { path = "../facet-json", version = "0.44.5" }
+facet-json = { path = "../facet-json", version = "0.44.6" }
 
 [dev-dependencies]
 insta = { workspace = true }
