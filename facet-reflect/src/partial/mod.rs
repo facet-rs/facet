@@ -753,17 +753,19 @@ impl Frame {
                             .shape()
                             .call_drop_in_place(self.data.assume_init())
                     };
-                }
-
-                // Drop any elements still in the rope (not yet drained into Vec)
-                if let Some(mut rope) = rope.take()
-                    && let Def::List(list_def) = self.allocated.shape().def
-                {
-                    let element_shape = list_def.t;
-                    unsafe {
-                        rope.drain_into(|ptr| {
-                            element_shape.call_drop_in_place(PtrMut::new(ptr.as_ptr()));
-                        });
+                    // The Vec was built and owns all elements — do NOT drain the rope,
+                    // as its data has already been moved into the Vec.
+                } else {
+                    // Vec was never built. Drop any elements still in the rope.
+                    if let Some(mut rope) = rope.take()
+                        && let Def::List(list_def) = self.allocated.shape().def
+                    {
+                        let element_shape = list_def.t;
+                        unsafe {
+                            rope.drain_into(|ptr| {
+                                element_shape.call_drop_in_place(PtrMut::new(ptr.as_ptr()));
+                            });
+                        }
                     }
                 }
             }
@@ -2288,6 +2290,7 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
                     _ => {}
                 }
             }
+
 
             frame.deinit();
             frame.dealloc();
