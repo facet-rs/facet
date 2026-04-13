@@ -1363,7 +1363,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             *insert_state = MapInsertState::PushingValue {
                 key_ptr: *key_ptr,
                 value_ptr: None,
-                value_initialized: false,
             };
 
             crate::trace!(
@@ -1972,7 +1971,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                                 *insert_state = MapInsertState::PushingValue {
                                     key_ptr: *key_ptr,
                                     value_ptr: None,
-                                    value_initialized: false,
                                 };
                                 popped_frame.ownership = FrameOwnership::Transferred;
                                 crate::trace!(
@@ -2515,7 +2513,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         *insert_state = MapInsertState::PushingValue {
                             key_ptr: *key_ptr,
                             value_ptr: None,
-                            value_initialized: false,
                         };
                     }
                     MapInsertState::PushingValue { value_ptr, .. } => {
