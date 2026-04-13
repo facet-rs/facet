@@ -592,13 +592,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     }
                 }
 
-                // Special handling for List/SmartPointerSlice element values: when path ends with Index,
-                // the parent is a List or SmartPointerSlice frame and we need to push the element into it.
-                // RopeSlot frames are already stored in the rope and will be drained during
-                // validation - pushing them here would duplicate the elements.
-                if matches!(last_step, PathStep::Index(_))
-                    && !matches!(frame.ownership, FrameOwnership::RopeSlot)
-                {
+                // Special handling for List/SmartPointerSlice element values: when path
+                // ends with Index, the parent is a List or SmartPointerSlice frame and we
+                // need to push the element into it. RopeSlot frames live in the parent
+                // rope's slot: they don't get "pushed" here (the slot is pre-allocated),
+                // but we DO need to mark the slot initialized now that the element has
+                // passed validation, so the rope knows it's safe to drop on error.
+                if matches!(last_step, PathStep::Index(_)) {
                     // Find the parent frame (List or SmartPointerSlice)
                     let parent_frame =
                         if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
@@ -608,6 +608,18 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         };
 
                     if let Some(parent_frame) = parent_frame {
+                        if matches!(frame.ownership, FrameOwnership::RopeSlot) {
+                            // Element already lives in rope slot. Mark it initialized now
+                            // that validation passed (consume-time). Frame is dropped
+                            // silently — no Drop impl, rope owns the buffer.
+                            if let Tracker::List {
+                                rope: Some(rope), ..
+                            } = &mut parent_frame.tracker
+                            {
+                                rope.mark_last_initialized();
+                            }
+                            continue;
+                        }
                         // Check if parent is a SmartPointerSlice (e.g., Arc<[T]>)
                         if matches!(parent_frame.tracker, Tracker::SmartPointerSlice { .. }) {
                             Self::complete_smart_pointer_slice_item_frame(parent_frame, frame);
@@ -1239,7 +1251,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Called only from the `finish_deferred` walk, after `require_full_initialization`
     /// has validated the value frame. The `entry_idx` comes from
     /// `PathStep::MapValue(idx)` and indexes the matching half-entry placed by
-    /// [`complete_map_key_frame`]. `value_frame` is dropped silently on return —
+    /// `complete_map_key_frame`. `value_frame` is dropped silently on return —
     /// Frame has no Drop impl, so `pending_entries` becomes the sole owner of the
     /// buffer.
     fn complete_map_value_frame(map_frame: &mut Frame, entry_idx: u32, value_frame: Frame) {
@@ -1904,16 +1916,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         return Ok(self);
                     }
 
-                    // For List elements stored in a rope (RopeSlot ownership), we need to
-                    // mark the element as initialized in the rope. When the List frame is
-                    // deinited, the rope will drop all initialized elements.
-                    if matches!(popped_frame.ownership, FrameOwnership::RopeSlot)
-                        && let Tracker::List {
-                            rope: Some(rope), ..
-                        } = &mut parent_frame.tracker
-                    {
-                        rope.mark_last_initialized();
-                    }
+                    // Note: we intentionally do NOT call `rope.mark_last_initialized()`
+                    // here for RopeSlot frames in deferred mode. Marking the slot as
+                    // initialized now would let `ListRope::drain_into` drop it on a
+                    // later error path — but the stored frame may have partial-init
+                    // descendants (e.g. a Box<enum> whose fields weren't all set), and
+                    // dropping those is UB. Instead, the frame stays stored; the
+                    // `finish_deferred` walk marks the rope slot initialized only after
+                    // `require_full_initialization` passes for this element. Same
+                    // consume-time protocol used for Map `pending_entries`.
 
                     // Clear building_item for SmartPointerSlice so the next element can be added
                     if let Tracker::SmartPointerSlice { building_item, .. } =
