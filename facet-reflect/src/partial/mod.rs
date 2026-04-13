@@ -388,6 +388,16 @@ pub(crate) struct Frame {
     pub(crate) type_plan: typeplan::NodeId,
 }
 
+/// A key/value pair queued for insertion into a Map's real container at
+/// finalization time. See the doc comment on `Tracker::Map::pending_entries`
+/// for the meaning of `owned_by_stored_frame`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PendingMapEntry {
+    pub key_ptr: PtrUninit,
+    pub value_ptr: PtrUninit,
+    pub owned_by_stored_frame: bool,
+}
+
 #[derive(Debug)]
 pub(crate) enum Tracker {
     /// Simple scalar value - no partial initialization tracking needed.
@@ -478,8 +488,25 @@ pub(crate) enum Tracker {
         /// Pending key-value entries to be inserted on map finalization.
         /// Deferred processing requires keeping buffers alive until finish_deferred(),
         /// so we delay actual insertion until the map frame is finalized.
-        /// Each entry is (key_ptr, value_ptr) - both are initialized and owned by this tracker.
-        pending_entries: Vec<(PtrUninit, PtrUninit)>,
+        ///
+        /// Each entry carries an `owned_by_stored_frame` flag that encodes which
+        /// cleanup path has drop responsibility for the key and value buffers:
+        /// - `false`: the entry was pushed from the non-deferred completion path
+        ///   (`complete_map_value_frame`). The child key/value frames were consumed
+        ///   during their `end()` calls; the Map solely owns the buffers and is
+        ///   responsible for dropping + deallocating them on `Frame::deinit`.
+        /// - `true`: the entry was pushed from the deferred `end()` path where the
+        ///   child MapKey and/or MapValue frames are kept in `stored_frames`.
+        ///   Those stored frames own drop responsibility (they alone know the
+        ///   iset-aware partial-initialization state of their contents). The Map's
+        ///   `Frame::deinit` MUST skip such entries — dropping them here would
+        ///   double-drop once the stored frames' own `deinit`/`dealloc` runs.
+        ///
+        /// This single flag replaces the ad-hoc coordination that used to live in
+        /// `sever_parent_pending_for_path` and the `PathStep::MapValue` arm of
+        /// `impl Drop for Partial`, which both existed to remove stale entries
+        /// before the Map's wholesale drop.
+        pending_entries: Vec<PendingMapEntry>,
         /// The current entry index, used for building unique paths for deferred frame storage.
         /// Incremented each time we start a new key (in begin_key).
         /// This allows inner frames of different map entries to have distinct paths.
@@ -786,9 +813,17 @@ impl Frame {
                     };
                 }
 
-                // Clean up pending entries (key-value pairs that haven't been inserted yet)
+                // Clean up pending entries (key-value pairs that haven't been inserted yet).
+                // Skip entries owned by stored frames: those frames' own deinit/dealloc
+                // will handle the buffers (iset-aware, safe for partially-initialized
+                // contents). Dropping them here would double-free.
                 if let Def::Map(map_def) = self.allocated.shape().def {
-                    for (key_ptr, value_ptr) in pending_entries.drain(..) {
+                    for entry in pending_entries.drain(..) {
+                        if entry.owned_by_stored_frame {
+                            continue;
+                        }
+                        let key_ptr = entry.key_ptr;
+                        let value_ptr = entry.value_ptr;
                         // Drop and deallocate key
                         unsafe { map_def.k().call_drop_in_place(key_ptr.assume_init()) };
                         if let Ok(key_layout) = map_def.k().layout.sized_layout()
@@ -1373,7 +1408,7 @@ impl Frame {
     /// kept in pending_entries to allow deferred processing; now we insert them into
     /// the actual map and deallocate the temporary buffers.
     fn drain_pending_into_map(
-        pending_entries: &mut Vec<(PtrUninit, PtrUninit)>,
+        pending_entries: &mut Vec<PendingMapEntry>,
         map_def: &facet_core::MapDef,
         map_data: PtrUninit,
     ) -> Result<(), ReflectErrorKind> {
@@ -1382,7 +1417,14 @@ impl Frame {
         // SAFETY: map_data points to initialized map (is_init was true)
         let map_ptr = unsafe { map_data.assume_init() };
 
-        for (key_ptr, value_ptr) in pending_entries.drain(..) {
+        // On the happy path, `finish_deferred` has already consumed all stored
+        // frames (their `end()` moved them out of `stored_frames`), so every
+        // entry we see here points at a fully-initialized buffer that is safe
+        // to move into the real map. The `owned_by_stored_frame` flag is only
+        // consulted by `Tracker::Map::deinit` on the error / drop path.
+        for entry in pending_entries.drain(..) {
+            let key_ptr = entry.key_ptr;
+            let value_ptr = entry.value_ptr;
             // Insert the key-value pair
             unsafe {
                 insert_fn(
@@ -2229,27 +2271,13 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
                                 }
                             }
                         }
-                        Some(PathStep::MapValue(entry_idx)) => {
-                            // Map value frame - remove the entry from pending_entries.
-                            // The value is dropped by this frame's deinit.
-                            // The key is dropped by the MapKey frame's deinit (processed separately).
-                            let entry_idx = *entry_idx as usize;
-                            if let Some(parent_ptr) =
-                                find_parent_frame(&mut stored_frames, stack, &parent_path)
-                            {
-                                let parent_frame = unsafe { &mut *parent_ptr };
-                                if let Tracker::Map {
-                                    pending_entries, ..
-                                } = &mut parent_frame.tracker
-                                {
-                                    // Remove the entry at this index if it exists.
-                                    // Don't drop key/value here - they're handled by their
-                                    // respective stored frames (MapKey and MapValue).
-                                    if entry_idx < pending_entries.len() {
-                                        pending_entries.remove(entry_idx);
-                                    }
-                                }
-                            }
+                        Some(PathStep::MapValue(_)) => {
+                            // Map value frame: no-op here. The stored MapValue frame's
+                            // own `deinit` + `dealloc` (run immediately after this match)
+                            // drops and frees the value buffer, and the parent Map's
+                            // `pending_entries` entry for this path carries
+                            // `owned_by_stored_frame = true`, so `Tracker::Map::deinit`
+                            // will skip it. No need to remove the entry here.
                         }
                         Some(PathStep::Index(_)) => {
                             // List element frames with RopeSlot ownership are handled by

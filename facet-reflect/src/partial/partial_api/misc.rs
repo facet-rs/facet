@@ -481,20 +481,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // Before cleanup, clear the parent's iset bit for the frame that failed.
                 // This prevents the parent from trying to drop this field when Partial is dropped.
                 Self::clear_parent_iset_for_path(&path, self.frames_mut(), &mut stored_frames);
-                // If this is a MapValue/Deref/OptionSome frame, a parent tracker holds
-                // a pointer to our frame's memory (pending_entries / pending_inner). Clear
-                // that pointer before we dealloc, so the parent's deinit won't double-drop.
-                let stored_map_key_paths: ::alloc::collections::BTreeSet<Path> = stored_frames
-                    .keys()
-                    .filter(|p| matches!(p.steps.last(), Some(PathStep::MapKey(_))))
-                    .cloned()
-                    .collect();
-                Self::sever_parent_pending_for_path(
-                    &path,
-                    self.frames_mut(),
-                    &mut stored_frames,
-                    &stored_map_key_paths,
-                );
+                // If this is a Deref/OptionSome frame, a parent tracker holds a pointer
+                // to our frame's memory (pending_inner). Clear that pointer before we
+                // dealloc, so the parent's deinit won't double-drop. MapValue is
+                // handled by `PendingMapEntry::owned_by_stored_frame` on the Map itself.
+                Self::sever_parent_pending_for_path(&path, self.frames_mut(), &mut stored_frames);
                 frame.deinit();
                 frame.dealloc();
                 // Clean up remaining stored frames safely (deepest first, clearing parent isets)
@@ -507,20 +498,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // Before cleanup, clear the parent's iset bit for the frame that failed.
                 // This prevents the parent from trying to drop this field when Partial is dropped.
                 Self::clear_parent_iset_for_path(&path, self.frames_mut(), &mut stored_frames);
-                // If this is a MapValue/Deref/OptionSome frame, a parent tracker holds
-                // a pointer to our frame's memory (pending_entries / pending_inner). Clear
-                // that pointer before we dealloc, so the parent's deinit won't double-drop.
-                let stored_map_key_paths: ::alloc::collections::BTreeSet<Path> = stored_frames
-                    .keys()
-                    .filter(|p| matches!(p.steps.last(), Some(PathStep::MapKey(_))))
-                    .cloned()
-                    .collect();
-                Self::sever_parent_pending_for_path(
-                    &path,
-                    self.frames_mut(),
-                    &mut stored_frames,
-                    &stored_map_key_paths,
-                );
+                // If this is a Deref/OptionSome frame, a parent tracker holds a pointer
+                // to our frame's memory (pending_inner). Clear that pointer before we
+                // dealloc, so the parent's deinit won't double-drop. MapValue is
+                // handled by `PendingMapEntry::owned_by_stored_frame` on the Map itself.
+                Self::sever_parent_pending_for_path(&path, self.frames_mut(), &mut stored_frames);
                 frame.deinit();
                 frame.dealloc();
                 // Clean up remaining stored frames safely (deepest first, clearing parent isets)
@@ -808,58 +790,35 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Sever parent/child pointer ownership when a stored child frame fails validation
     /// in `finish_deferred`.
     ///
-    /// When a child frame is stored for deferred processing, the parent may keep a
-    /// pointer to the child's buffer so it can finalize later (Map's `pending_entries`,
-    /// SmartPointer's / Option's `pending_inner`). If the child then fails validation
-    /// and its buffer is deallocated, that parent pointer would dangle and cause a
-    /// double-free when the parent is subsequently deinited.
+    /// When a child SmartPointer/Option frame is stored for deferred processing, the
+    /// parent keeps a raw `pending_inner` pointer to the child's buffer so it can
+    /// finalize later. If the child then fails validation and its buffer is deallocated,
+    /// that parent pointer would dangle and cause a double-free when the parent is
+    /// subsequently deinited. This helper clears `pending_inner` so the parent's own
+    /// cleanup leaves the buffer alone.
     ///
-    /// This helper clears the relevant parent field so the parent's own cleanup leaves
-    /// the buffer alone.
+    /// Map's `pending_entries` are handled differently — see
+    /// `PendingMapEntry::owned_by_stored_frame` and `Tracker::Map::deinit` — and are
+    /// intentionally not touched here.
     fn sever_parent_pending_for_path(
         path: &Path,
         stack: &mut [Frame],
         stored_frames: &mut ::alloc::collections::BTreeMap<Path, Frame>,
-        stored_map_key_paths: &::alloc::collections::BTreeSet<Path>,
     ) {
         let Some(last_step) = path.steps.last() else {
             return;
         };
-        if !matches!(
-            last_step,
-            PathStep::MapValue(_) | PathStep::Deref | PathStep::OptionSome
-        ) {
+        // Only Deref/OptionSome need sever handling. MapValue is handled by the
+        // `PendingMapEntry::owned_by_stored_frame` flag on the Map tracker — the
+        // Map's deinit skips the entry and the stored MapValue frame's own
+        // `deinit`/`dealloc` drops the value buffer iset-aware.
+        if !matches!(last_step, PathStep::Deref | PathStep::OptionSome) {
             return;
         }
 
         let parent_path = Path {
             shape: path.shape,
             steps: path.steps[..path.steps.len() - 1].to_vec(),
-        };
-
-        // If the failed path is a MapValue, check whether the sibling MapKey
-        // frame for this same entry index was stored in `stored_frames` at the
-        // start of cleanup. If so, that frame owns the key buffer (its deinit
-        // + dealloc will run for its own cleanup iteration) — we must pop the
-        // pending entry without dropping/deallocing the key here, otherwise
-        // we'll double-free. We consult a pre-captured snapshot because the
-        // MapKey frame may already have been removed from `stored_frames` by
-        // an earlier iteration of the cleanup loop (MapKey sorts before
-        // MapValue at equal depth).
-        //
-        // Path layout when a MapKey frame is stored in deferred mode:
-        //   parent_path + MapKey(entry_idx)   — stored MapKey frame
-        //   parent_path + MapValue(entry_idx) — the (failed) MapValue frame
-        let key_owned_by_stored_frame = if let PathStep::MapValue(entry_idx) = *last_step {
-            let mut map_key_steps = parent_path.steps.clone();
-            map_key_steps.push(PathStep::MapKey(entry_idx));
-            let map_key_path = Path {
-                shape: path.shape,
-                steps: map_key_steps,
-            };
-            stored_map_key_paths.contains(&map_key_path)
-        } else {
-            false
         };
 
         // Paths are absolute from the root; the frame at a given path lives at
@@ -874,40 +833,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             return;
         };
 
-        let parent_shape = parent_frame.allocated.shape();
-
         match (&mut parent_frame.tracker, last_step) {
-            (
-                Tracker::Map {
-                    pending_entries, ..
-                },
-                PathStep::MapValue(_),
-            ) => {
-                // The pending entry held both (key_ptr, value_ptr). The value buffer is
-                // about to be freed by the caller via frame.dealloc(). The key buffer
-                // is either solely owned by this pending entry (drop + dealloc here)
-                // or co-owned by a stored MapKey frame (pop only; that frame will
-                // handle the key).
-                if let Some((key_ptr, _value_ptr)) = pending_entries.pop()
-                    && !key_owned_by_stored_frame
-                    && let Def::Map(map_def) = parent_shape.def
-                {
-                    unsafe {
-                        map_def.k().call_drop_in_place(key_ptr.assume_init());
-                    }
-                    if let Ok(key_layout) = map_def.k().layout.sized_layout()
-                        && key_layout.size() > 0
-                    {
-                        unsafe {
-                            ::alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_layout);
-                        }
-                    }
-                }
-                trace!(
-                    "sever_parent_pending_for_path: popped map pending_entry for failed MapValue at {:?} (key_owned_by_stored_frame={})",
-                    path, key_owned_by_stored_frame,
-                );
-            }
             (
                 Tracker::SmartPointer {
                     building_inner,
@@ -966,17 +892,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         mut stored_frames: ::alloc::collections::BTreeMap<Path, Frame>,
         stack: &mut [Frame],
     ) {
-        // Snapshot the set of paths whose last step is `MapKey`. A stored
-        // MapKey frame owns its key buffer, and its sibling MapValue's
-        // `sever_parent_pending_for_path` must therefore skip dropping the
-        // pending-entry key. We capture the snapshot upfront because
-        // `stored_frames` is progressively drained during cleanup.
-        let stored_map_key_paths: ::alloc::collections::BTreeSet<Path> = stored_frames
-            .keys()
-            .filter(|p| matches!(p.steps.last(), Some(PathStep::MapKey(_))))
-            .cloned()
-            .collect();
-
         // Sort by depth (deepest first) so children are processed before parents
         let mut paths: Vec<_> = stored_frames.keys().cloned().collect();
         paths.sort_by_key(|p| core::cmp::Reverse(p.steps.len()));
@@ -1025,15 +940,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // Before dropping this frame, clear the parent's iset bit so the
                 // parent won't try to drop this field again.
                 Self::clear_parent_iset_for_path(&path, stack, &mut stored_frames);
-                // If this frame's buffer is also tracked by a parent Map/SmartPointer/Option
-                // pending pointer, clear that reference too — otherwise the parent will try to
-                // drop the same buffer we're about to dealloc.
-                Self::sever_parent_pending_for_path(
-                    &path,
-                    stack,
-                    &mut stored_frames,
-                    &stored_map_key_paths,
-                );
+                // If this frame's buffer is also tracked by a parent SmartPointer/Option
+                // pending_inner pointer, clear that reference too — otherwise the parent
+                // will try to drop the same buffer we're about to dealloc.
+                // (Map's pending_entries are handled via
+                // `PendingMapEntry::owned_by_stored_frame`, not via sever.)
+                Self::sever_parent_pending_for_path(&path, stack, &mut stored_frames);
                 trace!("cleanup: calling deinit() on path={:?}", path,);
                 frame.deinit();
                 frame.dealloc();
@@ -1417,8 +1329,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 ..
             } = insert_state
         {
-            // Add the key-value pair to pending_entries
-            pending_entries.push((*key_ptr, *value_ptr));
+            // Add the key-value pair to pending_entries. This call site runs in
+            // the non-deferred completion path: both the MapKey and MapValue
+            // frames are consumed here, so the Map alone owns both buffers and
+            // is responsible for dropping + deallocating them on its own deinit.
+            pending_entries.push(PendingMapEntry {
+                key_ptr: *key_ptr,
+                value_ptr: *value_ptr,
+                owned_by_stored_frame: false,
+            });
 
             crate::trace!(
                 "complete_map_value_frame: added entry to pending_entries for {}",
@@ -1988,8 +1907,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                                 value_ptr: Some(value_ptr),
                                 ..
                             } => {
-                                // Add entry to pending_entries and reset to Idle
-                                pending_entries.push((*key_ptr, *value_ptr));
+                                // Deferred path: the MapValue frame (and the
+                                // already-stored MapKey frame) will be kept in
+                                // `stored_frames`. They — not the Map's deinit
+                                // — own drop responsibility for the buffers.
+                                pending_entries.push(PendingMapEntry {
+                                    key_ptr: *key_ptr,
+                                    value_ptr: *value_ptr,
+                                    owned_by_stored_frame: true,
+                                });
                                 *insert_state = MapInsertState::Idle;
                                 crate::trace!(
                                     "end(): Map added entry to pending_entries while storing value frame"
@@ -2525,8 +2451,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         // Instead of inserting immediately, add to pending_entries.
                         // This keeps the buffers alive for deferred processing.
                         // Actual insertion happens in require_full_initialization.
+                        //
+                        // Both the key and value frames were consumed at their
+                        // own `end()` calls (we're the non-deferred path here),
+                        // so the Map alone owns the buffers.
                         if let Some(value_ptr) = value_ptr {
-                            pending_entries.push((*key_ptr, *value_ptr));
+                            pending_entries.push(PendingMapEntry {
+                                key_ptr: *key_ptr,
+                                value_ptr: *value_ptr,
+                                owned_by_stored_frame: false,
+                            });
 
                             // Reset to idle state
                             *insert_state = MapInsertState::Idle;
