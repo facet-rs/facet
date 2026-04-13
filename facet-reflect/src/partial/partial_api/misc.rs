@@ -484,7 +484,17 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // If this is a MapValue/Deref/OptionSome frame, a parent tracker holds
                 // a pointer to our frame's memory (pending_entries / pending_inner). Clear
                 // that pointer before we dealloc, so the parent's deinit won't double-drop.
-                Self::sever_parent_pending_for_path(&path, self.frames_mut(), &mut stored_frames);
+                let stored_map_key_paths: ::alloc::collections::BTreeSet<Path> = stored_frames
+                    .keys()
+                    .filter(|p| matches!(p.steps.last(), Some(PathStep::MapKey(_))))
+                    .cloned()
+                    .collect();
+                Self::sever_parent_pending_for_path(
+                    &path,
+                    self.frames_mut(),
+                    &mut stored_frames,
+                    &stored_map_key_paths,
+                );
                 frame.deinit();
                 frame.dealloc();
                 // Clean up remaining stored frames safely (deepest first, clearing parent isets)
@@ -500,7 +510,17 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // If this is a MapValue/Deref/OptionSome frame, a parent tracker holds
                 // a pointer to our frame's memory (pending_entries / pending_inner). Clear
                 // that pointer before we dealloc, so the parent's deinit won't double-drop.
-                Self::sever_parent_pending_for_path(&path, self.frames_mut(), &mut stored_frames);
+                let stored_map_key_paths: ::alloc::collections::BTreeSet<Path> = stored_frames
+                    .keys()
+                    .filter(|p| matches!(p.steps.last(), Some(PathStep::MapKey(_))))
+                    .cloned()
+                    .collect();
+                Self::sever_parent_pending_for_path(
+                    &path,
+                    self.frames_mut(),
+                    &mut stored_frames,
+                    &stored_map_key_paths,
+                );
                 frame.deinit();
                 frame.dealloc();
                 // Clean up remaining stored frames safely (deepest first, clearing parent isets)
@@ -800,6 +820,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         path: &Path,
         stack: &mut [Frame],
         stored_frames: &mut ::alloc::collections::BTreeMap<Path, Frame>,
+        stored_map_key_paths: &::alloc::collections::BTreeSet<Path>,
     ) {
         let Some(last_step) = path.steps.last() else {
             return;
@@ -814,6 +835,31 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let parent_path = Path {
             shape: path.shape,
             steps: path.steps[..path.steps.len() - 1].to_vec(),
+        };
+
+        // If the failed path is a MapValue, check whether the sibling MapKey
+        // frame for this same entry index was stored in `stored_frames` at the
+        // start of cleanup. If so, that frame owns the key buffer (its deinit
+        // + dealloc will run for its own cleanup iteration) — we must pop the
+        // pending entry without dropping/deallocing the key here, otherwise
+        // we'll double-free. We consult a pre-captured snapshot because the
+        // MapKey frame may already have been removed from `stored_frames` by
+        // an earlier iteration of the cleanup loop (MapKey sorts before
+        // MapValue at equal depth).
+        //
+        // Path layout when a MapKey frame is stored in deferred mode:
+        //   parent_path + MapKey(entry_idx)   — stored MapKey frame
+        //   parent_path + MapValue(entry_idx) — the (failed) MapValue frame
+        let key_owned_by_stored_frame = if let PathStep::MapValue(entry_idx) = *last_step {
+            let mut map_key_steps = parent_path.steps.clone();
+            map_key_steps.push(PathStep::MapKey(entry_idx));
+            let map_key_path = Path {
+                shape: path.shape,
+                steps: map_key_steps,
+            };
+            stored_map_key_paths.contains(&map_key_path)
+        } else {
+            false
         };
 
         // Paths are absolute from the root; the frame at a given path lives at
@@ -838,11 +884,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 PathStep::MapValue(_),
             ) => {
                 // The pending entry held both (key_ptr, value_ptr). The value buffer is
-                // about to be freed by the caller via frame.dealloc(). The key buffer,
-                // however, is solely owned by this pending entry — if we just pop it
-                // without dropping, both the key's in-place contents and its allocation
-                // leak.
+                // about to be freed by the caller via frame.dealloc(). The key buffer
+                // is either solely owned by this pending entry (drop + dealloc here)
+                // or co-owned by a stored MapKey frame (pop only; that frame will
+                // handle the key).
                 if let Some((key_ptr, _value_ptr)) = pending_entries.pop()
+                    && !key_owned_by_stored_frame
                     && let Def::Map(map_def) = parent_shape.def
                 {
                     unsafe {
@@ -857,8 +904,8 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     }
                 }
                 trace!(
-                    "sever_parent_pending_for_path: popped & dropped map pending_entry for failed MapValue at {:?}",
-                    path,
+                    "sever_parent_pending_for_path: popped map pending_entry for failed MapValue at {:?} (key_owned_by_stored_frame={})",
+                    path, key_owned_by_stored_frame,
                 );
             }
             (
@@ -919,6 +966,17 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         mut stored_frames: ::alloc::collections::BTreeMap<Path, Frame>,
         stack: &mut [Frame],
     ) {
+        // Snapshot the set of paths whose last step is `MapKey`. A stored
+        // MapKey frame owns its key buffer, and its sibling MapValue's
+        // `sever_parent_pending_for_path` must therefore skip dropping the
+        // pending-entry key. We capture the snapshot upfront because
+        // `stored_frames` is progressively drained during cleanup.
+        let stored_map_key_paths: ::alloc::collections::BTreeSet<Path> = stored_frames
+            .keys()
+            .filter(|p| matches!(p.steps.last(), Some(PathStep::MapKey(_))))
+            .cloned()
+            .collect();
+
         // Sort by depth (deepest first) so children are processed before parents
         let mut paths: Vec<_> = stored_frames.keys().cloned().collect();
         paths.sort_by_key(|p| core::cmp::Reverse(p.steps.len()));
@@ -970,7 +1028,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // If this frame's buffer is also tracked by a parent Map/SmartPointer/Option
                 // pending pointer, clear that reference too — otherwise the parent will try to
                 // drop the same buffer we're about to dealloc.
-                Self::sever_parent_pending_for_path(&path, stack, &mut stored_frames);
+                Self::sever_parent_pending_for_path(
+                    &path,
+                    stack,
+                    &mut stored_frames,
+                    &stored_map_key_paths,
+                );
                 trace!("cleanup: calling deinit() on path={:?}", path,);
                 frame.deinit();
                 frame.dealloc();
