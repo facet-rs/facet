@@ -9,6 +9,7 @@ mod invariant;
 mod list_deferred;
 mod list_leak;
 mod map;
+mod map_deferred_leak;
 mod map_leak;
 mod misc;
 mod no_uninit;
