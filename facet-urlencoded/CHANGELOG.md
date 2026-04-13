@@ -7,14 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.44.5](https://github.com/facet-rs/facet/compare/facet-pretty-v0.44.4...facet-pretty-v0.44.5) - 2026-04-13
+## [0.44.4](https://github.com/facet-rs/facet/compare/facet-urlencoded-v0.44.3...facet-urlencoded-v0.44.4) - 2026-04-13
 
 ### Other
 
 - updated the following local packages: facet-reflect
-
-## [0.44.4](https://github.com/facet-rs/facet/compare/facet-pretty-v0.44.3...facet-pretty-v0.44.4) - 2026-03-29
-
-### Other
-
-- Add collection truncation to facet-pretty
