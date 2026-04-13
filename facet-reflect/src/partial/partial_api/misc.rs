@@ -323,7 +323,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         // Extract deferred state, transitioning back to Strict mode
         let FrameMode::Deferred {
             stack,
-            start_depth,
             mut stored_frames,
             ..
         } = core::mem::replace(&mut self.mode, FrameMode::Strict { stack: Vec::new() })
@@ -396,16 +395,14 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             steps: path.steps[..path.steps.len() - 1].to_vec(),
                         };
 
-                        // Get the parent frame
-                        let parent_frame_opt = if parent_path.steps.is_empty() {
-                            let parent_index = start_depth.saturating_sub(1);
-                            self.frames_mut().get_mut(parent_index)
-                        } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
-                            Some(parent_frame)
-                        } else {
-                            let parent_frame_index = start_depth + parent_path.steps.len() - 1;
-                            self.frames_mut().get_mut(parent_frame_index)
-                        };
+                        // Paths are absolute from the root, so the parent frame lives at
+                        // stack[parent_path.steps.len()] when it's still on the stack.
+                        let parent_frame_opt =
+                            if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                                Some(parent_frame)
+                            } else {
+                                self.frames_mut().get_mut(parent_path.steps.len())
+                            };
 
                         if let Some(parent_frame) = parent_frame_opt {
                             // Get the field to find its offset
@@ -483,25 +480,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             if let Err(e) = frame.fill_defaults() {
                 // Before cleanup, clear the parent's iset bit for the frame that failed.
                 // This prevents the parent from trying to drop this field when Partial is dropped.
-                Self::clear_parent_iset_for_path(
-                    &path,
-                    start_depth,
-                    self.frames_mut(),
-                    &mut stored_frames,
-                );
+                Self::clear_parent_iset_for_path(&path, self.frames_mut(), &mut stored_frames);
                 // If this is a MapValue/Deref/OptionSome frame, a parent tracker holds
                 // a pointer to our frame's memory (pending_entries / pending_inner). Clear
                 // that pointer before we dealloc, so the parent's deinit won't double-drop.
-                Self::sever_parent_pending_for_path(
-                    &path,
-                    start_depth,
-                    self.frames_mut(),
-                    &mut stored_frames,
-                );
+                Self::sever_parent_pending_for_path(&path, self.frames_mut(), &mut stored_frames);
                 frame.deinit();
                 frame.dealloc();
                 // Clean up remaining stored frames safely (deepest first, clearing parent isets)
-                Self::cleanup_stored_frames_on_error(stored_frames, start_depth, self.frames_mut());
+                Self::cleanup_stored_frames_on_error(stored_frames, self.frames_mut());
                 return Err(self.err(e));
             }
 
@@ -509,33 +496,21 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             if let Err(e) = frame.require_full_initialization() {
                 // Before cleanup, clear the parent's iset bit for the frame that failed.
                 // This prevents the parent from trying to drop this field when Partial is dropped.
-                Self::clear_parent_iset_for_path(
-                    &path,
-                    start_depth,
-                    self.frames_mut(),
-                    &mut stored_frames,
-                );
+                Self::clear_parent_iset_for_path(&path, self.frames_mut(), &mut stored_frames);
                 // If this is a MapValue/Deref/OptionSome frame, a parent tracker holds
                 // a pointer to our frame's memory (pending_entries / pending_inner). Clear
                 // that pointer before we dealloc, so the parent's deinit won't double-drop.
-                Self::sever_parent_pending_for_path(
-                    &path,
-                    start_depth,
-                    self.frames_mut(),
-                    &mut stored_frames,
-                );
+                Self::sever_parent_pending_for_path(&path, self.frames_mut(), &mut stored_frames);
                 frame.deinit();
                 frame.dealloc();
                 // Clean up remaining stored frames safely (deepest first, clearing parent isets)
-                Self::cleanup_stored_frames_on_error(stored_frames, start_depth, self.frames_mut());
+                Self::cleanup_stored_frames_on_error(stored_frames, self.frames_mut());
                 return Err(self.err(e));
             }
 
             // Update parent's ISet to mark this field as initialized.
-            // The parent could be:
-            // 1. On the frames stack (if path.steps.len() == 1, parent is at start_depth - 1)
-            // 2. On the frames stack (if parent was pushed but never ended)
-            // 3. In stored_frames (if parent was ended during deferred mode)
+            // The parent lives either in stored_frames (if it was ended during deferred mode)
+            // or on the frames stack at index parent_path.steps.len() (paths are absolute).
             if let Some(last_step) = path.steps.last() {
                 // Construct parent path (same shape, all steps except the last one)
                 let parent_path = facet_path::Path {
@@ -548,15 +523,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // writing the inner value into the Option's memory.
                 if matches!(last_step, PathStep::OptionSome) {
                     // Find the Option frame (parent)
-                    let option_frame = if parent_path.steps.is_empty() {
-                        let parent_index = start_depth.saturating_sub(1);
-                        self.frames_mut().get_mut(parent_index)
-                    } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
-                        Some(parent_frame)
-                    } else {
-                        let parent_frame_index = start_depth + parent_path.steps.len() - 1;
-                        self.frames_mut().get_mut(parent_frame_index)
-                    };
+                    let option_frame =
+                        if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                            Some(parent_frame)
+                        } else {
+                            self.frames_mut().get_mut(parent_path.steps.len())
+                        };
 
                     if let Some(option_frame) = option_frame {
                         // The frame contains the inner value - write it into the Option's memory
@@ -571,15 +543,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // creating the SmartPointer from the inner value.
                 if matches!(last_step, PathStep::Deref) {
                     // Find the SmartPointer frame (parent)
-                    let smart_ptr_frame = if parent_path.steps.is_empty() {
-                        let parent_index = start_depth.saturating_sub(1);
-                        self.frames_mut().get_mut(parent_index)
-                    } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
-                        Some(parent_frame)
-                    } else {
-                        let parent_frame_index = start_depth + parent_path.steps.len() - 1;
-                        self.frames_mut().get_mut(parent_frame_index)
-                    };
+                    let smart_ptr_frame =
+                        if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                            Some(parent_frame)
+                        } else {
+                            self.frames_mut().get_mut(parent_path.steps.len())
+                        };
 
                     if let Some(smart_ptr_frame) = smart_ptr_frame {
                         // The frame contains the inner value - create the SmartPointer from it
@@ -594,15 +563,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // to convert the inner value to the parent type using try_from.
                 if matches!(last_step, PathStep::Inner) {
                     // Find the parent frame (Inner wrapper)
-                    let parent_frame = if parent_path.steps.is_empty() {
-                        let parent_index = start_depth.saturating_sub(1);
-                        self.frames_mut().get_mut(parent_index)
-                    } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
-                        Some(parent_frame)
-                    } else {
-                        let parent_frame_index = start_depth + parent_path.steps.len() - 1;
-                        self.frames_mut().get_mut(parent_frame_index)
-                    };
+                    let parent_frame =
+                        if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                            Some(parent_frame)
+                        } else {
+                            self.frames_mut().get_mut(parent_path.steps.len())
+                        };
 
                     if let Some(inner_wrapper_frame) = parent_frame {
                         // The frame contains the inner value - convert to parent type using try_from
@@ -617,15 +583,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // the proxy value (e.g., InnerProxy) using the proxy's convert_in.
                 if matches!(last_step, PathStep::Proxy) {
                     // Find the parent frame (the proxy target)
-                    let parent_frame = if parent_path.steps.is_empty() {
-                        let parent_index = start_depth.saturating_sub(1);
-                        self.frames_mut().get_mut(parent_index)
-                    } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
-                        Some(parent_frame)
-                    } else {
-                        let parent_frame_index = start_depth + parent_path.steps.len() - 1;
-                        self.frames_mut().get_mut(parent_frame_index)
-                    };
+                    let parent_frame =
+                        if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                            Some(parent_frame)
+                        } else {
+                            self.frames_mut().get_mut(parent_path.steps.len())
+                        };
 
                     if let Some(target_frame) = parent_frame {
                         Self::complete_proxy_frame(target_frame, frame);
@@ -641,15 +604,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     && !matches!(frame.ownership, FrameOwnership::RopeSlot)
                 {
                     // Find the parent frame (List or SmartPointerSlice)
-                    let parent_frame = if parent_path.steps.is_empty() {
-                        let parent_index = start_depth.saturating_sub(1);
-                        self.frames_mut().get_mut(parent_index)
-                    } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
-                        Some(parent_frame)
-                    } else {
-                        let parent_frame_index = start_depth + parent_path.steps.len() - 1;
-                        self.frames_mut().get_mut(parent_frame_index)
-                    };
+                    let parent_frame =
+                        if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                            Some(parent_frame)
+                        } else {
+                            self.frames_mut().get_mut(parent_path.steps.len())
+                        };
 
                     if let Some(parent_frame) = parent_frame {
                         // Check if parent is a SmartPointerSlice (e.g., Arc<[T]>)
@@ -669,14 +629,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // the parent is a Map frame and we need to transition it to PushingValue state.
                 if matches!(last_step, PathStep::MapKey(_)) {
                     // Find the Map frame (parent)
-                    let map_frame = if parent_path.steps.is_empty() {
-                        let parent_index = start_depth.saturating_sub(1);
-                        self.frames_mut().get_mut(parent_index)
-                    } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                    let map_frame = if let Some(parent_frame) = stored_frames.get_mut(&parent_path)
+                    {
                         Some(parent_frame)
                     } else {
-                        let parent_frame_index = start_depth + parent_path.steps.len() - 1;
-                        self.frames_mut().get_mut(parent_frame_index)
+                        self.frames_mut().get_mut(parent_path.steps.len())
                     };
 
                     if let Some(map_frame) = map_frame {
@@ -690,14 +647,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // the parent is a Map frame and we need to add the entry to pending_entries.
                 if matches!(last_step, PathStep::MapValue(_)) {
                     // Find the Map frame (parent)
-                    let map_frame = if parent_path.steps.is_empty() {
-                        let parent_index = start_depth.saturating_sub(1);
-                        self.frames_mut().get_mut(parent_index)
-                    } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                    let map_frame = if let Some(parent_frame) = stored_frames.get_mut(&parent_path)
+                    {
                         Some(parent_frame)
                     } else {
-                        let parent_frame_index = start_depth + parent_path.steps.len() - 1;
-                        self.frames_mut().get_mut(parent_frame_index)
+                        self.frames_mut().get_mut(parent_path.steps.len())
                     };
 
                     if let Some(map_frame) = map_frame {
@@ -710,28 +664,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // Only mark field initialized if the step is actually a Field
                 if let PathStep::Field(field_idx) = last_step {
                     let field_idx = *field_idx as usize;
-                    if parent_path.steps.is_empty() {
-                        // Parent is the frame that was current when deferred mode started.
-                        // It's at index (start_depth - 1) because deferred mode stores frames
-                        // relative to the position at start_depth.
-                        let parent_index = start_depth.saturating_sub(1);
-                        if let Some(root_frame) = self.frames_mut().get_mut(parent_index) {
-                            Self::mark_field_initialized_by_index(root_frame, field_idx);
-                        }
-                    } else {
-                        // Try stored_frames first
+                    // Paths are absolute from the root, so the parent frame lives at
+                    // stack[parent_path.steps.len()] when it's still on the stack.
+                    let parent_frame =
                         if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
-                            Self::mark_field_initialized_by_index(parent_frame, field_idx);
+                            Some(parent_frame)
                         } else {
-                            // Parent might still be on the frames stack (never ended).
-                            // The frame at index (start_depth + parent_path.steps.len() - 1) should be the parent.
-                            let parent_frame_index = start_depth + parent_path.steps.len() - 1;
-                            if let Some(parent_frame) =
-                                self.frames_mut().get_mut(parent_frame_index)
-                            {
-                                Self::mark_field_initialized_by_index(parent_frame, field_idx);
-                            }
-                        }
+                            self.frames_mut().get_mut(parent_path.steps.len())
+                        };
+                    if let Some(parent_frame) = parent_frame {
+                        Self::mark_field_initialized_by_index(parent_frame, field_idx);
                     }
                 }
             }
@@ -819,55 +761,27 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// The parent could be on the stack or in stored_frames.
     fn clear_parent_iset_for_path(
         path: &Path,
-        start_depth: usize,
         stack: &mut [Frame],
         stored_frames: &mut ::alloc::collections::BTreeMap<Path, Frame>,
     ) {
-        trace!(
-            "clear_parent_iset_for_path: path={:?}, start_depth={}",
-            path, start_depth,
-        );
-        if let Some(&PathStep::Field(field_idx)) = path.steps.last() {
-            let field_idx = field_idx as usize;
-            let parent_path = Path {
-                shape: path.shape,
-                steps: path.steps[..path.steps.len() - 1].to_vec(),
-            };
-            trace!(
-                "clear_parent_iset_for_path: field_idx={}, parent_path={:?}",
-                field_idx, parent_path,
-            );
+        let Some(&PathStep::Field(field_idx)) = path.steps.last() else {
+            return;
+        };
+        let field_idx = field_idx as usize;
+        let parent_path = Path {
+            shape: path.shape,
+            steps: path.steps[..path.steps.len() - 1].to_vec(),
+        };
 
-            // Try stored_frames first
-            if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
-                trace!(
-                    "clear_parent_iset_for_path: FOUND parent in stored_frames, shape={}, tracker before={:?}",
-                    parent_frame.allocated.shape(),
-                    parent_frame.tracker,
-                );
-                Self::unset_field_in_tracker(&mut parent_frame.tracker, field_idx);
-                trace!(
-                    "clear_parent_iset_for_path: tracker after={:?}",
-                    parent_frame.tracker,
-                );
-            } else {
-                // Path steps are absolute from the root; the frame at a given path lives at
-                // stack[path.steps.len()]. So the parent (one fewer step) lives at
-                // stack[parent_path.steps.len()].
-                let parent_index = parent_path.steps.len();
-                trace!(
-                    "clear_parent_iset_for_path: parent NOT in stored_frames, looking on stack at index {} (start_depth={})",
-                    parent_index, start_depth,
-                );
-                if let Some(parent_frame) = stack.get_mut(parent_index) {
-                    Self::unset_field_in_tracker(&mut parent_frame.tracker, field_idx);
-                }
-            }
+        // Paths are absolute from the root; the frame at a given path lives at
+        // stack[path.steps.len()], so the parent lives at stack[parent_path.steps.len()].
+        let parent_frame = if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+            Some(parent_frame)
         } else {
-            trace!(
-                "clear_parent_iset_for_path: path.steps.last() = {:?}, NOT a Field — skipping",
-                path.steps.last(),
-            );
+            stack.get_mut(parent_path.steps.len())
+        };
+        if let Some(parent_frame) = parent_frame {
+            Self::unset_field_in_tracker(&mut parent_frame.tracker, field_idx);
         }
     }
 
@@ -884,7 +798,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// the buffer alone.
     fn sever_parent_pending_for_path(
         path: &Path,
-        start_depth: usize,
         stack: &mut [Frame],
         stored_frames: &mut ::alloc::collections::BTreeMap<Path, Frame>,
     ) {
@@ -903,12 +816,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             steps: path.steps[..path.steps.len() - 1].to_vec(),
         };
 
+        // Paths are absolute from the root; the frame at a given path lives at
+        // stack[path.steps.len()], so the parent lives at stack[parent_path.steps.len()].
         let parent_frame = if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
             Some(parent_frame)
         } else {
-            // Path steps are absolute from the root; frame at a given path lives at
-            // stack[path.steps.len()]. So parent lives at stack[parent_path.steps.len()].
-            let _ = start_depth; // kept for symmetry with the API surface
             stack.get_mut(parent_path.steps.len())
         };
 
@@ -985,7 +897,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// clear parent's iset bits before deiniting children to prevent double-drops.
     fn cleanup_stored_frames_on_error(
         mut stored_frames: ::alloc::collections::BTreeMap<Path, Frame>,
-        start_depth: usize,
         stack: &mut [Frame],
     ) {
         // Sort by depth (deepest first) so children are processed before parents
@@ -1035,11 +946,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 );
                 // Before dropping this frame, clear the parent's iset bit so the
                 // parent won't try to drop this field again.
-                Self::clear_parent_iset_for_path(&path, start_depth, stack, &mut stored_frames);
+                Self::clear_parent_iset_for_path(&path, stack, &mut stored_frames);
                 // If this frame's buffer is also tracked by a parent Map/SmartPointer/Option
                 // pending pointer, clear that reference too — otherwise the parent will try to
                 // drop the same buffer we're about to dealloc.
-                Self::sever_parent_pending_for_path(&path, start_depth, stack, &mut stored_frames);
+                Self::sever_parent_pending_for_path(&path, stack, &mut stored_frames);
                 trace!("cleanup: calling deinit() on path={:?}", path,);
                 frame.deinit();
                 frame.dealloc();
