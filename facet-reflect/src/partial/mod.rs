@@ -746,27 +746,30 @@ impl Frame {
                 }
             }
             Tracker::List { rope, .. } => {
-                // Drop the initialized List
+                // Drain any rope elements first. `is_init` only indicates that the Vec
+                // has been allocated (via `init_in_place_with_capacity`); elements pushed
+                // via `begin_list_item` live in the rope until `drain_rope_into_vec` moves
+                // them into the Vec. A successful drain leaves `rope = None` (via `.take()`),
+                // so if we see `rope = Some(..)` here the elements inside were never moved
+                // into the Vec and they're still owned by the rope. Drop them now.
+                if let Some(mut rope) = rope.take()
+                    && let Def::List(list_def) = self.allocated.shape().def
+                {
+                    let element_shape = list_def.t;
+                    unsafe {
+                        rope.drain_into(|ptr| {
+                            element_shape.call_drop_in_place(PtrMut::new(ptr.as_ptr()));
+                        });
+                    }
+                }
+
+                // Now drop the Vec (and whatever elements it already owns).
                 if self.is_init {
                     unsafe {
                         self.allocated
                             .shape()
                             .call_drop_in_place(self.data.assume_init())
                     };
-                    // The Vec was built and owns all elements — do NOT drain the rope,
-                    // as its data has already been moved into the Vec.
-                } else {
-                    // Vec was never built. Drop any elements still in the rope.
-                    if let Some(mut rope) = rope.take()
-                        && let Def::List(list_def) = self.allocated.shape().def
-                    {
-                        let element_shape = list_def.t;
-                        unsafe {
-                            rope.drain_into(|ptr| {
-                                element_shape.call_drop_in_place(PtrMut::new(ptr.as_ptr()));
-                            });
-                        }
-                    }
                 }
             }
             Tracker::Map {
@@ -2290,7 +2293,6 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
                     _ => {}
                 }
             }
-
 
             frame.deinit();
             frame.dealloc();
