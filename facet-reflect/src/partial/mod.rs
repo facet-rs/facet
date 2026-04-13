@@ -676,20 +676,20 @@ impl Frame {
         // For BorrowedInPlace frames, we must NOT drop. These point into existing
         // collection entries (Value objects, Option inners) where the parent has no
         // per-entry tracking. Dropping here would cause double-free when parent drops.
-        //
-        // For RopeSlot frames, we must NOT drop. These point into a ListRope chunk
-        // owned by the parent List's tracker. The rope handles cleanup of all elements.
-        //
-        // For TrackedBuffer frames, we CAN drop. These are temporary buffers where
-        // the parent's MapInsertState tracks initialization via is_init propagation.
-        if matches!(
-            self.ownership,
-            FrameOwnership::BorrowedInPlace | FrameOwnership::RopeSlot
-        ) {
+        if matches!(self.ownership, FrameOwnership::BorrowedInPlace) {
             self.is_init = false;
             self.tracker = Tracker::Scalar;
             return;
         }
+
+        // For RopeSlot frames, `frame.data` points into a ListRope chunk owned by
+        // the parent List's tracker. We DO need to drop the element's contents
+        // (respecting partial init), because with consume-time rope marking, if a
+        // RopeSlot frame is still alive at deinit time the rope's initialized_count
+        // does NOT cover this slot — so `ListRope::drain_into` won't drop it.
+        // The drop below runs `call_drop_in_place` against `self.data` (in-rope);
+        // `dealloc` is skipped since `needs_dealloc()` is false for RopeSlot, so
+        // the chunk allocation stays intact for the parent rope to reclaim.
 
         // Field frames are responsible for their value during cleanup.
         // The ownership model ensures no double-free:
