@@ -481,20 +481,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // Before cleanup, clear the parent's iset bit for the frame that failed.
                 // This prevents the parent from trying to drop this field when Partial is dropped.
                 Self::clear_parent_iset_for_path(&path, self.frames_mut(), &mut stored_frames);
-                // If this is a MapValue/Deref/OptionSome frame, a parent tracker holds
-                // a pointer to our frame's memory (pending_entries / pending_inner). Clear
-                // that pointer before we dealloc, so the parent's deinit won't double-drop.
-                let stored_map_key_paths: ::alloc::collections::BTreeSet<Path> = stored_frames
-                    .keys()
-                    .filter(|p| matches!(p.steps.last(), Some(PathStep::MapKey(_))))
-                    .cloned()
-                    .collect();
-                Self::sever_parent_pending_for_path(
-                    &path,
-                    self.frames_mut(),
-                    &mut stored_frames,
-                    &stored_map_key_paths,
-                );
+                // NOTE: With the SSoT/Transferred ownership invariant, any frame whose
+                // buffer was copied into a parent pending slot is marked `Transferred`
+                // (frame drop no-ops, parent pending slot is sole drop site). No
+                // sever-from-parent logic is required here.
                 frame.deinit();
                 frame.dealloc();
                 // Clean up remaining stored frames safely (deepest first, clearing parent isets)
@@ -507,20 +497,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // Before cleanup, clear the parent's iset bit for the frame that failed.
                 // This prevents the parent from trying to drop this field when Partial is dropped.
                 Self::clear_parent_iset_for_path(&path, self.frames_mut(), &mut stored_frames);
-                // If this is a MapValue/Deref/OptionSome frame, a parent tracker holds
-                // a pointer to our frame's memory (pending_entries / pending_inner). Clear
-                // that pointer before we dealloc, so the parent's deinit won't double-drop.
-                let stored_map_key_paths: ::alloc::collections::BTreeSet<Path> = stored_frames
-                    .keys()
-                    .filter(|p| matches!(p.steps.last(), Some(PathStep::MapKey(_))))
-                    .cloned()
-                    .collect();
-                Self::sever_parent_pending_for_path(
-                    &path,
-                    self.frames_mut(),
-                    &mut stored_frames,
-                    &stored_map_key_paths,
-                );
+                // Same as above: Transferred ownership makes sever-from-parent obsolete.
                 frame.deinit();
                 frame.dealloc();
                 // Clean up remaining stored frames safely (deepest first, clearing parent isets)
@@ -805,142 +782,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         }
     }
 
-    /// Sever parent/child pointer ownership when a stored child frame fails validation
-    /// in `finish_deferred`.
-    ///
-    /// When a child frame is stored for deferred processing, the parent may keep a
-    /// pointer to the child's buffer so it can finalize later (Map's `pending_entries`,
-    /// SmartPointer's / Option's `pending_inner`). If the child then fails validation
-    /// and its buffer is deallocated, that parent pointer would dangle and cause a
-    /// double-free when the parent is subsequently deinited.
-    ///
-    /// This helper clears the relevant parent field so the parent's own cleanup leaves
-    /// the buffer alone.
-    fn sever_parent_pending_for_path(
-        path: &Path,
-        stack: &mut [Frame],
-        stored_frames: &mut ::alloc::collections::BTreeMap<Path, Frame>,
-        stored_map_key_paths: &::alloc::collections::BTreeSet<Path>,
-    ) {
-        let Some(last_step) = path.steps.last() else {
-            return;
-        };
-        if !matches!(
-            last_step,
-            PathStep::MapValue(_) | PathStep::Deref | PathStep::OptionSome
-        ) {
-            return;
-        }
-
-        let parent_path = Path {
-            shape: path.shape,
-            steps: path.steps[..path.steps.len() - 1].to_vec(),
-        };
-
-        // If the failed path is a MapValue, check whether the sibling MapKey
-        // frame for this same entry index was stored in `stored_frames` at the
-        // start of cleanup. If so, that frame owns the key buffer (its deinit
-        // + dealloc will run for its own cleanup iteration) — we must pop the
-        // pending entry without dropping/deallocing the key here, otherwise
-        // we'll double-free. We consult a pre-captured snapshot because the
-        // MapKey frame may already have been removed from `stored_frames` by
-        // an earlier iteration of the cleanup loop (MapKey sorts before
-        // MapValue at equal depth).
-        //
-        // Path layout when a MapKey frame is stored in deferred mode:
-        //   parent_path + MapKey(entry_idx)   — stored MapKey frame
-        //   parent_path + MapValue(entry_idx) — the (failed) MapValue frame
-        let key_owned_by_stored_frame = if let PathStep::MapValue(entry_idx) = *last_step {
-            let mut map_key_steps = parent_path.steps.clone();
-            map_key_steps.push(PathStep::MapKey(entry_idx));
-            let map_key_path = Path {
-                shape: path.shape,
-                steps: map_key_steps,
-            };
-            stored_map_key_paths.contains(&map_key_path)
-        } else {
-            false
-        };
-
-        // Paths are absolute from the root; the frame at a given path lives at
-        // stack[path.steps.len()], so the parent lives at stack[parent_path.steps.len()].
-        let parent_frame = if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
-            Some(parent_frame)
-        } else {
-            stack.get_mut(parent_path.steps.len())
-        };
-
-        let Some(parent_frame) = parent_frame else {
-            return;
-        };
-
-        let parent_shape = parent_frame.allocated.shape();
-
-        match (&mut parent_frame.tracker, last_step) {
-            (
-                Tracker::Map {
-                    pending_entries, ..
-                },
-                PathStep::MapValue(_),
-            ) => {
-                // The pending entry held both (key_ptr, value_ptr). The value buffer is
-                // about to be freed by the caller via frame.dealloc(). The key buffer
-                // is either solely owned by this pending entry (drop + dealloc here)
-                // or co-owned by a stored MapKey frame (pop only; that frame will
-                // handle the key).
-                if let Some((key_ptr, _value_ptr)) = pending_entries.pop()
-                    && !key_owned_by_stored_frame
-                    && let Def::Map(map_def) = parent_shape.def
-                {
-                    unsafe {
-                        map_def.k().call_drop_in_place(key_ptr.assume_init());
-                    }
-                    if let Ok(key_layout) = map_def.k().layout.sized_layout()
-                        && key_layout.size() > 0
-                    {
-                        unsafe {
-                            ::alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_layout);
-                        }
-                    }
-                }
-                trace!(
-                    "sever_parent_pending_for_path: popped map pending_entry for failed MapValue at {:?} (key_owned_by_stored_frame={})",
-                    path, key_owned_by_stored_frame,
-                );
-            }
-            (
-                Tracker::SmartPointer {
-                    building_inner,
-                    pending_inner,
-                },
-                PathStep::Deref,
-            ) => {
-                *pending_inner = None;
-                *building_inner = true;
-                parent_frame.is_init = false;
-                trace!(
-                    "sever_parent_pending_for_path: cleared SmartPointer pending_inner for failed Deref at {:?}",
-                    path,
-                );
-            }
-            (
-                Tracker::Option {
-                    building_inner,
-                    pending_inner,
-                },
-                PathStep::OptionSome,
-            ) => {
-                *pending_inner = None;
-                *building_inner = true;
-                parent_frame.is_init = false;
-                trace!(
-                    "sever_parent_pending_for_path: cleared Option pending_inner for failed OptionSome at {:?}",
-                    path,
-                );
-            }
-            _ => {}
-        }
-    }
+    // NOTE: `sever_parent_pending_for_path` has been removed. Under the SSoT/Transferred
+    // ownership invariant, any child frame whose buffer was copied into a parent pending
+    // slot is marked `FrameOwnership::Transferred` at the transfer site. Its `deinit` and
+    // `dealloc` no-op; the parent pending slot is the sole drop-and-dealloc authority.
+    // No sever-from-parent logic is required on failure paths.
 
     /// Helper to unset a field index in a tracker's iset
     fn unset_field_in_tracker(tracker: &mut Tracker, field_idx: usize) {
@@ -966,17 +812,6 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         mut stored_frames: ::alloc::collections::BTreeMap<Path, Frame>,
         stack: &mut [Frame],
     ) {
-        // Snapshot the set of paths whose last step is `MapKey`. A stored
-        // MapKey frame owns its key buffer, and its sibling MapValue's
-        // `sever_parent_pending_for_path` must therefore skip dropping the
-        // pending-entry key. We capture the snapshot upfront because
-        // `stored_frames` is progressively drained during cleanup.
-        let stored_map_key_paths: ::alloc::collections::BTreeSet<Path> = stored_frames
-            .keys()
-            .filter(|p| matches!(p.steps.last(), Some(PathStep::MapKey(_))))
-            .cloned()
-            .collect();
-
         // Sort by depth (deepest first) so children are processed before parents
         let mut paths: Vec<_> = stored_frames.keys().cloned().collect();
         paths.sort_by_key(|p| core::cmp::Reverse(p.steps.len()));
@@ -1025,18 +860,152 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // Before dropping this frame, clear the parent's iset bit so the
                 // parent won't try to drop this field again.
                 Self::clear_parent_iset_for_path(&path, stack, &mut stored_frames);
-                // If this frame's buffer is also tracked by a parent Map/SmartPointer/Option
-                // pending pointer, clear that reference too — otherwise the parent will try to
-                // drop the same buffer we're about to dealloc.
-                Self::sever_parent_pending_for_path(
-                    &path,
-                    stack,
-                    &mut stored_frames,
-                    &stored_map_key_paths,
-                );
+                // Cleanup path special case: frames whose buffer was `Transferred` into
+                // a parent pending slot were expected to be drop-in-placed by the parent
+                // at finalize. But we're aborting — the parent's pending slot points to
+                // a buffer whose deep contents may be only partially initialized, and
+                // drop-in-place would traverse uninit descendants. So we undo the
+                // transfer: remove the pending-slot pointer and dealloc the buffer
+                // directly (without drop-in-place) to avoid both leaks and crashes.
+                if matches!(frame.ownership, FrameOwnership::Transferred) {
+                    Self::untransfer_on_cleanup(&path, &mut frame, stack, &mut stored_frames);
+                    // untransfer_on_cleanup deallocs the raw buffer itself; skip the
+                    // normal deinit/dealloc path (deinit would no-op under Transferred
+                    // anyway, dealloc would also no-op).
+                    continue;
+                }
                 trace!("cleanup: calling deinit() on path={:?}", path,);
                 frame.deinit();
                 frame.dealloc();
+            }
+        }
+    }
+
+    /// Undo a `FrameOwnership::Transferred` transfer during error cleanup.
+    ///
+    /// At the transfer site, the frame's buffer pointer was copied into a parent pending
+    /// slot (Map::pending_entries, Option/SmartPointer::pending_inner,
+    /// DynamicValue::pending_entries/elements). On success, the parent tracker's deinit
+    /// is the sole drop-and-dealloc authority. On error cleanup we can't rely on that,
+    /// because deep descendants may be uninit and drop-in-place would crash.
+    ///
+    /// This helper removes the parent pending-slot pointer and deallocates the raw
+    /// buffer directly (no drop-in-place), preventing both use-after-free (from the
+    /// parent dereffing a buffer we freed) and drop-in-place of partially-init data.
+    fn untransfer_on_cleanup(
+        path: &Path,
+        frame: &mut Frame,
+        stack: &mut [Frame],
+        stored_frames: &mut ::alloc::collections::BTreeMap<Path, Frame>,
+    ) {
+        let Some(last_step) = path.steps.last() else {
+            return;
+        };
+
+        // Locate the parent frame (stored or on stack at index parent_path.steps.len()).
+        let parent_path = Path {
+            shape: path.shape,
+            steps: path.steps[..path.steps.len() - 1].to_vec(),
+        };
+        let parent_idx = parent_path.steps.len();
+        let parent_frame = if let Some(pf) = stored_frames.get_mut(&parent_path) {
+            Some(pf)
+        } else {
+            stack.get_mut(parent_idx)
+        };
+
+        if let Some(parent_frame) = parent_frame {
+            match (&mut parent_frame.tracker, last_step) {
+                (
+                    Tracker::Map {
+                        pending_entries, ..
+                    },
+                    PathStep::MapValue(_),
+                ) => {
+                    // The last pending entry is (key, Some(value_ptr)) where value_ptr
+                    // == frame.data. Pop the entry; drop+dealloc the key (it was
+                    // transferred into pending_entries as a half-entry earlier — the
+                    // key IS fully initialized at this point because it's a prerequisite
+                    // for begin_value()). Leave the value to this fn's own dealloc below.
+                    if let Some((key_ptr, _)) = pending_entries.pop()
+                        && let Def::Map(map_def) = parent_frame.allocated.shape().def
+                    {
+                        unsafe {
+                            map_def.k().call_drop_in_place(key_ptr.assume_init());
+                        }
+                        if let Ok(key_layout) = map_def.k().layout.sized_layout()
+                            && key_layout.size() > 0
+                        {
+                            unsafe {
+                                ::alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_layout);
+                            }
+                        }
+                    }
+                }
+                (
+                    Tracker::Map {
+                        pending_entries, ..
+                    },
+                    PathStep::MapKey(_),
+                ) => {
+                    // A MapKey frame marked Transferred means we stored a half-entry
+                    // (key, None). Pop it; the popped key_ptr IS `frame.data`, so
+                    // drop and dealloc here and return — skip the generic dealloc
+                    // below to avoid double-freeing the key buffer.
+                    if let Some((key_ptr, _)) = pending_entries.pop()
+                        && let Def::Map(map_def) = parent_frame.allocated.shape().def
+                    {
+                        unsafe {
+                            map_def.k().call_drop_in_place(key_ptr.assume_init());
+                        }
+                        if let Ok(key_layout) = map_def.k().layout.sized_layout()
+                            && key_layout.size() > 0
+                        {
+                            unsafe {
+                                ::alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_layout);
+                            }
+                        }
+                    }
+                    return;
+                }
+                (
+                    Tracker::SmartPointer {
+                        building_inner,
+                        pending_inner,
+                    },
+                    PathStep::Deref,
+                ) => {
+                    *pending_inner = None;
+                    *building_inner = true;
+                    parent_frame.is_init = false;
+                }
+                (
+                    Tracker::Option {
+                        building_inner,
+                        pending_inner,
+                    },
+                    PathStep::OptionSome,
+                ) => {
+                    *pending_inner = None;
+                    *building_inner = true;
+                    parent_frame.is_init = false;
+                }
+                _ => {}
+            }
+        }
+
+        // Manually deallocate the frame's buffer (no drop-in-place — contents may be
+        // partially initialized, which is exactly why we took this path).
+        if frame.allocated.allocated_size() > 0
+            && let Ok(layout) = frame.allocated.shape().layout.sized_layout()
+        {
+            let actual_layout = core::alloc::Layout::from_size_align(
+                frame.allocated.allocated_size(),
+                layout.align(),
+            )
+            .expect("allocated_size must be valid");
+            unsafe {
+                ::alloc::alloc::dealloc(frame.data.as_mut_byte_ptr(), actual_layout);
             }
         }
     }
@@ -1370,20 +1339,31 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     }
 
     /// Complete a Map key frame by transitioning the Map from PushingKey to PushingValue state
-    /// (for deferred finalization)
+    /// (for deferred finalization).
+    ///
+    /// The key buffer ownership now belongs to `pending_entries` via a half-entry
+    /// `(key_ptr, None)` pushed here. The subsequent value frame's
+    /// [`complete_map_value_frame`] upgrades this half-entry to
+    /// `(key_ptr, Some(value_ptr))`.
     fn complete_map_key_frame(map_frame: &mut Frame, key_frame: Frame) {
-        if let Tracker::Map { insert_state, .. } = &mut map_frame.tracker
+        if let Tracker::Map {
+            insert_state,
+            pending_entries,
+            ..
+        } = &mut map_frame.tracker
             && let MapInsertState::PushingKey { key_ptr, .. } = insert_state
         {
-            // Transition to PushingValue state, keeping the key pointer.
-            // key_frame_stored = false because the key frame is being finalized here,
-            // so after this the Map owns the key buffer.
+            // Transfer key buffer ownership to pending_entries as a half-entry. This
+            // entry will be upgraded to a full (key, value) by complete_map_value_frame
+            // or Map::deinit's pending_entries drain will drop/dealloc the orphaned key.
+            pending_entries.push((*key_ptr, None));
+
+            // Transition to PushingValue state. The `key_ptr` here is just a convenience
+            // copy for the value-push path; it is NOT a drop source — pending_entries is.
             *insert_state = MapInsertState::PushingValue {
                 key_ptr: *key_ptr,
                 value_ptr: None,
                 value_initialized: false,
-                value_frame_on_stack: false,
-                key_frame_stored: false,
             };
 
             crate::trace!(
@@ -1391,7 +1371,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 map_frame.allocated.shape()
             );
 
-            // Deallocate the key frame's memory (the key data lives at key_ptr which Map owns)
+            // Owned frames (rare) allocate their own buffer — we still need to free it.
+            // TrackedBuffer frames use the Map's key_ptr which is now in pending_entries,
+            // so only Owned ownership triggers dealloc here.
             if let FrameOwnership::Owned = key_frame.ownership
                 && let Ok(layout) = key_frame.allocated.shape().layout.sized_layout()
                 && layout.size() > 0
@@ -1403,8 +1385,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         }
     }
 
-    /// Complete a Map value frame by adding the key-value pair to pending_entries
-    /// (for deferred finalization)
+    /// Complete a Map value frame by upgrading the last pending half-entry
+    /// `(key_ptr, None)` to a full `(key_ptr, Some(value_ptr))`
+    /// (for deferred finalization).
     fn complete_map_value_frame(map_frame: &mut Frame, value_frame: Frame) {
         if let Tracker::Map {
             insert_state,
@@ -1412,23 +1395,31 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             ..
         } = &mut map_frame.tracker
             && let MapInsertState::PushingValue {
-                key_ptr,
                 value_ptr: Some(value_ptr),
                 ..
             } = insert_state
         {
-            // Add the key-value pair to pending_entries
-            pending_entries.push((*key_ptr, *value_ptr));
+            // Upgrade the last half-entry (which must exist — complete_map_key_frame
+            // or the deferred end() store-path pushed it) to a full entry.
+            let last = pending_entries
+                .last_mut()
+                .expect("pending_entries must have a half-entry from complete_map_key_frame");
+            debug_assert!(
+                last.1.is_none(),
+                "last pending entry must be a half-entry (None value), got Some — invariant violation in SSoT protocol"
+            );
+            last.1 = Some(*value_ptr);
 
             crate::trace!(
-                "complete_map_value_frame: added entry to pending_entries for {}",
+                "complete_map_value_frame: upgraded half-entry to full entry for {}",
                 map_frame.allocated.shape()
             );
 
             // Reset to idle state
             *insert_state = MapInsertState::Idle;
 
-            // Deallocate the value frame's memory (the value data lives at value_ptr which Map owns)
+            // For Owned frames (rare), free the frame's own buffer. TrackedBuffer frames
+            // use the Map's value_ptr which is now owned by pending_entries — no-op.
             if let FrameOwnership::Owned = value_frame.ownership
                 && let Ok(layout) = value_frame.allocated.shape().layout.sized_layout()
                 && layout.size() > 0
@@ -1619,9 +1610,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         FrameOwnership::TrackedBuffer
                         | FrameOwnership::BorrowedInPlace
                         | FrameOwnership::External
-                        | FrameOwnership::RopeSlot => {
+                        | FrameOwnership::RopeSlot
+                        | FrameOwnership::Transferred => {
                             return Err(self.err(ReflectErrorKind::InvariantViolation {
-                            invariant: "SmartPointerSlice cannot have TrackedBuffer/BorrowedInPlace/External/RopeSlot ownership after conversion",
+                            invariant: "SmartPointerSlice cannot have TrackedBuffer/BorrowedInPlace/External/RopeSlot/Transferred ownership after conversion",
                         }));
                         }
                     }
@@ -1959,7 +1951,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // The Map needs to transition states so that subsequent operations work:
                 // - PushingKey -> PushingValue: so begin_value() can be called
                 // - PushingValue -> Idle: so begin_key() can be called for the next entry
-                // The frames are still stored for potential re-entry and finalization.
+                //
+                // Per SSoT/Transferred protocol: whenever we copy `popped_frame.data` into
+                // pending_entries (as a half-entry for a stored key, or upgrading to a full
+                // entry for a stored value), we MUST mark popped_frame.ownership as
+                // `Transferred` so the stored frame no longer tries to drop/dealloc the
+                // buffer. pending_entries is now the sole drop authority.
                 if let Some(parent_frame) = stack.last_mut() {
                     if let Tracker::Map {
                         insert_state,
@@ -1969,30 +1966,37 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     {
                         match insert_state {
                             MapInsertState::PushingKey { key_ptr, .. } => {
-                                // Transition to PushingValue state.
-                                // key_frame_stored = true because the key frame is being stored,
-                                // so the stored frame will handle cleanup (not the Map's deinit).
+                                // Transfer key ownership into pending_entries as a
+                                // half-entry, then transition state.
+                                pending_entries.push((*key_ptr, None));
                                 *insert_state = MapInsertState::PushingValue {
                                     key_ptr: *key_ptr,
                                     value_ptr: None,
                                     value_initialized: false,
-                                    value_frame_on_stack: false,
-                                    key_frame_stored: true,
                                 };
+                                popped_frame.ownership = FrameOwnership::Transferred;
                                 crate::trace!(
-                                    "end(): Map transitioned to PushingValue while storing key frame"
+                                    "end(): Map transitioned to PushingValue while storing key frame (ownership Transferred)"
                                 );
                             }
                             MapInsertState::PushingValue {
-                                key_ptr,
                                 value_ptr: Some(value_ptr),
                                 ..
                             } => {
-                                // Add entry to pending_entries and reset to Idle
-                                pending_entries.push((*key_ptr, *value_ptr));
+                                // Upgrade the half-entry to a full entry, then reset
+                                // to Idle.
+                                let last = pending_entries.last_mut().expect(
+                                    "pending_entries must have a half-entry from when key was stored",
+                                );
+                                debug_assert!(
+                                    last.1.is_none(),
+                                    "last pending entry must be a half-entry (None value), got Some — invariant violation in SSoT protocol"
+                                );
+                                last.1 = Some(*value_ptr);
                                 *insert_state = MapInsertState::Idle;
+                                popped_frame.ownership = FrameOwnership::Transferred;
                                 crate::trace!(
-                                    "end(): Map added entry to pending_entries while storing value frame"
+                                    "end(): Map upgraded half-entry to full entry while storing value frame (ownership Transferred)"
                                 );
                             }
                             _ => {}
@@ -2046,17 +2050,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             return Err(ReflectError::new(kind, storage_path.clone()));
                         }
 
-                        // Add to pending_entries for deferred insertion
+                        // Add to pending_entries for deferred insertion.
+                        // SSoT: pending_entries is now the sole drop authority for this
+                        // buffer; mark the popped frame Transferred so its deinit/dealloc
+                        // no-op.
                         pending_entries.push((key, popped_frame.data));
+                        popped_frame.ownership = FrameOwnership::Transferred;
                         crate::trace!(
-                            "end(): DynamicValue object entry added to pending_entries in deferred mode"
+                            "end(): DynamicValue object entry added to pending_entries in deferred mode (ownership Transferred)"
                         );
-
-                        // The value frame's data is now owned by pending_entries
-                        // Mark frame as not owning the data so it won't be deallocated
-                        popped_frame.tracker = Tracker::Scalar;
-                        popped_frame.is_init = false;
-                        // Don't dealloc - pending_entries owns the pointer now
 
                         // Reset insert state to Idle so more entries can be added
                         *insert_state = DynamicObjectInsertState::Idle;
@@ -2082,17 +2084,14 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             return Err(ReflectError::new(kind, storage_path.clone()));
                         }
 
-                        // Add to pending_elements for deferred insertion
+                        // Add to pending_elements for deferred insertion.
+                        // SSoT: pending_elements is now the sole drop authority; mark the
+                        // popped frame Transferred so its deinit/dealloc no-op.
                         pending_elements.push(popped_frame.data);
+                        popped_frame.ownership = FrameOwnership::Transferred;
                         crate::trace!(
-                            "end(): DynamicValue array element added to pending_elements in deferred mode"
+                            "end(): DynamicValue array element added to pending_elements in deferred mode (ownership Transferred)"
                         );
-
-                        // The element frame's data is now owned by pending_elements
-                        // Mark frame as not owning the data so it won't be deallocated
-                        popped_frame.tracker = Tracker::Scalar;
-                        popped_frame.is_init = false;
-                        // Don't dealloc - pending_elements owns the pointer now
 
                         // Reset building_element so more elements can be added
                         *building_element = false;
@@ -2401,11 +2400,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         // Check if we're in deferred mode - if so, store the inner value pointer
                         if is_deferred_mode {
                             // Store the inner value pointer for deferred new_into_fn.
+                            // SSoT: pending_inner is now the sole drop authority for this
+                            // buffer; mark popped_frame Transferred so its deinit/dealloc
+                            // no-op.
                             *pending_inner = Some(popped_frame.data);
+                            popped_frame.ownership = FrameOwnership::Transferred;
                             *building_inner = false;
                             parent_frame.is_init = true;
                             crate::trace!(
-                                "end() SMARTPTR: stored pending_inner, will finalize in finish_deferred"
+                                "end() SMARTPTR: stored pending_inner, will finalize in finish_deferred (ownership Transferred)"
                             );
                         } else {
                             // Not in deferred mode - complete immediately
@@ -2501,32 +2504,40 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             return Err(self.err(e));
                         }
 
-                        // We just popped the key frame - mark key as initialized and transition
-                        // to PushingValue state. key_frame_on_stack = false because the frame
-                        // was just popped, so Map now owns the key buffer.
+                        // Transfer key buffer ownership into pending_entries as a
+                        // half-entry (key_ptr, None). The popped_frame (TrackedBuffer)
+                        // no longer owns the buffer — mark it Transferred so its own
+                        // deinit/dealloc no-ops. The value phase will upgrade the
+                        // half-entry to a full (key, Some(value)) pair.
+                        pending_entries.push((*key_ptr, None));
+                        popped_frame.ownership = FrameOwnership::Transferred;
+
                         *insert_state = MapInsertState::PushingValue {
                             key_ptr: *key_ptr,
                             value_ptr: None,
                             value_initialized: false,
-                            value_frame_on_stack: false, // No value frame yet
-                            key_frame_stored: false,     // Key frame was popped, Map owns key
                         };
                     }
-                    MapInsertState::PushingValue {
-                        key_ptr, value_ptr, ..
-                    } => {
+                    MapInsertState::PushingValue { value_ptr, .. } => {
                         // Fill defaults on the value frame before considering it done.
                         // This handles structs with Option fields.
                         if let Err(e) = popped_frame.fill_defaults() {
                             return Err(self.err(e));
                         }
 
-                        // We just popped the value frame.
-                        // Instead of inserting immediately, add to pending_entries.
-                        // This keeps the buffers alive for deferred processing.
-                        // Actual insertion happens in require_full_initialization.
+                        // Upgrade the last half-entry (key_ptr, None) to a full entry
+                        // (key_ptr, Some(value_ptr)) and mark the value frame as
+                        // Transferred so its deinit/dealloc no-ops.
                         if let Some(value_ptr) = value_ptr {
-                            pending_entries.push((*key_ptr, *value_ptr));
+                            let last = pending_entries.last_mut().expect(
+                                "pending_entries must have a half-entry from the PushingKey -> PushingValue transition",
+                            );
+                            debug_assert!(
+                                last.1.is_none(),
+                                "last pending entry must be a half-entry (None value), got Some — invariant violation"
+                            );
+                            last.1 = Some(*value_ptr);
+                            popped_frame.ownership = FrameOwnership::Transferred;
 
                             // Reset to idle state
                             *insert_state = MapInsertState::Idle;
@@ -2577,11 +2588,18 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         // Store the inner value pointer for deferred init_some.
                         // This keeps the inner value's memory stable for deferred processing.
                         // Actual init_some() happens in require_full_initialization().
+                        //
+                        // SSoT: pending_inner is now the sole drop authority for this
+                        // buffer; mark popped_frame Transferred so its deinit/dealloc
+                        // no-op.
                         *pending_inner = Some(popped_frame.data);
+                        popped_frame.ownership = FrameOwnership::Transferred;
 
                         // Mark that we're no longer building the inner value
                         *building_inner = false;
-                        crate::trace!("end(): stored pending_inner, set building_inner to false");
+                        crate::trace!(
+                            "end(): stored pending_inner, set building_inner to false (ownership Transferred)"
+                        );
                         // Mark the Option as initialized (pending finalization)
                         parent_frame.is_init = true;
                         crate::trace!("end(): set parent_frame.is_init to true");

@@ -228,7 +228,6 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 *insert_state = MapInsertState::PushingKey {
                     key_ptr,
                     key_initialized: false,
-                    key_frame_on_stack: true, // TrackedBuffer frame is now on the stack
                 };
             }
             _ => unreachable!(),
@@ -260,7 +259,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let frame = self.mode.stack_mut().last_mut().unwrap();
 
         // Check that we have a Map in PushingValue state with no value_ptr yet
-        let (map_def, key_ptr, key_frame_stored) = match (&shape.def, &frame.tracker) {
+        let (map_def, key_ptr) = match (&shape.def, &frame.tracker) {
             (
                 Def::Map(map_def),
                 Tracker::Map {
@@ -268,12 +267,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                         MapInsertState::PushingValue {
                             value_ptr: None,
                             key_ptr,
-                            key_frame_stored,
                             ..
                         },
                     ..
                 },
-            ) => (map_def, *key_ptr, *key_frame_stored),
+            ) => (map_def, *key_ptr),
             (
                 Def::Map(_),
                 Tracker::Map {
@@ -324,8 +322,6 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     key_ptr,
                     value_ptr: Some(value_ptr),
                     value_initialized: false,
-                    value_frame_on_stack: true, // TrackedBuffer frame is now on the stack
-                    key_frame_stored,           // Preserve from previous state
                 };
             }
             _ => unreachable!(),
