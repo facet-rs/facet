@@ -489,6 +489,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     self.frames_mut(),
                     &mut stored_frames,
                 );
+                // If this is a MapValue/Deref/OptionSome frame, a parent tracker holds
+                // a pointer to our frame's memory (pending_entries / pending_inner). Clear
+                // that pointer before we dealloc, so the parent's deinit won't double-drop.
+                Self::sever_parent_pending_for_path(
+                    &path,
+                    start_depth,
+                    self.frames_mut(),
+                    &mut stored_frames,
+                );
                 frame.deinit();
                 frame.dealloc();
                 // Clean up remaining stored frames safely (deepest first, clearing parent isets)
@@ -501,6 +510,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // Before cleanup, clear the parent's iset bit for the frame that failed.
                 // This prevents the parent from trying to drop this field when Partial is dropped.
                 Self::clear_parent_iset_for_path(
+                    &path,
+                    start_depth,
+                    self.frames_mut(),
+                    &mut stored_frames,
+                );
+                // If this is a MapValue/Deref/OptionSome frame, a parent tracker holds
+                // a pointer to our frame's memory (pending_entries / pending_inner). Clear
+                // that pointer before we dealloc, so the parent's deinit won't double-drop.
+                Self::sever_parent_pending_for_path(
                     &path,
                     start_depth,
                     self.frames_mut(),
@@ -805,29 +823,143 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         stack: &mut [Frame],
         stored_frames: &mut ::alloc::collections::BTreeMap<Path, Frame>,
     ) {
+        trace!(
+            "clear_parent_iset_for_path: path={:?}, start_depth={}",
+            path, start_depth,
+        );
         if let Some(&PathStep::Field(field_idx)) = path.steps.last() {
             let field_idx = field_idx as usize;
             let parent_path = Path {
                 shape: path.shape,
                 steps: path.steps[..path.steps.len() - 1].to_vec(),
             };
+            trace!(
+                "clear_parent_iset_for_path: field_idx={}, parent_path={:?}",
+                field_idx, parent_path,
+            );
 
             // Try stored_frames first
             if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                trace!(
+                    "clear_parent_iset_for_path: FOUND parent in stored_frames, shape={}, tracker before={:?}",
+                    parent_frame.allocated.shape(),
+                    parent_frame.tracker,
+                );
                 Self::unset_field_in_tracker(&mut parent_frame.tracker, field_idx);
-            } else if parent_path.steps.is_empty() {
-                // Parent is on the stack at (start_depth - 1)
-                let parent_index = start_depth.saturating_sub(1);
-                if let Some(parent_frame) = stack.get_mut(parent_index) {
-                    Self::unset_field_in_tracker(&mut parent_frame.tracker, field_idx);
-                }
+                trace!(
+                    "clear_parent_iset_for_path: tracker after={:?}",
+                    parent_frame.tracker,
+                );
             } else {
-                // Parent is on the stack at (start_depth + parent_path.steps.len() - 1)
-                let parent_index = start_depth + parent_path.steps.len() - 1;
+                // Path steps are absolute from the root; the frame at a given path lives at
+                // stack[path.steps.len()]. So the parent (one fewer step) lives at
+                // stack[parent_path.steps.len()].
+                let parent_index = parent_path.steps.len();
+                trace!(
+                    "clear_parent_iset_for_path: parent NOT in stored_frames, looking on stack at index {} (start_depth={})",
+                    parent_index, start_depth,
+                );
                 if let Some(parent_frame) = stack.get_mut(parent_index) {
                     Self::unset_field_in_tracker(&mut parent_frame.tracker, field_idx);
                 }
             }
+        } else {
+            trace!(
+                "clear_parent_iset_for_path: path.steps.last() = {:?}, NOT a Field — skipping",
+                path.steps.last(),
+            );
+        }
+    }
+
+    /// Sever parent/child pointer ownership when a stored child frame fails validation
+    /// in `finish_deferred`.
+    ///
+    /// When a child frame is stored for deferred processing, the parent may keep a
+    /// pointer to the child's buffer so it can finalize later (Map's `pending_entries`,
+    /// SmartPointer's / Option's `pending_inner`). If the child then fails validation
+    /// and its buffer is deallocated, that parent pointer would dangle and cause a
+    /// double-free when the parent is subsequently deinited.
+    ///
+    /// This helper clears the relevant parent field so the parent's own cleanup leaves
+    /// the buffer alone.
+    fn sever_parent_pending_for_path(
+        path: &Path,
+        start_depth: usize,
+        stack: &mut [Frame],
+        stored_frames: &mut ::alloc::collections::BTreeMap<Path, Frame>,
+    ) {
+        let Some(last_step) = path.steps.last() else {
+            return;
+        };
+        if !matches!(
+            last_step,
+            PathStep::MapValue(_) | PathStep::Deref | PathStep::OptionSome
+        ) {
+            return;
+        }
+
+        let parent_path = Path {
+            shape: path.shape,
+            steps: path.steps[..path.steps.len() - 1].to_vec(),
+        };
+
+        let parent_frame = if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+            Some(parent_frame)
+        } else {
+            // Path steps are absolute from the root; frame at a given path lives at
+            // stack[path.steps.len()]. So parent lives at stack[parent_path.steps.len()].
+            let _ = start_depth; // kept for symmetry with the API surface
+            stack.get_mut(parent_path.steps.len())
+        };
+
+        let Some(parent_frame) = parent_frame else {
+            return;
+        };
+
+        match (&mut parent_frame.tracker, last_step) {
+            (
+                Tracker::Map {
+                    pending_entries, ..
+                },
+                PathStep::MapValue(_),
+            ) => {
+                pending_entries.pop();
+                trace!(
+                    "sever_parent_pending_for_path: popped map pending_entry for failed MapValue at {:?}",
+                    path,
+                );
+            }
+            (
+                Tracker::SmartPointer {
+                    building_inner,
+                    pending_inner,
+                },
+                PathStep::Deref,
+            ) => {
+                *pending_inner = None;
+                *building_inner = true;
+                parent_frame.is_init = false;
+                trace!(
+                    "sever_parent_pending_for_path: cleared SmartPointer pending_inner for failed Deref at {:?}",
+                    path,
+                );
+            }
+            (
+                Tracker::Option {
+                    building_inner,
+                    pending_inner,
+                },
+                PathStep::OptionSome,
+            ) => {
+                *pending_inner = None;
+                *building_inner = true;
+                parent_frame.is_init = false;
+                trace!(
+                    "sever_parent_pending_for_path: cleared Option pending_inner for failed OptionSome at {:?}",
+                    path,
+                );
+            }
+            _ => {}
         }
     }
 
@@ -860,11 +992,55 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let mut paths: Vec<_> = stored_frames.keys().cloned().collect();
         paths.sort_by_key(|p| core::cmp::Reverse(p.steps.len()));
 
+        trace!(
+            "cleanup_stored_frames_on_error: {} frames to clean, paths: {:?}",
+            paths.len(),
+            paths
+        );
+
+        for path in &paths {
+            if let Some(frame) = stored_frames.get(path) {
+                trace!(
+                    "cleanup: processing path={:?}, shape={}, tracker={:?}, is_init={}, ownership={:?}",
+                    path,
+                    frame.allocated.shape(),
+                    frame.tracker.kind(),
+                    frame.is_init,
+                    frame.ownership,
+                );
+                // Dump iset contents for struct/enum trackers
+                match &frame.tracker {
+                    Tracker::Struct { iset: _iset, .. } => {
+                        trace!("cleanup:   Struct iset = {:?}", _iset);
+                    }
+                    Tracker::Enum {
+                        variant: _variant,
+                        data: _data,
+                        ..
+                    } => {
+                        trace!("cleanup:   Enum {:?} data = {:?}", _variant.name, _data);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         for path in paths {
             if let Some(mut frame) = stored_frames.remove(&path) {
+                trace!(
+                    "cleanup: REMOVING path={:?}, shape={}, tracker={:?}",
+                    path,
+                    frame.allocated.shape(),
+                    frame.tracker.kind(),
+                );
                 // Before dropping this frame, clear the parent's iset bit so the
                 // parent won't try to drop this field again.
                 Self::clear_parent_iset_for_path(&path, start_depth, stack, &mut stored_frames);
+                // If this frame's buffer is also tracked by a parent Map/SmartPointer/Option
+                // pending pointer, clear that reference too — otherwise the parent will try to
+                // drop the same buffer we're about to dealloc.
+                Self::sever_parent_pending_for_path(&path, start_depth, stack, &mut stored_frames);
+                trace!("cleanup: calling deinit() on path={:?}", path,);
                 frame.deinit();
                 frame.dealloc();
             }
