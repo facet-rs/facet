@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.5](https://github.com/facet-rs/facet/compare/facet-reflect-v0.44.4...facet-reflect-v0.44.5) - 2026-04-13
+
+### Fixed
+
+- *(reflect)* drop RopeSlot frame contents in-place on cleanup
+- *(reflect)* defer rope slot init mark to consume-time, fix doc link
+- *(reflect)* avoid UAF when stored MapKey frame co-owns pending-entry key
+
+### Other
+
+- *(reflect)* consume-time pending-slot population, drop Transferred variant
+- *(reflect)* remove now-dead MapInsertState init-tracking fields
+- *(reflect)* single-source-of-truth ownership via FrameOwnership::Transferred
+
 ## [0.44.4](https://github.com/facet-rs/facet/compare/facet-reflect-v0.44.3...facet-reflect-v0.44.4) - 2026-04-13
 
 ### Fixed
