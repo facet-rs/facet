@@ -828,6 +828,8 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             return;
         };
 
+        let parent_shape = parent_frame.allocated.shape();
+
         match (&mut parent_frame.tracker, last_step) {
             (
                 Tracker::Map {
@@ -835,9 +837,27 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 },
                 PathStep::MapValue(_),
             ) => {
-                pending_entries.pop();
+                // The pending entry held both (key_ptr, value_ptr). The value buffer is
+                // about to be freed by the caller via frame.dealloc(). The key buffer,
+                // however, is solely owned by this pending entry — if we just pop it
+                // without dropping, both the key's in-place contents and its allocation
+                // leak.
+                if let Some((key_ptr, _value_ptr)) = pending_entries.pop()
+                    && let Def::Map(map_def) = parent_shape.def
+                {
+                    unsafe {
+                        map_def.k().call_drop_in_place(key_ptr.assume_init());
+                    }
+                    if let Ok(key_layout) = map_def.k().layout.sized_layout()
+                        && key_layout.size() > 0
+                    {
+                        unsafe {
+                            ::alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_layout);
+                        }
+                    }
+                }
                 trace!(
-                    "sever_parent_pending_for_path: popped map pending_entry for failed MapValue at {:?}",
+                    "sever_parent_pending_for_path: popped & dropped map pending_entry for failed MapValue at {:?}",
                     path,
                 );
             }
