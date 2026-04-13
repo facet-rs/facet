@@ -65,6 +65,12 @@ test-i686:
 valgrind *args:
     cargo nextest run --profile valgrind --features jit {{ args }}
 
+asan *args:
+    CARGO_TARGET_DIR=target/asan RUSTFLAGS="-Z sanitizer=address" \
+        cargo +nightly nextest run \
+        --target "$(rustc -vV | sed -n 's|host: ||p')" \
+        -p facet-reflect {{ args }}
+
 fuzz-smoke-value:
     cargo fuzz run fuzz_value -- -runs=1000
 
