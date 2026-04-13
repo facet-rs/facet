@@ -274,8 +274,6 @@ pub(crate) enum MapInsertState {
     PushingKey {
         /// Temporary storage for the key being built
         key_ptr: PtrUninit,
-        /// Whether the key has been fully initialized
-        key_initialized: bool,
     },
 
     /// Pushing value after key is done.
@@ -289,8 +287,6 @@ pub(crate) enum MapInsertState {
         key_ptr: PtrUninit,
         /// Temporary storage for the value being built
         value_ptr: Option<PtrUninit>,
-        /// Whether the value has been fully initialized
-        value_initialized: bool,
     },
 }
 

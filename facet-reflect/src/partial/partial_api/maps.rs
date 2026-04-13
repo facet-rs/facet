@@ -225,10 +225,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     Some(idx) => idx + 1,
                 });
                 *building_key = true;
-                *insert_state = MapInsertState::PushingKey {
-                    key_ptr,
-                    key_initialized: false,
-                };
+                *insert_state = MapInsertState::PushingKey { key_ptr };
             }
             _ => unreachable!(),
         }
@@ -321,7 +318,6 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 *insert_state = MapInsertState::PushingValue {
                     key_ptr,
                     value_ptr: Some(value_ptr),
-                    value_initialized: false,
                 };
             }
             _ => unreachable!(),
