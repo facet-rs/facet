@@ -1,6 +1,6 @@
 [package]
 name = "facet"
-version = "0.44.3"
+version = "0.44.4"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -132,7 +132,7 @@ autocfg = { workspace = true }
 [dependencies]
 facet-core = { path = "../facet-core", version = "=0.44.3", default-features = false }
 facet-macros = { path = "../facet-macros", version = "0.44.3", default-features = false }
-facet-reflect = { path = "../facet-reflect", version = "0.44.3", optional = true }
+facet-reflect = { path = "../facet-reflect", version = "0.44.4", optional = true }
 static_assertions = { workspace = true, optional = true }
 
 [dev-dependencies]

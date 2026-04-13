@@ -1,6 +1,6 @@
 [package]
 name = "facet-pretty"
-version = "0.44.4"
+version = "0.44.5"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -25,7 +25,7 @@ camino = ["alloc", "facet-core/camino"]
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.44.3" }
-facet-reflect = { path = "../facet-reflect", version = "0.44.3" }
+facet-reflect = { path = "../facet-reflect", version = "0.44.4" }
 owo-colors = { version = "4", features = ["supports-colors"] }
 
 [dev-dependencies]
