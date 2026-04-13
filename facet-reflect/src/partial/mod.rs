@@ -109,28 +109,44 @@
 //! - Properly handling drop semantics for partially initialized values
 //! - Supporting both owned and borrowed values through lifetime parameters
 //!
-//! # Drop-ownership invariant (SSoT / Transferred)
+//! # Drop-ownership invariant (single-source-of-truth)
 //!
 //! Every heap buffer allocated during partial construction has exactly one drop-and-dealloc
 //! authority at all times. Authority is either the owning frame (its `FrameOwnership`
 //! controls deinit + dealloc) or a parent tracker's pending slot
 //! (`Tracker::Map::pending_entries`, `Tracker::Option::pending_inner`,
 //! `Tracker::SmartPointer::pending_inner`, `DynamicValueState::Object::pending_entries`,
-//! `DynamicValueState::Array::pending_elements`).
+//! `DynamicValueState::Array::pending_elements`). Authority transfers between the two
+//! at well-defined points — never simultaneously held.
 //!
-//! - **Transfer protocol**: in the same statement block that copies a child frame's `data`
-//!   pointer into a parent pending slot, mutate `child_frame.ownership =
-//!   FrameOwnership::Transferred`. The child's subsequent `deinit` and `dealloc` no-op.
-//!   The parent's tracker deinit is the sole site that drops + deallocs that buffer.
+//! - **Stored frames in deferred mode keep their buffer**: a frame that gets stored in
+//!   `stored_frames` for later re-entry retains full `TrackedBuffer`/`Owned` ownership
+//!   of its data. Parent tracker pending slots are NOT populated at store-time. On
+//!   error (`Partial` dropped mid-build, or `finish_deferred` aborting), the stored
+//!   frame's own `deinit` + `dealloc` handles cleanup; no parent pending-slot severing
+//!   is required.
+//! - **Pending-slot population is consume-time**: `finish_deferred`'s walk calls
+//!   `complete_map_{key,value}_frame` / `complete_option_frame` /
+//!   `complete_smart_pointer_frame` AFTER `require_full_initialization` has validated
+//!   the child frame. Only then does the buffer pointer move into the parent's pending
+//!   slot (or directly into the parent's final storage, for Option/SmartPointer). The
+//!   child frame is dropped silently (Frame has no `Drop` impl); the parent's pending
+//!   slot becomes the sole owner.
+//! - **Non-stored frames in deferred mode**: when a child frame isn't stored (e.g.
+//!   scalar Option inner), its popped `data` pointer is moved into the parent pending
+//!   slot directly in `end()`. The frame is silently dropped after the match block, so
+//!   single ownership is preserved without any ownership mutation.
 //! - **Map half-entries**: `pending_entries` holds `(key_ptr, Option<value_ptr>)`. A key
 //!   pushed without a paired value is a half-entry `(key, None)`; its value-phase
 //!   counterpart upgrades the last entry to `(key, Some(value))`. A half-entry left at
 //!   finalize is an invariant violation; a half-entry at drop-time drops the orphan key
 //!   only.
-//! - **No booleans, no sever helpers**: cleanup paths must not special-case which half
-//!   of a dual-ownership pair to disarm. Ownership mutation at the transfer site is the
-//!   only contract. If you catch yourself adding a `*_frame_on_stack` or
-//!   `sever_parent_pending_*` helper, re-read this block.
+//! - **No sever helpers, no ownership-mutation protocol**: the walk's consume-time
+//!   ordering guarantees `pending_entries` / `pending_inner` entries only reference
+//!   fully-validated buffers. `Tracker::*::deinit` can drain these unconditionally.
+//!   If you catch yourself adding a `sever_parent_pending_*` or `untransfer_*` helper,
+//!   re-read this block — the answer is to push to the pending slot later, not to add
+//!   a sever step.
 
 use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
 
@@ -267,10 +283,12 @@ pub(crate) enum MapInsertState {
     /// Pushing key - memory allocated, waiting for initialization.
     ///
     /// The key buffer is owned by the key frame currently on the stack
-    /// (a `TrackedBuffer` frame). If that frame is stored (deferred mode),
-    /// the key buffer ownership transfers to `pending_entries` as a
-    /// half-entry `(key_ptr, None)` and the stored frame is marked
-    /// `FrameOwnership::Transferred`.
+    /// (a `TrackedBuffer` frame). In non-deferred mode, the key frame's `end()`
+    /// transfers the buffer into `pending_entries` as a half-entry
+    /// `(key_ptr, None)` before transitioning to `PushingValue`. In deferred
+    /// mode, the key frame is stored (retaining ownership) and only the state
+    /// transitions here; `pending_entries` is populated at consume-time by
+    /// `complete_map_key_frame` during `finish_deferred`.
     PushingKey {
         /// Temporary storage for the key being built
         key_ptr: PtrUninit,
@@ -278,10 +296,11 @@ pub(crate) enum MapInsertState {
 
     /// Pushing value after key is done.
     ///
-    /// If the key was stored in deferred mode, `pending_entries` already
-    /// has a `(key_ptr, None)` half-entry. When the value frame is stored,
-    /// the half-entry is upgraded to `(key_ptr, Some(value_ptr))` and the
-    /// value frame is marked `FrameOwnership::Transferred`.
+    /// In non-deferred mode, the value frame's `end()` upgrades the last
+    /// half-entry in `pending_entries` to `(key_ptr, Some(value_ptr))`. In
+    /// deferred mode, the value frame is stored (retaining ownership); the
+    /// `finish_deferred` walk's `complete_map_value_frame` upgrades
+    /// the half-entry at consume-time.
     PushingValue {
         /// Temporary storage for the key that was built (always initialized)
         key_ptr: PtrUninit,
@@ -326,30 +345,14 @@ pub(crate) enum FrameOwnership {
     /// On list frame end(): all elements are moved into the real Vec.
     /// On drop/failure: the rope chunk handles cleanup.
     RopeSlot,
-
-    /// The frame's `data` pointer has been copied into a parent tracker's pending slot
-    /// (e.g., `Tracker::Map::pending_entries`, `Tracker::Option::pending_inner`,
-    /// `Tracker::SmartPointer::pending_inner`, `DynamicValueState::Object::pending_entries`,
-    /// `DynamicValueState::Array::pending_elements`). The parent tracker is now the SOLE
-    /// drop-and-dealloc authority for that buffer.
-    ///
-    /// On `deinit`: no-op (parent's tracker deinit will drop-in-place the pending slot).
-    /// On `dealloc`: no-op (parent's tracker deinit will dealloc the pending slot).
-    ///
-    /// This is the single invariant that protects against double-free across all the
-    /// nesting combinations (Map/List/Option/SmartPointer/DynamicValue × stack/stored).
-    /// Any code that copies a child frame's `data` into a parent pending slot MUST, in
-    /// the same statement block, set `child_frame.ownership = Transferred`.
-    Transferred,
 }
 
 impl FrameOwnership {
     /// Returns true if this frame is responsible for deallocating its memory.
     ///
     /// Both `Owned` and `TrackedBuffer` frames allocated their memory and need
-    /// to deallocate it. `Field`, `BorrowedInPlace`, `External`, `RopeSlot`, and
-    /// `Transferred` frames either borrow from somewhere else or have handed drop
-    /// responsibility off to a parent tracker's pending slot.
+    /// to deallocate it. `Field`, `BorrowedInPlace`, `External`, and `RopeSlot`
+    /// frames borrow from somewhere else.
     const fn needs_dealloc(&self) -> bool {
         matches!(self, FrameOwnership::Owned | FrameOwnership::TrackedBuffer)
     }
@@ -677,17 +680,11 @@ impl Frame {
         // For RopeSlot frames, we must NOT drop. These point into a ListRope chunk
         // owned by the parent List's tracker. The rope handles cleanup of all elements.
         //
-        // For Transferred frames, we must NOT drop. The child frame's data pointer has
-        // been copied into a parent tracker's pending slot and the parent now owns drop
-        // responsibility. Dropping here would cause double-free when the parent drops.
-        //
         // For TrackedBuffer frames, we CAN drop. These are temporary buffers where
         // the parent's MapInsertState tracks initialization via is_init propagation.
         if matches!(
             self.ownership,
-            FrameOwnership::BorrowedInPlace
-                | FrameOwnership::RopeSlot
-                | FrameOwnership::Transferred
+            FrameOwnership::BorrowedInPlace | FrameOwnership::RopeSlot
         ) {
             self.is_init = false;
             self.tracker = Tracker::Scalar;
@@ -826,10 +823,10 @@ impl Frame {
 
                 // Clean up pending entries. Each entry is `(key_ptr, Option<value_ptr>)`:
                 // a full entry has `Some(value_ptr)`; a half-entry (key pushed but no value
-                // paired yet) has `None`. Per the Transferred ownership invariant,
-                // `pending_entries` is the SOLE drop-and-dealloc authority for any buffer
-                // it holds; frames whose `data` was copied here are marked `Transferred`
-                // and no-op on drop/dealloc.
+                // paired yet) has `None`. `pending_entries` is the sole drop-and-dealloc
+                // authority for any buffer it holds; entries only ever reference fully-
+                // initialized buffers (pushed at walk consume-time or non-stored end()
+                // paths, after validation), so drop-in-place is safe.
                 if let Def::Map(map_def) = self.allocated.shape().def {
                     for (key_ptr, value_ptr) in pending_entries.drain(..) {
                         // Drop and deallocate key
@@ -853,9 +850,9 @@ impl Frame {
                     }
                 }
                 // Note: insert_state is no longer a cleanup source. Any key/value buffer
-                // for an in-flight frame is either still owned by that frame (on the stack,
-                // frame's own dealloc handles it) or already transferred into pending_entries
-                // above (frame marked `Transferred`, pending_entries handles it).
+                // for an in-flight frame is still owned by that frame (the stored frame's
+                // own dealloc handles it during `cleanup_stored_frames_on_error`, or the
+                // on-stack frame's dealloc handles it in `Drop::drop`).
             }
             Tracker::Set { .. } => {
                 // Drop the initialized Set
@@ -2175,12 +2172,11 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
                                 }
                             }
                         }
-                        // NOTE: PathStep::MapKey / PathStep::MapValue arms were previously
-                        // here. With the Transferred ownership SSoT invariant, stored map
-                        // key/value frames are marked `FrameOwnership::Transferred` at the
-                        // moment their data is copied into pending_entries. Their deinit
-                        // and dealloc no-op; pending_entries is the sole drop site. So no
-                        // cleanup is required here.
+                        // Stored map key/value frames keep their TrackedBuffer ownership
+                        // until consume-time in finish_deferred; pending_entries is only
+                        // populated by the walk, so at Partial::drop it contains nothing
+                        // referencing these frames. Their own deinit/dealloc handles the
+                        // partial-init drop. No parent-side cleanup required.
                         Some(PathStep::Index(_)) => {
                             // List element frames with RopeSlot ownership are handled by
                             // the deinit check for RopeSlot - they skip dropping since the
