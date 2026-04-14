@@ -1,7 +1,7 @@
-use core::{fmt::Debug, marker::PhantomData};
-use facet_core::{PtrMut, Shape, ShapeLayout};
+use core::{fmt::Debug, marker::PhantomData, mem::ManuallyDrop, ptr::NonNull};
+use facet_core::{FieldError, PtrMut, PtrUninit, Shape, ShapeLayout};
 
-use crate::{ReflectError, ReflectErrorKind, peek::ListLikeDef};
+use crate::{Guard, HeapValue, ReflectError, ReflectErrorKind, peek::ListLikeDef};
 
 use super::Poke;
 
@@ -184,6 +184,218 @@ impl<'mem, 'facet> PokeListLike<'mem, 'facet> {
         })
     }
 
+    /// Push a value onto the end of the list.
+    ///
+    /// Only supported for `List` variants whose element type provides a `push`
+    /// operation (e.g. `Vec<T>`). Fails for arrays and slices as their length
+    /// is fixed.
+    pub fn push<T: facet_core::Facet<'facet>>(&mut self, value: T) -> Result<(), ReflectError> {
+        if self.def.t() != T::SHAPE {
+            return Err(self.err(ReflectErrorKind::WrongShape {
+                expected: self.def.t(),
+                actual: T::SHAPE,
+            }));
+        }
+        let push_fn = self.push_fn()?;
+        let mut value = ManuallyDrop::new(value);
+        unsafe {
+            let item_ptr = PtrMut::new(&mut value as *mut ManuallyDrop<T> as *mut u8);
+            push_fn(self.value.data_mut(), item_ptr);
+        }
+        self.len += 1;
+        Ok(())
+    }
+
+    /// Type-erased [`push`](Self::push).
+    ///
+    /// Accepts a [`HeapValue`] whose shape must match the list's element type.
+    /// The value is moved out of the `HeapValue` into the list.
+    pub fn push_from_heap<const BORROW: bool>(
+        &mut self,
+        value: HeapValue<'facet, BORROW>,
+    ) -> Result<(), ReflectError> {
+        if self.def.t() != value.shape() {
+            return Err(self.err(ReflectErrorKind::WrongShape {
+                expected: self.def.t(),
+                actual: value.shape(),
+            }));
+        }
+        let push_fn = self.push_fn()?;
+        let mut value = value;
+        let guard = value
+            .guard
+            .take()
+            .expect("HeapValue guard was already taken");
+        unsafe {
+            let item_ptr = PtrMut::new(guard.ptr.as_ptr());
+            push_fn(self.value.data_mut(), item_ptr);
+        }
+        drop(guard);
+        self.len += 1;
+        Ok(())
+    }
+
+    /// Pop the last value off the end of the list.
+    ///
+    /// Returns `Ok(None)` if the list is empty. Only supported for `List`
+    /// variants whose element type provides a `pop` operation.
+    pub fn pop(&mut self) -> Result<Option<HeapValue<'facet, true>>, ReflectError> {
+        let list_def = match self.def {
+            ListLikeDef::List(def) => def,
+            _ => {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
+                    shape: self.value.shape(),
+                    operation: "pop: only list-backed list-likes support pop",
+                }));
+            }
+        };
+        let pop_fn = list_def.pop().ok_or_else(|| {
+            self.err(ReflectErrorKind::OperationFailed {
+                shape: self.value.shape(),
+                operation: "pop: list type does not support pop",
+            })
+        })?;
+        let elem_shape = self.def.t();
+        let layout = elem_shape.layout.sized_layout().map_err(|_| {
+            self.err(ReflectErrorKind::Unsized {
+                shape: elem_shape,
+                operation: "pop",
+            })
+        })?;
+        let ptr = if layout.size() == 0 {
+            NonNull::<u8>::dangling()
+        } else {
+            let raw = unsafe { alloc::alloc::alloc(layout) };
+            match NonNull::new(raw) {
+                Some(p) => p,
+                None => alloc::alloc::handle_alloc_error(layout),
+            }
+        };
+        let out = PtrUninit::new(ptr.as_ptr());
+        let popped = unsafe { pop_fn(self.value.data_mut(), out) };
+        if !popped {
+            if layout.size() != 0 {
+                unsafe { alloc::alloc::dealloc(ptr.as_ptr(), layout) };
+            }
+            return Ok(None);
+        }
+        self.len -= 1;
+        Ok(Some(HeapValue {
+            guard: Some(Guard {
+                ptr,
+                layout,
+                should_dealloc: layout.size() != 0,
+            }),
+            shape: elem_shape,
+            phantom: PhantomData,
+        }))
+    }
+
+    /// Swap the elements at indices `a` and `b`.
+    ///
+    /// For `List` variants, uses the list's `swap` vtable entry if present and
+    /// errors otherwise. For `Array` and `Slice` variants, performs a generic
+    /// byte-swap using the element stride (always available). Returns an error
+    /// if either index is out of bounds. Swapping an index with itself is a
+    /// no-op.
+    pub fn swap(&mut self, a: usize, b: usize) -> Result<(), ReflectError> {
+        let len = self.len;
+        if a >= len || b >= len {
+            let out_of_bounds = if a >= len { a } else { b };
+            return Err(self.err(ReflectErrorKind::FieldError {
+                shape: self.value.shape(),
+                field_error: FieldError::IndexOutOfBounds {
+                    index: out_of_bounds,
+                    bound: len,
+                },
+            }));
+        }
+        if a == b {
+            return Ok(());
+        }
+
+        match self.def {
+            ListLikeDef::List(def) => {
+                let swap_fn = def.vtable.swap.ok_or_else(|| {
+                    self.err(ReflectErrorKind::OperationFailed {
+                        shape: self.value.shape(),
+                        operation: "swap: list type does not support swap",
+                    })
+                })?;
+                let ok = unsafe { swap_fn(self.value.data_mut(), a, b, self.value.shape()) };
+                if !ok {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                        shape: self.value.shape(),
+                        operation: "swap: vtable refused the operation",
+                    }));
+                }
+                Ok(())
+            }
+            ListLikeDef::Array(def) => {
+                let elem_size = match self.def.t().layout {
+                    ShapeLayout::Sized(l) => l.size(),
+                    ShapeLayout::Unsized => {
+                        return Err(self.err(ReflectErrorKind::Unsized {
+                            shape: self.def.t(),
+                            operation: "swap",
+                        }));
+                    }
+                };
+                unsafe {
+                    let base = (def.vtable.as_mut_ptr)(self.value.data_mut());
+                    let pa = base.field(a * elem_size);
+                    let pb = base.field(b * elem_size);
+                    core::ptr::swap_nonoverlapping(
+                        pa.as_mut_byte_ptr(),
+                        pb.as_mut_byte_ptr(),
+                        elem_size,
+                    );
+                }
+                Ok(())
+            }
+            ListLikeDef::Slice(def) => {
+                let elem_size = match self.def.t().layout {
+                    ShapeLayout::Sized(l) => l.size(),
+                    ShapeLayout::Unsized => {
+                        return Err(self.err(ReflectErrorKind::Unsized {
+                            shape: self.def.t(),
+                            operation: "swap",
+                        }));
+                    }
+                };
+                unsafe {
+                    let base = (def.vtable.as_mut_ptr)(self.value.data_mut());
+                    let pa = base.field(a * elem_size);
+                    let pb = base.field(b * elem_size);
+                    core::ptr::swap_nonoverlapping(
+                        pa.as_mut_byte_ptr(),
+                        pb.as_mut_byte_ptr(),
+                        elem_size,
+                    );
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Resolve the per-T push function for the underlying list, or build an
+    /// error if the list-like is an array/slice or the list lacks push.
+    #[inline]
+    fn push_fn(&self) -> Result<facet_core::ListPushFn, ReflectError> {
+        match self.def {
+            ListLikeDef::List(def) => def.push().ok_or_else(|| {
+                self.err(ReflectErrorKind::OperationFailed {
+                    shape: self.value.shape(),
+                    operation: "push: list type does not support push",
+                })
+            }),
+            _ => Err(self.err(ReflectErrorKind::OperationFailed {
+                shape: self.value.shape(),
+                operation: "push: only list-backed list-likes support push",
+            })),
+        }
+    }
+
     /// Converts this `PokeListLike` back into a `Poke`.
     #[inline]
     pub fn into_inner(self) -> Poke<'mem, 'facet> {
@@ -241,5 +453,75 @@ mod tests {
             item.set(cur * 10).unwrap();
         }
         assert_eq!(v, alloc::vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn poke_list_like_vec_push_pop() {
+        let mut v: Vec<i32> = alloc::vec![];
+        {
+            let poke = Poke::new(&mut v);
+            let mut ll = poke.into_list_like().unwrap();
+            ll.push(10i32).unwrap();
+            ll.push(20i32).unwrap();
+            assert_eq!(ll.len(), 2);
+            let popped = ll.pop().unwrap().unwrap();
+            assert_eq!(popped.materialize::<i32>().unwrap(), 20);
+            assert_eq!(ll.len(), 1);
+        }
+        assert_eq!(v, alloc::vec![10]);
+    }
+
+    #[test]
+    fn poke_list_like_array_push_fails() {
+        let mut arr: [i32; 3] = [1, 2, 3];
+        let poke = Poke::new(&mut arr);
+        let mut ll = poke.into_list_like().unwrap();
+        let res = ll.push(4i32);
+        assert!(matches!(
+            res,
+            Err(ref err) if matches!(err.kind, ReflectErrorKind::OperationFailed { .. })
+        ));
+    }
+
+    #[test]
+    fn poke_list_like_array_pop_fails() {
+        let mut arr: [i32; 3] = [1, 2, 3];
+        let poke = Poke::new(&mut arr);
+        let mut ll = poke.into_list_like().unwrap();
+        let res = ll.pop();
+        assert!(matches!(
+            res,
+            Err(ref err) if matches!(err.kind, ReflectErrorKind::OperationFailed { .. })
+        ));
+    }
+
+    #[test]
+    fn poke_list_like_vec_swap() {
+        let mut v: Vec<i32> = alloc::vec![1, 2, 3];
+        let poke = Poke::new(&mut v);
+        let mut ll = poke.into_list_like().unwrap();
+        ll.swap(0, 2).unwrap();
+        assert_eq!(v, alloc::vec![3, 2, 1]);
+    }
+
+    #[test]
+    fn poke_list_like_array_swap() {
+        let mut arr: [i32; 3] = [10, 20, 30];
+        let poke = Poke::new(&mut arr);
+        let mut ll = poke.into_list_like().unwrap();
+        ll.swap(0, 2).unwrap();
+        assert_eq!(arr, [30, 20, 10]);
+    }
+
+    #[test]
+    fn poke_list_like_swap_out_of_bounds_fails() {
+        let mut v: Vec<i32> = alloc::vec![1, 2, 3];
+        let poke = Poke::new(&mut v);
+        let mut ll = poke.into_list_like().unwrap();
+        let res = ll.swap(5, 0);
+        assert!(matches!(
+            res,
+            Err(ref err) if matches!(err.kind, ReflectErrorKind::FieldError { .. })
+        ));
     }
 }

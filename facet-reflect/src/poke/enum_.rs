@@ -1,7 +1,7 @@
 use facet_core::{Def, EnumRepr, EnumType, Facet, FieldError};
 use facet_path::Path;
 
-use crate::{ReflectError, ReflectErrorKind, peek::VariantError};
+use crate::{HeapValue, ReflectError, ReflectErrorKind, peek::VariantError};
 
 use super::Poke;
 
@@ -291,6 +291,102 @@ impl<'mem, 'facet> PokeEnum<'mem, 'facet> {
         })?;
 
         self.set_field(index, value)
+    }
+
+    /// Type-erased [`set_field`](Self::set_field).
+    ///
+    /// Accepts a [`HeapValue`] whose shape must match the field's type. The
+    /// value is moved out of the `HeapValue` into the field (the previous
+    /// field value is dropped first).
+    pub fn set_field_from_heap<const BORROW: bool>(
+        &mut self,
+        index: usize,
+        value: HeapValue<'facet, BORROW>,
+    ) -> Result<(), ReflectError> {
+        if !self.value.shape.is_pod() {
+            return Err(self.err(ReflectErrorKind::NotPod {
+                shape: self.value.shape,
+            }));
+        }
+
+        let variant = self.active_variant().map_err(|_| {
+            self.err(ReflectErrorKind::OperationFailed {
+                shape: self.value.shape,
+                operation: "get active variant",
+            })
+        })?;
+        let fields = &variant.data.fields;
+
+        let field = fields.get(index).ok_or_else(|| {
+            self.err(ReflectErrorKind::FieldError {
+                shape: self.value.shape,
+                field_error: FieldError::IndexOutOfBounds {
+                    index,
+                    bound: fields.len(),
+                },
+            })
+        })?;
+
+        let field_shape = field.shape();
+        if field_shape != value.shape() {
+            return Err(self.err(ReflectErrorKind::WrongShape {
+                expected: field_shape,
+                actual: value.shape(),
+            }));
+        }
+
+        let field_offset = field.offset;
+        let field_layout = field_shape.layout.sized_layout().map_err(|_| {
+            self.err(ReflectErrorKind::Unsized {
+                shape: field_shape,
+                operation: "set_field_from_heap",
+            })
+        })?;
+
+        let mut value = value;
+        let guard = value
+            .guard
+            .take()
+            .expect("HeapValue guard was already taken");
+        unsafe {
+            let field_ptr = self.value.data.field(field_offset);
+            // Drop the old value, then move the bytes from the heap value in.
+            field_shape.call_drop_in_place(field_ptr);
+            core::ptr::copy_nonoverlapping(
+                guard.ptr.as_ptr(),
+                field_ptr.as_mut_byte_ptr(),
+                field_layout.size(),
+            );
+        }
+        // Free the heap allocation. Drop is skipped because `guard` holds only
+        // the allocation metadata; the value itself was moved into the field.
+        drop(guard);
+        Ok(())
+    }
+
+    /// Type-erased [`set_field_by_name`](Self::set_field_by_name).
+    ///
+    /// Accepts a [`HeapValue`] whose shape must match the field's type.
+    pub fn set_field_by_name_from_heap<const BORROW: bool>(
+        &mut self,
+        name: &str,
+        value: HeapValue<'facet, BORROW>,
+    ) -> Result<(), ReflectError> {
+        let index = self.field_index(name).map_err(|_| {
+            self.err(ReflectErrorKind::OperationFailed {
+                shape: self.value.shape,
+                operation: "get active variant",
+            })
+        })?;
+
+        let index = index.ok_or_else(|| {
+            self.err(ReflectErrorKind::FieldError {
+                shape: self.value.shape,
+                field_error: FieldError::NoSuchField,
+            })
+        })?;
+
+        self.set_field_from_heap(index, value)
     }
 
     /// Gets a read-only view of a field by index.
