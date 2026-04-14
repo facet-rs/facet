@@ -1,7 +1,7 @@
 use core::{fmt::Debug, marker::PhantomData};
-use facet_core::{PtrMut, ShapeLayout};
+use facet_core::{PtrMut, Shape, ShapeLayout};
 
-use crate::peek::ListLikeDef;
+use crate::{ReflectError, ReflectErrorKind, peek::ListLikeDef};
 
 use super::Poke;
 
@@ -18,18 +18,18 @@ impl<'mem, 'facet> Debug for PokeListLike<'mem, 'facet> {
     }
 }
 
-/// Iterator over a `PokeListLike` yielding mutable `Poke`s
+/// Iterator over a `PokeListLike` yielding mutable `Poke`s.
+///
+/// Constructed by [`PokeListLike::iter_mut`]. Only contiguous list-likes support
+/// mutable iteration — this iterator walks element strides starting from
+/// `as_mut_ptr`. See [`PokeListLike::iter_mut`] for the error conditions.
 pub struct PokeListLikeIter<'mem, 'facet> {
-    state: PokeListLikeIterStateKind,
+    data: PtrMut,
+    stride: usize,
     index: usize,
     len: usize,
-    def: ListLikeDef,
+    elem_shape: &'static Shape,
     _list: PhantomData<Poke<'mem, 'facet>>,
-}
-
-enum PokeListLikeIterStateKind {
-    Ptr { data: PtrMut, stride: usize },
-    Iter { iter: PtrMut },
 }
 
 impl<'mem, 'facet> Iterator for PokeListLikeIter<'mem, 'facet> {
@@ -40,25 +40,9 @@ impl<'mem, 'facet> Iterator for PokeListLikeIter<'mem, 'facet> {
         if self.index >= self.len {
             return None;
         }
-
-        let item_ptr = match &mut self.state {
-            PokeListLikeIterStateKind::Ptr { data, stride } => unsafe {
-                data.field(*stride * self.index)
-            },
-            PokeListLikeIterStateKind::Iter { iter } => match self.def {
-                ListLikeDef::List(def) => {
-                    let vtable = def.iter_vtable().unwrap();
-                    let const_ptr = unsafe { (vtable.next)(*iter)? };
-                    // SAFETY: we created this iterator from a PokeListLike which has
-                    // mutable access, so converting the const pointer back to mutable is sound.
-                    PtrMut::new(const_ptr.as_byte_ptr() as *mut u8)
-                }
-                _ => unreachable!("non-list list-likes always use Ptr state"),
-            },
-        };
-
+        let item_ptr = unsafe { self.data.field(self.stride * self.index) };
         self.index += 1;
-        Some(unsafe { Poke::from_raw_parts(item_ptr, self.def.t()) })
+        Some(unsafe { Poke::from_raw_parts(item_ptr, self.elem_shape) })
     }
 
     #[inline]
@@ -69,18 +53,6 @@ impl<'mem, 'facet> Iterator for PokeListLikeIter<'mem, 'facet> {
 }
 
 impl<'mem, 'facet> ExactSizeIterator for PokeListLikeIter<'mem, 'facet> {}
-
-impl Drop for PokeListLikeIter<'_, '_> {
-    #[inline]
-    fn drop(&mut self) {
-        if let PokeListLikeIterStateKind::Iter { iter } = &self.state
-            && let ListLikeDef::List(def) = self.def
-            && let Some(vtable) = def.iter_vtable()
-        {
-            unsafe { (vtable.dealloc)(*iter) }
-        }
-    }
-}
 
 impl<'mem, 'facet> PokeListLike<'mem, 'facet> {
     /// Creates a new poke list-like
@@ -103,6 +75,10 @@ impl<'mem, 'facet> PokeListLike<'mem, 'facet> {
             ListLikeDef::Array(v) => v.n,
         };
         Self { value, def, len }
+    }
+
+    fn err(&self, kind: ReflectErrorKind) -> ReflectError {
+        self.value.err(kind)
     }
 
     /// Get the length of the list-like.
@@ -162,63 +138,50 @@ impl<'mem, 'facet> PokeListLike<'mem, 'facet> {
     }
 
     /// Returns a mutable iterator over the list-like.
-    pub fn iter_mut(self) -> PokeListLikeIter<'mem, 'facet> {
-        let state = match self.def {
-            ListLikeDef::List(def) => {
-                if let Some(as_mut_ptr_fn) = def.vtable.as_mut_ptr {
-                    let data = unsafe { as_mut_ptr_fn(self.value.data) };
-                    let layout = self
-                        .def
-                        .t()
-                        .layout
-                        .sized_layout()
-                        .expect("can only iterate over sized list-like elements");
-                    PokeListLikeIterStateKind::Ptr {
-                        data,
-                        stride: layout.size(),
-                    }
-                } else {
-                    let iter = unsafe {
-                        (def.iter_vtable().unwrap().init_with_value.unwrap())(self.value.data())
-                    };
-                    PokeListLikeIterStateKind::Iter { iter }
-                }
-            }
-            ListLikeDef::Array(def) => {
-                let data = unsafe { (def.vtable.as_mut_ptr)(self.value.data) };
-                let layout = self
-                    .def
-                    .t()
-                    .layout
-                    .sized_layout()
-                    .expect("can only iterate over sized array elements");
-                PokeListLikeIterStateKind::Ptr {
-                    data,
-                    stride: layout.size(),
-                }
-            }
-            ListLikeDef::Slice(def) => {
-                let data = unsafe { (def.vtable.as_mut_ptr)(self.value.data) };
-                let layout = self
-                    .def
-                    .t()
-                    .layout
-                    .sized_layout()
-                    .expect("can only iterate over sized slice elements");
-                PokeListLikeIterStateKind::Ptr {
-                    data,
-                    stride: layout.size(),
-                }
+    ///
+    /// Requires contiguous mutable access to the backing storage: the element type must be
+    /// sized, and for `List` the vtable must expose `as_mut_ptr`. (`Array` and `Slice` always
+    /// expose `as_mut_ptr`.) Returns [`ReflectErrorKind::OperationFailed`] if either condition
+    /// fails; use [`PokeListLike::get_mut`] per index when `iter_mut` is unavailable.
+    ///
+    /// The previous fallback that synthesized a mutable iterator from the list's `iter_vtable`
+    /// was unsound: that vtable yields `PtrConst` items backed by shared references, and
+    /// writing through them is UB.
+    pub fn iter_mut(self) -> Result<PokeListLikeIter<'mem, 'facet>, ReflectError> {
+        let elem_shape = self.def.t();
+        let stride = match elem_shape.layout {
+            ShapeLayout::Sized(layout) => layout.size(),
+            ShapeLayout::Unsized => {
+                return Err(self.err(ReflectErrorKind::OperationFailed {
+                    shape: self.value.shape,
+                    operation: "iter_mut requires sized element type",
+                }));
             }
         };
 
-        PokeListLikeIter {
-            state,
+        let data = match self.def {
+            ListLikeDef::List(def) => match def.vtable.as_mut_ptr {
+                Some(as_mut_ptr_fn) => unsafe { as_mut_ptr_fn(self.value.data) },
+                None => {
+                    return Err(self.err(ReflectErrorKind::OperationFailed {
+                        shape: self.value.shape,
+                        operation:
+                            "iter_mut requires a contiguous `as_mut_ptr` vtable entry; use `get_mut` per index",
+                    }));
+                }
+            },
+            ListLikeDef::Array(def) => unsafe { (def.vtable.as_mut_ptr)(self.value.data) },
+            ListLikeDef::Slice(def) => unsafe { (def.vtable.as_mut_ptr)(self.value.data) },
+        };
+
+        Ok(PokeListLikeIter {
+            data,
+            stride,
             index: 0,
             len: self.len,
-            def: self.def,
+            elem_shape,
             _list: PhantomData,
-        }
+        })
     }
 
     /// Converts this `PokeListLike` back into a `Poke`.
@@ -231,16 +194,6 @@ impl<'mem, 'facet> PokeListLike<'mem, 'facet> {
     #[inline]
     pub fn as_peek_list_like(&self) -> crate::PeekListLike<'_, 'facet> {
         unsafe { crate::PeekListLike::new(self.value.as_peek(), self.def) }
-    }
-}
-
-impl<'mem, 'facet> IntoIterator for PokeListLike<'mem, 'facet> {
-    type Item = Poke<'mem, 'facet>;
-    type IntoIter = PokeListLikeIter<'mem, 'facet>;
-
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter_mut()
     }
 }
 
@@ -283,7 +236,7 @@ mod tests {
         let mut v: Vec<i32> = alloc::vec![1, 2, 3];
         let poke = Poke::new(&mut v);
         let ll = poke.into_list_like().unwrap();
-        for mut item in ll {
+        for mut item in ll.iter_mut().unwrap() {
             let cur = *item.get::<i32>().unwrap();
             item.set(cur * 10).unwrap();
         }

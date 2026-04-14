@@ -1,13 +1,20 @@
 use super::Poke;
 use core::{fmt::Debug, marker::PhantomData};
-use facet_core::{ListDef, PtrMut};
+use facet_core::{ListDef, PtrMut, Shape};
 
-/// Iterator over a `PokeList`
+use crate::{ReflectError, ReflectErrorKind};
+
+/// Iterator over a `PokeList` yielding mutable `Poke`s.
+///
+/// Constructed by [`PokeList::iter_mut`]. Walks element strides starting from the list's
+/// `as_mut_ptr`; `iter_mut` refuses to build one if that entry is missing or the element
+/// type is unsized.
 pub struct PokeListIter<'mem, 'facet> {
-    state: PokeListIterState<'mem>,
+    data: PtrMut,
+    stride: usize,
     index: usize,
     len: usize,
-    def: ListDef,
+    elem_shape: &'static Shape,
     _list: PhantomData<Poke<'mem, 'facet>>,
 }
 
@@ -16,26 +23,12 @@ impl<'mem, 'facet> Iterator for PokeListIter<'mem, 'facet> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let item_ptr = match &mut self.state.kind {
-            PokeListIterStateKind::Ptr { data, stride } => {
-                if self.index >= self.len {
-                    return None;
-                }
-
-                unsafe { data.field(*stride * self.index) }
-            }
-            PokeListIterStateKind::Iter { iter } => unsafe {
-                // The iter vtable returns PtrConst, but we know the underlying data is mutable
-                // because we created this iterator from a PokeList which has mutable access.
-                // We need to convert the const pointer back to mutable.
-                let const_ptr = (self.def.iter_vtable().unwrap().next)(*iter)?;
-                PtrMut::new(const_ptr.as_byte_ptr() as *mut u8)
-            },
-        };
-
+        if self.index >= self.len {
+            return None;
+        }
+        let item_ptr = unsafe { self.data.field(self.stride * self.index) };
         self.index += 1;
-
-        Some(unsafe { Poke::from_raw_parts(item_ptr, self.def.t()) })
+        Some(unsafe { Poke::from_raw_parts(item_ptr, self.elem_shape) })
     }
 
     #[inline]
@@ -46,30 +39,6 @@ impl<'mem, 'facet> Iterator for PokeListIter<'mem, 'facet> {
 }
 
 impl ExactSizeIterator for PokeListIter<'_, '_> {}
-
-impl Drop for PokeListIter<'_, '_> {
-    #[inline]
-    fn drop(&mut self) {
-        match &self.state.kind {
-            PokeListIterStateKind::Iter { iter } => unsafe {
-                (self.def.iter_vtable().unwrap().dealloc)(*iter)
-            },
-            PokeListIterStateKind::Ptr { .. } => {
-                // Nothing to do
-            }
-        }
-    }
-}
-
-struct PokeListIterState<'mem> {
-    kind: PokeListIterStateKind,
-    _phantom: PhantomData<&'mem mut ()>,
-}
-
-enum PokeListIterStateKind {
-    Ptr { data: PtrMut, stride: usize },
-    Iter { iter: PtrMut },
-}
 
 /// Lets you mutate a list (implements mutable [`facet_core::ListVTable`] proxies)
 pub struct PokeList<'mem, 'facet> {
@@ -129,40 +98,45 @@ impl<'mem, 'facet> PokeList<'mem, 'facet> {
         Some(unsafe { Poke::from_raw_parts(item, self.def.t()) })
     }
 
-    /// Returns a mutable iterator over the list
-    pub fn iter_mut(self) -> PokeListIter<'mem, 'facet> {
-        let state = if let Some(as_mut_ptr_fn) = self.def.vtable.as_mut_ptr {
-            let data = unsafe { as_mut_ptr_fn(self.value.data) };
-            let layout = self
-                .def
-                .t()
-                .layout
-                .sized_layout()
-                .expect("can only iterate over sized list elements");
-            let stride = layout.size();
-
-            PokeListIterState {
-                kind: PokeListIterStateKind::Ptr { data, stride },
-                _phantom: PhantomData,
-            }
-        } else {
-            // Fall back to the immutable iterator, but we know we have mutable access
-            let iter = unsafe {
-                (self.def.iter_vtable().unwrap().init_with_value.unwrap())(self.value.data())
-            };
-            PokeListIterState {
-                kind: PokeListIterStateKind::Iter { iter },
-                _phantom: PhantomData,
+    /// Returns a mutable iterator over the list.
+    ///
+    /// Requires contiguous mutable access: the element type must be sized and the list
+    /// vtable must expose `as_mut_ptr`. Returns [`ReflectErrorKind::OperationFailed`] otherwise;
+    /// use [`PokeList::get_mut`] per index when `iter_mut` is unavailable.
+    ///
+    /// The previous fallback that synthesized a mutable iterator from the list's `iter_vtable`
+    /// was unsound: that vtable yields `PtrConst` items backed by shared references, and writing
+    /// through them is UB.
+    pub fn iter_mut(self) -> Result<PokeListIter<'mem, 'facet>, ReflectError> {
+        let elem_shape = self.def.t();
+        let stride = match elem_shape.layout {
+            facet_core::ShapeLayout::Sized(layout) => layout.size(),
+            facet_core::ShapeLayout::Unsized => {
+                return Err(self.value.err(ReflectErrorKind::OperationFailed {
+                    shape: self.value.shape(),
+                    operation: "iter_mut requires sized element type",
+                }));
             }
         };
 
-        PokeListIter {
-            state,
+        let Some(as_mut_ptr_fn) = self.def.vtable.as_mut_ptr else {
+            return Err(self.value.err(ReflectErrorKind::OperationFailed {
+                shape: self.value.shape(),
+                operation:
+                    "iter_mut requires a contiguous `as_mut_ptr` vtable entry; use `get_mut` per index",
+            }));
+        };
+
+        let data = unsafe { as_mut_ptr_fn(self.value.data) };
+        let len = self.len();
+        Ok(PokeListIter {
+            data,
+            stride,
             index: 0,
-            len: self.len(),
-            def: self.def(),
+            len,
+            elem_shape,
             _list: PhantomData,
-        }
+        })
     }
 
     /// Def getter
@@ -181,16 +155,6 @@ impl<'mem, 'facet> PokeList<'mem, 'facet> {
     #[inline]
     pub fn as_peek_list(&self) -> crate::PeekList<'_, 'facet> {
         unsafe { crate::PeekList::new(self.value.as_peek(), self.def) }
-    }
-}
-
-impl<'mem, 'facet> IntoIterator for PokeList<'mem, 'facet> {
-    type Item = Poke<'mem, 'facet>;
-    type IntoIter = PokeListIter<'mem, 'facet>;
-
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter_mut()
     }
 }
 
@@ -241,7 +205,7 @@ mod tests {
         let list = poke.into_list().unwrap();
 
         let mut sum = 0;
-        for mut item in list {
+        for mut item in list.iter_mut().unwrap() {
             let val = *item.get::<i32>().unwrap();
             item.set(val * 10).unwrap();
             sum += val;
