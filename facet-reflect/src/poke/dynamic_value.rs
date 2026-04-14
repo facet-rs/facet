@@ -1,6 +1,10 @@
 //! Support for poking (mutating) DynamicValue types like `facet_value::Value`
 
-use facet_core::{DynValueKind, DynamicValueDef, PtrUninit};
+use core::mem::ManuallyDrop;
+
+use facet_core::{DynValueKind, DynamicValueDef, Facet, PtrMut, PtrUninit};
+
+use crate::{ReflectError, ReflectErrorKind};
 
 use super::Poke;
 
@@ -180,6 +184,85 @@ impl<'mem, 'facet> PokeDynamicValue<'mem, 'facet> {
             set_bytes(uninit, v);
         }
         true
+    }
+
+    /// Replace the value with an empty array, dropping the previous contents.
+    pub fn set_array(&mut self) {
+        unsafe {
+            let uninit = self.drop_and_as_uninit();
+            (self.def.vtable.begin_array)(uninit);
+        }
+    }
+
+    /// Replace the value with an empty object, dropping the previous contents.
+    pub fn set_object(&mut self) {
+        unsafe {
+            let uninit = self.drop_and_as_uninit();
+            (self.def.vtable.begin_object)(uninit);
+        }
+    }
+
+    /// Push an element onto the array value.
+    ///
+    /// The value must already be an array (use [`set_array`](Self::set_array) first if needed).
+    /// The element's shape must match this dynamic value's shape — a nested element is itself
+    /// a full dynamic value of the same kind (e.g. another `facet_value::Value`).
+    ///
+    /// The element is moved into the array (the vtable does the `ptr::read`); the caller's
+    /// original ownership of `element` is consumed by this call.
+    pub fn push_array_element<T: Facet<'facet>>(&mut self, element: T) -> Result<(), ReflectError> {
+        if self.value.shape != T::SHAPE {
+            return Err(self.value.err(ReflectErrorKind::WrongShape {
+                expected: self.value.shape,
+                actual: T::SHAPE,
+            }));
+        }
+        let mut element = ManuallyDrop::new(element);
+        unsafe {
+            let elem_ptr = PtrMut::new(&mut element as *mut ManuallyDrop<T> as *mut u8);
+            (self.def.vtable.push_array_element)(self.value.data_mut(), elem_ptr);
+        }
+        Ok(())
+    }
+
+    /// Finalize an array value. No-op if the underlying dynamic-value type doesn't need it.
+    pub fn end_array(&mut self) {
+        if let Some(end_array) = self.def.vtable.end_array {
+            unsafe { end_array(self.value.data_mut()) };
+        }
+    }
+
+    /// Insert a key-value pair into the object value.
+    ///
+    /// The value must already be an object (use [`set_object`](Self::set_object) first if needed).
+    /// The value's shape must match this dynamic value's shape — a nested value is itself a full
+    /// dynamic value of the same kind.
+    ///
+    /// `value` is moved into the object (the vtable does the `ptr::read`).
+    pub fn insert_object_entry<T: Facet<'facet>>(
+        &mut self,
+        key: &str,
+        value: T,
+    ) -> Result<(), ReflectError> {
+        if self.value.shape != T::SHAPE {
+            return Err(self.value.err(ReflectErrorKind::WrongShape {
+                expected: self.value.shape,
+                actual: T::SHAPE,
+            }));
+        }
+        let mut value = ManuallyDrop::new(value);
+        unsafe {
+            let value_ptr = PtrMut::new(&mut value as *mut ManuallyDrop<T> as *mut u8);
+            (self.def.vtable.insert_object_entry)(self.value.data_mut(), key, value_ptr);
+        }
+        Ok(())
+    }
+
+    /// Finalize an object value. No-op if the underlying dynamic-value type doesn't need it.
+    pub fn end_object(&mut self) {
+        if let Some(end_object) = self.def.vtable.end_object {
+            unsafe { end_object(self.value.data_mut()) };
+        }
     }
 
     /// Get a mutable `Poke` for the value at the given object key.
