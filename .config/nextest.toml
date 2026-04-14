@@ -43,6 +43,11 @@ command = 'valgrind --error-exitcode=1 --track-origins=yes --read-var-info=yes -
 # Note: nextest runs from crate dirs, so we need workspace-relative path
 command = '../scripts/lldb-wrapper.sh'
 
+[scripts.wrapper.leaks]
+# Run tests under macOS `leaks -quiet --atExit`
+# Fails (non-zero exit) if any allocation is unreachable at process exit
+command = 'leaks -quiet --atExit --'
+
 # Valgrind profile - runs tests under valgrind
 [profile.valgrind]
 
@@ -67,6 +72,14 @@ run-wrapper = 'valgrind-lean'
 platform = 'cfg(target_os = "macos")'
 filter = 'all()'
 run-wrapper = 'lldb'
+
+# Leaks profile - runs each test process under macOS `leaks --atExit`
+[profile.leaks]
+
+[[profile.leaks.scripts]]
+platform = 'cfg(target_os = "macos")'
+filter = 'all()'
+run-wrapper = 'leaks'
 
 # Debug profile - for attaching debugger with crash handler
 [profile.debug]
