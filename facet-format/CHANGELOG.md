@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.6](https://github.com/facet-rs/facet-format/compare/facet-python-v0.44.5...facet-python-v0.44.6) - 2026-04-14
+
+### Other
+
+- update Cargo.toml dependencies
+
+## [0.44.6](https://github.com/facet-rs/facet-format/compare/facet-typescript-v0.44.5...facet-typescript-v0.44.6) - 2026-04-14
+
+### Other
+
+- update Cargo.toml dependencies
+
+## [0.44.7](https://github.com/facet-rs/facet-format/compare/facet-format-v0.44.6...facet-format-v0.44.7) - 2026-04-14
+
+### Other
+
+- update Cargo.toml dependencies
+
 ## [0.44.6](https://github.com/facet-rs/facet-format/compare/facet-json-v0.44.5...facet-json-v0.44.6) - 2026-04-10
 
 ### Other

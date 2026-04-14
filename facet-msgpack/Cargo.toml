@@ -1,6 +1,6 @@
 [package]
 name = "facet-msgpack"
-version = "0.44.6"
+version = "0.44.7"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -17,7 +17,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet-core = { workspace = true }
-facet-format = { path = "../facet-format", version = "0.44.6" }
+facet-format = { path = "../facet-format", version = "0.44.7" }
 facet-reflect = { workspace = true }
 
 # Axum integration (optional)
