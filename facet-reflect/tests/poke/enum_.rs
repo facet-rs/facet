@@ -189,3 +189,77 @@ fn poke_not_enum_fails() {
     let result = poke.into_enum();
     assert!(matches!(result, Err(ref err) if matches!(err.kind, ReflectErrorKind::WasNotA { .. })));
 }
+
+#[test]
+fn poke_enum_set_field_from_heap() {
+    let mut value = SimpleEnum::Tuple(42);
+    {
+        let poke = Poke::new(&mut value);
+        let mut poke_enum = poke.into_enum().unwrap();
+
+        let hv = facet_reflect::Partial::alloc::<u32>()
+            .unwrap()
+            .set(100u32)
+            .unwrap()
+            .build()
+            .unwrap();
+        poke_enum.set_field_from_heap(0, hv).unwrap();
+    }
+
+    match value {
+        SimpleEnum::Tuple(v) => assert_eq!(v, 100),
+        _ => panic!("Expected Tuple variant"),
+    }
+}
+
+#[test]
+fn poke_enum_set_field_by_name_from_heap() {
+    let mut value = SimpleEnum::Struct {
+        a: 1,
+        b: "hello".to_string(),
+    };
+    {
+        let poke = Poke::new(&mut value);
+        let mut poke_enum = poke.into_enum().unwrap();
+
+        let a_val = facet_reflect::Partial::alloc::<u8>()
+            .unwrap()
+            .set(99u8)
+            .unwrap()
+            .build()
+            .unwrap();
+        let b_val = facet_reflect::Partial::alloc::<String>()
+            .unwrap()
+            .set("world".to_string())
+            .unwrap()
+            .build()
+            .unwrap();
+
+        poke_enum.set_field_by_name_from_heap("a", a_val).unwrap();
+        poke_enum.set_field_by_name_from_heap("b", b_val).unwrap();
+    }
+
+    match value {
+        SimpleEnum::Struct { a, b } => {
+            assert_eq!(a, 99);
+            assert_eq!(b, "world");
+        }
+        _ => panic!("Expected Struct variant"),
+    }
+}
+
+#[test]
+fn poke_enum_set_field_from_heap_wrong_shape_fails() {
+    let mut value = SimpleEnum::Tuple(42);
+    let poke = Poke::new(&mut value);
+    let mut poke_enum = poke.into_enum().unwrap();
+
+    let hv = facet_reflect::Partial::alloc::<i32>()
+        .unwrap()
+        .set(100i32)
+        .unwrap()
+        .build()
+        .unwrap();
+    let res = poke_enum.set_field_from_heap(0, hv);
+    assert!(matches!(res, Err(ref err) if matches!(err.kind, ReflectErrorKind::WrongShape { .. })));
+}
