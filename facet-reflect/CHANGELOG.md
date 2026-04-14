@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.6](https://github.com/facet-rs/facet/compare/facet-reflect-v0.44.5...facet-reflect-v0.44.6) - 2026-04-14
+
+### Added
+
+- *(reflect)* expose push/pop/swap + enum set_field_from_heap
+- *(reflect)* add HeapValue-based type-erased mutation variants
+- *(reflect)* add is_* predicates to Poke for every into_* case
+- *(reflect)* add array/object builders to PokeDynamicValue
+- *(reflect)* add Poke API parity with Peek
+
+### Fixed
+
+- *(reflect)* drop unsound iter-vtable fallback in Poke list iter_mut
+
+### Other
+
+- *(reflect)* correct PokePointer summary — it's read-only today
+- *(reflect)* add PokeTuple integration tests
+- *(reflect)* drop PokeOption::replace_with_raw
+
 ## [0.44.5](https://github.com/facet-rs/facet/compare/facet-reflect-v0.44.4...facet-reflect-v0.44.5) - 2026-04-13
 
 ### Fixed

@@ -227,9 +227,9 @@ checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 
 [[package]]
 name = "bitflags"
-version = "2.11.0"
+version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "843867be96c8daad0d758b57df9392b6d8d271134fce549de6ce169ff98a92af"
+checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 
 [[package]]
 name = "bitvec"
@@ -534,7 +534,7 @@ dependencies = [
 
 [[package]]
 name = "facet"
-version = "0.44.5"
+version = "0.45.0"
 dependencies = [
  "autocfg",
  "facet-core",
@@ -552,7 +552,7 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.44.4"
+version = "0.45.0"
 dependencies = [
  "autocfg",
  "bytes",
@@ -587,21 +587,21 @@ dependencies = [
 
 [[package]]
 name = "facet-default"
-version = "0.44.5"
+version = "0.44.6"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "facet-error"
-version = "0.44.5"
+version = "0.44.6"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "facet-macro-parse"
-version = "0.44.4"
+version = "0.45.0"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -610,7 +610,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-types"
-version = "0.44.4"
+version = "0.45.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -619,14 +619,14 @@ dependencies = [
 
 [[package]]
 name = "facet-macros"
-version = "0.44.4"
+version = "0.45.0"
 dependencies = [
  "facet-macros-impl",
 ]
 
 [[package]]
 name = "facet-macros-impl"
-version = "0.44.4"
+version = "0.45.0"
 dependencies = [
  "facet-macro-parse",
  "facet-macro-types",
@@ -638,7 +638,7 @@ dependencies = [
 
 [[package]]
 name = "facet-path"
-version = "0.44.4"
+version = "0.44.5"
 dependencies = [
  "facet",
  "facet-core",
@@ -648,7 +648,7 @@ dependencies = [
 
 [[package]]
 name = "facet-pretty"
-version = "0.44.6"
+version = "0.44.7"
 dependencies = [
  "camino",
  "facet",
@@ -662,7 +662,7 @@ dependencies = [
 
 [[package]]
 name = "facet-reflect"
-version = "0.44.5"
+version = "0.44.6"
 dependencies = [
  "camino",
  "eyre",
@@ -693,7 +693,7 @@ dependencies = [
 
 [[package]]
 name = "facet-solver"
-version = "0.44.5"
+version = "0.44.6"
 dependencies = [
  "divan",
  "facet",
@@ -733,7 +733,7 @@ dependencies = [
 
 [[package]]
 name = "facet-urlencoded"
-version = "0.44.5"
+version = "0.44.6"
 dependencies = [
  "axum-core",
  "facet",
@@ -748,7 +748,7 @@ dependencies = [
 
 [[package]]
 name = "facet-validate"
-version = "0.44.5"
+version = "0.44.6"
 dependencies = [
  "facet",
  "facet-core",

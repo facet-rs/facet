@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.45.0](https://github.com/facet-rs/facet/compare/facet-core-v0.44.4...facet-core-v0.45.0) - 2026-04-14
+
+### Added
+
+- *(core)* add pop + swap list vtable entries
+
+### Fixed
+
+- *(core)* drop Result via typed drop_in_place to satisfy Stacked Borrows
+
 ## [0.44.5](https://github.com/facet-rs/facet/compare/facet-v0.44.4...facet-v0.44.5) - 2026-04-13
 
 ### Other
