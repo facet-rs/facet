@@ -62,6 +62,12 @@ impl ListDef {
         self.type_ops.and_then(|ops| ops.push)
     }
 
+    /// Returns the pop function, checking type_ops first.
+    #[inline]
+    pub fn pop(&self) -> Option<ListPopFn> {
+        self.type_ops.and_then(|ops| ops.pop)
+    }
+
     /// Returns the set_len function for direct-fill operations.
     #[inline]
     pub fn set_len(&self) -> Option<ListSetLenFn> {
@@ -115,6 +121,33 @@ pub type ListInitInPlaceWithCapacityFn =
 /// may be dropped later, which requires mutable access.
 pub type ListPushFn = unsafe extern "C" fn(list: PtrMut, item: PtrMut);
 // FIXME: this forces allocating item separately, copying it, and then dropping it — it's not great.
+
+/// Pop the last item from the list, writing it into `out`.
+///
+/// Returns `true` if an item was popped (and `out` was written to), `false` if
+/// the list was empty (in which case `out` is left uninitialized).
+///
+/// # Safety
+///
+/// - `list` must point to aligned, initialized memory of the correct type.
+/// - `out` must point to uninitialized memory large enough for one element of
+///   the list's element type and with the element's alignment.
+pub type ListPopFn = unsafe extern "C" fn(list: PtrMut, out: PtrUninit) -> bool;
+
+/// Swap the elements at indices `a` and `b` in the list.
+///
+/// Returns `false` if either index is out of bounds (in which case no swap
+/// occurs); `true` on success. Swapping an index with itself is a no-op and
+/// still returns `true`.
+///
+/// The `shape` parameter is the list's shape, allowing type-erased
+/// implementations to extract the element size from `shape.type_params[0]`.
+///
+/// # Safety
+///
+/// The `list` parameter must point to aligned, initialized memory of the
+/// correct type.
+pub type ListSwapFn = unsafe fn(list: PtrMut, a: usize, b: usize, shape: &'static Shape) -> bool;
 
 /// Get the number of items in the list
 ///
@@ -240,6 +273,13 @@ pub struct ListTypeOps {
     /// - `item` must point to an initialized value that will be moved
     pub push: Option<ListPushFn>,
 
+    /// Pop the last item from the list (per-T).
+    ///
+    /// # Safety
+    /// - `list` must point to an initialized list
+    /// - `out` must point to uninitialized memory large enough for the element
+    pub pop: Option<ListPopFn>,
+
     /// Set the length of the list (per-T, for direct-fill operations).
     ///
     /// # Safety
@@ -279,6 +319,7 @@ impl ListTypeOps {
         Self {
             init_in_place_with_capacity: None,
             push: None,
+            pop: None,
             set_len: None,
             as_mut_ptr_typed: None,
             reserve: None,
@@ -292,6 +333,7 @@ impl ListTypeOps {
         ListTypeOpsBuilder {
             init_in_place_with_capacity: None,
             push: None,
+            pop: None,
             set_len: None,
             as_mut_ptr_typed: None,
             reserve: None,
@@ -306,6 +348,7 @@ impl ListTypeOps {
 pub struct ListTypeOpsBuilder {
     init_in_place_with_capacity: Option<ListInitInPlaceWithCapacityFn>,
     push: Option<ListPushFn>,
+    pop: Option<ListPopFn>,
     set_len: Option<ListSetLenFn>,
     as_mut_ptr_typed: Option<ListAsMutPtrTypedFn>,
     reserve: Option<ListReserveFn>,
@@ -323,6 +366,12 @@ impl ListTypeOpsBuilder {
     /// Set the `push` function.
     pub const fn push(mut self, f: ListPushFn) -> Self {
         self.push = Some(f);
+        self
+    }
+
+    /// Set the `pop` function.
+    pub const fn pop(mut self, f: ListPopFn) -> Self {
+        self.pop = Some(f);
         self
     }
 
@@ -364,6 +413,7 @@ impl ListTypeOpsBuilder {
         ListTypeOps {
             init_in_place_with_capacity: self.init_in_place_with_capacity,
             push: self.push,
+            pop: self.pop,
             set_len: self.set_len,
             as_mut_ptr_typed: self.as_mut_ptr_typed,
             reserve: self.reserve,
@@ -409,5 +459,9 @@ vtable_def! {
         /// cf. [`ListAsMutPtrFn`]
         /// Only available for types that can be accessed as a contiguous array
         pub as_mut_ptr: Option<ListAsMutPtrFn>,
+
+        /// cf. [`ListSwapFn`]
+        /// Only available for types that support in-place element swaps
+        pub swap: Option<ListSwapFn>,
     }
 }

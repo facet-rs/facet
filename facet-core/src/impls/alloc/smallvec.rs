@@ -327,6 +327,7 @@ where
                 get_mut: Some(smallvec_get_mut::<A>),
                 as_ptr: Some(smallvec_as_ptr::<A>),
                 as_mut_ptr: Some(smallvec_as_mut_ptr::<A>),
+                swap: None,
             }
         }
 

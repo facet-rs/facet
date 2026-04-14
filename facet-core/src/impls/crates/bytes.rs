@@ -87,11 +87,13 @@ static BYTES_LIST_VTABLE: ListVTable = ListVTable {
     get_mut: None,
     as_ptr: Some(bytes_as_ptr),
     as_mut_ptr: None,
+    swap: None,
 };
 
 static BYTES_LIST_TYPE_OPS: ListTypeOps = ListTypeOps {
     init_in_place_with_capacity: None,
     push: None,
+    pop: None,
     set_len: None,
     as_mut_ptr_typed: None,
     reserve: None,
@@ -230,11 +232,13 @@ static BYTES_MUT_LIST_VTABLE: ListVTable = ListVTable {
     get_mut: Some(bytes_mut_get_mut),
     as_ptr: Some(bytes_mut_as_ptr),
     as_mut_ptr: Some(bytes_mut_as_mut_ptr),
+    swap: None,
 };
 
 static BYTES_MUT_LIST_TYPE_OPS: ListTypeOps = ListTypeOps {
     init_in_place_with_capacity: Some(bytes_mut_init_in_place_with_capacity),
     push: Some(bytes_mut_push),
+    pop: None,
     set_len: None, // BytesMut has different semantics - not supported for direct-fill
     as_mut_ptr_typed: None,
     reserve: None,
