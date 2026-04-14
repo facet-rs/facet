@@ -180,27 +180,15 @@ unsafe fn result_cmp(a: OxPtrConst, b: OxPtrConst) -> Option<Ordering> {
     })
 }
 
-/// Drop for Result<T, E>
-unsafe fn result_drop(ox: OxPtrMut) {
-    let shape = ox.shape();
-    let Some(def) = get_result_def(shape) else {
-        return;
-    };
-    let ptr = ox.ptr();
-
-    if unsafe { (def.vtable.is_ok)(ptr.as_const()) } {
-        let Some(ok_ptr) = (unsafe { result_get_ok_ptr(def, ptr.as_const()) }) else {
-            return;
-        };
-        let ok_ptr_mut = PtrMut::new(ok_ptr.as_byte_ptr() as *mut u8);
-        unsafe { def.t.call_drop_in_place(ok_ptr_mut) };
-    } else {
-        let Some(err_ptr) = (unsafe { result_get_err_ptr(def, ptr.as_const()) }) else {
-            return;
-        };
-        let err_ptr_mut = PtrMut::new(err_ptr.as_byte_ptr() as *mut u8);
-        unsafe { def.e.call_drop_in_place(err_ptr_mut) };
-    }
+/// Drop for `Result<T, E>`
+///
+/// Calls `core::ptr::drop_in_place` on the full `Result<T, E>` so the compiler's
+/// drop glue handles both variants correctly. We can't go through `vtable.get_err`
+/// / `vtable.get_ok` to locate the inner value: those use `Result::as_ref().ok()`,
+/// which retags under Stacked Borrows as `SharedReadOnly`, so dropping through
+/// the resulting pointer is UB (miri catches this).
+unsafe fn result_drop<T, E>(ox: OxPtrMut) {
+    unsafe { core::ptr::drop_in_place(ox.as_mut::<Result<T, E>>()) };
 }
 
 // Shared vtable for all Result<T, E>
@@ -217,14 +205,6 @@ const RESULT_VTABLE: VTableIndirect = VTableIndirect {
     partial_eq: Some(result_partial_eq),
     partial_cmp: Some(result_partial_cmp),
     cmp: Some(result_cmp),
-};
-
-// Type operations for all Result<T, E>
-static RESULT_TYPE_OPS: TypeOpsIndirect = TypeOpsIndirect {
-    drop_in_place: result_drop,
-    default_in_place: None,
-    clone_into: None,
-    is_truthy: None,
 };
 
 /// Check if Result<T, E> is Ok
@@ -276,6 +256,15 @@ unsafe impl<'a, T: Facet<'a>, E: Facet<'a>> Facet<'a> for Result<T, E> {
                 .build()
         }
 
+        const fn build_type_ops<T, E>() -> TypeOpsIndirect {
+            TypeOpsIndirect {
+                drop_in_place: result_drop::<T, E>,
+                default_in_place: None,
+                clone_into: None,
+                is_truthy: None,
+            }
+        }
+
         ShapeBuilder::for_sized::<Result<T, E>>("Result")
             .module_path("core::result")
             .type_name(result_type_name)
@@ -306,7 +295,7 @@ unsafe impl<'a, T: Facet<'a>, E: Facet<'a>> Facet<'a> for Result<T, E> {
                 },
             })
             .vtable_indirect(&RESULT_VTABLE)
-            .type_ops_indirect(&RESULT_TYPE_OPS)
+            .type_ops_indirect(&const { build_type_ops::<T, E>() })
             .build()
     };
 }
