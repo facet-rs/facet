@@ -2,7 +2,7 @@ use core::mem::ManuallyDrop;
 
 use facet_core::{Facet, SetDef};
 
-use crate::{ReflectError, ReflectErrorKind};
+use crate::{HeapValue, ReflectError, ReflectErrorKind};
 
 use super::Poke;
 
@@ -87,6 +87,34 @@ impl<'mem, 'facet> PokeSet<'mem, 'facet> {
         Ok(inserted)
     }
 
+    /// Type-erased [`insert`](Self::insert).
+    ///
+    /// Accepts a [`HeapValue`] whose shape must match the set's element type. The value is
+    /// moved into the set. Returns `true` if the value was newly inserted.
+    pub fn insert_from_heap<const BORROW: bool>(
+        &mut self,
+        value: HeapValue<'facet, BORROW>,
+    ) -> Result<bool, ReflectError> {
+        if self.def.t() != value.shape() {
+            return Err(self.err(ReflectErrorKind::WrongShape {
+                expected: self.def.t(),
+                actual: value.shape(),
+            }));
+        }
+
+        let mut value = value;
+        let guard = value
+            .guard
+            .take()
+            .expect("HeapValue guard was already taken");
+        let inserted = unsafe {
+            let value_ptr = facet_core::PtrMut::new(guard.ptr.as_ptr());
+            (self.def.vtable.insert)(self.value.data_mut(), value_ptr)
+        };
+        drop(guard);
+        Ok(inserted)
+    }
+
     /// Returns an iterator over the values in the set (read-only).
     #[inline]
     pub fn iter(&self) -> crate::PeekSetIter<'_, 'facet> {
@@ -143,5 +171,21 @@ mod tests {
 
         assert!(set.contains(&42i32).unwrap());
         assert!(!set.contains(&7i32).unwrap());
+    }
+
+    #[test]
+    fn poke_set_insert_from_heap() {
+        let mut s: BTreeSet<i32> = BTreeSet::new();
+        let poke = Poke::new(&mut s);
+        let mut set = poke.into_set().unwrap();
+
+        let hv = crate::Partial::alloc::<i32>()
+            .unwrap()
+            .set(7i32)
+            .unwrap()
+            .build()
+            .unwrap();
+        assert!(set.insert_from_heap(hv).unwrap());
+        assert!(s.contains(&7));
     }
 }

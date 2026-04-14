@@ -2,7 +2,7 @@ use core::mem::ManuallyDrop;
 
 use facet_core::{Facet, OptionDef, OptionVTable};
 
-use crate::{ReflectError, ReflectErrorKind};
+use crate::{HeapValue, ReflectError, ReflectErrorKind};
 
 use super::Poke;
 
@@ -111,6 +111,36 @@ impl<'mem, 'facet> PokeOption<'mem, 'facet> {
         Ok(())
     }
 
+    /// Type-erased [`set_some`](Self::set_some).
+    ///
+    /// Accepts a [`HeapValue`] whose shape must match the option's inner type. The value is
+    /// moved out of the HeapValue into the option; the HeapValue's backing memory is freed
+    /// without running drop (the vtable has already consumed the value via `ptr::read`).
+    ///
+    /// Use this when you hold a reflection-built value and can't produce a concrete `T`.
+    pub fn set_some_from_heap<const BORROW: bool>(
+        &mut self,
+        value: HeapValue<'facet, BORROW>,
+    ) -> Result<(), ReflectError> {
+        if self.def.t() != value.shape() {
+            return Err(self.err(ReflectErrorKind::WrongShape {
+                expected: self.def.t(),
+                actual: value.shape(),
+            }));
+        }
+
+        let mut value = value;
+        let guard = value
+            .guard
+            .take()
+            .expect("HeapValue guard was already taken");
+        unsafe {
+            (self.vtable().replace_with)(self.value.data_mut(), guard.ptr.as_ptr());
+        }
+        drop(guard);
+        Ok(())
+    }
+
     /// Sets the option to `None`, dropping the previous value.
     pub fn set_none(&mut self) {
         unsafe {
@@ -178,5 +208,40 @@ mod tests {
             inner.set(100i32).unwrap();
         }
         assert_eq!(x, Some(100));
+    }
+
+    #[test]
+    fn poke_option_set_some_from_heap() {
+        let mut x: Option<i32> = None;
+        let poke = Poke::new(&mut x);
+        let mut opt = poke.into_option().unwrap();
+
+        let hv = crate::Partial::alloc::<i32>()
+            .unwrap()
+            .set(7i32)
+            .unwrap()
+            .build()
+            .unwrap();
+        opt.set_some_from_heap(hv).unwrap();
+        assert_eq!(x, Some(7));
+    }
+
+    #[test]
+    fn poke_option_set_some_from_heap_wrong_shape_fails() {
+        let mut x: Option<i32> = None;
+        let poke = Poke::new(&mut x);
+        let mut opt = poke.into_option().unwrap();
+
+        let hv = crate::Partial::alloc::<u32>()
+            .unwrap()
+            .set(7u32)
+            .unwrap()
+            .build()
+            .unwrap();
+        let res = opt.set_some_from_heap(hv);
+        assert!(matches!(
+            res,
+            Err(ref err) if matches!(err.kind, ReflectErrorKind::WrongShape { .. })
+        ));
     }
 }

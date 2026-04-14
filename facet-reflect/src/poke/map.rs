@@ -2,7 +2,7 @@ use core::mem::ManuallyDrop;
 
 use facet_core::{Facet, MapDef};
 
-use crate::{ReflectError, ReflectErrorKind};
+use crate::{HeapValue, ReflectError, ReflectErrorKind};
 
 use super::Poke;
 
@@ -137,6 +137,45 @@ impl<'mem, 'facet> PokeMap<'mem, 'facet> {
         Ok(())
     }
 
+    /// Type-erased [`insert`](Self::insert).
+    ///
+    /// Accepts [`HeapValue`]s for key and value; their shapes must match the map's key and
+    /// value types. Both values are moved into the map.
+    pub fn insert_from_heap<const KB: bool, const VB: bool>(
+        &mut self,
+        key: HeapValue<'facet, KB>,
+        value: HeapValue<'facet, VB>,
+    ) -> Result<(), ReflectError> {
+        if self.def.k() != key.shape() {
+            return Err(self.err(ReflectErrorKind::WrongShape {
+                expected: self.def.k(),
+                actual: key.shape(),
+            }));
+        }
+        if self.def.v() != value.shape() {
+            return Err(self.err(ReflectErrorKind::WrongShape {
+                expected: self.def.v(),
+                actual: value.shape(),
+            }));
+        }
+
+        let mut key = key;
+        let mut value = value;
+        let key_guard = key.guard.take().expect("key HeapValue guard already taken");
+        let value_guard = value
+            .guard
+            .take()
+            .expect("value HeapValue guard already taken");
+        unsafe {
+            let key_ptr = facet_core::PtrMut::new(key_guard.ptr.as_ptr());
+            let value_ptr = facet_core::PtrMut::new(value_guard.ptr.as_ptr());
+            (self.def.vtable.insert)(self.value.data_mut(), key_ptr, value_ptr);
+        }
+        drop(key_guard);
+        drop(value_guard);
+        Ok(())
+    }
+
     /// Returns an iterator over the key-value pairs in the map (read-only).
     #[inline]
     pub fn iter(&self) -> crate::PeekMapIter<'_, 'facet> {
@@ -194,5 +233,28 @@ mod tests {
 
         let v = map.get(&key).unwrap().unwrap();
         assert_eq!(*v.get::<i32>().unwrap(), 10);
+    }
+
+    #[test]
+    fn poke_map_insert_from_heap() {
+        let mut m: BTreeMap<String, i32> = BTreeMap::new();
+        let poke = Poke::new(&mut m);
+        let mut map = poke.into_map().unwrap();
+
+        let key = crate::Partial::alloc::<String>()
+            .unwrap()
+            .set(String::from("k"))
+            .unwrap()
+            .build()
+            .unwrap();
+        let value = crate::Partial::alloc::<i32>()
+            .unwrap()
+            .set(42i32)
+            .unwrap()
+            .build()
+            .unwrap();
+        map.insert_from_heap(key, value).unwrap();
+
+        assert_eq!(m.get("k"), Some(&42));
     }
 }
