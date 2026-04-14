@@ -74,16 +74,10 @@ asan *args:
 # macOS-only: run facet-reflect's tests under `leaks --atExit` to catch
 # memory leaks at process exit. Native speed, so it's orders of magnitude
 # faster than miri for leak regressions. Exits non-zero if any allocation
-# is unreachable at exit. Uses the host target triple so the runner env
-# var is picked up (cargo only applies --target runners when --target is
-# explicit).
+# is unreachable at exit.
 leaks *args:
-    CARGO_TARGET_DIR=target/leaks \
-    MallocStackLogging=1 \
-    CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER="leaks -quiet --atExit --" \
-    CARGO_TARGET_X86_64_APPLE_DARWIN_RUNNER="leaks -quiet --atExit --" \
-        cargo test -p facet-reflect \
-        --target "$(rustc -vV | sed -n 's|host: ||p')" -- {{ args }}
+    MallocStackLogging=1 CARGO_TARGET_DIR=target/leaks \
+        cargo nextest run --profile leaks -p facet-reflect {{ args }}
 
 fuzz-smoke-value:
     cargo fuzz run fuzz_value -- -runs=1000
