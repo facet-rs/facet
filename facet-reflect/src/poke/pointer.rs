@@ -2,11 +2,13 @@ use facet_core::PointerDef;
 
 use super::Poke;
 
-/// Represents a pointer that can be mutated through reflection.
+/// Poke-side wrapper over a pointer value, for symmetry with [`PeekPointer`](crate::PeekPointer).
 ///
-/// Note that the pointer vtable currently only exposes read-only access to the pointee
-/// (via [`borrow_inner`](Self::borrow_inner)); this is mostly here for symmetry with
-/// [`PeekPointer`](crate::PeekPointer).
+/// The current [`PointerVTable`](facet_core::PointerVTable) exposes no mutating operations
+/// on the pointee, so this type is effectively read-only: it offers
+/// [`borrow_inner`](Self::borrow_inner) (returning a [`Peek`](crate::Peek)) plus conversions
+/// back to [`Poke`] / [`PeekPointer`](crate::PeekPointer). Mutating methods will be added
+/// once the core vtable grows the corresponding hooks.
 pub struct PokePointer<'mem, 'facet> {
     pub(crate) value: Poke<'mem, 'facet>,
     pub(crate) def: PointerDef,
