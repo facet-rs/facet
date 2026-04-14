@@ -1,6 +1,6 @@
 use core::mem::ManuallyDrop;
 
-use facet_core::{Facet, OptionDef, OptionVTable, PtrMut};
+use facet_core::{Facet, OptionDef, OptionVTable};
 
 use crate::{ReflectError, ReflectErrorKind};
 
@@ -116,24 +116,6 @@ impl<'mem, 'facet> PokeOption<'mem, 'facet> {
         unsafe {
             (self.vtable().replace_with)(self.value.data_mut(), core::ptr::null_mut());
         }
-    }
-
-    /// Replace the option with either `Some(value)` or `None`, dropping the previous value.
-    ///
-    /// Pass `None` to set the option to `None`. Pass a `Poke<T>` whose shape matches the
-    /// option's inner type to set it to `Some(value)`. The value is moved out of the `Poke`
-    /// storage — the caller must ensure the original memory is not dropped afterwards.
-    ///
-    /// # Safety
-    ///
-    /// - If `value` is `Some(poke)`, the underlying storage for `poke` must not be dropped
-    ///   after this call (its ownership has been transferred to the option).
-    pub unsafe fn replace_with_raw(&mut self, value: Option<PtrMut>) {
-        let ptr = match value {
-            Some(p) => p.as_mut_byte_ptr(),
-            None => core::ptr::null_mut(),
-        };
-        unsafe { (self.vtable().replace_with)(self.value.data_mut(), ptr) };
     }
 
     /// Converts this `PokeOption` back into a `Poke`
