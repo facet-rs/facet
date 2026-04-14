@@ -161,6 +161,86 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
         matches!(self.shape.def, Def::Scalar)
     }
 
+    /// Returns true if this value is a tuple (anonymous `(A, B, ...)`).
+    ///
+    /// Note: tuple structs (named `struct Foo(A, B);`) report `false` here; they match
+    /// [`is_struct`](Self::is_struct).
+    #[inline]
+    pub const fn is_tuple(&self) -> bool {
+        matches!(
+            self.shape.ty,
+            Type::User(UserType::Struct(s)) if matches!(s.kind, StructKind::Tuple)
+        )
+    }
+
+    /// Returns true if this value is a list (variable-length, homogeneous, e.g. `Vec<T>`).
+    #[inline]
+    pub const fn is_list(&self) -> bool {
+        matches!(self.shape.def, Def::List(_))
+    }
+
+    /// Returns true if this value is a fixed-size array (e.g. `[T; N]`).
+    #[inline]
+    pub const fn is_array(&self) -> bool {
+        matches!(self.shape.def, Def::Array(_))
+    }
+
+    /// Returns true if this value is a slice (e.g. `[T]`).
+    #[inline]
+    pub const fn is_slice(&self) -> bool {
+        matches!(self.shape.def, Def::Slice(_))
+    }
+
+    /// Returns true if this value is a list, array, or slice
+    /// (the set accepted by [`into_list_like`](Self::into_list_like)).
+    #[inline]
+    pub const fn is_list_like(&self) -> bool {
+        matches!(self.shape.def, Def::List(_) | Def::Array(_) | Def::Slice(_))
+    }
+
+    /// Returns true if this value is a map.
+    #[inline]
+    pub const fn is_map(&self) -> bool {
+        matches!(self.shape.def, Def::Map(_))
+    }
+
+    /// Returns true if this value is a set.
+    #[inline]
+    pub const fn is_set(&self) -> bool {
+        matches!(self.shape.def, Def::Set(_))
+    }
+
+    /// Returns true if this value is an option.
+    #[inline]
+    pub const fn is_option(&self) -> bool {
+        matches!(self.shape.def, Def::Option(_))
+    }
+
+    /// Returns true if this value is a result.
+    #[inline]
+    pub const fn is_result(&self) -> bool {
+        matches!(self.shape.def, Def::Result(_))
+    }
+
+    /// Returns true if this value is a (smart) pointer.
+    #[inline]
+    pub const fn is_pointer(&self) -> bool {
+        matches!(self.shape.def, Def::Pointer(_))
+    }
+
+    /// Returns true if this value is an n-dimensional array.
+    #[inline]
+    pub const fn is_ndarray(&self) -> bool {
+        matches!(self.shape.def, Def::NdArray(_))
+    }
+
+    /// Returns true if this value is a dynamic value
+    /// (e.g. `facet_value::Value` — runtime-kind-dispatched).
+    #[inline]
+    pub const fn is_dynamic_value(&self) -> bool {
+        matches!(self.shape.def, Def::DynamicValue(_))
+    }
+
     /// Converts this into a `PokeStruct` if the value is a struct.
     pub fn into_struct(self) -> Result<PokeStruct<'mem, 'facet>, ReflectError> {
         match self.shape.ty {
@@ -812,5 +892,41 @@ mod tests {
 
         poke.set(String::from("world")).unwrap();
         assert_eq!(s, "world");
+    }
+
+    #[test]
+    fn poke_is_predicates() {
+        let mut v: alloc::vec::Vec<i32> = alloc::vec![1, 2, 3];
+        let poke = Poke::new(&mut v);
+        assert!(poke.is_list());
+        assert!(poke.is_list_like());
+        assert!(!poke.is_map());
+        assert!(!poke.is_set());
+        assert!(!poke.is_option());
+        assert!(!poke.is_result());
+        assert!(!poke.is_tuple());
+        assert!(!poke.is_scalar());
+
+        let mut x: Option<i32> = Some(1);
+        let poke = Poke::new(&mut x);
+        assert!(poke.is_option());
+        assert!(!poke.is_list());
+
+        let mut r: Result<i32, i32> = Ok(1);
+        let poke = Poke::new(&mut r);
+        assert!(poke.is_result());
+
+        let mut t: (i32, i32) = (1, 2);
+        let poke = Poke::new(&mut t);
+        assert!(poke.is_tuple());
+
+        let mut n: i32 = 42;
+        let poke = Poke::new(&mut n);
+        assert!(poke.is_scalar());
+
+        let mut a: [i32; 3] = [1, 2, 3];
+        let poke = Poke::new(&mut a);
+        assert!(poke.is_array());
+        assert!(poke.is_list_like());
     }
 }
