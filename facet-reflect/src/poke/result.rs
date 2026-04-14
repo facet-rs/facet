@@ -2,7 +2,7 @@ use core::mem::ManuallyDrop;
 
 use facet_core::{Facet, PtrUninit, ResultDef, ResultVTable};
 
-use crate::{ReflectError, ReflectErrorKind};
+use crate::{HeapValue, ReflectError, ReflectErrorKind};
 
 use super::Poke;
 
@@ -158,6 +158,64 @@ impl<'mem, 'facet> PokeResult<'mem, 'facet> {
         Ok(())
     }
 
+    /// Type-erased [`set_ok`](Self::set_ok).
+    ///
+    /// Accepts a [`HeapValue`] whose shape must match the result's Ok type.
+    pub fn set_ok_from_heap<const BORROW: bool>(
+        &mut self,
+        value: HeapValue<'facet, BORROW>,
+    ) -> Result<(), ReflectError> {
+        if self.def.t() != value.shape() {
+            return Err(self.err_reflect(ReflectErrorKind::WrongShape {
+                expected: self.def.t(),
+                actual: value.shape(),
+            }));
+        }
+
+        let mut value = value;
+        let guard = value
+            .guard
+            .take()
+            .expect("HeapValue guard was already taken");
+        unsafe {
+            self.value.shape.call_drop_in_place(self.value.data_mut());
+            let uninit = PtrUninit::new(self.value.data_mut().as_mut_byte_ptr());
+            let value_ptr = facet_core::PtrMut::new(guard.ptr.as_ptr());
+            (self.vtable().init_ok)(uninit, value_ptr);
+        }
+        drop(guard);
+        Ok(())
+    }
+
+    /// Type-erased [`set_err`](Self::set_err).
+    ///
+    /// Accepts a [`HeapValue`] whose shape must match the result's Err type.
+    pub fn set_err_from_heap<const BORROW: bool>(
+        &mut self,
+        value: HeapValue<'facet, BORROW>,
+    ) -> Result<(), ReflectError> {
+        if self.def.e() != value.shape() {
+            return Err(self.err_reflect(ReflectErrorKind::WrongShape {
+                expected: self.def.e(),
+                actual: value.shape(),
+            }));
+        }
+
+        let mut value = value;
+        let guard = value
+            .guard
+            .take()
+            .expect("HeapValue guard was already taken");
+        unsafe {
+            self.value.shape.call_drop_in_place(self.value.data_mut());
+            let uninit = PtrUninit::new(self.value.data_mut().as_mut_byte_ptr());
+            let value_ptr = facet_core::PtrMut::new(guard.ptr.as_ptr());
+            (self.vtable().init_err)(uninit, value_ptr);
+        }
+        drop(guard);
+        Ok(())
+    }
+
     /// Converts this `PokeResult` back into a `Poke`
     #[inline]
     pub const fn into_inner(self) -> Poke<'mem, 'facet> {
@@ -217,5 +275,37 @@ mod tests {
             inner.set(123i32).unwrap();
         }
         assert_eq!(x, Ok(123));
+    }
+
+    #[test]
+    fn poke_result_set_ok_from_heap() {
+        let mut x: Result<i32, String> = Err(String::from("initial"));
+        let poke = Poke::new(&mut x);
+        let mut res = poke.into_result().unwrap();
+
+        let hv = crate::Partial::alloc::<i32>()
+            .unwrap()
+            .set(42i32)
+            .unwrap()
+            .build()
+            .unwrap();
+        res.set_ok_from_heap(hv).unwrap();
+        assert_eq!(x, Ok(42));
+    }
+
+    #[test]
+    fn poke_result_set_err_from_heap() {
+        let mut x: Result<i32, String> = Ok(1);
+        let poke = Poke::new(&mut x);
+        let mut res = poke.into_result().unwrap();
+
+        let hv = crate::Partial::alloc::<String>()
+            .unwrap()
+            .set(String::from("boom"))
+            .unwrap()
+            .build()
+            .unwrap();
+        res.set_err_from_heap(hv).unwrap();
+        assert_eq!(x, Err(String::from("boom")));
     }
 }

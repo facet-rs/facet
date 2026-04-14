@@ -4,7 +4,7 @@ use core::mem::ManuallyDrop;
 
 use facet_core::{DynValueKind, DynamicValueDef, Facet, PtrMut, PtrUninit};
 
-use crate::{ReflectError, ReflectErrorKind};
+use crate::{HeapValue, ReflectError, ReflectErrorKind};
 
 use super::Poke;
 
@@ -225,6 +225,32 @@ impl<'mem, 'facet> PokeDynamicValue<'mem, 'facet> {
         Ok(())
     }
 
+    /// Type-erased [`push_array_element`](Self::push_array_element).
+    ///
+    /// Accepts a [`HeapValue`] whose shape must match this dynamic value's shape.
+    pub fn push_array_element_from_heap<const BORROW: bool>(
+        &mut self,
+        element: HeapValue<'facet, BORROW>,
+    ) -> Result<(), ReflectError> {
+        if self.value.shape != element.shape() {
+            return Err(self.value.err(ReflectErrorKind::WrongShape {
+                expected: self.value.shape,
+                actual: element.shape(),
+            }));
+        }
+        let mut element = element;
+        let guard = element
+            .guard
+            .take()
+            .expect("HeapValue guard was already taken");
+        unsafe {
+            let elem_ptr = PtrMut::new(guard.ptr.as_ptr());
+            (self.def.vtable.push_array_element)(self.value.data_mut(), elem_ptr);
+        }
+        drop(guard);
+        Ok(())
+    }
+
     /// Finalize an array value. No-op if the underlying dynamic-value type doesn't need it.
     pub fn end_array(&mut self) {
         if let Some(end_array) = self.def.vtable.end_array {
@@ -255,6 +281,33 @@ impl<'mem, 'facet> PokeDynamicValue<'mem, 'facet> {
             let value_ptr = PtrMut::new(&mut value as *mut ManuallyDrop<T> as *mut u8);
             (self.def.vtable.insert_object_entry)(self.value.data_mut(), key, value_ptr);
         }
+        Ok(())
+    }
+
+    /// Type-erased [`insert_object_entry`](Self::insert_object_entry).
+    ///
+    /// Accepts a [`HeapValue`] whose shape must match this dynamic value's shape.
+    pub fn insert_object_entry_from_heap<const BORROW: bool>(
+        &mut self,
+        key: &str,
+        value: HeapValue<'facet, BORROW>,
+    ) -> Result<(), ReflectError> {
+        if self.value.shape != value.shape() {
+            return Err(self.value.err(ReflectErrorKind::WrongShape {
+                expected: self.value.shape,
+                actual: value.shape(),
+            }));
+        }
+        let mut value = value;
+        let guard = value
+            .guard
+            .take()
+            .expect("HeapValue guard was already taken");
+        unsafe {
+            let value_ptr = PtrMut::new(guard.ptr.as_ptr());
+            (self.def.vtable.insert_object_entry)(self.value.data_mut(), key, value_ptr);
+        }
+        drop(guard);
         Ok(())
     }
 
