@@ -117,6 +117,7 @@ static VEC_LIST_VTABLE: ListVTable = ListVTable {
     get_mut: Some(vec_get_mut_erased),
     as_ptr: Some(vec_as_ptr_erased),
     as_mut_ptr: Some(vec_as_mut_ptr_erased),
+    swap: Some(vec_swap_erased),
 };
 
 /// Type-erased as_ptr implementation - works for any `Vec<T>`
@@ -132,6 +133,41 @@ unsafe extern "C" fn vec_as_mut_ptr_erased(ptr: PtrMut) -> PtrMut {
     unsafe {
         let layout = ptr.as_byte_ptr() as *const VecLayout;
         PtrMut::new((*layout).ptr)
+    }
+}
+
+/// Type-erased swap implementation - works for any `Vec<T>` using shape info.
+///
+/// Swaps the bytes of the elements at `a` and `b`. Returns `false` without
+/// modifying the list if either index is out of bounds.
+unsafe fn vec_swap_erased(ptr: PtrMut, a: usize, b: usize, shape: &'static Shape) -> bool {
+    unsafe {
+        let layout = ptr.as_byte_ptr() as *const VecLayout;
+        let len = (*layout).len;
+        if a >= len || b >= len {
+            return false;
+        }
+        if a == b {
+            return true;
+        }
+        let Ok(elem_layout) = shape
+            .type_params
+            .first()
+            .expect("Vec shape must have an element type parameter")
+            .shape
+            .layout
+            .sized_layout()
+        else {
+            return false;
+        };
+        let elem_size = elem_layout.size();
+        let data_ptr = (*layout).ptr;
+        core::ptr::swap_nonoverlapping(
+            data_ptr.add(a * elem_size),
+            data_ptr.add(b * elem_size),
+            elem_size,
+        );
+        true
     }
 }
 
@@ -297,6 +333,28 @@ unsafe extern "C" fn vec_push<T>(ptr: PtrMut, item: PtrMut) {
     }
 }
 
+/// Pop the last element from a `Vec<T>`, moving it into `out`.
+///
+/// Returns `true` if an element was popped, `false` if the vec was empty.
+///
+/// # Safety
+/// - `ptr` must point to an initialized `Vec<T>`.
+/// - When returning `true`, `out` must have been uninitialized memory of at
+///   least `size_of::<T>()` bytes, correctly aligned for `T`. The element is
+///   moved into `out` (no destructor is run on the source element).
+unsafe extern "C" fn vec_pop<T>(ptr: PtrMut, out: PtrUninit) -> bool {
+    unsafe {
+        let vec = ptr.as_mut::<Vec<T>>();
+        match vec.pop() {
+            Some(value) => {
+                out.put(value);
+                true
+            }
+            None => false,
+        }
+    }
+}
+
 /// Set the length of a Vec (for direct-fill operations).
 ///
 /// # Safety
@@ -390,6 +448,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Vec<T> {
                 ListTypeOps::builder()
                     .init_in_place_with_capacity(vec_init_in_place_with_capacity::<T>)
                     .push(vec_push::<T>)
+                    .pop(vec_pop::<T>)
                     .set_len(vec_set_len::<T>)
                     .as_mut_ptr_typed(vec_as_mut_ptr_typed::<T>)
                     .reserve(vec_reserve::<T>)
