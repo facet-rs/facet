@@ -1,11 +1,17 @@
 use core::marker::PhantomData;
 
-use facet_core::{Def, Facet, PtrConst, PtrMut, Shape, Type, UserType, Variance};
+use facet_core::{Def, Facet, PtrConst, PtrMut, Shape, StructKind, Type, UserType, Variance};
 use facet_path::{Path, PathAccessError, PathStep};
 
-use crate::{ReflectError, ReflectErrorKind, peek::VariantError};
+use crate::{
+    ReflectError, ReflectErrorKind,
+    peek::{ListLikeDef, TupleType, VariantError},
+};
 
-use super::{PokeList, PokeStruct};
+use super::{
+    PokeDynamicValue, PokeList, PokeListLike, PokeMap, PokeNdArray, PokeOption, PokePointer,
+    PokeResult, PokeSet, PokeStruct, PokeTuple,
+};
 
 /// A mutable view into a value with runtime type information.
 ///
@@ -98,7 +104,7 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
 
     /// Construct a ReflectError with this poke's shape as the root path.
     #[inline]
-    fn err(&self, kind: ReflectErrorKind) -> ReflectError {
+    pub(crate) fn err(&self, kind: ReflectErrorKind) -> ReflectError {
         ReflectError::new(kind, Path::new(self.shape))
     }
 
@@ -195,6 +201,133 @@ impl<'mem, 'facet> Poke<'mem, 'facet> {
 
         Err(self.err(ReflectErrorKind::WasNotA {
             expected: "list",
+            actual: self.shape,
+        }))
+    }
+
+    /// Converts this into a `PokeListLike` if the value is a list, array, or slice.
+    #[inline]
+    pub fn into_list_like(self) -> Result<PokeListLike<'mem, 'facet>, ReflectError> {
+        match self.shape.def {
+            // SAFETY: The defs come from self.shape.def, where self.shape is obtained from
+            // a trusted source. The vtables are therefore trusted.
+            Def::List(def) => Ok(unsafe { PokeListLike::new(self, ListLikeDef::List(def)) }),
+            Def::Array(def) => Ok(unsafe { PokeListLike::new(self, ListLikeDef::Array(def)) }),
+            Def::Slice(def) => Ok(unsafe { PokeListLike::new(self, ListLikeDef::Slice(def)) }),
+            _ => Err(self.err(ReflectErrorKind::WasNotA {
+                expected: "list, array or slice",
+                actual: self.shape,
+            })),
+        }
+    }
+
+    /// Converts this into a `PokeMap` if the value is a map.
+    #[inline]
+    pub fn into_map(self) -> Result<PokeMap<'mem, 'facet>, ReflectError> {
+        if let Def::Map(def) = self.shape.def {
+            return Ok(unsafe { PokeMap::new(self, def) });
+        }
+
+        Err(self.err(ReflectErrorKind::WasNotA {
+            expected: "map",
+            actual: self.shape,
+        }))
+    }
+
+    /// Converts this into a `PokeSet` if the value is a set.
+    #[inline]
+    pub fn into_set(self) -> Result<PokeSet<'mem, 'facet>, ReflectError> {
+        if let Def::Set(def) = self.shape.def {
+            return Ok(unsafe { PokeSet::new(self, def) });
+        }
+
+        Err(self.err(ReflectErrorKind::WasNotA {
+            expected: "set",
+            actual: self.shape,
+        }))
+    }
+
+    /// Converts this into a `PokeOption` if the value is an option.
+    #[inline]
+    pub fn into_option(self) -> Result<PokeOption<'mem, 'facet>, ReflectError> {
+        if let Def::Option(def) = self.shape.def {
+            return Ok(unsafe { PokeOption::new(self, def) });
+        }
+
+        Err(self.err(ReflectErrorKind::WasNotA {
+            expected: "option",
+            actual: self.shape,
+        }))
+    }
+
+    /// Converts this into a `PokeResult` if the value is a result.
+    #[inline]
+    pub fn into_result(self) -> Result<PokeResult<'mem, 'facet>, ReflectError> {
+        if let Def::Result(def) = self.shape.def {
+            return Ok(unsafe { PokeResult::new(self, def) });
+        }
+
+        Err(self.err(ReflectErrorKind::WasNotA {
+            expected: "result",
+            actual: self.shape,
+        }))
+    }
+
+    /// Converts this into a `PokeTuple` if the value is a tuple (or tuple struct).
+    #[inline]
+    pub fn into_tuple(self) -> Result<PokeTuple<'mem, 'facet>, ReflectError> {
+        if let Type::User(UserType::Struct(struct_type)) = self.shape.ty
+            && struct_type.kind == StructKind::Tuple
+        {
+            return Ok(PokeTuple {
+                value: self,
+                ty: TupleType {
+                    fields: struct_type.fields,
+                },
+            });
+        }
+
+        Err(self.err(ReflectErrorKind::WasNotA {
+            expected: "tuple",
+            actual: self.shape,
+        }))
+    }
+
+    /// Converts this into a `PokePointer` if the value is a pointer.
+    #[inline]
+    pub fn into_pointer(self) -> Result<PokePointer<'mem, 'facet>, ReflectError> {
+        if let Def::Pointer(def) = self.shape.def {
+            return Ok(PokePointer { value: self, def });
+        }
+
+        Err(self.err(ReflectErrorKind::WasNotA {
+            expected: "smart pointer",
+            actual: self.shape,
+        }))
+    }
+
+    /// Converts this into a `PokeNdArray` if the value is an n-dimensional array.
+    #[inline]
+    pub fn into_ndarray(self) -> Result<PokeNdArray<'mem, 'facet>, ReflectError> {
+        if let Def::NdArray(def) = self.shape.def {
+            return Ok(unsafe { PokeNdArray::new(self, def) });
+        }
+
+        Err(self.err(ReflectErrorKind::WasNotA {
+            expected: "ndarray",
+            actual: self.shape,
+        }))
+    }
+
+    /// Converts this into a `PokeDynamicValue` if the value is a dynamic value.
+    #[inline]
+    pub fn into_dynamic_value(self) -> Result<PokeDynamicValue<'mem, 'facet>, ReflectError> {
+        if let Def::DynamicValue(def) = self.shape.def {
+            return Ok(PokeDynamicValue { value: self, def });
+        }
+
+        Err(self.err(ReflectErrorKind::WasNotA {
+            expected: "dynamic value",
             actual: self.shape,
         }))
     }
