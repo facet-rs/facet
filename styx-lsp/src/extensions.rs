@@ -24,9 +24,6 @@ use std::process::Stdio;
 use std::task::{Context, Poll};
 
 use facet_styx::LspExtensionConfig;
-use roam_core::BareConduit;
-use roam_stream::StreamLink;
-use roam_types::MessageFamily;
 pub use styx_lsp_ext::StyxLspExtensionClient;
 use styx_lsp_ext::{
     GetDocumentParams, GetSchemaParams, GetSourceParams, GetSubtreeParams, OffsetToPositionParams,
@@ -38,6 +35,7 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::RwLock;
 use tower_lsp::lsp_types::Url;
 use tracing::{debug, info, warn};
+use vox::transport::tcp::StreamLink;
 
 use crate::config::{self, StyxUserConfig};
 use crate::schema_validation::resolve_schema;
@@ -95,7 +93,7 @@ pub struct ExtensionManager {
     documents: DocumentMap,
 }
 
-/// A spawned extension process with roam connection.
+/// A spawned extension process with vox connection.
 struct Extension {
     /// The child process.
     #[allow(dead_code)]
@@ -103,7 +101,7 @@ struct Extension {
     /// Extension config from the schema.
     #[allow(dead_code)]
     config: LspExtensionConfig,
-    /// Roam client for making calls.
+    /// Vox client for making calls.
     client: StyxLspExtensionClient,
 }
 
@@ -199,7 +197,7 @@ impl ExtensionManager {
         extensions.get(schema_id).map(|ext| ext.client.clone())
     }
 
-    /// Spawn an extension process, establish roam connection, and initialize it.
+    /// Spawn an extension process, establish vox connection, and initialize it.
     async fn spawn_extension(
         &self,
         schema_id: &str,
@@ -229,13 +227,9 @@ impl ExtensionManager {
             })
             .ok()?;
 
-        // Take stdin/stdout for roam communication
+        // Take stdin/stdout for vox communication
         let stdin = process.stdin.take()?;
         let stdout = process.stdout.take()?;
-
-        // Wrap in length-prefix framing for roam
-        let link = StreamLink::new(stdout, stdin);
-        let conduit = BareConduit::<MessageFamily, _>::new(link);
 
         // Create host dispatcher for extension callbacks
         let host_impl = StyxLspHostImpl {
@@ -243,17 +237,18 @@ impl ExtensionManager {
         };
         let dispatcher = StyxLspHostDispatcher::new(host_impl);
 
-        // Initiate roam session (LSP is the initiator)
-        let (client, _session_handle) = roam_core::initiator(conduit)
-            .establish::<StyxLspExtensionClient>(dispatcher)
+        // Initiate vox session (LSP is the initiator)
+        let client = vox::initiator_on(StreamLink::new(stdout, stdin), vox::TransportMode::Bare)
+            .on_connection(dispatcher)
+            .establish::<StyxLspExtensionClient>()
             .await
             .map_err(|e| {
-                warn!(command, error = %e, "Failed roam handshake with extension");
+                warn!(command, error = %e, "Failed vox handshake with extension");
                 e
             })
             .ok()?;
 
-        debug!(command, "Roam session established with extension");
+        debug!(command, "Vox session established with extension");
         let init_result = client
             .initialize(styx_lsp_ext::InitializeParams {
                 styx_version: env!("CARGO_PKG_VERSION").to_string(),

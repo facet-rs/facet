@@ -1,7 +1,7 @@
 //! Integration test harness and runner for LSP extensions.
 //!
 //! This module provides tools for testing LSP extensions through real IPC
-//! (roam over stdio), using the actual `StyxLspHostImpl` implementation.
+//! (vox over stdio), using the actual `StyxLspHostImpl` implementation.
 //!
 //! # Quick Start
 //!

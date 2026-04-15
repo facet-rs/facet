@@ -1,7 +1,7 @@
 //! Integration test harness for LSP extensions.
 //!
 //! This harness spawns extension binaries as subprocesses and communicates
-//! with them over roam (COBS-framed protocol over stdio), exactly like the
+//! with them over vox (length-prefix framing over stdio), exactly like the
 //! real Styx LSP does.
 //!
 //! # Example
@@ -26,14 +26,12 @@ use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
 
-use roam_core::BareConduit;
-use roam_stream::StreamLink;
-use roam_types::MessageFamily;
 use styx_cst::parse;
 use styx_tree::Value;
 use tokio::process::{Child, Command};
 use tokio::sync::RwLock;
 use tower_lsp::lsp_types::Url;
+use vox::transport::tcp::StreamLink;
 
 use crate::extensions::StyxLspHostImpl;
 use crate::server::{DocumentMap, DocumentState};
@@ -100,7 +98,7 @@ type CursorMap = Arc<RwLock<HashMap<String, CursorInfo>>>;
 
 /// Integration test harness for LSP extensions.
 ///
-/// Spawns an extension binary and communicates via roam over stdio,
+/// Spawns an extension binary and communicates via vox over stdio,
 /// using the real `StyxLspHostImpl` from the LSP server.
 pub struct TestHarness {
     /// The spawned child process.
@@ -134,9 +132,6 @@ impl TestHarness {
         let stdin = process.stdin.take().ok_or(HarnessError::NoStdin)?;
         let stdout = process.stdout.take().ok_or(HarnessError::NoStdout)?;
 
-        let link = StreamLink::new(stdout, stdin);
-        let conduit = BareConduit::<MessageFamily, _>::new(link);
-
         let documents: DocumentMap = Arc::new(RwLock::new(HashMap::new()));
         let cursors: CursorMap = Arc::new(RwLock::new(HashMap::new()));
 
@@ -144,9 +139,10 @@ impl TestHarness {
         let host = StyxLspHostImpl::new(documents.clone());
         let dispatcher = StyxLspHostDispatcher::new(host);
 
-        // Initiate roam session (we're the initiator, like the real LSP)
-        let (client, _session_handle) = roam_core::initiator(conduit)
-            .establish::<StyxLspExtensionClient>(dispatcher)
+        // Initiate vox session (we're the initiator, like the real LSP)
+        let client = vox::initiator_on(StreamLink::new(stdout, stdin), vox::TransportMode::Bare)
+            .on_connection(dispatcher)
+            .establish::<StyxLspExtensionClient>()
             .await
             .map_err(|e| HarnessError::HandshakeFailed(e.to_string()))?;
 

@@ -14,4 +14,4 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 facet.workspace = true
 styx-tree = { path = "../styx-tree", version = "3.0", features = ["facet"] }
-roam.workspace = true
+vox.workspace = true

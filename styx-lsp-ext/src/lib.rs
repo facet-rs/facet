@@ -1,7 +1,7 @@
 #![doc = include_str!("../README.md")]
 //! Protocol types for Styx LSP extensions.
 //!
-//! This crate defines the Roam service traits and types used for communication
+//! This crate defines the Vox service traits and types used for communication
 //! between the Styx LSP and external extensions that provide domain-specific
 //! intelligence (completions, hover, diagnostics, etc.).
 //!
@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! ┌─────────────┐                      ┌─────────────────┐
-//! │  Styx LSP   │◄────── Roam ────────►│    Extension    │
+//! │  Styx LSP   │◄─────── Vox ────────►│    Extension    │
 //! │             │                      │   (e.g. dibs)   │
 //! │ implements  │                      │   implements    │
 //! │ StyxLspHost │                      │ StyxLspExtension│
@@ -21,7 +21,7 @@
 //!
 //! # Generated Types
 //!
-//! The `#[roam::service]` macro generates:
+//! The `#[vox::service]` macro generates:
 //! - `StyxLspExtensionClient` - Call extension methods from the LSP
 //! - `StyxLspExtensionDispatcher` - Dispatch incoming calls on the extension side
 //! - `StyxLspHostClient` - Call LSP methods from the extension
@@ -30,8 +30,8 @@
 use facet::Facet;
 use styx_tree::Value;
 
-// Re-export roam types needed by generated code and consumers
-pub use roam;
+// Re-export vox for generated code and consumers
+pub use vox;
 
 // =============================================================================
 // Service traits
@@ -40,7 +40,7 @@ pub use roam;
 /// Service implemented by LSP extensions.
 ///
 /// The Styx LSP calls these methods to request domain-specific intelligence.
-#[roam::service]
+#[vox::service]
 pub trait StyxLspExtension {
     /// Initialize the extension. Called once after spawn.
     async fn initialize(&self, params: InitializeParams) -> InitializeResult;
@@ -71,7 +71,7 @@ pub trait StyxLspExtension {
 ///
 /// Extensions can call these methods to request additional context about
 /// the document being edited.
-#[roam::service]
+#[vox::service]
 pub trait StyxLspHost {
     /// Get a subtree of the document at a path.
     async fn get_subtree(&self, params: GetSubtreeParams) -> Option<Value>;

@@ -42,10 +42,8 @@ facet.workspace = true
 glob = "0.3"
 serde_json.workspace = true
 
-# LSP extensions (roam RPC)
-roam-core.workspace = true
-roam-stream.workspace = true
-roam-types.workspace = true
+# LSP extensions (vox RPC)
+vox.workspace = true
 
 # Extension protocol
 styx-lsp-ext = { path = "../styx-lsp-ext", version = "3.0" }

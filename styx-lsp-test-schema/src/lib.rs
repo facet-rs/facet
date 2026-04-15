@@ -2,7 +2,7 @@
 //! Schema types for LSP extension test files.
 //!
 //! These types define the structure of `.styx` test files that exercise
-//! LSP extensions through real IPC (roam over stdio).
+//! LSP extensions through real IPC (vox over stdio).
 //!
 //! # Example Test File
 //!
