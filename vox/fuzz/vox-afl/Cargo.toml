@@ -5,7 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
-afl = "0.15"
+afl = "0.17"
 vox = { path = "../../rust/vox" }
 vox-core = { path = "../../rust/vox-core" }
 vox-types = { path = "../../rust/vox-types" }

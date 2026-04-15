@@ -14,6 +14,6 @@
     "@bearcove/vox-ws": "workspace:*"
   },
   "devDependencies": {
-    "vite": "^6"
+    "vite": "^6.4.2"
   }
 }
