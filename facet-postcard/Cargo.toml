@@ -41,13 +41,12 @@ ulid = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
-bytes = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 divan = { workspace = true }
 facet = { workspace = true, features = ["std", "all-impls", "doc"] }
 facet-format = { path = "../facet-format", features = [] }
 facet-json = { path = "../facet-json", version = "0.46.0" }
-facet-json-classics = { path = "../facet-json-classics", version = "0.46.0" }
+facet-json-classics = { path = "../facet-json-classics" }
 facet-testhelpers = { workspace = true }
 facet-value = { path = "../facet-value" }
 serde_json = { workspace = true }

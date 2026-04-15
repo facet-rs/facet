@@ -29,16 +29,15 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 divan = { workspace = true }
 facet = { workspace = true, features = ["std", "all-impls", "iddqd"] }
 facet-format = { path = "../facet-format", features = ["net"] }
-facet-format-suite = { path = "../facet-format-suite", version = "0.46.0", features = [
+facet-format-suite = { path = "../facet-format-suite", features = [
   "third-party",
   "msgpack",
   "net",
 ] }
-facet-json-classics = { path = "../facet-json-classics", version = "0.46.0" }
+facet-json-classics = { path = "../facet-json-classics" }
 libtest-mimic = "0.8"
 rmp-serde = "1"
 serde = { workspace = true, features = ["derive"] }
-serde_bytes = "0.11"
 serde_json = { workspace = true }
 
 [[bench]]

@@ -19,7 +19,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 facet = { workspace = true }
 itoa = { version = "1", optional = true }
-memchr = "2"
 zmij = { version = "1", optional = true }
 facet-core = { workspace = true }
 facet-format = { path = "../facet-format", version = "0.47.0", default-features = false }
@@ -38,7 +37,7 @@ mime = { version = "0.3", optional = true }
 
 [dev-dependencies]
 compact_str = { workspace = true }
-facet-json-classics = { path = "../facet-json-classics", version = "0.46.0" }
+facet-json-classics = { path = "../facet-json-classics" }
 divan = { workspace = true }
 facet = { workspace = true, features = [
   "std",
@@ -55,7 +54,7 @@ facet-format = { path = "../facet-format", features = ["net", "tracing"] }
 facet-reflect = { workspace = true, features = ["tracing"] }
 facet-testhelpers = { workspace = true }
 serde_json = { workspace = true }
-facet-format-suite = { path = "../facet-format-suite", version = "0.46.0", features = [
+facet-format-suite = { path = "../facet-format-suite", features = [
   "third-party",
   "net",
   "tokio",
