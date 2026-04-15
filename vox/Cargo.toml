@@ -60,7 +60,7 @@ vox-ffi = { path = "rust/vox-ffi", version = "0.3.1" }
 subject-rust = { path = "rust/subject-rust", version = "0.2.2" }
 spec-proto = { path = "spec/spec-proto", version = "0.2.2" }
 vox-postcard = { path = "rust/vox-postcard", version = "0.3.1" }
-facet-cbor = { path = "rust/facet-cbor", version = "0.3.2" }
+facet-cbor = { path = "rust/facet-cbor", version = "0.3.3" }
 ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "8.0.0" }
 
 # Not internal crates
