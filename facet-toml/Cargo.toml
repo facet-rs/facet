@@ -34,7 +34,7 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 [dev-dependencies]
 divan = { workspace = true }
 facet = { workspace = true, features = ["std", "doc", "net", "iddqd"] }
-facet-format = { path = "../facet-format", features = ["jit", "net", "tracing"] }
+facet-format = { path = "../facet-format", features = ["net", "tracing"] }
 facet-format-suite = { path = "../facet-format-suite", version = "0.46.0", features = [
   "third-party",
   "net",
@@ -53,7 +53,6 @@ toml = "1.0"
 default = []
 std = []
 serialize = []
-jit = ["facet-format/jit"]
 fast = ["dep:zmij", "dep:itoa"]
 net = ["facet-format/net", "facet-core/net"]
 tracing = ["facet-reflect/tracing", "facet-format/tracing"]

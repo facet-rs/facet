@@ -50,9 +50,6 @@ mod error;
 mod parser;
 mod serializer;
 
-#[cfg(feature = "jit")]
-pub mod jit;
-
 #[cfg(feature = "axum")]
 mod axum;
 
@@ -60,8 +57,6 @@ pub use error::MsgPackError;
 
 #[cfg(feature = "axum")]
 pub use axum::{MsgPack, MsgPackRejection, MsgPackSerializeRejection};
-#[cfg(feature = "jit")]
-pub use jit::MsgPackJitFormat;
 pub use parser::MsgPackParser;
 pub use serializer::{MsgPackSerializeError, MsgPackSerializer, to_vec, to_writer};
 
