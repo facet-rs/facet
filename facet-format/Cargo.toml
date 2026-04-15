@@ -1,6 +1,6 @@
 [package]
 name = "facet-format"
-version = "0.44.7"
+version = "0.46.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -20,7 +20,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 tracing = { version = "0.1", default-features = false, optional = true }
 stacker = { version = "0.1", default-features = false, optional = true }
 facet-core = { workspace = true }
-facet-dessert = { path = "../facet-dessert", version = "0.44.6" }
+facet-dessert = { path = "../facet-dessert", version = "0.46.0" }
 facet-path = { workspace = true }
 facet-reflect = { workspace = true }
 facet-solver = { workspace = true }
