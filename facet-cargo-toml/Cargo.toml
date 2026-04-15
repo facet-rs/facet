@@ -1,6 +1,6 @@
 [package]
 name = "facet-cargo-toml"
-version = "0.46.0"
+version = "0.46.1"
 edition = "2024"
 authors = ["Amos Wenger <amos@bearcove.eu>"]
 license = "MIT OR Apache-2.0"
