@@ -534,7 +534,7 @@ dependencies = [
 
 [[package]]
 name = "facet"
-version = "0.45.0"
+version = "0.46.0"
 dependencies = [
  "autocfg",
  "facet-core",
@@ -552,7 +552,7 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.45.0"
+version = "0.46.0"
 dependencies = [
  "autocfg",
  "bytes",
@@ -587,21 +587,21 @@ dependencies = [
 
 [[package]]
 name = "facet-default"
-version = "0.44.6"
+version = "0.46.0"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "facet-error"
-version = "0.44.6"
+version = "0.46.0"
 dependencies = [
  "facet",
 ]
 
 [[package]]
 name = "facet-macro-parse"
-version = "0.45.0"
+version = "0.46.0"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -610,7 +610,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macro-types"
-version = "0.45.0"
+version = "0.46.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -619,14 +619,14 @@ dependencies = [
 
 [[package]]
 name = "facet-macros"
-version = "0.45.0"
+version = "0.46.0"
 dependencies = [
  "facet-macros-impl",
 ]
 
 [[package]]
 name = "facet-macros-impl"
-version = "0.45.0"
+version = "0.46.0"
 dependencies = [
  "facet-macro-parse",
  "facet-macro-types",
@@ -638,7 +638,7 @@ dependencies = [
 
 [[package]]
 name = "facet-path"
-version = "0.44.5"
+version = "0.46.0"
 dependencies = [
  "facet",
  "facet-core",
@@ -648,7 +648,7 @@ dependencies = [
 
 [[package]]
 name = "facet-pretty"
-version = "0.44.7"
+version = "0.46.0"
 dependencies = [
  "camino",
  "facet",
@@ -662,7 +662,7 @@ dependencies = [
 
 [[package]]
 name = "facet-reflect"
-version = "0.44.6"
+version = "0.46.0"
 dependencies = [
  "camino",
  "eyre",
@@ -693,7 +693,7 @@ dependencies = [
 
 [[package]]
 name = "facet-solver"
-version = "0.44.6"
+version = "0.46.0"
 dependencies = [
  "divan",
  "facet",
@@ -714,7 +714,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers"
-version = "0.44.3"
+version = "0.46.0"
 dependencies = [
  "color-backtrace",
  "facet-testhelpers-macros",
@@ -725,7 +725,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers-macros"
-version = "0.44.3"
+version = "0.46.0"
 dependencies = [
  "quote",
  "unsynn",
@@ -733,7 +733,7 @@ dependencies = [
 
 [[package]]
 name = "facet-urlencoded"
-version = "0.44.6"
+version = "0.46.0"
 dependencies = [
  "axum-core",
  "facet",
@@ -748,7 +748,7 @@ dependencies = [
 
 [[package]]
 name = "facet-validate"
-version = "0.44.6"
+version = "0.46.0"
 dependencies = [
  "facet",
  "facet-core",

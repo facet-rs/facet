@@ -6,6 +6,12 @@ git_release_enable = true
 
 # ============================================================================
 # Publishable packages - all synchronized versions, single changelog
+#
+# Every crate that re-exports or has facet-core in its public API must be in
+# this group. When facet-core makes a breaking change, all of these must ship
+# a new version simultaneously — otherwise consumers see a facet-core version
+# split that breaks compilation even though the dependent crate's semver looks
+# unchanged. cargo-semver-checks cannot detect this class of breakage today.
 # ============================================================================
 
 # Core
@@ -38,6 +44,58 @@ changelog_path = "CHANGELOG.md"
 
 [[package]]
 name = "facet-macro-parse"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+# Reflection (re-exports facet-core types publicly)
+[[package]]
+name = "facet-reflect"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+# Companion crates (depend on facet-core publicly)
+[[package]]
+name = "facet-error"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-default"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-solver"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-pretty"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-urlencoded"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-path"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-validate"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-testhelpers"
+version_group = "facet"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "facet-testhelpers-macros"
 version_group = "facet"
 changelog_path = "CHANGELOG.md"
 
