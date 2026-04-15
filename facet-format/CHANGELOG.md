@@ -49,6 +49,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- drop version field from publish=false path dev-deps
+- sync all crates to version_group "facet" at 0.46.0
+
+### Other
+
+- release v0.46.0
+
+## [0.46.0](https://github.com/facet-rs/facet-format/compare/facet-yaml-v0.44.7...facet-yaml-v0.46.0) - 2026-04-15
+
+### Fixed
+
+- drop version field from publish=false path dev-deps
+- sync all crates to version_group "facet" at 0.46.0
+
+### Other
+
+- release v0.46.0
+
+## [0.46.0](https://github.com/facet-rs/facet-format/compare/facet-toml-v0.44.7...facet-toml-v0.46.0) - 2026-04-15
+
+### Fixed
+
+- drop version field from publish=false path dev-deps
+- sync all crates to version_group "facet" at 0.46.0
+
+### Other
+
+- release v0.46.0
+- Remove JIT support
+
+## [0.46.0](https://github.com/facet-rs/facet-format/compare/facet-msgpack-v0.44.7...facet-msgpack-v0.46.0) - 2026-04-15
+
+### Fixed
+
+- drop version field from publish=false path dev-deps
+- sync all crates to version_group "facet" at 0.46.0
+
+### Other
+
+- release v0.46.0
+- Remove JIT support
+
+## [0.46.0](https://github.com/facet-rs/facet-format/compare/facet-postcard-v0.44.7...facet-postcard-v0.46.0) - 2026-04-15
+
+### Fixed
+
+- drop version field from publish=false path dev-deps
+- sync all crates to version_group "facet" at 0.46.0
+
+### Other
+
+- release v0.46.0
+- Remove JIT support
+
+## [0.46.0](https://github.com/facet-rs/facet-format/compare/facet-value-v0.44.7...facet-value-v0.46.0) - 2026-04-15
+
+### Fixed
+
+- sync all crates to version_group "facet" at 0.46.0
+
+## [0.46.0](https://github.com/facet-rs/facet-format/compare/facet-json-v0.44.7...facet-json-v0.46.0) - 2026-04-15
+
+### Fixed
+
+- drop version field from publish=false path dev-deps
+- sync all crates to version_group "facet" at 0.46.0
+
+### Other
+
+- release v0.46.0
+- Remove JIT support
+
+## [0.46.0](https://github.com/facet-rs/facet-format/compare/facet-python-v0.44.6...facet-python-v0.46.0) - 2026-04-15
+
+### Fixed
+
+- sync all crates to version_group "facet" at 0.46.0
+
+## [0.46.0](https://github.com/facet-rs/facet-format/compare/facet-typescript-v0.44.6...facet-typescript-v0.46.0) - 2026-04-15
+
+### Fixed
+
+- sync all crates to version_group "facet" at 0.46.0
+
+## [0.46.0](https://github.com/facet-rs/facet-format/compare/facet-json-schema-v0.44.7...facet-json-schema-v0.46.0) - 2026-04-15
+
+### Fixed
+
+- sync all crates to version_group "facet" at 0.46.0
+
+## [0.46.0](https://github.com/facet-rs/facet-format/compare/facet-xdr-v0.44.7...facet-xdr-v0.46.0) - 2026-04-15
+
+### Fixed
+
+- sync all crates to version_group "facet" at 0.46.0
+
+### Other
+
+- release v0.46.0
+
+## [0.46.0](https://github.com/facet-rs/facet-format/compare/facet-csv-v0.44.7...facet-csv-v0.46.0) - 2026-04-15
+
+### Fixed
+
+- sync all crates to version_group "facet" at 0.46.0
+
+### Other
+
+- release v0.46.0
+
+## [0.46.0](https://github.com/facet-rs/facet-format/compare/facet-asn1-v0.44.7...facet-asn1-v0.46.0) - 2026-04-15
+
+### Fixed
+
 - sync all crates to version_group "facet" at 0.46.0
 
 ### Other
