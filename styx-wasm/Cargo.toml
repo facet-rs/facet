@@ -1,6 +1,6 @@
 [package]
 name = "styx-wasm"
-version = "3.0.1"
+version = "3.0.2"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
