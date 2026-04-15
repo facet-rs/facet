@@ -1,6 +1,6 @@
 [package]
 name = "facet-error"
-version = "0.44.6"
+version = "0.46.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -15,7 +15,7 @@ categories = ["rust-patterns", "development-tools"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.45.0" }
+facet = { path = "../facet", version = "0.46.0" }
 
 [dev-dependencies]
 facet = { path = "../facet" }
