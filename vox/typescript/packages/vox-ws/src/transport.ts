@@ -43,7 +43,10 @@ export class WsLink implements Link {
     if (this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("WebSocket not open");
     }
-    this.ws.send(payload);
+    // tsgo: Uint8Array defaults to Uint8Array<ArrayBufferLike>, but browser
+    // WebSocket.send() only accepts ArrayBuffer-backed views (not SharedArrayBuffer).
+    // In practice this link is only ever created with ArrayBuffer-backed data.
+    this.ws.send(payload as Uint8Array<ArrayBuffer>);
   }
 
   recv(): Promise<Uint8Array | null> {

@@ -13,6 +13,7 @@ import type {
   Canvas,
   Color,
   Config,
+  GnarlyPayload,
   LookupError,
   MathError,
   Measurement,
@@ -25,6 +26,7 @@ import type {
   Shape,
   Status,
   Tag,
+  TaggedPoint,
   TestbedHandler,
 } from "@bearcove/vox-generated/testbed.generated.ts";
 import { TestbedDispatcher } from "@bearcove/vox-generated/testbed.generated.ts";
@@ -269,6 +271,60 @@ class TestbedService implements TestbedHandler {
 
   echoConfig(c: Config): Config {
     return c;
+  }
+
+  echoGnarly(payload: GnarlyPayload): GnarlyPayload {
+    return payload;
+  }
+
+  echoBytes(data: Uint8Array): Uint8Array {
+    return data;
+  }
+
+  echoBool(b: boolean): boolean {
+    return b;
+  }
+
+  echoU64(n: bigint): bigint {
+    return n;
+  }
+
+  echoOptionString(s: string | null): string | null {
+    return s;
+  }
+
+  async sumLarge(numbers: Rx<number>): Promise<bigint> {
+    let total = 0n;
+    for await (const n of numbers) {
+      total += BigInt(n);
+    }
+    return total;
+  }
+
+  async generateLarge(count: number, output: Tx<number>): Promise<void> {
+    for (let i = 0; i < count; i++) {
+      await output.send(i);
+    }
+  }
+
+  allColors(): Color[] {
+    return [{ tag: "Red" }, { tag: "Green" }, { tag: "Blue" }];
+  }
+
+  describePoint(label: string, x: number, y: number, active: boolean): TaggedPoint {
+    return { label, x, y, active };
+  }
+
+  echoShape(shape: Shape): Shape {
+    return shape;
+  }
+
+  echoStatusV1(status: Status): Status {
+    return status;
+  }
+
+  echoTagV1(tag: Tag): Tag {
+    return tag;
   }
 }
 
