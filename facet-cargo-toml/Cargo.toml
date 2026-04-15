@@ -11,11 +11,9 @@ categories = ["development-tools", "parser-implementations"]
 
 [dependencies]
 facet = { version = "0.46", features = ["camino"] }
-facet-format = "0.46"
 facet-toml = "0.46"
 facet-reflect = "0.46"
 facet-value = "0.46"
-facet-error = "0.46"
 camino = "1.2"
 
 [dev-dependencies]
