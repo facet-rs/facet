@@ -307,6 +307,7 @@ pub struct WorkspacePackage {
 #[derive(Facet, Debug, Clone)]
 #[repr(u8)]
 #[facet(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum Dependency {
     /// Simple version string: `aho-corasick = "1.0"`.
     Version(Spanned<String>),
