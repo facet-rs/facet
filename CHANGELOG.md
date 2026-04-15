@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.46.0](https://github.com/facet-rs/facet/compare/facet-core-v0.45.0...facet-core-v0.46.0) - 2026-04-15
+
+### Other
+
+- sync all companion crates to v0.46.0 in one version group
+
 ## [0.45.0](https://github.com/facet-rs/facet/compare/facet-core-v0.44.4...facet-core-v0.45.0) - 2026-04-14
 
 ### Added
