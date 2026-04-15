@@ -1131,6 +1131,13 @@ impl Session {
 
         loop {
             tokio::select! {
+                // biased: ensure conduit EOF is processed before any resume
+                // request. Without this, tokio's random branch selection can
+                // pick resume_rx when BOTH branches are simultaneously ready
+                // (fast client reconnect on Linux), causing the session to
+                // reject a valid resume while still in CONNECTED state.
+                biased;
+
                 msg = self.rx.recv_msg() => {
                     vox_types::dlog!("[session {:?}] recv_msg returned", self.role);
                     match msg {

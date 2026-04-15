@@ -1913,13 +1913,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1947,13 +1949,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -1993,13 +1997,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2038,13 +2044,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2079,13 +2087,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2116,13 +2126,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2153,13 +2165,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2190,13 +2204,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2235,13 +2251,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2270,13 +2288,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2306,13 +2326,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2348,13 +2370,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2385,13 +2409,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2432,13 +2458,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2499,13 +2527,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2604,13 +2634,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2653,13 +2685,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2690,13 +2724,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2730,13 +2766,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2765,13 +2803,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2798,13 +2838,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2832,13 +2874,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2869,13 +2913,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2910,13 +2956,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2947,13 +2995,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -2983,13 +3033,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -3020,13 +3072,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -3067,13 +3121,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -3110,13 +3166,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -3146,13 +3204,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -3182,13 +3242,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -3219,13 +3281,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -3262,13 +3326,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -3298,13 +3364,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -3334,13 +3402,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
@@ -3370,13 +3440,15 @@ public final class TestbedDispatcher: ServiceDispatcher {
       } catch {
         taskSender(
           .response(
-            requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
-            schemaPayload: responseSchemaPayload))
+            requestId: requestId,
+            payload: encodeInvalidPayloadError(reason: String(describing: error)),
+            methodId: methodId, schemaPayload: responseSchemaPayload))
       }
     } catch {
       taskSender(
         .response(
-          requestId: requestId, payload: encodeInvalidPayloadError(), methodId: methodId,
+          requestId: requestId,
+          payload: encodeInvalidPayloadError(reason: String(describing: error)), methodId: methodId,
           schemaPayload: responseSchemaPayload))
     }
   }
