@@ -117,7 +117,7 @@ ulid = "1"
 
 indexmap = "2"
 smallvec = "1.15.1"
-getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom = { version = "0.4", features = ["wasm_js"] }
 zerocopy = { version = "0.8", features = ["derive"] }
 
 # Benchmarking
