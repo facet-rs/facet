@@ -3,6 +3,7 @@ use facet::Facet;
 #[derive(Facet, Debug)]
 #[repr(u8)]
 #[facet(untagged)]
+#[allow(dead_code)]
 enum DebugLevel {
     Bool(bool),
     Number(u8),
