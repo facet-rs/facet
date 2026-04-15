@@ -23,7 +23,7 @@ yoke = ["facet-core/yoke"]
 
 [dependencies]
 facet-core = { workspace = true, features = ["alloc"] }
-facet-format = { path = "../facet-format", version = "0.46.0", default-features = false }
+facet-format = { path = "../facet-format", version = "0.47.0", default-features = false }
 facet-reflect = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
