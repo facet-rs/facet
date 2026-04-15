@@ -35,11 +35,11 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 divan = { workspace = true }
 facet = { workspace = true, features = ["std", "doc", "net", "iddqd"] }
 facet-format = { path = "../facet-format", features = ["net", "tracing"] }
-facet-format-suite = { path = "../facet-format-suite", version = "0.46.0", features = [
+facet-format-suite = { path = "../facet-format-suite", features = [
   "third-party",
   "net",
 ] }
-facet-json-classics = { path = "../facet-json-classics", version = "0.46.0" }
+facet-json-classics = { path = "../facet-json-classics" }
 facet-value = { path = "../facet-value" }
 facet-testhelpers = { workspace = true }
 facet-reflect = { workspace = true, features = ["tracing"] }
