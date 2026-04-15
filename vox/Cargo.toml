@@ -127,7 +127,7 @@ figue = "2.0.0"
 prettyplease = "0.2"
 insta = "1"
 unsynn = "0.3"
-cbindgen = "0.28"
+cbindgen = "0.29"
 loom = "0.7"
 windows-sys = "0.61"
 tarpc = { version = "0.37", features = ["tokio1", "serde1"] }
