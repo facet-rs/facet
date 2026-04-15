@@ -13,4 +13,4 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet.workspace = true
-vox = { path = "../../rust/vox", version = "0.3.1", default-features = false, features = ["runtime"] }
+vox = { path = "../../rust/vox", version = "0.4.0", default-features = false, features = ["runtime"] }
