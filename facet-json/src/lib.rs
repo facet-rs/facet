@@ -51,14 +51,8 @@ mod raw_json;
 mod scanner;
 mod serializer;
 
-#[cfg(feature = "jit")]
-pub mod jit;
-
 #[cfg(feature = "axum")]
 mod axum;
-
-#[cfg(feature = "jit")]
-pub use jit::JsonJitFormat;
 
 #[cfg(feature = "axum")]
 pub use axum::{Json, JsonRejection};

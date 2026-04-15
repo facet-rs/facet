@@ -51,7 +51,7 @@ facet = { workspace = true, features = [
 ] }
 serde = { workspace = true }
 tendril = "0.5.0"
-facet-format = { path = "../facet-format", features = ["jit", "net", "tracing"] }
+facet-format = { path = "../facet-format", features = ["net", "tracing"] }
 facet-reflect = { workspace = true, features = ["tracing"] }
 facet-testhelpers = { workspace = true }
 serde_json = { workspace = true }
@@ -84,16 +84,11 @@ harness = false
 name = "typeplan_reuse"
 harness = false
 
-[[example]]
-name = "profile_jit_vec"
-required-features = ["jit"]
-
 [features]
 default = []
 fast = ["lexical-parse", "dep:itoa", "dep:zmij"]
 lexical-parse = ["dep:lexical-parse-float", "dep:lexical-parse-integer"]
 std = []
-jit = ["facet-format/jit"]
 ci = ["stacker"] # CI feature enables stack growth for deep deserialization tests
 net = ["facet-format/net", "facet-core/net"]
 tracing = ["dep:tracing", "facet-format/tracing", "facet-reflect/tracing"]

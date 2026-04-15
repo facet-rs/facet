@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Postcard binary format for facet with Tier-0 and Tier-2 JIT deserialization"
-keywords = ["postcard", "binary", "serialization", "facet", "jit"]
+keywords = ["postcard", "binary", "serialization", "facet"]
 categories = ["encoding", "parsing"]
 homepage = "https://facet.rs"
 
@@ -45,7 +45,7 @@ bytes = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 divan = { workspace = true }
 facet = { workspace = true, features = ["std", "all-impls", "doc"] }
-facet-format = { path = "../facet-format", features = ["jit"] }
+facet-format = { path = "../facet-format", features = [] }
 facet-json = { path = "../facet-json", version = "0.46.0" }
 facet-json-classics = { path = "../facet-json-classics", version = "0.46.0" }
 facet-testhelpers = { workspace = true }
@@ -64,16 +64,11 @@ uuid = { workspace = true, features = ["v4"] }
 name = "classics"
 harness = false
 
-[[bench]]
-name = "vs_postcard"
-harness = false
-
 [features]
 default = ["std"]
 std = ["alloc", "facet-core/std", "facet-reflect/std", "facet-path/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc", "facet-path/alloc"]
-jit = ["facet-format/jit"]
-ci = ["jit"] # CI feature enables JIT tests
+ci = []
 
 # Axum HTTP integration
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]

@@ -28,7 +28,7 @@ http-body-util = { version = "0.1", default-features = false, optional = true }
 [dev-dependencies]
 divan = { workspace = true }
 facet = { workspace = true, features = ["std", "all-impls", "iddqd"] }
-facet-format = { path = "../facet-format", features = ["jit", "net"] }
+facet-format = { path = "../facet-format", features = ["net"] }
 facet-format-suite = { path = "../facet-format-suite", version = "0.46.0", features = [
   "third-party",
   "msgpack",
@@ -42,10 +42,6 @@ serde_bytes = "0.11"
 serde_json = { workspace = true }
 
 [[bench]]
-name = "vs_msgpack"
-harness = false
-
-[[bench]]
 name = "classics"
 harness = false
 
@@ -56,7 +52,6 @@ harness = false
 [features]
 default = []
 std = []
-jit = ["facet-format/jit"]
 net = ["facet-format/net", "facet-core/net"]
 iddqd = ["facet-core/iddqd"]
 

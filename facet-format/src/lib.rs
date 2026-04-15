@@ -1,4 +1,4 @@
-#![cfg_attr(not(feature = "jit"), deny(unsafe_code))]
+#![deny(unsafe_code)]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![allow(unused_macros)]
 
@@ -52,9 +52,6 @@ mod solver;
 mod type_plan_cache;
 mod visitor;
 
-#[cfg(feature = "jit")]
-pub mod jit;
-
 pub use deserializer::{
     DeserializeError, DeserializeErrorKind, FormatDeserializer, MetaSource, ParseError, SpanGuard,
 };
@@ -63,8 +60,6 @@ pub use event::{
     ValueMetaBuilder, ValueTypeHint,
 };
 pub use evidence::FieldEvidence;
-#[cfg(feature = "jit")]
-pub use parser::FormatJitParser;
 pub use parser::{EnumVariantHint, FormatParser, SavePoint, ScalarTypeHint};
 pub use serializer::{
     DynamicValueEncoding, DynamicValueTag, EnumVariantEncoding, FieldOrdering, FormatSerializer,

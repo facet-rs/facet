@@ -53,17 +53,12 @@ mod raw_postcard;
 mod serialize;
 mod shape_deser;
 
-#[cfg(feature = "jit")]
-pub mod jit;
-
 #[cfg(feature = "axum")]
 mod axum;
 
 #[cfg(feature = "axum")]
 pub use axum::{Postcard, PostcardRejection, PostcardSerializeRejection};
 pub use error::{PostcardError, SerializeError};
-#[cfg(feature = "jit")]
-pub use jit::PostcardJitFormat;
 pub use parser::PostcardParser;
 pub use raw_postcard::{RawPostcard, opaque_encoded_borrowed, opaque_encoded_owned};
 pub use serialize::{
