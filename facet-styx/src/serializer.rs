@@ -584,6 +584,47 @@ where
     Ok(String::from_utf8(bytes).expect("Styx output should always be valid UTF-8"))
 }
 
+/// Serialize a value to a pretty-printed Styx string (respects line length limits).
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_styx::to_string_pretty;
+///
+/// #[derive(Facet)]
+/// struct Config {
+///     server: Server,
+///     retries: u32,
+/// }
+///
+/// #[derive(Facet)]
+/// struct Server {
+///     host: String,
+///     port: u16,
+///     timeout: u32,
+/// }
+///
+/// let config = Config {
+///     server: Server {
+///         host: "localhost".to_string(),
+///         port: 8080,
+///         timeout: 30,
+///     },
+///     retries: 3,
+/// };
+/// let pretty_styx = to_string_pretty(&config).unwrap();
+/// assert!(pretty_styx.contains("server {"));
+/// assert!(pretty_styx.contains("retries 3"));
+/// ```
+pub fn to_string_pretty<'facet, T>(value: &T) -> Result<String, SerializeError<StyxSerializeError>>
+where
+    T: Facet<'facet> + ?Sized,
+{
+    let options = FormatOptions::default().pretty(80);
+    to_string_with_options(value, &options)
+}
+
 /// Serialize a value to a Styx string with custom options.
 pub fn to_string_with_options<'facet, T>(
     value: &T,
@@ -596,6 +637,17 @@ where
     serialize_root(&mut serializer, Peek::new(value))?;
     let bytes = serializer.finish();
     Ok(String::from_utf8(bytes).expect("Styx output should always be valid UTF-8"))
+}
+
+/// Serialize a value to a pretty-printed Styx string (respects line length limits).
+///
+/// This is a convenience wrapper around `peek_to_string_with_options` that enables
+/// pretty printing with the default line length of 80 characters.
+pub fn peek_to_string_pretty<'input, 'facet>(
+    peek: Peek<'input, 'facet>,
+) -> Result<String, SerializeError<StyxSerializeError>> {
+    let options = FormatOptions::default().pretty(80);
+    peek_to_string_with_options(peek, &options)
 }
 
 /// Serialize a `Peek` instance to a Styx string.

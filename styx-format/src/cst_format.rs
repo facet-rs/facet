@@ -7,7 +7,7 @@ use styx_cst::{
     AstNode, Document, Entry, NodeOrToken, Object, Separator, Sequence, SyntaxKind, SyntaxNode,
 };
 
-use crate::FormatOptions;
+use crate::{FormatOptions, options::ForceStyle};
 
 /// Format a Styx document from its CST.
 ///
@@ -42,6 +42,37 @@ struct CstFormatter {
 }
 
 impl CstFormatter {
+    /// Estimate the line length if this object were formatted inline
+    /// format[impl format.line-length]
+    fn estimate_object_line_length(&self, entries: &[Entry]) -> usize {
+        let mut length = 2; // "{}"
+        for (i, entry) in entries.iter().enumerate() {
+            if i > 0 {
+                length += 2; // ", "
+            }
+            // Add the entry text length
+            let text_len = entry.syntax().to_string().len();
+            length += text_len;
+        }
+        // Add indentation
+        length + (self.indent_level * self.options.indent.len())
+    }
+
+    /// Estimate the line length if this sequence were formatted inline
+    /// format[impl format.line-length]
+    fn estimate_sequence_line_length(&self, entries: &[Entry]) -> usize {
+        let mut length = 2; // "()"
+        for (i, entry) in entries.iter().enumerate() {
+            if i > 0 {
+                length += 1; // " "
+            }
+            // Add the entry text length
+            let text_len = entry.syntax().to_string().len();
+            length += text_len;
+        }
+        // Add indentation
+        length + (self.indent_level * self.options.indent.len())
+    }
     fn new(options: FormatOptions) -> Self {
         Self {
             out: String::new(),
@@ -290,10 +321,17 @@ impl CstFormatter {
         let has_block_child = entries.iter().any(|e| contains_block_object(e.syntax()));
 
         // Determine if we need multiline format
-        let is_multiline = matches!(separator, Separator::Newline | Separator::Mixed)
+        let is_multiline = matches!(self.options.force_style, ForceStyle::Multiline)
+            || matches!(separator, Separator::Newline | Separator::Mixed)
             || has_comments
             || has_block_child
             || entries.is_empty(); // Empty with comments needs multiline
+
+        // Apply pretty printing: expand if inline version would exceed max_width
+        let should_expand_for_pretty = self.options.pretty_printing_enabled()
+            && self.estimate_object_line_length(&entries) > self.options.max_width;
+
+        let is_multiline = is_multiline || should_expand_for_pretty;
 
         if is_multiline {
             // Multiline format - preserve comments as children of the object
@@ -392,9 +430,16 @@ impl CstFormatter {
         let single_tag_with_block =
             !has_comments && entries.len() == 1 && is_tag_with_block_payload(entries[0].syntax());
 
-        let is_multiline = !should_collapse
-            && !single_tag_with_block
-            && (seq.is_multiline() || has_comments || entries.is_empty());
+        let is_multiline = matches!(self.options.force_style, ForceStyle::Multiline)
+            || (!should_collapse
+                && !single_tag_with_block
+                && (seq.is_multiline() || has_comments || entries.is_empty()));
+
+        // Apply pretty printing: expand if inline version would exceed max_width
+        let should_expand_for_pretty = self.options.pretty_printing_enabled()
+            && self.estimate_sequence_line_length(&entries) > self.options.max_width;
+
+        let is_multiline = is_multiline || should_expand_for_pretty;
 
         if single_tag_with_block {
             // Format the single entry inline with the paren - no newline after (

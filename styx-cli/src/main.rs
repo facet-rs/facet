@@ -63,6 +63,18 @@ struct FileArgs {
     #[facet(args::named, default)]
     compact: bool,
 
+    /// Force multiline formatting (expand all objects/sequences)
+    #[facet(args::named, default)]
+    multiline: bool,
+
+    /// Enable pretty printing (respect line length limits)
+    #[facet(args::named, default)]
+    pretty: bool,
+
+    /// Maximum line length for pretty printing (default: 80)
+    #[facet(args::named, default)]
+    line_length: Option<usize>,
+
     /// Validate against declared schema (no output unless -o specified)
     #[facet(args::named, default)]
     validate: bool,
@@ -303,6 +315,11 @@ fn print_help() {
     eprintln!("        --json-out <FILE>           Output as JSON (use '-' for stdout)");
     eprintln!("        --in-place                  Modify input file in place");
     eprintln!("        --compact                   Single-line/compact formatting");
+    eprintln!("        --multiline                 Force multiline formatting (expand all)");
+    eprintln!("        --pretty                    Enable pretty printing (respect line limits)");
+    eprintln!(
+        "        --line-length <N>          Max line length for pretty printing (default: 80)"
+    );
     eprintln!("        --validate                  Validate against declared schema");
     eprintln!("        --schema <FILE>             Use this schema instead of @schema\n");
     eprintln!("SUBCOMMANDS:");
@@ -386,12 +403,36 @@ fn run_file_mode(args: &[String]) -> Result<(), CliError> {
             serde_json::to_string_pretty(&json).map_err(|e| CliError::Io(io::Error::other(e)))?;
         write_output(json_path, &output)?;
     } else {
+        // Validate mutually exclusive options
+        if opts.compact && opts.multiline {
+            return Err(CliError::Usage(
+                "--compact and --multiline are mutually exclusive".to_string(),
+            ));
+        }
+        if opts.compact && opts.pretty {
+            return Err(CliError::Usage(
+                "--compact and --pretty are mutually exclusive".to_string(),
+            ));
+        }
+        if opts.multiline && opts.pretty {
+            return Err(CliError::Usage(
+                "--multiline and --pretty are mutually exclusive".to_string(),
+            ));
+        }
+
         // Styx output - use CST formatter to preserve comments
-        let format_opts = if opts.compact {
+        let mut format_opts = if opts.multiline {
+            FormatOptions::default().multiline()
+        } else if opts.compact {
             FormatOptions::default().inline()
         } else {
             FormatOptions::default()
         };
+
+        // Apply pretty printing options if enabled
+        if opts.pretty {
+            format_opts = format_opts.pretty(opts.line_length.unwrap_or(80));
+        }
         let output = format_source(&source, format_opts);
 
         if opts.in_place {

@@ -77,7 +77,8 @@ pub use schema_types::*;
 pub use schema_validate::{Validator, validate, validate_as};
 pub use serializer::{
     SerializeOptions, StyxSerializeError, StyxSerializer, peek_to_string, peek_to_string_expr,
-    peek_to_string_with_options, to_string, to_string_compact, to_string_with_options,
+    peek_to_string_pretty, peek_to_string_with_options, to_string, to_string_compact,
+    to_string_pretty, to_string_with_options,
 };
 
 /// Deserialize a value from a Styx string into an owned type.
