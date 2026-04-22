@@ -611,8 +611,11 @@ impl PrettyPrinter {
                             if !short {
                                 writeln!(f)?;
                                 self.indent(f, format_depth + 1)?;
+                                writeln!(f, " ...({omitted} bytes)...")?;
+                                self.indent(f, format_depth + 1)?;
+                            } else {
+                                write!(f, " ...({omitted} bytes)...")?;
                             }
-                            write!(f, " ...({omitted} bytes)...")?;
 
                             // Show end
                             for (idx, item) in list.iter().enumerate().skip(total_len - end_count) {
@@ -2404,6 +2407,22 @@ mod tests {
             output
         );
         assert!(output.contains("bytes"), "should mention bytes: {}", output);
+    }
+
+    #[test]
+    fn test_max_content_formatting() {
+        let printer = PrettyPrinter::new()
+            .with_colors(ColorMode::Never)
+            .with_max_content_len(12);
+        let data: Vec<u8> = (0..50).collect();
+        let output = printer.format(&data);
+        insta::assert_snapshot!(output, @"
+        Vec<u8> [
+           00 01 02 03 04 05
+           ...(38 bytes)...
+           2c 2d 2e 2f 30 31
+        ]
+        ");
     }
 
     #[test]
