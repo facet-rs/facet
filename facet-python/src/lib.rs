@@ -1057,6 +1057,18 @@ impl PythonGenerator {
             // Char as string
             "char" => "str".to_string(),
 
+            // chrono date/time types — all serialise as ISO 8601 strings
+            "NaiveDate"
+            | "NaiveDateTime"
+            | "NaiveTime"
+            | "DateTime<Utc>"
+            | "DateTime<FixedOffset>"
+            | "DateTime<Local>"
+                if shape.module_path == Some("chrono") =>
+            {
+                "str".to_string()
+            }
+
             // Unknown scalar
             _ => {
                 self.imports.insert("Any");
@@ -2264,6 +2276,51 @@ mod tests {
         assert!(
             py.contains("type: Required[Literal[\"Count\"]]"),
             "tagged newtype primitive — tag field missing for Count variant, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_chrono_types() {
+        use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+
+        #[derive(Facet)]
+        struct Event {
+            date: NaiveDate,
+            datetime: NaiveDateTime,
+            time: NaiveTime,
+            timestamp: DateTime<Utc>,
+            optional_date: Option<NaiveDate>,
+        }
+
+        let py = to_python::<Event>(false);
+
+        // All chrono types must map to str, not Any
+        assert!(
+            !py.contains("Any"),
+            "chrono types must not produce Any, got:\n{py}"
+        );
+        assert!(
+            py.contains("date: Required[str]"),
+            "NaiveDate must map to str, got:\n{py}"
+        );
+        assert!(
+            py.contains("datetime: Required[str]"),
+            "NaiveDateTime must map to str, got:\n{py}"
+        );
+        assert!(
+            py.contains("time: Required[str]"),
+            "NaiveTime must map to str, got:\n{py}"
+        );
+        assert!(
+            py.contains("timestamp: Required[str]"),
+            "DateTime<Utc> must map to str, got:\n{py}"
+        );
+        // Optional chrono field must be bare str (no Required[])
+        assert!(
+            py.contains("optional_date: str"),
+            "Option<NaiveDate> must map to bare str, got:\n{py}"
         );
 
         insta::assert_snapshot!(py);

@@ -1346,6 +1346,7 @@ dependencies = [
 name = "facet-python"
 version = "0.50.0-rc.0"
 dependencies = [
+ "chrono",
  "facet",
  "facet-core",
  "insta",
