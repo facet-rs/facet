@@ -1,0 +1,12 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+class Inner(TypedDict, total=False):
+    x: Required[float]
+    y: Required[float]
+
+class Outer(TypedDict, total=False):
+    x: Required[float]
+    y: Required[float]
+    z: Required[str]

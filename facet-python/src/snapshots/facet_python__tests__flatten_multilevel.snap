@@ -1,0 +1,18 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+class ColoredPoint(TypedDict, total=False):
+    x: Required[float]
+    y: Required[float]
+    color: Required[str]
+
+class Point(TypedDict, total=False):
+    x: Required[float]
+    y: Required[float]
+
+class Scene(TypedDict, total=False):
+    x: Required[float]
+    y: Required[float]
+    color: Required[str]
+    name: Required[str]

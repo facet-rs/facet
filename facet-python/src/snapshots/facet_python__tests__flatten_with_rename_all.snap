@@ -1,0 +1,12 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+class Coords(TypedDict, total=False):
+    posX: Required[float]
+    posY: Required[float]
+
+class Entity(TypedDict, total=False):
+    posX: Required[float]
+    posY: Required[float]
+    label: Required[str]
