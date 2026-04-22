@@ -413,7 +413,13 @@ impl PythonGenerator {
         if let Def::Option(opt) = &field.shape.get().def {
             (self.type_for_shape(opt.t, quote_after), false)
         } else {
-            (self.type_for_shape(field.shape.get(), quote_after), true)
+            // Fields with a default value are optional in JSON — facet fills in
+            // the default when the key is absent. Matches facet-typescript behaviour.
+            let required = field.default.is_none();
+            (
+                self.type_for_shape(field.shape.get(), quote_after),
+                required,
+            )
         }
     }
 
@@ -1597,6 +1603,52 @@ mod tests {
         assert!(
             !py.contains("internal"),
             "flatten skip_serializing — 'internal' must not appear anywhere, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_default_field_not_required() {
+        // Fields with #[facet(default)] are optional in JSON — facet fills in
+        // the default when the key is absent. They must not be Required[T].
+        #[derive(Facet)]
+        struct Config {
+            name: String,
+            #[facet(default)]
+            retries: u32,
+            #[facet(default = 30)]
+            timeout: u32,
+            required_value: i32,
+        }
+
+        let py = to_python::<Config>(false);
+
+        // Non-default fields must still be Required
+        assert!(
+            py.contains("name: Required[str]"),
+            "default — 'name' has no default so must be Required, got:\n{py}"
+        );
+        assert!(
+            py.contains("required_value: Required[int]"),
+            "default — 'required_value' has no default so must be Required, got:\n{py}"
+        );
+        // Fields with defaults must NOT be Required
+        assert!(
+            !py.contains("retries: Required[int]"),
+            "default — 'retries' has a default so must NOT be Required, got:\n{py}"
+        );
+        assert!(
+            py.contains("retries: int"),
+            "default — 'retries' should be bare int (optional), got:\n{py}"
+        );
+        assert!(
+            !py.contains("timeout: Required[int]"),
+            "default — 'timeout' has a default so must NOT be Required, got:\n{py}"
+        );
+        assert!(
+            py.contains("timeout: int"),
+            "default — 'timeout' should be bare int (optional), got:\n{py}"
         );
 
         insta::assert_snapshot!(py);
