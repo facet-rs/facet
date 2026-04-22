@@ -1,0 +1,10 @@
+---
+source: facet-python/src/lib.rs
+assertion_line: 2269
+expression: py
+---
+type Event = EventCount
+
+class EventCount(TypedDict, total=False):
+    type: Required[Literal["Count"]]
+    value: Required[int]

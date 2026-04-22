@@ -1,0 +1,19 @@
+---
+source: facet-python/src/lib.rs
+assertion_line: 2171
+expression: py
+---
+class IrsData(TypedDict, total=False):
+    pay_rate: Required[float]
+    receive_rate: Required[float]
+
+type Product = ProductIrs | ProductFixed
+
+class ProductFixed(TypedDict, total=False):
+    type: Required[Literal["Fixed"]]
+    rate: Required[float]
+
+class ProductIrs(TypedDict, total=False):
+    type: Required[Literal["Irs"]]
+    pay_rate: Required[float]
+    receive_rate: Required[float]
