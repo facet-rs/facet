@@ -296,8 +296,29 @@ impl PythonGenerator {
         // Collect fields, recursively inlining any #[facet(flatten)] fields.
         let all_fields = self.collect_flat_fields(fields);
 
-        // Functional form uses runtime expressions — quote forward references.
-        // Check all fields, including those inlined from flattened structs.
+        // Partition: separate flattened tagged-enum fields from everything else.
+        // A flattened tagged-enum field cannot be expressed as a single TypedDict
+        // key — it causes the entire parent to expand into a per-variant union.
+        let mut base_fields: Vec<(&'static Field, bool)> = Vec::new();
+        let mut tag_enum_flattens: Vec<(&'static facet_core::EnumType, &'static str)> = Vec::new();
+
+        for &(field, force_optional) in &all_fields {
+            if field.is_flattened() {
+                let (inner, _) = Self::unwrap_to_inner_shape(field.shape.get());
+                if let (Type::User(UserType::Enum(en)), Some(tag)) = (&inner.ty, inner.tag) {
+                    tag_enum_flattens.push((en, tag));
+                    continue;
+                }
+            }
+            base_fields.push((field, force_optional));
+        }
+
+        if !tag_enum_flattens.is_empty() {
+            self.generate_struct_as_tagged_union(output, shape, &base_fields, &tag_enum_flattens);
+            return;
+        }
+
+        // Normal path: emit a single TypedDict class.
         let needs_functional = all_fields
             .iter()
             .any(|(f, _)| is_python_keyword(f.effective_name()));
@@ -324,6 +345,105 @@ impl PythonGenerator {
 
         write_doc_comment(output, shape.doc);
         write_typed_dict(output, shape.type_identifier, &typed_dict_fields);
+    }
+
+    /// Generate a struct that flattens a `#[facet(tag = "...")]` enum.
+    ///
+    /// Because the tag field and variant fields are merged directly into the parent
+    /// JSON object, the parent struct becomes a union of per-variant TypedDicts.
+    /// Each variant TypedDict is named `ParentNameVariantName` and contains:
+    ///   - all base fields of the parent (those not involved in the tagged flatten)
+    ///   - a `Required[Literal["VariantName"]]` tag field
+    ///   - the variant's own fields
+    fn generate_struct_as_tagged_union(
+        &mut self,
+        output: &mut String,
+        shape: &'static Shape,
+        base_fields: &[(&'static Field, bool)],
+        tag_enum_flattens: &[(&'static facet_core::EnumType, &'static str)],
+    ) {
+        self.imports.insert("TypedDict");
+        self.imports.insert("Required");
+        self.imports.insert("Literal");
+
+        let parent_name = shape.type_identifier;
+        let mut variant_class_names: Vec<String> = Vec::new();
+
+        for &(enum_type, tag_key) in tag_enum_flattens {
+            for variant in enum_type.variants {
+                let variant_name = variant.effective_name();
+                let class_name = format!("{}{}", parent_name, to_pascal_case(variant_name));
+
+                let mut fields: Vec<TypedDictField> = Vec::new();
+
+                // Parent's own base fields come first.
+                for &(f, force_optional) in base_fields {
+                    let (type_string, required) = self.field_type_info(f, None);
+                    let required = required && !force_optional;
+                    fields.push(TypedDictField::new(
+                        f.effective_name(),
+                        type_string,
+                        required,
+                        f.doc,
+                    ));
+                }
+
+                // Tag discriminator field.
+                let tag_type = format!("Literal[\"{}\"]", variant_name);
+                fields.push(TypedDictField::new(tag_key, tag_type, true, &[]));
+
+                // Variant-specific fields.
+                match variant.data.kind {
+                    StructKind::Unit => {
+                        // Only the tag field — no additional data.
+                    }
+                    StructKind::TupleStruct if variant.data.fields.len() == 1 => {
+                        let inner = self.type_for_shape(variant.data.fields[0].shape.get(), None);
+                        fields.push(TypedDictField::new("value", inner, true, &[]));
+                    }
+                    StructKind::TupleStruct => {
+                        let types: Vec<String> = variant
+                            .data
+                            .fields
+                            .iter()
+                            .map(|f| self.type_for_shape(f.shape.get(), None))
+                            .collect();
+                        let inner_type = format!("tuple[{}]", types.join(", "));
+                        fields.push(TypedDictField::new("value", inner_type, true, &[]));
+                    }
+                    _ => {
+                        // Struct variant: inline fields alongside the tag.
+                        for f in variant.data.fields {
+                            if f.should_skip_serializing_unconditional() {
+                                continue;
+                            }
+                            let (type_string, required) = self.field_type_info(f, None);
+                            fields.push(TypedDictField::new(
+                                f.effective_name(),
+                                type_string,
+                                required,
+                                f.doc,
+                            ));
+                        }
+                    }
+                }
+
+                let mut class_output = String::new();
+                write_typed_dict(&mut class_output, &class_name, &fields);
+                class_output.push('\n');
+                self.generated.insert(class_name.clone(), class_output);
+                variant_class_names.push(class_name);
+            }
+        }
+
+        write_doc_comment(output, shape.doc);
+        writeln!(
+            output,
+            "type {} = {}",
+            parent_name,
+            variant_class_names.join(" | ")
+        )
+        .unwrap();
     }
 
     /// Unwrap through `Option<T>`, pointers (`Arc<T>`, `Box<T>`), and transparent
@@ -1886,6 +2006,81 @@ mod tests {
         assert!(
             py.contains("y: Required[float]"),
             "untagged — 'y' field should appear in a TypedDict, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_flatten_tagged_enum() {
+        // When a struct flattens a #[facet(tag = "...")] enum, facet-json merges
+        // the tag field and variant fields directly into the parent object — no
+        // wrapper key appears. The Python output must reflect this by turning the
+        // parent struct into a union of per-variant TypedDicts, each containing
+        // the parent's own fields plus the tag discriminator plus the variant fields.
+        #[derive(Facet)]
+        #[facet(tag = "type")]
+        #[repr(C)]
+        #[allow(dead_code)]
+        enum Product {
+            Irs { pay_rate: f64, receive_rate: f64 },
+            Fx { ccy: String, amount: f64 },
+        }
+
+        #[derive(Facet)]
+        struct Deal {
+            id: String,
+            #[facet(flatten)]
+            product: Product,
+        }
+
+        let py = to_python::<Deal>(false);
+
+        // The "product" key must NOT appear — it does not exist in the JSON
+        assert!(
+            !py.contains("product:"),
+            "flatten tagged enum — 'product' key must not appear, got:\n{py}"
+        );
+        // Deal must be a union, not a single class
+        assert!(
+            !py.contains("class Deal(TypedDict"),
+            "flatten tagged enum — Deal must not be a single TypedDict class, got:\n{py}"
+        );
+        assert!(
+            py.contains("type Deal = "),
+            "flatten tagged enum — Deal should be a union type alias, got:\n{py}"
+        );
+        // Per-variant TypedDicts must exist
+        assert!(
+            py.contains("class DealIrs(TypedDict, total=False):"),
+            "flatten tagged enum — DealIrs class missing, got:\n{py}"
+        );
+        assert!(
+            py.contains("class DealFx(TypedDict, total=False):"),
+            "flatten tagged enum — DealFx class missing, got:\n{py}"
+        );
+        // Tag discriminator fields
+        assert!(
+            py.contains("type: Required[Literal[\"Irs\"]]"),
+            "flatten tagged enum — tag field missing for Irs variant, got:\n{py}"
+        );
+        assert!(
+            py.contains("type: Required[Literal[\"Fx\"]]"),
+            "flatten tagged enum — tag field missing for Fx variant, got:\n{py}"
+        );
+        // Base field from parent must appear in both variants
+        assert!(
+            py.contains("id: Required[str]"),
+            "flatten tagged enum — base field 'id' must be inlined into variants, got:\n{py}"
+        );
+        // Variant-specific fields
+        assert!(
+            py.contains("pay_rate: Required[float]"),
+            "flatten tagged enum — 'pay_rate' field missing from DealIrs, got:\n{py}"
+        );
+        assert!(
+            py.contains("ccy: Required[str]"),
+            "flatten tagged enum — 'ccy' field missing from DealFx, got:\n{py}"
         );
 
         insta::assert_snapshot!(py);
