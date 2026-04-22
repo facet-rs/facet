@@ -3,4 +3,5 @@ source: facet-python/src/lib.rs
 expression: py
 ---
 class IntKeyedMap(TypedDict, total=False):
+    # Map with integer keys
     counts: Required[dict[int, str]]

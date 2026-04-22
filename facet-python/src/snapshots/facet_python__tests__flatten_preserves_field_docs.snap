@@ -3,10 +3,14 @@ source: facet-python/src/lib.rs
 expression: py
 ---
 class Dims(TypedDict, total=False):
+    # Width in pixels
     width: Required[int]
+    # Height in pixels
     height: Required[int]
 
 class Image(TypedDict, total=False):
+    # Width in pixels
     width: Required[int]
+    # Height in pixels
     height: Required[int]
     path: Required[str]
