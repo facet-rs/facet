@@ -398,8 +398,28 @@ impl PythonGenerator {
                         // Only the tag field — no additional data.
                     }
                     StructKind::TupleStruct if variant.data.fields.len() == 1 => {
-                        let inner = self.type_for_shape(variant.data.fields[0].shape.get(), None);
-                        fields.push(TypedDictField::new("value", inner, true, &[]));
+                        let inner_shape = variant.data.fields[0].shape.get();
+                        let (resolved, _) = Self::unwrap_to_inner_shape(inner_shape);
+                        if let Type::User(UserType::Struct(st)) = &resolved.ty {
+                            // Inner type is a struct: inline its fields directly.
+                            self.add_shape(resolved);
+                            for f in st.fields {
+                                if f.should_skip_serializing_unconditional() {
+                                    continue;
+                                }
+                                let (type_string, required) = self.field_type_info(f, None);
+                                fields.push(TypedDictField::new(
+                                    f.effective_name(),
+                                    type_string,
+                                    required,
+                                    f.doc,
+                                ));
+                            }
+                        } else {
+                            // Primitive or collection: wrap in a "value" key.
+                            let inner_type = self.type_for_shape(inner_shape, None);
+                            fields.push(TypedDictField::new("value", inner_type, true, &[]));
+                        }
                     }
                     StructKind::TupleStruct => {
                         let types: Vec<String> = variant
@@ -600,9 +620,29 @@ impl PythonGenerator {
                     // Only the tag field — no additional data.
                 }
                 StructKind::TupleStruct if variant.data.fields.len() == 1 => {
-                    // Newtype variant: tag + the inner value under a "value" key.
-                    let inner_type = self.type_for_shape(variant.data.fields[0].shape.get(), None);
-                    fields.push(TypedDictField::new("value", inner_type, true, &[]));
+                    let inner_shape = variant.data.fields[0].shape.get();
+                    let (resolved, _) = Self::unwrap_to_inner_shape(inner_shape);
+                    if let Type::User(UserType::Struct(st)) = &resolved.ty {
+                        // Inner type is a struct: inline its fields directly, matching
+                        // facet-json which merges struct fields at the same level as the tag.
+                        self.add_shape(resolved);
+                        for f in st.fields {
+                            if f.should_skip_serializing_unconditional() {
+                                continue;
+                            }
+                            let (type_string, required) = self.field_type_info(f, None);
+                            fields.push(TypedDictField::new(
+                                f.effective_name(),
+                                type_string,
+                                required,
+                                f.doc,
+                            ));
+                        }
+                    } else {
+                        // Primitive or collection: wrap in a "value" key.
+                        let inner_type = self.type_for_shape(inner_shape, None);
+                        fields.push(TypedDictField::new("value", inner_type, true, &[]));
+                    }
                 }
                 StructKind::TupleStruct => {
                     // Multi-field tuple: tag + tuple payload under a "value" key.
@@ -2081,6 +2121,149 @@ mod tests {
         assert!(
             py.contains("ccy: Required[str]"),
             "flatten tagged enum — 'ccy' field missing from DealFx, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_internally_tagged_newtype_struct_variant() {
+        // When a tagged enum has a newtype variant whose inner type is a struct,
+        // facet-json inlines the struct's fields at the same level as the tag —
+        // there is no "value" wrapper key. The Python TypedDict must match.
+        #[derive(Facet)]
+        struct IrsData {
+            pay_rate: f64,
+            receive_rate: f64,
+        }
+
+        #[derive(Facet)]
+        #[facet(tag = "type")]
+        #[repr(C)]
+        #[allow(dead_code)]
+        enum Product {
+            Irs(IrsData),
+            Fixed { rate: f64 },
+        }
+
+        let py = to_python::<Product>(false);
+
+        // Must NOT have a "value" key wrapping IrsData
+        assert!(
+            !py.contains("value: Required[IrsData]"),
+            "tagged newtype struct — IrsData fields must be inlined, not wrapped in 'value', got:\n{py}"
+        );
+        // Tag discriminator must be present
+        assert!(
+            py.contains("type: Required[Literal[\"Irs\"]]"),
+            "tagged newtype struct — tag field missing for Irs variant, got:\n{py}"
+        );
+        // Struct fields must be inlined alongside the tag
+        assert!(
+            py.contains("pay_rate: Required[float]"),
+            "tagged newtype struct — 'pay_rate' must be inlined from IrsData, got:\n{py}"
+        );
+        assert!(
+            py.contains("receive_rate: Required[float]"),
+            "tagged newtype struct — 'receive_rate' must be inlined from IrsData, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_flatten_tagged_enum_newtype_struct() {
+        // Same as above but the tagged enum is flattened into a parent struct.
+        // The per-variant TypedDicts must combine the parent's base fields with
+        // the inlined inner-struct fields — no "value" wrapper key.
+        #[derive(Facet)]
+        struct IrsData {
+            pay_rate: f64,
+            receive_rate: f64,
+        }
+
+        #[derive(Facet)]
+        struct FxData {
+            ccy: String,
+            amount: f64,
+        }
+
+        #[derive(Facet)]
+        #[facet(tag = "type")]
+        #[repr(C)]
+        #[allow(dead_code)]
+        enum Product {
+            Irs(IrsData),
+            Fx(FxData),
+        }
+
+        #[derive(Facet)]
+        struct Deal {
+            id: String,
+            #[facet(flatten)]
+            product: Product,
+        }
+
+        let py = to_python::<Deal>(false);
+
+        // Must NOT have "value" wrappers
+        assert!(
+            !py.contains("value: Required[IrsData]"),
+            "flatten tagged newtype struct — IrsData fields must be inlined, got:\n{py}"
+        );
+        assert!(
+            !py.contains("value: Required[FxData]"),
+            "flatten tagged newtype struct — FxData fields must be inlined, got:\n{py}"
+        );
+        // Base field from parent must appear in both variants
+        assert!(
+            py.contains("id: Required[str]"),
+            "flatten tagged newtype struct — base field 'id' must be inlined, got:\n{py}"
+        );
+        // Tag discriminators
+        assert!(
+            py.contains("type: Required[Literal[\"Irs\"]]"),
+            "flatten tagged newtype struct — tag field missing for Irs, got:\n{py}"
+        );
+        assert!(
+            py.contains("type: Required[Literal[\"Fx\"]]"),
+            "flatten tagged newtype struct — tag field missing for Fx, got:\n{py}"
+        );
+        // Variant fields inlined
+        assert!(
+            py.contains("pay_rate: Required[float]"),
+            "flatten tagged newtype struct — 'pay_rate' must be inlined, got:\n{py}"
+        );
+        assert!(
+            py.contains("ccy: Required[str]"),
+            "flatten tagged newtype struct — 'ccy' must be inlined, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_internally_tagged_newtype_primitive_variant() {
+        // When a tagged enum has a newtype variant whose inner type is a primitive
+        // or collection, a "value" key IS correct — the primitive cannot be inlined.
+        #[derive(Facet)]
+        #[facet(tag = "type")]
+        #[repr(C)]
+        #[allow(dead_code)]
+        enum Event {
+            Count(u32),
+        }
+
+        let py = to_python::<Event>(false);
+
+        // Primitive newtype: "value" key must be present
+        assert!(
+            py.contains("value: Required[int]"),
+            "tagged newtype primitive — 'value' key must be present for primitive inner type, got:\n{py}"
+        );
+        assert!(
+            py.contains("type: Required[Literal[\"Count\"]]"),
+            "tagged newtype primitive — tag field missing for Count variant, got:\n{py}"
         );
 
         insta::assert_snapshot!(py);
