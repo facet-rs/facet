@@ -37,6 +37,8 @@ pub struct FormatOptions {
     pub heredoc_line_threshold: usize,
 
     pub force_style: ForceStyle,
+    /// Whether pretty printing is enabled
+    pub pretty_printing: bool,
 }
 
 impl Default for FormatOptions {
@@ -49,6 +51,7 @@ impl Default for FormatOptions {
             inline_sequence_threshold: 8,
             heredoc_line_threshold: 2,
             force_style: ForceStyle::None,
+            pretty_printing: false,
         }
     }
 }
@@ -81,5 +84,17 @@ impl FormatOptions {
     pub fn max_width(mut self, width: usize) -> Self {
         self.max_width = width;
         self
+    }
+
+    /// Enable pretty printing with optional line length override.
+    pub fn pretty(mut self, line_length: usize) -> Self {
+        self.max_width = line_length;
+        self.pretty_printing = true;
+        self
+    }
+
+    /// Check if pretty printing is enabled.
+    pub fn pretty_printing_enabled(&self) -> bool {
+        self.pretty_printing
     }
 }
