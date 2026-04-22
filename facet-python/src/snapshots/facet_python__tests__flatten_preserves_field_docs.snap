@@ -1,0 +1,12 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+class Dims(TypedDict, total=False):
+    width: Required[int]
+    height: Required[int]
+
+class Image(TypedDict, total=False):
+    width: Required[int]
+    height: Required[int]
+    path: Required[str]

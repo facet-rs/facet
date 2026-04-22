@@ -293,15 +293,14 @@ impl PythonGenerator {
     ) {
         self.imports.insert("TypedDict");
 
-        let visible_fields: Vec<_> = fields
-            .iter()
-            .filter(|f| !f.flags.contains(facet_core::FieldFlags::SKIP))
-            .collect();
+        // Collect fields, recursively inlining any #[facet(flatten)] fields.
+        let all_fields = self.collect_flat_fields(fields);
 
         // Functional form uses runtime expressions — quote forward references.
-        let needs_functional = visible_fields
+        // Check all fields, including those inlined from flattened structs.
+        let needs_functional = all_fields
             .iter()
-            .any(|f| is_python_keyword(f.effective_name()));
+            .any(|(f, _)| is_python_keyword(f.effective_name()));
         let quote_after: Option<&str> = if needs_functional {
             Some(shape.type_identifier)
         } else {
@@ -309,10 +308,11 @@ impl PythonGenerator {
         };
 
         // Convert to TypedDictField for shared generation logic
-        let typed_dict_fields: Vec<_> = visible_fields
+        let typed_dict_fields: Vec<_> = all_fields
             .iter()
-            .map(|f| {
+            .map(|(f, force_optional)| {
                 let (type_string, required) = self.field_type_info(f, quote_after);
+                let required = required && !force_optional;
                 TypedDictField::new(f.effective_name(), type_string, required, f.doc)
             })
             .collect();
@@ -324,6 +324,88 @@ impl PythonGenerator {
 
         write_doc_comment(output, shape.doc);
         write_typed_dict(output, shape.type_identifier, &typed_dict_fields);
+    }
+
+    /// Unwrap through `Option<T>`, pointers (`Arc<T>`, `Box<T>`), and transparent
+    /// wrappers to reach the effective inner shape for flatten purposes.
+    ///
+    /// Returns `(inner_shape, was_optional)` where `was_optional` is `true` if an
+    /// `Option` layer was encountered.
+    fn unwrap_to_inner_shape(shape: &'static Shape) -> (&'static Shape, bool) {
+        // Option<T> — mark optional and recurse on T.
+        if let Def::Option(opt) = &shape.def {
+            let (inner, _) = Self::unwrap_to_inner_shape(opt.t);
+            return (inner, true);
+        }
+        // Arc<T>, Box<T>, etc. — unwrap the pointee.
+        if let Def::Pointer(ptr) = &shape.def
+            && let Some(pointee) = ptr.pointee
+        {
+            return Self::unwrap_to_inner_shape(pointee);
+        }
+        // Transparent wrappers (#[facet(transparent)]).
+        if let Some(inner) = shape.inner {
+            let (inner_shape, is_optional) = Self::unwrap_to_inner_shape(inner);
+            return (inner_shape, is_optional);
+        }
+        (shape, false)
+    }
+
+    /// Collect visible fields, inlining `#[facet(flatten)]` ones.
+    ///
+    /// Each entry is `(field, force_optional)`. `force_optional` is `true` when the
+    /// field was inlined from an `Option<Struct>` flatten, meaning the child field
+    /// must be treated as optional in the parent regardless of its own shape.
+    fn collect_flat_fields(&mut self, fields: &'static [Field]) -> Vec<(&'static Field, bool)> {
+        let mut flatten_stack: Vec<&'static str> = Vec::new();
+        self.collect_flat_fields_guarded(fields, false, &mut flatten_stack)
+    }
+
+    fn collect_flat_fields_guarded(
+        &mut self,
+        fields: &'static [Field],
+        force_optional: bool,
+        flatten_stack: &mut Vec<&'static str>,
+    ) -> Vec<(&'static Field, bool)> {
+        let mut result = Vec::new();
+        for field in fields {
+            // Covers both #[facet(skip)] and #[facet(skip_serializing)].
+            if field.should_skip_serializing_unconditional() {
+                continue;
+            }
+
+            if field.is_flattened() {
+                // Unwrap Option/pointer/transparent layers to reach the struct shape.
+                let (inner_shape, parent_is_optional) =
+                    Self::unwrap_to_inner_shape(field.shape.get());
+
+                // Queue the struct itself (not any Option/pointer wrapper) so it
+                // gets its own TypedDict if referenced elsewhere.
+                self.add_shape(inner_shape);
+
+                if let Type::User(UserType::Struct(st)) = &inner_shape.ty {
+                    // Cycle guard: skip self-referential shapes.
+                    let key = inner_shape.type_identifier;
+                    if flatten_stack.contains(&key) {
+                        continue;
+                    }
+                    flatten_stack.push(key);
+                    let inner = self.collect_flat_fields_guarded(
+                        st.fields,
+                        force_optional || parent_is_optional,
+                        flatten_stack,
+                    );
+                    result.extend(inner);
+                    flatten_stack.pop();
+                } else {
+                    // Non-struct flatten (e.g. a map) — emit as a regular field.
+                    result.push((field, force_optional));
+                }
+            } else {
+                result.push((field, force_optional));
+            }
+        }
+        result
     }
 
     /// Get the Python type string and required status for a field.
@@ -1144,6 +1226,379 @@ mod tests {
             py.contains("Required[\"Recipient\"]"),
             "forward reference in functional TypedDict should be quoted, got:\n{py}"
         );
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_flatten() {
+        #[derive(Facet)]
+        struct Inner {
+            x: f64,
+            y: f64,
+        }
+
+        #[derive(Facet)]
+        struct Outer {
+            #[facet(flatten)]
+            inner: Inner,
+            z: String,
+        }
+
+        let py = to_python::<Outer>(false);
+
+        // Inner should still be generated as its own TypedDict
+        assert!(
+            py.contains("class Inner(TypedDict, total=False):"),
+            "#[facet(flatten)] — Inner should still be generated as its own TypedDict, got:\n{py}"
+        );
+
+        // The flattened field 'inner' must NOT appear as a key in Outer
+        assert!(
+            !py.contains("inner: Required[Inner]"),
+            "#[facet(flatten)] — 'inner' should be inlined, not a nested field, got:\n{py}"
+        );
+
+        // x and y must be inlined directly into Outer
+        assert!(
+            py.contains("    x: Required[float]"),
+            "#[facet(flatten)] — 'x' should be inlined from Inner into Outer, got:\n{py}"
+        );
+        assert!(
+            py.contains("    y: Required[float]"),
+            "#[facet(flatten)] — 'y' should be inlined from Inner into Outer, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_flatten_option() {
+        // #[facet(flatten)] on Option<Struct> — the inlined fields should be
+        // optional in the parent TypedDict because their JSON presence is
+        // conditional on the Option being Some.
+        #[derive(Facet)]
+        struct Coords {
+            x: f64,
+            y: f64,
+        }
+
+        #[derive(Facet)]
+        struct Entity {
+            name: String,
+            #[facet(flatten)]
+            coords: Option<Coords>,
+        }
+
+        let py = to_python::<Entity>(false);
+
+        // Coords must still be generated as its own TypedDict
+        assert!(
+            py.contains("class Coords(TypedDict, total=False):"),
+            "flatten Option — Coords should still be generated, got:\n{py}"
+        );
+        // The raw 'coords' field must NOT appear as a nested key
+        assert!(
+            !py.contains("coords:"),
+            "flatten Option — 'coords' key should not appear in Entity, got:\n{py}"
+        );
+        // x and y must be inlined as optional (bare type, no Required[]).
+        // Coords' own definition still uses Required[float], so check with
+        // indentation to match Entity's lines only.
+        assert!(
+            py.contains("    x: float"),
+            "flatten Option — 'x' should be inlined as optional float in Entity, got:\n{py}"
+        );
+        assert!(
+            py.contains("    y: float"),
+            "flatten Option — 'y' should be inlined as optional float in Entity, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_flatten_with_rename_all() {
+        // Flattened struct with rename_all — inlined fields should use the
+        // renamed effective names, not the original Rust field names.
+        #[derive(Facet)]
+        #[facet(rename_all = "camelCase")]
+        struct Coords {
+            pos_x: f64,
+            pos_y: f64,
+        }
+
+        #[derive(Facet)]
+        struct Entity {
+            #[facet(flatten)]
+            coords: Coords,
+            label: String,
+        }
+
+        let py = to_python::<Entity>(false);
+
+        // Renamed fields must appear, not the Rust names
+        assert!(
+            py.contains("posX: Required[float]"),
+            "flatten + rename_all — 'posX' should be inlined into Entity, got:\n{py}"
+        );
+        assert!(
+            py.contains("posY: Required[float]"),
+            "flatten + rename_all — 'posY' should be inlined into Entity, got:\n{py}"
+        );
+        // Raw Rust names must NOT appear in the output
+        assert!(
+            !py.contains("pos_x"),
+            "flatten + rename_all — raw 'pos_x' should not appear, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_flatten_with_optional_fields() {
+        // Optional fields inside a flattened struct must remain optional
+        // (i.e. not wrapped in Required[]) in the parent TypedDict.
+        #[derive(Facet)]
+        struct Meta {
+            description: Option<String>,
+            version: u32,
+        }
+
+        #[derive(Facet)]
+        struct Package {
+            name: String,
+            #[facet(flatten)]
+            meta: Meta,
+        }
+
+        let py = to_python::<Package>(false);
+
+        // Optional field must stay optional — in this generator optional fields
+        // use a bare type (no Required[]) because the TypedDict is total=False.
+        assert!(
+            py.contains("description: str"),
+            "flatten + optional — 'description' should be optional (bare type) in Package, got:\n{py}"
+        );
+        assert!(
+            !py.contains("description: Required[str]"),
+            "flatten + optional — 'description' must NOT be wrapped in Required[], got:\n{py}"
+        );
+        // Required field must stay required
+        assert!(
+            py.contains("version: Required[int]"),
+            "flatten + optional — 'version' should be required in Package, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_flatten_multilevel() {
+        // A flattened struct that itself contains a flattened struct —
+        // all fields should end up in the outermost TypedDict.
+        #[derive(Facet)]
+        struct Point {
+            x: f64,
+            y: f64,
+        }
+
+        #[derive(Facet)]
+        struct ColoredPoint {
+            #[facet(flatten)]
+            point: Point,
+            color: String,
+        }
+
+        #[derive(Facet)]
+        struct Scene {
+            #[facet(flatten)]
+            colored_point: ColoredPoint,
+            name: String,
+        }
+
+        let py = to_python::<Scene>(false);
+
+        // x and y must be inlined all the way into Scene
+        assert!(
+            py.contains("    x: Required[float]"),
+            "multi-level flatten — 'x' should reach Scene, got:\n{py}"
+        );
+        assert!(
+            py.contains("    y: Required[float]"),
+            "multi-level flatten — 'y' should reach Scene, got:\n{py}"
+        );
+        assert!(
+            py.contains("    color: Required[str]"),
+            "multi-level flatten — 'color' should reach Scene, got:\n{py}"
+        );
+        // Neither intermediate field name should appear as a key
+        assert!(
+            !py.contains("colored_point:"),
+            "multi-level flatten — 'colored_point' key should not appear in Scene, got:\n{py}"
+        );
+        assert!(
+            !py.contains("point:"),
+            "multi-level flatten — 'point' key should not appear in Scene, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_flatten_preserves_field_docs() {
+        // Doc comments on fields inside a flattened struct should be
+        // preserved when those fields are inlined into the parent TypedDict.
+        #[derive(Facet)]
+        struct Dims {
+            /// Width in pixels
+            width: u32,
+            /// Height in pixels
+            height: u32,
+        }
+
+        #[derive(Facet)]
+        struct Image {
+            #[facet(flatten)]
+            dims: Dims,
+            path: String,
+        }
+
+        let py = to_python::<Image>(false);
+
+        assert!(
+            py.contains("width: Required[int]"),
+            "flatten docs — 'width' should be inlined into Image, got:\n{py}"
+        );
+        assert!(
+            py.contains("height: Required[int]"),
+            "flatten docs — 'height' should be inlined into Image, got:\n{py}"
+        );
+        assert!(
+            !py.contains("dims: Required[Dims]"),
+            "flatten docs — 'dims' key should not appear in Image, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_flatten_arc() {
+        // #[facet(flatten)] on Arc<Struct> — should inline the same as a plain
+        // struct flatten, since Arc is just a pointer wrapper.
+        use std::sync::Arc;
+
+        #[derive(Facet)]
+        struct Coords {
+            x: f64,
+            y: f64,
+        }
+
+        #[derive(Facet)]
+        struct Entity {
+            name: String,
+            #[facet(flatten)]
+            coords: Arc<Coords>,
+        }
+
+        let py = to_python::<Entity>(false);
+
+        assert!(
+            py.contains("class Coords(TypedDict, total=False):"),
+            "flatten Arc — Coords should still be generated, got:\n{py}"
+        );
+        assert!(
+            !py.contains("coords:"),
+            "flatten Arc — 'coords' key should not appear in Entity, got:\n{py}"
+        );
+        assert!(
+            py.contains("    x: Required[float]"),
+            "flatten Arc — 'x' should be inlined as required float in Entity, got:\n{py}"
+        );
+        assert!(
+            py.contains("    y: Required[float]"),
+            "flatten Arc — 'y' should be inlined as required float in Entity, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_flatten_option_arc() {
+        // #[facet(flatten)] on Option<Arc<Struct>> — multi-layer unwrap.
+        // Fields should be optional (from the Option) despite the Arc wrapper.
+        use std::sync::Arc;
+
+        #[derive(Facet)]
+        struct Coords {
+            x: f64,
+            y: f64,
+        }
+
+        #[derive(Facet)]
+        struct Entity {
+            name: String,
+            #[facet(flatten)]
+            coords: Option<Arc<Coords>>,
+        }
+
+        let py = to_python::<Entity>(false);
+
+        assert!(
+            py.contains("class Coords(TypedDict, total=False):"),
+            "flatten Option<Arc> — Coords should still be generated, got:\n{py}"
+        );
+        assert!(
+            !py.contains("coords:"),
+            "flatten Option<Arc> — 'coords' key should not appear in Entity, got:\n{py}"
+        );
+        // Fields must be optional (bare type) because of the Option wrapper
+        assert!(
+            py.contains("    x: float"),
+            "flatten Option<Arc> — 'x' should be inlined as optional float in Entity, got:\n{py}"
+        );
+        assert!(
+            py.contains("    y: float"),
+            "flatten Option<Arc> — 'y' should be inlined as optional float in Entity, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_flatten_skip_serializing_field() {
+        // A #[facet(skip_serializing)] field inside a flattened struct must
+        // NOT appear in the parent TypedDict — it is excluded from the wire
+        // format so it must not be part of the Python type either.
+        #[derive(Facet)]
+        struct Coords {
+            x: f64,
+            y: f64,
+            #[facet(skip_serializing)]
+            internal: u8,
+        }
+
+        #[derive(Facet)]
+        struct Entity {
+            name: String,
+            #[facet(flatten)]
+            coords: Coords,
+        }
+
+        let py = to_python::<Entity>(false);
+
+        assert!(
+            py.contains("    x: Required[float]"),
+            "flatten skip_serializing — 'x' should be inlined, got:\n{py}"
+        );
+        assert!(
+            py.contains("    y: Required[float]"),
+            "flatten skip_serializing — 'y' should be inlined, got:\n{py}"
+        );
+        assert!(
+            !py.contains("internal"),
+            "flatten skip_serializing — 'internal' must not appear anywhere, got:\n{py}"
+        );
+
         insta::assert_snapshot!(py);
     }
 }
