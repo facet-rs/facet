@@ -1,0 +1,11 @@
+---
+source: facet-python/src/lib.rs
+assertion_line: 2326
+expression: py
+---
+class Event(TypedDict, total=False):
+    date: Required[str]
+    datetime: Required[str]
+    time: Required[str]
+    timestamp: Required[str]
+    optional_date: str
