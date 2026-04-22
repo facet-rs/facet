@@ -1,0 +1,14 @@
+---
+source: facet-python/src/lib.rs
+assertion_line: 1844
+expression: py
+---
+type Shape = ShapeMat | ShapeSp
+
+class ShapeMat(TypedDict, total=False):
+    type: Required[Literal["Mat"]]
+
+class ShapeSp(TypedDict, total=False):
+    type: Required[Literal["Sp"]]
+    first_roll: Required[int]
+    long_last: Required[bool]

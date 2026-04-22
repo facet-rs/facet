@@ -436,12 +436,162 @@ impl PythonGenerator {
 
         write_doc_comment(output, shape.doc);
 
-        if all_unit {
+        if let Some(tag_key) = shape.tag {
+            self.generate_enum_internally_tagged(output, shape, enum_type, tag_key);
+        } else if shape.is_untagged() {
+            self.generate_enum_untagged(output, shape, enum_type);
+        } else if all_unit {
             self.generate_enum_unit_variants(output, shape, enum_type);
         } else {
             self.generate_enum_with_data(output, shape, enum_type);
         }
         output.push('\n');
+    }
+
+    /// Generate an internally-tagged enum (`#[facet(tag = "key")]`).
+    ///
+    /// Each variant becomes a named TypedDict `EnumNameVariantName` containing
+    /// a `Required[Literal["VariantName"]]` tag field plus the variant's own fields.
+    fn generate_enum_internally_tagged(
+        &mut self,
+        output: &mut String,
+        shape: &'static Shape,
+        enum_type: &facet_core::EnumType,
+        tag_key: &'static str,
+    ) {
+        self.imports.insert("TypedDict");
+        self.imports.insert("Required");
+        self.imports.insert("Literal");
+
+        let enum_name = shape.type_identifier;
+        let mut variant_class_names: Vec<String> = Vec::new();
+
+        for variant in enum_type.variants {
+            let variant_name = variant.effective_name();
+            let class_name = format!("{}{}", enum_name, to_pascal_case(variant_name));
+            let tag_type = format!("Literal[\"{}\"]", variant_name);
+
+            let mut fields: Vec<TypedDictField> = Vec::new();
+            // Tag field always comes first.
+            fields.push(TypedDictField::new(tag_key, tag_type, true, &[]));
+
+            match variant.data.kind {
+                StructKind::Unit => {
+                    // Only the tag field — no additional data.
+                }
+                StructKind::TupleStruct if variant.data.fields.len() == 1 => {
+                    // Newtype variant: tag + the inner value under a "value" key.
+                    let inner_type = self.type_for_shape(variant.data.fields[0].shape.get(), None);
+                    fields.push(TypedDictField::new("value", inner_type, true, &[]));
+                }
+                StructKind::TupleStruct => {
+                    // Multi-field tuple: tag + tuple payload under a "value" key.
+                    let types: Vec<String> = variant
+                        .data
+                        .fields
+                        .iter()
+                        .map(|f| self.type_for_shape(f.shape.get(), None))
+                        .collect();
+                    let inner_type = format!("tuple[{}]", types.join(", "));
+                    fields.push(TypedDictField::new("value", inner_type, true, &[]));
+                }
+                _ => {
+                    // Struct variant: inline all fields alongside the tag.
+                    for field in variant.data.fields {
+                        if field.should_skip_serializing_unconditional() {
+                            continue;
+                        }
+                        let (type_string, required) = self.field_type_info(field, None);
+                        fields.push(TypedDictField::new(
+                            field.effective_name(),
+                            type_string,
+                            required,
+                            field.doc,
+                        ));
+                    }
+                }
+            }
+
+            let mut class_output = String::new();
+            write_typed_dict(&mut class_output, &class_name, &fields);
+            class_output.push('\n');
+            self.generated.insert(class_name.clone(), class_output);
+            variant_class_names.push(class_name);
+        }
+
+        writeln!(
+            output,
+            "type {} = {}",
+            enum_name,
+            variant_class_names.join(" | ")
+        )
+        .unwrap();
+    }
+
+    /// Generate an untagged enum (`#[facet(untagged)]`).
+    ///
+    /// Each variant serializes purely by content with no discriminator:
+    ///   - Unit variant    => `Literal["VariantName"]`
+    ///   - Newtype variant => the inner Python type directly
+    ///   - Struct variant  => a named TypedDict `EnumNameVariantName`
+    fn generate_enum_untagged(
+        &mut self,
+        output: &mut String,
+        shape: &'static Shape,
+        enum_type: &facet_core::EnumType,
+    ) {
+        self.imports.insert("Literal");
+
+        let enum_name = shape.type_identifier;
+        let mut variant_types: Vec<String> = Vec::new();
+
+        for variant in enum_type.variants {
+            let variant_name = variant.effective_name();
+
+            match variant.data.kind {
+                StructKind::Unit => {
+                    variant_types.push(format!("Literal[\"{}\"]", variant_name));
+                }
+                StructKind::TupleStruct if variant.data.fields.len() == 1 => {
+                    // Newtype: the inner type directly, no wrapper.
+                    let inner = self.type_for_shape(variant.data.fields[0].shape.get(), None);
+                    variant_types.push(inner);
+                }
+                StructKind::TupleStruct => {
+                    // Multi-field tuple: tuple[T1, T2, ...]
+                    let types: Vec<String> = variant
+                        .data
+                        .fields
+                        .iter()
+                        .map(|f| self.type_for_shape(f.shape.get(), None))
+                        .collect();
+                    variant_types.push(format!("tuple[{}]", types.join(", ")));
+                }
+                _ => {
+                    // Struct variant: generate a named TypedDict.
+                    self.imports.insert("TypedDict");
+                    self.imports.insert("Required");
+                    let class_name = format!("{}{}", enum_name, to_pascal_case(variant_name));
+                    let typed_dict_fields: Vec<TypedDictField> = variant
+                        .data
+                        .fields
+                        .iter()
+                        .filter(|f| !f.should_skip_serializing_unconditional())
+                        .map(|f| {
+                            let (type_string, required) = self.field_type_info(f, None);
+                            TypedDictField::new(f.effective_name(), type_string, required, f.doc)
+                        })
+                        .collect();
+                    let mut class_output = String::new();
+                    write_typed_dict(&mut class_output, &class_name, &typed_dict_fields);
+                    class_output.push('\n');
+                    self.generated.insert(class_name.clone(), class_output);
+                    variant_types.push(class_name);
+                }
+            }
+        }
+
+        writeln!(output, "type {} = {}", enum_name, variant_types.join(" | ")).unwrap();
     }
 
     /// Generate a simple enum where all variants are unit variants.
@@ -1649,6 +1799,93 @@ mod tests {
         assert!(
             py.contains("timeout: int"),
             "default — 'timeout' should be bare int (optional), got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_internally_tagged_enum() {
+        // #[facet(tag = "type")] enums are internally tagged: facet-json serializes
+        // each variant as {"type":"VariantName", ...fields}. The Python TypedDict
+        // must include the tag field, NOT an outer wrapper key.
+        #[derive(Facet)]
+        #[facet(tag = "type")]
+        #[repr(C)]
+        #[allow(dead_code)]
+        enum Shape {
+            Mat,
+            Sp { first_roll: u32, long_last: bool },
+        }
+
+        let py = to_python::<Shape>(false);
+
+        // Must NOT use external wrapping ({"Sp": {...}} does not exist at runtime)
+        assert!(
+            !py.contains("Sp: Required"),
+            "internally tagged — 'Sp' must not appear as an outer key, got:\n{py}"
+        );
+        // Tag field must be present for the struct variant
+        assert!(
+            py.contains("type: Required[Literal[\"Sp\"]]"),
+            "internally tagged — tag field missing for Sp variant, got:\n{py}"
+        );
+        // Struct fields must be inlined at the same level as the tag
+        assert!(
+            py.contains("first_roll: Required[int]"),
+            "internally tagged — 'first_roll' should be inlined, got:\n{py}"
+        );
+        // Unit variant must also get a TypedDict with just the tag field
+        assert!(
+            py.contains("type: Required[Literal[\"Mat\"]]"),
+            "internally tagged — tag field missing for Mat variant, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_untagged_enum() {
+        // #[facet(untagged)] enums serialize each variant purely by content —
+        // no discriminator key at all. The Python union must reflect this:
+        //   unit    => Literal["VariantName"]
+        //   newtype => the inner type directly (no wrapper TypedDict)
+        //   struct  => a named TypedDict with inlined fields
+        #[derive(Facet)]
+        #[facet(untagged)]
+        #[repr(C)]
+        #[allow(dead_code)]
+        enum Value {
+            None,
+            Number(f64),
+            Point { x: f64, y: f64 },
+        }
+
+        let py = to_python::<Value>(false);
+
+        // Newtype must NOT be wrapped in {"Number": ...} — the float appears directly
+        assert!(
+            !py.contains("Number: Required"),
+            "untagged — 'Number' must not appear as an outer key, got:\n{py}"
+        );
+        // The union must include float directly for the newtype variant
+        assert!(
+            py.contains("float"),
+            "untagged — float should appear directly in the union, got:\n{py}"
+        );
+        // Struct variant must NOT be wrapped in {"Point": ...}
+        assert!(
+            !py.contains("Point: Required"),
+            "untagged — 'Point' must not appear as an outer key, got:\n{py}"
+        );
+        // Struct variant fields must be in a named TypedDict
+        assert!(
+            py.contains("x: Required[float]"),
+            "untagged — 'x' field should appear in a TypedDict, got:\n{py}"
+        );
+        assert!(
+            py.contains("y: Required[float]"),
+            "untagged — 'y' field should appear in a TypedDict, got:\n{py}"
         );
 
         insta::assert_snapshot!(py);

@@ -1,0 +1,10 @@
+---
+source: facet-python/src/lib.rs
+assertion_line: 1891
+expression: py
+---
+type Value = Literal["None"] | float | ValuePoint
+
+class ValuePoint(TypedDict, total=False):
+    x: Required[float]
+    y: Required[float]
