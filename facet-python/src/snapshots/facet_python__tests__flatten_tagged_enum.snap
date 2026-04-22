@@ -1,0 +1,30 @@
+---
+source: facet-python/src/lib.rs
+assertion_line: 2086
+expression: py
+---
+type Deal = DealIrs | DealFx
+
+class DealFx(TypedDict, total=False):
+    id: Required[str]
+    type: Required[Literal["Fx"]]
+    ccy: Required[str]
+    amount: Required[float]
+
+class DealIrs(TypedDict, total=False):
+    id: Required[str]
+    type: Required[Literal["Irs"]]
+    pay_rate: Required[float]
+    receive_rate: Required[float]
+
+type Product = ProductIrs | ProductFx
+
+class ProductFx(TypedDict, total=False):
+    type: Required[Literal["Fx"]]
+    ccy: Required[str]
+    amount: Required[float]
+
+class ProductIrs(TypedDict, total=False):
+    type: Required[Literal["Irs"]]
+    pay_rate: Required[float]
+    receive_rate: Required[float]
