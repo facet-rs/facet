@@ -1,0 +1,13 @@
+---
+source: facet-python/src/lib.rs
+assertion_line: 2528
+expression: py
+---
+type MyStruct = Payload | MyStructConstant
+
+class MyStructConstant(TypedDict, total=False):
+    constant: Required[float]
+
+class Payload(TypedDict, total=False):
+    x: Required[float]
+    y: Required[float]
