@@ -21,6 +21,7 @@ facet = { workspace = true }
 facet-core = { workspace = true }
 facet-reflect = { workspace = true }
 vox-schema = { workspace = true }
+vox-jit-cal = { workspace = true }
 
 [dev-dependencies]
 facet-postcard = { workspace = true }

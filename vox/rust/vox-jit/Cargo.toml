@@ -1,0 +1,34 @@
+[package]
+name = "vox-jit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords = ["jit", "cranelift", "decode", "postcard"]
+categories = ["development-tools"]
+description = "Cranelift JIT backend for vox: compiled decode/encode stubs replacing the reflective interpreter"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+vox-jit-abi = { workspace = true }
+vox-jit-cal = { workspace = true }
+vox-postcard = { workspace = true }
+vox-schema = { workspace = true }
+facet-core = { workspace = true }
+cranelift-codegen = "0.131"
+cranelift-frontend = "0.131"
+cranelift-jit = "0.131"
+cranelift-module = "0.131"
+cranelift-native = "0.131"
+
+[dev-dependencies]
+facet = { workspace = true }
+facet-core = { workspace = true }
+vox-types = { path = "../vox-types" }

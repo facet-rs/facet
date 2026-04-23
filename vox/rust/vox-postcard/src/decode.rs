@@ -11,6 +11,17 @@ impl<'a> Cursor<'a> {
         Self { input, pos: 0 }
     }
 
+    /// Create a cursor over `input` starting at `pos`.
+    pub fn new_at(input: &'a [u8], pos: usize) -> Self {
+        Self { input, pos }
+    }
+
+    /// Advance the cursor to `new_pos` without reading bytes.
+    pub fn advance_to(&mut self, new_pos: usize) {
+        debug_assert!(new_pos <= self.input.len());
+        self.pos = new_pos;
+    }
+
     pub fn pos(&self) -> usize {
         self.pos
     }

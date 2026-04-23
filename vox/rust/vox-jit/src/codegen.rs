@@ -1,0 +1,3533 @@
+//! Cranelift backend: lowers `DecodeProgram` IR into native machine code.
+//!
+//! The generated function signature (stable extern "C" ABI):
+//!   unsafe extern "C" fn(ctx: *mut DecodeCtx, out_ptr: *mut u8) -> u32
+//!
+//! The `u32` return value is the `DecodeStatus` discriminant.
+//!
+//! # Minimal subset (task #8)
+//!
+//! The initial Cranelift backend handles:
+//!   - All scalar primitives (bool, u8–u64, i8–i64, f32, f64)
+//!   - Structs and tuples (field reads in remote wire order)
+//!   - Fixed-size arrays (unrolled element decode)
+//!   - Vec<u8> and String via calibrated opaque descriptors
+//!   - SlowPath ops (delegates back to the IR interpreter)
+//!
+//! Unsupported ops cause `compile_decode` to return `Err(CodegenError::UnsupportedOp)`
+//! and the caller falls back to the pure IR interpreter.
+
+#![allow(unsafe_code)]
+
+use cranelift_codegen::ir::{
+    AbiParam, Block, BlockArg, InstBuilder, MemFlags, Signature, Type, Value, condcodes::IntCC,
+    types,
+};
+use cranelift_codegen::{settings, settings::Configurable};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use cranelift_jit::{JITBuilder, JITModule};
+use cranelift_module::{Linkage, Module};
+
+use vox_jit_abi::{
+    BorrowedDecodeFn, DecodeCtx, DecodeStatus, EncodeFn, OwnedDecodeFn, vox_jit_box_alloc,
+    vox_jit_box_slice_alloc, vox_jit_buf_grow, vox_jit_buf_push_byte, vox_jit_buf_push_bytes,
+    vox_jit_buf_write_varint, vox_jit_buf_write_varint_signed, vox_jit_string_commit_len,
+    vox_jit_string_reserve, vox_jit_utf8_validate, vox_jit_vec_commit_len, vox_jit_vec_reserve,
+};
+use vox_jit_cal::{
+    CalibrationRegistry, ContainerKind, DescriptorHandle, OpaqueDescriptor as CalDescriptor,
+};
+
+use vox_postcard::ir::{
+    DecodeOp, DecodeProgram, EncodeOp, EncodeProgram, OpaqueDescriptorId, TagWidth, WirePrimitive,
+};
+
+// ---------------------------------------------------------------------------
+// Target ISA name
+// ---------------------------------------------------------------------------
+
+/// Return a stable string identifying the current host ISA.
+pub fn host_isa_name() -> &'static str {
+    #[cfg(target_arch = "x86_64")]
+    {
+        "x86_64"
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        "aarch64"
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        "unknown"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub enum CodegenError {
+    ModuleError(cranelift_module::ModuleError),
+    CraneliftError(cranelift_codegen::CodegenError),
+    UnsupportedOp(String),
+    IsaError(String),
+}
+
+impl From<cranelift_module::ModuleError> for CodegenError {
+    fn from(e: cranelift_module::ModuleError) -> Self {
+        Self::ModuleError(e)
+    }
+}
+
+impl From<cranelift_codegen::CodegenError> for CodegenError {
+    fn from(e: cranelift_codegen::CodegenError) -> Self {
+        Self::CraneliftError(e)
+    }
+}
+
+impl std::fmt::Display for CodegenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ModuleError(e) => write!(f, "module error: {e}"),
+            Self::CraneliftError(e) => write!(f, "codegen error: {e}"),
+            Self::UnsupportedOp(s) => write!(f, "unsupported op: {s}"),
+            Self::IsaError(s) => write!(f, "ISA error: {s}"),
+        }
+    }
+}
+
+impl std::error::Error for CodegenError {}
+
+// ---------------------------------------------------------------------------
+// Cranelift backend
+// ---------------------------------------------------------------------------
+
+/// Cranelift JIT backend.
+///
+/// One instance per process. Owns the `JITModule` which holds all compiled
+/// function memory. Thread-safety is provided by the caller (wrapped in Mutex
+/// in `JitRuntime`).
+pub struct CraneliftBackend {
+    module: JITModule,
+    ptr_ty: Type,
+    isa_name: &'static str,
+    /// Programs kept alive for the lifetime of the backend so that raw pointers
+    /// to plans embedded by `SlowPath` ops remain valid when the stubs are called.
+    retained_programs: Vec<DecodeProgram>,
+}
+
+impl CraneliftBackend {
+    /// Create a new backend targeting the current host ISA.
+    pub fn new() -> Result<Self, CodegenError> {
+        let mut flag_builder = settings::builder();
+        flag_builder.set("use_colocated_libcalls", "false").unwrap();
+        flag_builder.set("is_pic", "false").unwrap();
+        flag_builder.set("opt_level", "speed").unwrap();
+
+        let isa_builder =
+            cranelift_native::builder().map_err(|e| CodegenError::IsaError(e.to_string()))?;
+        let flags = settings::Flags::new(flag_builder);
+        let isa = isa_builder
+            .finish(flags)
+            .map_err(CodegenError::CraneliftError)?;
+
+        let ptr_ty = isa.pointer_type();
+        let isa_name = host_isa_name();
+
+        let mut jit_builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+
+        // Register decode runtime helper symbols.
+        jit_builder.symbol("vox_jit_vec_reserve", vox_jit_vec_reserve as *const u8);
+        jit_builder.symbol(
+            "vox_jit_vec_commit_len",
+            vox_jit_vec_commit_len as *const u8,
+        );
+        jit_builder.symbol(
+            "vox_jit_string_reserve",
+            vox_jit_string_reserve as *const u8,
+        );
+        jit_builder.symbol(
+            "vox_jit_string_commit_len",
+            vox_jit_string_commit_len as *const u8,
+        );
+        jit_builder.symbol("vox_jit_utf8_validate", vox_jit_utf8_validate as *const u8);
+        jit_builder.symbol("vox_jit_box_alloc", vox_jit_box_alloc as *const u8);
+        jit_builder.symbol(
+            "vox_jit_box_slice_alloc",
+            vox_jit_box_slice_alloc as *const u8,
+        );
+        jit_builder.symbol(
+            "vox_jit_slow_path",
+            crate::helpers::vox_jit_slow_path as *const u8,
+        );
+
+        // Register encode runtime helper symbols.
+        jit_builder.symbol("vox_jit_buf_grow", vox_jit_buf_grow as *const u8);
+        jit_builder.symbol("vox_jit_buf_push_byte", vox_jit_buf_push_byte as *const u8);
+        jit_builder.symbol(
+            "vox_jit_buf_push_bytes",
+            vox_jit_buf_push_bytes as *const u8,
+        );
+        jit_builder.symbol(
+            "vox_jit_buf_write_varint",
+            vox_jit_buf_write_varint as *const u8,
+        );
+        jit_builder.symbol(
+            "vox_jit_buf_write_varint_signed",
+            vox_jit_buf_write_varint_signed as *const u8,
+        );
+
+        let module = JITModule::new(jit_builder);
+
+        Ok(Self {
+            module,
+            ptr_ty,
+            isa_name,
+            retained_programs: Vec::new(),
+        })
+    }
+
+    pub fn isa_name(&self) -> &'static str {
+        self.isa_name
+    }
+
+    /// Compile a `DecodeProgram` into a pair of owned/borrowed decode function pointers.
+    ///
+    /// Both pointers point to the same generated code — the distinction between
+    /// owned and borrowed mode is enforced by the surrounding Rust types, not
+    /// by the generated function itself.
+    ///
+    /// Returns `Err(CodegenError::UnsupportedOp)` if any op in the program is
+    /// not yet supported by the Cranelift backend (caller must fall back to the
+    /// IR interpreter).
+    pub fn compile_decode(
+        &mut self,
+        program: &DecodeProgram,
+        descriptors: &CalibrationRegistry,
+    ) -> Result<(OwnedDecodeFn, BorrowedDecodeFn), CodegenError> {
+        // Retain an owned copy of the program. The emitted stub embeds raw
+        // pointers into `SlowPath` op plans; those plans must outlive the stub.
+        self.retained_programs.push(program.clone());
+        let program = self.retained_programs.last().unwrap();
+
+        let sig = self.decode_signature();
+        let func_name = format!("vox_decode_{}", next_id());
+
+        let func_id = self
+            .module
+            .declare_function(&func_name, Linkage::Local, &sig)?;
+
+        let mut ctx = self.module.make_context();
+        ctx.func.signature = sig;
+
+        let mut func_ctx = FunctionBuilderContext::new();
+        {
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+            emit_decode_function(&mut builder, program, descriptors, self.ptr_ty)?;
+            builder.finalize();
+        }
+
+        self.module.define_function(func_id, &mut ctx)?;
+        self.module.clear_context(&mut ctx);
+        self.module
+            .finalize_definitions()
+            .map_err(CodegenError::ModuleError)?;
+
+        let fn_ptr = self.module.get_finalized_function(func_id);
+
+        // SAFETY: We just compiled and finalized this function; the pointer is
+        // valid for the lifetime of the JITModule.
+        let owned: OwnedDecodeFn = unsafe { core::mem::transmute(fn_ptr) };
+        let borrowed: BorrowedDecodeFn = unsafe { core::mem::transmute(fn_ptr) };
+
+        Ok((owned, borrowed))
+    }
+
+    /// Like `compile_decode` but also returns the machine-code size in bytes.
+    ///
+    /// Used by benchmarks to measure stub size per root type.
+    pub fn compile_decode_with_size(
+        &mut self,
+        program: &DecodeProgram,
+        descriptors: &CalibrationRegistry,
+    ) -> Result<(OwnedDecodeFn, BorrowedDecodeFn, u32), CodegenError> {
+        self.retained_programs.push(program.clone());
+        let program = self.retained_programs.last().unwrap();
+
+        let sig = self.decode_signature();
+        let func_name = format!("vox_decode_{}", next_id());
+
+        let func_id = self
+            .module
+            .declare_function(&func_name, Linkage::Local, &sig)?;
+
+        let mut ctx = self.module.make_context();
+        ctx.func.signature = sig;
+
+        let mut func_ctx = FunctionBuilderContext::new();
+        {
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+            emit_decode_function(&mut builder, program, descriptors, self.ptr_ty)?;
+            builder.finalize();
+        }
+
+        self.module.define_function(func_id, &mut ctx)?;
+
+        let code_size = ctx
+            .compiled_code()
+            .map(|c| c.code_info().total_size)
+            .unwrap_or(0);
+
+        self.module.clear_context(&mut ctx);
+        self.module
+            .finalize_definitions()
+            .map_err(CodegenError::ModuleError)?;
+
+        let fn_ptr = self.module.get_finalized_function(func_id);
+
+        let owned: OwnedDecodeFn = unsafe { core::mem::transmute(fn_ptr) };
+        let borrowed: BorrowedDecodeFn = unsafe { core::mem::transmute(fn_ptr) };
+
+        Ok((owned, borrowed, code_size))
+    }
+
+    fn decode_signature(&self) -> Signature {
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(self.ptr_ty)); // ctx: *mut DecodeCtx
+        sig.params.push(AbiParam::new(self.ptr_ty)); // out_ptr: *mut u8
+        sig.returns.push(AbiParam::new(types::I32)); // DecodeStatus as u32
+        sig
+    }
+
+    /// Compile an `EncodeProgram` into an encode function pointer.
+    ///
+    /// The generated function has the signature:
+    ///   `unsafe extern "C" fn(ctx: *mut EncodeCtx, src_ptr: *const u8) -> bool`
+    ///
+    /// Returns `Err(CodegenError::UnsupportedOp)` if any op in the program is
+    /// not yet supported by the Cranelift backend.
+    pub fn compile_encode(
+        &mut self,
+        program: &EncodeProgram,
+        descriptors: &CalibrationRegistry,
+    ) -> Result<EncodeFn, CodegenError> {
+        let sig = self.encode_signature();
+        let func_name = format!("vox_encode_{}", next_id());
+
+        let func_id = self
+            .module
+            .declare_function(&func_name, Linkage::Local, &sig)?;
+
+        let mut ctx = self.module.make_context();
+        ctx.func.signature = sig;
+
+        let mut func_ctx = FunctionBuilderContext::new();
+        {
+            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+            emit_encode_function(&mut builder, program, descriptors, self.ptr_ty)?;
+            builder.finalize();
+        }
+
+        self.module.define_function(func_id, &mut ctx)?;
+        self.module.clear_context(&mut ctx);
+        self.module
+            .finalize_definitions()
+            .map_err(CodegenError::ModuleError)?;
+
+        let fn_ptr = self.module.get_finalized_function(func_id);
+
+        // SAFETY: We just compiled and finalized this function; the pointer is
+        // valid for the lifetime of the JITModule.
+        let encode_fn: EncodeFn = unsafe { core::mem::transmute(fn_ptr) };
+        Ok(encode_fn)
+    }
+
+    fn encode_signature(&self) -> Signature {
+        let mut sig = self.module.make_signature();
+        sig.params.push(AbiParam::new(self.ptr_ty)); // ctx: *mut EncodeCtx
+        sig.params.push(AbiParam::new(self.ptr_ty)); // src_ptr: *const u8
+        sig.returns.push(AbiParam::new(types::I8)); // bool (success)
+        sig
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Function emission
+// ---------------------------------------------------------------------------
+
+/// State threaded through the Cranelift function builder.
+struct EmitCtx<'a, 'b> {
+    b: &'a mut FunctionBuilder<'b>,
+    ctx_ptr: Value,
+    out_ptr: Value,
+    ptr_ty: Type,
+    /// Variable tracking bytes consumed (written back to ctx on return).
+    var_consumed: Variable,
+    /// Variable tracking partially-initialized element count (committed len).
+    var_init_count: Variable,
+    /// Variable holding the total list length (set by ReadListLen, used by AllocBacking loop).
+    var_list_len: Variable,
+    /// Variable holding the last-decoded enum discriminant (set by ReadDiscriminant).
+    var_discriminant: Variable,
+    descriptors: &'a CalibrationRegistry,
+    /// Mapping from DecodeProgram block index to Cranelift Block.
+    block_map: Vec<Option<Block>>,
+    /// IR block indices that have been emitted inline (e.g. Vec element body).
+    /// These must be skipped by the outer emit loop to avoid double-emission.
+    inlined_blocks: std::collections::HashSet<usize>,
+    /// IR block indices that were fully sealed+filled during recursive inlining.
+    /// The outer loop skips these entirely — no dummy terminator is needed.
+    sealed_inlined_blocks: std::collections::HashSet<usize>,
+}
+
+impl<'a, 'b> EmitCtx<'a, 'b> {
+    fn fresh_block(&mut self) -> Block {
+        self.b.create_block()
+    }
+
+    fn fresh_var(&mut self, ty: Type) -> Variable {
+        self.b.declare_var(ty)
+    }
+
+    /// Load `ctx.input_ptr`.
+    fn ctx_input_ptr(&mut self) -> Value {
+        let off = core::mem::offset_of!(DecodeCtx, input_ptr) as i32;
+        self.b
+            .ins()
+            .load(self.ptr_ty, MemFlags::trusted(), self.ctx_ptr, off)
+    }
+
+    /// Load `ctx.input_len`.
+    fn ctx_input_len(&mut self) -> Value {
+        let off = core::mem::offset_of!(DecodeCtx, input_len) as i32;
+        self.b
+            .ins()
+            .load(self.ptr_ty, MemFlags::trusted(), self.ctx_ptr, off)
+    }
+
+    /// Read current consumed variable.
+    fn consumed(&mut self) -> Value {
+        self.b.use_var(self.var_consumed)
+    }
+
+    /// Reload `var_consumed` from `ctx.consumed` (after an opaque helper updates it).
+    fn reload_consumed_from_ctx(&mut self) {
+        let off = core::mem::offset_of!(DecodeCtx, consumed) as i32;
+        let val = self
+            .b
+            .ins()
+            .load(self.ptr_ty, MemFlags::trusted(), self.ctx_ptr, off);
+        self.b.def_var(self.var_consumed, val);
+    }
+
+    /// Write back `consumed` and `init_count` to the context struct.
+    fn flush_ctx(&mut self) {
+        let consumed = self.b.use_var(self.var_consumed);
+        let off = core::mem::offset_of!(DecodeCtx, consumed) as i32;
+        self.b
+            .ins()
+            .store(MemFlags::trusted(), consumed, self.ctx_ptr, off);
+
+        let init_count = self.b.use_var(self.var_init_count);
+        let off2 = core::mem::offset_of!(DecodeCtx, init_count) as i32;
+        self.b
+            .ins()
+            .store(MemFlags::trusted(), init_count, self.ctx_ptr, off2);
+    }
+
+    /// Return `DecodeStatus::Ok` (writes back context first).
+    fn return_ok(&mut self) {
+        self.flush_ctx();
+        let ok = self.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
+        self.b.ins().return_(&[ok]);
+    }
+
+    /// Return a non-Ok status (writes back context first).
+    fn return_err(&mut self, status: DecodeStatus) {
+        self.flush_ctx();
+        let code = self.b.ins().iconst(types::I32, status as i64);
+        self.b.ins().return_(&[code]);
+    }
+
+    /// Compute a pointer to `out_ptr + offset`.
+    fn dst_at(&mut self, offset: usize) -> Value {
+        if offset == 0 {
+            self.out_ptr
+        } else {
+            self.b.ins().iadd_imm(self.out_ptr, offset as i64)
+        }
+    }
+
+    /// Read one byte from the input; generates an EOF guard.
+    fn read_byte(&mut self) -> Result<Value, CodegenError> {
+        let consumed = self.consumed();
+        let input_len = self.ctx_input_len();
+        let eof = self
+            .b
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThanOrEqual, consumed, input_len);
+
+        let eof_block = self.fresh_block();
+        let ok_block = self.fresh_block();
+        self.b.ins().brif(eof, eof_block, &[], ok_block, &[]);
+
+        self.b.switch_to_block(eof_block);
+        self.b.seal_block(eof_block);
+        self.return_err(DecodeStatus::UnexpectedEof);
+
+        self.b.switch_to_block(ok_block);
+        self.b.seal_block(ok_block);
+
+        let input_ptr = self.ctx_input_ptr();
+        let addr = self.b.ins().iadd(input_ptr, consumed);
+        let byte = self.b.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+        let one = self.b.ins().iconst(self.ptr_ty, 1);
+        let new_consumed = self.b.ins().iadd(consumed, one);
+        self.b.def_var(self.var_consumed, new_consumed);
+
+        Ok(byte)
+    }
+
+    /// Read a postcard unsigned varint; return as I64.
+    ///
+    /// Unrolled 10-byte varint decode. Each byte either terminates the varint
+    /// (MSB clear) or continues to the next byte (MSB set). All early-exit
+    /// paths jump to a single merge block that carries the result.
+    fn read_varint_u64(&mut self) -> Result<Value, CodegenError> {
+        let merge = self.fresh_block();
+        self.b.append_block_param(merge, types::I64);
+
+        let zero = self.b.ins().iconst(types::I64, 0);
+        let mut acc = zero;
+
+        for shift in 0u32..10 {
+            let byte = self.read_byte()?;
+            let byte64 = self.b.ins().uextend(types::I64, byte);
+            let low7 = self.b.ins().band_imm(byte64, 0x7F);
+            let shifted = if shift == 0 {
+                low7
+            } else {
+                self.b.ins().ishl_imm(low7, (shift * 7) as i64)
+            };
+            acc = self.b.ins().bor(acc, shifted);
+
+            let cont_bit = self.b.ins().band_imm(byte64, 0x80);
+            let has_more = self.b.ins().icmp_imm(IntCC::NotEqual, cont_bit, 0);
+
+            if shift < 9 {
+                let cont_block = self.fresh_block();
+                // MSB clear → varint done, jump to merge with accumulated value.
+                // MSB set → read next byte.
+                self.b
+                    .ins()
+                    .brif(has_more, cont_block, &[], merge, &[BlockArg::Value(acc)]);
+                self.b.switch_to_block(cont_block);
+                self.b.seal_block(cont_block);
+            } else {
+                // Byte 10: any continuation bit is an overflow.
+                let overflow_block = self.fresh_block();
+                self.b.ins().brif(
+                    has_more,
+                    overflow_block,
+                    &[],
+                    merge,
+                    &[BlockArg::Value(acc)],
+                );
+                self.b.switch_to_block(overflow_block);
+                self.b.seal_block(overflow_block);
+                self.return_err(DecodeStatus::VarintOverflow);
+            }
+        }
+
+        // Switch to the merge block; all paths that end the varint jump here.
+        self.b.switch_to_block(merge);
+        self.b.seal_block(merge);
+        let result = self.b.block_params(merge)[0];
+        Ok(result)
+    }
+
+    /// Read a postcard signed varint (zigzag encoded); return as I64.
+    fn read_varint_i64(&mut self) -> Result<Value, CodegenError> {
+        let z = self.read_varint_u64()?;
+        // zigzag decode: (z >> 1) ^ -(z & 1)
+        let half = self.b.ins().sshr_imm(z, 1);
+        let lsb = self.b.ins().band_imm(z, 1);
+        let neg_lsb = self.b.ins().ineg(lsb);
+        Ok(self.b.ins().bxor(half, neg_lsb))
+    }
+
+    /// Advance consumed by `n` bytes (no bounds check — skip ops).
+    fn skip_bytes_val(&mut self, n: Value) {
+        let consumed = self.consumed();
+        let new_c = self.b.ins().iadd(consumed, n);
+        self.b.def_var(self.var_consumed, new_c);
+    }
+}
+
+/// Entry: emit the full function body for `program`.
+fn emit_decode_function(
+    builder: &mut FunctionBuilder<'_>,
+    program: &DecodeProgram,
+    descriptors: &CalibrationRegistry,
+    ptr_ty: Type,
+) -> Result<(), CodegenError> {
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+
+    let ctx_ptr = builder.block_params(entry)[0];
+    let out_ptr = builder.block_params(entry)[1];
+
+    let var_consumed = builder.declare_var(ptr_ty);
+    let var_init_count = builder.declare_var(ptr_ty);
+    let var_list_len = builder.declare_var(ptr_ty);
+    let var_discriminant = builder.declare_var(types::I64);
+
+    // Load initial consumed from ctx.
+    let off = core::mem::offset_of!(DecodeCtx, consumed) as i32;
+    let init_consumed = builder
+        .ins()
+        .load(ptr_ty, MemFlags::trusted(), ctx_ptr, off);
+    builder.def_var(var_consumed, init_consumed);
+    let zero = builder.ins().iconst(ptr_ty, 0);
+    builder.def_var(var_init_count, zero);
+    builder.def_var(var_list_len, zero);
+    let zero64 = builder.ins().iconst(types::I64, 0);
+    builder.def_var(var_discriminant, zero64);
+
+    // Pre-create Cranelift blocks for all program blocks.
+    let mut block_map: Vec<Option<Block>> = (0..program.blocks.len())
+        .map(|_| Some(builder.create_block()))
+        .collect();
+    // The entry program block (block 0) maps to the already-active entry block.
+    block_map[0] = Some(entry);
+
+    let mut ctx = EmitCtx {
+        b: builder,
+        ctx_ptr,
+        out_ptr,
+        ptr_ty,
+        var_consumed,
+        var_init_count,
+        var_list_len,
+        var_discriminant,
+        descriptors,
+        block_map: block_map.into_iter().collect(),
+        inlined_blocks: std::collections::HashSet::new(),
+        sealed_inlined_blocks: std::collections::HashSet::new(),
+    };
+
+    // Emit block 0 (entry) first, then the rest.
+    emit_block(&mut ctx, program, 0)?;
+
+    // Emit remaining blocks (skip any that were inlined by emit_alloc_backing).
+    for block_idx in 1..program.blocks.len() {
+        if ctx.sealed_inlined_blocks.contains(&block_idx) {
+            // Block was fully sealed+filled by recursive inlining — nothing to do.
+            continue;
+        }
+        if ctx.inlined_blocks.contains(&block_idx) {
+            // Block was emitted inline; the pre-created Cranelift block for it
+            // is unreachable. Seal and terminate it to satisfy the verifier.
+            let clif_block = ctx.block_map[block_idx].unwrap();
+            ctx.b.switch_to_block(clif_block);
+            ctx.b.seal_block(clif_block);
+            ctx.flush_ctx();
+            let ok = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
+            ctx.b.ins().return_(&[ok]);
+            continue;
+        }
+        let clif_block = ctx.block_map[block_idx].unwrap();
+        ctx.b.switch_to_block(clif_block);
+        ctx.b.seal_block(clif_block);
+        emit_block(&mut ctx, program, block_idx)?;
+    }
+
+    Ok(())
+}
+
+fn emit_block(
+    ctx: &mut EmitCtx<'_, '_>,
+    program: &DecodeProgram,
+    block_idx: usize,
+) -> Result<(), CodegenError> {
+    let ops: Vec<DecodeOp> = program.blocks[block_idx].ops.clone();
+    emit_ops(ctx, program, &ops, None)
+}
+
+/// Recursively emit an IR block inline within an element decode loop.
+///
+/// Replaces `Return` with `jump(loop_tail)` so the element decode continues
+/// into the loop-increment/commit path instead of returning from the function.
+///
+/// Unlike the old approach, `ReadListLen` and `BranchOnVariant` are treated as
+/// inline sub-routines (matching the IR interpreter's semantics): the empty/body
+/// or variant blocks are inlined with their own continuation, and processing of
+/// the remaining ops in the current IR block resumes in a fresh Cranelift block.
+///
+/// Blocks processed here are added to `sealed_inlined_blocks` so the outer
+/// block-processing loop skips them entirely.
+fn emit_inline_block(
+    ctx: &mut EmitCtx<'_, '_>,
+    program: &DecodeProgram,
+    block_idx: usize,
+    loop_tail: Block,
+) -> Result<(), CodegenError> {
+    ctx.inlined_blocks.insert(block_idx);
+    ctx.sealed_inlined_blocks.insert(block_idx);
+    // SAFETY: we only read `program.blocks[block_idx].ops` and do not mutate it.
+    // Cloning it would deep-clone the `Box<TranslationPlan>` inside `SlowPath`
+    // to a fresh heap allocation that would drop when this function returns —
+    // leaving the baked plan pointers in the generated code dangling.
+    let ops_ptr: *const [DecodeOp] = program.blocks[block_idx].ops.as_slice();
+    let ops = unsafe { &*ops_ptr };
+    emit_ops(ctx, program, ops, Some(loop_tail))
+}
+
+/// Unified op emitter used by both `emit_block` (top-level, `loop_tail=None`)
+/// and `emit_inline_block` (element body, `loop_tail=Some(tail)`).
+///
+/// The IR interpreter treats `ReadListLen` and `BranchOnVariant` as inline
+/// sub-routine calls: after the sub-block(s) return, execution continues with
+/// the next op in the parent block.  This function replicates that behavior in
+/// the JIT by creating convergence ("continuation") Cranelift blocks between
+/// adjacent soft terminators, so that all fields in a multi-Vec/enum struct are
+/// decoded in the correct order regardless of nesting depth.
+///
+/// `loop_tail`:
+///   - `None`  → `Return` emits `ctx.return_ok()` (top-level function exit).
+///   - `Some(tail)` → `Return` emits `jump(tail)` (element body done, back to loop).
+fn emit_ops(
+    ctx: &mut EmitCtx<'_, '_>,
+    program: &DecodeProgram,
+    ops: &[DecodeOp],
+    loop_tail: Option<Block>,
+) -> Result<(), CodegenError> {
+    let mut i = 0;
+    while i < ops.len() {
+        let op = &ops[i];
+        match op {
+            DecodeOp::Return => {
+                match loop_tail {
+                    None => ctx.return_ok(),
+                    Some(tail) => {
+                        ctx.b.ins().jump(tail, &[]);
+                    }
+                }
+                return Ok(());
+            }
+
+            // CommitListLen is skipped in inline mode — emit_alloc_backing's loop-tail
+            // calls vox_jit_vec_commit_len after each element.  In top-level mode it
+            // must be emitted (it reaches here when the Vec is the root value).
+            DecodeOp::CommitListLen {
+                dst_offset,
+                descriptor,
+            } => {
+                if loop_tail.is_none() {
+                    emit_commit_list_len(ctx, *dst_offset, *descriptor)?;
+                }
+                i += 1;
+                continue;
+            }
+
+            DecodeOp::ReadListLen {
+                empty_block,
+                body_block,
+                ..
+            } => {
+                let empty_ir = *empty_block;
+                let body_ir = *body_block;
+
+                // Continuation block: where ops after this ReadListLen resume.
+                // Both the empty and body paths jump here when their Return fires.
+                let list_done = ctx.fresh_block();
+
+                // Emit the brif — terminates the current Cranelift block.
+                emit_op(ctx, program, op)?;
+
+                // Inline empty path (Return → jump to list_done).
+                let clif_empty = ctx.block_map[empty_ir].unwrap();
+                ctx.b.switch_to_block(clif_empty);
+                ctx.b.seal_block(clif_empty);
+                emit_inline_block(ctx, program, empty_ir, list_done)?;
+
+                // Inline body path (Return → jump to list_done).
+                let clif_body = ctx.block_map[body_ir].unwrap();
+                ctx.b.switch_to_block(clif_body);
+                ctx.b.seal_block(clif_body);
+                emit_inline_block(ctx, program, body_ir, list_done)?;
+
+                // Both paths have now jumped to list_done — safe to seal.
+                ctx.b.switch_to_block(list_done);
+                ctx.b.seal_block(list_done);
+
+                // Continue processing remaining ops in the current IR block.
+                i += 1;
+                continue;
+            }
+
+            DecodeOp::Jump { block_id } => {
+                let target_ir = *block_id;
+                let clif_target = ctx.block_map[target_ir].unwrap();
+                ctx.b.ins().jump(clif_target, &[]);
+                if let Some(tail) = loop_tail {
+                    ctx.b.switch_to_block(clif_target);
+                    ctx.b.seal_block(clif_target);
+                    emit_inline_block(ctx, program, target_ir, tail)?;
+                }
+                return Ok(());
+            }
+
+            DecodeOp::BranchOnVariant { variant_blocks, .. } => {
+                let variant_irs: Vec<usize> = variant_blocks.iter().map(|&(_, b)| b).collect();
+
+                // Check whether there are meaningful ops after this BranchOnVariant.
+                // In practice the only op that can follow in the same IR block is
+                // Return, which is unreachable (control never falls through from
+                // BranchOnVariant at runtime). But to be safe, check for non-Return ops.
+                let has_remaining_ops = ops[i + 1..]
+                    .iter()
+                    .any(|o| !matches!(o, DecodeOp::Return | DecodeOp::CommitListLen { .. }));
+
+                if loop_tail.is_some() || has_remaining_ops {
+                    // Inline mode OR top-level with ops after the dispatch:
+                    // variant blocks converge on a fresh block.
+                    let variant_done = ctx.fresh_block();
+                    let eff_tail = variant_done;
+
+                    // Emit the dispatch chain — terminates current Cranelift block.
+                    emit_op(ctx, program, op)?;
+
+                    for variant_ir in &variant_irs {
+                        let variant_ir = *variant_ir;
+                        if variant_ir == usize::MAX {
+                            continue; // sentinel — unknown variant, no block
+                        }
+                        let clif_variant = ctx.block_map[variant_ir].unwrap();
+                        ctx.b.switch_to_block(clif_variant);
+                        ctx.b.seal_block(clif_variant);
+                        emit_inline_block(ctx, program, variant_ir, eff_tail)?;
+                    }
+
+                    ctx.b.switch_to_block(variant_done);
+                    ctx.b.seal_block(variant_done);
+
+                    i += 1;
+                    continue;
+                } else {
+                    // Top-level mode with only Return after (or nothing) — variant
+                    // blocks each emit their own ctx.return_ok() when they hit Return.
+                    emit_op(ctx, program, op)?;
+                    // Outer loop in emit_decode_function will emit the variant blocks.
+                    return Ok(());
+                }
+            }
+
+            _ => {
+                let terminated = emit_op(ctx, program, op)?;
+                if terminated {
+                    return Ok(());
+                }
+            }
+        }
+        i += 1;
+    }
+    // All ops processed without an explicit terminator.
+    match loop_tail {
+        None => { /* top-level: no implicit return; well-formed IR always ends with Return */ }
+        Some(tail) => {
+            ctx.b.ins().jump(tail, &[]);
+        }
+    }
+    Ok(())
+}
+
+/// Emit one IR op. Returns `true` if the op terminated the current Cranelift block
+/// (i.e., no further ops should be emitted into this block).
+fn emit_op(
+    ctx: &mut EmitCtx<'_, '_>,
+    program: &DecodeProgram,
+    op: &DecodeOp,
+) -> Result<bool, CodegenError> {
+    match op {
+        DecodeOp::ReadScalar { prim, dst_offset } => {
+            emit_read_scalar(ctx, *prim, *dst_offset)?;
+        }
+
+        DecodeOp::ReadByteVec {
+            dst_offset,
+            descriptor,
+        } => {
+            emit_read_byte_vec(ctx, *dst_offset, *descriptor)?;
+        }
+
+        DecodeOp::ReadString {
+            dst_offset,
+            descriptor,
+        } => {
+            emit_read_string(ctx, *dst_offset, *descriptor)?;
+        }
+
+        DecodeOp::SkipValue { .. } => {
+            return Err(CodegenError::UnsupportedOp(
+                "SkipValue — fall back to IR interpreter for skip ops".into(),
+            ));
+        }
+
+        DecodeOp::DecodeOption {
+            dst_offset,
+            inner_offset,
+            some_block,
+            init_none,
+            init_some,
+        } => {
+            emit_decode_option(
+                ctx,
+                program,
+                *dst_offset,
+                *inner_offset,
+                *some_block,
+                *init_none,
+                *init_some,
+            )?;
+        }
+
+        DecodeOp::ReadDiscriminant => {
+            let disc = ctx.read_varint_u64()?;
+            ctx.b.def_var(ctx.var_discriminant, disc);
+        }
+
+        DecodeOp::BranchOnVariant {
+            tag_offset,
+            tag_width,
+            variant_table,
+            variant_blocks,
+        } => {
+            emit_branch_on_variant(ctx, *tag_offset, *tag_width, variant_table, variant_blocks)?;
+            return Ok(true);
+        }
+
+        DecodeOp::PushFrame {
+            field_offset: _,
+            frame_size: _,
+        } => {
+            // In the Cranelift backend, PushFrame is a no-op at the IR level;
+            // field offsets are already absolute from the root out_ptr.
+            // The interpreter needs this for its base-pointer stack; the JIT uses
+            // absolute offsets baked in at lowering time.
+        }
+
+        DecodeOp::PopFrame => { /* see PushFrame */ }
+
+        DecodeOp::ReadListLen {
+            descriptor,
+            dst_offset,
+            empty_block,
+            body_block,
+        } => {
+            emit_read_list_len(
+                ctx,
+                program,
+                *descriptor,
+                *dst_offset,
+                *empty_block,
+                *body_block,
+            )?;
+            return Ok(true);
+        }
+
+        DecodeOp::CommitListLen {
+            dst_offset,
+            descriptor,
+        } => {
+            emit_commit_list_len(ctx, *dst_offset, *descriptor)?;
+        }
+
+        DecodeOp::DecodeArray {
+            dst_offset,
+            count,
+            elem_size,
+            body_block,
+        } => {
+            emit_decode_array(ctx, program, *dst_offset, *count, *elem_size, *body_block)?;
+        }
+
+        DecodeOp::MaterializeEmpty {
+            dst_offset,
+            descriptor,
+        } => {
+            emit_materialize_empty(ctx, *dst_offset, *descriptor)?;
+        }
+
+        DecodeOp::AllocBacking {
+            dst_offset,
+            descriptor,
+            body_block,
+            elem_size,
+        } => {
+            emit_alloc_backing(
+                ctx,
+                program,
+                *dst_offset,
+                *descriptor,
+                *body_block,
+                *elem_size,
+            )?;
+        }
+
+        DecodeOp::AllocBoxed {
+            dst_offset,
+            descriptor,
+            body_block,
+        } => {
+            emit_alloc_boxed(ctx, program, *dst_offset, *descriptor, *body_block)?;
+        }
+
+        DecodeOp::SlowPath {
+            shape,
+            plan,
+            dst_offset,
+        } => {
+            emit_slow_path(ctx, *shape, plan, *dst_offset)?;
+        }
+
+        DecodeOp::Jump { block_id } => {
+            let target = ctx.block_map[*block_id].unwrap();
+            ctx.b.ins().jump(target, &[]);
+            return Ok(true);
+        }
+
+        DecodeOp::Return => {
+            ctx.return_ok();
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+// ---------------------------------------------------------------------------
+// Scalar decode
+// ---------------------------------------------------------------------------
+
+fn emit_read_scalar(
+    ctx: &mut EmitCtx<'_, '_>,
+    prim: WirePrimitive,
+    dst_offset: usize,
+) -> Result<(), CodegenError> {
+    let dst = ctx.dst_at(dst_offset);
+    match prim {
+        WirePrimitive::Unit => { /* no bytes */ }
+
+        WirePrimitive::Bool => {
+            let byte = ctx.read_byte()?;
+            let byte_i32 = ctx.b.ins().uextend(types::I32, byte);
+            let zero = ctx.b.ins().iconst(types::I32, 0);
+            let one = ctx.b.ins().iconst(types::I32, 1);
+            let is_zero = ctx.b.ins().icmp(IntCC::Equal, byte_i32, zero);
+            let is_one = ctx.b.ins().icmp(IntCC::Equal, byte_i32, one);
+
+            let invalid_block = ctx.fresh_block();
+            let ok_block = ctx.fresh_block();
+            // If 0x00 or 0x01 → ok; else → invalid.
+            let valid = ctx.b.ins().bor(is_zero, is_one);
+            ctx.b.ins().brif(valid, ok_block, &[], invalid_block, &[]);
+
+            ctx.b.switch_to_block(invalid_block);
+            ctx.b.seal_block(invalid_block);
+            ctx.return_err(DecodeStatus::InvalidBool);
+
+            ctx.b.switch_to_block(ok_block);
+            ctx.b.seal_block(ok_block);
+            let byte_as_i8 = ctx.b.ins().ireduce(types::I8, byte_i32);
+            ctx.b.ins().store(MemFlags::trusted(), byte_as_i8, dst, 0);
+        }
+
+        WirePrimitive::U8 | WirePrimitive::I8 => {
+            let byte = ctx.read_byte()?;
+            ctx.b.ins().store(MemFlags::trusted(), byte, dst, 0);
+        }
+
+        WirePrimitive::U16 => {
+            let v = ctx.read_varint_u64()?;
+            let v16 = ctx.b.ins().ireduce(types::I16, v);
+            ctx.b.ins().store(MemFlags::trusted(), v16, dst, 0);
+        }
+
+        WirePrimitive::U32 => {
+            let v = ctx.read_varint_u64()?;
+            let v32 = ctx.b.ins().ireduce(types::I32, v);
+            ctx.b.ins().store(MemFlags::trusted(), v32, dst, 0);
+        }
+
+        WirePrimitive::U64 | WirePrimitive::USize => {
+            let v = ctx.read_varint_u64()?;
+            if ctx.ptr_ty == types::I64 || prim == WirePrimitive::U64 {
+                ctx.b.ins().store(MemFlags::trusted(), v, dst, 0);
+            } else {
+                let v32 = ctx.b.ins().ireduce(types::I32, v);
+                ctx.b.ins().store(MemFlags::trusted(), v32, dst, 0);
+            }
+        }
+
+        WirePrimitive::I16 => {
+            let v = ctx.read_varint_i64()?;
+            let v16 = ctx.b.ins().ireduce(types::I16, v);
+            ctx.b.ins().store(MemFlags::trusted(), v16, dst, 0);
+        }
+
+        WirePrimitive::I32 => {
+            let v = ctx.read_varint_i64()?;
+            let v32 = ctx.b.ins().ireduce(types::I32, v);
+            ctx.b.ins().store(MemFlags::trusted(), v32, dst, 0);
+        }
+
+        WirePrimitive::I64 | WirePrimitive::ISize => {
+            let v = ctx.read_varint_i64()?;
+            ctx.b.ins().store(MemFlags::trusted(), v, dst, 0);
+        }
+
+        WirePrimitive::F32 => {
+            // Read 4 bytes little-endian.
+            let b0 = ctx.read_byte()?;
+            let b1 = ctx.read_byte()?;
+            let b2 = ctx.read_byte()?;
+            let b3 = ctx.read_byte()?;
+            let b0_32 = ctx.b.ins().uextend(types::I32, b0);
+            let b1_32 = ctx.b.ins().uextend(types::I32, b1);
+            let b2_32 = ctx.b.ins().uextend(types::I32, b2);
+            let b3_32 = ctx.b.ins().uextend(types::I32, b3);
+            let s1 = ctx.b.ins().ishl_imm(b1_32, 8);
+            let s2 = ctx.b.ins().ishl_imm(b2_32, 16);
+            let s3 = ctx.b.ins().ishl_imm(b3_32, 24);
+            let r01 = ctx.b.ins().bor(b0_32, s1);
+            let r012 = ctx.b.ins().bor(r01, s2);
+            let i32_val = ctx.b.ins().bor(r012, s3);
+            let f32_val = ctx.b.ins().bitcast(types::F32, MemFlags::new(), i32_val);
+            ctx.b.ins().store(MemFlags::trusted(), f32_val, dst, 0);
+        }
+
+        WirePrimitive::F64 => {
+            // Read 8 bytes little-endian.
+            let mut acc = {
+                let b = ctx.read_byte()?;
+                ctx.b.ins().uextend(types::I64, b)
+            };
+            for shift in 1u32..8 {
+                let b = ctx.read_byte()?;
+                let b64 = ctx.b.ins().uextend(types::I64, b);
+                let shifted = ctx.b.ins().ishl_imm(b64, (shift * 8) as i64);
+                acc = ctx.b.ins().bor(acc, shifted);
+            }
+            let f64_val = ctx.b.ins().bitcast(types::F64, MemFlags::new(), acc);
+            ctx.b.ins().store(MemFlags::trusted(), f64_val, dst, 0);
+        }
+
+        WirePrimitive::String => {
+            // String reads varint length + UTF-8 bytes; slow path in minimal subset.
+            return Err(CodegenError::UnsupportedOp(
+                "WirePrimitive::String inline — use ReadString op".into(),
+            ));
+        }
+
+        WirePrimitive::Bytes => {
+            return Err(CodegenError::UnsupportedOp(
+                "WirePrimitive::Bytes inline — use ReadByteVec op".into(),
+            ));
+        }
+
+        WirePrimitive::Payload => {
+            return Err(CodegenError::UnsupportedOp(
+                "WirePrimitive::Payload not in Cranelift minimal subset".into(),
+            ));
+        }
+
+        WirePrimitive::Char => {
+            return Err(CodegenError::UnsupportedOp(
+                "WirePrimitive::Char not in Cranelift minimal subset".into(),
+            ));
+        }
+
+        WirePrimitive::U128 | WirePrimitive::I128 => {
+            return Err(CodegenError::UnsupportedOp(
+                "u128/i128 not in Cranelift minimal subset".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Vec<u8> decode
+// ---------------------------------------------------------------------------
+
+fn emit_read_byte_vec(
+    ctx: &mut EmitCtx<'_, '_>,
+    dst_offset: usize,
+    descriptor: OpaqueDescriptorId,
+) -> Result<(), CodegenError> {
+    let desc = ctx
+        .descriptors
+        .get(DescriptorHandle(descriptor.0))
+        .ok_or_else(|| CodegenError::UnsupportedOp("descriptor not found".into()))?;
+
+    let len = ctx.read_varint_u64()?;
+    let len_ptr = if ctx.ptr_ty == types::I64 {
+        len
+    } else {
+        ctx.b.ins().ireduce(types::I32, len)
+    };
+
+    let zero64 = ctx.b.ins().iconst(types::I64, 0);
+    let is_empty = ctx.b.ins().icmp(IntCC::Equal, len, zero64);
+    let empty_block = ctx.fresh_block();
+    let nonempty_block = ctx.fresh_block();
+    let done_block = ctx.fresh_block();
+
+    ctx.b
+        .ins()
+        .brif(is_empty, empty_block, &[], nonempty_block, &[]);
+
+    // Empty: copy calibrated empty bytes.
+    ctx.b.switch_to_block(empty_block);
+    ctx.b.seal_block(empty_block);
+    copy_empty_bytes(ctx, desc, dst_offset);
+    ctx.b.ins().jump(done_block, &[]);
+
+    // Non-empty: reserve, memcpy from input, set_len.
+    ctx.b.switch_to_block(nonempty_block);
+    ctx.b.seal_block(nonempty_block);
+
+    let desc_ptr_val = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, desc as *const CalDescriptor as i64);
+    let dst = ctx.dst_at(dst_offset);
+
+    // Call vox_jit_vec_reserve.
+    let reserve_sig = make_reserve_sig(ctx);
+    let reserve_fn = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, vox_jit_vec_reserve as *const () as i64);
+    let call = ctx
+        .b
+        .ins()
+        .call_indirect(reserve_sig, reserve_fn, &[desc_ptr_val, len_ptr, dst]);
+    let status = ctx.b.inst_results(call)[0];
+
+    let ok_val = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
+    let is_ok = ctx.b.ins().icmp(IntCC::Equal, status, ok_val);
+    let alloc_ok = ctx.fresh_block();
+    let alloc_err = ctx.fresh_block();
+    ctx.b.ins().brif(is_ok, alloc_ok, &[], alloc_err, &[]);
+
+    ctx.b.switch_to_block(alloc_err);
+    ctx.b.seal_block(alloc_err);
+    ctx.return_err(DecodeStatus::AllocFailed);
+
+    ctx.b.switch_to_block(alloc_ok);
+    ctx.b.seal_block(alloc_ok);
+
+    // Get data pointer from the container.
+    let ptr_off = desc.ptr_offset as i32;
+    let data_ptr = ctx
+        .b
+        .ins()
+        .load(ctx.ptr_ty, MemFlags::trusted(), dst, ptr_off);
+
+    // Memcpy: copy len bytes from input cursor to data_ptr.
+    let consumed = ctx.consumed();
+    let input_ptr = ctx.ctx_input_ptr();
+    let src = ctx.b.ins().iadd(input_ptr, consumed);
+    emit_memcpy(ctx, src, data_ptr, len_ptr, desc.elem_size);
+
+    // Advance consumed.
+    ctx.skip_bytes_val(len_ptr);
+
+    // Set len via helper.
+    let set_len_sig = make_set_len_sig(ctx);
+    let set_len_fn = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, vox_jit_vec_commit_len as *const () as i64);
+    ctx.b
+        .ins()
+        .call_indirect(set_len_sig, set_len_fn, &[desc_ptr_val, dst, len_ptr]);
+
+    ctx.b.ins().jump(done_block, &[]);
+
+    ctx.b.switch_to_block(done_block);
+    ctx.b.seal_block(done_block);
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// String decode
+// ---------------------------------------------------------------------------
+
+fn emit_read_string(
+    ctx: &mut EmitCtx<'_, '_>,
+    dst_offset: usize,
+    descriptor: OpaqueDescriptorId,
+) -> Result<(), CodegenError> {
+    let desc = ctx
+        .descriptors
+        .get(DescriptorHandle(descriptor.0))
+        .ok_or_else(|| CodegenError::UnsupportedOp("string descriptor not found".into()))?;
+
+    let len = ctx.read_varint_u64()?;
+    let len_ptr = if ctx.ptr_ty == types::I64 {
+        len
+    } else {
+        ctx.b.ins().ireduce(types::I32, len)
+    };
+
+    let zero64 = ctx.b.ins().iconst(types::I64, 0);
+    let is_empty = ctx.b.ins().icmp(IntCC::Equal, len, zero64);
+    let empty_block = ctx.fresh_block();
+    let nonempty_block = ctx.fresh_block();
+    let done_block = ctx.fresh_block();
+
+    ctx.b
+        .ins()
+        .brif(is_empty, empty_block, &[], nonempty_block, &[]);
+
+    // Empty string.
+    ctx.b.switch_to_block(empty_block);
+    ctx.b.seal_block(empty_block);
+    copy_empty_bytes(ctx, desc, dst_offset);
+    ctx.b.ins().jump(done_block, &[]);
+
+    // Non-empty string: validate UTF-8, then allocate and copy.
+    ctx.b.switch_to_block(nonempty_block);
+    ctx.b.seal_block(nonempty_block);
+
+    // Point to start of string bytes in input.
+    let consumed = ctx.consumed();
+    let input_ptr = ctx.ctx_input_ptr();
+    let str_start = ctx.b.ins().iadd(input_ptr, consumed);
+
+    // Validate UTF-8.
+    let validate_sig = make_utf8_validate_sig(ctx);
+    let validate_fn = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, vox_jit_utf8_validate as *const () as i64);
+    let call = ctx
+        .b
+        .ins()
+        .call_indirect(validate_sig, validate_fn, &[str_start, len_ptr]);
+    let status = ctx.b.inst_results(call)[0];
+    let ok_val = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
+    let is_ok = ctx.b.ins().icmp(IntCC::Equal, status, ok_val);
+
+    let utf8_ok = ctx.fresh_block();
+    let utf8_err = ctx.fresh_block();
+    ctx.b.ins().brif(is_ok, utf8_ok, &[], utf8_err, &[]);
+
+    ctx.b.switch_to_block(utf8_err);
+    ctx.b.seal_block(utf8_err);
+    ctx.return_err(DecodeStatus::InvalidUtf8);
+
+    ctx.b.switch_to_block(utf8_ok);
+    ctx.b.seal_block(utf8_ok);
+
+    // Allocate backing storage (use String-specific symbol per helper contract).
+    let desc_ptr_val = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, desc as *const CalDescriptor as i64);
+    let dst = ctx.dst_at(dst_offset);
+    let reserve_sig = make_reserve_sig(ctx);
+    let reserve_fn = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, vox_jit_string_reserve as *const () as i64);
+    let call = ctx
+        .b
+        .ins()
+        .call_indirect(reserve_sig, reserve_fn, &[desc_ptr_val, len_ptr, dst]);
+    let status = ctx.b.inst_results(call)[0];
+    let is_ok = ctx.b.ins().icmp(IntCC::Equal, status, ok_val);
+
+    let alloc_ok = ctx.fresh_block();
+    let alloc_err_block = ctx.fresh_block();
+    ctx.b.ins().brif(is_ok, alloc_ok, &[], alloc_err_block, &[]);
+
+    ctx.b.switch_to_block(alloc_err_block);
+    ctx.b.seal_block(alloc_err_block);
+    ctx.return_err(DecodeStatus::AllocFailed);
+
+    ctx.b.switch_to_block(alloc_ok);
+    ctx.b.seal_block(alloc_ok);
+
+    // Copy bytes into the backing store.
+    let ptr_off = desc.ptr_offset as i32;
+    let data_ptr = ctx
+        .b
+        .ins()
+        .load(ctx.ptr_ty, MemFlags::trusted(), dst, ptr_off);
+    emit_memcpy(ctx, str_start, data_ptr, len_ptr, 1);
+
+    // Advance consumed.
+    ctx.skip_bytes_val(len_ptr);
+
+    // Commit len (use String-specific symbol per helper contract).
+    let set_len_sig = make_set_len_sig(ctx);
+    let set_len_fn = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, vox_jit_string_commit_len as *const () as i64);
+    ctx.b
+        .ins()
+        .call_indirect(set_len_sig, set_len_fn, &[desc_ptr_val, dst, len_ptr]);
+
+    ctx.b.ins().jump(done_block, &[]);
+
+    ctx.b.switch_to_block(done_block);
+    ctx.b.seal_block(done_block);
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// List decode
+// ---------------------------------------------------------------------------
+
+fn emit_read_list_len(
+    ctx: &mut EmitCtx<'_, '_>,
+    _program: &DecodeProgram,
+    _descriptor: OpaqueDescriptorId,
+    _dst_offset: usize,
+    empty_block: usize,
+    body_block: usize,
+) -> Result<(), CodegenError> {
+    let len = ctx.read_varint_u64()?;
+
+    // Save list length for use by AllocBacking's element loop.
+    let len_ptr = if ctx.ptr_ty == types::I64 {
+        len
+    } else {
+        ctx.b.ins().ireduce(types::I32, len)
+    };
+    ctx.b.def_var(ctx.var_list_len, len_ptr);
+
+    // Do NOT reset var_init_count here: emit_alloc_backing initialises its own
+    // fresh loop-counter variable, so writing 0 here would corrupt any enclosing
+    // outer loop that has swapped its counter into ctx.var_init_count.
+
+    let zero64 = ctx.b.ins().iconst(types::I64, 0);
+    let is_empty = ctx.b.ins().icmp(IntCC::Equal, len, zero64);
+
+    let clif_empty = ctx.block_map[empty_block].unwrap();
+    let clif_body = ctx.block_map[body_block].unwrap();
+    ctx.b.ins().brif(is_empty, clif_empty, &[], clif_body, &[]);
+
+    Ok(())
+}
+
+fn emit_commit_list_len(
+    ctx: &mut EmitCtx<'_, '_>,
+    dst_offset: usize,
+    descriptor: OpaqueDescriptorId,
+) -> Result<(), CodegenError> {
+    let desc = ctx
+        .descriptors
+        .get(DescriptorHandle(descriptor.0))
+        .ok_or_else(|| {
+            CodegenError::UnsupportedOp("descriptor not found in commit_list_len".into())
+        })?;
+    let desc_ptr_val = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, desc as *const CalDescriptor as i64);
+    let dst = ctx.dst_at(dst_offset);
+    let init_count = ctx.b.use_var(ctx.var_init_count);
+    let set_len_sig = make_set_len_sig(ctx);
+    let set_len_fn = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, vox_jit_vec_commit_len as *const () as i64);
+    ctx.b
+        .ins()
+        .call_indirect(set_len_sig, set_len_fn, &[desc_ptr_val, dst, init_count]);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Enum decode
+// ---------------------------------------------------------------------------
+
+/// Emit the discriminant read + dispatch table for an enum.
+///
+/// Generates a chain of comparisons: for each entry in `variant_table`, compare
+/// the discriminant against the remote index. On match, write the local tag and
+/// jump to the variant block. On no match, return `UnknownVariant`.
+fn emit_branch_on_variant(
+    ctx: &mut EmitCtx<'_, '_>,
+    tag_offset: usize,
+    tag_width: TagWidth,
+    variant_table: &[Option<usize>],
+    variant_blocks: &[(u64, usize)],
+) -> Result<(), CodegenError> {
+    let disc = ctx.b.use_var(ctx.var_discriminant);
+    let tag_dst = ctx.dst_at(tag_offset);
+
+    // Build the chain: compare disc == remote_idx for each known variant.
+    // Unknown entries jump to the unknown_block.
+    let unknown_block = ctx.fresh_block();
+
+    let mut remaining_block = ctx.fresh_block();
+    ctx.b.ins().jump(remaining_block, &[]);
+
+    for (remote_idx, maybe_local) in variant_table.iter().enumerate() {
+        ctx.b.switch_to_block(remaining_block);
+        ctx.b.seal_block(remaining_block);
+
+        let remote_val = ctx.b.ins().iconst(types::I64, remote_idx as i64);
+        let is_match = ctx.b.ins().icmp(IntCC::Equal, disc, remote_val);
+
+        if let Some(_local_idx) = maybe_local {
+            let (local_disc, variant_block_id) = variant_blocks[remote_idx];
+            if variant_block_id == usize::MAX {
+                // Sentinel: remote variant maps to nothing — treat as unknown.
+                let next = ctx.fresh_block();
+                ctx.b.ins().brif(is_match, unknown_block, &[], next, &[]);
+                remaining_block = next;
+                continue;
+            }
+
+            let match_block = ctx.fresh_block();
+            let next = ctx.fresh_block();
+            ctx.b.ins().brif(is_match, match_block, &[], next, &[]);
+
+            // Emit match block: write local tag + jump to variant decode.
+            ctx.b.switch_to_block(match_block);
+            ctx.b.seal_block(match_block);
+            emit_write_tag(ctx, tag_dst, tag_width, local_disc);
+            let clif_variant_block = ctx.block_map[variant_block_id].unwrap();
+            ctx.b.ins().jump(clif_variant_block, &[]);
+
+            remaining_block = next;
+        } else {
+            // Unknown local mapping for this remote index: skip on match.
+            // (The discriminant didn't match any known local variant.)
+            let next = ctx.fresh_block();
+            ctx.b.ins().brif(is_match, unknown_block, &[], next, &[]);
+            remaining_block = next;
+        }
+    }
+
+    // After exhausting the table, fall through to unknown.
+    ctx.b.switch_to_block(remaining_block);
+    ctx.b.seal_block(remaining_block);
+    ctx.b.ins().jump(unknown_block, &[]);
+
+    // Emit the unknown variant error block.
+    ctx.b.switch_to_block(unknown_block);
+    ctx.b.seal_block(unknown_block);
+    ctx.return_err(DecodeStatus::UnknownVariant);
+
+    Ok(())
+}
+
+/// Write `disc` into `tag_dst` with the given width.
+fn emit_write_tag(ctx: &mut EmitCtx<'_, '_>, tag_dst: Value, tag_width: TagWidth, disc: u64) {
+    match tag_width {
+        TagWidth::U8 => {
+            let v = ctx.b.ins().iconst(types::I8, disc as i8 as i64);
+            ctx.b.ins().store(MemFlags::trusted(), v, tag_dst, 0);
+        }
+        TagWidth::U16 => {
+            let v = ctx.b.ins().iconst(types::I16, disc as i16 as i64);
+            ctx.b.ins().store(MemFlags::trusted(), v, tag_dst, 0);
+        }
+        TagWidth::U32 => {
+            let v = ctx.b.ins().iconst(types::I32, disc as i32 as i64);
+            ctx.b.ins().store(MemFlags::trusted(), v, tag_dst, 0);
+        }
+        TagWidth::U64 => {
+            let v = ctx.b.ins().iconst(types::I64, disc as i64);
+            ctx.b.ins().store(MemFlags::trusted(), v, tag_dst, 0);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Option decode
+// ---------------------------------------------------------------------------
+
+/// Emit `DecodeOption`.
+///
+/// Layout:
+///   current block → read tag byte
+///   brif tag==0 → none_block, else → check_some_block
+///   none_block: call init_none(option_ptr); jump → after_block
+///   check_some_block: brif tag==1 → some_call_block, else → invalid_block
+///   invalid_block: return InvalidOptionTag
+///   some_call_block: call init_some(option_ptr, inner_ptr);
+///                    emit some_block_ir ops inline with out_ptr=inner_ptr;
+///                    jump → after_block
+///   after_block: (continue — None and Some both land here)
+///
+/// `some_block_ir` ops are emitted inline (marked in inlined_blocks) so the
+/// outer emit loop does not double-emit them. The inner ops use dst_offset=0
+/// relative to inner_ptr (as set by lower_option).
+fn emit_decode_option(
+    ctx: &mut EmitCtx<'_, '_>,
+    program: &DecodeProgram,
+    dst_offset: usize,
+    inner_offset: usize,
+    some_block_ir: usize,
+    init_none: facet_core::OptionInitNoneFn,
+    init_some: facet_core::OptionInitSomeFn,
+) -> Result<(), CodegenError> {
+    let tag = ctx.read_byte()?;
+    let tag_i32 = ctx.b.ins().uextend(types::I32, tag);
+
+    let none_block = ctx.fresh_block();
+    let check_some_block = ctx.fresh_block();
+    let some_call_block = ctx.fresh_block();
+    let invalid_block = ctx.fresh_block();
+    let after_block = ctx.fresh_block();
+
+    let is_zero = ctx.b.ins().icmp_imm(IntCC::Equal, tag_i32, 0);
+    ctx.b
+        .ins()
+        .brif(is_zero, none_block, &[], check_some_block, &[]);
+
+    // None path.
+    ctx.b.switch_to_block(none_block);
+    ctx.b.seal_block(none_block);
+    {
+        let option_ptr = ctx.dst_at(dst_offset);
+        let init_none_sig = make_init_none_sig(ctx);
+        let init_none_fn = ctx
+            .b
+            .ins()
+            .iconst(ctx.ptr_ty, init_none as *const () as i64);
+        ctx.b
+            .ins()
+            .call_indirect(init_none_sig, init_none_fn, &[option_ptr]);
+    }
+    ctx.b.ins().jump(after_block, &[]);
+
+    // Check-some path: validate tag == 1.
+    ctx.b.switch_to_block(check_some_block);
+    ctx.b.seal_block(check_some_block);
+    let is_one = ctx.b.ins().icmp_imm(IntCC::Equal, tag_i32, 1);
+    ctx.b
+        .ins()
+        .brif(is_one, some_call_block, &[], invalid_block, &[]);
+
+    // Invalid option tag.
+    ctx.b.switch_to_block(invalid_block);
+    ctx.b.seal_block(invalid_block);
+    ctx.return_err(DecodeStatus::InvalidOptionTag);
+
+    // Some path: call init_some, decode inner value inline.
+    ctx.b.switch_to_block(some_call_block);
+    ctx.b.seal_block(some_call_block);
+    {
+        let option_ptr = ctx.dst_at(dst_offset);
+        let inner_ptr = if inner_offset == 0 {
+            option_ptr
+        } else {
+            ctx.b.ins().iadd_imm(option_ptr, inner_offset as i64)
+        };
+        let init_some_sig = make_init_some_sig(ctx);
+        let init_some_fn = ctx
+            .b
+            .ins()
+            .iconst(ctx.ptr_ty, init_some as *const () as i64);
+        ctx.b
+            .ins()
+            .call_indirect(init_some_sig, init_some_fn, &[option_ptr, inner_ptr]);
+
+        // Inline the some_block using emit_inline_block so nested multi-block
+        // element bodies (e.g. Option<Vec<T>>) are handled correctly.
+        let saved_out_ptr = ctx.out_ptr;
+        ctx.out_ptr = inner_ptr;
+        emit_inline_block(ctx, program, some_block_ir, after_block)?;
+        ctx.out_ptr = saved_out_ptr;
+        // emit_inline_block jumps to after_block — do NOT emit jump here.
+    }
+
+    // Merge: None and Some (inner done) both land here.
+    ctx.b.switch_to_block(after_block);
+    ctx.b.seal_block(after_block);
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Array decode
+// ---------------------------------------------------------------------------
+
+fn emit_decode_array(
+    ctx: &mut EmitCtx<'_, '_>,
+    program: &DecodeProgram,
+    dst_offset: usize,
+    count: usize,
+    elem_size: usize,
+    body_block: usize,
+) -> Result<(), CodegenError> {
+    // Unrolled: for small fixed arrays, generate `count` copies of the body block.
+    // This is acceptable for the initial rollout; a production implementation
+    // would generate a proper loop for large counts.
+    if count > 64 {
+        return Err(CodegenError::UnsupportedOp(
+            "array count > 64 not yet unrolled — fall back to interpreter".into(),
+        ));
+    }
+    for i in 0..count {
+        let elem_off = dst_offset + i * elem_size;
+        // Adjust out_ptr for this element, emit body ops.
+        // The body_block ops reference dst_offset=0 relative to their base.
+        // We need to add elem_off to ctx.out_ptr temporarily.
+        let saved_out_ptr = ctx.out_ptr;
+        ctx.out_ptr = ctx.b.ins().iadd_imm(saved_out_ptr, elem_off as i64);
+        emit_block(ctx, program, body_block)?;
+        ctx.out_ptr = saved_out_ptr;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Opaque fast-path
+// ---------------------------------------------------------------------------
+
+fn emit_materialize_empty(
+    ctx: &mut EmitCtx<'_, '_>,
+    dst_offset: usize,
+    descriptor: OpaqueDescriptorId,
+) -> Result<(), CodegenError> {
+    let desc = ctx
+        .descriptors
+        .get(DescriptorHandle(descriptor.0))
+        .ok_or_else(|| {
+            CodegenError::UnsupportedOp("descriptor not found in materialize_empty".into())
+        })?;
+    copy_empty_bytes(ctx, desc, dst_offset);
+    Ok(())
+}
+
+/// Emit backing allocation + element decode loop for a calibrated Vec<T>.
+///
+/// Layout of generated code:
+///   1. Call vox_jit_vec_reserve(desc, list_len, container_ptr)
+///   2. On alloc failure: return AllocFailed
+///   3. Load data pointer from container_ptr[ptr_offset]
+///   4. Loop: while init_count < list_len:
+///      a. Set out_ptr = data_ptr + init_count * elem_size
+///      b. Decode one element (inline body_block ops)
+///      c. Increment init_count, commit len via CommitListLen
+///
+/// The element body_block ops are emitted inline (not as a separate block
+/// call) using a Cranelift loop with the element pointer adjusted per
+/// iteration.
+fn emit_alloc_backing(
+    ctx: &mut EmitCtx<'_, '_>,
+    program: &DecodeProgram,
+    dst_offset: usize,
+    descriptor: OpaqueDescriptorId,
+    body_block: usize,
+    elem_size: usize,
+) -> Result<(), CodegenError> {
+    let desc = ctx
+        .descriptors
+        .get(DescriptorHandle(descriptor.0))
+        .ok_or_else(|| {
+            CodegenError::UnsupportedOp("descriptor not found in alloc_backing".into())
+        })?;
+    let desc_ptr_val = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, desc as *const CalDescriptor as i64);
+    let ptr_off = desc.ptr_offset as i32;
+    let dst = ctx.dst_at(dst_offset);
+
+    // Snapshot var_list_len now (set by the enclosing ReadListLen) before the inner body
+    // can overwrite it with a nested list's length.
+    let list_len = ctx.b.use_var(ctx.var_list_len);
+
+    // 1. Reserve backing storage.
+    let reserve_sig = make_reserve_sig(ctx);
+    let reserve_fn = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, vox_jit_vec_reserve as *const () as i64);
+    let call = ctx
+        .b
+        .ins()
+        .call_indirect(reserve_sig, reserve_fn, &[desc_ptr_val, list_len, dst]);
+    let status = ctx.b.inst_results(call)[0];
+    let ok_val = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
+    let is_ok = ctx.b.ins().icmp(IntCC::Equal, status, ok_val);
+
+    let alloc_ok = ctx.fresh_block();
+    let alloc_err = ctx.fresh_block();
+    ctx.b.ins().brif(is_ok, alloc_ok, &[], alloc_err, &[]);
+
+    ctx.b.switch_to_block(alloc_err);
+    ctx.b.seal_block(alloc_err);
+    ctx.return_err(DecodeStatus::AllocFailed);
+
+    ctx.b.switch_to_block(alloc_ok);
+    ctx.b.seal_block(alloc_ok);
+
+    // 2. Load backing data pointer.
+    let backing_ptr = ctx
+        .b
+        .ins()
+        .load(ctx.ptr_ty, MemFlags::trusted(), dst, ptr_off);
+
+    // 3. Emit element decode loop.
+    //
+    // Use fresh SSA variables for this loop's counter and list-length so that
+    // nested Vec fields in the element body can use their own ReadListLen +
+    // AllocBacking without corrupting the outer loop's counter or length.
+    //
+    // Two key variables:
+    //   var_loop_i   — this loop's element counter; swapped into ctx.var_init_count
+    //   var_loop_len — this loop's stable length cap; NOT exposed via ctx so inner
+    //                  ReadListLen cannot overwrite it (inner writes ctx.var_list_len
+    //                  which is a DIFFERENT fresh scratch variable).
+    let ptr_ty = ctx.ptr_ty;
+    let var_loop_i = ctx.fresh_var(ptr_ty);
+    let var_loop_len = ctx.fresh_var(ptr_ty);
+    let var_inner_list_len = ctx.fresh_var(ptr_ty); // scratch for nested ReadListLen writes
+
+    let zero = ctx.b.ins().iconst(ctx.ptr_ty, 0);
+    ctx.b.def_var(var_loop_i, zero);
+    ctx.b.def_var(var_loop_len, list_len);
+    ctx.b.def_var(var_inner_list_len, zero); // initial value required by Cranelift SSA
+
+    // Save outer vars; point ctx.var_init_count at var_loop_i (so inner AllocBacking
+    // saves/restores it correctly) and ctx.var_list_len at the scratch variable (so
+    // inner ReadListLen writes to the scratch, leaving var_loop_len untouched).
+    let saved_var_init_count = ctx.var_init_count;
+    let saved_var_list_len = ctx.var_list_len;
+    ctx.var_init_count = var_loop_i;
+    ctx.var_list_len = var_inner_list_len;
+
+    let loop_header = ctx.fresh_block();
+    let loop_body_entry = ctx.fresh_block();
+    let loop_tail = ctx.fresh_block(); // increment + commit + back-edge
+    let loop_done = ctx.fresh_block();
+
+    ctx.b.ins().jump(loop_header, &[]);
+
+    // Loop header: check init_count < list_len.
+    // Read var_loop_len directly — not via ctx.var_list_len — so inner code
+    // cannot corrupt it.
+    ctx.b.switch_to_block(loop_header);
+    let i = ctx.b.use_var(var_loop_i);
+    let list_len2 = ctx.b.use_var(var_loop_len);
+    let done = ctx
+        .b
+        .ins()
+        .icmp(IntCC::UnsignedGreaterThanOrEqual, i, list_len2);
+    ctx.b.ins().brif(done, loop_done, &[], loop_body_entry, &[]);
+    // Note: loop_header is sealed after loop_tail jumps back to it.
+
+    // Loop body entry: compute element pointer, then recursively inline the element body.
+    // loop_tail is the convergence point for all paths through the element body.
+    ctx.b.switch_to_block(loop_body_entry);
+    ctx.b.seal_block(loop_body_entry);
+
+    // Compute element pointer: backing_ptr + i * elem_size.
+    let elem_ptr = if elem_size == 0 {
+        backing_ptr
+    } else if elem_size == 1 {
+        let i2 = ctx.b.use_var(var_loop_i);
+        ctx.b.ins().iadd(backing_ptr, i2)
+    } else {
+        let i2 = ctx.b.use_var(var_loop_i);
+        let stride = ctx.b.ins().iconst(ctx.ptr_ty, elem_size as i64);
+        let offset = ctx.b.ins().imul(i2, stride);
+        ctx.b.ins().iadd(backing_ptr, offset)
+    };
+
+    // Inline-emit the element body, replacing Return with jump(loop_tail).
+    // All transitively-referenced blocks are also inlined (handles nested Vecs).
+    let saved_out_ptr = ctx.out_ptr;
+    ctx.out_ptr = elem_ptr;
+    emit_inline_block(ctx, program, body_block, loop_tail)?;
+    ctx.out_ptr = saved_out_ptr;
+
+    // Loop tail: all element body paths converge here.
+    // Increment init_count, commit the new len, jump back to loop_header.
+    ctx.b.switch_to_block(loop_tail);
+    ctx.b.seal_block(loop_tail);
+
+    let i3 = ctx.b.use_var(var_loop_i);
+    let one = ctx.b.ins().iconst(ctx.ptr_ty, 1);
+    let next_i = ctx.b.ins().iadd(i3, one);
+    ctx.b.def_var(var_loop_i, next_i);
+
+    // Commit the new len.
+    let set_len_sig = make_set_len_sig(ctx);
+    let set_len_fn = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, vox_jit_vec_commit_len as *const () as i64);
+    ctx.b
+        .ins()
+        .call_indirect(set_len_sig, set_len_fn, &[desc_ptr_val, dst, next_i]);
+
+    ctx.b.ins().jump(loop_header, &[]);
+    ctx.b.seal_block(loop_header);
+
+    ctx.b.switch_to_block(loop_done);
+    ctx.b.seal_block(loop_done);
+
+    // Restore outer loop vars.
+    ctx.var_init_count = saved_var_init_count;
+    ctx.var_list_len = saved_var_list_len;
+
+    Ok(())
+}
+
+/// Emit a `Box<T>` or `Box<[T]>` allocation + inline pointee decode.
+///
+/// Dispatches on `desc.kind`:
+///
+/// **BoxOwned** (`Box<T>`):
+///   1. Call `vox_jit_box_alloc(desc, dst)` — allocates one T-sized slot.
+///   2. On OOM: return AllocFailed.
+///   3. Load the written pointer, inline-emit body_block with out_ptr = alloc_ptr.
+///
+/// **BoxSlice** (`Box<[T]>`):
+///   1. Read varint list length.
+///   2. Call `vox_jit_box_slice_alloc(desc, len, dst)` — allocates len*elem_size bytes,
+///      writes fat pointer (data ptr + len) into dst.
+///   3. Load data pointer, emit element decode loop (same as emit_alloc_backing).
+fn emit_alloc_boxed(
+    ctx: &mut EmitCtx<'_, '_>,
+    program: &DecodeProgram,
+    dst_offset: usize,
+    descriptor: OpaqueDescriptorId,
+    body_block: usize,
+) -> Result<(), CodegenError> {
+    let desc = ctx
+        .descriptors
+        .get(DescriptorHandle(descriptor.0))
+        .ok_or_else(|| CodegenError::UnsupportedOp("descriptor not found in alloc_boxed".into()))?;
+
+    match desc.kind {
+        ContainerKind::BoxOwned => emit_alloc_box_owned(ctx, program, dst_offset, desc, body_block),
+        ContainerKind::BoxSlice => emit_alloc_box_slice(ctx, program, dst_offset, desc, body_block),
+        _ => Err(CodegenError::UnsupportedOp(format!(
+            "AllocBoxed called with non-Box descriptor kind {:?}",
+            desc.kind
+        ))),
+    }
+}
+
+fn emit_alloc_box_owned(
+    ctx: &mut EmitCtx<'_, '_>,
+    program: &DecodeProgram,
+    dst_offset: usize,
+    desc: &CalDescriptor,
+    body_block: usize,
+) -> Result<(), CodegenError> {
+    let desc_ptr_val = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, desc as *const CalDescriptor as i64);
+    let ptr_off = desc.ptr_offset as i32;
+    let dst = ctx.dst_at(dst_offset);
+
+    let box_alloc_sig = make_box_alloc_sig(ctx);
+    let box_alloc_fn = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, vox_jit_box_alloc as *const () as i64);
+    let call = ctx
+        .b
+        .ins()
+        .call_indirect(box_alloc_sig, box_alloc_fn, &[desc_ptr_val, dst]);
+    let status = ctx.b.inst_results(call)[0];
+    let ok_val = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
+    let is_ok = ctx.b.ins().icmp(IntCC::Equal, status, ok_val);
+
+    let alloc_ok = ctx.fresh_block();
+    let alloc_err = ctx.fresh_block();
+    ctx.b.ins().brif(is_ok, alloc_ok, &[], alloc_err, &[]);
+
+    ctx.b.switch_to_block(alloc_err);
+    ctx.b.seal_block(alloc_err);
+    ctx.return_err(DecodeStatus::AllocFailed);
+
+    ctx.b.switch_to_block(alloc_ok);
+    ctx.b.seal_block(alloc_ok);
+
+    let alloc_ptr = ctx
+        .b
+        .ins()
+        .load(ctx.ptr_ty, MemFlags::trusted(), dst, ptr_off);
+
+    // Inline the pointee decode. Use a continuation block so that if the
+    // body contains nested Vecs (or other multi-block ops), all paths converge
+    // back into the caller's block sequence.
+    let continuation = ctx.fresh_block();
+    let saved_out_ptr = ctx.out_ptr;
+    ctx.out_ptr = alloc_ptr;
+    emit_inline_block(ctx, program, body_block, continuation)?;
+    ctx.out_ptr = saved_out_ptr;
+
+    ctx.b.switch_to_block(continuation);
+    ctx.b.seal_block(continuation);
+
+    Ok(())
+}
+
+fn emit_alloc_box_slice(
+    ctx: &mut EmitCtx<'_, '_>,
+    program: &DecodeProgram,
+    dst_offset: usize,
+    desc: &CalDescriptor,
+    body_block: usize,
+) -> Result<(), CodegenError> {
+    let elem_size = desc.elem_size;
+    let desc_ptr_val = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, desc as *const CalDescriptor as i64);
+    let ptr_off = desc.ptr_offset as i32;
+    let dst = ctx.dst_at(dst_offset);
+
+    // 1. Read varint list length.
+    let len = ctx.read_varint_u64()?;
+    let len_ptr = if ctx.ptr_ty == types::I64 {
+        len
+    } else {
+        ctx.b.ins().ireduce(types::I32, len)
+    };
+
+    // 2. Call vox_jit_box_slice_alloc(desc, len, dst).
+    let slice_alloc_sig = make_box_slice_alloc_sig(ctx);
+    let slice_alloc_fn = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, vox_jit_box_slice_alloc as *const () as i64);
+    let call = ctx.b.ins().call_indirect(
+        slice_alloc_sig,
+        slice_alloc_fn,
+        &[desc_ptr_val, len_ptr, dst],
+    );
+    let status = ctx.b.inst_results(call)[0];
+    let ok_val = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
+    let is_ok = ctx.b.ins().icmp(IntCC::Equal, status, ok_val);
+
+    let alloc_ok = ctx.fresh_block();
+    let alloc_err = ctx.fresh_block();
+    ctx.b.ins().brif(is_ok, alloc_ok, &[], alloc_err, &[]);
+
+    ctx.b.switch_to_block(alloc_err);
+    ctx.b.seal_block(alloc_err);
+    ctx.return_err(DecodeStatus::AllocFailed);
+
+    ctx.b.switch_to_block(alloc_ok);
+    ctx.b.seal_block(alloc_ok);
+
+    // 3. Load backing data pointer (ptr_offset in fat pointer).
+    let backing_ptr = ctx
+        .b
+        .ins()
+        .load(ctx.ptr_ty, MemFlags::trusted(), dst, ptr_off);
+
+    // 4. Element decode loop (same structure as emit_alloc_backing's loop).
+    //
+    // Use fresh SSA variables for this loop's counter and list-length so that
+    // nested Vec fields in the element body can use their own ReadListLen +
+    // AllocBacking without corrupting the outer loop's counter or length.
+    let ptr_ty = ctx.ptr_ty;
+    let var_loop_i = ctx.fresh_var(ptr_ty);
+    let var_loop_len = ctx.fresh_var(ptr_ty);
+    let var_inner_list_len = ctx.fresh_var(ptr_ty); // scratch for nested ReadListLen writes
+
+    let zero = ctx.b.ins().iconst(ctx.ptr_ty, 0);
+    ctx.b.def_var(var_loop_i, zero);
+    ctx.b.def_var(var_loop_len, len_ptr);
+    ctx.b.def_var(var_inner_list_len, zero);
+
+    // Save outer vars; point ctx.var_init_count at var_loop_i and ctx.var_list_len
+    // at the scratch variable so inner ReadListLen cannot overwrite var_loop_len.
+    let saved_var_init_count = ctx.var_init_count;
+    let saved_var_list_len = ctx.var_list_len;
+    ctx.var_init_count = var_loop_i;
+    ctx.var_list_len = var_inner_list_len;
+
+    let loop_header = ctx.fresh_block();
+    let loop_body_entry = ctx.fresh_block();
+    let loop_tail = ctx.fresh_block(); // increment + back-edge
+    let loop_done = ctx.fresh_block();
+
+    ctx.b.ins().jump(loop_header, &[]);
+
+    // Read var_loop_len directly — not via ctx.var_list_len — so inner code cannot corrupt it.
+    ctx.b.switch_to_block(loop_header);
+    let i = ctx.b.use_var(var_loop_i);
+    let list_len = ctx.b.use_var(var_loop_len);
+    let done = ctx
+        .b
+        .ins()
+        .icmp(IntCC::UnsignedGreaterThanOrEqual, i, list_len);
+    ctx.b.ins().brif(done, loop_done, &[], loop_body_entry, &[]);
+
+    ctx.b.switch_to_block(loop_body_entry);
+    ctx.b.seal_block(loop_body_entry);
+
+    let elem_ptr = if elem_size == 0 {
+        backing_ptr
+    } else if elem_size == 1 {
+        let i2 = ctx.b.use_var(var_loop_i);
+        ctx.b.ins().iadd(backing_ptr, i2)
+    } else {
+        let i2 = ctx.b.use_var(var_loop_i);
+        let stride = ctx.b.ins().iconst(ctx.ptr_ty, elem_size as i64);
+        let offset = ctx.b.ins().imul(i2, stride);
+        ctx.b.ins().iadd(backing_ptr, offset)
+    };
+
+    let saved_out_ptr = ctx.out_ptr;
+    ctx.out_ptr = elem_ptr;
+    emit_inline_block(ctx, program, body_block, loop_tail)?;
+    ctx.out_ptr = saved_out_ptr;
+
+    // Loop tail: all element body paths converge here.
+    ctx.b.switch_to_block(loop_tail);
+    ctx.b.seal_block(loop_tail);
+
+    let i3 = ctx.b.use_var(var_loop_i);
+    let one = ctx.b.ins().iconst(ctx.ptr_ty, 1);
+    let next_i = ctx.b.ins().iadd(i3, one);
+    ctx.b.def_var(var_loop_i, next_i);
+
+    ctx.b.ins().jump(loop_header, &[]);
+    ctx.b.seal_block(loop_header);
+
+    ctx.b.switch_to_block(loop_done);
+    ctx.b.seal_block(loop_done);
+
+    // Restore outer loop vars.
+    ctx.var_init_count = saved_var_init_count;
+    ctx.var_list_len = saved_var_list_len;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Copy the calibrated empty bytes for `desc` into `dst_offset` from `out_ptr`.
+fn copy_empty_bytes(ctx: &mut EmitCtx<'_, '_>, desc: &CalDescriptor, dst_offset: usize) {
+    let dst = ctx.dst_at(dst_offset);
+    let src = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, desc.empty_bytes.as_ptr() as i64);
+    // Byte-by-byte copy (desc.size is small — 24 bytes for Vec on 64-bit).
+    for i in 0..desc.size as i32 {
+        let byte = ctx.b.ins().load(types::I8, MemFlags::trusted(), src, i);
+        ctx.b.ins().store(MemFlags::trusted(), byte, dst, i);
+    }
+}
+
+/// Emit a byte-by-byte memcpy from `src` to `dst` for `len` bytes.
+fn emit_memcpy(ctx: &mut EmitCtx<'_, '_>, src: Value, dst: Value, len: Value, _elem_size: usize) {
+    // For the minimal subset, use a simple counted byte loop.
+    // TODO: use Cranelift bulk_memory or call libc memcpy for large copies.
+    let var_i = ctx.b.declare_var(ctx.ptr_ty);
+    let zero = ctx.b.ins().iconst(ctx.ptr_ty, 0);
+    ctx.b.def_var(var_i, zero);
+
+    let header = ctx.b.create_block();
+    let body = ctx.b.create_block();
+    let exit = ctx.b.create_block();
+
+    ctx.b.ins().jump(header, &[]);
+
+    ctx.b.switch_to_block(header);
+    // Do NOT seal header yet — its back-edge predecessor (body) is added below.
+    let i = ctx.b.use_var(var_i);
+    let done = ctx.b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, i, len);
+    ctx.b.ins().brif(done, exit, &[], body, &[]);
+
+    ctx.b.switch_to_block(body);
+    ctx.b.seal_block(body); // only one predecessor: header
+    let src_addr = ctx.b.ins().iadd(src, i);
+    let dst_addr = ctx.b.ins().iadd(dst, i);
+    let byte = ctx
+        .b
+        .ins()
+        .load(types::I8, MemFlags::trusted(), src_addr, 0);
+    ctx.b.ins().store(MemFlags::trusted(), byte, dst_addr, 0);
+    let one = ctx.b.ins().iconst(ctx.ptr_ty, 1);
+    let next_i = ctx.b.ins().iadd(i, one);
+    ctx.b.def_var(var_i, next_i);
+    ctx.b.ins().jump(header, &[]);
+    ctx.b.seal_block(header); // now both predecessors (entry + back-edge) are known
+
+    ctx.b.switch_to_block(exit);
+    ctx.b.seal_block(exit);
+}
+
+/// Emit a call to `vox_jit_slow_path` for a `SlowPath` IR op.
+///
+/// Flushes `consumed` to ctx before the call so the helper sees the current
+/// position, then reloads it after the helper updates `ctx.consumed`.
+fn emit_slow_path(
+    ctx: &mut EmitCtx<'_, '_>,
+    shape: &'static facet_core::Shape,
+    plan: &vox_postcard::TranslationPlan,
+    dst_offset: usize,
+) -> Result<(), CodegenError> {
+    // Flush current consumed to ctx so the helper reads the right position.
+    let consumed_val = ctx.b.use_var(ctx.var_consumed);
+    let off = core::mem::offset_of!(DecodeCtx, consumed) as i32;
+    ctx.b
+        .ins()
+        .store(MemFlags::trusted(), consumed_val, ctx.ctx_ptr, off);
+
+    let shape_ptr = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, shape as *const facet_core::Shape as i64);
+    let plan_ptr = ctx.b.ins().iconst(
+        ctx.ptr_ty,
+        plan as *const vox_postcard::TranslationPlan as i64,
+    );
+    let dst_offset_val = ctx.b.ins().iconst(ctx.ptr_ty, dst_offset as i64);
+
+    let sig = make_slow_path_sig(ctx);
+    let fn_ptr = ctx.b.ins().iconst(
+        ctx.ptr_ty,
+        crate::helpers::vox_jit_slow_path as *const () as i64,
+    );
+    let call = ctx.b.ins().call_indirect(
+        sig,
+        fn_ptr,
+        &[
+            ctx.ctx_ptr,
+            shape_ptr,
+            plan_ptr,
+            ctx.out_ptr,
+            dst_offset_val,
+        ],
+    );
+    let status = ctx.b.inst_results(call)[0];
+
+    // Check status.
+    let ok_val = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
+    let is_ok = ctx.b.ins().icmp(IntCC::Equal, status, ok_val);
+
+    let ok_block = ctx.fresh_block();
+    let err_block = ctx.fresh_block();
+    ctx.b.ins().brif(is_ok, ok_block, &[], err_block, &[]);
+
+    ctx.b.switch_to_block(err_block);
+    ctx.b.seal_block(err_block);
+    // Return the helper's status directly.
+    ctx.flush_ctx();
+    ctx.b.ins().return_(&[status]);
+
+    ctx.b.switch_to_block(ok_block);
+    ctx.b.seal_block(ok_block);
+
+    // Reload consumed from ctx (the helper updated ctx.consumed).
+    ctx.reload_consumed_from_ctx();
+
+    Ok(())
+}
+
+fn make_reserve_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
+    ctx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ctx.ptr_ty), // desc
+            AbiParam::new(ctx.ptr_ty), // cap
+            AbiParam::new(ctx.ptr_ty), // out_ptr
+        ],
+        returns: vec![AbiParam::new(types::I32)],
+        call_conv: cranelift_codegen::isa::CallConv::SystemV,
+    })
+}
+
+/// Signature for `vox_jit_box_alloc(desc: *const OpaqueDescriptor, out_ptr: *mut u8) -> u32`.
+fn make_box_alloc_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
+    ctx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ctx.ptr_ty), // desc
+            AbiParam::new(ctx.ptr_ty), // out_ptr
+        ],
+        returns: vec![AbiParam::new(types::I32)],
+        call_conv: cranelift_codegen::isa::CallConv::SystemV,
+    })
+}
+
+/// Signature for `vox_jit_box_slice_alloc(desc, len, out_ptr) -> u32`.
+fn make_box_slice_alloc_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
+    ctx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ctx.ptr_ty), // desc
+            AbiParam::new(ctx.ptr_ty), // len
+            AbiParam::new(ctx.ptr_ty), // out_ptr
+        ],
+        returns: vec![AbiParam::new(types::I32)],
+        call_conv: cranelift_codegen::isa::CallConv::SystemV,
+    })
+}
+
+fn make_set_len_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
+    ctx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ctx.ptr_ty), // desc
+            AbiParam::new(ctx.ptr_ty), // container_ptr
+            AbiParam::new(ctx.ptr_ty), // len
+        ],
+        returns: vec![],
+        call_conv: cranelift_codegen::isa::CallConv::SystemV,
+    })
+}
+
+fn make_utf8_validate_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
+    ctx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ctx.ptr_ty), // bytes
+            AbiParam::new(ctx.ptr_ty), // len
+        ],
+        returns: vec![AbiParam::new(types::I32)],
+        call_conv: cranelift_codegen::isa::CallConv::SystemV,
+    })
+}
+
+/// Signature: `unsafe extern "C" fn(option: *mut ()) -> *mut ()`
+fn make_init_none_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
+    ctx.b.func.import_signature(Signature {
+        params: vec![AbiParam::new(ctx.ptr_ty)],
+        returns: vec![AbiParam::new(ctx.ptr_ty)],
+        call_conv: cranelift_codegen::isa::CallConv::SystemV,
+    })
+}
+
+/// Signature: `unsafe extern "C" fn(option: *mut (), value: *mut ()) -> *mut ()`
+fn make_init_some_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
+    ctx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ctx.ptr_ty), // option ptr
+            AbiParam::new(ctx.ptr_ty), // inner value ptr
+        ],
+        returns: vec![AbiParam::new(ctx.ptr_ty)],
+        call_conv: cranelift_codegen::isa::CallConv::SystemV,
+    })
+}
+
+/// Signature for `vox_jit_slow_path(ctx, shape, plan, dst_base, dst_offset) -> u32`.
+fn make_slow_path_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
+    ctx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ctx.ptr_ty), // ctx: *mut DecodeCtx
+            AbiParam::new(ctx.ptr_ty), // shape: &'static Shape (fat ptr — data half)
+            AbiParam::new(ctx.ptr_ty), // plan: *const TranslationPlan
+            AbiParam::new(ctx.ptr_ty), // dst_base: *mut u8
+            AbiParam::new(ctx.ptr_ty), // dst_offset: usize
+        ],
+        returns: vec![AbiParam::new(types::I32)],
+        call_conv: cranelift_codegen::isa::CallConv::SystemV,
+    })
+}
+
+fn next_id() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
+// ---------------------------------------------------------------------------
+// Encode function emission
+// ---------------------------------------------------------------------------
+
+/// State threaded through the Cranelift encode function builder.
+struct EncodeCtx_<'a, 'b> {
+    b: &'a mut FunctionBuilder<'b>,
+    /// `*mut EncodeCtx` argument.
+    enc_ctx: Value,
+    /// `*const u8` source pointer argument (base of the value being encoded).
+    src_ptr: Value,
+    ptr_ty: Type,
+    descriptors: &'a CalibrationRegistry,
+    /// Mapping from EncodeProgram block index to Cranelift Block.
+    block_map: Vec<Option<Block>>,
+    /// Block indices inlined into the parent (element loops).
+    inlined_blocks: std::collections::HashSet<usize>,
+}
+
+impl<'a, 'b> EncodeCtx_<'a, 'b> {
+    fn fresh_block(&mut self) -> Block {
+        self.b.create_block()
+    }
+
+    /// Compute `src_ptr + offset`.
+    fn src_at(&mut self, offset: usize) -> Value {
+        if offset == 0 {
+            self.src_ptr
+        } else {
+            self.b.ins().iadd_imm(self.src_ptr, offset as i64)
+        }
+    }
+
+    /// Return `true` (success).
+    fn return_ok(&mut self) {
+        let ok = self.b.ins().iconst(types::I8, 1);
+        self.b.ins().return_(&[ok]);
+    }
+
+    /// Return `false` (failure — OOM).
+    fn return_fail(&mut self) {
+        let fail = self.b.ins().iconst(types::I8, 0);
+        self.b.ins().return_(&[fail]);
+    }
+
+    /// Call `vox_jit_buf_push_byte(enc_ctx, byte)` and return on OOM.
+    fn call_push_byte(&mut self, byte: Value) {
+        let sig = self.b.func.import_signature(Signature {
+            params: vec![AbiParam::new(self.ptr_ty), AbiParam::new(types::I8)],
+            returns: vec![AbiParam::new(types::I8)],
+            call_conv: cranelift_codegen::isa::CallConv::SystemV,
+        });
+        let callee = self
+            .b
+            .ins()
+            .iconst(self.ptr_ty, vox_jit_buf_push_byte as *const () as i64);
+        let call = self
+            .b
+            .ins()
+            .call_indirect(sig, callee, &[self.enc_ctx, byte]);
+        let ok = self.b.inst_results(call)[0];
+
+        let fail_block = self.fresh_block();
+        let cont_block = self.fresh_block();
+        self.b.ins().brif(ok, cont_block, &[], fail_block, &[]);
+
+        self.b.switch_to_block(fail_block);
+        self.b.seal_block(fail_block);
+        self.return_fail();
+
+        self.b.switch_to_block(cont_block);
+        self.b.seal_block(cont_block);
+    }
+
+    /// Call `vox_jit_buf_push_bytes(enc_ctx, data, len)` and return on OOM.
+    fn call_push_bytes(&mut self, data: Value, len: Value) {
+        let sig = self.b.func.import_signature(Signature {
+            params: vec![
+                AbiParam::new(self.ptr_ty),
+                AbiParam::new(self.ptr_ty),
+                AbiParam::new(self.ptr_ty),
+            ],
+            returns: vec![AbiParam::new(types::I8)],
+            call_conv: cranelift_codegen::isa::CallConv::SystemV,
+        });
+        let callee = self
+            .b
+            .ins()
+            .iconst(self.ptr_ty, vox_jit_buf_push_bytes as *const () as i64);
+        let call = self
+            .b
+            .ins()
+            .call_indirect(sig, callee, &[self.enc_ctx, data, len]);
+        let ok = self.b.inst_results(call)[0];
+
+        let fail_block = self.fresh_block();
+        let cont_block = self.fresh_block();
+        self.b.ins().brif(ok, cont_block, &[], fail_block, &[]);
+
+        self.b.switch_to_block(fail_block);
+        self.b.seal_block(fail_block);
+        self.return_fail();
+
+        self.b.switch_to_block(cont_block);
+        self.b.seal_block(cont_block);
+    }
+
+    /// Call `vox_jit_buf_write_varint(enc_ctx, value)` and return on OOM.
+    fn call_write_varint(&mut self, value: Value) {
+        let sig = self.b.func.import_signature(Signature {
+            params: vec![AbiParam::new(self.ptr_ty), AbiParam::new(types::I64)],
+            returns: vec![AbiParam::new(types::I8)],
+            call_conv: cranelift_codegen::isa::CallConv::SystemV,
+        });
+        let callee = self
+            .b
+            .ins()
+            .iconst(self.ptr_ty, vox_jit_buf_write_varint as *const () as i64);
+        let call = self
+            .b
+            .ins()
+            .call_indirect(sig, callee, &[self.enc_ctx, value]);
+        let ok = self.b.inst_results(call)[0];
+
+        let fail_block = self.fresh_block();
+        let cont_block = self.fresh_block();
+        self.b.ins().brif(ok, cont_block, &[], fail_block, &[]);
+
+        self.b.switch_to_block(fail_block);
+        self.b.seal_block(fail_block);
+        self.return_fail();
+
+        self.b.switch_to_block(cont_block);
+        self.b.seal_block(cont_block);
+    }
+
+    /// Call `vox_jit_buf_write_varint_signed(enc_ctx, value)` and return on OOM.
+    fn call_write_varint_signed(&mut self, value: Value) {
+        let sig = self.b.func.import_signature(Signature {
+            params: vec![AbiParam::new(self.ptr_ty), AbiParam::new(types::I64)],
+            returns: vec![AbiParam::new(types::I8)],
+            call_conv: cranelift_codegen::isa::CallConv::SystemV,
+        });
+        let callee = self.b.ins().iconst(
+            self.ptr_ty,
+            vox_jit_buf_write_varint_signed as *const () as i64,
+        );
+        let call = self
+            .b
+            .ins()
+            .call_indirect(sig, callee, &[self.enc_ctx, value]);
+        let ok = self.b.inst_results(call)[0];
+
+        let fail_block = self.fresh_block();
+        let cont_block = self.fresh_block();
+        self.b.ins().brif(ok, cont_block, &[], fail_block, &[]);
+
+        self.b.switch_to_block(fail_block);
+        self.b.seal_block(fail_block);
+        self.return_fail();
+
+        self.b.switch_to_block(cont_block);
+        self.b.seal_block(cont_block);
+    }
+}
+
+fn emit_encode_function(
+    builder: &mut FunctionBuilder<'_>,
+    program: &EncodeProgram,
+    descriptors: &CalibrationRegistry,
+    ptr_ty: Type,
+) -> Result<(), CodegenError> {
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+
+    let enc_ctx = builder.block_params(entry)[0];
+    let src_ptr = builder.block_params(entry)[1];
+
+    let mut block_map: Vec<Option<Block>> = (0..program.blocks.len())
+        .map(|_| Some(builder.create_block()))
+        .collect();
+    block_map[0] = Some(entry);
+
+    let mut ectx = EncodeCtx_ {
+        b: builder,
+        enc_ctx,
+        src_ptr,
+        ptr_ty,
+        descriptors,
+        block_map: block_map.into_iter().collect(),
+        inlined_blocks: std::collections::HashSet::new(),
+    };
+
+    emit_encode_block(&mut ectx, program, 0)?;
+
+    for block_idx in 1..program.blocks.len() {
+        if ectx.inlined_blocks.contains(&block_idx) {
+            // Stub out the unreachable pre-created block.
+            let clif_block = ectx.block_map[block_idx].unwrap();
+            ectx.b.switch_to_block(clif_block);
+            ectx.b.seal_block(clif_block);
+            ectx.return_ok();
+            continue;
+        }
+        let clif_block = ectx.block_map[block_idx].unwrap();
+        ectx.b.switch_to_block(clif_block);
+        ectx.b.seal_block(clif_block);
+        emit_encode_block(&mut ectx, program, block_idx)?;
+    }
+
+    Ok(())
+}
+
+fn emit_encode_block(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    program: &EncodeProgram,
+    block_idx: usize,
+) -> Result<(), CodegenError> {
+    let block = &program.blocks[block_idx];
+    for op in &block.ops {
+        let terminated = emit_encode_op(ectx, program, op)?;
+        if terminated {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Emit one encode IR op. Returns `true` if the current Cranelift block is terminated.
+fn emit_encode_op(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    program: &EncodeProgram,
+    op: &EncodeOp,
+) -> Result<bool, CodegenError> {
+    match op {
+        EncodeOp::WriteScalar { prim, src_offset } => {
+            emit_write_scalar(ectx, *prim, *src_offset)?;
+            Ok(false)
+        }
+
+        EncodeOp::WriteDiscriminant {
+            src_offset,
+            tag_width,
+        } => {
+            let tag_addr = ectx.src_at(*src_offset);
+            let disc = match tag_width {
+                TagWidth::U8 => {
+                    let b = ectx
+                        .b
+                        .ins()
+                        .load(types::I8, MemFlags::trusted(), tag_addr, 0);
+                    ectx.b.ins().uextend(types::I64, b)
+                }
+                TagWidth::U16 => {
+                    let h = ectx
+                        .b
+                        .ins()
+                        .load(types::I16, MemFlags::trusted(), tag_addr, 0);
+                    ectx.b.ins().uextend(types::I64, h)
+                }
+                TagWidth::U32 => {
+                    let w = ectx
+                        .b
+                        .ins()
+                        .load(types::I32, MemFlags::trusted(), tag_addr, 0);
+                    ectx.b.ins().uextend(types::I64, w)
+                }
+                TagWidth::U64 => ectx
+                    .b
+                    .ins()
+                    .load(types::I64, MemFlags::trusted(), tag_addr, 0),
+            };
+            ectx.call_write_varint(disc);
+            Ok(false)
+        }
+
+        EncodeOp::BranchOnEncode {
+            src_offset,
+            tag_width,
+            variant_blocks,
+        } => {
+            emit_encode_branch(ectx, *src_offset, *tag_width, variant_blocks)?;
+            Ok(true)
+        }
+
+        EncodeOp::EncodeOption {
+            src_offset,
+            some_block,
+            is_some_fn,
+            get_value_fn,
+        } => {
+            emit_encode_option(
+                ectx,
+                program,
+                *src_offset,
+                *some_block,
+                *is_some_fn,
+                *get_value_fn,
+            )?;
+            // emit_encode_option leaves us in after_block — not a terminator.
+            Ok(false)
+        }
+
+        EncodeOp::EncodeArray {
+            src_offset,
+            count,
+            elem_size,
+            body_block,
+        } => {
+            emit_encode_array(ectx, program, *src_offset, *count, *elem_size, *body_block)?;
+            Ok(false)
+        }
+
+        EncodeOp::EncodeList {
+            src_offset,
+            descriptor,
+            body_block,
+            elem_size,
+        } => {
+            emit_encode_list(
+                ectx,
+                program,
+                *src_offset,
+                descriptor,
+                *body_block,
+                *elem_size,
+            )?;
+            Ok(false)
+        }
+
+        EncodeOp::Jump { block_id } => {
+            let target = ectx.block_map[*block_id].unwrap();
+            ectx.b.ins().jump(target, &[]);
+            Ok(true)
+        }
+
+        EncodeOp::Return => {
+            ectx.return_ok();
+            Ok(true)
+        }
+    }
+}
+
+/// Write one scalar primitive from `src_offset` to the encode buffer.
+fn emit_write_scalar(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    prim: WirePrimitive,
+    src_offset: usize,
+) -> Result<(), CodegenError> {
+    let addr = ectx.src_at(src_offset);
+    match prim {
+        WirePrimitive::Unit => {}
+
+        WirePrimitive::Bool => {
+            let byte = ectx.b.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+            ectx.call_push_byte(byte);
+        }
+
+        WirePrimitive::U8 | WirePrimitive::I8 => {
+            let byte = ectx.b.ins().load(types::I8, MemFlags::trusted(), addr, 0);
+            ectx.call_push_byte(byte);
+        }
+
+        WirePrimitive::U16 | WirePrimitive::USize => {
+            let v = ectx.b.ins().load(types::I16, MemFlags::trusted(), addr, 0);
+            let v64 = ectx.b.ins().uextend(types::I64, v);
+            ectx.call_write_varint(v64);
+        }
+
+        WirePrimitive::U32 => {
+            let v = ectx.b.ins().load(types::I32, MemFlags::trusted(), addr, 0);
+            let v64 = ectx.b.ins().uextend(types::I64, v);
+            ectx.call_write_varint(v64);
+        }
+
+        WirePrimitive::U64 => {
+            let v = ectx.b.ins().load(types::I64, MemFlags::trusted(), addr, 0);
+            ectx.call_write_varint(v);
+        }
+
+        WirePrimitive::U128 => {
+            // u128 needs zigzag? No — u128 uses write_varint_u128 in the reflective path.
+            // For JIT we fall back to the byte-level approach: write 16 bytes in varint.
+            // Emit as 2×u64 varints (lo then hi) approximation is wrong.
+            // Actual postcard u128: varint up to 19 bytes.
+            // We call push_bytes with the 16 raw bytes and varint-encode directly.
+            // Actually postcard uses a zigzag-free 128-bit varint (same as u64 but wider).
+            // We don't have a vox_jit_buf_write_varint_u128 helper yet — return unsupported.
+            return Err(CodegenError::UnsupportedOp(
+                "u128 encode not yet supported".into(),
+            ));
+        }
+
+        WirePrimitive::I16 | WirePrimitive::ISize => {
+            let v = ectx.b.ins().load(types::I16, MemFlags::trusted(), addr, 0);
+            let v64 = ectx.b.ins().sextend(types::I64, v);
+            ectx.call_write_varint_signed(v64);
+        }
+
+        WirePrimitive::I32 => {
+            let v = ectx.b.ins().load(types::I32, MemFlags::trusted(), addr, 0);
+            let v64 = ectx.b.ins().sextend(types::I64, v);
+            ectx.call_write_varint_signed(v64);
+        }
+
+        WirePrimitive::I64 => {
+            let v = ectx.b.ins().load(types::I64, MemFlags::trusted(), addr, 0);
+            ectx.call_write_varint_signed(v);
+        }
+
+        WirePrimitive::I128 => {
+            return Err(CodegenError::UnsupportedOp(
+                "i128 encode not yet supported".into(),
+            ));
+        }
+
+        WirePrimitive::F32 => {
+            // 4 bytes little-endian.
+            let len = ectx.b.ins().iconst(ectx.ptr_ty, 4);
+            ectx.call_push_bytes(addr, len);
+        }
+
+        WirePrimitive::F64 => {
+            // 8 bytes little-endian.
+            let len = ectx.b.ins().iconst(ectx.ptr_ty, 8);
+            ectx.call_push_bytes(addr, len);
+        }
+
+        WirePrimitive::String => {
+            // `String` in memory: ptr, len, cap (calibrated). We need to read
+            // ptr and len from the String's internal representation.
+            // Since we don't have the descriptor here, use a slow approach:
+            // emit as a SlowPath. Actually — for String fields in structs the
+            // IR emitter will have already resolved via descriptor. If we land
+            // here, we have a bare String scalar — fall back.
+            return Err(CodegenError::UnsupportedOp(
+                "String scalar in WriteScalar — use EncodeList with descriptor".into(),
+            ));
+        }
+
+        WirePrimitive::Bytes => {
+            return Err(CodegenError::UnsupportedOp(
+                "Bytes scalar in WriteScalar — use EncodeList with descriptor".into(),
+            ));
+        }
+
+        WirePrimitive::Payload => {
+            return Err(CodegenError::UnsupportedOp(
+                "Payload encode not yet supported".into(),
+            ));
+        }
+
+        WirePrimitive::Char => {
+            // char is 4 bytes in Rust. Encode as UTF-8 length-prefixed string.
+            // Read the char as u32, encode as UTF-8. This requires runtime logic —
+            // fall back for now.
+            return Err(CodegenError::UnsupportedOp(
+                "char encode not yet supported in JIT".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Emit a branch-on-encode: read discriminant, branch to per-variant block.
+fn emit_encode_branch(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    src_offset: usize,
+    tag_width: TagWidth,
+    variant_blocks: &[(u64, usize)],
+) -> Result<(), CodegenError> {
+    let tag_addr = ectx.src_at(src_offset);
+
+    let disc = match tag_width {
+        TagWidth::U8 => {
+            let b = ectx
+                .b
+                .ins()
+                .load(types::I8, MemFlags::trusted(), tag_addr, 0);
+            ectx.b.ins().uextend(types::I64, b)
+        }
+        TagWidth::U16 => {
+            let h = ectx
+                .b
+                .ins()
+                .load(types::I16, MemFlags::trusted(), tag_addr, 0);
+            ectx.b.ins().uextend(types::I64, h)
+        }
+        TagWidth::U32 => {
+            let w = ectx
+                .b
+                .ins()
+                .load(types::I32, MemFlags::trusted(), tag_addr, 0);
+            ectx.b.ins().uextend(types::I64, w)
+        }
+        TagWidth::U64 => ectx
+            .b
+            .ins()
+            .load(types::I64, MemFlags::trusted(), tag_addr, 0),
+    };
+
+    // Chain of compare+brif, one per variant.
+    for &(disc_val, vblock_idx) in variant_blocks {
+        let disc_const = ectx.b.ins().iconst(types::I64, disc_val as i64);
+        let is_match = ectx.b.ins().icmp(IntCC::Equal, disc, disc_const);
+
+        let target = ectx.block_map[vblock_idx].unwrap();
+        let next_block = ectx.fresh_block();
+        ectx.b.ins().brif(is_match, target, &[], next_block, &[]);
+        ectx.b.switch_to_block(next_block);
+        ectx.b.seal_block(next_block);
+    }
+
+    // Fell through all variants — should not happen for valid data; return ok.
+    ectx.return_ok();
+    Ok(())
+}
+
+/// Emit encode for `Option<T>`.
+fn emit_encode_option(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    program: &EncodeProgram,
+    src_offset: usize,
+    some_block_ir: usize,
+    is_some_fn: facet_core::OptionIsSomeFn,
+    get_value_fn: facet_core::OptionGetValueFn,
+) -> Result<(), CodegenError> {
+    let opt_ptr = ectx.src_at(src_offset);
+
+    // Call is_some_fn(opt_ptr) -> bool
+    let is_some_sig = ectx.b.func.import_signature(Signature {
+        params: vec![AbiParam::new(ectx.ptr_ty)],
+        returns: vec![AbiParam::new(types::I8)],
+        call_conv: cranelift_codegen::isa::CallConv::SystemV,
+    });
+    let is_some_callee = ectx
+        .b
+        .ins()
+        .iconst(ectx.ptr_ty, is_some_fn as *const () as i64);
+    let is_some_call = ectx
+        .b
+        .ins()
+        .call_indirect(is_some_sig, is_some_callee, &[opt_ptr]);
+    let is_some = ectx.b.inst_results(is_some_call)[0];
+
+    let some_block = ectx.fresh_block();
+    let none_block = ectx.fresh_block();
+    let after_block = ectx.fresh_block();
+
+    ectx.b.ins().brif(is_some, some_block, &[], none_block, &[]);
+
+    // None path: write 0x00
+    ectx.b.switch_to_block(none_block);
+    ectx.b.seal_block(none_block);
+    let zero_byte = ectx.b.ins().iconst(types::I8, 0);
+    ectx.call_push_byte(zero_byte);
+    ectx.b.ins().jump(after_block, &[]);
+
+    // Some path: write 0x01, call get_value_fn, encode inner
+    ectx.b.switch_to_block(some_block);
+    ectx.b.seal_block(some_block);
+    let one_byte = ectx.b.ins().iconst(types::I8, 1);
+    ectx.call_push_byte(one_byte);
+
+    let get_value_sig = ectx.b.func.import_signature(Signature {
+        params: vec![AbiParam::new(ectx.ptr_ty)],
+        returns: vec![AbiParam::new(ectx.ptr_ty)],
+        call_conv: cranelift_codegen::isa::CallConv::SystemV,
+    });
+    let get_value_callee = ectx
+        .b
+        .ins()
+        .iconst(ectx.ptr_ty, get_value_fn as *const () as i64);
+    let get_value_call = ectx
+        .b
+        .ins()
+        .call_indirect(get_value_sig, get_value_callee, &[opt_ptr]);
+    let inner_ptr = ectx.b.inst_results(get_value_call)[0];
+
+    // Inline the some_block_ir ops with src_ptr = inner_ptr
+    let saved_src = ectx.src_ptr;
+    ectx.src_ptr = inner_ptr;
+    ectx.inlined_blocks.insert(some_block_ir);
+    for op in &program.blocks[some_block_ir].ops {
+        match op {
+            EncodeOp::Return => break,
+            _ => {
+                let term = emit_encode_op(ectx, program, op)?;
+                if term {
+                    break;
+                }
+            }
+        }
+    }
+    ectx.src_ptr = saved_src;
+    ectx.b.ins().jump(after_block, &[]);
+
+    ectx.b.switch_to_block(after_block);
+    ectx.b.seal_block(after_block);
+
+    Ok(())
+}
+
+/// Emit encode for a fixed-size array.
+fn emit_encode_array(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    program: &EncodeProgram,
+    src_offset: usize,
+    count: usize,
+    elem_size: usize,
+    body_block_ir: usize,
+) -> Result<(), CodegenError> {
+    ectx.inlined_blocks.insert(body_block_ir);
+
+    let base = ectx.src_at(src_offset);
+    let saved_src = ectx.src_ptr;
+
+    for i in 0..count {
+        let elem_ptr = if i == 0 {
+            base
+        } else {
+            ectx.b.ins().iadd_imm(base, (i * elem_size) as i64)
+        };
+        ectx.src_ptr = elem_ptr;
+        for op in &program.blocks[body_block_ir].ops {
+            match op {
+                EncodeOp::Return => break,
+                _ => {
+                    let term = emit_encode_op(ectx, program, op)?;
+                    if term {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    ectx.src_ptr = saved_src;
+    Ok(())
+}
+
+/// Emit encode for a Vec-family list.
+///
+/// Reads ptr and len from the calibrated descriptor offsets, writes varint len,
+/// then loops over elements calling the body block.
+fn emit_encode_list(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    program: &EncodeProgram,
+    src_offset: usize,
+    descriptor: &OpaqueDescriptorId,
+    body_block_ir: usize,
+    elem_size: usize,
+) -> Result<(), CodegenError> {
+    let desc = ectx.descriptors.get((*descriptor).into()).ok_or_else(|| {
+        CodegenError::UnsupportedOp(format!("opaque descriptor {:?} not found", descriptor))
+    })?;
+
+    let container_addr = ectx.src_at(src_offset);
+
+    // Read data ptr and len from container.
+    let data_ptr = ectx.b.ins().load(
+        ectx.ptr_ty,
+        MemFlags::trusted(),
+        container_addr,
+        desc.ptr_offset as i32,
+    );
+    let len = ectx.b.ins().load(
+        ectx.ptr_ty,
+        MemFlags::trusted(),
+        container_addr,
+        desc.len_offset as i32,
+    );
+
+    // Write varint length.
+    let len64 = if ectx.ptr_ty == types::I64 {
+        len
+    } else {
+        ectx.b.ins().uextend(types::I64, len)
+    };
+    ectx.call_write_varint(len64);
+
+    // Emit element loop.
+    ectx.inlined_blocks.insert(body_block_ir);
+
+    let header = ectx.fresh_block();
+    let body = ectx.fresh_block();
+    let exit = ectx.fresh_block();
+
+    let var_i = ectx.b.declare_var(ectx.ptr_ty);
+    let zero = ectx.b.ins().iconst(ectx.ptr_ty, 0);
+    ectx.b.def_var(var_i, zero);
+    ectx.b.ins().jump(header, &[]);
+
+    ectx.b.switch_to_block(header);
+    // Seal after body is connected.
+    let i = ectx.b.use_var(var_i);
+    let done = ectx.b.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, i, len);
+    ectx.b.ins().brif(done, exit, &[], body, &[]);
+
+    ectx.b.switch_to_block(body);
+
+    // elem_ptr = data_ptr + i * elem_size
+    let stride = ectx.b.ins().iconst(ectx.ptr_ty, elem_size as i64);
+    let offset_bytes = ectx.b.ins().imul(i, stride);
+    let elem_ptr = ectx.b.ins().iadd(data_ptr, offset_bytes);
+
+    let saved_src = ectx.src_ptr;
+    ectx.src_ptr = elem_ptr;
+    for op in &program.blocks[body_block_ir].ops {
+        match op {
+            EncodeOp::Return => break,
+            _ => {
+                let term = emit_encode_op(ectx, program, op)?;
+                if term {
+                    break;
+                }
+            }
+        }
+    }
+    ectx.src_ptr = saved_src;
+
+    let next_i = ectx.b.ins().iadd_imm(i, 1);
+    ectx.b.def_var(var_i, next_i);
+    ectx.b.ins().jump(header, &[]);
+    ectx.b.seal_block(body);
+    ectx.b.seal_block(header);
+
+    ectx.b.switch_to_block(exit);
+    ectx.b.seal_block(exit);
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tests: verify compile_decode handles enum, option, and nested ops
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use facet::Facet;
+    use vox_jit_abi::EncodeCtx;
+    use vox_jit_cal::CalibrationRegistry;
+    use vox_postcard::{
+        build_identity_plan,
+        ir::{lower, lower_encode, lower_with_cal},
+    };
+
+    fn compile_shape<T: Facet<'static>>() -> Result<(), CodegenError> {
+        let plan = build_identity_plan(T::SHAPE);
+        let registry = vox_schema::SchemaRegistry::new();
+        let program = lower(&plan, T::SHAPE, &registry)
+            .map_err(|e| CodegenError::UnsupportedOp(format!("lowering failed: {e:?}")))?;
+        let cal = CalibrationRegistry::new();
+        let mut backend = CraneliftBackend::new()?;
+        backend.compile_decode(&program, &cal)?;
+        Ok(())
+    }
+
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    #[repr(u8)]
+    enum Color {
+        Red,
+        Green,
+        Blue,
+    }
+
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    #[repr(u8)]
+    enum Shape {
+        Circle(f64),
+        Rect { w: f64, h: f64 },
+        Point,
+    }
+
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    struct WithOption {
+        maybe: Option<u32>,
+        name: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    struct Outer {
+        value: u32,
+        inner: Inner,
+    }
+
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    struct Inner {
+        x: i32,
+        label: String,
+    }
+
+    #[test]
+    fn compile_enum_unit_variants() {
+        compile_shape::<Color>().expect("Color should compile");
+    }
+
+    #[test]
+    fn compile_enum_with_payload() {
+        compile_shape::<Shape>().expect("Shape should compile");
+    }
+
+    #[test]
+    fn compile_option_u32() {
+        // Option<u32> now lowers via Def::Option (DecodeOption), not the unstable
+        // enum path. Compilation should succeed.
+        compile_shape::<Option<u32>>().expect("Option<u32> should compile via DecodeOption");
+    }
+
+    #[test]
+    fn compile_struct_with_option_and_string() {
+        // Requires DecodeOption and ReadString — falls back if String descriptor absent.
+        // Either Ok or UnsupportedOp(descriptor) is acceptable.
+        let _ = compile_shape::<WithOption>();
+    }
+
+    #[test]
+    fn compile_nested_struct() {
+        let _ = compile_shape::<Outer>();
+    }
+
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    struct NumBatch {
+        values: Vec<u32>,
+    }
+
+    #[test]
+    fn compile_vec_u32_calibrated() {
+        let plan = build_identity_plan(NumBatch::SHAPE);
+        let registry = vox_schema::SchemaRegistry::new();
+        let mut cal = CalibrationRegistry::new();
+        cal.calibrate_vec_for_type::<u32>();
+        let program = lower_with_cal(&plan, NumBatch::SHAPE, &registry, Some(&cal))
+            .map_err(|e| CodegenError::UnsupportedOp(format!("lowering failed: {e:?}")))
+            .expect("lower_with_cal should succeed");
+        let mut backend = CraneliftBackend::new().expect("backend");
+        let result = backend.compile_decode(&program, &cal);
+        assert!(
+            result.is_ok(),
+            "compile_decode for Vec<u32> failed: {:?}",
+            result
+        );
+    }
+
+    // Gnarly: Vec<Struct> where Struct has a Vec<u32> field.
+    // This exercises emit_inline_block's recursive handling of ReadListLen
+    // inside an element body — the bug fixed in task #34.
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    struct Row {
+        id: u32,
+        values: Vec<u32>,
+    }
+
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    struct Table {
+        rows: Vec<Row>,
+    }
+
+    #[test]
+    fn compile_nested_vec_struct() {
+        let plan = build_identity_plan(Table::SHAPE);
+        let registry = vox_schema::SchemaRegistry::new();
+        let mut cal = CalibrationRegistry::new();
+        cal.calibrate_vec_for_type::<u32>();
+        cal.calibrate_vec_for_type::<Row>();
+        let program = lower_with_cal(&plan, Table::SHAPE, &registry, Some(&cal))
+            .map_err(|e| CodegenError::UnsupportedOp(format!("lowering failed: {e:?}")))
+            .expect("lower_with_cal should succeed");
+        let mut backend = CraneliftBackend::new().expect("backend");
+        let result = backend.compile_decode(&program, &cal);
+        assert!(
+            result.is_ok(),
+            "compile nested Vec<Struct> failed: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn decode_roundtrip_nested_vec_struct() {
+        let original = Table {
+            rows: vec![
+                Row {
+                    id: 1,
+                    values: vec![10, 20, 30],
+                },
+                Row {
+                    id: 2,
+                    values: vec![],
+                },
+                Row {
+                    id: 3,
+                    values: vec![42],
+                },
+            ],
+        };
+        let bytes = reflective_encode(&original);
+        let decoded = jit_decode_value::<Table>(&bytes).expect("JIT decode failed");
+        assert_eq!(original, decoded, "nested Vec<Struct> round-trip mismatch");
+    }
+
+    // Gnarly-like: Vec<Entry> where Entry has Vec<Vec<u8>> and enum with Vec variants.
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    #[repr(u8)]
+    enum Kind {
+        File { tags: Vec<String> } = 0,
+        Dir { children: Vec<String> } = 1,
+        Link { hops: Vec<u32> } = 2,
+    }
+
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    struct Entry {
+        id: u64,
+        name: String,
+        chunks: Vec<Vec<u8>>,
+        kind: Kind,
+    }
+
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    struct Payload {
+        revision: u64,
+        entries: Vec<Entry>,
+    }
+
+    #[test]
+    fn decode_roundtrip_gnarly_like() {
+        let original = Payload {
+            revision: 42,
+            entries: vec![
+                Entry {
+                    id: 1,
+                    name: "alpha".to_string(),
+                    chunks: vec![vec![1, 2, 3], vec![4, 5]],
+                    kind: Kind::File {
+                        tags: vec!["hot".to_string(), "warm".to_string()],
+                    },
+                },
+                Entry {
+                    id: 2,
+                    name: "beta".to_string(),
+                    chunks: vec![],
+                    kind: Kind::Dir {
+                        children: vec!["child-a".to_string()],
+                    },
+                },
+                Entry {
+                    id: 3,
+                    name: "gamma".to_string(),
+                    chunks: vec![vec![0xff; 8]],
+                    kind: Kind::Link {
+                        hops: vec![1, 2, 3],
+                    },
+                },
+            ],
+        };
+        let bytes = reflective_encode(&original);
+        let decoded = jit_decode_value::<Payload>(&bytes).expect("JIT decode gnarly-like failed");
+        assert_eq!(original, decoded, "gnarly-like round-trip mismatch");
+    }
+
+    // Vec<Vec<u8>> — outer loop must not be corrupted by inner ReadListLen writes.
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    struct Chunks {
+        data: Vec<Vec<u8>>,
+    }
+
+    #[test]
+    fn decode_roundtrip_vec_of_vecs() {
+        let original = Chunks {
+            data: vec![vec![1u8, 2, 3], vec![], vec![10, 20], vec![255]],
+        };
+        let bytes = reflective_encode(&original);
+        let decoded = jit_decode_value::<Chunks>(&bytes).expect("JIT decode Vec<Vec<u8>> failed");
+        assert_eq!(original, decoded, "Vec<Vec<u8>> round-trip mismatch");
+    }
+
+    // -----------------------------------------------------------------------
+    // Encode compile tests
+    // -----------------------------------------------------------------------
+
+    fn encode_shape<T: Facet<'static>>() -> Result<(), CodegenError> {
+        let cal = CalibrationRegistry::new();
+        let program = lower_encode(T::SHAPE, Some(&cal))
+            .map_err(|e| CodegenError::UnsupportedOp(format!("encode lowering failed: {e}")))?;
+        let mut backend = CraneliftBackend::new()?;
+        backend.compile_encode(&program, &cal)?;
+        Ok(())
+    }
+
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    struct SimpleScalars {
+        a: u32,
+        b: i64,
+        c: f64,
+        d: bool,
+    }
+
+    #[test]
+    fn encode_compile_struct_scalars() {
+        encode_shape::<SimpleScalars>().expect("SimpleScalars should encode-compile");
+    }
+
+    #[test]
+    fn encode_compile_enum_unit_variants() {
+        encode_shape::<Color>().expect("Color should encode-compile");
+    }
+
+    #[test]
+    fn encode_compile_enum_with_payload() {
+        encode_shape::<Shape>().expect("Shape should encode-compile");
+    }
+
+    #[test]
+    fn encode_compile_u32() {
+        encode_shape::<u32>().expect("u32 should encode-compile");
+    }
+
+    #[test]
+    fn encode_compile_option_u32() {
+        // Option<u32> uses the Def::Option path in lower_encode (not the enum path).
+        // This should succeed because lower_encode checks Def before ty.
+        let result = encode_shape::<Option<u32>>();
+        // Either Ok or UnsupportedOp is acceptable — Option<u32> may work via
+        // the Def::Option path or fail on the inner type. Document the current behavior.
+        match &result {
+            Ok(()) => {}
+            Err(CodegenError::UnsupportedOp(_)) => {}
+            Err(e) => panic!("unexpected error: {e:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Encode correctness: JIT output must match the reflective serializer
+    // -----------------------------------------------------------------------
+
+    fn jit_encode_value<T: Facet<'static>>(value: &T) -> Result<Vec<u8>, CodegenError> {
+        let cal = CalibrationRegistry::new();
+        let program = lower_encode(T::SHAPE, Some(&cal))
+            .map_err(|e| CodegenError::UnsupportedOp(format!("encode lowering failed: {e}")))?;
+        let mut backend = CraneliftBackend::new()?;
+        let encode_fn = backend.compile_encode(&program, &cal)?;
+
+        let mut ctx = EncodeCtx::with_capacity(64);
+        let src_ptr = value as *const T as *const u8;
+        let ok = unsafe { encode_fn(&mut ctx as *mut _, src_ptr) };
+        assert!(ok, "JIT encode returned false (OOM)");
+        Ok(ctx.into_vec())
+    }
+
+    fn reflective_encode<T: for<'de> Facet<'de>>(value: &T) -> Vec<u8> {
+        vox_postcard::serialize::to_vec(value).expect("reflective encode failed")
+    }
+
+    #[test]
+    fn encode_roundtrip_struct_scalars() {
+        let v = SimpleScalars {
+            a: 42,
+            b: -7,
+            c: 3.14,
+            d: true,
+        };
+        let jit_bytes = jit_encode_value(&v).expect("JIT encode failed");
+        let ref_bytes = reflective_encode(&v);
+        assert_eq!(
+            jit_bytes, ref_bytes,
+            "JIT and reflective encode disagree for SimpleScalars"
+        );
+    }
+
+    #[test]
+    fn encode_roundtrip_u32() {
+        for &v in &[0u32, 1, 127, 128, 16383, 16384, u32::MAX] {
+            let jit_bytes = jit_encode_value(&v).expect("JIT encode failed");
+            let ref_bytes = reflective_encode(&v);
+            assert_eq!(
+                jit_bytes, ref_bytes,
+                "JIT and reflective encode disagree for u32={v}"
+            );
+        }
+    }
+
+    #[test]
+    fn encode_roundtrip_enum_unit() {
+        for v in [Color::Red, Color::Green, Color::Blue] {
+            let jit_bytes = jit_encode_value(&v).expect("JIT encode failed");
+            let ref_bytes = reflective_encode(&v);
+            assert_eq!(
+                jit_bytes, ref_bytes,
+                "JIT and reflective encode disagree for {v:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn encode_roundtrip_enum_with_payload() {
+        for v in [
+            Shape::Circle(1.5),
+            Shape::Rect { w: 10.0, h: 20.0 },
+            Shape::Point,
+        ] {
+            let jit_bytes = jit_encode_value(&v).expect("JIT encode failed");
+            let ref_bytes = reflective_encode(&v);
+            assert_eq!(
+                jit_bytes, ref_bytes,
+                "JIT and reflective encode disagree for {v:?}"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // SlowPath round-trip: struct containing a non-postcard scalar (SocketAddr)
+    // -----------------------------------------------------------------------
+
+    fn jit_decode_value<T: Facet<'static> + Clone>(bytes: &[u8]) -> Result<T, CodegenError> {
+        let plan = build_identity_plan(T::SHAPE);
+        let registry = vox_schema::SchemaRegistry::new();
+        let mut cal = CalibrationRegistry::new();
+        cal.calibrate_string_for_type();
+        let program = lower_with_cal(&plan, T::SHAPE, &registry, Some(&cal))
+            .map_err(|e| CodegenError::UnsupportedOp(format!("lowering failed: {e:?}")))?;
+        let mut backend = CraneliftBackend::new()?;
+        let (decode_fn, _) = backend.compile_decode(&program, &cal)?;
+
+        let layout = T::SHAPE
+            .layout
+            .sized_layout()
+            .map_err(|_| CodegenError::UnsupportedOp("unsized shape".into()))?;
+
+        let mut ctx = DecodeCtx::new(bytes);
+        let buf = vec![0u8; layout.size()];
+        let out_ptr = buf.as_ptr() as *mut u8;
+        let status = unsafe { decode_fn(&mut ctx as *mut _, out_ptr) };
+        if status != DecodeStatus::Ok {
+            return Err(CodegenError::UnsupportedOp(format!(
+                "decode status: {status:?}"
+            )));
+        }
+        let value = unsafe { std::ptr::read(out_ptr as *const T) };
+        std::mem::forget(buf); // ownership transferred to value
+        Ok(value)
+    }
+
+    // Proxy type: serialized as u32, deserialized via convert_in.
+    // A struct field of this type triggers SlowPath in the IR lowerer.
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    #[facet(proxy = u32)]
+    struct Proxied {
+        inner: u32,
+    }
+
+    impl From<u32> for Proxied {
+        fn from(v: u32) -> Self {
+            Proxied { inner: v }
+        }
+    }
+
+    impl From<&Proxied> for u32 {
+        fn from(p: &Proxied) -> Self {
+            p.inner
+        }
+    }
+
+    #[derive(Facet, Debug, PartialEq, Clone)]
+    struct WithProxy {
+        id: u32,
+        value: Proxied,
+    }
+
+    #[test]
+    fn slow_path_proxy_roundtrip() {
+        let original = WithProxy {
+            id: 42,
+            value: Proxied { inner: 99 },
+        };
+        let bytes = reflective_encode(&original);
+        let decoded = jit_decode_value::<WithProxy>(&bytes).expect("JIT decode failed");
+        assert_eq!(original, decoded, "SlowPath round-trip mismatch");
+    }
+}

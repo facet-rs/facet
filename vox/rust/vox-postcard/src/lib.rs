@@ -7,6 +7,8 @@ pub mod decode;
 pub mod deserialize;
 pub mod encode;
 pub mod error;
+#[allow(unsafe_code)]
+pub mod ir;
 pub mod plan;
 pub mod scatter;
 pub mod serialize;

@@ -86,6 +86,16 @@ where
 ///
 /// The cursor lifetime `'de` must outlive `'facet` so borrowed strings
 /// can be stored in the Partial.
+/// Public-crate alias so the IR slow path can delegate here.
+pub(crate) fn deserialize_value_pub<'de, 'facet, const BORROW: bool>(
+    partial: Partial<'facet, BORROW>,
+    cursor: &mut Cursor<'de>,
+    plan: &TranslationPlan,
+    registry: &SchemaRegistry,
+) -> Result<Partial<'facet, BORROW>, DeserializeError> {
+    deserialize_value::<BORROW>(partial, cursor, plan, registry)
+}
+
 fn deserialize_value<'de, 'facet, const BORROW: bool>(
     partial: Partial<'facet, BORROW>,
     cursor: &mut Cursor<'de>,
@@ -595,7 +605,9 @@ fn deserialize_list<'de, 'facet, const BORROW: bool>(
 ) -> Result<Partial<'facet, BORROW>, DeserializeError> {
     let re = |e: facet_reflect::ReflectError| DeserializeError::ReflectError(e.to_string());
     let len = cursor.read_varint()? as usize;
-    let mut partial = partial.init_list_with_capacity(len).map_err(re)?;
+    // Cap capacity hint by remaining bytes to avoid allocation OOM on malformed input.
+    let cap = len.min(cursor.remaining());
+    let mut partial = partial.init_list_with_capacity(cap).map_err(re)?;
     for _ in 0..len {
         partial = partial.begin_list_item().map_err(re)?;
         partial = deserialize_value::<BORROW>(partial, cursor, element_plan, registry)?;

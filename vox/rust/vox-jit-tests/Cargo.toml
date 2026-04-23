@@ -1,0 +1,34 @@
+[package]
+name = "vox-jit-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+publish = false
+description = "Differential tests, fuzz harnesses, calibration self-tests, and profiling gates for the vox JIT"
+
+[dependencies]
+vox-postcard = { workspace = true }
+vox-schema = { workspace = true }
+vox-types = { workspace = true }
+vox-jit-cal = { workspace = true }
+vox-jit-abi = { workspace = true }
+vox-jit = { workspace = true }
+facet = { workspace = true }
+facet-core = { workspace = true }
+facet-postcard = { workspace = true }
+spec-proto = { workspace = true }
+
+[dev-dependencies]
+divan = { workspace = true }
+
+[[bench]]
+name = "decode"
+harness = false
+
+[[bench]]
+name = "compile_cache"
+harness = false

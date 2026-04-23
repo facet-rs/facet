@@ -13,7 +13,7 @@ use crate::error::{PathSegment, SchemaSide, TranslationError, TranslationErrorKi
 /// This is a recursive enum that mirrors the shape of data. Each variant
 /// carries sub-plans for its children, so translation works through
 /// arbitrarily nested containers (Vec, Option, Map, etc.).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TranslationPlan {
     /// Identity — no translation needed. Used for leaves (scalars, etc.)
     /// and for container elements when remote and local types match.
@@ -62,7 +62,7 @@ pub enum TranslationPlan {
     Pointer { pointee: Box<TranslationPlan> },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum FieldOp {
     /// Read this remote field into local field at `local_index`.
     Read { local_index: usize },

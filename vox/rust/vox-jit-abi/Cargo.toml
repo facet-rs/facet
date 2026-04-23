@@ -1,0 +1,21 @@
+[package]
+name = "vox-jit-abi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords = ["jit", "abi", "decode", "postcard"]
+categories = ["development-tools"]
+description = "Stable extern C ABI types and helper signatures for the vox Cranelift JIT"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+vox-jit-cal = { workspace = true }
+facet-core = { workspace = true }
