@@ -130,7 +130,18 @@ impl JitRuntime {
             return Some(stub);
         }
 
-        let program = lower_with_cal(plan, local_shape, registry, Some(&cal), borrow_mode).ok()?;
+        let program = match lower_with_cal(plan, local_shape, registry, Some(&cal), borrow_mode) {
+            Ok(program) => program,
+            Err(err) => {
+                if require_pure_jit() {
+                    panic!(
+                        "VOX_JIT_REQUIRE_PURE=1 and lowered decode program for '{}' failed: {:?}",
+                        local_shape, err
+                    );
+                }
+                return None;
+            }
+        };
         if require_pure_jit() && decode_program_has_slow_path(&program) {
             panic!(
                 "VOX_JIT_REQUIRE_PURE=1 and lowered decode program for '{}' contains SlowPath",
@@ -139,14 +150,36 @@ impl JitRuntime {
         }
         let mut backend = self.backend.lock().unwrap();
         let stub = if borrow_mode {
-            let borrowed_fn = backend.compile_decode_borrowed(&program, &cal).ok()?;
+            let borrowed_fn = match backend.compile_decode_borrowed(&program, &cal) {
+                Ok(f) => f,
+                Err(err) => {
+                    if require_pure_jit() {
+                        panic!(
+                            "VOX_JIT_REQUIRE_PURE=1 and decode compile failed for '{}': {}",
+                            local_shape, err
+                        );
+                    }
+                    return None;
+                }
+            };
             cache::CompiledDecodeStub {
                 owned_fn: None,
                 borrowed_fn: Some(borrowed_fn),
                 key: key.clone(),
             }
         } else {
-            let owned_fn = backend.compile_decode_owned(&program, &cal).ok()?;
+            let owned_fn = match backend.compile_decode_owned(&program, &cal) {
+                Ok(f) => f,
+                Err(err) => {
+                    if require_pure_jit() {
+                        panic!(
+                            "VOX_JIT_REQUIRE_PURE=1 and decode compile failed for '{}': {}",
+                            local_shape, err
+                        );
+                    }
+                    return None;
+                }
+            };
             cache::CompiledDecodeStub {
                 owned_fn: Some(owned_fn),
                 borrowed_fn: None,
@@ -176,7 +209,18 @@ impl JitRuntime {
             return Some(stub);
         }
 
-        let program = lower_encode(shape, Some(&cal)).ok()?;
+        let program = match lower_encode(shape, Some(&cal)) {
+            Ok(program) => program,
+            Err(err) => {
+                if require_pure_jit() {
+                    panic!(
+                        "VOX_JIT_REQUIRE_PURE=1 and lowered encode program for '{}' failed: {}",
+                        shape, err
+                    );
+                }
+                return None;
+            }
+        };
         if require_pure_jit() && encode_program_has_slow_path(&program) {
             panic!(
                 "VOX_JIT_REQUIRE_PURE=1 and lowered encode program for '{}' contains SlowPath",
@@ -184,7 +228,18 @@ impl JitRuntime {
             );
         }
         let mut backend = self.backend.lock().unwrap();
-        let encode_fn = backend.compile_encode(&program, &cal).ok()?;
+        let encode_fn = match backend.compile_encode(&program, &cal) {
+            Ok(f) => f,
+            Err(err) => {
+                if require_pure_jit() {
+                    panic!(
+                        "VOX_JIT_REQUIRE_PURE=1 and encode compile failed for '{}': {}",
+                        shape, err
+                    );
+                }
+                return None;
+            }
+        };
         let stub = cache::CompiledEncodeStub {
             key: key.clone(),
             encode_fn,

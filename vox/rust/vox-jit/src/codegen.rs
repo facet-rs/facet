@@ -152,6 +152,10 @@ impl CraneliftBackend {
             crate::helpers::vox_jit_slow_path as *const u8,
         );
         jit_builder.symbol(
+            "vox_jit_decode_opaque",
+            crate::helpers::vox_jit_decode_opaque as *const u8,
+        );
+        jit_builder.symbol(
             "vox_jit_encode_slow_path",
             crate::helpers::vox_jit_encode_slow_path as *const u8,
         );
@@ -198,6 +202,18 @@ impl CraneliftBackend {
         jit_builder.symbol(
             "vox_jit_encode_string_like",
             crate::helpers::vox_jit_encode_string_like as *const u8,
+        );
+        jit_builder.symbol(
+            "vox_jit_encode_shape",
+            crate::helpers::vox_jit_encode_shape as *const u8,
+        );
+        jit_builder.symbol(
+            "vox_jit_encode_opaque",
+            crate::helpers::vox_jit_encode_opaque as *const u8,
+        );
+        jit_builder.symbol(
+            "vox_jit_encode_proxy",
+            crate::helpers::vox_jit_encode_proxy as *const u8,
         );
         jit_builder.symbol(
             "vox_jit_encode_bytes_like",
@@ -896,6 +912,10 @@ fn emit_op(
 
         DecodeOp::ReadByteSliceRef { dst_offset } => {
             emit_read_byte_slice_ref(ctx, *dst_offset)?;
+        }
+
+        DecodeOp::ReadOpaque { shape, dst_offset } => {
+            emit_decode_opaque(ctx, *shape, *dst_offset)?;
         }
 
         DecodeOp::SkipValue { .. } => {
@@ -2402,6 +2422,64 @@ fn emit_slow_path(
     Ok(())
 }
 
+fn emit_decode_opaque(
+    ctx: &mut EmitCtx<'_, '_>,
+    shape: &'static facet_core::Shape,
+    dst_offset: usize,
+) -> Result<(), CodegenError> {
+    let consumed_val = ctx.b.use_var(ctx.var_consumed);
+    let off = core::mem::offset_of!(DecodeCtx, consumed) as i32;
+    ctx.b
+        .ins()
+        .store(MemFlags::trusted(), consumed_val, ctx.ctx_ptr, off);
+
+    let shape_ptr = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, shape as *const facet_core::Shape as i64);
+    let dst_offset_val = ctx.b.ins().iconst(ctx.ptr_ty, dst_offset as i64);
+
+    let call_conv = ctx.b.func.signature.call_conv;
+    let sig = ctx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ctx.ptr_ty),
+            AbiParam::new(ctx.ptr_ty),
+            AbiParam::new(ctx.ptr_ty),
+            AbiParam::new(ctx.ptr_ty),
+        ],
+        returns: vec![AbiParam::new(types::I32)],
+        call_conv,
+    });
+    let fn_ptr = ctx.b.ins().iconst(
+        ctx.ptr_ty,
+        crate::helpers::vox_jit_decode_opaque as *const () as i64,
+    );
+    let call = ctx.b.ins().call_indirect(
+        sig,
+        fn_ptr,
+        &[ctx.ctx_ptr, shape_ptr, ctx.out_ptr, dst_offset_val],
+    );
+    let status = ctx.b.inst_results(call)[0];
+
+    let ok_val = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
+    let is_ok = ctx.b.ins().icmp(IntCC::Equal, status, ok_val);
+
+    let ok_block = ctx.fresh_block();
+    let err_block = ctx.fresh_block();
+    ctx.b.ins().brif(is_ok, ok_block, &[], err_block, &[]);
+
+    ctx.b.switch_to_block(err_block);
+    ctx.b.seal_block(err_block);
+    ctx.flush_ctx();
+    ctx.b.ins().return_(&[status]);
+
+    ctx.b.switch_to_block(ok_block);
+    ctx.b.seal_block(ok_block);
+    ctx.reload_consumed_from_ctx();
+
+    Ok(())
+}
+
 fn make_alloc_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
     let call_conv = ctx.b.func.signature.call_conv;
     ctx.b.func.import_signature(Signature {
@@ -2750,6 +2828,36 @@ fn emit_encode_op(
                 *shape,
                 *src_offset,
                 crate::helpers::vox_jit_encode_string_like as *const (),
+            );
+            Ok(false)
+        }
+
+        EncodeOp::WriteShape { shape, src_offset } => {
+            emit_encode_helper_shape_op(
+                ectx,
+                *shape,
+                *src_offset,
+                crate::helpers::vox_jit_encode_shape as *const (),
+            );
+            Ok(false)
+        }
+
+        EncodeOp::WriteOpaque { shape, src_offset } => {
+            emit_encode_helper_shape_op(
+                ectx,
+                *shape,
+                *src_offset,
+                crate::helpers::vox_jit_encode_opaque as *const (),
+            );
+            Ok(false)
+        }
+
+        EncodeOp::WriteProxy { shape, src_offset } => {
+            emit_encode_helper_shape_op(
+                ectx,
+                *shape,
+                *src_offset,
+                crate::helpers::vox_jit_encode_proxy as *const (),
             );
             Ok(false)
         }
@@ -3464,13 +3572,17 @@ fn emit_encode_list(
 mod tests {
     use super::*;
     use facet::Facet;
+    use spec_proto::{GnarlyAttr, GnarlyEntry, GnarlyKind, GnarlyPayload};
     use vox_jit_abi::EncodeCtx;
     use vox_jit_cal::CalibrationRegistry;
     use vox_postcard::{
         build_identity_plan,
         ir::{lower, lower_encode, lower_with_cal},
     };
-    use vox_types::{ConnectionId, Message, MessagePayload, MetadataEntry};
+    use vox_types::{
+        BindingDirection, CborPayload, ConnectionId, Message, MessagePayload, MetadataEntry,
+        MethodId, RequestBody, RequestCall, RequestId,
+    };
 
     fn compile_shape<T: Facet<'static>>() -> Result<(), CodegenError> {
         let plan = build_identity_plan(T::SHAPE);
@@ -3521,12 +3633,154 @@ mod tests {
         cal
     }
 
+    fn calibration_for(shape: &'static facet_core::Shape) -> CalibrationRegistry {
+        fn register_tree(shape: &'static facet_core::Shape, cal: &mut CalibrationRegistry) {
+            use facet_core::{Def, Type, UserType};
+
+            match shape.def {
+                Def::List(_) | Def::Pointer(_) => {
+                    cal.get_or_calibrate_by_shape(shape);
+                }
+                _ => {}
+            }
+
+            match shape.ty {
+                Type::User(UserType::Struct(st)) => {
+                    for field in st.fields {
+                        register_tree(field.shape(), cal);
+                    }
+                }
+                Type::User(UserType::Enum(et)) => {
+                    for variant in et.variants {
+                        for field in variant.data.fields {
+                            register_tree(field.shape(), cal);
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            match shape.def {
+                Def::Option(opt) => register_tree(opt.t, cal),
+                Def::List(list) => register_tree(list.t, cal),
+                Def::Pointer(ptr) => {
+                    if let Some(inner) = ptr.pointee() {
+                        register_tree(inner, cal);
+                    }
+                }
+                Def::Array(arr) => register_tree(arr.t, cal),
+                _ => {}
+            }
+        }
+
+        let mut cal = metadata_calibration();
+        cal.calibrate_string_for_type();
+        register_tree(shape, &mut cal);
+        cal
+    }
+
     fn control_message_with_metadata_bytes() -> Message<'static> {
         Message {
             connection_id: ConnectionId(7),
             payload: MessagePayload::ConnectionReject(vox_types::ConnectionReject {
                 metadata: vec![MetadataEntry::bytes("blob", &[0xde, 0xad, 0xbe, 0xef][..])],
             }),
+        }
+    }
+
+    fn request_message_with_gnarly<'a>(args: &'a (GnarlyPayload,)) -> Message<'a> {
+        Message {
+            connection_id: ConnectionId(1),
+            payload: MessagePayload::RequestMessage(vox_types::RequestMessage {
+                id: RequestId(9),
+                body: RequestBody::Call(RequestCall {
+                    method_id: MethodId(42),
+                    metadata: vec![MetadataEntry::str("kind", "bench")],
+                    args: vox_types::Payload::outgoing(args),
+                    schemas: CborPayload::default(),
+                }),
+            }),
+        }
+    }
+
+    fn schema_message_with_payload() -> Message<'static> {
+        Message {
+            connection_id: ConnectionId(1),
+            payload: MessagePayload::SchemaMessage(vox_types::SchemaMessage {
+                method_id: MethodId(42),
+                direction: BindingDirection::Args,
+                schemas: CborPayload(vec![0xde, 0xad, 0xbe, 0xef, 7, 8, 9]),
+            }),
+        }
+    }
+
+    fn gnarly_payload(entry_count: usize, seq: usize) -> GnarlyPayload {
+        let entries = (0..entry_count)
+            .map(|i| {
+                let attrs = vec![
+                    GnarlyAttr {
+                        key: "owner".to_string(),
+                        value: format!("user-{seq}-{i}"),
+                    },
+                    GnarlyAttr {
+                        key: "class".to_string(),
+                        value: format!("hot-path-{}", (seq + i) % 17),
+                    },
+                    GnarlyAttr {
+                        key: "etag".to_string(),
+                        value: format!("etag-{seq:08x}-{i:08x}"),
+                    },
+                ];
+                let chunks = (0..3)
+                    .map(|j| {
+                        let len = 32 * (j + 1);
+                        vec![((seq + i + j) & 0xff) as u8; len]
+                    })
+                    .collect();
+                let kind = match i % 3 {
+                    0 => GnarlyKind::File {
+                        mime: "application/octet-stream".to_string(),
+                        tags: vec![
+                            "warm".to_string(),
+                            "cacheable".to_string(),
+                            format!("tag-{seq}-{i}"),
+                        ],
+                    },
+                    1 => GnarlyKind::Directory {
+                        child_count: i as u32 + 3,
+                        children: vec![
+                            format!("child-{seq}-{i}-0"),
+                            format!("child-{seq}-{i}-1"),
+                            format!("child-{seq}-{i}-2"),
+                        ],
+                    },
+                    _ => GnarlyKind::Symlink {
+                        target: format!("/target/{seq}/{i}/nested/item"),
+                        hops: vec![1, 2, 3, i as u32],
+                    },
+                };
+                GnarlyEntry {
+                    id: seq as u64 * 1_000_000 + i as u64,
+                    parent: if i == 0 {
+                        None
+                    } else {
+                        Some(seq as u64 * 1_000_000 + i as u64 - 1)
+                    },
+                    name: format!("entry-{seq}-{i}"),
+                    path: format!("/mount/very/deep/path/with/component/{seq}/{i}/file.bin"),
+                    attrs,
+                    chunks,
+                    kind,
+                }
+            })
+            .collect();
+
+        GnarlyPayload {
+            revision: seq as u64,
+            mount: format!("/mnt/bench-fast-path-{seq:08x}"),
+            entries,
+            footer: Some(format!("benchmark footer {seq}")),
+            digest: vec![(seq & 0xff) as u8; 64],
         }
     }
 
@@ -3667,6 +3921,13 @@ mod tests {
     #[test]
     fn encode_compile_message_outer_path() {
         let cal = metadata_calibration();
+        let plan = build_identity_plan(Message::SHAPE);
+        let registry = vox_schema::SchemaRegistry::new();
+        let decode_program = lower_with_cal(&plan, Message::SHAPE, &registry, Some(&cal), false)
+            .expect("Message decode lowering");
+        assert_no_decode_slow_path(&decode_program);
+        let program = lower_encode(Message::SHAPE, Some(&cal)).expect("Message encode lowering");
+        assert_no_encode_slow_path(&program);
         encode_shape_with_cal::<Message<'static>>(&cal).expect("Message should encode-compile");
     }
 
@@ -3828,7 +4089,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     fn jit_encode_value<T: Facet<'static>>(value: &T) -> Result<Vec<u8>, CodegenError> {
-        let cal = metadata_calibration();
+        let cal = calibration_for(T::SHAPE);
         let program = lower_encode(T::SHAPE, Some(&cal))
             .map_err(|e| CodegenError::UnsupportedOp(format!("encode lowering failed: {e}")))?;
         let mut backend = CraneliftBackend::new()?;
@@ -3920,6 +4181,89 @@ mod tests {
         );
     }
 
+    #[test]
+    fn encode_roundtrip_gnarly_like_tuple() {
+        let value = (Payload {
+            revision: 42,
+            entries: vec![
+                Entry {
+                    id: 1,
+                    name: "alpha".to_string(),
+                    chunks: vec![vec![1, 2, 3], vec![4, 5]],
+                    kind: Kind::File {
+                        tags: vec!["hot".to_string(), "warm".to_string()],
+                    },
+                },
+                Entry {
+                    id: 2,
+                    name: "beta".to_string(),
+                    chunks: vec![],
+                    kind: Kind::Dir {
+                        children: vec!["child-a".to_string()],
+                    },
+                },
+                Entry {
+                    id: 3,
+                    name: "gamma".to_string(),
+                    chunks: vec![vec![0xff; 8]],
+                    kind: Kind::Link {
+                        hops: vec![1, 2, 3],
+                    },
+                },
+            ],
+        },);
+
+        let jit_bytes = jit_encode_value(&value).expect("JIT encode failed");
+        let ref_bytes = reflective_encode(&value);
+        assert_eq!(jit_bytes, ref_bytes, "JIT and reflective encode disagree");
+
+        let decoded = jit_decode_value::<(Payload,)>(&jit_bytes).expect("JIT decode failed");
+        assert_eq!(decoded, value, "JIT tuple round-trip mismatch");
+    }
+
+    #[test]
+    fn encode_roundtrip_real_gnarly_tuple() {
+        let value = (gnarly_payload(4, 7),);
+        let jit_bytes = jit_encode_value(&value).expect("JIT encode failed");
+        let ref_bytes = reflective_encode(&value);
+        assert_eq!(jit_bytes, ref_bytes, "JIT and reflective encode disagree");
+
+        let decoded = jit_decode_value::<(GnarlyPayload,)>(&jit_bytes).expect("JIT decode failed");
+        assert_eq!(decoded, value, "JIT real gnarly tuple round-trip mismatch");
+    }
+
+    #[test]
+    fn encode_roundtrip_message_with_gnarly_payload() {
+        let args = Box::leak(Box::new((gnarly_payload(4, 7),)));
+        let msg = request_message_with_gnarly(args);
+
+        let jit_bytes = jit_encode_value(&msg).expect("JIT encode failed");
+        let ref_bytes = vox_postcard::serialize::to_vec(&msg).expect("reflective encode failed");
+        assert_eq!(jit_bytes, ref_bytes, "JIT and reflective encode disagree");
+
+        let decoded = jit_decode_value::<Message<'static>>(&jit_bytes).expect("JIT decode failed");
+        assert_eq!(
+            reflective_encode_static(&decoded),
+            ref_bytes,
+            "JIT message round-trip mismatch"
+        );
+    }
+
+    #[test]
+    fn encode_roundtrip_schema_message() {
+        let msg = schema_message_with_payload();
+        let jit_bytes = jit_encode_value(&msg).expect("JIT encode failed");
+        let ref_bytes = reflective_encode_static(&msg);
+        assert_eq!(jit_bytes, ref_bytes, "JIT and reflective encode disagree");
+
+        let decoded = jit_decode_value::<Message<'static>>(&jit_bytes).expect("JIT decode failed");
+        assert_eq!(
+            reflective_encode_static(&decoded),
+            ref_bytes,
+            "JIT schema message round-trip mismatch"
+        );
+    }
+
     // -----------------------------------------------------------------------
     // SlowPath round-trip: struct containing a non-postcard scalar (SocketAddr)
     // -----------------------------------------------------------------------
@@ -3927,8 +4271,7 @@ mod tests {
     fn jit_decode_value<T: Facet<'static>>(bytes: &[u8]) -> Result<T, CodegenError> {
         let plan = build_identity_plan(T::SHAPE);
         let registry = vox_schema::SchemaRegistry::new();
-        let mut cal = metadata_calibration();
-        cal.calibrate_string_for_type();
+        let cal = calibration_for(T::SHAPE);
         let program = lower_with_cal(&plan, T::SHAPE, &registry, Some(&cal), false)
             .map_err(|e| CodegenError::UnsupportedOp(format!("lowering failed: {e:?}")))?;
         let mut backend = CraneliftBackend::new()?;

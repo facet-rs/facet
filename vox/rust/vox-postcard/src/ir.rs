@@ -198,6 +198,13 @@ pub enum DecodeOp {
     /// at `dst_offset`.
     ReadByteSliceRef { dst_offset: usize },
 
+    /// Read a u32le-length-prefixed opaque payload and initialize the target
+    /// via the shape's opaque adapter.
+    ReadOpaque {
+        shape: &'static Shape,
+        dst_offset: usize,
+    },
+
     // -----------------------------------------------------------------------
     // Skip operations (remote fields absent in local type)
     // -----------------------------------------------------------------------
@@ -491,8 +498,12 @@ fn lower_value(
     block: usize,
     dst_offset: usize,
 ) -> Result<(), LowerError> {
-    // Opaque adapter — always slow path (handled by proxy layer above us)
-    if shape.opaque_adapter.is_some() || shape.proxy.is_some() {
+    if shape.opaque_adapter.is_some() {
+        program.emit(block, DecodeOp::ReadOpaque { shape, dst_offset });
+        return Ok(());
+    }
+
+    if shape.proxy.is_some() {
         program.emit(
             block,
             DecodeOp::SlowPath {
@@ -1580,6 +1591,13 @@ impl<'a> InterpState<'a> {
         let len = self.read_varint()? as usize;
         self.read_bytes(len)
     }
+
+    fn read_opaque_bytes(&mut self) -> Result<&'a [u8], DeserializeError> {
+        let len_bytes = self.read_bytes(4)?;
+        let len =
+            u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]) as usize;
+        self.read_bytes(len)
+    }
 }
 
 /// Interpret a `DecodeProgram` against `input`, writing the decoded value into
@@ -1700,6 +1718,22 @@ fn run_block(
                 unsafe {
                     std::ptr::write(base.add(*dst_offset) as *mut &'static [u8], bytes);
                 }
+            }
+
+            DecodeOp::ReadOpaque { shape, dst_offset } => {
+                let bytes = state.read_opaque_bytes()?;
+                let adapter = shape.opaque_adapter.ok_or_else(|| {
+                    DeserializeError::ReflectError(format!("missing opaque adapter for {shape}"))
+                })?;
+                let input = facet::OpaqueDeserialize::Borrowed(bytes);
+                unsafe {
+                    (adapter.deserialize)(input, facet_core::PtrUninit::new(base.add(*dst_offset)))
+                }
+                .map_err(|e| {
+                    DeserializeError::ReflectError(format!(
+                        "opaque adapter deserialize failed for {shape}: {e}"
+                    ))
+                })?;
             }
 
             DecodeOp::SkipValue { kind } => {
@@ -2278,10 +2312,29 @@ pub enum EncodeOp {
     /// Encode `vox_types::MetadataEntry` via a dedicated helper.
     WriteMetadataEntry { src_offset: usize },
 
+    /// Encode a field by delegating to a nested encoder for the exact shape.
+    WriteShape {
+        shape: &'static Shape,
+        src_offset: usize,
+    },
+
+    /// Encode an opaque-adapter field (`#[facet(opaque = ...)]`) via a dedicated
+    /// helper that preserves postcard's length-prefixed opaque semantics while
+    /// delegating nested value encoding back through the JIT runtime.
+    WriteOpaque {
+        shape: &'static Shape,
+        src_offset: usize,
+    },
+
+    /// Encode a proxy field (`#[facet(proxy = ...)]`) by converting to the
+    /// proxy value and then delegating nested encoding back through the JIT
+    /// runtime.
+    WriteProxy {
+        shape: &'static Shape,
+        src_offset: usize,
+    },
+
     /// Encode one field reflectively from `src_offset`.
-    ///
-    /// Used for opaque/proxy shapes that the JIT cannot lower inline while
-    /// still allowing the surrounding message/frame encoder to stay native.
     SlowPath {
         shape: &'static Shape,
         src_offset: usize,
@@ -2472,10 +2525,13 @@ fn lower_encode_value(
         )));
     }
 
-    // Opaque adapter or proxy — handled via a local slow path so the
-    // surrounding message/frame can still compile natively.
-    if shape.opaque_adapter.is_some() || shape.proxy.is_some() {
-        program.emit(block, EncodeOp::SlowPath { shape, src_offset });
+    if shape.opaque_adapter.is_some() {
+        program.emit(block, EncodeOp::WriteOpaque { shape, src_offset });
+        return Ok(());
+    }
+
+    if shape.proxy.is_some() {
+        program.emit(block, EncodeOp::WriteProxy { shape, src_offset });
         return Ok(());
     }
 
@@ -2579,6 +2635,29 @@ fn lower_encode_pointer(
     )))
 }
 
+fn should_inline_loop_body(shape: &'static Shape) -> bool {
+    if shape.type_identifier == "MetadataEntry" {
+        return true;
+    }
+
+    if let Some(scalar) = shape.scalar_type() {
+        let _ = scalar;
+        return true;
+    }
+
+    match shape.def {
+        facet_core::Def::Pointer(ptr_def) => {
+            if let Some(pointee) = ptr_def.pointee() {
+                return pointee.scalar_type() == Some(facet_core::ScalarType::Str)
+                    || matches!(pointee.def, facet_core::Def::Slice(slice_def) if slice_def.t().is_type::<u8>());
+            }
+            false
+        }
+        facet_core::Def::Slice(slice_def) => slice_def.t().is_type::<u8>(),
+        _ => false,
+    }
+}
+
 fn lower_encode_slice(
     shape: &'static Shape,
     slice_def: facet_core::SliceDef,
@@ -2654,7 +2733,17 @@ fn lower_encode_array(
         },
     );
 
-    lower_encode_value(elem_shape, cal, program, body_block, 0)?;
+    if should_inline_loop_body(elem_shape) {
+        lower_encode_value(elem_shape, cal, program, body_block, 0)?;
+    } else {
+        program.emit(
+            body_block,
+            EncodeOp::WriteShape {
+                shape: elem_shape,
+                src_offset: 0,
+            },
+        );
+    }
     program.emit(body_block, EncodeOp::Return);
 
     Ok(())
@@ -2698,7 +2787,17 @@ fn lower_encode_list(
         },
     );
 
-    lower_encode_value(elem_shape, cal, program, body_block, 0)?;
+    if should_inline_loop_body(elem_shape) {
+        lower_encode_value(elem_shape, cal, program, body_block, 0)?;
+    } else {
+        program.emit(
+            body_block,
+            EncodeOp::WriteShape {
+                shape: elem_shape,
+                src_offset: 0,
+            },
+        );
+    }
     program.emit(body_block, EncodeOp::Return);
 
     Ok(())
@@ -2723,6 +2822,14 @@ fn lower_encode_enum(
             tag_width,
         },
     );
+
+    if et
+        .variants
+        .iter()
+        .all(|variant| variant.data.fields.is_empty())
+    {
+        return Ok(());
+    }
 
     // Build per-variant blocks
     let mut variant_blocks: Vec<(u64, usize)> = Vec::new();

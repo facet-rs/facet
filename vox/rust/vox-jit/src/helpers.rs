@@ -56,6 +56,47 @@ pub unsafe extern "C" fn vox_jit_slow_path(
     }
 }
 
+/// Opaque decode helper: read a u32le-length-prefixed byte payload and
+/// initialize the destination via the shape's opaque adapter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_jit_decode_opaque(
+    ctx: *mut DecodeCtx,
+    shape: &'static facet_core::Shape,
+    dst_base: *mut u8,
+    dst_offset: usize,
+) -> DecodeStatus {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let adapter = shape.opaque_adapter?;
+        let ctx_ref = unsafe { &mut *ctx };
+        let remaining = unsafe { ctx_ref.remaining() };
+        if remaining.len() < 4 {
+            return None;
+        }
+
+        let len =
+            u32::from_le_bytes([remaining[0], remaining[1], remaining[2], remaining[3]]) as usize;
+        let total = 4usize.checked_add(len)?;
+        if remaining.len() < total {
+            return None;
+        }
+
+        let bytes = &remaining[4..total];
+        let input = facet::OpaqueDeserialize::Borrowed(bytes);
+        unsafe {
+            (adapter.deserialize)(input, facet_core::PtrUninit::new(dst_base.add(dst_offset)))
+        }
+        .ok()?;
+        ctx_ref.consumed = ctx_ref.consumed.checked_add(total)?;
+        Some(())
+    }));
+
+    match result {
+        Ok(Some(())) => DecodeStatus::Ok,
+        Ok(None) => DecodeStatus::UnexpectedEof,
+        Err(_) => DecodeStatus::UnexpectedEof,
+    }
+}
+
 /// SlowPath helper: encode one field reflectively and append its bytes to the
 /// current encode buffer.
 ///
@@ -102,6 +143,101 @@ pub unsafe extern "C" fn vox_jit_encode_slow_path(
             vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape).ok()?
         };
         unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }.then_some(())
+    }));
+
+    matches!(result, Ok(Some(())))
+}
+
+fn handle_pure_jit_encode_miss(kind: &str, shape: &'static facet_core::Shape) -> Option<()> {
+    if crate::abort_on_slow_path() {
+        eprintln!(
+            "VOX_JIT_ABORT_ON_SLOW_PATH=1: {kind} encode fell back for '{}'",
+            shape
+        );
+        std::process::abort();
+    }
+    if crate::require_pure_jit() {
+        panic!(
+            "VOX_JIT_REQUIRE_PURE=1 and {kind} encode for '{}' could not stay on JIT",
+            shape
+        );
+    }
+    None
+}
+
+/// Encode an opaque-adapter field without using the reflective walker when the
+/// mapped inner value can be encoded by the JIT runtime.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_jit_encode_opaque(
+    ctx: *mut EncodeCtx,
+    src_ptr: *const u8,
+    shape: &'static facet_core::Shape,
+) -> bool {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let adapter = shape.opaque_adapter?;
+        let mapped = unsafe { (adapter.serialize)(PtrConst::new(src_ptr)) };
+
+        if let Some(bytes) =
+            unsafe { vox_postcard::raw::try_decode_passthrough_bytes(mapped.ptr, mapped.shape) }
+        {
+            unsafe { vox_jit_buf_push_bytes(ctx, (bytes.len() as u32).to_le_bytes().as_ptr(), 4) }
+                .then_some(())?;
+            return unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
+                .then_some(());
+        }
+
+        if let Some(result) = crate::global_runtime().try_encode_ptr(mapped.ptr, mapped.shape) {
+            let inner = result.ok()?;
+            unsafe { vox_jit_buf_push_bytes(ctx, (inner.len() as u32).to_le_bytes().as_ptr(), 4) }
+                .then_some(())?;
+            return unsafe { vox_jit_buf_push_bytes(ctx, inner.as_ptr(), inner.len()) }
+                .then_some(());
+        }
+
+        handle_pure_jit_encode_miss("opaque", shape)?;
+
+        let bytes = vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape).ok()?;
+        unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }.then_some(())
+    }));
+
+    matches!(result, Ok(Some(())))
+}
+
+/// Encode a proxy field by converting to the proxy value and delegating the
+/// proxy shape back through the JIT runtime.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_jit_encode_proxy(
+    ctx: *mut EncodeCtx,
+    src_ptr: *const u8,
+    shape: &'static facet_core::Shape,
+) -> bool {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let proxy_def = shape.proxy?;
+        let proxy_shape = proxy_def.shape;
+        let proxy_layout = proxy_shape.layout.sized_layout().ok()?;
+        let proxy_uninit = facet_core::alloc_for_layout(proxy_layout);
+        let proxy_ptr =
+            unsafe { (proxy_def.convert_out)(PtrConst::new(src_ptr), proxy_uninit) }.ok()?;
+
+        let encode_result = if let Some(result) =
+            crate::global_runtime().try_encode_ptr(proxy_ptr.as_const(), proxy_shape)
+        {
+            result.ok().and_then(|bytes| {
+                unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }.then_some(())
+            })
+        } else {
+            handle_pure_jit_encode_miss("proxy", shape)?;
+            let bytes =
+                vox_postcard::serialize::to_vec_dynamic(proxy_ptr.as_const(), proxy_shape).ok()?;
+            unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }.then_some(())
+        };
+
+        unsafe {
+            let _ = proxy_shape.call_drop_in_place(proxy_ptr);
+            facet_core::dealloc_for_layout(proxy_ptr, proxy_layout);
+        }
+
+        encode_result
     }));
 
     matches!(result, Ok(Some(())))
@@ -217,6 +353,30 @@ pub unsafe extern "C" fn vox_jit_encode_string_like(
         if !unsafe { vox_jit_buf_write_varint(ctx, bytes.len() as u64) } {
             return None;
         }
+        unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }.then_some(())
+    }));
+
+    matches!(result, Ok(Some(())))
+}
+
+/// Encode a field by delegating to a nested encoder for the exact shape.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_jit_encode_shape(
+    ctx: *mut EncodeCtx,
+    src_ptr: *const u8,
+    shape: &'static facet_core::Shape,
+) -> bool {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if let Some(result) = crate::global_runtime().try_encode_ptr(PtrConst::new(src_ptr), shape)
+        {
+            let bytes = result.ok()?;
+            return unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
+                .then_some(());
+        }
+
+        handle_pure_jit_encode_miss("nested", shape)?;
+
+        let bytes = vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape).ok()?;
         unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }.then_some(())
     }));
 

@@ -3923,6 +3923,7 @@ dependencies = [
  "cranelift-native",
  "facet",
  "facet-core",
+ "spec-proto",
  "vox-jit-abi",
  "vox-jit-cal",
  "vox-postcard",
