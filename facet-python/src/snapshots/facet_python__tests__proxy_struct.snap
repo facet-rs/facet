@@ -1,0 +1,8 @@
+---
+source: facet-python/src/lib.rs
+assertion_line: 2428
+expression: py
+---
+class InternalPoint(TypedDict, total=False):
+    x: Required[float]
+    y: Required[float]

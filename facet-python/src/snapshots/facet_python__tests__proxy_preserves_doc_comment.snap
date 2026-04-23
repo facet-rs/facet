@@ -1,0 +1,8 @@
+---
+source: facet-python/src/lib.rs
+expression: py
+---
+# A 2-D point (internal representation).
+class Point(TypedDict, total=False):
+    x: Required[float]
+    y: Required[float]

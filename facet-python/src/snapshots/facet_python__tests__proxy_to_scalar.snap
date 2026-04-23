@@ -1,0 +1,6 @@
+---
+source: facet-python/src/lib.rs
+assertion_line: 2464
+expression: py
+---
+type UserId = str

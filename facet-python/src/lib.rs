@@ -209,13 +209,57 @@ impl PythonGenerator {
     fn generate_shape(&mut self, shape: &'static Shape) {
         let mut output = String::new();
 
-        // Handle transparent wrappers - generate a type alias to the inner type
+        // Handle transparent wrappers — generate a type alias to the inner type.
         if let Some(inner) = shape.inner {
             self.add_shape(inner);
             let inner_type = self.type_for_shape(inner, None);
             write_doc_comment(&mut output, shape.doc);
             writeln!(output, "type {} = {}", shape.type_identifier, inner_type).unwrap();
             output.push('\n');
+            self.generated
+                .insert(shape.type_identifier.to_string(), output);
+            return;
+        }
+
+        // Handle proxy types — use the proxy's wire format but keep the original
+        // type's name and doc comment. Mirrors facet-typescript's approach.
+        if let Some(proxy_def) = shape.proxy {
+            let proxy_shape = proxy_def.shape;
+            match &proxy_shape.ty {
+                Type::User(UserType::Struct(st)) => {
+                    // Proxy is a struct: generate TypedDict using the proxy's fields.
+                    // Doc comment is written by generate_struct → generate_typed_dict.
+                    self.generate_struct(&mut output, shape, st.fields, st.kind);
+                }
+                Type::User(UserType::Enum(en)) => {
+                    // Proxy is an enum: use proxy_shape's tag/untagged attributes so
+                    // the generated union matches the actual wire format.
+                    // Write doc comment here — the enum sub-generators don't.
+                    write_doc_comment(&mut output, shape.doc);
+                    let all_unit = en
+                        .variants
+                        .iter()
+                        .all(|v| matches!(v.data.kind, StructKind::Unit));
+                    if let Some(tag_key) = proxy_shape.tag {
+                        self.generate_enum_internally_tagged(&mut output, shape, en, tag_key);
+                    } else if proxy_shape.is_untagged() {
+                        self.generate_enum_untagged(&mut output, shape, en);
+                    } else if all_unit {
+                        self.generate_enum_unit_variants(&mut output, shape, en);
+                    } else {
+                        self.generate_enum_with_data(&mut output, shape, en);
+                    }
+                    output.push('\n');
+                }
+                _ => {
+                    // Scalar or other proxy type: generate a type alias.
+                    // Write doc comment here — the type alias path doesn't.
+                    write_doc_comment(&mut output, shape.doc);
+                    let proxy_type = self.type_for_shape(proxy_shape, None);
+                    writeln!(output, "type {} = {}", shape.type_identifier, proxy_type).unwrap();
+                    output.push('\n');
+                }
+            }
             self.generated
                 .insert(shape.type_identifier.to_string(), output);
             return;
@@ -487,6 +531,10 @@ impl PythonGenerator {
         if let Some(inner) = shape.inner {
             let (inner_shape, is_optional) = Self::unwrap_to_inner_shape(inner);
             return (inner_shape, is_optional);
+        }
+        // Proxy types — follow the proxy chain.
+        if let Some(proxy_def) = shape.proxy {
+            return Self::unwrap_to_inner_shape(proxy_def.shape);
         }
         (shape, false)
     }
@@ -2321,6 +2369,218 @@ mod tests {
         assert!(
             py.contains("optional_date: str"),
             "Option<NaiveDate> must map to bare str, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_proxy_preserves_doc_comment() {
+        // Doc comments on the proxied type should appear exactly once in the
+        // output — not doubled (once from generate_shape, once from generate_typed_dict).
+        /// A 2-D point in wire format.
+        #[derive(Facet)]
+        struct WirePoint {
+            x: f64,
+            y: f64,
+        }
+
+        /// A 2-D point (internal representation).
+        #[derive(Facet)]
+        #[facet(proxy = WirePoint)]
+        #[allow(dead_code)]
+        struct Point {
+            internal_x: f64,
+            internal_y: f64,
+        }
+
+        impl TryFrom<WirePoint> for Point {
+            type Error = String;
+            fn try_from(w: WirePoint) -> Result<Self, Self::Error> {
+                Ok(Self {
+                    internal_x: w.x,
+                    internal_y: w.y,
+                })
+            }
+        }
+
+        impl From<&Point> for WirePoint {
+            fn from(p: &Point) -> Self {
+                Self {
+                    x: p.internal_x,
+                    y: p.internal_y,
+                }
+            }
+        }
+
+        let py = to_python::<Point>(false);
+
+        // Proxy fields must appear, not the internal ones
+        assert!(
+            py.contains("x: Required[float]"),
+            "proxy doc — proxy field 'x' must appear, got:\n{py}"
+        );
+        assert!(
+            !py.contains("internal_x"),
+            "proxy doc — internal field must not appear, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_proxy_struct() {
+        // When a struct has #[facet(proxy = ProxyType)], facet-json uses ProxyType
+        // for the wire format. facet-python must generate a TypedDict matching the
+        // proxy's fields, not the internal struct fields.
+        #[derive(Facet)]
+        struct WireType {
+            x: f64,
+            y: f64,
+        }
+
+        #[derive(Facet)]
+        #[facet(proxy = WireType)]
+        #[allow(dead_code)]
+        struct InternalPoint {
+            internal_x: f64,
+            internal_y: f64,
+        }
+
+        impl TryFrom<WireType> for InternalPoint {
+            type Error = String;
+            fn try_from(w: WireType) -> Result<Self, Self::Error> {
+                Ok(Self {
+                    internal_x: w.x,
+                    internal_y: w.y,
+                })
+            }
+        }
+
+        impl From<&InternalPoint> for WireType {
+            fn from(p: &InternalPoint) -> Self {
+                Self {
+                    x: p.internal_x,
+                    y: p.internal_y,
+                }
+            }
+        }
+
+        let py = to_python::<InternalPoint>(false);
+
+        // Must NOT expose the internal fields
+        assert!(
+            !py.contains("internal_x"),
+            "proxy struct — internal field must not appear, got:\n{py}"
+        );
+        // Must use the proxy's fields
+        assert!(
+            py.contains("x: Required[float]"),
+            "proxy struct — proxy field 'x' must appear, got:\n{py}"
+        );
+        assert!(
+            py.contains("y: Required[float]"),
+            "proxy struct — proxy field 'y' must appear, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_proxy_to_scalar() {
+        // A struct proxied to a scalar type should generate a type alias.
+        #[derive(Facet)]
+        #[facet(proxy = String)]
+        #[allow(dead_code)]
+        struct UserId(u64);
+
+        impl TryFrom<String> for UserId {
+            type Error = String;
+            fn try_from(s: String) -> Result<Self, Self::Error> {
+                s.parse::<u64>().map(UserId).map_err(|e| e.to_string())
+            }
+        }
+
+        impl From<&UserId> for String {
+            fn from(u: &UserId) -> Self {
+                u.0.to_string()
+            }
+        }
+
+        let py = to_python::<UserId>(false);
+
+        // Should be a type alias to str, not a class with an internal u64 field
+        assert!(
+            !py.contains("class UserId(TypedDict"),
+            "proxy scalar — must not generate a TypedDict class, got:\n{py}"
+        );
+        assert!(
+            py.contains("type UserId = str"),
+            "proxy scalar — should be a type alias to str, got:\n{py}"
+        );
+
+        insta::assert_snapshot!(py);
+    }
+
+    #[test]
+    fn test_proxy_to_untagged_enum() {
+        // The bug-report case: a struct proxied to an untagged enum.
+        // facet-json serializes via the proxy, so the Python type must match the
+        // untagged enum's union — NOT the struct's internal fields.
+        #[derive(Facet, Clone)]
+        struct Payload {
+            x: f64,
+            y: f64,
+        }
+
+        #[derive(Facet, Clone)]
+        #[facet(untagged)]
+        #[repr(C)]
+        #[allow(dead_code)]
+        enum ProxyEnum {
+            Variant(Payload),
+            Constant { constant: f64 },
+        }
+
+        #[derive(Facet)]
+        #[facet(proxy = ProxyEnum)]
+        #[allow(dead_code)]
+        struct MyStruct {
+            inner: Payload,
+        }
+
+        impl TryFrom<ProxyEnum> for MyStruct {
+            type Error = String;
+            fn try_from(p: ProxyEnum) -> Result<Self, Self::Error> {
+                match p {
+                    ProxyEnum::Variant(payload) => Ok(Self { inner: payload }),
+                    ProxyEnum::Constant { .. } => Err("cannot build".into()),
+                }
+            }
+        }
+
+        impl From<&MyStruct> for ProxyEnum {
+            fn from(s: &MyStruct) -> Self {
+                ProxyEnum::Variant(s.inner.clone())
+            }
+        }
+
+        let py = to_python::<MyStruct>(false);
+
+        // Must NOT expose the internal 'inner' field
+        assert!(
+            !py.contains("inner: Required"),
+            "proxy untagged enum — internal field must not appear, got:\n{py}"
+        );
+        // Must NOT generate a TypedDict class for MyStruct
+        assert!(
+            !py.contains("class MyStruct(TypedDict"),
+            "proxy untagged enum — must not be a single TypedDict class, got:\n{py}"
+        );
+        // Must be a union type alias (from the untagged enum)
+        assert!(
+            py.contains("type MyStruct"),
+            "proxy untagged enum — should be a union type alias, got:\n{py}"
         );
 
         insta::assert_snapshot!(py);
