@@ -542,6 +542,36 @@ The same inline-body pattern applies to `Option<T>` Some payload
 (`emit_alloc_boxed`, `codegen.rs:1462–1474`). Fixed arrays are unrolled
 up to 64 elements (`emit_decode_array`, `codegen.rs:1260`).
 
+## Current Benchmark Snapshot
+
+On the current tree, the `GnarlyPayload` benchmark in
+`rust/vox-jit-tests/benches/decode.rs` shows a real end-to-end win for the JIT
+path on a heterogeneous nested payload:
+
+| entries | reflective median | IR-interp median | JIT median | JIT vs reflective | JIT vs IR-interp |
+|---|---:|---:|---:|---:|---:|
+| 1 | 3.082 us | 3.166 us | 1.332 us | 2.31x | 2.38x |
+| 4 | 9.999 us | 10.08 us | 4.707 us | 2.12x | 2.14x |
+| 16 | 46.87 us | 36.66 us | 17.85 us | 2.63x | 2.05x |
+
+These medians came from:
+
+```bash
+cargo bench -p vox-jit-tests --bench decode -- gnarly
+```
+
+Two points matter when interpreting that table:
+
+- `gnarly/jit` is using a real Cranelift stub, not a reflective fallback.
+  `compile_decode` rejects any lowered program that still contains
+  `DecodeOp::SlowPath`, so a successful JIT bench implies the root program
+  compiled without SlowPath ops.
+- The remaining gap versus the simpler microbenchmarks therefore should not be
+  explained as "some leaves are still reflective". At this stage it is more
+  likely a mix of real heterogeneous-workload costs: more helper traffic, more
+  branching, more allocations, more UTF-8 checks, and more nested container
+  bookkeeping than the pure `Msg` or pure `Vec<u32>` cases.
+
 ## Open Questions
 
 - How much UTF-8 validation belongs in generated code versus helpers?

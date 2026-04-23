@@ -50,6 +50,9 @@ tokio-rustls = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rustls-pemfile = { workspace = true, optional = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+vox-jit.workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
 vox-core = { path = "../vox-core" }

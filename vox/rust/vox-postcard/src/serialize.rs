@@ -1,9 +1,30 @@
 use facet::Facet;
 use facet_core::{Def, ScalarType, StructKind, Type, UserType};
 use facet_reflect::Peek;
+use std::sync::OnceLock;
 
 use crate::encode;
 use crate::error::SerializeError;
+
+pub type RuntimeEncodeHook =
+    fn(facet::PtrConst, &'static facet::Shape) -> Result<Option<Vec<u8>>, SerializeError>;
+
+static RUNTIME_ENCODE_HOOK: OnceLock<RuntimeEncodeHook> = OnceLock::new();
+
+pub fn set_runtime_encode_hook(hook: RuntimeEncodeHook) {
+    let _ = RUNTIME_ENCODE_HOOK.set(hook);
+}
+
+fn try_runtime_encode(
+    ptr: facet::PtrConst,
+    shape: &'static facet::Shape,
+) -> Result<Option<Vec<u8>>, SerializeError> {
+    if let Some(hook) = RUNTIME_ENCODE_HOOK.get() {
+        hook(ptr, shape)
+    } else {
+        Ok(None)
+    }
+}
 
 /// Handle to a reserved u32le size field that can be patched after serialization.
 #[derive(Debug, Clone, Copy)]
@@ -111,6 +132,20 @@ pub fn to_vec<'a, T: Facet<'a>>(value: &T) -> Result<Vec<u8>, SerializeError> {
     Ok(out)
 }
 
+/// Serialize a dynamically-shaped value to postcard bytes.
+///
+/// The caller must ensure `ptr` points to a valid value matching `shape`.
+pub fn to_vec_dynamic(
+    ptr: facet::PtrConst,
+    shape: &'static facet::Shape,
+) -> Result<Vec<u8>, SerializeError> {
+    #[allow(unsafe_code)]
+    let peek = unsafe { Peek::unchecked_new(ptr, shape) };
+    let mut out = Vec::new();
+    serialize_peek(peek, &mut CopyWriter::new(&mut out))?;
+    Ok(out)
+}
+
 /// Serialize a `Peek` value to postcard, appending to the writer.
 pub(crate) fn serialize_peek<'a>(
     peek: Peek<'a, '_>,
@@ -174,6 +209,11 @@ fn serialize_peek_inner<'a>(
         // Non-passthrough: reserve u32le prefix, serialize directly, patch length.
         #[allow(unsafe_code)]
         let mapped_peek = unsafe { Peek::unchecked_new(mapped.ptr, mapped.shape) };
+        if let Some(bytes) = try_runtime_encode(mapped.ptr, mapped.shape)? {
+            out.write_bytes(&(bytes.len() as u32).to_le_bytes());
+            out.write_bytes(&bytes);
+            return Ok(());
+        }
         let size_field = out.reserve_size_field();
         let before = out.bytes_written();
         serialize_peek_inner(mapped_peek, out)?;

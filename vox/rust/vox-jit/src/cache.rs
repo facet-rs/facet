@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use vox_jit_abi::{BorrowedDecodeFn, DecodeCacheKey, EncodeCacheKey, OwnedDecodeFn};
+use vox_jit_abi::{BorrowedDecodeFn, DecodeCacheKey, EncodeCacheKey, EncodeFn, OwnedDecodeFn};
 
 // ---------------------------------------------------------------------------
 // Compiled stub entries
@@ -30,7 +30,7 @@ pub struct CompiledDecodeStub {
 /// A compiled encode stub — reserved for task #17 (deferred).
 pub struct CompiledEncodeStub {
     pub key: EncodeCacheKey,
-    // encode_fn: EncodeFn,  // TODO: define encode fn type in task #17
+    pub encode_fn: EncodeFn,
 }
 
 // ---------------------------------------------------------------------------

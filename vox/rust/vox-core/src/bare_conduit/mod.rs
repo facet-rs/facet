@@ -115,6 +115,14 @@ fn encode_message<F: MsgFamily>(
     shape: &'static Shape,
     item: F::Msg<'_>,
 ) -> Result<Vec<u8>, BareConduitError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let ptr = PtrConst::new((&raw const item).cast::<u8>());
+        if let Some(result) = vox_jit::global_runtime().try_encode_ptr(ptr, shape) {
+            return result.map_err(BareConduitError::Encode);
+        }
+    }
+
     #[allow(unsafe_code)]
     let peek = unsafe { Peek::unchecked_new(PtrConst::new((&raw const item).cast::<u8>()), shape) };
     let plan = vox_postcard::peek_to_scatter_plan(peek).map_err(BareConduitError::Encode)?;
@@ -151,8 +159,9 @@ where
         };
 
         match &self.message_plan {
-            Some(plan) => crate::deserialize_postcard_with_plan::<F::Msg<'static>>(
+            Some(plan) => crate::deserialize_postcard_with_jit_key::<F::Msg<'static>>(
                 backing,
+                plan.remote_schema_id,
                 &plan.plan,
                 &plan.registry,
             ),

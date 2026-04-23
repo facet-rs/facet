@@ -671,6 +671,15 @@ fn encode_frame_bytes(
         ack,
         item: Payload::PostcardBytes(item_bytes),
     };
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let ptr = PtrConst::new((&raw const frame).cast::<u8>());
+        if let Some(result) =
+            vox_jit::global_runtime().try_encode_ptr(ptr, <Frame<'static> as Facet<'static>>::SHAPE)
+        {
+            return result.map_err(StableConduitError::Encode);
+        }
+    }
     #[allow(unsafe_code)]
     let peek = unsafe {
         Peek::unchecked_new(
@@ -702,7 +711,21 @@ fn prepare_frame<F: MsgFamily, LS: LinkSource>(
     item: F::Msg<'_>,
 ) -> Result<StablePreparedMessage, StableConduitError> {
     let _ = shared;
-    let item_bytes = vox_postcard::to_vec(&item).map_err(StableConduitError::Encode)?;
+    let item_bytes = {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let ptr = PtrConst::new((&raw const item).cast::<u8>());
+            if let Some(result) = vox_jit::global_runtime().try_encode_ptr(ptr, F::shape()) {
+                result.map_err(StableConduitError::Encode)?
+            } else {
+                vox_postcard::to_vec(&item).map_err(StableConduitError::Encode)?
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            vox_postcard::to_vec(&item).map_err(StableConduitError::Encode)?
+        }
+    };
     Ok(StablePreparedMessage {
         item_bytes,
         framed: None,
@@ -801,8 +824,9 @@ where
             };
             let item_backing = vox_types::Backing::Boxed(item_bytes.to_vec().into());
             let msg = match &self.message_plan {
-                Some(plan) => crate::deserialize_postcard_with_plan::<F::Msg<'static>>(
+                Some(plan) => crate::deserialize_postcard_with_jit_key::<F::Msg<'static>>(
                     item_backing,
+                    plan.remote_schema_id,
                     &plan.plan,
                     &plan.registry,
                 ),

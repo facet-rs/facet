@@ -144,124 +144,53 @@ pub type BorrowedDecodeFn =
 //   - are explicit about ownership transfer and cleanup responsibility
 
 /// Allocate backing storage for `cap` elements of a Vec-family container
-/// (`Vec<T>` or `String`), and write the initial container header into
-/// `out_ptr`.
+/// (`Vec<T>` or `String`) and return the data pointer.
 ///
-/// On success: writes `(ptr, len=0, cap)` into the container header fields at
-/// the offsets given by `desc`, then returns `Ok`. The data pointer points to
-/// an allocation of `cap * desc.elem_size` bytes with alignment `desc.elem_align`.
+/// This helper does allocation only. The generated code is responsible for
+/// writing ptr/len/cap into the container header using calibrated offsets.
 ///
-/// On ZST element: no allocation is made; the data pointer is set to the
-/// alignment sentinel.
-///
-/// On OOM or invalid layout: returns `AllocFailed` without writing `out_ptr`.
+/// Returns:
+/// - non-null data pointer on success
+/// - alignment sentinel for ZST elements or `cap == 0`
+/// - null on OOM or invalid layout
 ///
 /// # Safety
 /// - `desc` must be a valid calibrated descriptor with `kind == Vec` or
 ///   `kind == String`. Do not call with `BoxOwned` or `BoxSlice` descriptors.
-/// - `out_ptr` must be writable for `desc.size` bytes with alignment `desc.align`.
-/// - `desc.cap_offset` must not be `OFFSET_ABSENT`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn vox_jit_vec_reserve(
-    desc: *const OpaqueDescriptor,
-    cap: usize,
-    out_ptr: *mut u8,
-) -> DecodeStatus {
+pub unsafe extern "C" fn vox_jit_vec_alloc(desc: *const OpaqueDescriptor, cap: usize) -> *mut u8 {
     let desc = unsafe { &*desc };
 
-    if desc.elem_size == 0 {
-        // ZST: set data ptr to alignment sentinel, len = 0, cap = cap.
-        // No heap allocation needed.
-        let sentinel = desc.elem_align as *mut u8;
-        unsafe {
-            write_ptr_field(out_ptr, desc.ptr_offset, sentinel);
-            write_usize_field(out_ptr, desc.len_offset, 0);
-            // cap_offset must be present for Vec/String.
-            if desc.cap_offset != OFFSET_ABSENT {
-                write_usize_field(out_ptr, desc.cap_offset, cap);
-            }
-        }
-        return DecodeStatus::Ok;
-    }
-
-    if cap == 0 {
-        // Zero capacity: copy the calibrated empty bytes directly.
-        unsafe {
-            core::ptr::copy_nonoverlapping(desc.empty_bytes.as_ptr(), out_ptr, desc.size);
-        }
-        return DecodeStatus::Ok;
+    if desc.elem_size == 0 || cap == 0 {
+        return desc.elem_align as *mut u8;
     }
 
     let layout = match std::alloc::Layout::from_size_align(cap * desc.elem_size, desc.elem_align) {
         Ok(l) => l,
-        Err(_) => return DecodeStatus::AllocFailed,
+        Err(_) => return core::ptr::null_mut(),
     };
 
     let data_ptr = unsafe { std::alloc::alloc(layout) };
     if data_ptr.is_null() {
-        return DecodeStatus::AllocFailed;
+        core::ptr::null_mut()
+    } else {
+        data_ptr
     }
-
-    unsafe {
-        write_ptr_field(out_ptr, desc.ptr_offset, data_ptr);
-        write_usize_field(out_ptr, desc.len_offset, 0);
-        if desc.cap_offset != OFFSET_ABSENT {
-            write_usize_field(out_ptr, desc.cap_offset, cap);
-        }
-    }
-
-    DecodeStatus::Ok
 }
 
-/// `String`-specific reserve — identical semantics to `vox_jit_vec_reserve`
+/// `String`-specific alloc — identical semantics to `vox_jit_vec_alloc`
 /// but under a distinct symbol so the call site is unambiguous about which
 /// calibrated type it is operating on.
 ///
 /// # Safety
-/// Same as `vox_jit_vec_reserve`. `desc.kind` must be `String`.
+/// Same as `vox_jit_vec_alloc`. `desc.kind` must be `String`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn vox_jit_string_reserve(
+pub unsafe extern "C" fn vox_jit_string_alloc(
     desc: *const OpaqueDescriptor,
     cap: usize,
-    out_ptr: *mut u8,
-) -> DecodeStatus {
+) -> *mut u8 {
     // Implementation is identical; the symbol distinction is the contract.
-    unsafe { vox_jit_vec_reserve(desc, cap, out_ptr) }
-}
-
-/// Commit `len` initialized elements into the container header at
-/// `container_ptr`.
-///
-/// Only updates the `len` field. Must be called after each element is
-/// successfully initialized — never before. Does not touch ptr or cap.
-///
-/// # Safety
-/// - `desc` valid; `container_ptr` initialized by `vox_jit_vec_reserve`.
-/// - `len` must not exceed the `cap` written by `vox_jit_vec_reserve`.
-/// - `desc.len_offset` must not be `OFFSET_ABSENT`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn vox_jit_vec_commit_len(
-    desc: *const OpaqueDescriptor,
-    container_ptr: *mut u8,
-    len: usize,
-) {
-    let desc = unsafe { &*desc };
-    if desc.len_offset != OFFSET_ABSENT {
-        unsafe { write_usize_field(container_ptr, desc.len_offset, len) };
-    }
-}
-
-/// `String`-specific commit — distinct symbol, same semantics.
-///
-/// # Safety
-/// Same as `vox_jit_vec_commit_len`. `desc.kind` must be `String`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn vox_jit_string_commit_len(
-    desc: *const OpaqueDescriptor,
-    container_ptr: *mut u8,
-    len: usize,
-) {
-    unsafe { vox_jit_vec_commit_len(desc, container_ptr, len) }
+    unsafe { vox_jit_vec_alloc(desc, cap) }
 }
 
 /// Drop the first `init_count` initialized elements of a partially initialized
@@ -278,7 +207,8 @@ pub unsafe extern "C" fn vox_jit_string_commit_len(
 /// UB or a panic.
 ///
 /// # Safety
-/// - `desc` valid, `container_ptr` initialized by `vox_jit_vec_reserve`.
+/// - `desc` valid, `container_ptr` initialized with ptr/cap fields matching the
+///   allocation returned by `vox_jit_vec_alloc`.
 /// - Elements `[0, init_count)` are fully initialized T values.
 /// - Elements `[init_count, cap)` are uninitialized and must not be dropped.
 /// - `drop_glue`, if provided, must correctly drop a single T at the given ptr.
@@ -729,8 +659,8 @@ mod tests {
     use vox_jit_cal::{CalibrationRegistry, ContainerKind, OFFSET_ABSENT, OpaqueDescriptor};
 
     use crate::{
-        DecodeStatus, vox_jit_box_alloc, vox_jit_string_reserve, vox_jit_utf8_validate,
-        vox_jit_vec_commit_len, vox_jit_vec_drop_partial, vox_jit_vec_reserve,
+        DecodeStatus, vox_jit_box_alloc, vox_jit_string_alloc, vox_jit_utf8_validate,
+        vox_jit_vec_alloc, vox_jit_vec_drop_partial, write_ptr_field, write_usize_field,
     };
 
     fn desc_for_vec_u32() -> OpaqueDescriptor {
@@ -752,36 +682,15 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // vox_jit_vec_reserve
+    // vox_jit_vec_alloc
     // -----------------------------------------------------------------------
 
     #[test]
-    fn vec_reserve_nonzero_cap_allocates() {
+    fn vec_alloc_nonzero_cap_allocates() {
         let desc = desc_for_vec_u32();
-        let mut buf = vec![0u8; desc.size];
-        let status = unsafe { vox_jit_vec_reserve(&desc as *const _, 4, buf.as_mut_ptr()) };
-        assert_eq!(status, DecodeStatus::Ok);
+        let data_ptr = unsafe { vox_jit_vec_alloc(&desc as *const _, 4) as *mut u32 };
 
-        // ptr field must be non-zero (heap allocation). Read as typed pointer to preserve provenance.
-        let data_ptr = unsafe {
-            (buf.as_ptr().add(desc.ptr_offset as usize) as *const *mut u32).read_unaligned()
-        };
-        assert!(
-            !data_ptr.is_null(),
-            "data ptr must be non-null after reserve"
-        );
-
-        // len must be 0.
-        let len_val = unsafe {
-            (buf.as_ptr().add(desc.len_offset as usize) as *const usize).read_unaligned()
-        };
-        assert_eq!(len_val, 0, "len must be 0 after reserve");
-
-        // cap must equal what we asked for.
-        let cap_val = unsafe {
-            (buf.as_ptr().add(desc.cap_offset as usize) as *const usize).read_unaligned()
-        };
-        assert_eq!(cap_val, 4, "cap must equal requested capacity");
+        assert!(!data_ptr.is_null(), "data ptr must be non-null after alloc");
 
         // Clean up: reconstruct and drop the vec to avoid leak.
         unsafe {
@@ -790,42 +699,10 @@ mod tests {
     }
 
     #[test]
-    fn vec_reserve_zero_cap_copies_empty_bytes() {
+    fn vec_alloc_zero_cap_returns_alignment_sentinel() {
         let desc = desc_for_vec_u32();
-        let mut buf = vec![0u8; desc.size];
-        // Fill with 0xFF so we can confirm the copy happened.
-        buf.fill(0xFF);
-        let status = unsafe { vox_jit_vec_reserve(&desc as *const _, 0, buf.as_mut_ptr()) };
-        assert_eq!(status, DecodeStatus::Ok);
-        assert_eq!(
-            &buf[..],
-            &desc.empty_bytes[..],
-            "cap=0 must copy calibrated empty bytes"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // vox_jit_vec_commit_len
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn vec_commit_len_updates_len_field() {
-        let desc = desc_for_vec_u32();
-        let mut buf = vec![0u8; desc.size];
-        let _ = unsafe { vox_jit_vec_reserve(&desc as *const _, 8, buf.as_mut_ptr()) };
-
-        unsafe { vox_jit_vec_commit_len(&desc as *const _, buf.as_mut_ptr(), 3) };
-
-        let len_val = unsafe {
-            (buf.as_ptr().add(desc.len_offset as usize) as *const usize).read_unaligned()
-        };
-        assert_eq!(len_val, 3);
-
-        // Clean up.
-        let data_ptr = unsafe {
-            (buf.as_ptr().add(desc.ptr_offset as usize) as *const *mut u32).read_unaligned()
-        };
-        unsafe { drop(Vec::<u32>::from_raw_parts(data_ptr, 0, 8)) };
+        let data_ptr = unsafe { vox_jit_vec_alloc(&desc as *const _, 0) };
+        assert_eq!(data_ptr, desc.elem_align as *mut u8);
     }
 
     // -----------------------------------------------------------------------
@@ -836,17 +713,18 @@ mod tests {
     fn vec_drop_partial_copy_type_no_glue() {
         let desc = desc_for_vec_u32();
         let mut buf = vec![0u8; desc.size];
-        let _ = unsafe { vox_jit_vec_reserve(&desc as *const _, 4, buf.as_mut_ptr()) };
+        let data_ptr = unsafe { vox_jit_vec_alloc(&desc as *const _, 4) as *mut u32 };
+        unsafe {
+            write_ptr_field(buf.as_mut_ptr(), desc.ptr_offset, data_ptr as *mut u8);
+            write_usize_field(buf.as_mut_ptr(), desc.len_offset, 2);
+            write_usize_field(buf.as_mut_ptr(), desc.cap_offset, 4);
+        }
 
         // Write 2 u32 values (they're Copy — no destructor needed).
-        let data_ptr = unsafe {
-            (buf.as_ptr().add(desc.ptr_offset as usize) as *const *mut u32).read_unaligned()
-        };
         unsafe {
             data_ptr.write(10);
             data_ptr.add(1).write(20);
         }
-        unsafe { vox_jit_vec_commit_len(&desc as *const _, buf.as_mut_ptr(), 2) };
 
         // Simulate failure after 2 elements: drop_partial with no glue.
         // This should free the backing allocation without calling any destructor.
@@ -855,19 +733,13 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // vox_jit_string_reserve
+    // vox_jit_string_alloc
     // -----------------------------------------------------------------------
 
     #[test]
-    fn string_reserve_nonzero_cap() {
+    fn string_alloc_nonzero_cap() {
         let desc = desc_for_string();
-        let mut buf = vec![0u8; desc.size];
-        let status = unsafe { vox_jit_string_reserve(&desc as *const _, 16, buf.as_mut_ptr()) };
-        assert_eq!(status, DecodeStatus::Ok);
-
-        let str_ptr = unsafe {
-            (buf.as_ptr().add(desc.ptr_offset as usize) as *const *mut u8).read_unaligned()
-        };
+        let str_ptr = unsafe { vox_jit_string_alloc(&desc as *const _, 16) };
         assert!(!str_ptr.is_null());
 
         // Clean up: reconstruct the String backing to avoid leak.
@@ -977,14 +849,15 @@ mod tests {
         let desc = desc_for_vec_u32();
         let mut buf = vec![0u8; desc.size];
 
-        // Reserve 4 slots.
-        let status = unsafe { vox_jit_vec_reserve(&desc as *const _, 4, buf.as_mut_ptr()) };
-        assert_eq!(status, DecodeStatus::Ok);
+        // Allocate 4 slots and write the container header.
+        let data_ptr = unsafe { vox_jit_vec_alloc(&desc as *const _, 4) as *mut u32 };
+        unsafe {
+            write_ptr_field(buf.as_mut_ptr(), desc.ptr_offset, data_ptr as *mut u8);
+            write_usize_field(buf.as_mut_ptr(), desc.len_offset, 2);
+            write_usize_field(buf.as_mut_ptr(), desc.cap_offset, 4);
+        }
 
         // Write elements at indices 0 and 1 only.
-        let data_ptr = unsafe {
-            (buf.as_ptr().add(desc.ptr_offset as usize) as *const *mut u32).read_unaligned()
-        };
         unsafe {
             data_ptr.write(10);
             data_ptr.add(1).write(20);
@@ -1016,9 +889,13 @@ mod tests {
         let desc = desc_for_vec_u32();
         let mut buf = vec![0u8; desc.size];
 
-        // Reserve 4 slots but "fail" before writing any element.
-        let status = unsafe { vox_jit_vec_reserve(&desc as *const _, 4, buf.as_mut_ptr()) };
-        assert_eq!(status, DecodeStatus::Ok);
+        // Allocate 4 slots but "fail" before writing any element.
+        let data_ptr = unsafe { vox_jit_vec_alloc(&desc as *const _, 4) };
+        unsafe {
+            write_ptr_field(buf.as_mut_ptr(), desc.ptr_offset, data_ptr);
+            write_usize_field(buf.as_mut_ptr(), desc.len_offset, 0);
+            write_usize_field(buf.as_mut_ptr(), desc.cap_offset, 4);
+        }
 
         unsafe {
             vox_jit_vec_drop_partial(

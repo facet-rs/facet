@@ -16,7 +16,7 @@
 /// All layout knowledge is baked in at lowering time.
 use std::collections::HashMap;
 
-use facet_core::{EnumRepr, ScalarType, Shape, Type, UserType};
+use facet_core::{EnumRepr, Facet, ScalarType, Shape, Type, UserType};
 use vox_jit_cal::{CalibrationRegistry, DescriptorHandle};
 use vox_schema::{SchemaKind, SchemaRegistry};
 
@@ -182,6 +182,21 @@ pub enum DecodeOp {
         dst_offset: usize,
         descriptor: OpaqueDescriptorId,
     },
+
+    /// Read a varint-length-prefixed UTF-8 string into `Cow<str>` at
+    /// `dst_offset`.
+    ReadCowStr { dst_offset: usize, borrowed: bool },
+
+    /// Read a varint-length-prefixed UTF-8 string into `&str` at `dst_offset`.
+    ReadStrRef { dst_offset: usize },
+
+    /// Read a varint-length-prefixed byte slice and initialize `Cow<[u8]>`
+    /// at `dst_offset`.
+    ReadCowByteSlice { dst_offset: usize, borrowed: bool },
+
+    /// Read a varint-length-prefixed byte slice and initialize `&[u8]`
+    /// at `dst_offset`.
+    ReadByteSliceRef { dst_offset: usize },
 
     // -----------------------------------------------------------------------
     // Skip operations (remote fields absent in local type)
@@ -424,7 +439,7 @@ pub fn lower(
     shape: &'static Shape,
     registry: &SchemaRegistry,
 ) -> Result<DecodeProgram, LowerError> {
-    lower_with_cal(plan, shape, registry, None)
+    lower_with_cal(plan, shape, registry, None, false)
 }
 
 /// Like `lower` but with an optional calibration registry.
@@ -438,6 +453,7 @@ pub fn lower_with_cal(
     shape: &'static Shape,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
+    borrow_mode: bool,
 ) -> Result<DecodeProgram, LowerError> {
     let layout = shape
         .layout
@@ -450,7 +466,16 @@ pub fn lower_with_cal(
     };
 
     let entry = 0;
-    lower_value(plan, shape, registry, cal, &mut program, entry, 0)?;
+    lower_value(
+        plan,
+        shape,
+        registry,
+        cal,
+        borrow_mode,
+        &mut program,
+        entry,
+        0,
+    )?;
     program.emit(entry, DecodeOp::Return);
 
     Ok(program)
@@ -461,6 +486,7 @@ fn lower_value(
     shape: &'static Shape,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
+    borrow_mode: bool,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -484,7 +510,16 @@ fn lower_value(
             && let Some(inner_field) = st.fields.first()
         {
             let inner_shape = inner_field.shape();
-            return lower_value(plan, inner_shape, registry, cal, program, block, dst_offset);
+            return lower_value(
+                plan,
+                inner_shape,
+                registry,
+                cal,
+                borrow_mode,
+                program,
+                block,
+                dst_offset,
+            );
         }
         // Transparent wrapper with no first field (e.g. dynamically generated
         // transparent struct with no inner slot) — SlowPath by design.
@@ -501,6 +536,40 @@ fn lower_value(
 
     // Scalars
     if let Some(scalar) = shape.scalar_type() {
+        match scalar {
+            facet_core::ScalarType::String => {
+                if shape.is_type::<String>() {
+                    if let Some(cal) = cal
+                        && let Some(handle) = cal.string_descriptor_handle()
+                    {
+                        program.emit(
+                            block,
+                            DecodeOp::ReadString {
+                                dst_offset,
+                                descriptor: OpaqueDescriptorId(handle.0),
+                            },
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+            facet_core::ScalarType::CowStr => {
+                program.emit(
+                    block,
+                    DecodeOp::ReadCowStr {
+                        dst_offset,
+                        borrowed: borrow_mode,
+                    },
+                );
+                return Ok(());
+            }
+            facet_core::ScalarType::Str if borrow_mode => {
+                program.emit(block, DecodeOp::ReadStrRef { dst_offset });
+                return Ok(());
+            }
+            _ => {}
+        }
+
         if let Some(prim) = WirePrimitive::from_scalar(scalar) {
             // String scalars: use ReadString (calibrated) when possible so the
             // JIT can emit the fast allocation path instead of calling SlowPath.
@@ -538,13 +607,37 @@ fn lower_value(
 
     // User types
     match shape.ty {
-        Type::User(UserType::Struct(st)) => {
-            lower_struct(plan, st, registry, cal, program, block, dst_offset)
-        }
-        Type::User(UserType::Enum(et)) => {
-            lower_enum(plan, shape, et, registry, cal, program, block, dst_offset)
-        }
-        _ => lower_def(plan, shape, registry, cal, program, block, dst_offset),
+        Type::User(UserType::Struct(st)) => lower_struct(
+            plan,
+            st,
+            registry,
+            cal,
+            borrow_mode,
+            program,
+            block,
+            dst_offset,
+        ),
+        Type::User(UserType::Enum(et)) => lower_enum(
+            plan,
+            shape,
+            et,
+            registry,
+            cal,
+            borrow_mode,
+            program,
+            block,
+            dst_offset,
+        ),
+        _ => lower_def(
+            plan,
+            shape,
+            registry,
+            cal,
+            borrow_mode,
+            program,
+            block,
+            dst_offset,
+        ),
     }
 }
 
@@ -553,6 +646,7 @@ fn lower_def(
     shape: &'static Shape,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
+    borrow_mode: bool,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -561,16 +655,47 @@ fn lower_def(
 
     match shape.def {
         Def::Option(opt_def) => lower_option(
-            plan, shape, opt_def, registry, cal, program, block, dst_offset,
+            plan,
+            shape,
+            opt_def,
+            registry,
+            cal,
+            borrow_mode,
+            program,
+            block,
+            dst_offset,
         ),
-        Def::Array(arr_def) => {
-            lower_array(plan, arr_def, registry, cal, program, block, dst_offset)
-        }
+        Def::Array(arr_def) => lower_array(
+            plan,
+            arr_def,
+            registry,
+            cal,
+            borrow_mode,
+            program,
+            block,
+            dst_offset,
+        ),
         Def::List(list_def) => lower_list(
-            plan, shape, list_def, registry, cal, program, block, dst_offset,
+            plan,
+            shape,
+            list_def,
+            registry,
+            cal,
+            borrow_mode,
+            program,
+            block,
+            dst_offset,
         ),
         Def::Pointer(ptr_def) => lower_pointer(
-            plan, shape, ptr_def, registry, cal, program, block, dst_offset,
+            plan,
+            shape,
+            ptr_def,
+            registry,
+            cal,
+            borrow_mode,
+            program,
+            block,
+            dst_offset,
         ),
         _ => {
             // Def::Map, Def::Set, Def::Slice, Def::Result, Def::NdArray,
@@ -604,6 +729,7 @@ fn lower_struct(
     st: facet_core::StructType,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
+    borrow_mode: bool,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -613,7 +739,16 @@ fn lower_struct(
         | TranslationPlan::Tuple { field_ops, nested } => (field_ops.as_slice(), nested),
         TranslationPlan::Identity => {
             let identity = build_identity_plan_for_struct(st);
-            return lower_struct(&identity, st, registry, cal, program, block, dst_offset);
+            return lower_struct(
+                &identity,
+                st,
+                registry,
+                cal,
+                borrow_mode,
+                program,
+                block,
+                dst_offset,
+            );
         }
         _ => {
             // A validated plan for a struct is always Struct | Tuple | Identity.
@@ -636,6 +771,7 @@ fn lower_struct(
                     field_shape,
                     registry,
                     cal,
+                    borrow_mode,
                     program,
                     block,
                     field_offset,
@@ -662,6 +798,7 @@ fn lower_enum(
     et: facet_core::EnumType,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
+    borrow_mode: bool,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -688,6 +825,20 @@ fn lower_enum(
             variant_plans,
             nested,
         } => (variant_map, variant_plans, nested),
+        TranslationPlan::Identity => {
+            let identity = crate::build_identity_plan(shape);
+            return lower_enum(
+                &identity,
+                shape,
+                et,
+                registry,
+                cal,
+                borrow_mode,
+                program,
+                block,
+                dst_offset,
+            );
+        }
         _ => {
             // Non-Enum plan for an enum type — SlowPath by design.
             // Only `TranslationPlan::Enum { .. }` carries variant_map and
@@ -736,6 +887,7 @@ fn lower_enum(
                 local_variant.data,
                 registry,
                 cal,
+                borrow_mode,
                 program,
                 variant_block,
                 dst_offset,
@@ -749,6 +901,7 @@ fn lower_enum(
                     field.shape(),
                     registry,
                     cal,
+                    borrow_mode,
                     program,
                     variant_block,
                     field_offset,
@@ -762,6 +915,7 @@ fn lower_enum(
                 local_variant.data,
                 registry,
                 cal,
+                borrow_mode,
                 program,
                 variant_block,
                 dst_offset,
@@ -833,6 +987,7 @@ fn lower_option(
     opt_def: facet_core::OptionDef,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
+    borrow_mode: bool,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -884,7 +1039,16 @@ fn lower_option(
     // Lower the inner value decode into some_block.
     // The interpreter will call run_block(some_block, inner_ptr) where inner_ptr
     // already points to the inner slot, so dst_offset for inner ops is 0.
-    lower_value(inner_plan, opt_def.t, registry, cal, program, some_block, 0)?;
+    lower_value(
+        inner_plan,
+        opt_def.t,
+        registry,
+        cal,
+        borrow_mode,
+        program,
+        some_block,
+        0,
+    )?;
     program.emit(some_block, DecodeOp::Return);
 
     Ok(())
@@ -895,6 +1059,7 @@ fn lower_array(
     arr_def: facet_core::ArrayDef,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
+    borrow_mode: bool,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -930,6 +1095,7 @@ fn lower_array(
         elem_shape,
         registry,
         cal,
+        borrow_mode,
         program,
         body_block,
         0,
@@ -945,6 +1111,7 @@ fn lower_list(
     list_def: facet_core::ListDef,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
+    borrow_mode: bool,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -1013,6 +1180,7 @@ fn lower_list(
                 elem_shape,
                 registry,
                 Some(cal),
+                borrow_mode,
                 program,
                 inner_block,
                 0,
@@ -1091,6 +1259,7 @@ fn lower_list(
             elem_shape,
             registry,
             Some(cal),
+            borrow_mode,
             program,
             inner_block,
             0,
@@ -1125,6 +1294,7 @@ fn lower_pointer(
     ptr_def: facet_core::PointerDef,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
+    borrow_mode: bool,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -1157,6 +1327,28 @@ fn lower_pointer(
         );
         return Ok(());
     };
+
+    if let facet_core::Def::Slice(slice_def) = pointee_shape.def
+        && slice_def.t().is_type::<u8>()
+    {
+        match ptr_def.known {
+            Some(facet_core::KnownPointer::Cow) => {
+                program.emit(
+                    block,
+                    DecodeOp::ReadCowByteSlice {
+                        dst_offset,
+                        borrowed: borrow_mode,
+                    },
+                );
+                return Ok(());
+            }
+            Some(facet_core::KnownPointer::SharedReference) if borrow_mode => {
+                program.emit(block, DecodeOp::ReadByteSliceRef { dst_offset });
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
 
     // Box<[T]> — fat pointer. Look up by structural shape identity.
     if let facet_core::Def::Slice(_) = pointee_shape.def {
@@ -1216,6 +1408,7 @@ fn lower_pointer(
             pointee_shape,
             registry,
             Some(cal),
+            borrow_mode,
             program,
             body_block,
             0,
@@ -1456,6 +1649,56 @@ fn run_block(
                 let owned = s.to_owned();
                 unsafe {
                     std::ptr::write(base.add(*dst_offset) as *mut String, owned);
+                }
+            }
+
+            DecodeOp::ReadCowStr {
+                dst_offset,
+                borrowed,
+            } => {
+                let s = state.read_str()?;
+                let dst = unsafe { base.add(*dst_offset) as *mut std::borrow::Cow<'static, str> };
+                let value = if *borrowed {
+                    let borrowed: &'static str = unsafe { std::mem::transmute(s) };
+                    std::borrow::Cow::Borrowed(borrowed)
+                } else {
+                    std::borrow::Cow::Owned(s.to_owned())
+                };
+                unsafe {
+                    std::ptr::write(dst, value);
+                }
+            }
+
+            DecodeOp::ReadStrRef { dst_offset } => {
+                let s = state.read_str()?;
+                let s: &'static str = unsafe { std::mem::transmute(s) };
+                unsafe {
+                    std::ptr::write(base.add(*dst_offset) as *mut &'static str, s);
+                }
+            }
+
+            DecodeOp::ReadCowByteSlice {
+                dst_offset,
+                borrowed,
+            } => {
+                let bytes = state.read_byte_slice()?;
+                let dst = unsafe { base.add(*dst_offset) as *mut std::borrow::Cow<'static, [u8]> };
+                let value = if *borrowed {
+                    let borrowed: &'static [u8] = unsafe { std::mem::transmute(bytes) };
+                    std::borrow::Cow::Borrowed(borrowed)
+                } else {
+                    std::borrow::Cow::Owned(bytes.to_vec())
+                };
+                unsafe {
+                    std::ptr::write(dst, value);
+                }
+            }
+
+            DecodeOp::ReadByteSliceRef { dst_offset } => {
+                let bytes = state.read_byte_slice()?;
+                let bytes: &'static [u8] = unsafe { std::mem::transmute(bytes) };
+                unsafe {
+                    std::ptr::write(base.add(*dst_offset) as *mut &'static [u8], bytes);
                 }
             }
 
@@ -2018,6 +2261,47 @@ pub enum EncodeOp {
         src_offset: usize,
     },
 
+    /// Encode a string-like field (`String`, `&str`, `Cow<str>`) without the
+    /// reflective walker.
+    WriteStringLike {
+        shape: &'static Shape,
+        src_offset: usize,
+    },
+
+    /// Encode a bytes-like field (`Cow<[u8]>`, `&[u8]`) without the
+    /// reflective walker.
+    WriteBytesLike {
+        shape: &'static Shape,
+        src_offset: usize,
+    },
+
+    /// Encode `vox_types::MetadataEntry` via a dedicated helper.
+    WriteMetadataEntry { src_offset: usize },
+
+    /// Encode one field reflectively from `src_offset`.
+    ///
+    /// Used for opaque/proxy shapes that the JIT cannot lower inline while
+    /// still allowing the surrounding message/frame encoder to stay native.
+    SlowPath {
+        shape: &'static Shape,
+        src_offset: usize,
+    },
+
+    /// Borrow a pointee from a pointer-like value and continue encoding from
+    /// the borrowed pointee pointer.
+    BorrowPointer {
+        src_offset: usize,
+        body_block: usize,
+        borrow_fn: facet_core::BorrowFn,
+    },
+
+    /// Write a varint-length-prefixed byte slice from a slice-like value.
+    WriteByteSlice {
+        src_offset: usize,
+        len_fn: facet_core::SliceLenFn,
+        as_ptr_fn: facet_core::SliceAsPtrFn,
+    },
+
     // -----------------------------------------------------------------------
     // Option handling
     // -----------------------------------------------------------------------
@@ -2188,15 +2472,30 @@ fn lower_encode_value(
         )));
     }
 
-    // Opaque adapter or proxy — not supported inline.
+    // Opaque adapter or proxy — handled via a local slow path so the
+    // surrounding message/frame can still compile natively.
     if shape.opaque_adapter.is_some() || shape.proxy.is_some() {
-        return Err(EncodeLowerError::Unsupported(format!(
-            "opaque/proxy shape: {shape}"
-        )));
+        program.emit(block, EncodeOp::SlowPath { shape, src_offset });
+        return Ok(());
+    }
+
+    if shape.type_identifier == "MetadataEntry" {
+        program.emit(block, EncodeOp::WriteMetadataEntry { src_offset });
+        return Ok(());
     }
 
     // Scalars
     if let Some(scalar) = shape.scalar_type() {
+        match scalar {
+            facet_core::ScalarType::String
+            | facet_core::ScalarType::Str
+            | facet_core::ScalarType::CowStr => {
+                program.emit(block, EncodeOp::WriteStringLike { shape, src_offset });
+                return Ok(());
+            }
+            _ => {}
+        }
+
         if let Some(prim) = WirePrimitive::from_scalar(scalar) {
             program.emit(block, EncodeOp::WriteScalar { prim, src_offset });
             return Ok(());
@@ -2217,7 +2516,13 @@ fn lower_encode_value(
         Def::List(list_def) => {
             return lower_encode_list(shape, list_def, cal, program, block, src_offset);
         }
-        Def::Pointer(_) | Def::Slice(_) | Def::Map(_) | Def::Set(_) | Def::Result(_) => {
+        Def::Pointer(ptr_def) => {
+            return lower_encode_pointer(shape, ptr_def, cal, program, block, src_offset);
+        }
+        Def::Slice(slice_def) => {
+            return lower_encode_slice(shape, slice_def, program, block, src_offset);
+        }
+        Def::Map(_) | Def::Set(_) | Def::Result(_) => {
             return Err(EncodeLowerError::Unsupported(format!(
                 "unsupported def: {shape}"
             )));
@@ -2241,6 +2546,61 @@ fn lower_encode_value(
             "unsupported type: {shape}"
         ))),
     }
+}
+
+fn lower_encode_pointer(
+    shape: &'static Shape,
+    ptr_def: facet_core::PointerDef,
+    _cal: Option<&CalibrationRegistry>,
+    program: &mut EncodeProgram,
+    block: usize,
+    src_offset: usize,
+) -> Result<(), EncodeLowerError> {
+    let Some(pointee_shape) = ptr_def.pointee() else {
+        return Err(EncodeLowerError::Unsupported(
+            "opaque pointer without pointee".into(),
+        ));
+    };
+
+    if pointee_shape == <str as Facet<'static>>::SHAPE {
+        program.emit(block, EncodeOp::WriteStringLike { shape, src_offset });
+        return Ok(());
+    }
+
+    if let facet_core::Def::Slice(slice_def) = pointee_shape.def
+        && slice_def.t().is_type::<u8>()
+    {
+        program.emit(block, EncodeOp::WriteBytesLike { shape, src_offset });
+        return Ok(());
+    }
+
+    Err(EncodeLowerError::Unsupported(format!(
+        "unsupported pointer: {pointee_shape}"
+    )))
+}
+
+fn lower_encode_slice(
+    shape: &'static Shape,
+    slice_def: facet_core::SliceDef,
+    program: &mut EncodeProgram,
+    block: usize,
+    src_offset: usize,
+) -> Result<(), EncodeLowerError> {
+    if !slice_def.t().is_type::<u8>() {
+        return Err(EncodeLowerError::Unsupported(format!(
+            "unsupported slice: {shape}"
+        )));
+    }
+
+    program.emit(
+        block,
+        EncodeOp::WriteByteSlice {
+            src_offset,
+            len_fn: slice_def.vtable.len,
+            as_ptr_fn: slice_def.vtable.as_ptr,
+        },
+    );
+    Ok(())
 }
 
 fn lower_encode_option(

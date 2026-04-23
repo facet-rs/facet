@@ -540,9 +540,18 @@ mod jit {
 
 mod alloc_count {
     use super::*;
+    use std::mem::MaybeUninit;
 
     fn report(label: &str, count: u64, bytes: u64) {
         eprintln!("  {label}: {count} allocs, {bytes} bytes");
+    }
+
+    unsafe fn decode_via_stub<T>(owned_fn: OwnedDecodeFn, bytes: &[u8]) -> T {
+        let mut out = MaybeUninit::<T>::uninit();
+        let mut ctx = DecodeCtx::new(bytes);
+        let status = unsafe { owned_fn(&mut ctx, out.as_mut_ptr() as *mut u8) };
+        assert!(status.is_ok(), "JIT stub returned {status:?}");
+        unsafe { out.assume_init() }
     }
 
     #[divan::bench]
@@ -587,6 +596,59 @@ mod alloc_count {
             let v = from_slice_ir::<Msg>(&bytes, &plan, &registry, Some(&cal)).unwrap();
             let (c, b) = snap.delta();
             report("msg/ir-cal", c, b);
+            v
+        });
+    }
+
+    #[divan::bench(args = [1, 4, 16])]
+    fn gnarly_reflective(bencher: divan::Bencher, n: usize) {
+        let plan = plan_for::<GnarlyPayload>();
+        let registry = SchemaRegistry::new();
+        let bytes = encode(&make_gnarly_payload(n, 0));
+
+        bencher.bench(|| {
+            let snap = AllocSnapshot::take();
+            let v = from_slice_with_plan::<GnarlyPayload>(&bytes, &plan, &registry).unwrap();
+            let (c, b) = snap.delta();
+            report(&format!("gnarly/{n}/reflective"), c, b);
+            v
+        });
+    }
+
+    #[divan::bench(args = [1, 4, 16])]
+    fn gnarly_ir(bencher: divan::Bencher, n: usize) {
+        let plan = plan_for::<GnarlyPayload>();
+        let registry = SchemaRegistry::new();
+        let cal = gnarly_registry();
+        let bytes = encode(&make_gnarly_payload(n, 0));
+
+        bencher.bench(|| {
+            let snap = AllocSnapshot::take();
+            let v = from_slice_ir::<GnarlyPayload>(&bytes, &plan, &registry, Some(&cal)).unwrap();
+            let (c, b) = snap.delta();
+            report(&format!("gnarly/{n}/ir"), c, b);
+            v
+        });
+    }
+
+    #[divan::bench(args = [1, 4, 16])]
+    fn gnarly_jit(bencher: divan::Bencher, n: usize) {
+        let plan = plan_for::<GnarlyPayload>();
+        let registry = SchemaRegistry::new();
+        let cal = gnarly_registry();
+        let bytes = encode(&make_gnarly_payload(n, 0));
+        let mut backend = CraneliftBackend::new().unwrap();
+        let program = lower_with_cal(&plan, GnarlyPayload::SHAPE, &registry, Some(&cal))
+            .expect("gnarly lower should succeed");
+        let (owned_fn, _borrowed) = backend
+            .compile_decode(&program, &cal)
+            .expect("gnarly compile should succeed");
+
+        bencher.bench(|| {
+            let snap = AllocSnapshot::take();
+            let v = unsafe { decode_via_stub::<GnarlyPayload>(owned_fn, &bytes) };
+            let (c, b) = snap.delta();
+            report(&format!("gnarly/{n}/jit"), c, b);
             v
         });
     }

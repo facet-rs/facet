@@ -47,6 +47,7 @@ use vox_types::{Backing, SelfRef};
 /// local schema. Stored in the conduit's Rx half and used for every
 /// incoming message.
 pub struct MessagePlan {
+    pub remote_schema_id: u64,
     pub plan: vox_postcard::plan::TranslationPlan,
     pub registry: vox_types::SchemaRegistry,
 }
@@ -62,6 +63,7 @@ impl MessagePlan {
                 <vox_types::Message<'static> as facet::Facet<'static>>::SHAPE,
             );
             return Ok(MessagePlan {
+                remote_schema_id: 0,
                 plan,
                 registry: vox_types::SchemaRegistry::new(),
             });
@@ -77,6 +79,7 @@ impl MessagePlan {
         .map_err(|e| format!("failed to build message translation plan: {e}"))?;
 
         Ok(MessagePlan {
+            remote_schema_id: remote.root.id.0,
             plan,
             registry: remote.registry,
         })
@@ -91,7 +94,7 @@ pub(crate) fn deserialize_postcard<T: facet::Facet<'static>>(
 ) -> Result<SelfRef<T>, vox_postcard::DeserializeError> {
     let plan = vox_postcard::build_identity_plan(T::SHAPE);
     let registry = vox_types::SchemaRegistry::new();
-    deserialize_postcard_with_plan(backing, &plan, &registry)
+    deserialize_postcard_with_jit_key(backing, 0, &plan, &registry)
 }
 
 /// Deserialize postcard-encoded `backing` bytes into `T` using a pre-built
@@ -102,9 +105,25 @@ pub(crate) fn deserialize_postcard_with_plan<T: facet::Facet<'static>>(
     plan: &vox_postcard::plan::TranslationPlan,
     registry: &vox_types::SchemaRegistry,
 ) -> Result<SelfRef<T>, vox_postcard::DeserializeError> {
+    deserialize_postcard_with_jit_key(backing, 0, plan, registry)
+}
+
+pub(crate) fn deserialize_postcard_with_jit_key<T: facet::Facet<'static>>(
+    backing: Backing,
+    remote_schema_id: u64,
+    plan: &vox_postcard::plan::TranslationPlan,
+    registry: &vox_types::SchemaRegistry,
+) -> Result<SelfRef<T>, vox_postcard::DeserializeError> {
     // SAFETY: backing is heap-allocated with a stable address.
     // The SelfRef::try_new contract guarantees value is dropped before backing.
     SelfRef::try_new(backing, |bytes| {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(result) =
+            vox_jit::global_runtime().try_decode_owned::<T>(bytes, remote_schema_id, plan, registry)
+        {
+            return result;
+        }
+
         let mut value = std::mem::MaybeUninit::<T>::uninit();
         let ptr = facet_core::PtrUninit::from_maybe_uninit(&mut value);
 

@@ -21,6 +21,8 @@ vox-jit-abi = { workspace = true }
 vox-jit-cal = { workspace = true }
 vox-postcard = { workspace = true }
 vox-schema = { workspace = true }
+vox-types = { path = "../vox-types" }
+facet = { workspace = true }
 facet-core = { workspace = true }
 cranelift-codegen = "0.131"
 cranelift-frontend = "0.131"
@@ -31,4 +33,3 @@ cranelift-native = "0.131"
 [dev-dependencies]
 facet = { workspace = true }
 facet-core = { workspace = true }
-vox-types = { path = "../vox-types" }
