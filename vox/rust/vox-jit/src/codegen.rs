@@ -188,6 +188,10 @@ impl CraneliftBackend {
             crate::helpers::vox_jit_decode_opaque as *const u8,
         );
         jit_builder.symbol(
+            "vox_jit_write_default",
+            crate::helpers::vox_jit_write_default as *const u8,
+        );
+        jit_builder.symbol(
             "vox_jit_encode_slow_path",
             crate::helpers::vox_jit_encode_slow_path as *const u8,
         );
