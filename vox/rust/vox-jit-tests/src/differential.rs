@@ -258,13 +258,10 @@ pub fn shape_of<T: for<'de> Facet<'de>>() -> &'static Shape {
 
 /// JIT forced-fallback engine.
 ///
-/// Sets `VOX_JIT_DISABLE=1` before decoding so the full JIT integration path
+/// Sets `VOX_CODEC=reflect` before decoding so the full JIT integration path
 /// is exercised but the generated stub is bypassed — routing through the
-/// reflective interpreter. This confirms the wiring is correct and establishes
-/// a baseline before real Cranelift stubs are wired in.
-///
-/// When real stubs are ready, replace `VOX_JIT_DISABLE` with a real JIT decode
-/// call and keep this engine for the force-fallback regression path.
+/// reflective interpreter. This confirms the wiring is correct and provides a
+/// regression baseline against the real JIT engine.
 pub struct JitFallbackEngine;
 
 impl<T> DecodeEngine<T> for JitFallbackEngine
@@ -278,11 +275,11 @@ where
         registry: &SchemaRegistry,
     ) -> DecodeOutcome<T> {
         // Safety: env vars are process-global. Tests using this engine must not
-        // run in parallel with tests that rely on VOX_JIT_DISABLE being unset.
+        // run in parallel with tests that rely on VOX_CODEC being unset.
         // The fuzz tests are single-threaded per test function, so this is safe.
-        unsafe { std::env::set_var("VOX_JIT_DISABLE", "1") };
+        unsafe { std::env::set_var("VOX_CODEC", "reflect") };
         let result = from_slice_with_plan::<T>(bytes, plan, registry);
-        unsafe { std::env::remove_var("VOX_JIT_DISABLE") };
+        unsafe { std::env::remove_var("VOX_CODEC") };
         match result {
             Ok(v) => DecodeOutcome::Ok(v),
             Err(e) => DecodeOutcome::Err(ErrorClass::of(&e)),

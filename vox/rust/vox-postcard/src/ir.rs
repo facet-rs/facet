@@ -2667,8 +2667,45 @@ pub fn from_slice_ir<T>(
 where
     T: facet::Facet<'static>,
 {
+    unsafe { from_slice_ir_impl::<T>(input, plan, registry, cal, BorrowMode::Owned) }
+}
+
+/// Borrowed-mode sibling of [`from_slice_ir`]. Emits `ReadStrRef` /
+/// `ReadByteSliceRef` / borrowed `Cow` ops so the decoded value may hold
+/// references into `input`.
+///
+/// The `'input: 'facet` bound mirrors the JIT `try_decode_borrowed` entry
+/// point — the input must outlive the borrowed value.
+pub fn from_slice_ir_borrowed<'input, 'facet, T>(
+    input: &'input [u8],
+    plan: &TranslationPlan,
+    registry: &SchemaRegistry,
+    cal: Option<&CalibrationRegistry>,
+) -> Result<T, DeserializeError>
+where
+    T: facet::Facet<'facet>,
+    'input: 'facet,
+{
+    unsafe { from_slice_ir_impl::<T>(input, plan, registry, cal, BorrowMode::Borrowed) }
+}
+
+/// SAFETY: caller must uphold the lifetime contract between `input` and `T`
+/// when `borrow_mode` is `Borrowed` — the `BorrowMode::Owned` public wrapper
+/// enforces `T: Facet<'static>`; the `Borrowed` wrapper enforces
+/// `'input: 'facet`.
+#[allow(unsafe_code)]
+unsafe fn from_slice_ir_impl<'facet, T>(
+    input: &[u8],
+    plan: &TranslationPlan,
+    registry: &SchemaRegistry,
+    cal: Option<&CalibrationRegistry>,
+    borrow_mode: BorrowMode,
+) -> Result<T, DeserializeError>
+where
+    T: facet::Facet<'facet>,
+{
     let shape = T::SHAPE;
-    let program = lower(plan, shape, registry).map_err(|e| match e {
+    let program = lower_with_cal(plan, shape, registry, cal, borrow_mode).map_err(|e| match e {
         LowerError::UnsizedShape => DeserializeError::UnsupportedType("unsized shape".into()),
         LowerError::UnstableEnumRepr => {
             DeserializeError::UnsupportedType("unstable enum repr".into())
@@ -2681,8 +2718,6 @@ where
         .sized_layout()
         .map_err(|_| DeserializeError::UnsupportedType(format!("{shape}")))?;
 
-    // Allocate zeroed destination memory
-    #[allow(unsafe_code)]
     let ptr = {
         let p = unsafe {
             std::alloc::alloc_zeroed(
@@ -2702,9 +2737,7 @@ where
 
     match result {
         Ok(_bytes_consumed) => {
-            // SAFETY: ptr holds a fully-initialized T.
             let value: T = unsafe { std::ptr::read(ptr as *const T) };
-            #[allow(unsafe_code)]
             unsafe {
                 std::alloc::dealloc(
                     ptr,
@@ -2714,10 +2747,6 @@ where
             Ok(value)
         }
         Err(e) => {
-            // Drop any initialized sub-fields before freeing.
-            // For safety, zero the allocation (avoids dangling ptr reads in
-            // partial-init state — correct drop is deferred to future work).
-            #[allow(unsafe_code)]
             unsafe {
                 std::ptr::write_bytes(ptr, 0, layout.size());
                 std::alloc::dealloc(

@@ -17,9 +17,8 @@ use crate::fuzz::{
 // ---------------------------------------------------------------------------
 // Helper: JIT forced-fallback closure for three-way fuzz.
 //
-// Sets VOX_JIT_DISABLE=1 to route through the reflective path via the same
-// code path the JIT integration will use when real stubs aren't compiled.
-// When real Cranelift stubs land, replace this closure body with a JIT call.
+// Sets VOX_CODEC=reflect to route through the reflective path via the same
+// code path the JIT integration uses when a stub isn't compiled.
 // ---------------------------------------------------------------------------
 
 fn jit_fallback_engine<T>(
@@ -33,9 +32,9 @@ where
     // SAFETY: env-var mutation is safe when tests are single-threaded per
     // test function (default for `cargo test`). The var is restored before
     // returning so other tests in the same process aren't affected.
-    unsafe { std::env::set_var("VOX_JIT_DISABLE", "1") };
+    unsafe { std::env::set_var("VOX_CODEC", "reflect") };
     let result = from_slice_with_plan::<T>(bytes, plan, registry);
-    unsafe { std::env::remove_var("VOX_JIT_DISABLE") };
+    unsafe { std::env::remove_var("VOX_CODEC") };
     result.map(|v| to_vec(&v).expect("re-encode jit-fallback result"))
 }
 
@@ -273,8 +272,8 @@ fn fuzz_vec_string_stress() {
 // Three-way differential fuzz: reflective × IR × JIT-fallback
 //
 // These tests run the same workloads through all three engines and assert
-// identical output. The JIT leg uses VOX_JIT_DISABLE=1 (forced fallback
-// through the reflective path) until real Cranelift stubs are available.
+// identical output. The JIT leg uses VOX_CODEC=reflect (forced fallback
+// through the reflective path).
 // ---------------------------------------------------------------------------
 
 #[test]

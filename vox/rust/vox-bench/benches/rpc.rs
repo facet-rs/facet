@@ -142,7 +142,7 @@ enum RpcCodecMode {
 
 struct CodecModeGuard {
     _lock: MutexGuard<'static, ()>,
-    previous_disable: Option<OsString>,
+    previous: Option<OsString>,
 }
 
 static CODEC_MODE_LOCK: Mutex<()> = Mutex::new(());
@@ -150,16 +150,16 @@ static CODEC_MODE_LOCK: Mutex<()> = Mutex::new(());
 impl CodecModeGuard {
     fn install(mode: RpcCodecMode) -> Self {
         let lock = CODEC_MODE_LOCK.lock().expect("codec mode lock poisoned");
-        let previous_disable = std::env::var_os("VOX_JIT_DISABLE");
+        let previous = std::env::var_os("VOX_CODEC");
         unsafe {
             match mode {
-                RpcCodecMode::Jit => std::env::remove_var("VOX_JIT_DISABLE"),
-                RpcCodecMode::NonJit => std::env::set_var("VOX_JIT_DISABLE", "1"),
+                RpcCodecMode::Jit => std::env::set_var("VOX_CODEC", "jit"),
+                RpcCodecMode::NonJit => std::env::set_var("VOX_CODEC", "reflect"),
             }
         }
         Self {
             _lock: lock,
-            previous_disable,
+            previous,
         }
     }
 }
@@ -167,9 +167,9 @@ impl CodecModeGuard {
 impl Drop for CodecModeGuard {
     fn drop(&mut self) {
         unsafe {
-            match &self.previous_disable {
-                Some(value) => std::env::set_var("VOX_JIT_DISABLE", value),
-                None => std::env::remove_var("VOX_JIT_DISABLE"),
+            match &self.previous {
+                Some(value) => std::env::set_var("VOX_CODEC", value),
+                None => std::env::remove_var("VOX_CODEC"),
             }
         }
     }

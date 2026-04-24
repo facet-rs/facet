@@ -36,9 +36,44 @@ use vox_postcard::TranslationPlan;
 use vox_postcard::error::DeserializeError;
 use vox_postcard::error::SerializeError;
 use vox_postcard::ir::{
-    DecodeOp, DecodeProgram, EncodeOp, EncodeProgram, lower_encode, lower_with_cal,
+    DecodeOp, DecodeProgram, EncodeOp, EncodeProgram, from_slice_ir, from_slice_ir_borrowed,
+    lower_encode, lower_with_cal,
 };
 use vox_schema::SchemaRegistry;
+
+// ---------------------------------------------------------------------------
+// Codec mode — `VOX_CODEC` selects between reflect / interp / jit
+// ---------------------------------------------------------------------------
+
+/// Which decoder/encoder the RPC layer should use for this process.
+///
+/// Selected via the `VOX_CODEC` environment variable:
+/// - `reflect` — facet-reflect oracle (slow, correctness baseline, Miri-safe).
+/// - `interp`  — IR interpreter (shares lowering with JIT, Miri-safe).
+/// - `jit`     — Cranelift JIT, falling back to `reflect` for shapes the JIT
+///               cannot compile. This is the default.
+///
+/// Reading the env var is one-shot per process (OnceLock-cached).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodecMode {
+    Reflect,
+    Interp,
+    Jit,
+}
+
+impl CodecMode {
+    pub fn from_env() -> Self {
+        static CACHED: OnceLock<CodecMode> = OnceLock::new();
+        *CACHED.get_or_init(|| match std::env::var("VOX_CODEC").ok().as_deref() {
+            Some("reflect") => CodecMode::Reflect,
+            Some("interp") => CodecMode::Interp,
+            Some("jit") | None => CodecMode::Jit,
+            Some(other) => {
+                panic!("VOX_CODEC must be one of 'reflect', 'interp', 'jit' (got {other:?})")
+            }
+        })
+    }
+}
 
 // ---------------------------------------------------------------------------
 // JIT runtime — top-level handle
@@ -70,15 +105,11 @@ impl JitRuntime {
         &self.cache
     }
 
-    /// Returns `true` if the `VOX_JIT_DISABLE` environment variable is set to `1`.
-    ///
-    /// When this returns `true`, all JIT paths should return `JitDecodeResult::FallBack`
-    /// immediately, routing execution through the reflective interpreter. This is
-    /// useful for differential testing (run the same input through both paths) and for
-    /// production bisection without recompilation.
+    /// Returns `true` when the current [`CodecMode`] is not `Jit`. Callers use
+    /// this to short-circuit JIT compilation and fall through to the reflective
+    /// or IR-interpreter path.
     pub fn force_fallback() -> bool {
-        static CACHED: OnceLock<bool> = OnceLock::new();
-        *CACHED.get_or_init(|| std::env::var_os("VOX_JIT_DISABLE").is_some_and(|v| v == "1"))
+        CodecMode::from_env() != CodecMode::Jit
     }
 
     /// Build a `DecodeCacheKey` for the given parameters.
@@ -314,6 +345,15 @@ impl JitRuntime {
         plan: &TranslationPlan,
         registry: &SchemaRegistry,
     ) -> Option<Result<T, DeserializeError>> {
+        match CodecMode::from_env() {
+            CodecMode::Reflect => return None,
+            CodecMode::Interp => {
+                let cal = self.cal.lock().unwrap();
+                return Some(from_slice_ir::<T>(input, plan, registry, Some(&cal)));
+            }
+            CodecMode::Jit => {}
+        }
+
         let stub = self.prepare_decode_stub(
             remote_schema_id,
             T::SHAPE,
@@ -348,6 +388,20 @@ impl JitRuntime {
     where
         'input: 'facet,
     {
+        match CodecMode::from_env() {
+            CodecMode::Reflect => return None,
+            CodecMode::Interp => {
+                let cal = self.cal.lock().unwrap();
+                return Some(from_slice_ir_borrowed::<T>(
+                    input,
+                    plan,
+                    registry,
+                    Some(&cal),
+                ));
+            }
+            CodecMode::Jit => {}
+        }
+
         let stub = self.prepare_decode_stub(
             remote_schema_id,
             T::SHAPE,
