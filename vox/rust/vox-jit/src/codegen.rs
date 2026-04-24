@@ -42,6 +42,39 @@ use vox_postcard::ir::{
     DecodeOp, DecodeProgram, EncodeOp, EncodeProgram, OpaqueDescriptorId, TagWidth, WirePrimitive,
 };
 
+/// Map of nested `&'static Shape` pointers to already-compiled encode stubs.
+///
+/// Populated by the runtime (`JitRuntime::prepare_encode_stub`) before it
+/// calls `compile_encode`. The key is the raw pointer address — two shapes
+/// with the same address are the same `Facet` type within the process.
+///
+/// Consulted by `EncodeOp::WriteShape` handling to choose between emitting
+/// a direct `call_indirect(child_fn_ptr, [ctx, src_ptr])` (no cache, no
+/// alloc) and falling through to `vox_jit_encode_shape` (the legacy helper
+/// that looks up the stub in the runtime cache and returns a fresh
+/// `Vec<u8>` that then has to be copied into the outer buffer).
+pub type ChildEncoderMap =
+    std::collections::HashMap<*const facet_core::Shape, vox_jit_abi::EncodeFn>;
+
+/// Walk an `EncodeProgram` and collect every distinct `WriteShape` child
+/// shape. Used by the runtime to pre-compile nested stubs before the
+/// parent stub is emitted so the parent can call them directly.
+pub fn collect_write_shape_children(program: &EncodeProgram) -> Vec<&'static facet_core::Shape> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::<*const facet_core::Shape>::new();
+    for block in &program.blocks {
+        for op in &block.ops {
+            if let EncodeOp::WriteShape { shape, .. } = op {
+                let p = *shape as *const _;
+                if seen.insert(p) {
+                    out.push(*shape);
+                }
+            }
+        }
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // Target ISA name
 // ---------------------------------------------------------------------------
@@ -312,6 +345,15 @@ impl CraneliftBackend {
     /// The generated function has the signature:
     ///   `unsafe extern "C" fn(ctx: *mut EncodeCtx, src_ptr: *const u8) -> bool`
     ///
+    /// `child_encoders` maps nested `&'static Shape` pointers to their
+    /// already-compiled `EncodeFn`. When a `WriteShape { shape, .. }` op
+    /// references a shape present in the map, the generated code emits a
+    /// direct `call_indirect` to that fn pointer, bypassing the runtime
+    /// cache lookup and the `Vec<u8>` alloc inside
+    /// `vox_jit_encode_shape`. Shapes absent from the map (e.g. cyclic
+    /// self-references detected at prepare time) fall through to the
+    /// helper.
+    ///
     /// Returns `Err(CodegenError::UnsupportedOp)` if any op in the program is
     /// not yet supported by the Cranelift backend.
     pub fn compile_encode(
@@ -319,6 +361,7 @@ impl CraneliftBackend {
         shape: &'static facet_core::Shape,
         program: &EncodeProgram,
         descriptors: &CalibrationRegistry,
+        child_encoders: &ChildEncoderMap,
     ) -> Result<EncodeFn, CodegenError> {
         let sig = self.encode_signature();
         let func_name = format!("vox_encode_{}_{}", shape_symbol_fragment(shape), next_id());
@@ -333,7 +376,13 @@ impl CraneliftBackend {
         let mut func_ctx = FunctionBuilderContext::new();
         {
             let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
-            emit_encode_function(&mut builder, program, descriptors, self.ptr_ty)?;
+            emit_encode_function(
+                &mut builder,
+                program,
+                descriptors,
+                self.ptr_ty,
+                child_encoders,
+            )?;
             builder.finalize();
         }
 
@@ -2829,6 +2878,10 @@ struct EncodeCtx_<'a, 'b> {
     var_buf_len: Variable,
     /// Local SSA cache of `ctx.buf_cap`. Reloaded after grow / helper calls.
     var_buf_cap: Variable,
+    /// Compile-time-resolved encode stubs for nested shapes. Consulted by
+    /// `EncodeOp::WriteShape` to emit a direct `call_indirect` instead of
+    /// dispatching through `vox_jit_encode_shape`.
+    child_encoders: &'a ChildEncoderMap,
 }
 
 impl<'a, 'b> EncodeCtx_<'a, 'b> {
@@ -3110,6 +3163,7 @@ fn emit_encode_function(
     program: &EncodeProgram,
     descriptors: &CalibrationRegistry,
     ptr_ty: Type,
+    child_encoders: &ChildEncoderMap,
 ) -> Result<(), CodegenError> {
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
@@ -3156,6 +3210,7 @@ fn emit_encode_function(
         var_buf_ptr,
         var_buf_len,
         var_buf_cap,
+        child_encoders,
     };
 
     emit_encode_block(&mut ectx, program, 0)?;
@@ -3216,12 +3271,16 @@ fn emit_encode_op(
         }
 
         EncodeOp::WriteShape { shape, src_offset } => {
-            emit_encode_helper_shape_op(
-                ectx,
-                *shape,
-                *src_offset,
-                crate::helpers::vox_jit_encode_shape as *const (),
-            );
+            if let Some(&child_fn) = ectx.child_encoders.get(&(*shape as *const _)) {
+                emit_encode_direct_child(ectx, child_fn, *src_offset);
+            } else {
+                emit_encode_helper_shape_op(
+                    ectx,
+                    *shape,
+                    *src_offset,
+                    crate::helpers::vox_jit_encode_shape as *const (),
+                );
+            }
             Ok(false)
         }
 
@@ -3537,6 +3596,47 @@ fn emit_encode_helper_shape_op(
 ) {
     let src_ptr = ectx.src_at(src_offset);
     emit_encode_shape_ptr_with_helper(ectx, src_ptr, shape, helper);
+}
+
+/// Emit a direct `call_indirect` to a pre-compiled child encode stub.
+///
+/// Signature of the callee matches `EncodeFn`:
+///   `unsafe extern "C" fn(ctx: *mut EncodeCtx, src_ptr: *const u8) -> bool`
+///
+/// The child stub writes directly into `ctx.buf_*`, so we flush the cached
+/// `buf_len` before the call and reload all three fields afterwards, exactly
+/// like we do around any other helper that mutates the buffer.
+fn emit_encode_direct_child(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    child_fn: vox_jit_abi::EncodeFn,
+    src_offset: usize,
+) {
+    let src_ptr = ectx.src_at(src_offset);
+    let call_conv = ectx.b.func.signature.call_conv;
+    let sig = ectx.b.func.import_signature(Signature {
+        params: vec![AbiParam::new(ectx.ptr_ty), AbiParam::new(ectx.ptr_ty)],
+        returns: vec![AbiParam::new(types::I8)],
+        call_conv,
+    });
+    let callee = ectx.b.ins().iconst(ectx.ptr_ty, child_fn as usize as i64);
+    ectx.flush_buf_len_to_ctx();
+    let call = ectx
+        .b
+        .ins()
+        .call_indirect(sig, callee, &[ectx.enc_ctx, src_ptr]);
+    let ok = ectx.b.inst_results(call)[0];
+    ectx.reload_buf_state();
+
+    let fail_block = ectx.fresh_block();
+    let cont_block = ectx.fresh_block();
+    ectx.b.ins().brif(ok, cont_block, &[], fail_block, &[]);
+
+    ectx.b.switch_to_block(fail_block);
+    ectx.b.seal_block(fail_block);
+    ectx.return_fail();
+
+    ectx.b.switch_to_block(cont_block);
+    ectx.b.seal_block(cont_block);
 }
 
 fn emit_encode_shape_ptr_with_helper(
@@ -4136,7 +4236,8 @@ mod tests {
         let program = lower_encode(T::SHAPE, Some(cal))
             .map_err(|e| CodegenError::UnsupportedOp(format!("encode lowering failed: {e}")))?;
         let mut backend = CraneliftBackend::new()?;
-        backend.compile_encode(T::SHAPE, &program, cal)?;
+        let child_encoders = ChildEncoderMap::new();
+        backend.compile_encode(T::SHAPE, &program, cal, &child_encoders)?;
         Ok(())
     }
 
@@ -4642,7 +4743,8 @@ mod tests {
         let program = lower_encode(T::SHAPE, Some(&cal))
             .map_err(|e| CodegenError::UnsupportedOp(format!("encode lowering failed: {e}")))?;
         let mut backend = CraneliftBackend::new()?;
-        backend.compile_encode(T::SHAPE, &program, &cal)?;
+        let child_encoders = ChildEncoderMap::new();
+        backend.compile_encode(T::SHAPE, &program, &cal, &child_encoders)?;
         Ok(())
     }
 
@@ -4697,7 +4799,8 @@ mod tests {
         let program = lower_encode(T::SHAPE, Some(&cal))
             .map_err(|e| CodegenError::UnsupportedOp(format!("encode lowering failed: {e}")))?;
         let mut backend = CraneliftBackend::new()?;
-        let encode_fn = backend.compile_encode(T::SHAPE, &program, &cal)?;
+        let child_encoders = ChildEncoderMap::new();
+        let encode_fn = backend.compile_encode(T::SHAPE, &program, &cal, &child_encoders)?;
 
         let mut ctx = EncodeCtx::with_capacity(64);
         let src_ptr = value as *const T as *const u8;

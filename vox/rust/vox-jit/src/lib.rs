@@ -19,10 +19,12 @@ pub mod codegen;
 pub mod helpers;
 
 pub use cache::StubCache;
-pub use codegen::{CodegenError, CraneliftBackend, host_isa_name};
+pub use codegen::{ChildEncoderMap, CodegenError, CraneliftBackend, host_isa_name};
 pub use vox_jit_abi as abi;
 pub use vox_jit_cal as cal;
 
+use std::cell::RefCell;
+use std::collections::HashSet;
 use std::mem::MaybeUninit;
 use std::sync::{Arc, Mutex, Once, OnceLock};
 
@@ -214,41 +216,75 @@ impl JitRuntime {
             return None;
         }
 
-        let mut cal = self.cal.lock().unwrap();
-        register_shape_tree(shape, &mut cal);
-        let descriptor_handle = calibration_token(&cal);
-        let key = EncodeCacheKey {
-            local_shape: shape,
-            borrow_mode: BorrowMode::Owned,
-            target_isa: host_isa_name(),
-            descriptor_handle,
-        };
-
-        if let Some(stub) = self.cache.get_encode(&key) {
-            self.cache.insert_encode_fast(shape, stub.clone());
-            return Some(stub);
+        // Cycle guard: if we're already compiling this shape higher up the
+        // stack (recursive type), bail so the caller falls back to the
+        // runtime helper for that one nested reference. The outer frame
+        // will complete and cache the stub; subsequent encodes hit the
+        // fast path directly.
+        if !encode_in_progress_insert(shape) {
+            return None;
         }
+        let _guard = InProgressGuard(shape);
 
-        let program = match lower_encode(shape, Some(&cal)) {
-            Ok(program) => program,
-            Err(err) => {
-                if require_pure_jit() {
-                    panic!(
-                        "VOX_JIT_REQUIRE_PURE=1 and lowered encode program for '{}' failed: {}",
-                        shape, err
-                    );
-                }
-                return None;
+        // Phase 1: lower the IR and collect nested shapes under cal lock.
+        let (program, children, key) = {
+            let mut cal = self.cal.lock().unwrap();
+            register_shape_tree(shape, &mut cal);
+            let descriptor_handle = calibration_token(&cal);
+            let key = EncodeCacheKey {
+                local_shape: shape,
+                borrow_mode: BorrowMode::Owned,
+                target_isa: host_isa_name(),
+                descriptor_handle,
+            };
+
+            if let Some(stub) = self.cache.get_encode(&key) {
+                self.cache.insert_encode_fast(shape, stub.clone());
+                return Some(stub);
             }
+
+            let program = match lower_encode(shape, Some(&cal)) {
+                Ok(program) => program,
+                Err(err) => {
+                    if require_pure_jit() {
+                        panic!(
+                            "VOX_JIT_REQUIRE_PURE=1 and lowered encode program for '{}' failed: {}",
+                            shape, err
+                        );
+                    }
+                    return None;
+                }
+            };
+            if require_pure_jit() && encode_program_has_slow_path(&program) {
+                panic!(
+                    "VOX_JIT_REQUIRE_PURE=1 and lowered encode program for '{}' contains SlowPath",
+                    shape
+                );
+            }
+            let children = codegen::collect_write_shape_children(&program);
+            (program, children, key)
         };
-        if require_pure_jit() && encode_program_has_slow_path(&program) {
-            panic!(
-                "VOX_JIT_REQUIRE_PURE=1 and lowered encode program for '{}' contains SlowPath",
-                shape
-            );
+
+        // Phase 2: recurse for each nested WriteShape child with cal+backend
+        // unlocked. Direct self-references and cycles are filtered by the
+        // in-progress guard above; children that fail to compile fall back
+        // to the runtime helper path at the WriteShape site.
+        let mut child_encoders = ChildEncoderMap::new();
+        for child in children {
+            if std::ptr::eq(child, shape) {
+                continue;
+            }
+            if let Some(child_stub) = self.prepare_encode_stub(child) {
+                child_encoders.insert(child as *const _, child_stub.encode_fn);
+            }
         }
+
+        // Phase 3: reacquire locks and emit machine code for this shape,
+        // embedding child fn pointers directly into the generated call
+        // sites.
+        let cal = self.cal.lock().unwrap();
         let mut backend = self.backend.lock().unwrap();
-        let encode_fn = match backend.compile_encode(shape, &program, &cal) {
+        let encode_fn = match backend.compile_encode(shape, &program, &cal, &child_encoders) {
             Ok(f) => f,
             Err(err) => {
                 if require_pure_jit() {
@@ -351,6 +387,37 @@ impl JitRuntime {
                 "JIT encode returned false (OOM)".into(),
             )))
         }
+    }
+}
+
+thread_local! {
+    /// Shapes currently being compiled on this thread (DFS stack).
+    ///
+    /// Used to short-circuit cyclic recursion when `prepare_encode_stub`
+    /// walks a shape's nested `WriteShape` children. A child that's
+    /// already on the stack would deadlock / loop if we tried to
+    /// pre-compile it; instead we return `None` for that child so the
+    /// parent emits a runtime helper call for that one reference.
+    static ENCODE_IN_PROGRESS: RefCell<HashSet<*const Shape>> = RefCell::new(HashSet::new());
+}
+
+/// Try to mark `shape` as "in progress" for encode compile on this thread.
+/// Returns `true` if inserted, `false` if already present (cycle detected).
+fn encode_in_progress_insert(shape: &'static Shape) -> bool {
+    ENCODE_IN_PROGRESS.with(|set| set.borrow_mut().insert(shape as *const _))
+}
+
+fn encode_in_progress_remove(shape: &'static Shape) {
+    ENCODE_IN_PROGRESS.with(|set| {
+        set.borrow_mut().remove(&(shape as *const _));
+    });
+}
+
+struct InProgressGuard(&'static Shape);
+
+impl Drop for InProgressGuard {
+    fn drop(&mut self) {
+        encode_in_progress_remove(self.0);
     }
 }
 
