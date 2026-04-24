@@ -320,6 +320,7 @@ impl CraneliftBackend {
             .map_err(CodegenError::ModuleError)?;
 
         let fn_ptr = self.module.get_finalized_function(func_id);
+        crate::jitdump::record_load(&func_name, fn_ptr, code_size);
         Ok((fn_ptr, code_size))
     }
 
@@ -405,12 +406,17 @@ impl CraneliftBackend {
                 eprintln!("=== asm encode {func_name} ===\n{d}");
             }
         }
+        let code_size = ctx
+            .compiled_code()
+            .map(|c| c.code_info().total_size)
+            .unwrap_or(0);
         self.module.clear_context(&mut ctx);
         self.module
             .finalize_definitions()
             .map_err(CodegenError::ModuleError)?;
 
         let fn_ptr = self.module.get_finalized_function(func_id);
+        crate::jitdump::record_load(&func_name, fn_ptr, code_size);
 
         // SAFETY: We just compiled and finalized this function; the pointer is
         // valid for the lifetime of the JITModule.

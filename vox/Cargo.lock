@@ -3924,6 +3924,7 @@ dependencies = [
  "cranelift-native",
  "facet",
  "facet-core",
+ "libc",
  "spec-proto",
  "vox-jit-abi",
  "vox-jit-cal",

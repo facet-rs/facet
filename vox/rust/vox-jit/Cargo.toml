@@ -29,6 +29,9 @@ cranelift-jit = "0.131"
 cranelift-module = "0.131"
 cranelift-native = "0.131"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true }
+
 [dev-dependencies]
 facet = { workspace = true }
 facet-core = { workspace = true }

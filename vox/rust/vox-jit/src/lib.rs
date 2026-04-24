@@ -17,6 +17,7 @@
 pub mod cache;
 pub mod codegen;
 pub mod helpers;
+pub(crate) mod jitdump;
 
 pub use cache::StubCache;
 pub use codegen::{ChildEncoderMap, CodegenError, CraneliftBackend, host_isa_name};
