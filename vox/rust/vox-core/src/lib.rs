@@ -100,6 +100,7 @@ pub(crate) fn deserialize_postcard<T: facet::Facet<'static>>(
 /// Deserialize postcard-encoded `backing` bytes into `T` using a pre-built
 /// translation plan and schema registry for the remote peer's type layout.
 // r[impl zerocopy.framing.value]
+#[cfg(test)]
 pub(crate) fn deserialize_postcard_with_plan<T: facet::Facet<'static>>(
     backing: Backing,
     plan: &vox_postcard::plan::TranslationPlan,

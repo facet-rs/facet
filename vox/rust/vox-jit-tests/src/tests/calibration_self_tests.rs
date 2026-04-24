@@ -12,7 +12,7 @@
 
 use vox_jit_cal::{
     CalibrationRegistry, CalibrationResult, CalibrationSelfCheck, ContainerKind, GatedResult,
-    OFFSET_ABSENT, OpaqueDescriptor, SelfCheckFailure, calibrate_string, calibrate_vec,
+    OFFSET_ABSENT, OpaqueDescriptor, SelfCheckFailure, calibrate_vec,
 };
 
 // ---------------------------------------------------------------------------

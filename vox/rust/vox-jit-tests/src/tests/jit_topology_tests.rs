@@ -20,7 +20,7 @@ use vox_jit::{
 use vox_jit_cal::{BorrowMode, CalibrationRegistry};
 use vox_postcard::{
     TranslationPlan, build_identity_plan,
-    ir::{DecodeProgram, from_slice_ir, lower_with_cal},
+    ir::{from_slice_ir, lower_with_cal},
     serialize::to_vec,
 };
 use vox_schema::SchemaRegistry;

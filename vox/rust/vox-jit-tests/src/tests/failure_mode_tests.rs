@@ -9,9 +9,7 @@
 //! - unknown remote variant (runtime error per message)
 
 use facet::Facet;
-use vox_postcard::{
-    DeserializeError, TranslationPlan, build_identity_plan, from_slice_with_plan, ir::from_slice_ir,
-};
+use vox_postcard::{TranslationPlan, build_identity_plan, from_slice_with_plan, ir::from_slice_ir};
 use vox_schema::SchemaRegistry;
 
 use crate::{

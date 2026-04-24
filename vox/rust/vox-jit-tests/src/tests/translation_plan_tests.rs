@@ -8,13 +8,11 @@
 
 use facet::Facet;
 use vox_postcard::{
-    SchemaSet, TranslationPlan, build_plan, from_slice_with_plan, plan::PlanInput,
-    serialize::to_vec,
+    SchemaSet, build_plan, from_slice_with_plan, plan::PlanInput, serialize::to_vec,
 };
-use vox_schema::SchemaRegistry;
 use vox_types::schema::extract_schemas;
 
-use crate::{differential::ErrorClass, fixtures::*};
+use crate::differential::ErrorClass;
 
 // ---------------------------------------------------------------------------
 // Helper

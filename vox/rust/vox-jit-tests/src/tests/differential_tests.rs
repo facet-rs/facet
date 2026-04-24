@@ -8,7 +8,7 @@
 //! and including them in the `candidates` slice.
 
 use vox_postcard::{
-    SchemaSet, TranslationPlan, build_identity_plan, build_plan, plan::PlanInput, serialize::to_vec,
+    SchemaSet, build_identity_plan, build_plan, plan::PlanInput, serialize::to_vec,
 };
 use vox_schema::SchemaRegistry;
 
