@@ -1184,6 +1184,16 @@ impl ScratchBuf {
     }
 
     #[allow(unsafe_code)]
+    fn new_filled(layout: std::alloc::Layout, fill: u8) -> Option<Self> {
+        let ptr = unsafe { std::alloc::alloc(layout) };
+        if ptr.is_null() {
+            return None;
+        }
+        unsafe { std::ptr::write_bytes(ptr, fill, layout.size()) };
+        Some(Self { ptr, layout })
+    }
+
+    #[allow(unsafe_code)]
     fn to_bytes(&self) -> Box<[u8]> {
         unsafe { std::slice::from_raw_parts(self.ptr as *const u8, self.layout.size()) }
             .to_vec()
@@ -1202,6 +1212,15 @@ struct CalibratedOptionLayout {
     inner_offset: usize,
     none_bytes: Box<[u8]>,
     some_bytes: Box<[u8]>,
+    /// Positions (and expected None values) of the discriminator bytes — bytes
+    /// rustc reliably writes in *both* `init_none` and `init_some`, whose values
+    /// differ between the two variants. Used by the JIT encode fast path to
+    /// classify an `Option<T>` at runtime without calling `is_some_fn`.
+    ///
+    /// Computed by probing each init fn twice (once over zero-filled memory,
+    /// once over `0xFF`-filled memory): bytes whose value depends on the fill
+    /// are padding / uninitialized and are excluded from the discriminator.
+    tag_bytes: Box<[(usize, u8)]>,
 }
 
 struct CalibratedResultLayout {
@@ -1219,46 +1238,134 @@ fn calibrate_option_layout(
     let opt_layout = shape.layout.sized_layout().ok()?;
     let inner_layout = opt_def.t.layout.sized_layout().ok()?;
 
-    let none_buf = ScratchBuf::new(opt_layout)?;
-    unsafe { (opt_def.vtable.init_none)(facet_core::PtrUninit::new(none_buf.ptr as *mut ())) };
+    // Probe each init fn over several distinct outer fills. A byte is
+    // "consistently written" only if it has the same value across every probe
+    // of that variant — padding and uninit bytes that `ptr::write` doesn't
+    // touch follow the fill and get filtered out. More than two fills helps
+    // with cases where `ptr::write` copies undef bytes whose value happens
+    // to match across two runs.
+    const FILLS: [u8; 4] = [0x00, 0xFF, 0x5A, 0xA5];
 
-    let some_buf = ScratchBuf::new(opt_layout)?;
+    let mut none_probes: Vec<Box<[u8]>> = Vec::with_capacity(FILLS.len());
+    for &fill in &FILLS {
+        none_probes.push(probe_option_none(shape, opt_def, opt_layout, fill)?.0);
+    }
+
+    let mut some_probes: Vec<Box<[u8]>> = Vec::with_capacity(FILLS.len());
+    let mut inner_offset: Option<usize> = None;
+    for &fill in &FILLS {
+        let (bytes, off) = probe_option_some(shape, opt_def, opt_layout, inner_layout, fill)?;
+        match inner_offset {
+            Some(prev) if prev != off => return None,
+            _ => inner_offset = Some(off),
+        }
+        some_probes.push(bytes);
+    }
+
+    let inner_offset = inner_offset?;
+    if inner_offset.checked_add(inner_layout.size())? > opt_layout.size() {
+        return None;
+    }
+
+    let mut candidates: Vec<(usize, u8, u8)> = Vec::new();
+    for i in 0..opt_layout.size() {
+        let none_val = none_probes[0][i];
+        let some_val = some_probes[0][i];
+        let none_written = none_probes.iter().all(|p| p[i] == none_val);
+        let some_written = some_probes.iter().all(|p| p[i] == some_val);
+        if none_written && some_written && none_val != some_val {
+            candidates.push((i, none_val, some_val));
+        }
+    }
+
+    // Prune spurious candidates with `is_some_fn` as the oracle: for each
+    // candidate offset, start from a fresh None buffer and flip only that
+    // byte to its calibrated Some value. If `is_some_fn` still reports
+    // None, that byte isn't a real discriminator — some other part of the
+    // representation (padding or probe-stable undef) just happened to
+    // differ consistently across our probes.
+    let mut tag_bytes: Vec<(usize, u8)> = Vec::new();
+    for &(i, none_val, some_val) in &candidates {
+        let oracle_buf = ScratchBuf::new_filled(opt_layout, 0x00)?;
+        unsafe {
+            (opt_def.vtable.init_none)(facet_core::PtrUninit::new(oracle_buf.ptr as *mut ()))
+        };
+        unsafe { oracle_buf.ptr.add(i).write(some_val) };
+        let is_some = unsafe {
+            (opt_def.vtable.is_some)(facet_core::PtrConst::new(oracle_buf.ptr as *const ()))
+        };
+        unsafe { shape.call_drop_in_place(facet_core::PtrMut::new(oracle_buf.ptr as *mut ())) };
+        if is_some {
+            tag_bytes.push((i, none_val));
+        }
+    }
+
+    if tag_bytes.is_empty() {
+        return None;
+    }
+
+    Some(CalibratedOptionLayout {
+        inner_offset,
+        none_bytes: none_probes.into_iter().next().unwrap(),
+        some_bytes: some_probes.into_iter().next().unwrap(),
+        tag_bytes: tag_bytes.into_boxed_slice(),
+    })
+}
+
+/// Probe a `None`-initialized Option over memory pre-filled with `fill`.
+///
+/// Returns `(option_bytes, ())`; the second tuple slot exists only to mirror
+/// `probe_option_some` for call-site symmetry.
+#[allow(unsafe_code)]
+fn probe_option_none(
+    shape: &'static Shape,
+    opt_def: facet_core::OptionDef,
+    opt_layout: std::alloc::Layout,
+    fill: u8,
+) -> Option<(Box<[u8]>, ())> {
+    let buf = ScratchBuf::new_filled(opt_layout, fill)?;
+    unsafe { (opt_def.vtable.init_none)(facet_core::PtrUninit::new(buf.ptr as *mut ())) };
+    let bytes = buf.to_bytes();
+    unsafe { shape.call_drop_in_place(facet_core::PtrMut::new(buf.ptr as *mut ())) };
+    Some((bytes, ()))
+}
+
+/// Probe a `Some(T::default())`-initialized Option over memory pre-filled with
+/// `fill`. Returns `(option_bytes, inner_offset)`.
+#[allow(unsafe_code)]
+fn probe_option_some(
+    shape: &'static Shape,
+    opt_def: facet_core::OptionDef,
+    opt_layout: std::alloc::Layout,
+    inner_layout: std::alloc::Layout,
+    fill: u8,
+) -> Option<(Box<[u8]>, usize)> {
+    let buf = ScratchBuf::new_filled(opt_layout, fill)?;
     let inner_buf = ScratchBuf::new(inner_layout)?;
     unsafe {
         opt_def
             .t
             .call_default_in_place(facet_core::PtrUninit::new(inner_buf.ptr as *mut ()))?
     };
-
     unsafe {
         (opt_def.vtable.init_some)(
-            facet_core::PtrUninit::new(some_buf.ptr as *mut ()),
+            facet_core::PtrUninit::new(buf.ptr as *mut ()),
             facet_core::PtrMut::new(inner_buf.ptr as *mut ()),
         )
     };
 
     let ret_ptr =
-        unsafe { (opt_def.vtable.get_value)(facet_core::PtrConst::new(some_buf.ptr as *const ())) };
-    let base_ptr = some_buf.ptr as *const u8;
+        unsafe { (opt_def.vtable.get_value)(facet_core::PtrConst::new(buf.ptr as *const ())) };
+    let base_ptr = buf.ptr as *const u8;
     let end_ptr = unsafe { base_ptr.add(opt_layout.size()) };
     if ret_ptr < base_ptr || ret_ptr > end_ptr {
         return None;
     }
-
     let inner_offset = ret_ptr as usize - base_ptr as usize;
-    if inner_offset.checked_add(inner_layout.size())? > opt_layout.size() {
-        return None;
-    }
 
-    let none_bytes = none_buf.to_bytes();
-    let some_bytes = some_buf.to_bytes();
-    let _ = unsafe { shape.call_drop_in_place(facet_core::PtrMut::new(some_buf.ptr as *mut ())) };
-
-    Some(CalibratedOptionLayout {
-        inner_offset,
-        none_bytes,
-        some_bytes,
-    })
+    let bytes = buf.to_bytes();
+    unsafe { shape.call_drop_in_place(facet_core::PtrMut::new(buf.ptr as *mut ())) };
+    Some((bytes, inner_offset))
 }
 
 #[allow(unsafe_code)]
@@ -2865,6 +2972,24 @@ pub enum EncodeOp {
         get_value_fn: facet_core::OptionGetValueFn,
     },
 
+    /// Encode an `Option<T>` using a calibrated in-memory layout — no vtable
+    /// calls. The lowering probes `init_none` / `init_some(default)` (once over
+    /// zero-filled memory, once over `0xFF`-filled memory) to discover which
+    /// bytes rustc reliably writes and differ between the two variants. The
+    /// JIT emits inline code that loads those tag bytes, XORs with their `None`
+    /// values, ORs the results, and branches: zero → None, non-zero → Some.
+    ///
+    /// On None the emitted code writes postcard `0x00`; on Some it writes
+    /// `0x01` then encodes the inner value at `src_offset + inner_offset`.
+    EncodeOptionCalibrated {
+        src_offset: usize,
+        /// Byte offset from the option base to the inner `T` slot.
+        inner_offset: usize,
+        some_block: usize,
+        /// Discriminator byte positions and their `None` values.
+        tag_bytes: Box<[(usize, u8)]>,
+    },
+
     /// Encode a `Result<T, E>` at `src_offset`.
     ///
     /// Writes postcard discriminant `0` for `Ok`, `1` for `Err`, then encodes
@@ -3089,7 +3214,7 @@ fn lower_encode_value(
 
     match shape.def {
         Def::Option(opt_def) => {
-            return lower_encode_option(opt_def, cal, program, block, src_offset);
+            return lower_encode_option(shape, opt_def, cal, program, block, src_offset);
         }
         Def::Array(arr_def) => {
             return lower_encode_array(arr_def, cal, program, block, src_offset);
@@ -3204,6 +3329,7 @@ fn lower_encode_slice(
 }
 
 fn lower_encode_option(
+    shape: &'static Shape,
     opt_def: facet_core::OptionDef,
     cal: Option<&CalibrationRegistry>,
     program: &mut EncodeProgram,
@@ -3212,15 +3338,32 @@ fn lower_encode_option(
 ) -> Result<(), EncodeLowerError> {
     let some_block = program.new_block();
 
-    program.emit(
-        block,
-        EncodeOp::EncodeOption {
-            src_offset,
-            some_block,
-            is_some_fn: opt_def.vtable.is_some,
-            get_value_fn: opt_def.vtable.get_value,
-        },
-    );
+    let fallback = match calibrate_option_layout(shape, opt_def) {
+        Some(layout) if !layout.tag_bytes.is_empty() => {
+            program.emit(
+                block,
+                EncodeOp::EncodeOptionCalibrated {
+                    src_offset,
+                    inner_offset: layout.inner_offset,
+                    some_block,
+                    tag_bytes: layout.tag_bytes,
+                },
+            );
+            false
+        }
+        _ => true,
+    };
+    if fallback {
+        program.emit(
+            block,
+            EncodeOp::EncodeOption {
+                src_offset,
+                some_block,
+                is_some_fn: opt_def.vtable.is_some,
+                get_value_fn: opt_def.vtable.get_value,
+            },
+        );
+    }
 
     // Lower the inner value encode into some_block (base = inner_ptr, offset = 0).
     lower_encode_value(opt_def.t, cal, program, some_block, 0)?;

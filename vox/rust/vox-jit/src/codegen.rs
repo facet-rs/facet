@@ -3132,6 +3132,19 @@ impl<'a, 'b> EncodeCtx_<'a, 'b> {
         self.store_buf_len(new_len);
     }
 
+    /// Append an integer of `ty` (1/2/4/8 bytes) to the encode buffer with a
+    /// single inline store — no libcall. The value is stored little-endian by
+    /// host convention; we only target LE platforms (x86_64 / aarch64).
+    fn call_push_int(&mut self, value: Value, ty: Type) {
+        let size = ty.bytes() as i64;
+        let size_val = self.b.ins().iconst(self.ptr_ty, size);
+        let (ptr, len) = self.reserve(size_val);
+        let addr = self.b.ins().iadd(ptr, len);
+        self.b.ins().store(MemFlags::trusted(), value, addr, 0);
+        let new_len = self.b.ins().iadd_imm(len, size);
+        self.store_buf_len(new_len);
+    }
+
     /// Emit a `libc.memcpy(dst, src, len)` call.
     fn emit_memcpy(&mut self, dst: Value, src: Value, len: Value) {
         let call_conv = self.b.func.signature.call_conv;
@@ -3154,13 +3167,114 @@ impl<'a, 'b> EncodeCtx_<'a, 'b> {
     }
 
     /// Append `len` bytes from `data` to the encode buffer. Grows inline on
-    /// shortfall; the payload copy uses `libc.memcpy`.
+    /// shortfall. For `len < 16` the copy is emitted as an inline overlapping
+    /// word-sized load/store ladder (saves the `libc.memcpy` call for the
+    /// abundance of short strings in typical RPC payloads); larger copies fall
+    /// through to the libcall.
     fn call_push_bytes(&mut self, data: Value, len: Value) {
         let (ptr, buf_len) = self.reserve(len);
         let dst = self.b.ins().iadd(ptr, buf_len);
-        self.emit_memcpy(dst, data, len);
+        self.emit_inline_copy(dst, data, len);
         let new_len = self.b.ins().iadd(buf_len, len);
         self.store_buf_len(new_len);
+    }
+
+    /// Copy `len` bytes from `src` to `dst`. Inlines an overlapping-word
+    /// ladder for `len` in `[1, 15]` and falls back to `libc.memcpy` for
+    /// `len >= 16`.
+    fn emit_inline_copy(&mut self, dst: Value, src: Value, len: Value) {
+        let done = self.fresh_block();
+        let big = self.fresh_block();
+        let small = self.fresh_block();
+        let try_8 = self.fresh_block();
+        let do_8 = self.fresh_block();
+        let try_4 = self.fresh_block();
+        let do_4 = self.fresh_block();
+        let try_2 = self.fresh_block();
+        let do_2 = self.fresh_block();
+        let do_1 = self.fresh_block();
+
+        // `len >= 16` → libcall path.
+        let is_big = self
+            .b
+            .ins()
+            .icmp_imm(IntCC::UnsignedGreaterThanOrEqual, len, 16);
+        self.b.ins().brif(is_big, big, &[], small, &[]);
+
+        self.b.switch_to_block(big);
+        self.b.seal_block(big);
+        self.emit_memcpy(dst, src, len);
+        self.b.ins().jump(done, &[]);
+
+        // Small path: peel the powers-of-two in decreasing order, each with an
+        // overlapping pair of loads/stores so we write exactly `len` bytes
+        // without overreading `src` or requiring an inner loop.
+        self.b.switch_to_block(small);
+        self.b.seal_block(small);
+        let ge_8 = self
+            .b
+            .ins()
+            .icmp_imm(IntCC::UnsignedGreaterThanOrEqual, len, 8);
+        self.b.ins().brif(ge_8, do_8, &[], try_8, &[]);
+
+        self.b.switch_to_block(do_8);
+        self.b.seal_block(do_8);
+        self.emit_overlap_copy(dst, src, len, types::I64, 8);
+        self.b.ins().jump(done, &[]);
+
+        self.b.switch_to_block(try_8);
+        self.b.seal_block(try_8);
+        let ge_4 = self
+            .b
+            .ins()
+            .icmp_imm(IntCC::UnsignedGreaterThanOrEqual, len, 4);
+        self.b.ins().brif(ge_4, do_4, &[], try_4, &[]);
+
+        self.b.switch_to_block(do_4);
+        self.b.seal_block(do_4);
+        self.emit_overlap_copy(dst, src, len, types::I32, 4);
+        self.b.ins().jump(done, &[]);
+
+        self.b.switch_to_block(try_4);
+        self.b.seal_block(try_4);
+        let ge_2 = self
+            .b
+            .ins()
+            .icmp_imm(IntCC::UnsignedGreaterThanOrEqual, len, 2);
+        self.b.ins().brif(ge_2, do_2, &[], try_2, &[]);
+
+        self.b.switch_to_block(do_2);
+        self.b.seal_block(do_2);
+        self.emit_overlap_copy(dst, src, len, types::I16, 2);
+        self.b.ins().jump(done, &[]);
+
+        self.b.switch_to_block(try_2);
+        self.b.seal_block(try_2);
+        let ge_1 = self.b.ins().icmp_imm(IntCC::Equal, len, 1);
+        self.b.ins().brif(ge_1, do_1, &[], done, &[]);
+
+        self.b.switch_to_block(do_1);
+        self.b.seal_block(do_1);
+        let byte = self.b.ins().load(types::I8, MemFlags::trusted(), src, 0);
+        self.b.ins().store(MemFlags::trusted(), byte, dst, 0);
+        self.b.ins().jump(done, &[]);
+
+        self.b.switch_to_block(done);
+        self.b.seal_block(done);
+    }
+
+    /// Emit two overlapping `width`-byte loads/stores: one at the head
+    /// (`src[0..width]`) and one at the tail (`src[len-width..len]`). Valid
+    /// iff `len >= width`; the two accesses cover the whole `len` range with
+    /// at most `width - 1` bytes of overlap.
+    fn emit_overlap_copy(&mut self, dst: Value, src: Value, len: Value, int_ty: Type, width: i64) {
+        let lo = self.b.ins().load(int_ty, MemFlags::trusted(), src, 0);
+        self.b.ins().store(MemFlags::trusted(), lo, dst, 0);
+        let tail_off = self.b.ins().iadd_imm(len, -width);
+        let src_tail = self.b.ins().iadd(src, tail_off);
+        let dst_tail = self.b.ins().iadd(dst, tail_off);
+        let hi = self.b.ins().load(int_ty, MemFlags::trusted(), src_tail, 0);
+        self.b.ins().store(MemFlags::trusted(), hi, dst_tail, 0);
     }
 
     /// Append a `u64` as a postcard varint to the encode buffer.
@@ -3442,6 +3556,23 @@ fn emit_encode_op(
             Ok(false)
         }
 
+        EncodeOp::EncodeOptionCalibrated {
+            src_offset,
+            inner_offset,
+            some_block,
+            tag_bytes,
+        } => {
+            emit_encode_option_calibrated(
+                ectx,
+                program,
+                *src_offset,
+                *inner_offset,
+                *some_block,
+                tag_bytes,
+            )?;
+            Ok(false)
+        }
+
         EncodeOp::EncodeResult {
             shape: _,
             src_offset,
@@ -3590,15 +3721,13 @@ fn emit_write_scalar(
         }
 
         WirePrimitive::F32 => {
-            // 4 bytes little-endian.
-            let len = ectx.b.ins().iconst(ectx.ptr_ty, 4);
-            ectx.call_push_bytes(addr, len);
+            let v = ectx.b.ins().load(types::I32, MemFlags::trusted(), addr, 0);
+            ectx.call_push_int(v, types::I32);
         }
 
         WirePrimitive::F64 => {
-            // 8 bytes little-endian.
-            let len = ectx.b.ins().iconst(ectx.ptr_ty, 8);
-            ectx.call_push_bytes(addr, len);
+            let v = ectx.b.ins().load(types::I64, MemFlags::trusted(), addr, 0);
+            ectx.call_push_int(v, types::I64);
         }
 
         WirePrimitive::String => {
@@ -3900,6 +4029,155 @@ fn emit_encode_option(
     let inner_ptr = ectx.b.inst_results(get_value_call)[0];
 
     // Inline the some_block_ir ops with src_ptr = inner_ptr
+    let saved_src = ectx.src_ptr;
+    ectx.src_ptr = inner_ptr;
+    ectx.inlined_blocks.insert(some_block_ir);
+    for op in &program.blocks[some_block_ir].ops {
+        match op {
+            EncodeOp::Return => break,
+            _ => {
+                let term = emit_encode_op(ectx, program, op)?;
+                if term {
+                    break;
+                }
+            }
+        }
+    }
+    ectx.src_ptr = saved_src;
+    ectx.b.ins().jump(after_block, &[]);
+
+    ectx.b.switch_to_block(after_block);
+    ectx.b.seal_block(after_block);
+
+    Ok(())
+}
+
+/// Calibrated variant of `emit_encode_option` — no vtable indirect calls.
+///
+/// Inlines the is-some check as:
+///   `acc = 0; for (off, none_val) in tag_bytes: acc |= (*(u8*)opt_ptr+off) ^ none_val;`
+///   `is_some = (acc != 0)`
+/// then uses the known `inner_offset` instead of calling `get_value_fn`.
+///
+/// Contiguous runs of tag bytes are coalesced into larger (up to 8-byte) loads
+/// so we avoid one load/XOR per byte for niched pointer-sized Options.
+fn emit_encode_option_calibrated(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    program: &EncodeProgram,
+    src_offset: usize,
+    inner_offset: usize,
+    some_block_ir: usize,
+    tag_bytes: &[(usize, u8)],
+) -> Result<(), CodegenError> {
+    if tag_bytes.is_empty() {
+        return Err(CodegenError::UnsupportedOp(
+            "EncodeOptionCalibrated with empty tag_bytes".into(),
+        ));
+    }
+
+    let opt_ptr = ectx.src_at(src_offset);
+
+    // Group tag bytes into contiguous runs so we can load 8/4/2/1 bytes at a
+    // time. `tag_bytes` is sorted by offset (lowering produces it in order).
+    let mut runs: Vec<Vec<(usize, u8)>> = Vec::new();
+    for &(off, val) in tag_bytes {
+        match runs.last_mut() {
+            Some(run) if run.last().unwrap().0 + 1 == off => run.push((off, val)),
+            _ => runs.push(vec![(off, val)]),
+        }
+    }
+
+    let mut accumulator: Option<Value> = None;
+
+    for run in &runs {
+        let mut pos = 0;
+        while pos < run.len() {
+            let remaining = run.len() - pos;
+            let chunk = if remaining >= 8 {
+                8
+            } else if remaining >= 4 {
+                4
+            } else if remaining >= 2 {
+                2
+            } else {
+                1
+            };
+            let base_off = run[pos].0;
+            let addr = if base_off == 0 {
+                opt_ptr
+            } else {
+                ectx.b.ins().iadd_imm(opt_ptr, base_off as i64)
+            };
+            let (ty, none_word) = match chunk {
+                8 => {
+                    let mut bytes = [0u8; 8];
+                    for (i, entry) in run[pos..pos + 8].iter().enumerate() {
+                        bytes[i] = entry.1;
+                    }
+                    (types::I64, u64::from_le_bytes(bytes) as i64)
+                }
+                4 => {
+                    let mut bytes = [0u8; 4];
+                    for (i, entry) in run[pos..pos + 4].iter().enumerate() {
+                        bytes[i] = entry.1;
+                    }
+                    (types::I32, u32::from_le_bytes(bytes) as i64)
+                }
+                2 => {
+                    let mut bytes = [0u8; 2];
+                    for (i, entry) in run[pos..pos + 2].iter().enumerate() {
+                        bytes[i] = entry.1;
+                    }
+                    (types::I16, u16::from_le_bytes(bytes) as i64)
+                }
+                1 => (types::I8, run[pos].1 as i64),
+                _ => unreachable!(),
+            };
+            let loaded = ectx.b.ins().load(ty, MemFlags::trusted(), addr, 0);
+            let none_const = ectx.b.ins().iconst(ty, none_word);
+            let xored = ectx.b.ins().bxor(loaded, none_const);
+            let xored_64 = if ty == types::I64 {
+                xored
+            } else {
+                ectx.b.ins().uextend(types::I64, xored)
+            };
+            accumulator = Some(match accumulator {
+                None => xored_64,
+                Some(prev) => ectx.b.ins().bor(prev, xored_64),
+            });
+            pos += chunk;
+        }
+    }
+
+    let acc = accumulator.unwrap();
+    let zero = ectx.b.ins().iconst(types::I64, 0);
+    let is_some = ectx.b.ins().icmp(IntCC::NotEqual, acc, zero);
+
+    let some_block = ectx.fresh_block();
+    let none_block = ectx.fresh_block();
+    let after_block = ectx.fresh_block();
+
+    ectx.b.ins().brif(is_some, some_block, &[], none_block, &[]);
+
+    // None path: write 0x00.
+    ectx.b.switch_to_block(none_block);
+    ectx.b.seal_block(none_block);
+    let zero_byte = ectx.b.ins().iconst(types::I8, 0);
+    ectx.call_push_byte(zero_byte);
+    ectx.b.ins().jump(after_block, &[]);
+
+    // Some path: write 0x01, inline inner encode with src_ptr = opt_ptr + inner_offset.
+    ectx.b.switch_to_block(some_block);
+    ectx.b.seal_block(some_block);
+    let one_byte = ectx.b.ins().iconst(types::I8, 1);
+    ectx.call_push_byte(one_byte);
+
+    let inner_ptr = if inner_offset == 0 {
+        opt_ptr
+    } else {
+        ectx.b.ins().iadd_imm(opt_ptr, inner_offset as i64)
+    };
+
     let saved_src = ectx.src_ptr;
     ectx.src_ptr = inner_ptr;
     ectx.inlined_blocks.insert(some_block_ir);
