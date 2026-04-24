@@ -463,7 +463,7 @@ fn runtime_encode_hook(
     ptr: facet::PtrConst,
     shape: &'static Shape,
 ) -> Result<Option<Vec<u8>>, SerializeError> {
-    Ok(global_runtime().try_encode_ptr(ptr, shape).transpose()?)
+    global_runtime().try_encode_ptr(ptr, shape).transpose()
 }
 
 fn calibration_token(cal: &CalibrationRegistry) -> Option<DescriptorHandle> {

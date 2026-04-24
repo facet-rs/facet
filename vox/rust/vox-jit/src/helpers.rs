@@ -83,6 +83,33 @@ pub unsafe extern "C" fn vox_jit_slow_path(
     }
 }
 
+/// Default-fill helper: invoke a shape's `call_default_in_place` vtable on
+/// `dst_base.add(dst_offset)`. Used for local struct fields that have no
+/// corresponding remote field on the wire (schema evolution: fill-defaults).
+///
+/// # Safety
+/// - `shape` must be a valid `&'static Shape`.
+/// - `dst_base.add(dst_offset)` must point to writable, properly-aligned,
+///   uninitialized memory of at least `shape.layout.size()` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_jit_write_default(
+    shape: &'static facet_core::Shape,
+    dst_base: *mut u8,
+    dst_offset: usize,
+) -> DecodeStatus {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        shape.call_default_in_place(PtrUninit::new(dst_base.add(dst_offset)))
+    }));
+    match result {
+        Ok(Some(())) => DecodeStatus::Ok,
+        // No default available — this field should have been marked required
+        // during plan-build, so reaching this branch means the plan was built
+        // incorrectly. Surface as a generic failure.
+        Ok(None) => DecodeStatus::AllocFailed,
+        Err(_) => DecodeStatus::AllocFailed,
+    }
+}
+
 /// Opaque decode helper: read a u32le-length-prefixed byte payload and
 /// initialize the destination via the shape's opaque adapter.
 #[unsafe(no_mangle)]

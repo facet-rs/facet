@@ -951,13 +951,17 @@ fn emit_op(
         }
 
         DecodeOp::ReadOpaque { shape, dst_offset } => {
-            emit_decode_opaque(ctx, *shape, *dst_offset)?;
+            emit_decode_opaque(ctx, shape, *dst_offset)?;
         }
 
         DecodeOp::SkipValue { .. } => {
             return Err(CodegenError::UnsupportedOp(
                 "SkipValue — fall back to IR interpreter for skip ops".into(),
             ));
+        }
+
+        DecodeOp::WriteDefault { shape, dst_offset } => {
+            emit_write_default(ctx, shape, *dst_offset)?;
         }
 
         DecodeOp::DecodeOption {
@@ -1122,7 +1126,7 @@ fn emit_op(
             plan,
             dst_offset,
         } => {
-            emit_slow_path(ctx, *shape, plan, *dst_offset)?;
+            emit_slow_path(ctx, shape, plan, *dst_offset)?;
         }
 
         DecodeOp::Jump { block_id } => {
@@ -2759,6 +2763,55 @@ fn emit_decode_opaque(
     Ok(())
 }
 
+fn emit_write_default(
+    ctx: &mut EmitCtx<'_, '_>,
+    shape: &'static facet_core::Shape,
+    dst_offset: usize,
+) -> Result<(), CodegenError> {
+    let shape_ptr = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, shape as *const facet_core::Shape as i64);
+    let dst_offset_val = ctx.b.ins().iconst(ctx.ptr_ty, dst_offset as i64);
+
+    let call_conv = ctx.b.func.signature.call_conv;
+    let sig = ctx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ctx.ptr_ty),
+            AbiParam::new(ctx.ptr_ty),
+            AbiParam::new(ctx.ptr_ty),
+        ],
+        returns: vec![AbiParam::new(types::I32)],
+        call_conv,
+    });
+    let fn_ptr = ctx.b.ins().iconst(
+        ctx.ptr_ty,
+        crate::helpers::vox_jit_write_default as *const () as i64,
+    );
+    let call = ctx
+        .b
+        .ins()
+        .call_indirect(sig, fn_ptr, &[shape_ptr, ctx.out_ptr, dst_offset_val]);
+    let status = ctx.b.inst_results(call)[0];
+
+    let ok_val = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
+    let is_ok = ctx.b.ins().icmp(IntCC::Equal, status, ok_val);
+
+    let ok_block = ctx.fresh_block();
+    let err_block = ctx.fresh_block();
+    ctx.b.ins().brif(is_ok, ok_block, &[], err_block, &[]);
+
+    ctx.b.switch_to_block(err_block);
+    ctx.b.seal_block(err_block);
+    ctx.flush_ctx();
+    ctx.b.ins().return_(&[status]);
+
+    ctx.b.switch_to_block(ok_block);
+    ctx.b.seal_block(ok_block);
+
+    Ok(())
+}
+
 fn make_alloc_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
     let call_conv = ctx.b.func.signature.call_conv;
     ctx.b.func.import_signature(Signature {
@@ -3263,7 +3316,7 @@ fn emit_encode_op(
         EncodeOp::WriteStringLike { shape, src_offset } => {
             emit_encode_helper_shape_op(
                 ectx,
-                *shape,
+                shape,
                 *src_offset,
                 crate::helpers::vox_jit_encode_string_like as *const (),
             );
@@ -3276,7 +3329,7 @@ fn emit_encode_op(
             } else {
                 emit_encode_helper_shape_op(
                     ectx,
-                    *shape,
+                    shape,
                     *src_offset,
                     crate::helpers::vox_jit_encode_shape as *const (),
                 );
@@ -3287,7 +3340,7 @@ fn emit_encode_op(
         EncodeOp::WriteOpaque { shape, src_offset } => {
             emit_encode_helper_shape_op(
                 ectx,
-                *shape,
+                shape,
                 *src_offset,
                 crate::helpers::vox_jit_encode_opaque as *const (),
             );
@@ -3297,7 +3350,7 @@ fn emit_encode_op(
         EncodeOp::WriteProxy { shape, src_offset } => {
             emit_encode_helper_shape_op(
                 ectx,
-                *shape,
+                shape,
                 *src_offset,
                 crate::helpers::vox_jit_encode_proxy as *const (),
             );
@@ -3307,7 +3360,7 @@ fn emit_encode_op(
         EncodeOp::WriteBytesLike { shape, src_offset } => {
             emit_encode_helper_shape_op(
                 ectx,
-                *shape,
+                shape,
                 *src_offset,
                 crate::helpers::vox_jit_encode_bytes_like as *const (),
             );
@@ -3315,7 +3368,7 @@ fn emit_encode_op(
         }
 
         EncodeOp::SlowPath { shape, src_offset } => {
-            emit_encode_slow_path(ectx, *shape, *src_offset);
+            emit_encode_slow_path(ectx, shape, *src_offset);
             Ok(false)
         }
 
@@ -3418,8 +3471,8 @@ fn emit_encode_op(
                 *src_offset,
                 *ok_block,
                 *err_block,
-                *ok_shape,
-                *err_shape,
+                ok_shape,
+                err_shape,
                 *is_ok_fn,
                 *get_ok_fn,
                 *get_err_fn,

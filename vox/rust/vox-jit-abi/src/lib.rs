@@ -479,10 +479,8 @@ pub unsafe extern "C" fn vox_jit_buf_grow(ctx: *mut EncodeCtx, needed: usize) ->
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_buf_push_byte(ctx: *mut EncodeCtx, byte: u8) -> bool {
     let ctx_ref = unsafe { &mut *ctx };
-    if ctx_ref.buf_len >= ctx_ref.buf_cap {
-        if !unsafe { vox_jit_buf_grow(ctx, 1) } {
-            return false;
-        }
+    if ctx_ref.buf_len >= ctx_ref.buf_cap && !unsafe { vox_jit_buf_grow(ctx, 1) } {
+        return false;
     }
     let ctx_ref = unsafe { &mut *ctx };
     unsafe { ctx_ref.buf_ptr.add(ctx_ref.buf_len).write(byte) };

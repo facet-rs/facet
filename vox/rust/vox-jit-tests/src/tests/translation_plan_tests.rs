@@ -250,6 +250,124 @@ fn translation_nested_vec_string() {
 }
 
 // ---------------------------------------------------------------------------
+// Fill defaults: local has extra field with #[facet(default)] that remote
+// didn't send. Decode must zero/default-initialize that field rather than
+// leaving uninitialized memory.
+// ---------------------------------------------------------------------------
+
+mod fill_default_types {
+    pub mod remote {
+        #[derive(facet::Facet, Debug, PartialEq, Clone)]
+        pub struct Point {
+            pub x: f64,
+            pub y: f64,
+        }
+    }
+    pub mod local {
+        #[derive(facet::Facet, Debug, PartialEq, Clone)]
+        pub struct Point {
+            pub x: f64,
+            pub y: f64,
+            #[facet(default)]
+            pub z: f64,
+        }
+    }
+}
+
+#[test]
+fn translation_fill_default_missing_field() {
+    use fill_default_types::{local, remote};
+
+    let remote_set = schema_set_for::<remote::Point>();
+    let local_set = schema_set_for::<local::Point>();
+
+    let plan = build_plan(&PlanInput {
+        remote: &remote_set,
+        local: &local_set,
+    })
+    .expect("build_plan: missing field has default, must accept");
+
+    let remote_val = remote::Point { x: 6.0, y: 8.0 };
+    let bytes = to_vec(&remote_val).expect("encode");
+
+    // Oracle path (reflective Partial::build) — must fill z=0.0.
+    let result: local::Point =
+        from_slice_with_plan(&bytes, &plan, &remote_set.registry).expect("decode");
+    assert_eq!(result.x, 6.0);
+    assert_eq!(result.y, 8.0);
+    assert_eq!(result.z, 0.0, "oracle: missing field must fill default");
+}
+
+/// Same scenario, exercised through the JIT compile path + IR interpreter.
+/// This is the code path the RPC dispatch uses and where the fill-defaults
+/// bug originally surfaced: JIT/IR never emits an op for unmatched local
+/// fields, so whatever happened to be at that memory location leaks through.
+#[test]
+fn translation_fill_default_missing_field_jit() {
+    use std::mem::MaybeUninit;
+
+    use fill_default_types::{local, remote};
+    use vox_jit::{
+        CraneliftBackend,
+        abi::{DecodeCtx, DecodeStatus},
+    };
+    use vox_jit_cal::{BorrowMode, CalibrationRegistry};
+    use vox_postcard::ir::{from_slice_ir, lower_with_cal};
+
+    let remote_set = schema_set_for::<remote::Point>();
+    let local_set = schema_set_for::<local::Point>();
+
+    let plan = build_plan(&PlanInput {
+        remote: &remote_set,
+        local: &local_set,
+    })
+    .expect("build_plan");
+
+    let remote_val = remote::Point { x: 6.0, y: 8.0 };
+    let bytes = to_vec(&remote_val).expect("encode");
+
+    // IR interpreter — goes through the same `lower_struct` path the JIT uses.
+    let cal = CalibrationRegistry::default();
+    let ir_result: local::Point =
+        from_slice_ir(&bytes, &plan, &remote_set.registry, Some(&cal)).expect("IR decode");
+    assert_eq!(ir_result.x, 6.0);
+    assert_eq!(ir_result.y, 8.0);
+    assert_eq!(ir_result.z, 0.0, "IR: missing field must fill default");
+
+    // JIT stub — out buffer is pre-poisoned with nonzero bytes so that a
+    // decoder which leaves z untouched is caught even if the result happens
+    // to be 0.0 on some allocators.
+    let program = lower_with_cal(
+        &plan,
+        <local::Point as facet::Facet>::SHAPE,
+        &remote_set.registry,
+        Some(&cal),
+        BorrowMode::Owned,
+    )
+    .expect("lower");
+    let mut backend = CraneliftBackend::new().expect("backend");
+    let owned_fn = backend
+        .compile_decode_owned(<local::Point as facet::Facet>::SHAPE, &program, &cal)
+        .expect("compile");
+
+    let mut out = MaybeUninit::<local::Point>::uninit();
+    unsafe {
+        std::ptr::write_bytes(
+            out.as_mut_ptr() as *mut u8,
+            0xAA,
+            std::mem::size_of::<local::Point>(),
+        );
+    }
+    let mut ctx = DecodeCtx::new(&bytes);
+    let status = unsafe { owned_fn(&mut ctx, out.as_mut_ptr() as *mut u8) };
+    assert_eq!(status, DecodeStatus::Ok, "JIT decode status");
+    let jit_result = unsafe { out.assume_init() };
+    assert_eq!(jit_result.x, 6.0);
+    assert_eq!(jit_result.y, 8.0);
+    assert_eq!(jit_result.z, 0.0, "JIT: missing field must fill default");
+}
+
+// ---------------------------------------------------------------------------
 // Type mismatch: build_plan must reject structurally incompatible schemas
 // at plan-build time (not decode time).
 // ---------------------------------------------------------------------------

@@ -1208,7 +1208,7 @@ fn probe_list_by_vtable(
     let elem_align = elem_layout.align();
 
     // Scratch buffer: u64-aligned, large enough for 3 pointer-width words.
-    let mut scratch: Vec<u64> = vec![0u64; (container_size + 7) / 8];
+    let mut scratch: Vec<u64> = vec![0u64; container_size.div_ceil(8)];
 
     // Capture empty bytes (capacity=0 init).
     let empty_bytes: Vec<u8> = {
@@ -1318,7 +1318,7 @@ fn probe_list_zst_by_vtable(
     elem_align: usize,
 ) -> CalibrationResult {
     let ptr_width = std::mem::size_of::<usize>();
-    let mut scratch: Vec<u64> = vec![0u64; (container_size + 7) / 8];
+    let mut scratch: Vec<u64> = vec![0u64; container_size.div_ceil(8)];
 
     let words: [usize; 3] = {
         let scratch_ptr = scratch.as_mut_ptr() as *mut ();

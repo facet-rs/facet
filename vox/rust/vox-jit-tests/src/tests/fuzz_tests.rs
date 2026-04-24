@@ -232,7 +232,7 @@ fn fuzz_enum_unit() {
     let registry = SchemaRegistry::new();
 
     // Only generate valid discriminants 0, 1, 2 (Red, Green, Blue).
-    let payload = |rng: &mut Rng| -> Vec<u8> { encode_varint((rng.next_u64() % 3) as u64) };
+    let payload = |rng: &mut Rng| -> Vec<u8> { encode_varint((rng.next_u64() % 3)) };
 
     fuzz_oracle::<Color>(&plan, &registry, payload, SEEDS, ITERS);
 }
@@ -288,7 +288,7 @@ fn three_way_fuzz_u32() {
         SEEDS,
         ITERS,
         "jit-fallback",
-        |b, p, r| jit_fallback_engine::<u32>(b, p, r),
+        jit_fallback_engine::<u32>,
     );
 }
 
@@ -303,7 +303,7 @@ fn three_way_fuzz_string() {
         SEEDS,
         ITERS,
         "jit-fallback",
-        |b, p, r| jit_fallback_engine::<String>(b, p, r),
+        jit_fallback_engine::<String>,
     );
 }
 
@@ -318,7 +318,7 @@ fn three_way_fuzz_vec_u32() {
         SEEDS,
         ITERS,
         "jit-fallback",
-        |b, p, r| jit_fallback_engine::<Vec<u32>>(b, p, r),
+        jit_fallback_engine::<Vec<u32>>,
     );
 }
 
@@ -333,7 +333,7 @@ fn three_way_fuzz_vec_string() {
         SEEDS,
         ITERS,
         "jit-fallback",
-        |b, p, r| jit_fallback_engine::<Vec<String>>(b, p, r),
+        jit_fallback_engine::<Vec<String>>,
     );
 }
 
@@ -374,7 +374,7 @@ fn three_way_fuzz_struct_scalars() {
         SEEDS,
         ITERS,
         "jit-fallback",
-        |b, p, r| jit_fallback_engine::<Scalars>(b, p, r),
+        jit_fallback_engine::<Scalars>,
     );
 }
 
@@ -386,7 +386,7 @@ fn three_way_fuzz_enum_unit() {
     let plan = build_identity_plan(Color::SHAPE);
     let registry = SchemaRegistry::new();
 
-    let payload = |rng: &mut Rng| -> Vec<u8> { encode_varint((rng.next_u64() % 3) as u64) };
+    let payload = |rng: &mut Rng| -> Vec<u8> { encode_varint((rng.next_u64() % 3)) };
 
     fuzz_oracle_three_way::<Color>(
         &plan,
@@ -395,6 +395,6 @@ fn three_way_fuzz_enum_unit() {
         SEEDS,
         ITERS,
         "jit-fallback",
-        |b, p, r| jit_fallback_engine::<Color>(b, p, r),
+        jit_fallback_engine::<Color>,
     );
 }

@@ -53,7 +53,7 @@ impl CalibrationSelfCheck for VecSelfCheck {
 
         // All offsets must be word-aligned and within `size`.
         for &off in &[desc.ptr_offset, desc.len_offset, desc.cap_offset] {
-            if off as usize % pw != 0 {
+            if !(off as usize).is_multiple_of(pw) {
                 return Err(SelfCheckFailure {
                     check: "vec.offsets.aligned",
                     reason: format!("offset {off} is not word-aligned (pw={pw})"),
@@ -333,7 +333,7 @@ impl CalibrationSelfCheck for BoxSliceSelfCheck {
 
         // Both ptr_offset and len_offset must be word-aligned and within size.
         for &off in &[desc.ptr_offset, desc.len_offset] {
-            if off as usize % pw != 0 {
+            if !(off as usize).is_multiple_of(pw) {
                 return Err(SelfCheckFailure {
                     check: "box_slice.offsets.aligned",
                     reason: format!("offset {off} is not word-aligned (pw={pw})"),

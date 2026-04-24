@@ -214,6 +214,16 @@ pub enum DecodeOp {
     /// The kind is stored inline so the interpreter does not need a registry.
     SkipValue { kind: SchemaKind },
 
+    // r[impl schema.translation.fill-defaults]
+    /// Initialize a local field via its `Default` implementation. Emitted for
+    /// every local struct field that has no corresponding remote field on the
+    /// wire (schema evolution: remote dropped a field that has a default on
+    /// the local side).
+    WriteDefault {
+        shape: &'static Shape,
+        dst_offset: usize,
+    },
+
     // -----------------------------------------------------------------------
     // Option handling
     // -----------------------------------------------------------------------
@@ -598,19 +608,18 @@ fn lower_value(
     if let Some(scalar) = shape.scalar_type() {
         match scalar {
             facet_core::ScalarType::String => {
-                if shape.is_type::<String>() {
-                    if let Some(cal) = cal
-                        && let Some(handle) = cal.string_descriptor_handle()
-                    {
-                        program.emit(
-                            block,
-                            DecodeOp::ReadString {
-                                dst_offset,
-                                descriptor: OpaqueDescriptorId(handle.0),
-                            },
-                        );
-                        return Ok(());
-                    }
+                if shape.is_type::<String>()
+                    && let Some(cal) = cal
+                    && let Some(handle) = cal.string_descriptor_handle()
+                {
+                    program.emit(
+                        block,
+                        DecodeOp::ReadString {
+                            dst_offset,
+                            descriptor: OpaqueDescriptorId(handle.0),
+                        },
+                    );
+                    return Ok(());
                 }
             }
             facet_core::ScalarType::CowStr => {
@@ -633,19 +642,18 @@ fn lower_value(
         if let Some(prim) = WirePrimitive::from_scalar(scalar) {
             // String scalars: use ReadString (calibrated) when possible so the
             // JIT can emit the fast allocation path instead of calling SlowPath.
-            if matches!(prim, WirePrimitive::String) {
-                if let Some(cal) = cal
-                    && let Some(handle) = cal.string_descriptor_handle()
-                {
-                    program.emit(
-                        block,
-                        DecodeOp::ReadString {
-                            dst_offset,
-                            descriptor: OpaqueDescriptorId(handle.0),
-                        },
-                    );
-                    return Ok(());
-                }
+            if matches!(prim, WirePrimitive::String)
+                && let Some(cal) = cal
+                && let Some(handle) = cal.string_descriptor_handle()
+            {
+                program.emit(
+                    block,
+                    DecodeOp::ReadString {
+                        dst_offset,
+                        descriptor: OpaqueDescriptorId(handle.0),
+                    },
+                );
+                return Ok(());
             }
             program.emit(block, DecodeOp::ReadScalar { prim, dst_offset });
             return Ok(());
@@ -960,9 +968,11 @@ fn lower_struct(
         }
     };
 
+    let mut matched = vec![false; st.fields.len()];
     for op in field_ops {
         match op {
             FieldOp::Read { local_index } => {
+                matched[*local_index] = true;
                 let field = &st.fields[*local_index];
                 let field_shape = field.shape();
                 let field_offset = dst_offset + field.offset;
@@ -986,6 +996,22 @@ fn lower_struct(
                     .ok_or(LowerError::SchemaMissing)?;
                 program.emit(block, DecodeOp::SkipValue { kind });
             }
+        }
+    }
+
+    // r[impl schema.translation.fill-defaults]
+    // Local fields with no corresponding remote field need a Default-fill:
+    // plan-build has already verified they're not required (i.e. have a
+    // `#[facet(default)]` attribute), so `call_default_in_place` will succeed.
+    for (i, field) in st.fields.iter().enumerate() {
+        if !matched[i] {
+            program.emit(
+                block,
+                DecodeOp::WriteDefault {
+                    shape: field.shape(),
+                    dst_offset: dst_offset + field.offset,
+                },
+            );
         }
     }
 
@@ -2057,6 +2083,19 @@ fn run_block(
                 skip_in_state(state, kind, registry)?;
             }
 
+            DecodeOp::WriteDefault { shape, dst_offset } => {
+                let dst = unsafe { base.add(*dst_offset) };
+                unsafe {
+                    shape
+                        .call_default_in_place(facet_core::PtrUninit::new(dst as *mut ()))
+                        .ok_or_else(|| {
+                            DeserializeError::ReflectError(format!(
+                                "no Default available for fill-defaults field {shape}"
+                            ))
+                        })?;
+                }
+            }
+
             DecodeOp::DecodeOption {
                 dst_offset,
                 inner_offset,
@@ -2372,7 +2411,7 @@ fn run_block(
                 plan,
                 dst_offset,
             } => {
-                exec_slow_path(state, *shape, plan, *dst_offset, base, registry)?;
+                exec_slow_path(state, shape, plan, *dst_offset, base, registry)?;
             }
 
             DecodeOp::Jump { block_id } => {
