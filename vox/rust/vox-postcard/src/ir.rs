@@ -2915,6 +2915,15 @@ pub enum EncodeOp {
         elem_size: usize,
     },
 
+    /// Fast path for `Vec<u8>` / `String` (any calibrated container whose
+    /// element size is 1): write the varint length then a single memcpy of the
+    /// raw bytes into the output buffer. No per-element loop, no scalar
+    /// dispatch.
+    WriteByteList {
+        src_offset: usize,
+        descriptor: OpaqueDescriptorId,
+    },
+
     /// Encode a fixed-size array at `src_offset`.
     ///
     /// Calls `body_block` exactly `count` times, advancing by `elem_size`.
@@ -3046,9 +3055,23 @@ fn lower_encode_value(
     // Scalars
     if let Some(scalar) = shape.scalar_type() {
         match scalar {
-            facet_core::ScalarType::String
-            | facet_core::ScalarType::Str
-            | facet_core::ScalarType::CowStr => {
+            facet_core::ScalarType::String => {
+                if let Some(cal) = cal
+                    && let Some(h) = cal.lookup_by_shape(shape)
+                {
+                    program.emit(
+                        block,
+                        EncodeOp::WriteByteList {
+                            src_offset,
+                            descriptor: OpaqueDescriptorId(h.0),
+                        },
+                    );
+                    return Ok(());
+                }
+                program.emit(block, EncodeOp::WriteStringLike { shape, src_offset });
+                return Ok(());
+            }
+            facet_core::ScalarType::Str | facet_core::ScalarType::CowStr => {
                 program.emit(block, EncodeOp::WriteStringLike { shape, src_offset });
                 return Ok(());
             }
@@ -3307,6 +3330,18 @@ fn lower_encode_list(
             "Vec<T> without calibration: {shape}"
         )));
     };
+
+    // Vec<u8>: skip the per-element loop; write varint(len) + a single memcpy.
+    if elem_shape.is_type::<u8>() {
+        program.emit(
+            block,
+            EncodeOp::WriteByteList {
+                src_offset,
+                descriptor,
+            },
+        );
+        return Ok(());
+    }
 
     let body_block = program.new_block();
 

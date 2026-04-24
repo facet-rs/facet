@@ -332,6 +332,7 @@ impl JitRuntime {
             cache::CompiledEncodeStub {
                 key: key.clone(),
                 encode_fn,
+                size_hint: std::sync::atomic::AtomicUsize::new(0),
             },
         );
         self.cache.insert_encode_fast(shape, stub.clone());
@@ -431,11 +432,18 @@ impl JitRuntime {
         ptr: facet::PtrConst,
         shape: &'static Shape,
     ) -> Option<Result<Vec<u8>, SerializeError>> {
+        use std::sync::atomic::Ordering;
+
         let stub = self.prepare_encode_stub(shape)?;
-        let mut ctx = vox_jit_abi::EncodeCtx::with_capacity(64);
+        let hint = stub.size_hint.load(Ordering::Relaxed);
+        let mut ctx = vox_jit_abi::EncodeCtx::with_capacity(hint);
         let ok = unsafe { (stub.encode_fn)(&mut ctx as *mut _, ptr.as_ptr()) };
         if ok {
-            Some(Ok(ctx.into_vec()))
+            let bytes = ctx.into_vec();
+            if bytes.len() > hint {
+                stub.size_hint.store(bytes.len(), Ordering::Relaxed);
+            }
+            Some(Ok(bytes))
         } else {
             Some(Err(SerializeError::ReflectError(
                 "JIT encode returned false (OOM)".into(),
@@ -483,6 +491,14 @@ pub(crate) fn require_pure_jit() -> bool {
 pub(crate) fn abort_on_slow_path() -> bool {
     static CACHED: OnceLock<bool> = OnceLock::new();
     *CACHED.get_or_init(|| std::env::var_os("VOX_JIT_ABORT_ON_SLOW_PATH").is_some_and(|v| v == "1"))
+}
+
+/// When set, the Cranelift backend prints each compiled function's CLIF IR
+/// and machine-code disassembly to stderr. Useful when reasoning about why
+/// the JIT is (or isn't) as fast as expected.
+pub fn dump_compiled() -> bool {
+    static CACHED: OnceLock<bool> = OnceLock::new();
+    *CACHED.get_or_init(|| std::env::var_os("VOX_JIT_DUMP").is_some_and(|v| v == "1"))
 }
 
 fn decode_program_has_slow_path(program: &DecodeProgram) -> bool {

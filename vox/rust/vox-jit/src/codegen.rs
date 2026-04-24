@@ -376,6 +376,10 @@ impl CraneliftBackend {
 
         let mut ctx = self.module.make_context();
         ctx.func.signature = sig;
+        let dump = crate::dump_compiled();
+        if dump {
+            ctx.set_disasm(true);
+        }
 
         let mut func_ctx = FunctionBuilderContext::new();
         {
@@ -390,7 +394,17 @@ impl CraneliftBackend {
             builder.finalize();
         }
 
+        if dump {
+            eprintln!("=== CLIF encode {func_name} ===\n{}", ctx.func);
+        }
         self.module.define_function(func_id, &mut ctx)?;
+        if dump {
+            if let Some(cc) = ctx.compiled_code()
+                && let Some(d) = cc.vcode.as_deref()
+            {
+                eprintln!("=== asm encode {func_name} ===\n{d}");
+            }
+        }
         self.module.clear_context(&mut ctx);
         self.module
             .finalize_definitions()
@@ -3481,6 +3495,14 @@ fn emit_encode_op(
             Ok(false)
         }
 
+        EncodeOp::WriteByteList {
+            src_offset,
+            descriptor,
+        } => {
+            emit_encode_byte_list(ectx, *src_offset, descriptor)?;
+            Ok(false)
+        }
+
         EncodeOp::Jump { block_id } => {
             let target = ectx.block_map[*block_id].unwrap();
             ectx.b.ins().jump(target, &[]);
@@ -4138,6 +4160,43 @@ fn emit_encode_array(
 ///
 /// Reads ptr and len from the calibrated descriptor offsets, writes varint len,
 /// then loops over elements calling the body block.
+/// Fast-path encode for `Vec<u8>` / `String`: read `ptr` + `len` from the
+/// calibrated container offsets, write the varint length, then a single
+/// memcpy of the backing bytes into the output buffer.
+fn emit_encode_byte_list(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    src_offset: usize,
+    descriptor: &OpaqueDescriptorId,
+) -> Result<(), CodegenError> {
+    let desc = ectx.descriptors.get((*descriptor).into()).ok_or_else(|| {
+        CodegenError::UnsupportedOp(format!("opaque descriptor {:?} not found", descriptor))
+    })?;
+
+    let container_addr = ectx.src_at(src_offset);
+
+    let data_ptr = ectx.b.ins().load(
+        ectx.ptr_ty,
+        MemFlags::trusted(),
+        container_addr,
+        desc.ptr_offset as i32,
+    );
+    let len = ectx.b.ins().load(
+        ectx.ptr_ty,
+        MemFlags::trusted(),
+        container_addr,
+        desc.len_offset as i32,
+    );
+
+    let len64 = if ectx.ptr_ty == types::I64 {
+        len
+    } else {
+        ectx.b.ins().uextend(types::I64, len)
+    };
+    ectx.call_write_varint(len64);
+    ectx.call_push_bytes(data_ptr, len);
+    Ok(())
+}
+
 fn emit_encode_list(
     ectx: &mut EncodeCtx_<'_, '_>,
     program: &EncodeProgram,

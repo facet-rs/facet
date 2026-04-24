@@ -8,6 +8,7 @@
 //! from the module.
 
 use std::collections::HashMap;
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 
 use facet_core::Shape;
@@ -68,6 +69,10 @@ pub struct CompiledDecodeStub {
 pub struct CompiledEncodeStub {
     pub key: EncodeCacheKey,
     pub encode_fn: EncodeFn,
+    /// Largest encoded output observed for this shape. Used to seed the
+    /// initial `EncodeCtx` capacity so the hot path avoids `realloc`
+    /// churn after the first encode of a given shape.
+    pub size_hint: AtomicUsize,
 }
 
 // ---------------------------------------------------------------------------
