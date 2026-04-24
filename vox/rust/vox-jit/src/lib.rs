@@ -75,7 +75,8 @@ impl JitRuntime {
     /// useful for differential testing (run the same input through both paths) and for
     /// production bisection without recompilation.
     pub fn force_fallback() -> bool {
-        std::env::var_os("VOX_JIT_DISABLE").map_or(false, |v| v == "1")
+        static CACHED: OnceLock<bool> = OnceLock::new();
+        *CACHED.get_or_init(|| std::env::var_os("VOX_JIT_DISABLE").is_some_and(|v| v == "1"))
     }
 
     /// Build a `DecodeCacheKey` for the given parameters.
@@ -112,6 +113,13 @@ impl JitRuntime {
         registry: &SchemaRegistry,
         borrow_mode: BorrowMode,
     ) -> Option<Arc<cache::CompiledDecodeStub>> {
+        if let Some(stub) = self
+            .cache
+            .get_decode_fast(local_shape, borrow_mode, remote_schema_id)
+        {
+            return Some(stub);
+        }
+
         if Self::force_fallback() {
             return None;
         }
@@ -127,6 +135,8 @@ impl JitRuntime {
         );
 
         if let Some(stub) = self.cache.get_decode(&key) {
+            self.cache
+                .insert_decode_fast(local_shape, borrow_mode, remote_schema_id, stub.clone());
             return Some(stub);
         }
 
@@ -186,11 +196,20 @@ impl JitRuntime {
                 key: key.clone(),
             }
         };
-        self.cache.insert_decode(key.clone(), stub);
-        self.cache.get_decode(&key)
+        let stub = self.cache.insert_decode(key.clone(), stub);
+        self.cache
+            .insert_decode_fast(local_shape, borrow_mode, remote_schema_id, stub.clone());
+        Some(stub)
     }
 
     fn prepare_encode_stub(&self, shape: &'static Shape) -> Option<Arc<cache::CompiledEncodeStub>> {
+        // Fast path: pointer-identity lookup. No shape-tree walk, no cal
+        // mutex, no structural hashing. This is the hot path for repeated
+        // encode calls of the same type (i.e., every benchmark iteration).
+        if let Some(stub) = self.cache.get_encode_fast(shape) {
+            return Some(stub);
+        }
+
         if Self::force_fallback() {
             return None;
         }
@@ -206,6 +225,7 @@ impl JitRuntime {
         };
 
         if let Some(stub) = self.cache.get_encode(&key) {
+            self.cache.insert_encode_fast(shape, stub.clone());
             return Some(stub);
         }
 
@@ -240,12 +260,15 @@ impl JitRuntime {
                 return None;
             }
         };
-        let stub = cache::CompiledEncodeStub {
-            key: key.clone(),
-            encode_fn,
-        };
-        self.cache.insert_encode(key.clone(), stub);
-        self.cache.get_encode(&key)
+        let stub = self.cache.insert_encode(
+            key.clone(),
+            cache::CompiledEncodeStub {
+                key: key.clone(),
+                encode_fn,
+            },
+        );
+        self.cache.insert_encode_fast(shape, stub.clone());
+        Some(stub)
     }
 
     pub fn try_decode_owned<T: Facet<'static>>(
@@ -332,11 +355,13 @@ impl JitRuntime {
 }
 
 pub(crate) fn require_pure_jit() -> bool {
-    std::env::var_os("VOX_JIT_REQUIRE_PURE").is_some_and(|v| v == "1")
+    static CACHED: OnceLock<bool> = OnceLock::new();
+    *CACHED.get_or_init(|| std::env::var_os("VOX_JIT_REQUIRE_PURE").is_some_and(|v| v == "1"))
 }
 
 pub(crate) fn abort_on_slow_path() -> bool {
-    std::env::var_os("VOX_JIT_ABORT_ON_SLOW_PATH").is_some_and(|v| v == "1")
+    static CACHED: OnceLock<bool> = OnceLock::new();
+    *CACHED.get_or_init(|| std::env::var_os("VOX_JIT_ABORT_ON_SLOW_PATH").is_some_and(|v| v == "1"))
 }
 
 fn decode_program_has_slow_path(program: &DecodeProgram) -> bool {
