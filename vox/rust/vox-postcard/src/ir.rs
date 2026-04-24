@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 
 use facet_core::{EnumRepr, Facet, ScalarType, Shape, Type, UserType};
-use vox_jit_cal::{CalibrationRegistry, DescriptorHandle};
+use vox_jit_cal::{BorrowMode, CalibrationRegistry, DescriptorHandle};
 use vox_schema::{SchemaKind, SchemaRegistry};
 
 use crate::error::DeserializeError;
@@ -238,13 +238,11 @@ pub enum DecodeOp {
         dst_offset: usize,
         inner_offset: usize,
         some_block: usize,
-        /// vtable fn: `unsafe extern "C" fn(PtrUninit) -> PtrMut`
-        init_none: facet_core::OptionInitNoneFn,
-        /// vtable fn: `unsafe extern "C" fn(PtrUninit, PtrMut) -> PtrMut`
-        ///
-        /// The interpreter passes a pointer to the inner slot computed from
-        /// `inner_offset`; the fn writes the Some tag and returns the inner ptr.
-        init_some: facet_core::OptionInitSomeFn,
+        /// Exact bytes of a calibrated `None` value.
+        none_bytes: Box<[u8]>,
+        /// Exact bytes of a calibrated `Some(_)` value before the payload is
+        /// overwritten by the inner decode.
+        some_bytes: Box<[u8]>,
     },
 
     /// Decode a `Result<T, E>` in-place.
@@ -256,12 +254,14 @@ pub enum DecodeOp {
         dst_offset: usize,
         ok_block: usize,
         err_block: usize,
-        ok_size: usize,
-        ok_align: usize,
-        err_size: usize,
-        err_align: usize,
-        init_ok: facet_core::ResultInitOkFn,
-        init_err: facet_core::ResultInitErrFn,
+        ok_offset: usize,
+        err_offset: usize,
+        /// Exact bytes of a calibrated `Ok(_)` value before the payload is
+        /// overwritten by the inner decode.
+        ok_bytes: Box<[u8]>,
+        /// Exact bytes of a calibrated `Err(_)` value before the payload is
+        /// overwritten by the inner decode.
+        err_bytes: Box<[u8]>,
     },
 
     // -----------------------------------------------------------------------
@@ -463,7 +463,7 @@ pub fn lower(
     shape: &'static Shape,
     registry: &SchemaRegistry,
 ) -> Result<DecodeProgram, LowerError> {
-    lower_with_cal(plan, shape, registry, None, false)
+    lower_with_cal(plan, shape, registry, None, BorrowMode::Owned)
 }
 
 /// Like `lower` but with an optional calibration registry.
@@ -477,7 +477,7 @@ pub fn lower_with_cal(
     shape: &'static Shape,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
-    borrow_mode: bool,
+    borrow_mode: BorrowMode,
 ) -> Result<DecodeProgram, LowerError> {
     let layout = shape
         .layout
@@ -510,7 +510,7 @@ fn lower_value(
     shape: &'static Shape,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
-    borrow_mode: bool,
+    borrow_mode: BorrowMode,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -586,12 +586,12 @@ fn lower_value(
                     block,
                     DecodeOp::ReadCowStr {
                         dst_offset,
-                        borrowed: borrow_mode,
+                        borrowed: borrow_mode == BorrowMode::Borrowed,
                     },
                 );
                 return Ok(());
             }
-            facet_core::ScalarType::Str if borrow_mode => {
+            facet_core::ScalarType::Str if borrow_mode == BorrowMode::Borrowed => {
                 program.emit(block, DecodeOp::ReadStrRef { dst_offset });
                 return Ok(());
             }
@@ -695,7 +695,7 @@ fn lower_def(
     shape: &'static Shape,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
-    borrow_mode: bool,
+    borrow_mode: BorrowMode,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -788,7 +788,7 @@ fn lower_result(
     result_def: facet_core::ResultDef,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
-    borrow_mode: bool,
+    borrow_mode: BorrowMode,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -812,33 +812,16 @@ fn lower_result(
         }
     };
 
-    let ok_layout = match result_def.t.layout.sized_layout() {
-        Ok(layout) => layout,
-        Err(_) => {
-            program.emit(
-                block,
-                DecodeOp::SlowPath {
-                    shape,
-                    plan: Box::new(clone_plan(plan)),
-                    dst_offset,
-                },
-            );
-            return Ok(());
-        }
-    };
-    let err_layout = match result_def.e.layout.sized_layout() {
-        Ok(layout) => layout,
-        Err(_) => {
-            program.emit(
-                block,
-                DecodeOp::SlowPath {
-                    shape,
-                    plan: Box::new(clone_plan(plan)),
-                    dst_offset,
-                },
-            );
-            return Ok(());
-        }
+    let Some(layout) = calibrate_result_layout(shape, result_def) else {
+        program.emit(
+            block,
+            DecodeOp::SlowPath {
+                shape,
+                plan: Box::new(clone_plan(plan)),
+                dst_offset,
+            },
+        );
+        return Ok(());
     };
 
     let ok_block = program.new_block();
@@ -850,12 +833,10 @@ fn lower_result(
             dst_offset,
             ok_block,
             err_block,
-            ok_size: ok_layout.size(),
-            ok_align: ok_layout.align(),
-            err_size: err_layout.size(),
-            err_align: err_layout.align(),
-            init_ok: result_def.vtable.init_ok,
-            init_err: result_def.vtable.init_err,
+            ok_offset: layout.ok_offset,
+            err_offset: layout.err_offset,
+            ok_bytes: layout.ok_bytes,
+            err_bytes: layout.err_bytes,
         },
     );
 
@@ -893,7 +874,7 @@ fn lower_struct(
     st: facet_core::StructType,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
-    borrow_mode: bool,
+    borrow_mode: BorrowMode,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -962,7 +943,7 @@ fn lower_enum(
     et: facet_core::EnumType,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
-    borrow_mode: bool,
+    borrow_mode: BorrowMode,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -1102,46 +1083,172 @@ fn lower_enum(
     Ok(())
 }
 
-/// Probe the `Option<T>` vtable to find the byte offset of the inner value
-/// slot within the Option's memory. Returns `None` if the probe fails (e.g.
-/// unsized inner type or `get_value` returns null on a Some).
+struct ScratchBuf {
+    ptr: *mut u8,
+    layout: std::alloc::Layout,
+}
+
+impl ScratchBuf {
+    #[allow(unsafe_code)]
+    fn new(layout: std::alloc::Layout) -> Option<Self> {
+        let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+        if ptr.is_null() {
+            None
+        } else {
+            Some(Self { ptr, layout })
+        }
+    }
+
+    #[allow(unsafe_code)]
+    fn to_bytes(&self) -> Box<[u8]> {
+        unsafe { std::slice::from_raw_parts(self.ptr as *const u8, self.layout.size()) }
+            .to_vec()
+            .into_boxed_slice()
+    }
+}
+
+impl Drop for ScratchBuf {
+    #[allow(unsafe_code)]
+    fn drop(&mut self) {
+        unsafe { std::alloc::dealloc(self.ptr, self.layout) };
+    }
+}
+
+struct CalibratedOptionLayout {
+    inner_offset: usize,
+    none_bytes: Box<[u8]>,
+    some_bytes: Box<[u8]>,
+}
+
+struct CalibratedResultLayout {
+    ok_offset: usize,
+    err_offset: usize,
+    ok_bytes: Box<[u8]>,
+    err_bytes: Box<[u8]>,
+}
+
 #[allow(unsafe_code)]
-fn probe_option_inner_offset(opt_def: facet_core::OptionDef) -> Option<usize> {
-    let opt_layout = opt_def.t.layout.sized_layout().ok()?;
+fn calibrate_option_layout(
+    shape: &'static Shape,
+    opt_def: facet_core::OptionDef,
+) -> Option<CalibratedOptionLayout> {
+    let opt_layout = shape.layout.sized_layout().ok()?;
     let inner_layout = opt_def.t.layout.sized_layout().ok()?;
 
-    // Allocate zeroed buffer for the Option value.
-    let opt_size = std::mem::size_of::<usize>() * 4; // generous upper bound
-    let _ = opt_layout; // suppress unused warning — we use opt_size as a safe bound
-    let _ = inner_layout;
+    let none_buf = ScratchBuf::new(opt_layout)?;
+    unsafe { (opt_def.vtable.init_none)(facet_core::PtrUninit::new(none_buf.ptr as *mut ())) };
 
-    // Use a stack-allocated buffer large enough for Option<usize> (worst case 2 words).
-    // For larger types we'd need heap allocation — but all scalar Options fit here.
-    let mut option_buf = [0u8; 64];
-    let mut inner_buf = [0u8; 64];
-    let _ = opt_size;
+    let some_buf = ScratchBuf::new(opt_layout)?;
+    let inner_buf = ScratchBuf::new(inner_layout)?;
+    unsafe {
+        opt_def
+            .t
+            .call_default_in_place(facet_core::PtrUninit::new(inner_buf.ptr as *mut ()))?
+    };
 
-    let opt_ptr = option_buf.as_mut_ptr();
-    let inner_ptr = inner_buf.as_mut_ptr();
-
-    // Call init_some: writes the Some representation and returns ptr to inner slot.
-    let returned_inner = unsafe {
+    unsafe {
         (opt_def.vtable.init_some)(
-            facet_core::PtrUninit::new(opt_ptr as *mut ()),
-            facet_core::PtrMut::new(inner_ptr as *mut ()),
+            facet_core::PtrUninit::new(some_buf.ptr as *mut ()),
+            facet_core::PtrMut::new(inner_buf.ptr as *mut ()),
         )
     };
 
-    // returned_inner points into option_buf (the inner value slot within the Option).
-    let ret_ptr = unsafe { returned_inner.as_ptr() } as *const u8;
-    let base_ptr = opt_ptr as *const u8;
-
-    // The offset must be within the buffer and non-negative.
-    if ret_ptr >= base_ptr && (ret_ptr as usize) < (base_ptr as usize) + option_buf.len() {
-        Some(ret_ptr as usize - base_ptr as usize)
-    } else {
-        None
+    let ret_ptr =
+        unsafe { (opt_def.vtable.get_value)(facet_core::PtrConst::new(some_buf.ptr as *const ())) };
+    let base_ptr = some_buf.ptr as *const u8;
+    let end_ptr = unsafe { base_ptr.add(opt_layout.size()) };
+    if ret_ptr < base_ptr || ret_ptr > end_ptr {
+        return None;
     }
+
+    let inner_offset = ret_ptr as usize - base_ptr as usize;
+    if inner_offset.checked_add(inner_layout.size())? > opt_layout.size() {
+        return None;
+    }
+
+    let none_bytes = none_buf.to_bytes();
+    let some_bytes = some_buf.to_bytes();
+    let _ = unsafe { shape.call_drop_in_place(facet_core::PtrMut::new(some_buf.ptr as *mut ())) };
+
+    Some(CalibratedOptionLayout {
+        inner_offset,
+        none_bytes,
+        some_bytes,
+    })
+}
+
+#[allow(unsafe_code)]
+fn calibrate_result_layout(
+    shape: &'static Shape,
+    result_def: facet_core::ResultDef,
+) -> Option<CalibratedResultLayout> {
+    let result_layout = shape.layout.sized_layout().ok()?;
+    let ok_layout = result_def.t.layout.sized_layout().ok()?;
+    let err_layout = result_def.e.layout.sized_layout().ok()?;
+
+    let ok_buf = ScratchBuf::new(result_layout)?;
+    let ok_inner = ScratchBuf::new(ok_layout)?;
+    unsafe {
+        result_def
+            .t
+            .call_default_in_place(facet_core::PtrUninit::new(ok_inner.ptr as *mut ()))?
+    };
+    unsafe {
+        (result_def.vtable.init_ok)(
+            facet_core::PtrUninit::new(ok_buf.ptr as *mut ()),
+            facet_core::PtrMut::new(ok_inner.ptr as *mut ()),
+        )
+    };
+
+    let err_buf = ScratchBuf::new(result_layout)?;
+    let err_inner = ScratchBuf::new(err_layout)?;
+    unsafe {
+        result_def
+            .e
+            .call_default_in_place(facet_core::PtrUninit::new(err_inner.ptr as *mut ()))?
+    };
+    unsafe {
+        (result_def.vtable.init_err)(
+            facet_core::PtrUninit::new(err_buf.ptr as *mut ()),
+            facet_core::PtrMut::new(err_inner.ptr as *mut ()),
+        )
+    };
+
+    let base_ptr = ok_buf.ptr as *const u8;
+    let end_ptr = unsafe { base_ptr.add(result_layout.size()) };
+    let ok_ptr =
+        unsafe { (result_def.vtable.get_ok)(facet_core::PtrConst::new(ok_buf.ptr as *const ())) };
+    if ok_ptr < base_ptr || ok_ptr > end_ptr {
+        return None;
+    }
+    let ok_offset = ok_ptr as usize - base_ptr as usize;
+    if ok_offset.checked_add(ok_layout.size())? > result_layout.size() {
+        return None;
+    }
+
+    let err_base_ptr = err_buf.ptr as *const u8;
+    let err_end_ptr = unsafe { err_base_ptr.add(result_layout.size()) };
+    let err_ptr =
+        unsafe { (result_def.vtable.get_err)(facet_core::PtrConst::new(err_buf.ptr as *const ())) };
+    if err_ptr < err_base_ptr || err_ptr > err_end_ptr {
+        return None;
+    }
+    let err_offset = err_ptr as usize - err_base_ptr as usize;
+    if err_offset.checked_add(err_layout.size())? > result_layout.size() {
+        return None;
+    }
+
+    let ok_bytes = ok_buf.to_bytes();
+    let err_bytes = err_buf.to_bytes();
+    let _ = unsafe { shape.call_drop_in_place(facet_core::PtrMut::new(ok_buf.ptr as *mut ())) };
+    let _ = unsafe { shape.call_drop_in_place(facet_core::PtrMut::new(err_buf.ptr as *mut ())) };
+
+    Some(CalibratedResultLayout {
+        ok_offset,
+        err_offset,
+        ok_bytes,
+        err_bytes,
+    })
 }
 
 #[allow(unsafe_code)]
@@ -1151,7 +1258,7 @@ fn lower_option(
     opt_def: facet_core::OptionDef,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
-    borrow_mode: bool,
+    borrow_mode: BorrowMode,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -1172,19 +1279,16 @@ fn lower_option(
         }
     };
 
-    let inner_offset = match probe_option_inner_offset(opt_def) {
-        Some(off) => off,
-        None => {
-            program.emit(
-                block,
-                DecodeOp::SlowPath {
-                    shape,
-                    plan: Box::new(clone_plan(plan)),
-                    dst_offset,
-                },
-            );
-            return Ok(());
-        }
+    let Some(layout) = calibrate_option_layout(shape, opt_def) else {
+        program.emit(
+            block,
+            DecodeOp::SlowPath {
+                shape,
+                plan: Box::new(clone_plan(plan)),
+                dst_offset,
+            },
+        );
+        return Ok(());
     };
 
     let some_block = program.new_block();
@@ -1193,10 +1297,10 @@ fn lower_option(
         block,
         DecodeOp::DecodeOption {
             dst_offset,
-            inner_offset,
+            inner_offset: layout.inner_offset,
             some_block,
-            init_none: opt_def.vtable.init_none,
-            init_some: opt_def.vtable.init_some,
+            none_bytes: layout.none_bytes,
+            some_bytes: layout.some_bytes,
         },
     );
 
@@ -1223,7 +1327,7 @@ fn lower_array(
     arr_def: facet_core::ArrayDef,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
-    borrow_mode: bool,
+    borrow_mode: BorrowMode,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -1275,7 +1379,7 @@ fn lower_list(
     list_def: facet_core::ListDef,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
-    borrow_mode: bool,
+    borrow_mode: BorrowMode,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -1458,7 +1562,7 @@ fn lower_pointer(
     ptr_def: facet_core::PointerDef,
     registry: &SchemaRegistry,
     cal: Option<&CalibrationRegistry>,
-    borrow_mode: bool,
+    borrow_mode: BorrowMode,
     program: &mut DecodeProgram,
     block: usize,
     dst_offset: usize,
@@ -1501,12 +1605,14 @@ fn lower_pointer(
                     block,
                     DecodeOp::ReadCowByteSlice {
                         dst_offset,
-                        borrowed: borrow_mode,
+                        borrowed: borrow_mode == BorrowMode::Borrowed,
                     },
                 );
                 return Ok(());
             }
-            Some(facet_core::KnownPointer::SharedReference) if borrow_mode => {
+            Some(facet_core::KnownPointer::SharedReference)
+                if borrow_mode == BorrowMode::Borrowed =>
+            {
                 program.emit(block, DecodeOp::ReadByteSliceRef { dst_offset });
                 return Ok(());
             }
@@ -1897,30 +2003,28 @@ fn run_block(
                 dst_offset,
                 inner_offset,
                 some_block,
-                init_none,
-                init_some,
+                none_bytes,
+                some_bytes,
             } => {
                 let tag = state.read_byte()?;
                 let option_ptr = unsafe { base.add(*dst_offset) };
                 match tag {
-                    0x00 => {
-                        // Write the None representation via vtable.
-                        unsafe {
-                            (init_none)(facet_core::PtrUninit::new(option_ptr as *mut ()));
-                        }
-                    }
+                    0x00 => unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            none_bytes.as_ptr(),
+                            option_ptr,
+                            none_bytes.len(),
+                        );
+                    },
                     0x01 => {
-                        // Compute the inner value slot pointer from the known offset.
-                        let inner_ptr = unsafe { option_ptr.add(*inner_offset) };
-                        // Call init_some with the inner ptr as a PtrMut (pre-computed slot).
-                        // init_some writes the Some tag and returns the inner ptr.
                         unsafe {
-                            (init_some)(
-                                facet_core::PtrUninit::new(option_ptr as *mut ()),
-                                facet_core::PtrMut::new(inner_ptr as *mut ()),
+                            std::ptr::copy_nonoverlapping(
+                                some_bytes.as_ptr(),
+                                option_ptr,
+                                some_bytes.len(),
                             );
                         }
-                        // Decode the inner value into inner_ptr.
+                        let inner_ptr = unsafe { option_ptr.add(*inner_offset) };
                         run_block(program, *some_block, state, inner_ptr, registry, cal)?;
                     }
                     other => {
@@ -1936,55 +2040,35 @@ fn run_block(
                 dst_offset,
                 ok_block,
                 err_block,
-                ok_size,
-                ok_align,
-                err_size,
-                err_align,
-                init_ok,
-                init_err,
+                ok_offset,
+                err_offset,
+                ok_bytes,
+                err_bytes,
             } => {
                 let variant_index = state.read_varint()? as usize;
                 let result_ptr = unsafe { base.add(*dst_offset) };
                 match variant_index {
                     0 => {
-                        let layout = std::alloc::Layout::from_size_align(*ok_size, *ok_align)
-                            .map_err(|_| {
-                                DeserializeError::Custom("DecodeResult: invalid Ok layout".into())
-                            })?;
-                        let tmp = facet_core::alloc_for_layout(layout);
-                        let tmp_ptr = unsafe { tmp.assume_init() };
-                        run_block(
-                            program,
-                            *ok_block,
-                            state,
-                            tmp_ptr.as_mut_byte_ptr(),
-                            registry,
-                            cal,
-                        )?;
                         unsafe {
-                            (init_ok)(facet_core::PtrUninit::new(result_ptr), tmp_ptr);
-                            facet_core::dealloc_for_layout(tmp_ptr, layout);
+                            std::ptr::copy_nonoverlapping(
+                                ok_bytes.as_ptr(),
+                                result_ptr,
+                                ok_bytes.len(),
+                            );
                         }
+                        let payload_ptr = unsafe { result_ptr.add(*ok_offset) };
+                        run_block(program, *ok_block, state, payload_ptr, registry, cal)?;
                     }
                     1 => {
-                        let layout = std::alloc::Layout::from_size_align(*err_size, *err_align)
-                            .map_err(|_| {
-                                DeserializeError::Custom("DecodeResult: invalid Err layout".into())
-                            })?;
-                        let tmp = facet_core::alloc_for_layout(layout);
-                        let tmp_ptr = unsafe { tmp.assume_init() };
-                        run_block(
-                            program,
-                            *err_block,
-                            state,
-                            tmp_ptr.as_mut_byte_ptr(),
-                            registry,
-                            cal,
-                        )?;
                         unsafe {
-                            (init_err)(facet_core::PtrUninit::new(result_ptr), tmp_ptr);
-                            facet_core::dealloc_for_layout(tmp_ptr, layout);
+                            std::ptr::copy_nonoverlapping(
+                                err_bytes.as_ptr(),
+                                result_ptr,
+                                err_bytes.len(),
+                            );
                         }
+                        let payload_ptr = unsafe { result_ptr.add(*err_offset) };
+                        run_block(program, *err_block, state, payload_ptr, registry, cal)?;
                     }
                     other => {
                         return Err(DeserializeError::UnknownVariant {

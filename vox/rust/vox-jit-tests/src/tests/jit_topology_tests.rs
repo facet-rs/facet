@@ -17,7 +17,7 @@ use vox_jit::{
     CodegenError, CraneliftBackend,
     abi::{DecodeCtx, OwnedDecodeFn},
 };
-use vox_jit_cal::CalibrationRegistry;
+use vox_jit_cal::{BorrowMode, CalibrationRegistry};
 use vox_postcard::{
     TranslationPlan, build_identity_plan,
     ir::{DecodeProgram, from_slice_ir, lower_with_cal},
@@ -120,10 +120,10 @@ fn try_jit<T: Facet<'static>>(
     registry: &SchemaRegistry,
     cal: &CalibrationRegistry,
 ) -> Result<(CraneliftBackend, OwnedDecodeFn), CodegenError> {
-    let program = lower_with_cal(plan, T::SHAPE, registry, Some(cal))
+    let program = lower_with_cal(plan, T::SHAPE, registry, Some(cal), BorrowMode::Owned)
         .map_err(|e| CodegenError::UnsupportedOp(format!("{e:?}")))?;
     let mut backend = CraneliftBackend::new()?;
-    let (owned, _borrowed) = backend.compile_decode(&program, cal)?;
+    let owned = backend.compile_decode_owned(&program, cal)?;
     Ok((backend, owned))
 }
 

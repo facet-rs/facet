@@ -32,7 +32,7 @@ use vox_jit_abi::{
     DecodeCacheKey, DecodeCtx, DecodeStatus, EncodeCacheKey, EncodeCtx, vox_jit_buf_push_bytes,
     vox_jit_buf_write_varint,
 };
-use vox_jit_cal::CalibrationRegistry;
+use vox_jit_cal::{BorrowMode, CalibrationRegistry};
 use vox_postcard::error::DeserializeError;
 use vox_postcard::error::SerializeError;
 use vox_postcard::ir::{
@@ -95,7 +95,7 @@ impl JitRuntime {
         &self,
         remote_schema_id: u64,
         local_shape: &'static facet_core::Shape,
-        borrow_mode: bool,
+        borrow_mode: BorrowMode,
         descriptor_handle: Option<vox_jit_abi::DescriptorHandle>,
     ) -> DecodeCacheKey {
         DecodeCacheKey {
@@ -113,7 +113,7 @@ impl JitRuntime {
         local_shape: &'static Shape,
         plan: &TranslationPlan,
         registry: &SchemaRegistry,
-        borrow_mode: bool,
+        borrow_mode: BorrowMode,
     ) -> Option<Arc<cache::CompiledDecodeStub>> {
         if Self::force_fallback() {
             return None;
@@ -152,7 +152,7 @@ impl JitRuntime {
             );
         }
         let mut backend = self.backend.lock().unwrap();
-        let stub = if borrow_mode {
+        let stub = if borrow_mode == BorrowMode::Borrowed {
             let borrowed_fn = match backend.compile_decode_borrowed(&program, &cal) {
                 Ok(f) => f,
                 Err(err) => {
@@ -203,7 +203,7 @@ impl JitRuntime {
         let descriptor_handle = calibration_token(&cal);
         let key = EncodeCacheKey {
             local_shape: shape,
-            borrow_mode: false,
+            borrow_mode: BorrowMode::Owned,
             target_isa: host_isa_name(),
             descriptor_handle,
         };
@@ -264,11 +264,17 @@ impl JitRuntime {
                 remote_schema_id,
                 plan,
                 registry,
-                false,
+                BorrowMode::Owned,
                 result_def,
             );
         }
-        let stub = self.prepare_decode_stub(remote_schema_id, T::SHAPE, plan, registry, false)?;
+        let stub = self.prepare_decode_stub(
+            remote_schema_id,
+            T::SHAPE,
+            plan,
+            registry,
+            BorrowMode::Owned,
+        )?;
         let decode_fn = stub.owned_fn?;
         let mut ctx = DecodeCtx::new(input);
         let mut out = MaybeUninit::<T>::uninit();
@@ -296,7 +302,13 @@ impl JitRuntime {
     where
         'input: 'facet,
     {
-        let stub = self.prepare_decode_stub(remote_schema_id, T::SHAPE, plan, registry, true)?;
+        let stub = self.prepare_decode_stub(
+            remote_schema_id,
+            T::SHAPE,
+            plan,
+            registry,
+            BorrowMode::Borrowed,
+        )?;
         let decode_fn = stub.borrowed_fn?;
         let mut ctx = DecodeCtx::new(input);
         let mut out = MaybeUninit::<T>::uninit();
@@ -408,12 +420,12 @@ impl JitRuntime {
         shape: &'static Shape,
         plan: &TranslationPlan,
         registry: &SchemaRegistry,
-        borrow_mode: bool,
+        borrow_mode: BorrowMode,
         dst: *mut u8,
     ) -> Option<Result<(), DeserializeError>> {
         let stub =
             self.prepare_decode_stub(remote_schema_id, shape, plan, registry, borrow_mode)?;
-        let decode_fn = if borrow_mode {
+        let decode_fn = if borrow_mode == BorrowMode::Borrowed {
             stub.borrowed_fn?
         } else {
             stub.owned_fn?
@@ -433,7 +445,7 @@ impl JitRuntime {
         remote_schema_id: u64,
         plan: &TranslationPlan,
         registry: &SchemaRegistry,
-        borrow_mode: bool,
+        borrow_mode: BorrowMode,
         result_def: facet_core::ResultDef,
     ) -> Option<Result<T, DeserializeError>> {
         let ok_identity = build_identity_plan(result_def.t);

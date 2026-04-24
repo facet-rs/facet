@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use facet::Facet;
 use vox_jit::{CraneliftBackend, abi::OwnedDecodeFn, host_isa_name};
 use vox_jit_abi::DecodeCacheKey;
-use vox_jit_cal::CalibrationRegistry;
+use vox_jit_cal::{BorrowMode, CalibrationRegistry};
 use vox_postcard::{TranslationPlan, build_identity_plan, ir::lower_with_cal};
 use vox_schema::SchemaRegistry;
 
@@ -85,9 +85,9 @@ fn compile_one<T: Facet<'static>>(
     cal: &CalibrationRegistry,
     backend: &mut CraneliftBackend,
 ) -> (OwnedDecodeFn, u32) {
-    let program =
-        lower_with_cal(plan, T::SHAPE, registry, Some(cal)).expect("lower_with_cal failed");
-    let (owned, _borrowed, code_bytes) = backend
+    let program = lower_with_cal(plan, T::SHAPE, registry, Some(cal), BorrowMode::Owned)
+        .expect("lower_with_cal failed");
+    let (owned, code_bytes) = backend
         .compile_decode_with_size(&program, cal)
         .expect("compile_decode failed");
     (owned, code_bytes)
@@ -181,7 +181,7 @@ mod cache_hit {
         DecodeCacheKey {
             remote_schema_id,
             local_shape: Msg::SHAPE,
-            borrow_mode: false,
+            borrow_mode: BorrowMode::Owned,
             target_isa: host_isa_name(),
             descriptor_handle: None,
         }
@@ -224,9 +224,9 @@ mod code_size {
         let plan = build_identity_plan(T::SHAPE);
         let reg = registry();
         let cal = cal();
-        let program =
-            lower_with_cal(&plan, T::SHAPE, &reg, Some(&cal)).expect("lower_with_cal failed");
-        let (_owned, _borrowed, bytes) = backend
+        let program = lower_with_cal(&plan, T::SHAPE, &reg, Some(&cal), BorrowMode::Owned)
+            .expect("lower_with_cal failed");
+        let (_owned, bytes) = backend
             .compile_decode_with_size(&program, &cal)
             .expect("compile failed");
         println!("code_size/{label}: {bytes} bytes");

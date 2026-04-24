@@ -27,7 +27,7 @@ use facet_core::Shape;
 use spec_proto::{GnarlyAttr, GnarlyEntry, GnarlyKind, GnarlyPayload};
 use vox_jit::abi::{DecodeCtx, OwnedDecodeFn};
 use vox_jit::{CodegenError, CraneliftBackend};
-use vox_jit_cal::CalibrationRegistry;
+use vox_jit_cal::{BorrowMode, CalibrationRegistry};
 use vox_postcard::{
     TranslationPlan, build_identity_plan, from_slice_with_plan,
     ir::{from_slice_ir, lower_with_cal},
@@ -375,9 +375,9 @@ mod jit {
         cal: &CalibrationRegistry,
         backend: &mut CraneliftBackend,
     ) -> Result<OwnedDecodeFn, CodegenError> {
-        let program = lower_with_cal(plan, T::SHAPE, registry, Some(cal))
+        let program = lower_with_cal(plan, T::SHAPE, registry, Some(cal), BorrowMode::Owned)
             .map_err(|e| CodegenError::UnsupportedOp(format!("{e:?}")))?;
-        let (owned, _borrowed) = backend.compile_decode(&program, cal)?;
+        let owned = backend.compile_decode_owned(&program, cal)?;
         Ok(owned)
     }
 
@@ -638,10 +638,16 @@ mod alloc_count {
         let cal = gnarly_registry();
         let bytes = encode(&make_gnarly_payload(n, 0));
         let mut backend = CraneliftBackend::new().unwrap();
-        let program = lower_with_cal(&plan, GnarlyPayload::SHAPE, &registry, Some(&cal))
-            .expect("gnarly lower should succeed");
-        let (owned_fn, _borrowed) = backend
-            .compile_decode(&program, &cal)
+        let program = lower_with_cal(
+            &plan,
+            GnarlyPayload::SHAPE,
+            &registry,
+            Some(&cal),
+            BorrowMode::Owned,
+        )
+        .expect("gnarly lower should succeed");
+        let owned_fn = backend
+            .compile_decode_owned(&program, &cal)
             .expect("gnarly compile should succeed");
 
         bencher.bench(|| {
@@ -884,8 +890,14 @@ mod gnarly {
         registry: &SchemaRegistry,
         cal: &CalibrationRegistry,
     ) -> Result<vox_postcard::ir::DecodeProgram, String> {
-        lower_with_cal(plan, GnarlyPayload::SHAPE, registry, Some(cal))
-            .map_err(|e| format!("{e:?}"))
+        lower_with_cal(
+            plan,
+            GnarlyPayload::SHAPE,
+            registry,
+            Some(cal),
+            BorrowMode::Owned,
+        )
+        .map_err(|e| format!("{e:?}"))
     }
 
     fn try_compile_gnarly(
@@ -894,9 +906,15 @@ mod gnarly {
         cal: &CalibrationRegistry,
         backend: &mut CraneliftBackend,
     ) -> Result<OwnedDecodeFn, CodegenError> {
-        let program = lower_with_cal(plan, GnarlyPayload::SHAPE, registry, Some(cal))
-            .map_err(|e| CodegenError::UnsupportedOp(format!("{e:?}")))?;
-        let (owned, _borrowed) = backend.compile_decode(&program, cal)?;
+        let program = lower_with_cal(
+            plan,
+            GnarlyPayload::SHAPE,
+            registry,
+            Some(cal),
+            BorrowMode::Owned,
+        )
+        .map_err(|e| CodegenError::UnsupportedOp(format!("{e:?}")))?;
+        let owned = backend.compile_decode_owned(&program, cal)?;
         Ok(owned)
     }
 

@@ -23,7 +23,8 @@
 #![allow(unsafe_code)]
 
 pub use vox_jit_cal::{
-    CalibrationRegistry, ContainerKind, DescriptorHandle, OFFSET_ABSENT, OpaqueDescriptor,
+    BorrowMode, CalibrationRegistry, ContainerKind, DescriptorHandle, OFFSET_ABSENT,
+    OpaqueDescriptor,
 };
 
 // ---------------------------------------------------------------------------
@@ -615,7 +616,7 @@ pub unsafe extern "C" fn vox_jit_buf_write_opaque_vec(
 pub struct DecodeCacheKey {
     pub remote_schema_id: u64,
     pub local_shape: &'static facet_core::Shape,
-    pub borrow_mode: bool,
+    pub borrow_mode: BorrowMode,
     pub target_isa: &'static str,
     pub descriptor_handle: Option<DescriptorHandle>,
 }
@@ -627,7 +628,7 @@ pub struct DecodeCacheKey {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EncodeCacheKey {
     pub local_shape: &'static facet_core::Shape,
-    pub borrow_mode: bool,
+    pub borrow_mode: BorrowMode,
     pub target_isa: &'static str,
     pub descriptor_handle: Option<DescriptorHandle>,
 }

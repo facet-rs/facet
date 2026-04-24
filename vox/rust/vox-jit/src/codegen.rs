@@ -20,8 +20,8 @@
 #![allow(unsafe_code)]
 
 use cranelift_codegen::ir::{
-    AbiParam, Block, BlockArg, InstBuilder, MemFlags, Signature, StackSlotData, StackSlotKind,
-    Type, Value, condcodes::IntCC, types,
+    AbiParam, Block, BlockArg, InstBuilder, MemFlags, Signature, Type, Value, condcodes::IntCC,
+    types,
 };
 use cranelift_codegen::{settings, settings::Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -928,8 +928,8 @@ fn emit_op(
             dst_offset,
             inner_offset,
             some_block,
-            init_none,
-            init_some,
+            none_bytes,
+            some_bytes,
         } => {
             emit_decode_option(
                 ctx,
@@ -937,8 +937,8 @@ fn emit_op(
                 *dst_offset,
                 *inner_offset,
                 *some_block,
-                *init_none,
-                *init_some,
+                none_bytes,
+                some_bytes,
             )?;
         }
 
@@ -946,12 +946,10 @@ fn emit_op(
             dst_offset,
             ok_block,
             err_block,
-            ok_size,
-            ok_align,
-            err_size,
-            err_align,
-            init_ok,
-            init_err,
+            ok_offset,
+            err_offset,
+            ok_bytes,
+            err_bytes,
         } => {
             emit_decode_result(
                 ctx,
@@ -959,12 +957,10 @@ fn emit_op(
                 *dst_offset,
                 *ok_block,
                 *err_block,
-                *ok_size,
-                *ok_align,
-                *err_size,
-                *err_align,
-                *init_ok,
-                *init_err,
+                *ok_offset,
+                *err_offset,
+                ok_bytes,
+                err_bytes,
             )?;
         }
 
@@ -1737,10 +1733,10 @@ fn emit_write_tag(ctx: &mut EmitCtx<'_, '_>, tag_dst: Value, tag_width: TagWidth
 /// Layout:
 ///   current block → read tag byte
 ///   brif tag==0 → none_block, else → check_some_block
-///   none_block: call init_none(option_ptr); jump → after_block
+///   none_block: materialize calibrated None bytes; jump → after_block
 ///   check_some_block: brif tag==1 → some_call_block, else → invalid_block
 ///   invalid_block: return InvalidOptionTag
-///   some_call_block: call init_some(option_ptr, inner_ptr);
+///   some_call_block: materialize calibrated Some bytes;
 ///                    emit some_block_ir ops inline with out_ptr=inner_ptr;
 ///                    jump → after_block
 ///   after_block: (continue — None and Some both land here)
@@ -1754,8 +1750,8 @@ fn emit_decode_option(
     dst_offset: usize,
     inner_offset: usize,
     some_block_ir: usize,
-    init_none: facet_core::OptionInitNoneFn,
-    init_some: facet_core::OptionInitSomeFn,
+    none_bytes: &[u8],
+    some_bytes: &[u8],
 ) -> Result<(), CodegenError> {
     let tag = ctx.read_byte()?;
     let tag_i32 = ctx.b.ins().uextend(types::I32, tag);
@@ -1776,14 +1772,7 @@ fn emit_decode_option(
     ctx.b.seal_block(none_block);
     {
         let option_ptr = ctx.dst_at(dst_offset);
-        let init_none_sig = make_init_none_sig(ctx);
-        let init_none_fn = ctx
-            .b
-            .ins()
-            .iconst(ctx.ptr_ty, init_none as *const () as i64);
-        ctx.b
-            .ins()
-            .call_indirect(init_none_sig, init_none_fn, &[option_ptr]);
+        emit_inline_bytes(ctx, option_ptr, none_bytes);
     }
     ctx.b.ins().jump(after_block, &[]);
 
@@ -1805,19 +1794,12 @@ fn emit_decode_option(
     ctx.b.seal_block(some_call_block);
     {
         let option_ptr = ctx.dst_at(dst_offset);
+        emit_inline_bytes(ctx, option_ptr, some_bytes);
         let inner_ptr = if inner_offset == 0 {
             option_ptr
         } else {
             ctx.b.ins().iadd_imm(option_ptr, inner_offset as i64)
         };
-        let init_some_sig = make_init_some_sig(ctx);
-        let init_some_fn = ctx
-            .b
-            .ins()
-            .iconst(ctx.ptr_ty, init_some as *const () as i64);
-        ctx.b
-            .ins()
-            .call_indirect(init_some_sig, init_some_fn, &[option_ptr, inner_ptr]);
 
         // Inline the some_block using emit_inline_block so nested multi-block
         // element bodies (e.g. Option<Vec<T>>) are handled correctly.
@@ -1841,12 +1823,10 @@ fn emit_decode_result(
     dst_offset: usize,
     ok_block_ir: usize,
     err_block_ir: usize,
-    ok_size: usize,
-    ok_align: usize,
-    err_size: usize,
-    err_align: usize,
-    init_ok: facet_core::ResultInitOkFn,
-    init_err: facet_core::ResultInitErrFn,
+    ok_offset: usize,
+    err_offset: usize,
+    ok_bytes: &[u8],
+    err_bytes: &[u8],
 ) -> Result<(), CodegenError> {
     let variant = ctx.read_varint_u64()?;
     let zero = ctx.b.ins().iconst(types::I64, 0);
@@ -1877,51 +1857,33 @@ fn emit_decode_result(
     ctx.b.switch_to_block(ok_case);
     ctx.b.seal_block(ok_case);
     {
-        let ok_done = ctx.fresh_block();
-        let slot = ctx.b.create_sized_stack_slot(StackSlotData::new(
-            StackSlotKind::ExplicitSlot,
-            ok_size.max(1) as u32,
-            ok_align.trailing_zeros() as u8,
-        ));
-        let tmp_ptr = ctx.b.ins().stack_addr(ctx.ptr_ty, slot, 0);
-        let saved_out = ctx.out_ptr;
-        ctx.out_ptr = tmp_ptr;
-        emit_inline_block(ctx, program, ok_block_ir, ok_done)?;
-        ctx.out_ptr = saved_out;
-        ctx.b.switch_to_block(ok_done);
-        ctx.b.seal_block(ok_done);
         let result_ptr = ctx.dst_at(dst_offset);
-        let init_ok_sig = make_result_init_sig(ctx);
-        let init_ok_fn = ctx.b.ins().iconst(ctx.ptr_ty, init_ok as *const () as i64);
-        ctx.b
-            .ins()
-            .call_indirect(init_ok_sig, init_ok_fn, &[result_ptr, tmp_ptr]);
-        ctx.b.ins().jump(after_block, &[]);
+        emit_inline_bytes(ctx, result_ptr, ok_bytes);
+        let payload_ptr = if ok_offset == 0 {
+            result_ptr
+        } else {
+            ctx.b.ins().iadd_imm(result_ptr, ok_offset as i64)
+        };
+        let saved_out = ctx.out_ptr;
+        ctx.out_ptr = payload_ptr;
+        emit_inline_block(ctx, program, ok_block_ir, after_block)?;
+        ctx.out_ptr = saved_out;
     }
 
     ctx.b.switch_to_block(err_case);
     ctx.b.seal_block(err_case);
     {
-        let err_done = ctx.fresh_block();
-        let slot = ctx.b.create_sized_stack_slot(StackSlotData::new(
-            StackSlotKind::ExplicitSlot,
-            err_size.max(1) as u32,
-            err_align.trailing_zeros() as u8,
-        ));
-        let tmp_ptr = ctx.b.ins().stack_addr(ctx.ptr_ty, slot, 0);
-        let saved_out = ctx.out_ptr;
-        ctx.out_ptr = tmp_ptr;
-        emit_inline_block(ctx, program, err_block_ir, err_done)?;
-        ctx.out_ptr = saved_out;
-        ctx.b.switch_to_block(err_done);
-        ctx.b.seal_block(err_done);
         let result_ptr = ctx.dst_at(dst_offset);
-        let init_err_sig = make_result_init_sig(ctx);
-        let init_err_fn = ctx.b.ins().iconst(ctx.ptr_ty, init_err as *const () as i64);
-        ctx.b
-            .ins()
-            .call_indirect(init_err_sig, init_err_fn, &[result_ptr, tmp_ptr]);
-        ctx.b.ins().jump(after_block, &[]);
+        emit_inline_bytes(ctx, result_ptr, err_bytes);
+        let payload_ptr = if err_offset == 0 {
+            result_ptr
+        } else {
+            ctx.b.ins().iadd_imm(result_ptr, err_offset as i64)
+        };
+        let saved_out = ctx.out_ptr;
+        ctx.out_ptr = payload_ptr;
+        emit_inline_block(ctx, program, err_block_ir, after_block)?;
+        ctx.out_ptr = saved_out;
     }
 
     ctx.b.switch_to_block(after_block);
@@ -2397,6 +2359,13 @@ fn copy_empty_bytes(ctx: &mut EmitCtx<'_, '_>, desc: &CalDescriptor, dst_offset:
     }
 }
 
+fn emit_inline_bytes(ctx: &mut EmitCtx<'_, '_>, dst: Value, bytes: &[u8]) {
+    for (i, byte) in bytes.iter().copied().enumerate() {
+        let value = ctx.b.ins().iconst(types::I8, i64::from(byte));
+        ctx.b.ins().store(MemFlags::trusted(), value, dst, i as i32);
+    }
+}
+
 fn zero_ptr(ctx: &mut EmitCtx<'_, '_>) -> Value {
     ctx.b.ins().iconst(ctx.ptr_ty, 0)
 }
@@ -2648,42 +2617,6 @@ fn make_utf8_validate_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::S
             AbiParam::new(ctx.ptr_ty), // len
         ],
         returns: vec![AbiParam::new(types::I32)],
-        call_conv,
-    })
-}
-
-/// Signature: `unsafe extern "C" fn(option: *mut ()) -> *mut ()`
-fn make_init_none_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
-    let call_conv = ctx.b.func.signature.call_conv;
-    ctx.b.func.import_signature(Signature {
-        params: vec![AbiParam::new(ctx.ptr_ty)],
-        returns: vec![AbiParam::new(ctx.ptr_ty)],
-        call_conv,
-    })
-}
-
-/// Signature: `unsafe extern "C" fn(option: *mut (), value: *mut ()) -> *mut ()`
-fn make_init_some_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
-    let call_conv = ctx.b.func.signature.call_conv;
-    ctx.b.func.import_signature(Signature {
-        params: vec![
-            AbiParam::new(ctx.ptr_ty), // option ptr
-            AbiParam::new(ctx.ptr_ty), // inner value ptr
-        ],
-        returns: vec![AbiParam::new(ctx.ptr_ty)],
-        call_conv,
-    })
-}
-
-/// Signature: `unsafe extern "C" fn(result: *mut (), value: *mut ()) -> *mut ()`
-fn make_result_init_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
-    let call_conv = ctx.b.func.signature.call_conv;
-    ctx.b.func.import_signature(Signature {
-        params: vec![
-            AbiParam::new(ctx.ptr_ty), // result ptr
-            AbiParam::new(ctx.ptr_ty), // inner value ptr
-        ],
-        returns: vec![AbiParam::new(ctx.ptr_ty)],
         call_conv,
     })
 }
@@ -3773,10 +3706,10 @@ mod tests {
     use facet::Facet;
     use spec_proto::{GnarlyAttr, GnarlyEntry, GnarlyKind, GnarlyPayload};
     use vox_jit_abi::EncodeCtx;
-    use vox_jit_cal::CalibrationRegistry;
+    use vox_jit_cal::{BorrowMode, CalibrationRegistry};
     use vox_postcard::{
         build_identity_plan,
-        ir::{lower, lower_encode, lower_with_cal},
+        ir::{from_slice_ir, lower, lower_encode, lower_with_cal},
     };
     use vox_types::{
         BindingDirection, CborPayload, ConnectionId, Message, MessagePayload, MetadataEntry,
@@ -4046,6 +3979,48 @@ mod tests {
     }
 
     #[test]
+    fn decode_roundtrip_struct_with_option_and_string() {
+        let value = WithOption {
+            maybe: Some(0x1234_5678),
+            name: "hello".to_string(),
+        };
+        let bytes = reflective_encode_static(&value);
+        let decoded = jit_decode_value::<WithOption>(&bytes).expect("JIT decode failed");
+        assert_eq!(decoded, value, "option/string round-trip mismatch");
+    }
+
+    #[test]
+    fn ir_roundtrip_struct_with_option_and_string() {
+        let value = WithOption {
+            maybe: Some(0x1234_5678),
+            name: "hello".to_string(),
+        };
+        let bytes = reflective_encode_static(&value);
+        let plan = build_identity_plan(WithOption::SHAPE);
+        let registry = vox_schema::SchemaRegistry::new();
+        let cal = calibration_for(WithOption::SHAPE);
+        let decoded = from_slice_ir::<WithOption>(&bytes, &plan, &registry, Some(&cal))
+            .expect("IR decode failed");
+        assert_eq!(decoded, value, "IR option/string round-trip mismatch");
+    }
+
+    #[test]
+    fn decode_roundtrip_result_ok() {
+        let value: Result<u32, u16> = Ok(0x1234_5678);
+        let bytes = reflective_encode_static(&value);
+        let decoded = jit_decode_value::<Result<u32, u16>>(&bytes).expect("JIT decode failed");
+        assert_eq!(decoded, value, "result ok round-trip mismatch");
+    }
+
+    #[test]
+    fn decode_roundtrip_result_err() {
+        let value: Result<u32, u16> = Err(0x3456);
+        let bytes = reflective_encode_static(&value);
+        let decoded = jit_decode_value::<Result<u32, u16>>(&bytes).expect("JIT decode failed");
+        assert_eq!(decoded, value, "result err round-trip mismatch");
+    }
+
+    #[test]
     fn compile_nested_struct() {
         let _ = compile_shape::<Outer>();
     }
@@ -4061,9 +4036,15 @@ mod tests {
         let registry = vox_schema::SchemaRegistry::new();
         let mut cal = CalibrationRegistry::new();
         cal.calibrate_vec_for_type::<u32>();
-        let program = lower_with_cal(&plan, NumBatch::SHAPE, &registry, Some(&cal), false)
-            .map_err(|e| CodegenError::UnsupportedOp(format!("lowering failed: {e:?}")))
-            .expect("lower_with_cal should succeed");
+        let program = lower_with_cal(
+            &plan,
+            NumBatch::SHAPE,
+            &registry,
+            Some(&cal),
+            BorrowMode::Owned,
+        )
+        .map_err(|e| CodegenError::UnsupportedOp(format!("lowering failed: {e:?}")))
+        .expect("lower_with_cal should succeed");
         let mut backend = CraneliftBackend::new().expect("backend");
         let result = backend.compile_decode_owned(&program, &cal);
         assert!(
@@ -4094,9 +4075,15 @@ mod tests {
         let mut cal = CalibrationRegistry::new();
         cal.calibrate_vec_for_type::<u32>();
         cal.calibrate_vec_for_type::<Row>();
-        let program = lower_with_cal(&plan, Table::SHAPE, &registry, Some(&cal), false)
-            .map_err(|e| CodegenError::UnsupportedOp(format!("lowering failed: {e:?}")))
-            .expect("lower_with_cal should succeed");
+        let program = lower_with_cal(
+            &plan,
+            Table::SHAPE,
+            &registry,
+            Some(&cal),
+            BorrowMode::Owned,
+        )
+        .map_err(|e| CodegenError::UnsupportedOp(format!("lowering failed: {e:?}")))
+        .expect("lower_with_cal should succeed");
         let mut backend = CraneliftBackend::new().expect("backend");
         let result = backend.compile_decode_owned(&program, &cal);
         assert!(
@@ -4111,9 +4098,14 @@ mod tests {
         let plan = build_identity_plan(MetadataEntry::SHAPE);
         let registry = vox_schema::SchemaRegistry::new();
         let cal = metadata_calibration();
-        let decode_program =
-            lower_with_cal(&plan, MetadataEntry::SHAPE, &registry, Some(&cal), false)
-                .expect("decode lowering");
+        let decode_program = lower_with_cal(
+            &plan,
+            MetadataEntry::SHAPE,
+            &registry,
+            Some(&cal),
+            BorrowMode::Owned,
+        )
+        .expect("decode lowering");
         assert_no_decode_slow_path(&decode_program);
 
         let encode_program =
@@ -4126,8 +4118,14 @@ mod tests {
         let cal = metadata_calibration();
         let plan = build_identity_plan(Message::SHAPE);
         let registry = vox_schema::SchemaRegistry::new();
-        let decode_program = lower_with_cal(&plan, Message::SHAPE, &registry, Some(&cal), false)
-            .expect("Message decode lowering");
+        let decode_program = lower_with_cal(
+            &plan,
+            Message::SHAPE,
+            &registry,
+            Some(&cal),
+            BorrowMode::Owned,
+        )
+        .expect("Message decode lowering");
         assert_no_decode_slow_path(&decode_program);
         let program = lower_encode(Message::SHAPE, Some(&cal)).expect("Message encode lowering");
         assert_no_encode_slow_path(&program);
@@ -4445,7 +4443,7 @@ mod tests {
             <(GnarlyPayload,)>::SHAPE,
             &registry,
             Some(&cal),
-            false,
+            BorrowMode::Owned,
         )
         .expect("decode lowering");
         assert_no_decode_slow_path(&program);
@@ -4482,9 +4480,14 @@ mod tests {
         let plan = build_identity_plan(GnarlyReply::SHAPE);
         let registry = vox_schema::SchemaRegistry::new();
         let cal = calibration_for(GnarlyReply::SHAPE);
-        let decode_program =
-            lower_with_cal(&plan, GnarlyReply::SHAPE, &registry, Some(&cal), false)
-                .expect("decode lowering");
+        let decode_program = lower_with_cal(
+            &plan,
+            GnarlyReply::SHAPE,
+            &registry,
+            Some(&cal),
+            BorrowMode::Owned,
+        )
+        .expect("decode lowering");
         assert_no_decode_slow_path(&decode_program);
 
         let encode_program = lower_encode(GnarlyReply::SHAPE, Some(&cal)).expect("encode lowering");
@@ -4586,7 +4589,7 @@ mod tests {
         let plan = build_identity_plan(T::SHAPE);
         let registry = vox_schema::SchemaRegistry::new();
         let cal = calibration_for(T::SHAPE);
-        let program = lower_with_cal(&plan, T::SHAPE, &registry, Some(&cal), false)
+        let program = lower_with_cal(&plan, T::SHAPE, &registry, Some(&cal), BorrowMode::Owned)
             .map_err(|e| CodegenError::UnsupportedOp(format!("lowering failed: {e:?}")))?;
         let mut backend = CraneliftBackend::new()?;
         let decode_fn = backend.compile_decode_owned(&program, &cal)?;

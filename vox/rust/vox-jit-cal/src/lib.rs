@@ -29,6 +29,15 @@ pub type ByteOffset = u8;
 /// Sentinel value meaning "this slot does not exist for this container kind".
 pub const OFFSET_ABSENT: ByteOffset = ByteOffset::MAX;
 
+/// Whether a decode stub produces an owned value or a borrowed reference.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BorrowMode {
+    /// Decode data into a fully-owned Rust value (default for decoding).
+    Owned,
+    /// Decode data as a borrowed reference with lifetime tied to the input buffer.
+    Borrowed,
+}
+
 /// Discriminant that tells the JIT which family of container the descriptor
 /// describes, so it can use the right fast-path strategy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
