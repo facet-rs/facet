@@ -2734,9 +2734,6 @@ pub enum EncodeOp {
         src_offset: usize,
     },
 
-    /// Encode `vox_types::MetadataEntry` via a dedicated helper.
-    WriteMetadataEntry { src_offset: usize },
-
     /// Encode a field by delegating to a nested encoder for the exact shape.
     WriteShape {
         shape: &'static Shape,
@@ -2980,11 +2977,6 @@ fn lower_encode_value(
         return Ok(());
     }
 
-    if shape.type_identifier == "MetadataEntry" {
-        program.emit(block, EncodeOp::WriteMetadataEntry { src_offset });
-        return Ok(());
-    }
-
     // Scalars
     if let Some(scalar) = shape.scalar_type() {
         match scalar {
@@ -3080,10 +3072,6 @@ fn lower_encode_pointer(
 }
 
 fn should_inline_loop_body(shape: &'static Shape) -> bool {
-    if shape.type_identifier == "MetadataEntry" {
-        return true;
-    }
-
     if let Some(scalar) = shape.scalar_type() {
         let _ = scalar;
         return true;

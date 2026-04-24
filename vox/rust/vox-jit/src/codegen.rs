@@ -205,10 +205,6 @@ impl CraneliftBackend {
             "vox_jit_encode_bytes_like",
             crate::helpers::vox_jit_encode_bytes_like as *const u8,
         );
-        jit_builder.symbol(
-            "vox_jit_encode_metadata_entry",
-            crate::helpers::vox_jit_encode_metadata_entry as *const u8,
-        );
 
         let module = JITModule::new(jit_builder);
 
@@ -2799,6 +2795,14 @@ struct EncodeCtx_<'a, 'b> {
     block_map: Vec<Option<Block>>,
     /// Block indices inlined into the parent (element loops).
     inlined_blocks: std::collections::HashSet<usize>,
+    /// Local SSA cache of `ctx.buf_ptr`. Kept in sync via flush before, and
+    /// reload after, any helper call that may touch the buffer.
+    var_buf_ptr: Variable,
+    /// Local SSA cache of `ctx.buf_len`. Flushed before helper calls and on
+    /// successful return; bumped purely in registers on scalar writes.
+    var_buf_len: Variable,
+    /// Local SSA cache of `ctx.buf_cap`. Reloaded after grow / helper calls.
+    var_buf_cap: Variable,
 }
 
 impl<'a, 'b> EncodeCtx_<'a, 'b> {
@@ -2815,13 +2819,17 @@ impl<'a, 'b> EncodeCtx_<'a, 'b> {
         }
     }
 
-    /// Return `true` (success).
+    /// Return `true` (success). Flushes the buf_len cache to ctx so the caller
+    /// observes the final write offset.
     fn return_ok(&mut self) {
+        self.flush_buf_len_to_ctx();
         let ok = self.b.ins().iconst(types::I8, 1);
         self.b.ins().return_(&[ok]);
     }
 
-    /// Return `false` (failure — OOM).
+    /// Return `false` (failure — OOM). Does NOT flush buf_len: on failure paths
+    /// the authoritative value is whatever the last helper/grow wrote into ctx,
+    /// and our local cache may be stale.
     fn return_fail(&mut self) {
         let fail = self.b.ins().iconst(types::I8, 0);
         self.b.ins().return_(&[fail]);
@@ -2839,40 +2847,58 @@ impl<'a, 'b> EncodeCtx_<'a, 'b> {
         core::mem::offset_of!(EncodeCtx, buf_cap) as i32
     }
 
+    /// Read the cached `buf_ptr` (no memory load on the hot path).
     fn load_buf_ptr(&mut self) -> Value {
-        self.b.ins().load(
+        self.b.use_var(self.var_buf_ptr)
+    }
+
+    /// Read the cached `buf_len`.
+    fn load_buf_len(&mut self) -> Value {
+        self.b.use_var(self.var_buf_len)
+    }
+
+    /// Read the cached `buf_cap`.
+    fn load_buf_cap(&mut self) -> Value {
+        self.b.use_var(self.var_buf_cap)
+    }
+
+    /// Update the cached `buf_len` (no memory store on the hot path).
+    fn store_buf_len(&mut self, new_len: Value) {
+        self.b.def_var(self.var_buf_len, new_len);
+    }
+
+    /// Publish the cached buf_len back to `ctx.buf_len`.
+    fn flush_buf_len_to_ctx(&mut self) {
+        let len = self.b.use_var(self.var_buf_len);
+        self.b
+            .ins()
+            .store(MemFlags::trusted(), len, self.enc_ctx, Self::off_buf_len());
+    }
+
+    /// Reload all three buf_* fields from ctx into the local cache. Use after
+    /// a helper call that may have mutated the buffer (and potentially grown it).
+    fn reload_buf_state(&mut self) {
+        let ptr = self.b.ins().load(
             self.ptr_ty,
             MemFlags::trusted(),
             self.enc_ctx,
             Self::off_buf_ptr(),
-        )
-    }
-
-    fn load_buf_len(&mut self) -> Value {
-        self.b.ins().load(
+        );
+        let len = self.b.ins().load(
             self.ptr_ty,
             MemFlags::trusted(),
             self.enc_ctx,
             Self::off_buf_len(),
-        )
-    }
-
-    fn load_buf_cap(&mut self) -> Value {
-        self.b.ins().load(
+        );
+        let cap = self.b.ins().load(
             self.ptr_ty,
             MemFlags::trusted(),
             self.enc_ctx,
             Self::off_buf_cap(),
-        )
-    }
-
-    fn store_buf_len(&mut self, new_len: Value) {
-        self.b.ins().store(
-            MemFlags::trusted(),
-            new_len,
-            self.enc_ctx,
-            Self::off_buf_len(),
         );
+        self.b.def_var(self.var_buf_ptr, ptr);
+        self.b.def_var(self.var_buf_len, len);
+        self.b.def_var(self.var_buf_cap, cap);
     }
 
     /// Emit a call to `vox_jit_buf_grow(ctx, needed)`. Returns its `bool` result.
@@ -2894,12 +2920,12 @@ impl<'a, 'b> EncodeCtx_<'a, 'b> {
         self.b.inst_results(call)[0]
     }
 
-    /// Ensure `needed` bytes of capacity remain after `buf_len`. On shortfall,
-    /// call `vox_jit_buf_grow`; if grow fails, bail out via `return_fail`.
+    /// Ensure `needed` bytes of capacity remain after the cached `buf_len`.
+    /// On shortfall, flush `buf_len` to ctx, call `vox_jit_buf_grow`, reload
+    /// `buf_ptr` / `buf_cap` (grow may have reallocated); if grow fails, bail
+    /// via `return_fail`.
     ///
-    /// After this call returns, the current block is the fast-path continuation
-    /// where writes can proceed. The return value is `(buf_ptr, buf_len)`
-    /// sampled after any grow — `buf_ptr` may have been reallocated.
+    /// Returns `(buf_ptr, buf_len)` valid on the fast-path continuation.
     fn reserve(&mut self, needed: Value) -> (Value, Value) {
         let len = self.load_buf_len();
         let cap = self.load_buf_cap();
@@ -2908,38 +2934,42 @@ impl<'a, 'b> EncodeCtx_<'a, 'b> {
 
         let grow_block = self.fresh_block();
         let fast_block = self.fresh_block();
-        self.b.append_block_param(fast_block, self.ptr_ty);
 
-        self.b.ins().brif(
-            lacking,
-            grow_block,
-            &[],
-            fast_block,
-            &[BlockArg::Value(len)],
-        );
+        self.b.ins().brif(lacking, grow_block, &[], fast_block, &[]);
 
-        // Slow path: grow, then branch to fast_block or fail_block.
+        // Slow path: publish len to ctx, grow, reload ptr/cap, branch to fast or fail.
         self.b.switch_to_block(grow_block);
         self.b.seal_block(grow_block);
+        self.flush_buf_len_to_ctx();
         let grow_ok = self.emit_call_grow(needed);
-        let fail_block = self.fresh_block();
-        self.b.ins().brif(
-            grow_ok,
-            fast_block,
-            &[BlockArg::Value(len)],
-            fail_block,
-            &[],
+        let new_ptr = self.b.ins().load(
+            self.ptr_ty,
+            MemFlags::trusted(),
+            self.enc_ctx,
+            Self::off_buf_ptr(),
         );
+        let new_cap = self.b.ins().load(
+            self.ptr_ty,
+            MemFlags::trusted(),
+            self.enc_ctx,
+            Self::off_buf_cap(),
+        );
+        self.b.def_var(self.var_buf_ptr, new_ptr);
+        self.b.def_var(self.var_buf_cap, new_cap);
+        let fail_block = self.fresh_block();
+        self.b.ins().brif(grow_ok, fast_block, &[], fail_block, &[]);
+
         self.b.switch_to_block(fail_block);
         self.b.seal_block(fail_block);
         self.return_fail();
 
-        // Fast path: all predecessors have been emitted.
+        // Fast path: Cranelift will phi buf_ptr/buf_cap between the direct and
+        // grow predecessors automatically via Variable SSA.
         self.b.switch_to_block(fast_block);
         self.b.seal_block(fast_block);
-        let len_p = self.b.block_params(fast_block)[0];
         let ptr = self.load_buf_ptr();
-        (ptr, len_p)
+        let len = self.load_buf_len();
+        (ptr, len)
     }
 
     /// Append one byte to the encode buffer. Grows inline on shortfall.
@@ -3063,6 +3093,27 @@ fn emit_encode_function(
     let enc_ctx = builder.block_params(entry)[0];
     let src_ptr = builder.block_params(entry)[1];
 
+    // Cache ctx.buf_{ptr,len,cap} in locals so the hot path is pure-register
+    // bump+store. Flushed to ctx only around helper calls and on return_ok.
+    let var_buf_ptr = builder.declare_var(ptr_ty);
+    let var_buf_len = builder.declare_var(ptr_ty);
+    let var_buf_cap = builder.declare_var(ptr_ty);
+    let off_ptr = core::mem::offset_of!(EncodeCtx, buf_ptr) as i32;
+    let off_len = core::mem::offset_of!(EncodeCtx, buf_len) as i32;
+    let off_cap = core::mem::offset_of!(EncodeCtx, buf_cap) as i32;
+    let init_ptr = builder
+        .ins()
+        .load(ptr_ty, MemFlags::trusted(), enc_ctx, off_ptr);
+    let init_len = builder
+        .ins()
+        .load(ptr_ty, MemFlags::trusted(), enc_ctx, off_len);
+    let init_cap = builder
+        .ins()
+        .load(ptr_ty, MemFlags::trusted(), enc_ctx, off_cap);
+    builder.def_var(var_buf_ptr, init_ptr);
+    builder.def_var(var_buf_len, init_len);
+    builder.def_var(var_buf_cap, init_cap);
+
     let mut block_map: Vec<Option<Block>> = (0..program.blocks.len())
         .map(|_| Some(builder.create_block()))
         .collect();
@@ -3076,6 +3127,9 @@ fn emit_encode_function(
         descriptors,
         block_map: block_map.into_iter().collect(),
         inlined_blocks: std::collections::HashSet::new(),
+        var_buf_ptr,
+        var_buf_len,
+        var_buf_cap,
     };
 
     emit_encode_block(&mut ectx, program, 0)?;
@@ -3171,15 +3225,6 @@ fn emit_encode_op(
                 *shape,
                 *src_offset,
                 crate::helpers::vox_jit_encode_bytes_like as *const (),
-            );
-            Ok(false)
-        }
-
-        EncodeOp::WriteMetadataEntry { src_offset } => {
-            emit_encode_simple_helper_op(
-                ectx,
-                *src_offset,
-                crate::helpers::vox_jit_encode_metadata_entry as *const (),
             );
             Ok(false)
         }
@@ -3485,42 +3530,15 @@ fn emit_encode_shape_ptr_with_helper(
     });
     let callee = ectx.b.ins().iconst(ectx.ptr_ty, helper as i64);
     let shape_ptr = ectx.b.ins().iconst(ectx.ptr_ty, shape as *const _ as i64);
+    // Publish cached buf_len so the helper sees the current write offset; it
+    // mutates ctx.buf_* directly, so reload all three after it returns.
+    ectx.flush_buf_len_to_ctx();
     let call = ectx
         .b
         .ins()
         .call_indirect(sig, callee, &[ectx.enc_ctx, src_ptr, shape_ptr]);
     let ok = ectx.b.inst_results(call)[0];
-
-    let fail_block = ectx.fresh_block();
-    let cont_block = ectx.fresh_block();
-    ectx.b.ins().brif(ok, cont_block, &[], fail_block, &[]);
-
-    ectx.b.switch_to_block(fail_block);
-    ectx.b.seal_block(fail_block);
-    ectx.return_fail();
-
-    ectx.b.switch_to_block(cont_block);
-    ectx.b.seal_block(cont_block);
-}
-
-fn emit_encode_simple_helper_op(
-    ectx: &mut EncodeCtx_<'_, '_>,
-    src_offset: usize,
-    helper: *const (),
-) {
-    let src_ptr = ectx.src_at(src_offset);
-    let call_conv = ectx.b.func.signature.call_conv;
-    let sig = ectx.b.func.import_signature(Signature {
-        params: vec![AbiParam::new(ectx.ptr_ty), AbiParam::new(ectx.ptr_ty)],
-        returns: vec![AbiParam::new(types::I8)],
-        call_conv,
-    });
-    let callee = ectx.b.ins().iconst(ectx.ptr_ty, helper as i64);
-    let call = ectx
-        .b
-        .ins()
-        .call_indirect(sig, callee, &[ectx.enc_ctx, src_ptr]);
-    let ok = ectx.b.inst_results(call)[0];
+    ectx.reload_buf_state();
 
     let fail_block = ectx.fresh_block();
     let cont_block = ectx.fresh_block();

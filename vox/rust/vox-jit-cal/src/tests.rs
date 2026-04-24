@@ -333,15 +333,8 @@ mod tests {
         let mut reg = CalibrationRegistry::new();
         reg.with_common();
 
-        // Registry must have entries (at minimum Vec<u8>, String, Box<u8>, Box<[u8]>).
-        // We don't assert exact count — future additions should not break this test.
-        let desc_count = reg.len();
-        assert!(
-            desc_count >= 4,
-            "expected at least 4 descriptors, got {desc_count}"
-        );
-
-        // All registered descriptors must have sane sizes.
+        // `with_common` now only calibrates `String`. Vec<T>, Box<T>, and
+        // Box<[T]> are handled on-demand via `get_or_calibrate_by_shape`.
         for (i, (_, d)) in reg.iter().enumerate() {
             assert!(d.size > 0, "descriptor {i}: size must be > 0");
             assert!(d.align > 0, "descriptor {i}: align must be > 0");
@@ -351,24 +344,9 @@ mod tests {
                 "descriptor {i}: empty_bytes length must equal size"
             );
         }
-
-        // Spot-check kinds are represented.
-        let has_vec = reg.iter().any(|(_, d)| d.kind == ContainerKind::Vec);
-        let has_string = reg.iter().any(|(_, d)| d.kind == ContainerKind::String);
-        let has_box_owned = reg.iter().any(|(_, d)| d.kind == ContainerKind::BoxOwned);
-        let has_box_slice = reg.iter().any(|(_, d)| d.kind == ContainerKind::BoxSlice);
         assert!(
-            has_vec,
-            "with_common must include at least one Vec descriptor"
-        );
-        assert!(has_string, "with_common must include a String descriptor");
-        assert!(
-            has_box_owned,
-            "with_common must include at least one BoxOwned descriptor"
-        );
-        assert!(
-            has_box_slice,
-            "with_common must include at least one BoxSlice descriptor"
+            reg.iter().any(|(_, d)| d.kind == ContainerKind::String),
+            "with_common must include a String descriptor"
         );
     }
 

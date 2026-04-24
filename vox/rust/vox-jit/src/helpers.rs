@@ -145,34 +145,36 @@ pub unsafe extern "C" fn vox_jit_encode_slow_path(
         std::process::abort();
     }
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let bytes = if let Some(adapter) = shape.opaque_adapter {
-            let mapped = unsafe { (adapter.serialize)(PtrConst::new(src_ptr)) };
-            if let Some(bytes) =
-                unsafe { vox_postcard::raw::try_decode_passthrough_bytes(mapped.ptr, mapped.shape) }
-            {
-                let mut out = Vec::with_capacity(4 + bytes.len());
-                out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
-                out.extend_from_slice(bytes);
-                out
-            } else if let Some(result) =
-                crate::global_runtime().try_encode_ptr(mapped.ptr, mapped.shape)
-            {
-                let inner = result.ok()?;
-                let mut out = Vec::with_capacity(4 + inner.len());
-                out.extend_from_slice(&(inner.len() as u32).to_le_bytes());
-                out.extend_from_slice(&inner);
-                out
-            } else {
-                vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape).ok()?
-            }
+    let bytes = if let Some(adapter) = shape.opaque_adapter {
+        let mapped = unsafe { (adapter.serialize)(PtrConst::new(src_ptr)) };
+        if let Some(bytes) =
+            unsafe { vox_postcard::raw::try_decode_passthrough_bytes(mapped.ptr, mapped.shape) }
+        {
+            let mut out = Vec::with_capacity(4 + bytes.len());
+            out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            out.extend_from_slice(bytes);
+            out
+        } else if let Some(result) =
+            crate::global_runtime().try_encode_ptr(mapped.ptr, mapped.shape)
+        {
+            let Ok(inner) = result else { return false };
+            let mut out = Vec::with_capacity(4 + inner.len());
+            out.extend_from_slice(&(inner.len() as u32).to_le_bytes());
+            out.extend_from_slice(&inner);
+            out
         } else {
-            vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape).ok()?
-        };
-        unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }.then_some(())
-    }));
-
-    matches!(result, Ok(Some(())))
+            match vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape) {
+                Ok(v) => v,
+                Err(_) => return false,
+            }
+        }
+    } else {
+        match vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape) {
+            Ok(v) => v,
+            Err(_) => return false,
+        }
+    };
+    unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
 }
 
 fn handle_pure_jit_encode_miss(kind: &str, shape: &'static facet_core::Shape) -> Option<()> {
@@ -200,34 +202,36 @@ pub unsafe extern "C" fn vox_jit_encode_opaque(
     src_ptr: *const u8,
     shape: &'static facet_core::Shape,
 ) -> bool {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let adapter = shape.opaque_adapter?;
-        let mapped = unsafe { (adapter.serialize)(PtrConst::new(src_ptr)) };
+    let Some(adapter) = shape.opaque_adapter else {
+        return false;
+    };
+    let mapped = unsafe { (adapter.serialize)(PtrConst::new(src_ptr)) };
 
-        if let Some(bytes) =
-            unsafe { vox_postcard::raw::try_decode_passthrough_bytes(mapped.ptr, mapped.shape) }
-        {
-            unsafe { vox_jit_buf_push_bytes(ctx, (bytes.len() as u32).to_le_bytes().as_ptr(), 4) }
-                .then_some(())?;
-            return unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
-                .then_some(());
+    if let Some(bytes) =
+        unsafe { vox_postcard::raw::try_decode_passthrough_bytes(mapped.ptr, mapped.shape) }
+    {
+        if !unsafe { vox_jit_buf_push_bytes(ctx, (bytes.len() as u32).to_le_bytes().as_ptr(), 4) } {
+            return false;
         }
+        return unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) };
+    }
 
-        if let Some(result) = crate::global_runtime().try_encode_ptr(mapped.ptr, mapped.shape) {
-            let inner = result.ok()?;
-            unsafe { vox_jit_buf_push_bytes(ctx, (inner.len() as u32).to_le_bytes().as_ptr(), 4) }
-                .then_some(())?;
-            return unsafe { vox_jit_buf_push_bytes(ctx, inner.as_ptr(), inner.len()) }
-                .then_some(());
+    if let Some(result) = crate::global_runtime().try_encode_ptr(mapped.ptr, mapped.shape) {
+        let Ok(inner) = result else { return false };
+        if !unsafe { vox_jit_buf_push_bytes(ctx, (inner.len() as u32).to_le_bytes().as_ptr(), 4) } {
+            return false;
         }
+        return unsafe { vox_jit_buf_push_bytes(ctx, inner.as_ptr(), inner.len()) };
+    }
 
-        handle_pure_jit_encode_miss("opaque", shape)?;
+    if handle_pure_jit_encode_miss("opaque", shape).is_none() {
+        return false;
+    }
 
-        let bytes = vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape).ok()?;
-        unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }.then_some(())
-    }));
-
-    matches!(result, Ok(Some(())))
+    let Ok(bytes) = vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape) else {
+        return false;
+    };
+    unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
 }
 
 /// Encode a proxy field by converting to the proxy value and delegating the
@@ -238,36 +242,41 @@ pub unsafe extern "C" fn vox_jit_encode_proxy(
     src_ptr: *const u8,
     shape: &'static facet_core::Shape,
 ) -> bool {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let proxy_def = shape.proxy?;
-        let proxy_shape = proxy_def.shape;
-        let proxy_layout = proxy_shape.layout.sized_layout().ok()?;
-        let proxy_uninit = facet_core::alloc_for_layout(proxy_layout);
-        let proxy_ptr =
-            unsafe { (proxy_def.convert_out)(PtrConst::new(src_ptr), proxy_uninit) }.ok()?;
+    let Some(proxy_def) = shape.proxy else {
+        return false;
+    };
+    let proxy_shape = proxy_def.shape;
+    let Ok(proxy_layout) = proxy_shape.layout.sized_layout() else {
+        return false;
+    };
+    let proxy_uninit = facet_core::alloc_for_layout(proxy_layout);
+    let Ok(proxy_ptr) = (unsafe { (proxy_def.convert_out)(PtrConst::new(src_ptr), proxy_uninit) })
+    else {
+        return false;
+    };
 
-        let encode_result = if let Some(result) =
-            crate::global_runtime().try_encode_ptr(proxy_ptr.as_const(), proxy_shape)
-        {
-            result.ok().and_then(|bytes| {
-                unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }.then_some(())
-            })
-        } else {
-            handle_pure_jit_encode_miss("proxy", shape)?;
-            let bytes =
-                vox_postcard::serialize::to_vec_dynamic(proxy_ptr.as_const(), proxy_shape).ok()?;
-            unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }.then_some(())
-        };
-
-        unsafe {
-            let _ = proxy_shape.call_drop_in_place(proxy_ptr);
-            facet_core::dealloc_for_layout(proxy_ptr, proxy_layout);
+    let ok = if let Some(result) =
+        crate::global_runtime().try_encode_ptr(proxy_ptr.as_const(), proxy_shape)
+    {
+        match result {
+            Ok(bytes) => unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) },
+            Err(_) => false,
         }
+    } else if handle_pure_jit_encode_miss("proxy", shape).is_none() {
+        false
+    } else {
+        match vox_postcard::serialize::to_vec_dynamic(proxy_ptr.as_const(), proxy_shape) {
+            Ok(bytes) => unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) },
+            Err(_) => false,
+        }
+    };
 
-        encode_result
-    }));
+    unsafe {
+        let _ = proxy_shape.call_drop_in_place(proxy_ptr);
+        facet_core::dealloc_for_layout(proxy_ptr, proxy_layout);
+    }
 
-    matches!(result, Ok(Some(())))
+    ok
 }
 
 /// Encode a `Result<T, E>` by selecting the active arm via the result vtable,
@@ -279,46 +288,44 @@ pub unsafe extern "C" fn vox_jit_encode_result(
     src_ptr: *const u8,
     shape: &'static facet_core::Shape,
 ) -> bool {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let facet_core::Def::Result(result_def) = shape.def else {
-            return None;
-        };
-        let result_ptr = PtrConst::new(src_ptr);
+    let facet_core::Def::Result(result_def) = shape.def else {
+        return false;
+    };
+    let result_ptr = PtrConst::new(src_ptr);
 
-        if unsafe { (result_def.vtable.is_ok)(result_ptr) } {
-            unsafe { vox_jit_buf_write_varint(ctx, 0) }.then_some(())?;
-            let ok_ptr = unsafe { (result_def.vtable.get_ok)(result_ptr) };
-            if ok_ptr.is_null() {
-                return None;
-            }
-            if let Some(result) =
-                crate::global_runtime().try_encode_ptr(PtrConst::new(ok_ptr), result_def.t)
-            {
-                let inner = result.ok()?;
-                return unsafe { vox_jit_buf_push_bytes(ctx, inner.as_ptr(), inner.len()) }
-                    .then_some(());
-            }
-            handle_pure_jit_encode_miss("result Ok", result_def.t)?;
-            None
-        } else {
-            unsafe { vox_jit_buf_write_varint(ctx, 1) }.then_some(())?;
-            let err_ptr = unsafe { (result_def.vtable.get_err)(result_ptr) };
-            if err_ptr.is_null() {
-                return None;
-            }
-            if let Some(result) =
-                crate::global_runtime().try_encode_ptr(PtrConst::new(err_ptr), result_def.e)
-            {
-                let inner = result.ok()?;
-                return unsafe { vox_jit_buf_push_bytes(ctx, inner.as_ptr(), inner.len()) }
-                    .then_some(());
-            }
-            handle_pure_jit_encode_miss("result Err", result_def.e)?;
-            None
+    if unsafe { (result_def.vtable.is_ok)(result_ptr) } {
+        if !unsafe { vox_jit_buf_write_varint(ctx, 0) } {
+            return false;
         }
-    }));
-
-    matches!(result, Ok(Some(())))
+        let ok_ptr = unsafe { (result_def.vtable.get_ok)(result_ptr) };
+        if ok_ptr.is_null() {
+            return false;
+        }
+        if let Some(result) =
+            crate::global_runtime().try_encode_ptr(PtrConst::new(ok_ptr), result_def.t)
+        {
+            let Ok(inner) = result else { return false };
+            return unsafe { vox_jit_buf_push_bytes(ctx, inner.as_ptr(), inner.len()) };
+        }
+        let _ = handle_pure_jit_encode_miss("result Ok", result_def.t);
+        false
+    } else {
+        if !unsafe { vox_jit_buf_write_varint(ctx, 1) } {
+            return false;
+        }
+        let err_ptr = unsafe { (result_def.vtable.get_err)(result_ptr) };
+        if err_ptr.is_null() {
+            return false;
+        }
+        if let Some(result) =
+            crate::global_runtime().try_encode_ptr(PtrConst::new(err_ptr), result_def.e)
+        {
+            let Ok(inner) = result else { return false };
+            return unsafe { vox_jit_buf_push_bytes(ctx, inner.as_ptr(), inner.len()) };
+        }
+        let _ = handle_pure_jit_encode_miss("result Err", result_def.e);
+        false
+    }
 }
 
 /// Initialize a `Cow<[u8]>` with owned bytes.
@@ -414,27 +421,23 @@ pub unsafe extern "C" fn vox_jit_encode_string_like(
     src_ptr: *const u8,
     shape: &'static facet_core::Shape,
 ) -> bool {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        use facet_core::ScalarType;
+    use facet_core::ScalarType;
 
-        let bytes: &[u8] = match shape.scalar_type() {
-            Some(ScalarType::String) if shape.is_type::<String>() => unsafe {
-                (&*(src_ptr as *const String)).as_bytes()
-            },
-            Some(ScalarType::Str) => unsafe { (&*(src_ptr as *const &str)).as_bytes() },
-            Some(ScalarType::CowStr) => unsafe {
-                (&*(src_ptr as *const std::borrow::Cow<'static, str>)).as_bytes()
-            },
-            _ => return None,
-        };
+    let bytes: &[u8] = match shape.scalar_type() {
+        Some(ScalarType::String) if shape.is_type::<String>() => unsafe {
+            (&*(src_ptr as *const String)).as_bytes()
+        },
+        Some(ScalarType::Str) => unsafe { (&*(src_ptr as *const &str)).as_bytes() },
+        Some(ScalarType::CowStr) => unsafe {
+            (&*(src_ptr as *const std::borrow::Cow<'static, str>)).as_bytes()
+        },
+        _ => return false,
+    };
 
-        if !unsafe { vox_jit_buf_write_varint(ctx, bytes.len() as u64) } {
-            return None;
-        }
-        unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }.then_some(())
-    }));
-
-    matches!(result, Ok(Some(())))
+    if !unsafe { vox_jit_buf_write_varint(ctx, bytes.len() as u64) } {
+        return false;
+    }
+    unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
 }
 
 /// Encode a field by delegating to a nested encoder for the exact shape.
@@ -444,21 +447,19 @@ pub unsafe extern "C" fn vox_jit_encode_shape(
     src_ptr: *const u8,
     shape: &'static facet_core::Shape,
 ) -> bool {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if let Some(result) = crate::global_runtime().try_encode_ptr(PtrConst::new(src_ptr), shape)
-        {
-            let bytes = result.ok()?;
-            return unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
-                .then_some(());
-        }
+    if let Some(result) = crate::global_runtime().try_encode_ptr(PtrConst::new(src_ptr), shape) {
+        let Ok(bytes) = result else { return false };
+        return unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) };
+    }
 
-        handle_pure_jit_encode_miss("nested", shape)?;
+    if handle_pure_jit_encode_miss("nested", shape).is_none() {
+        return false;
+    }
 
-        let bytes = vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape).ok()?;
-        unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }.then_some(())
-    }));
-
-    matches!(result, Ok(Some(())))
+    let Ok(bytes) = vox_postcard::serialize::to_vec_dynamic(PtrConst::new(src_ptr), shape) else {
+        return false;
+    };
+    unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
 }
 
 /// Encode a bytes-like shape (`Cow<[u8]>`, `&[u8]`) without using the
@@ -469,82 +470,18 @@ pub unsafe extern "C" fn vox_jit_encode_bytes_like(
     src_ptr: *const u8,
     shape: &'static facet_core::Shape,
 ) -> bool {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let bytes: &[u8] = match shape.def {
-            facet_core::Def::Pointer(ptr_def)
-                if ptr_def.known == Some(facet_core::KnownPointer::Cow) =>
-            unsafe { (&*(src_ptr as *const std::borrow::Cow<'static, [u8]>)).as_ref() },
-            facet_core::Def::Pointer(ptr_def)
-                if ptr_def.known == Some(facet_core::KnownPointer::SharedReference) =>
-            unsafe { &*(src_ptr as *const &[u8]) },
-            _ => return None,
-        };
+    let bytes: &[u8] = match shape.def {
+        facet_core::Def::Pointer(ptr_def)
+            if ptr_def.known == Some(facet_core::KnownPointer::Cow) =>
+        unsafe { (&*(src_ptr as *const std::borrow::Cow<'static, [u8]>)).as_ref() },
+        facet_core::Def::Pointer(ptr_def)
+            if ptr_def.known == Some(facet_core::KnownPointer::SharedReference) =>
+        unsafe { &*(src_ptr as *const &[u8]) },
+        _ => return false,
+    };
 
-        if !unsafe { vox_jit_buf_write_varint(ctx, bytes.len() as u64) } {
-            return None;
-        }
-        unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }.then_some(())
-    }));
-
-    matches!(result, Ok(Some(())))
-}
-
-/// Encode `vox_types::MetadataEntry` without the reflective walker.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn vox_jit_encode_metadata_entry(
-    ctx: *mut EncodeCtx,
-    src_ptr: *const u8,
-) -> bool {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        use vox_types::MetadataValue;
-
-        let entry = unsafe { &*(src_ptr as *const vox_types::MetadataEntry<'static>) };
-
-        if !unsafe { vox_jit_buf_write_varint(ctx, entry.key.len() as u64) } {
-            return None;
-        }
-        if !unsafe { vox_jit_buf_push_bytes(ctx, entry.key.as_bytes().as_ptr(), entry.key.len()) } {
-            return None;
-        }
-
-        match &entry.value {
-            MetadataValue::String(s) => {
-                if !unsafe { vox_jit_buf_write_varint(ctx, 0) } {
-                    return None;
-                }
-                let s = s.as_ref();
-                if !unsafe { vox_jit_buf_write_varint(ctx, s.len() as u64) } {
-                    return None;
-                }
-                if !unsafe { vox_jit_buf_push_bytes(ctx, s.as_bytes().as_ptr(), s.len()) } {
-                    return None;
-                }
-            }
-            MetadataValue::Bytes(b) => {
-                if !unsafe { vox_jit_buf_write_varint(ctx, 1) } {
-                    return None;
-                }
-                let b = b.as_ref();
-                if !unsafe { vox_jit_buf_write_varint(ctx, b.len() as u64) } {
-                    return None;
-                }
-                if !unsafe { vox_jit_buf_push_bytes(ctx, b.as_ptr(), b.len()) } {
-                    return None;
-                }
-            }
-            MetadataValue::U64(n) => {
-                if !unsafe { vox_jit_buf_write_varint(ctx, 2) } {
-                    return None;
-                }
-                if !unsafe { vox_jit_buf_write_varint(ctx, *n) } {
-                    return None;
-                }
-            }
-        }
-
-        let flags = unsafe { *(std::ptr::addr_of!(entry.flags) as *const u64) };
-        unsafe { vox_jit_buf_write_varint(ctx, flags) }.then_some(())
-    }));
-
-    matches!(result, Ok(Some(())))
+    if !unsafe { vox_jit_buf_write_varint(ctx, bytes.len() as u64) } {
+        return false;
+    }
+    unsafe { vox_jit_buf_push_bytes(ctx, bytes.as_ptr(), bytes.len()) }
 }

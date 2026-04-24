@@ -621,6 +621,21 @@ fn calibrate_box_slice_zst<T>(
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DescriptorHandle(pub u32);
 
+/// T-invariant layout of the `Vec<T>` family.
+///
+/// `Vec<T>`'s header is three pointer-width words — `(ptr, len, cap)` in some
+/// slot order — and the layout is identical for every `T`. Only the element
+/// size/align varies. Once we've probed one `Vec<T>` we cache these offsets
+/// and synthesize every subsequent `Vec<U>` descriptor.
+#[derive(Clone, Copy, Debug)]
+struct VecFamilyLayout {
+    size: usize,
+    align: usize,
+    ptr_offset: ByteOffset,
+    len_offset: ByteOffset,
+    cap_offset: ByteOffset,
+}
+
 /// Process-local registry of calibrated opaque descriptors.
 ///
 /// Created once per process; never persisted.
@@ -634,6 +649,8 @@ pub struct CalibrationRegistry {
     /// The String descriptor handle, stored separately so that IR lowering can
     /// retrieve it without knowing `String::SHAPE` statically.
     string_handle: Option<DescriptorHandle>,
+    /// Cached `Vec<T>` header layout after the first successful probe.
+    vec_family: Option<VecFamilyLayout>,
 }
 
 impl CalibrationRegistry {
@@ -642,6 +659,7 @@ impl CalibrationRegistry {
             descriptors: Vec::new(),
             shape_map: std::collections::HashMap::new(),
             string_handle: None,
+            vec_family: None,
         }
     }
 
@@ -684,8 +702,14 @@ impl CalibrationRegistry {
     where
         T: Sized,
     {
+        if let Some(desc) = self.synthesize_vec_desc::<T>() {
+            return Some(self.register_for_shape(shape, desc));
+        }
         match calibrate_vec::<T>() {
-            CalibrationResult::Ok(desc) => Some(self.register_for_shape(shape, desc)),
+            CalibrationResult::Ok(desc) => {
+                self.cache_vec_family(&desc);
+                Some(self.register_for_shape(shape, desc))
+            }
             CalibrationResult::Unsupported { reason } => {
                 eprintln!("vox-jit-cal: Vec<T> calibration unsupported: {reason}");
                 None
@@ -721,15 +745,89 @@ impl CalibrationRegistry {
 
     /// Calibrate `Vec<T>` if not already done and return the handle, or
     /// `None` if calibration fails (caller must fall back to interpreter).
+    ///
+    /// Uses the cached family layout after the first successful probe.
     pub fn calibrate_vec<T>(&mut self) -> Option<DescriptorHandle> {
+        if let Some(desc) = self.synthesize_vec_desc::<T>() {
+            return Some(self.register(desc));
+        }
         match calibrate_vec::<T>() {
-            CalibrationResult::Ok(desc) => Some(self.register(desc)),
+            CalibrationResult::Ok(desc) => {
+                self.cache_vec_family(&desc);
+                Some(self.register(desc))
+            }
             CalibrationResult::Unsupported { reason } => {
-                // No forcing — log and return None so the caller falls back.
                 eprintln!("vox-jit-cal: Vec<T> calibration unsupported: {reason}");
                 None
             }
         }
+    }
+
+    /// Synthesize a `Vec<T>` descriptor from the cached family layout, without
+    /// probing. Returns `None` if the family isn't cached yet or if `Vec<T>`'s
+    /// container size/align doesn't match the cached family (e.g., a pointer
+    /// width mismatch that shouldn't happen in practice).
+    fn synthesize_vec_desc<T>(&self) -> Option<OpaqueDescriptor> {
+        let container_size = std::mem::size_of::<Vec<T>>();
+        let container_align = std::mem::align_of::<Vec<T>>();
+        let elem_size = std::mem::size_of::<T>();
+        let elem_align = std::mem::align_of::<T>();
+        self.synthesize_vec_desc_from_layouts(
+            container_size,
+            container_align,
+            elem_size,
+            elem_align,
+        )
+    }
+
+    fn synthesize_vec_desc_from_layouts(
+        &self,
+        container_size: usize,
+        container_align: usize,
+        elem_size: usize,
+        elem_align: usize,
+    ) -> Option<OpaqueDescriptor> {
+        let f = self.vec_family?;
+        if f.size != container_size || f.align != container_align {
+            return None;
+        }
+        let ptr_width = std::mem::size_of::<usize>();
+        let mut empty_bytes = vec![0u8; f.size];
+        // `Vec::<T>::new()` stores `NonNull::<T>::dangling()` — which is
+        // `align_of::<T>()` as a raw address — in the ptr slot. `len` is 0.
+        // `cap` is 0 for non-ZSTs; for ZSTs modern stdlib uses `usize::MAX`.
+        let ptr_sentinel: usize = elem_align.max(1);
+        let cap_sentinel: usize = if elem_size == 0 { usize::MAX } else { 0 };
+        let ptr_off = f.ptr_offset as usize;
+        let cap_off = f.cap_offset as usize;
+        empty_bytes[ptr_off..ptr_off + ptr_width].copy_from_slice(&ptr_sentinel.to_ne_bytes());
+        empty_bytes[cap_off..cap_off + ptr_width].copy_from_slice(&cap_sentinel.to_ne_bytes());
+        Some(OpaqueDescriptor {
+            kind: ContainerKind::Vec,
+            size: f.size,
+            align: f.align,
+            empty_bytes,
+            ptr_offset: f.ptr_offset,
+            len_offset: f.len_offset,
+            cap_offset: f.cap_offset,
+            elem_size,
+            elem_align,
+        })
+    }
+
+    /// Record the `Vec<T>` family layout from a successful probe. No-op if
+    /// already cached or if the descriptor isn't a Vec.
+    fn cache_vec_family(&mut self, desc: &OpaqueDescriptor) {
+        if desc.kind != ContainerKind::Vec || self.vec_family.is_some() {
+            return;
+        }
+        self.vec_family = Some(VecFamilyLayout {
+            size: desc.size,
+            align: desc.align,
+            ptr_offset: desc.ptr_offset,
+            len_offset: desc.len_offset,
+            cap_offset: desc.cap_offset,
+        });
     }
 
     /// Calibrate `String` and return the handle, or `None` on failure.
@@ -835,70 +933,11 @@ impl CalibrationRegistry {
     /// stores them in `shape_map` under each type's `Facet::SHAPE`, so that
     /// IR lowering can retrieve them via `lookup_by_shape(&shape)`.
     pub fn with_common(&mut self) -> &mut Self {
-        macro_rules! register_vec {
-            ($T:ty) => {
-                self.calibrate_vec_for_type::<$T>();
-            };
-        }
-        macro_rules! register_box_t {
-            ($T:ty) => {
-                self.calibrate_box_t::<$T>();
-            };
-        }
-        macro_rules! register_box_slice {
-            ($T:ty) => {
-                self.calibrate_box_slice::<$T>();
-            };
-        }
-
-        // Primitive scalar element types. `shape_map` is keyed by the Shape
-        // value via the blanket `impl<T: Hash> Hash for &T`, which delegates
-        // to Shape's own Hash/Eq impls — not pointer identity.
-        register_vec!(bool);
-        register_vec!(i8);
-        register_vec!(i16);
-        register_vec!(i32);
-        register_vec!(i64);
-        register_vec!(u8);
-        register_vec!(u16);
-        register_vec!(u32);
-        register_vec!(u64);
-        register_vec!(f32);
-        register_vec!(f64);
-        // Vec<String> (strings-of-strings is a common workload).
-        register_vec!(String);
-
-        // String itself — registered by type so lookup_by_shape works for String fields.
+        // Calibrate `String` once — it's not parameterized. Everything else
+        // (Vec<T>, Box<T>, Box<[T]>) is handled on-demand via
+        // `get_or_calibrate_by_shape`; Vec<T>'s family layout is probed once
+        // and then reused for every T.
         self.calibrate_string_for_type();
-
-        // Box<T> for each primitive.
-        register_box_t!(bool);
-        register_box_t!(i8);
-        register_box_t!(i16);
-        register_box_t!(i32);
-        register_box_t!(i64);
-        register_box_t!(u8);
-        register_box_t!(u16);
-        register_box_t!(u32);
-        register_box_t!(u64);
-        register_box_t!(f32);
-        register_box_t!(f64);
-        register_box_t!(String);
-
-        // Box<[T]> for each primitive.
-        register_box_slice!(bool);
-        register_box_slice!(i8);
-        register_box_slice!(i16);
-        register_box_slice!(i32);
-        register_box_slice!(i64);
-        register_box_slice!(u8);
-        register_box_slice!(u16);
-        register_box_slice!(u32);
-        register_box_slice!(u64);
-        register_box_slice!(f32);
-        register_box_slice!(f64);
-        register_box_slice!(String);
-
         self
     }
 }
@@ -1026,8 +1065,15 @@ impl CalibrationRegistry {
         }
 
         let result = match shape.def {
-            facet_core::Def::List(list_def) => probe_list_by_vtable(shape, list_def),
-            facet_core::Def::Pointer(ptr_def) => probe_pointer_by_vtable(shape, ptr_def),
+            facet_core::Def::List(list_def) => self.calibrate_list_by_shape(shape, list_def),
+            facet_core::Def::Pointer(ptr_def) => {
+                // TODO: Cow, Arc, Rc, &T, etc. — all in scope, just not yet
+                // implemented. Skip them silently until someone wires them up.
+                if ptr_def.known != Some(facet_core::KnownPointer::Box) {
+                    return None;
+                }
+                probe_pointer_by_vtable(shape, ptr_def)
+            }
             _ => CalibrationResult::Unsupported {
                 reason: format!(
                     "shape '{}' has unsupported Def for on-demand calibration",
@@ -1050,6 +1096,48 @@ impl CalibrationRegistry {
                 None
             }
         }
+    }
+
+    /// Calibrate a list-shaped container, using the cached `Vec<T>` family
+    /// layout when available. `Vec<T>` headers are T-invariant so we only
+    /// need to probe once; subsequent shapes synthesize their descriptor
+    /// from the cached offsets and this shape's own element layout.
+    fn calibrate_list_by_shape(
+        &mut self,
+        shape: &'static facet_core::Shape,
+        list_def: facet_core::ListDef,
+    ) -> CalibrationResult {
+        let container_layout = match shape.layout.sized_layout() {
+            Ok(l) => l,
+            Err(_) => {
+                return CalibrationResult::Unsupported {
+                    reason: "list shape has unsized layout".into(),
+                };
+            }
+        };
+        let elem_layout = match list_def.t.layout.sized_layout() {
+            Ok(l) => l,
+            Err(_) => {
+                return CalibrationResult::Unsupported {
+                    reason: "element shape has unsized layout".into(),
+                };
+            }
+        };
+
+        if let Some(desc) = self.synthesize_vec_desc_from_layouts(
+            container_layout.size(),
+            container_layout.align(),
+            elem_layout.size(),
+            elem_layout.align(),
+        ) {
+            return CalibrationResult::Ok(desc);
+        }
+
+        let result = probe_list_by_vtable(shape, list_def);
+        if let CalibrationResult::Ok(ref desc) = result {
+            self.cache_vec_family(desc);
+        }
+        result
     }
 }
 
