@@ -243,6 +243,57 @@ pub unsafe extern "C" fn vox_jit_encode_proxy(
     matches!(result, Ok(Some(())))
 }
 
+/// Encode a `Result<T, E>` by selecting the active arm via the result vtable,
+/// writing postcard discriminant `0`/`1`, then delegating the inner value back
+/// through the JIT runtime.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_jit_encode_result(
+    ctx: *mut EncodeCtx,
+    src_ptr: *const u8,
+    shape: &'static facet_core::Shape,
+) -> bool {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let facet_core::Def::Result(result_def) = shape.def else {
+            return None;
+        };
+        let result_ptr = PtrConst::new(src_ptr);
+
+        if unsafe { (result_def.vtable.is_ok)(result_ptr) } {
+            unsafe { vox_jit_buf_write_varint(ctx, 0) }.then_some(())?;
+            let ok_ptr = unsafe { (result_def.vtable.get_ok)(result_ptr) };
+            if ok_ptr.is_null() {
+                return None;
+            }
+            if let Some(result) =
+                crate::global_runtime().try_encode_ptr(PtrConst::new(ok_ptr), result_def.t)
+            {
+                let inner = result.ok()?;
+                return unsafe { vox_jit_buf_push_bytes(ctx, inner.as_ptr(), inner.len()) }
+                    .then_some(());
+            }
+            handle_pure_jit_encode_miss("result Ok", result_def.t)?;
+            None
+        } else {
+            unsafe { vox_jit_buf_write_varint(ctx, 1) }.then_some(())?;
+            let err_ptr = unsafe { (result_def.vtable.get_err)(result_ptr) };
+            if err_ptr.is_null() {
+                return None;
+            }
+            if let Some(result) =
+                crate::global_runtime().try_encode_ptr(PtrConst::new(err_ptr), result_def.e)
+            {
+                let inner = result.ok()?;
+                return unsafe { vox_jit_buf_push_bytes(ctx, inner.as_ptr(), inner.len()) }
+                    .then_some(());
+            }
+            handle_pure_jit_encode_miss("result Err", result_def.e)?;
+            None
+        }
+    }));
+
+    matches!(result, Ok(Some(())))
+}
+
 /// Initialize a `Cow<[u8]>` with owned bytes.
 ///
 /// # Safety

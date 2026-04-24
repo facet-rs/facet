@@ -247,6 +247,23 @@ pub enum DecodeOp {
         init_some: facet_core::OptionInitSomeFn,
     },
 
+    /// Decode a `Result<T, E>` in-place.
+    ///
+    /// Reads the postcard variant index (`0 = Ok`, `1 = Err`) as a varint,
+    /// decodes the selected inner value into a temporary buffer, then moves it
+    /// into the destination result via the result vtable.
+    DecodeResult {
+        dst_offset: usize,
+        ok_block: usize,
+        err_block: usize,
+        ok_size: usize,
+        ok_align: usize,
+        err_size: usize,
+        err_align: usize,
+        init_ok: facet_core::ResultInitOkFn,
+        init_err: facet_core::ResultInitErrFn,
+    },
+
     // -----------------------------------------------------------------------
     // Enum handling
     // -----------------------------------------------------------------------
@@ -616,6 +633,27 @@ fn lower_value(
         return Ok(());
     }
 
+    // Def-based types before user types so Option<T>/Vec<T>/Box<T> don't get
+    // intercepted by their user-level representation first.
+    match shape.def {
+        facet_core::Def::Option(_)
+        | facet_core::Def::Array(_)
+        | facet_core::Def::List(_)
+        | facet_core::Def::Pointer(_) => {
+            return lower_def(
+                plan,
+                shape,
+                registry,
+                cal,
+                borrow_mode,
+                program,
+                block,
+                dst_offset,
+            );
+        }
+        _ => {}
+    }
+
     // User types
     match shape.ty {
         Type::User(UserType::Struct(st)) => lower_struct(
@@ -708,8 +746,19 @@ fn lower_def(
             block,
             dst_offset,
         ),
+        Def::Result(result_def) => lower_result(
+            plan,
+            shape,
+            result_def,
+            registry,
+            cal,
+            borrow_mode,
+            program,
+            block,
+            dst_offset,
+        ),
         _ => {
-            // Def::Map, Def::Set, Def::Slice, Def::Result, Def::NdArray,
+            // Def::Map, Def::Set, Def::Slice, Def::NdArray,
             // Def::DynamicValue, Def::Undefined — SlowPath by design.
             //
             // Set/Map: same postcard wire encoding as List (varint len + elements),
@@ -731,6 +780,110 @@ fn lower_def(
             Ok(())
         }
     }
+}
+
+fn lower_result(
+    plan: &TranslationPlan,
+    shape: &'static Shape,
+    result_def: facet_core::ResultDef,
+    registry: &SchemaRegistry,
+    cal: Option<&CalibrationRegistry>,
+    borrow_mode: bool,
+    program: &mut DecodeProgram,
+    block: usize,
+    dst_offset: usize,
+) -> Result<(), LowerError> {
+    let (ok_plan, err_plan) = match plan {
+        TranslationPlan::Enum { nested, .. } => (
+            nested.get(&0).unwrap_or(&TranslationPlan::Identity),
+            nested.get(&1).unwrap_or(&TranslationPlan::Identity),
+        ),
+        TranslationPlan::Identity => (&TranslationPlan::Identity, &TranslationPlan::Identity),
+        _ => {
+            program.emit(
+                block,
+                DecodeOp::SlowPath {
+                    shape,
+                    plan: Box::new(clone_plan(plan)),
+                    dst_offset,
+                },
+            );
+            return Ok(());
+        }
+    };
+
+    let ok_layout = match result_def.t.layout.sized_layout() {
+        Ok(layout) => layout,
+        Err(_) => {
+            program.emit(
+                block,
+                DecodeOp::SlowPath {
+                    shape,
+                    plan: Box::new(clone_plan(plan)),
+                    dst_offset,
+                },
+            );
+            return Ok(());
+        }
+    };
+    let err_layout = match result_def.e.layout.sized_layout() {
+        Ok(layout) => layout,
+        Err(_) => {
+            program.emit(
+                block,
+                DecodeOp::SlowPath {
+                    shape,
+                    plan: Box::new(clone_plan(plan)),
+                    dst_offset,
+                },
+            );
+            return Ok(());
+        }
+    };
+
+    let ok_block = program.new_block();
+    let err_block = program.new_block();
+
+    program.emit(
+        block,
+        DecodeOp::DecodeResult {
+            dst_offset,
+            ok_block,
+            err_block,
+            ok_size: ok_layout.size(),
+            ok_align: ok_layout.align(),
+            err_size: err_layout.size(),
+            err_align: err_layout.align(),
+            init_ok: result_def.vtable.init_ok,
+            init_err: result_def.vtable.init_err,
+        },
+    );
+
+    lower_value(
+        ok_plan,
+        result_def.t,
+        registry,
+        cal,
+        borrow_mode,
+        program,
+        ok_block,
+        0,
+    )?;
+    program.emit(ok_block, DecodeOp::Return);
+
+    lower_value(
+        err_plan,
+        result_def.e,
+        registry,
+        cal,
+        borrow_mode,
+        program,
+        err_block,
+        0,
+    )?;
+    program.emit(err_block, DecodeOp::Return);
+
+    Ok(())
 }
 
 // r[impl schema.translation.reorder]
@@ -1779,6 +1932,68 @@ fn run_block(
                 }
             }
 
+            DecodeOp::DecodeResult {
+                dst_offset,
+                ok_block,
+                err_block,
+                ok_size,
+                ok_align,
+                err_size,
+                err_align,
+                init_ok,
+                init_err,
+            } => {
+                let variant_index = state.read_varint()? as usize;
+                let result_ptr = unsafe { base.add(*dst_offset) };
+                match variant_index {
+                    0 => {
+                        let layout = std::alloc::Layout::from_size_align(*ok_size, *ok_align)
+                            .map_err(|_| {
+                                DeserializeError::Custom("DecodeResult: invalid Ok layout".into())
+                            })?;
+                        let tmp = facet_core::alloc_for_layout(layout);
+                        let tmp_ptr = unsafe { tmp.assume_init() };
+                        run_block(
+                            program,
+                            *ok_block,
+                            state,
+                            tmp_ptr.as_mut_byte_ptr(),
+                            registry,
+                            cal,
+                        )?;
+                        unsafe {
+                            (init_ok)(facet_core::PtrUninit::new(result_ptr), tmp_ptr);
+                            facet_core::dealloc_for_layout(tmp_ptr, layout);
+                        }
+                    }
+                    1 => {
+                        let layout = std::alloc::Layout::from_size_align(*err_size, *err_align)
+                            .map_err(|_| {
+                                DeserializeError::Custom("DecodeResult: invalid Err layout".into())
+                            })?;
+                        let tmp = facet_core::alloc_for_layout(layout);
+                        let tmp_ptr = unsafe { tmp.assume_init() };
+                        run_block(
+                            program,
+                            *err_block,
+                            state,
+                            tmp_ptr.as_mut_byte_ptr(),
+                            registry,
+                            cal,
+                        )?;
+                        unsafe {
+                            (init_err)(facet_core::PtrUninit::new(result_ptr), tmp_ptr);
+                            facet_core::dealloc_for_layout(tmp_ptr, layout);
+                        }
+                    }
+                    other => {
+                        return Err(DeserializeError::UnknownVariant {
+                            remote_index: other,
+                        });
+                    }
+                }
+            }
+
             DecodeOp::ReadDiscriminant => {
                 state.discriminant = state.read_varint()?;
             }
@@ -2375,6 +2590,22 @@ pub enum EncodeOp {
         get_value_fn: facet_core::OptionGetValueFn,
     },
 
+    /// Encode a `Result<T, E>` at `src_offset`.
+    ///
+    /// Writes postcard discriminant `0` for `Ok`, `1` for `Err`, then encodes
+    /// the corresponding inner value from the pointer returned by the vtable.
+    EncodeResult {
+        shape: &'static Shape,
+        src_offset: usize,
+        ok_block: usize,
+        err_block: usize,
+        ok_shape: &'static Shape,
+        err_shape: &'static Shape,
+        is_ok_fn: facet_core::ResultIsOkFn,
+        get_ok_fn: facet_core::ResultGetOkFn,
+        get_err_fn: facet_core::ResultGetErrFn,
+    },
+
     // -----------------------------------------------------------------------
     // Enum handling
     // -----------------------------------------------------------------------
@@ -2578,7 +2809,10 @@ fn lower_encode_value(
         Def::Slice(slice_def) => {
             return lower_encode_slice(shape, slice_def, program, block, src_offset);
         }
-        Def::Map(_) | Def::Set(_) | Def::Result(_) => {
+        Def::Result(result_def) => {
+            return lower_encode_result(shape, result_def, cal, program, block, src_offset);
+        }
+        Def::Map(_) | Def::Set(_) => {
             return Err(EncodeLowerError::Unsupported(format!(
                 "unsupported def: {shape}"
             )));
@@ -2704,6 +2938,41 @@ fn lower_encode_option(
     // Lower the inner value encode into some_block (base = inner_ptr, offset = 0).
     lower_encode_value(opt_def.t, cal, program, some_block, 0)?;
     program.emit(some_block, EncodeOp::Return);
+
+    Ok(())
+}
+
+fn lower_encode_result(
+    shape: &'static Shape,
+    result_def: facet_core::ResultDef,
+    cal: Option<&CalibrationRegistry>,
+    program: &mut EncodeProgram,
+    block: usize,
+    src_offset: usize,
+) -> Result<(), EncodeLowerError> {
+    let ok_block = program.new_block();
+    let err_block = program.new_block();
+
+    program.emit(
+        block,
+        EncodeOp::EncodeResult {
+            shape,
+            src_offset,
+            ok_block,
+            err_block,
+            ok_shape: result_def.t,
+            err_shape: result_def.e,
+            is_ok_fn: result_def.vtable.is_ok,
+            get_ok_fn: result_def.vtable.get_ok,
+            get_err_fn: result_def.vtable.get_err,
+        },
+    );
+
+    lower_encode_value(result_def.t, cal, program, ok_block, 0)?;
+    program.emit(ok_block, EncodeOp::Return);
+
+    lower_encode_value(result_def.e, cal, program, err_block, 0)?;
+    program.emit(err_block, EncodeOp::Return);
 
     Ok(())
 }

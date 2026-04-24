@@ -20,8 +20,8 @@
 #![allow(unsafe_code)]
 
 use cranelift_codegen::ir::{
-    AbiParam, Block, BlockArg, InstBuilder, MemFlags, Signature, Type, Value, condcodes::IntCC,
-    types,
+    AbiParam, Block, BlockArg, InstBuilder, MemFlags, Signature, StackSlotData, StackSlotKind,
+    Type, Value, condcodes::IntCC, types,
 };
 use cranelift_codegen::{settings, settings::Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -942,6 +942,32 @@ fn emit_op(
             )?;
         }
 
+        DecodeOp::DecodeResult {
+            dst_offset,
+            ok_block,
+            err_block,
+            ok_size,
+            ok_align,
+            err_size,
+            err_align,
+            init_ok,
+            init_err,
+        } => {
+            emit_decode_result(
+                ctx,
+                program,
+                *dst_offset,
+                *ok_block,
+                *err_block,
+                *ok_size,
+                *ok_align,
+                *err_size,
+                *err_align,
+                *init_ok,
+                *init_err,
+            )?;
+        }
+
         DecodeOp::ReadDiscriminant => {
             let disc = ctx.read_varint_u64()?;
             ctx.b.def_var(ctx.var_discriminant, disc);
@@ -1809,6 +1835,101 @@ fn emit_decode_option(
     Ok(())
 }
 
+fn emit_decode_result(
+    ctx: &mut EmitCtx<'_, '_>,
+    program: &DecodeProgram,
+    dst_offset: usize,
+    ok_block_ir: usize,
+    err_block_ir: usize,
+    ok_size: usize,
+    ok_align: usize,
+    err_size: usize,
+    err_align: usize,
+    init_ok: facet_core::ResultInitOkFn,
+    init_err: facet_core::ResultInitErrFn,
+) -> Result<(), CodegenError> {
+    let variant = ctx.read_varint_u64()?;
+    let zero = ctx.b.ins().iconst(types::I64, 0);
+    let one = ctx.b.ins().iconst(types::I64, 1);
+    let is_ok_variant = ctx.b.ins().icmp(IntCC::Equal, variant, zero);
+    let is_err_variant = ctx.b.ins().icmp(IntCC::Equal, variant, one);
+
+    let ok_case = ctx.fresh_block();
+    let check_err = ctx.fresh_block();
+    let err_case = ctx.fresh_block();
+    let invalid = ctx.fresh_block();
+    let after_block = ctx.fresh_block();
+
+    ctx.b
+        .ins()
+        .brif(is_ok_variant, ok_case, &[], check_err, &[]);
+
+    ctx.b.switch_to_block(check_err);
+    ctx.b.seal_block(check_err);
+    ctx.b
+        .ins()
+        .brif(is_err_variant, err_case, &[], invalid, &[]);
+
+    ctx.b.switch_to_block(invalid);
+    ctx.b.seal_block(invalid);
+    ctx.return_err(DecodeStatus::UnknownVariant);
+
+    ctx.b.switch_to_block(ok_case);
+    ctx.b.seal_block(ok_case);
+    {
+        let ok_done = ctx.fresh_block();
+        let slot = ctx.b.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            ok_size.max(1) as u32,
+            ok_align.trailing_zeros() as u8,
+        ));
+        let tmp_ptr = ctx.b.ins().stack_addr(ctx.ptr_ty, slot, 0);
+        let saved_out = ctx.out_ptr;
+        ctx.out_ptr = tmp_ptr;
+        emit_inline_block(ctx, program, ok_block_ir, ok_done)?;
+        ctx.out_ptr = saved_out;
+        ctx.b.switch_to_block(ok_done);
+        ctx.b.seal_block(ok_done);
+        let result_ptr = ctx.dst_at(dst_offset);
+        let init_ok_sig = make_result_init_sig(ctx);
+        let init_ok_fn = ctx.b.ins().iconst(ctx.ptr_ty, init_ok as *const () as i64);
+        ctx.b
+            .ins()
+            .call_indirect(init_ok_sig, init_ok_fn, &[result_ptr, tmp_ptr]);
+        ctx.b.ins().jump(after_block, &[]);
+    }
+
+    ctx.b.switch_to_block(err_case);
+    ctx.b.seal_block(err_case);
+    {
+        let err_done = ctx.fresh_block();
+        let slot = ctx.b.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            err_size.max(1) as u32,
+            err_align.trailing_zeros() as u8,
+        ));
+        let tmp_ptr = ctx.b.ins().stack_addr(ctx.ptr_ty, slot, 0);
+        let saved_out = ctx.out_ptr;
+        ctx.out_ptr = tmp_ptr;
+        emit_inline_block(ctx, program, err_block_ir, err_done)?;
+        ctx.out_ptr = saved_out;
+        ctx.b.switch_to_block(err_done);
+        ctx.b.seal_block(err_done);
+        let result_ptr = ctx.dst_at(dst_offset);
+        let init_err_sig = make_result_init_sig(ctx);
+        let init_err_fn = ctx.b.ins().iconst(ctx.ptr_ty, init_err as *const () as i64);
+        ctx.b
+            .ins()
+            .call_indirect(init_err_sig, init_err_fn, &[result_ptr, tmp_ptr]);
+        ctx.b.ins().jump(after_block, &[]);
+    }
+
+    ctx.b.switch_to_block(after_block);
+    ctx.b.seal_block(after_block);
+
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Array decode
 // ---------------------------------------------------------------------------
@@ -2554,6 +2675,19 @@ fn make_init_some_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRe
     })
 }
 
+/// Signature: `unsafe extern "C" fn(result: *mut (), value: *mut ()) -> *mut ()`
+fn make_result_init_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
+    let call_conv = ctx.b.func.signature.call_conv;
+    ctx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ctx.ptr_ty), // result ptr
+            AbiParam::new(ctx.ptr_ty), // inner value ptr
+        ],
+        returns: vec![AbiParam::new(ctx.ptr_ty)],
+        call_conv,
+    })
+}
+
 /// Signature for `vox_jit_slow_path(ctx, shape, plan, dst_base, dst_offset) -> u32`.
 fn make_slow_path_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
     let call_conv = ctx.b.func.signature.call_conv;
@@ -2967,6 +3101,32 @@ fn emit_encode_op(
             Ok(false)
         }
 
+        EncodeOp::EncodeResult {
+            shape,
+            src_offset,
+            ok_block,
+            err_block,
+            ok_shape,
+            err_shape,
+            is_ok_fn,
+            get_ok_fn,
+            get_err_fn,
+        } => {
+            emit_encode_result(
+                ectx,
+                *shape,
+                *src_offset,
+                *ok_block,
+                *err_block,
+                *ok_shape,
+                *err_shape,
+                *is_ok_fn,
+                *get_ok_fn,
+                *get_err_fn,
+            )?;
+            Ok(false)
+        }
+
         EncodeOp::EncodeArray {
             src_offset,
             count,
@@ -3135,6 +3295,15 @@ fn emit_encode_helper_shape_op(
     helper: *const (),
 ) {
     let src_ptr = ectx.src_at(src_offset);
+    emit_encode_shape_ptr_with_helper(ectx, src_ptr, shape, helper);
+}
+
+fn emit_encode_shape_ptr_with_helper(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    src_ptr: Value,
+    shape: &'static facet_core::Shape,
+    helper: *const (),
+) {
     let call_conv = ectx.b.func.signature.call_conv;
     let sig = ectx.b.func.import_signature(Signature {
         params: vec![
@@ -3347,6 +3516,36 @@ fn emit_encode_option(
     ectx.b.switch_to_block(after_block);
     ectx.b.seal_block(after_block);
 
+    Ok(())
+}
+
+fn emit_encode_result(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    shape: &'static facet_core::Shape,
+    src_offset: usize,
+    _ok_block_ir: usize,
+    _err_block_ir: usize,
+    ok_shape: &'static facet_core::Shape,
+    err_shape: &'static facet_core::Shape,
+    is_ok_fn: facet_core::ResultIsOkFn,
+    get_ok_fn: facet_core::ResultGetOkFn,
+    get_err_fn: facet_core::ResultGetErrFn,
+) -> Result<(), CodegenError> {
+    let _ = (
+        _ok_block_ir,
+        _err_block_ir,
+        ok_shape,
+        err_shape,
+        is_ok_fn,
+        get_ok_fn,
+        get_err_fn,
+    );
+    emit_encode_helper_shape_op(
+        ectx,
+        shape,
+        src_offset,
+        crate::helpers::vox_jit_encode_result as *const (),
+    );
     Ok(())
 }
 
@@ -3662,6 +3861,10 @@ mod tests {
 
             match shape.def {
                 Def::Option(opt) => register_tree(opt.t, cal),
+                Def::Result(result) => {
+                    register_tree(result.t, cal);
+                    register_tree(result.e, cal);
+                }
                 Def::List(list) => register_tree(list.t, cal),
                 Def::Pointer(ptr) => {
                     if let Some(inner) = ptr.pointee() {
@@ -4233,6 +4436,62 @@ mod tests {
     }
 
     #[test]
+    fn decode_lower_real_gnarly_tuple_has_no_slow_path() {
+        let plan = build_identity_plan(<(GnarlyPayload,)>::SHAPE);
+        let registry = vox_schema::SchemaRegistry::new();
+        let cal = calibration_for(<(GnarlyPayload,)>::SHAPE);
+        let program = lower_with_cal(
+            &plan,
+            <(GnarlyPayload,)>::SHAPE,
+            &registry,
+            Some(&cal),
+            false,
+        )
+        .expect("decode lowering");
+        assert_no_decode_slow_path(&program);
+    }
+
+    #[test]
+    fn decode_roundtrip_real_gnarly_root_direct() {
+        let value = gnarly_payload(4, 11);
+        let bytes = reflective_encode_static(&value);
+        let decoded = jit_decode_value::<GnarlyPayload>(&bytes).expect("JIT decode failed");
+        assert_eq!(decoded, value, "direct root gnarly round-trip mismatch");
+    }
+
+    #[test]
+    fn decode_roundtrip_real_gnarly_root_runtime() {
+        let value = gnarly_payload(4, 11);
+        let bytes = reflective_encode_static(&value);
+        let decoded = crate::global_runtime()
+            .try_decode_owned::<GnarlyPayload>(
+                &bytes,
+                0,
+                &build_identity_plan(GnarlyPayload::SHAPE),
+                &vox_schema::SchemaRegistry::new(),
+            )
+            .expect("runtime JIT decode unavailable")
+            .expect("runtime JIT decode failed");
+        assert_eq!(decoded, value, "runtime root gnarly round-trip mismatch");
+    }
+
+    #[test]
+    fn result_gnarly_has_no_slow_path() {
+        type GnarlyReply = Result<GnarlyPayload, vox_types::VoxError<std::convert::Infallible>>;
+
+        let plan = build_identity_plan(GnarlyReply::SHAPE);
+        let registry = vox_schema::SchemaRegistry::new();
+        let cal = calibration_for(GnarlyReply::SHAPE);
+        let decode_program =
+            lower_with_cal(&plan, GnarlyReply::SHAPE, &registry, Some(&cal), false)
+                .expect("decode lowering");
+        assert_no_decode_slow_path(&decode_program);
+
+        let encode_program = lower_encode(GnarlyReply::SHAPE, Some(&cal)).expect("encode lowering");
+        assert_no_encode_slow_path(&encode_program);
+    }
+
+    #[test]
     fn encode_roundtrip_message_with_gnarly_payload() {
         let args = Box::leak(Box::new((gnarly_payload(4, 7),)));
         let msg = request_message_with_gnarly(args);
@@ -4264,6 +4523,61 @@ mod tests {
         );
     }
 
+    #[test]
+    fn encode_roundtrip_gnarly_result() {
+        type GnarlyReply = Result<GnarlyPayload, vox_types::VoxError<std::convert::Infallible>>;
+
+        let value: GnarlyReply = Ok(gnarly_payload(4, 11));
+        let jit_bytes = crate::global_runtime()
+            .try_encode_ptr(
+                facet::PtrConst::new(&value as *const _ as *const u8),
+                GnarlyReply::SHAPE,
+            )
+            .expect("runtime JIT encode unavailable")
+            .expect("runtime JIT encode failed");
+        let ref_bytes = reflective_encode_static(&value);
+        assert_eq!(jit_bytes, ref_bytes, "JIT and reflective encode disagree");
+
+        let decoded = crate::global_runtime()
+            .try_decode_owned::<GnarlyReply>(
+                &jit_bytes,
+                0,
+                &build_identity_plan(GnarlyReply::SHAPE),
+                &vox_schema::SchemaRegistry::new(),
+            )
+            .expect("runtime JIT decode unavailable")
+            .expect("runtime JIT decode failed");
+        match decoded {
+            Ok(payload) => assert_eq!(
+                payload,
+                gnarly_payload(4, 11),
+                "JIT result round-trip mismatch"
+            ),
+            Err(err) => panic!("expected Ok payload, got {err:?}"),
+        }
+    }
+
+    #[test]
+    fn encode_result_helper_roundtrip_gnarly() {
+        type GnarlyReply = Result<GnarlyPayload, vox_types::VoxError<std::convert::Infallible>>;
+
+        let value: GnarlyReply = Ok(gnarly_payload(4, 11));
+        let mut ctx = EncodeCtx::with_capacity(64);
+        let ok = unsafe {
+            crate::helpers::vox_jit_encode_result(
+                &mut ctx as *mut _,
+                &value as *const _ as *const u8,
+                GnarlyReply::SHAPE,
+            )
+        };
+        assert!(ok, "result helper encode returned false");
+        assert_eq!(
+            ctx.into_vec(),
+            reflective_encode_static(&value),
+            "result helper and reflective encode disagree"
+        );
+    }
+
     // -----------------------------------------------------------------------
     // SlowPath round-trip: struct containing a non-postcard scalar (SocketAddr)
     // -----------------------------------------------------------------------
@@ -4283,17 +4597,19 @@ mod tests {
             .map_err(|_| CodegenError::UnsupportedOp("unsized shape".into()))?;
 
         let mut ctx = DecodeCtx::new(bytes);
-        let buf = vec![0u8; layout.size()];
-        let out_ptr = buf.as_ptr() as *mut u8;
-        let status = unsafe { decode_fn(&mut ctx as *mut _, out_ptr) };
+        let mut out = std::mem::MaybeUninit::<T>::uninit();
+        if layout.size() != 0 {
+            unsafe {
+                std::ptr::write_bytes(out.as_mut_ptr() as *mut u8, 0, layout.size());
+            }
+        }
+        let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
         if status != DecodeStatus::Ok {
             return Err(CodegenError::UnsupportedOp(format!(
                 "decode status: {status:?}"
             )));
         }
-        let value = unsafe { std::ptr::read(out_ptr as *const T) };
-        std::mem::forget(buf); // ownership transferred to value
-        Ok(value)
+        Ok(unsafe { out.assume_init() })
     }
 
     // Proxy type: serialized as u32, deserialized via convert_in.
