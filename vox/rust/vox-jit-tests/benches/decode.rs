@@ -377,7 +377,7 @@ mod jit {
     ) -> Result<OwnedDecodeFn, CodegenError> {
         let program = lower_with_cal(plan, T::SHAPE, registry, Some(cal), BorrowMode::Owned)
             .map_err(|e| CodegenError::UnsupportedOp(format!("{e:?}")))?;
-        let owned = backend.compile_decode_owned(&program, cal)?;
+        let owned = backend.compile_decode_owned(T::SHAPE, &program, cal)?;
         Ok(owned)
     }
 
@@ -647,7 +647,7 @@ mod alloc_count {
         )
         .expect("gnarly lower should succeed");
         let owned_fn = backend
-            .compile_decode_owned(&program, &cal)
+            .compile_decode_owned(GnarlyPayload::SHAPE, &program, &cal)
             .expect("gnarly compile should succeed");
 
         bencher.bench(|| {
@@ -914,7 +914,7 @@ mod gnarly {
             BorrowMode::Owned,
         )
         .map_err(|e| CodegenError::UnsupportedOp(format!("{e:?}")))?;
-        let owned = backend.compile_decode_owned(&program, cal)?;
+        let owned = backend.compile_decode_owned(GnarlyPayload::SHAPE, &program, cal)?;
         Ok(owned)
     }
 

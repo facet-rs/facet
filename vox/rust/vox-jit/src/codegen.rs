@@ -223,25 +223,28 @@ impl CraneliftBackend {
     /// Compile an owned decode stub.
     pub fn compile_decode_owned(
         &mut self,
+        shape: &'static facet_core::Shape,
         program: &DecodeProgram,
         descriptors: &CalibrationRegistry,
     ) -> Result<OwnedDecodeFn, CodegenError> {
-        let (fn_ptr, _) = self.compile_decode_inner(program, descriptors)?;
+        let (fn_ptr, _) = self.compile_decode_inner(shape, program, descriptors)?;
         Ok(unsafe { core::mem::transmute(fn_ptr) })
     }
 
     /// Compile a borrowed decode stub.
     pub fn compile_decode_borrowed(
         &mut self,
+        shape: &'static facet_core::Shape,
         program: &DecodeProgram,
         descriptors: &CalibrationRegistry,
     ) -> Result<BorrowedDecodeFn, CodegenError> {
-        let (fn_ptr, _) = self.compile_decode_inner(program, descriptors)?;
+        let (fn_ptr, _) = self.compile_decode_inner(shape, program, descriptors)?;
         Ok(unsafe { core::mem::transmute(fn_ptr) })
     }
 
     fn compile_decode_inner(
         &mut self,
+        shape: &'static facet_core::Shape,
         program: &DecodeProgram,
         descriptors: &CalibrationRegistry,
     ) -> Result<(*const u8, u32), CodegenError> {
@@ -251,7 +254,7 @@ impl CraneliftBackend {
         let program = self.retained_programs.last().unwrap();
 
         let sig = self.decode_signature();
-        let func_name = format!("vox_decode_{}", next_id());
+        let func_name = format!("vox_decode_{}_{}", shape_symbol_fragment(shape), next_id());
 
         let func_id = self
             .module
@@ -288,10 +291,11 @@ impl CraneliftBackend {
     /// Used by benchmarks to measure stub size per root type.
     pub fn compile_decode_with_size(
         &mut self,
+        shape: &'static facet_core::Shape,
         program: &DecodeProgram,
         descriptors: &CalibrationRegistry,
     ) -> Result<(OwnedDecodeFn, u32), CodegenError> {
-        let (fn_ptr, code_size) = self.compile_decode_inner(program, descriptors)?;
+        let (fn_ptr, code_size) = self.compile_decode_inner(shape, program, descriptors)?;
         Ok((unsafe { core::mem::transmute(fn_ptr) }, code_size))
     }
 
@@ -312,11 +316,12 @@ impl CraneliftBackend {
     /// not yet supported by the Cranelift backend.
     pub fn compile_encode(
         &mut self,
+        shape: &'static facet_core::Shape,
         program: &EncodeProgram,
         descriptors: &CalibrationRegistry,
     ) -> Result<EncodeFn, CodegenError> {
         let sig = self.encode_signature();
-        let func_name = format!("vox_encode_{}", next_id());
+        let func_name = format!("vox_encode_{}_{}", shape_symbol_fragment(shape), next_id());
 
         let func_id = self
             .module
@@ -2778,6 +2783,27 @@ fn next_id() -> u64 {
     COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Make a shape's Display-form suitable for use as a JIT symbol name: keep
+/// identifiers, `::`, angle brackets, commas, and dots; replace anything else
+/// (including whitespace) with `_`. Truncate to keep perf-map / symbolicator
+/// output readable.
+fn shape_symbol_fragment(shape: &'static facet_core::Shape) -> String {
+    let raw = shape.to_string();
+    let mut out = String::with_capacity(raw.len());
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() || matches!(c, '_' | ':' | '<' | '>' | ',' | '.' | '[' | ']') {
+            out.push(c);
+        } else {
+            out.push('_');
+        }
+    }
+    const MAX: usize = 96;
+    if out.len() > MAX {
+        out.truncate(MAX);
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // Encode function emission
 // ---------------------------------------------------------------------------
@@ -4100,7 +4126,7 @@ mod tests {
             .map_err(|e| CodegenError::UnsupportedOp(format!("lowering failed: {e:?}")))?;
         let cal = CalibrationRegistry::new();
         let mut backend = CraneliftBackend::new()?;
-        backend.compile_decode_owned(&program, &cal)?;
+        backend.compile_decode_owned(T::SHAPE, &program, &cal)?;
         Ok(())
     }
 
@@ -4110,7 +4136,7 @@ mod tests {
         let program = lower_encode(T::SHAPE, Some(cal))
             .map_err(|e| CodegenError::UnsupportedOp(format!("encode lowering failed: {e}")))?;
         let mut backend = CraneliftBackend::new()?;
-        backend.compile_encode(&program, cal)?;
+        backend.compile_encode(T::SHAPE, &program, cal)?;
         Ok(())
     }
 
@@ -4423,7 +4449,7 @@ mod tests {
         .map_err(|e| CodegenError::UnsupportedOp(format!("lowering failed: {e:?}")))
         .expect("lower_with_cal should succeed");
         let mut backend = CraneliftBackend::new().expect("backend");
-        let result = backend.compile_decode_owned(&program, &cal);
+        let result = backend.compile_decode_owned(NumBatch::SHAPE, &program, &cal);
         assert!(
             result.is_ok(),
             "compile_decode for Vec<u32> failed: {:?}",
@@ -4462,7 +4488,7 @@ mod tests {
         .map_err(|e| CodegenError::UnsupportedOp(format!("lowering failed: {e:?}")))
         .expect("lower_with_cal should succeed");
         let mut backend = CraneliftBackend::new().expect("backend");
-        let result = backend.compile_decode_owned(&program, &cal);
+        let result = backend.compile_decode_owned(Table::SHAPE, &program, &cal);
         assert!(
             result.is_ok(),
             "compile nested Vec<Struct> failed: {:?}",
@@ -4616,7 +4642,7 @@ mod tests {
         let program = lower_encode(T::SHAPE, Some(&cal))
             .map_err(|e| CodegenError::UnsupportedOp(format!("encode lowering failed: {e}")))?;
         let mut backend = CraneliftBackend::new()?;
-        backend.compile_encode(&program, &cal)?;
+        backend.compile_encode(T::SHAPE, &program, &cal)?;
         Ok(())
     }
 
@@ -4671,7 +4697,7 @@ mod tests {
         let program = lower_encode(T::SHAPE, Some(&cal))
             .map_err(|e| CodegenError::UnsupportedOp(format!("encode lowering failed: {e}")))?;
         let mut backend = CraneliftBackend::new()?;
-        let encode_fn = backend.compile_encode(&program, &cal)?;
+        let encode_fn = backend.compile_encode(T::SHAPE, &program, &cal)?;
 
         let mut ctx = EncodeCtx::with_capacity(64);
         let src_ptr = value as *const T as *const u8;
@@ -4969,7 +4995,7 @@ mod tests {
         let program = lower_with_cal(&plan, T::SHAPE, &registry, Some(&cal), BorrowMode::Owned)
             .map_err(|e| CodegenError::UnsupportedOp(format!("lowering failed: {e:?}")))?;
         let mut backend = CraneliftBackend::new()?;
-        let decode_fn = backend.compile_decode_owned(&program, &cal)?;
+        let decode_fn = backend.compile_decode_owned(T::SHAPE, &program, &cal)?;
 
         let layout = T::SHAPE
             .layout

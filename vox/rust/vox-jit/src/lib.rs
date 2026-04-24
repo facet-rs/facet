@@ -160,7 +160,7 @@ impl JitRuntime {
         }
         let mut backend = self.backend.lock().unwrap();
         let stub = if borrow_mode == BorrowMode::Borrowed {
-            let borrowed_fn = match backend.compile_decode_borrowed(&program, &cal) {
+            let borrowed_fn = match backend.compile_decode_borrowed(local_shape, &program, &cal) {
                 Ok(f) => f,
                 Err(err) => {
                     if require_pure_jit() {
@@ -178,7 +178,7 @@ impl JitRuntime {
                 key: key.clone(),
             }
         } else {
-            let owned_fn = match backend.compile_decode_owned(&program, &cal) {
+            let owned_fn = match backend.compile_decode_owned(local_shape, &program, &cal) {
                 Ok(f) => f,
                 Err(err) => {
                     if require_pure_jit() {
@@ -248,7 +248,7 @@ impl JitRuntime {
             );
         }
         let mut backend = self.backend.lock().unwrap();
-        let encode_fn = match backend.compile_encode(&program, &cal) {
+        let encode_fn = match backend.compile_encode(shape, &program, &cal) {
             Ok(f) => f,
             Err(err) => {
                 if require_pure_jit() {

@@ -123,7 +123,7 @@ fn try_jit<T: Facet<'static>>(
     let program = lower_with_cal(plan, T::SHAPE, registry, Some(cal), BorrowMode::Owned)
         .map_err(|e| CodegenError::UnsupportedOp(format!("{e:?}")))?;
     let mut backend = CraneliftBackend::new()?;
-    let owned = backend.compile_decode_owned(&program, cal)?;
+    let owned = backend.compile_decode_owned(T::SHAPE, &program, cal)?;
     Ok((backend, owned))
 }
 

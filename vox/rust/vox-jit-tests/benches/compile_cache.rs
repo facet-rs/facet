@@ -88,7 +88,7 @@ fn compile_one<T: Facet<'static>>(
     let program = lower_with_cal(plan, T::SHAPE, registry, Some(cal), BorrowMode::Owned)
         .expect("lower_with_cal failed");
     let (owned, code_bytes) = backend
-        .compile_decode_with_size(&program, cal)
+        .compile_decode_with_size(T::SHAPE, &program, cal)
         .expect("compile_decode failed");
     (owned, code_bytes)
 }
@@ -227,7 +227,7 @@ mod code_size {
         let program = lower_with_cal(&plan, T::SHAPE, &reg, Some(&cal), BorrowMode::Owned)
             .expect("lower_with_cal failed");
         let (_owned, bytes) = backend
-            .compile_decode_with_size(&program, &cal)
+            .compile_decode_with_size(T::SHAPE, &program, &cal)
             .expect("compile failed");
         println!("code_size/{label}: {bytes} bytes");
     }
