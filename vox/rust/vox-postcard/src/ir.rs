@@ -2884,12 +2884,10 @@ pub enum EncodeOp {
     // -----------------------------------------------------------------------
     // Enum handling
     // -----------------------------------------------------------------------
-    /// Read the enum discriminant tag at `src_offset` (width given by
-    /// `tag_width`) and write it as a postcard varint.
-    WriteDiscriminant {
-        src_offset: usize,
-        tag_width: TagWidth,
-    },
+    /// Write the enum variant's postcard index (its position in the variant
+    /// list) as a varint. Emitted as the first op of each variant body so
+    /// the index is correct regardless of any explicit Rust discriminant.
+    WriteVariantIndex { index: u64 },
 
     /// Branch to the encode block for the active variant.
     ///
@@ -3349,31 +3347,19 @@ fn lower_encode_enum(
     let tag_width =
         TagWidth::from_enum_repr(et.enum_repr).ok_or(EncodeLowerError::UnstableEnumRepr)?;
 
-    // Emit: write discriminant as varint
-    program.emit(
-        block,
-        EncodeOp::WriteDiscriminant {
-            src_offset,
-            tag_width,
-        },
-    );
-
-    if et
-        .variants
-        .iter()
-        .all(|variant| variant.data.fields.is_empty())
-    {
-        return Ok(());
-    }
-
-    // Build per-variant blocks
+    // Each variant body first writes the variant's postcard index, then
+    // encodes its fields. The dispatch block only branches — the index write
+    // is deferred to the body so that explicit Rust discriminants (e.g.
+    // `Inline = 1`) don't leak onto the wire. Postcard wants the variant's
+    // position in the enum, not its in-memory tag byte.
     let mut variant_blocks: Vec<(u64, usize)> = Vec::new();
     for (i, variant) in et.variants.iter().enumerate() {
         let disc = variant.discriminant.map(|d| d as u64).unwrap_or(i as u64);
         let vblock = program.new_block();
         variant_blocks.push((disc, vblock));
 
-        // Encode variant fields into vblock (all at base = src_offset)
+        program.emit(vblock, EncodeOp::WriteVariantIndex { index: i as u64 });
+
         for field in variant.data.fields {
             let field_offset = src_offset + field.offset;
             lower_encode_value(field.shape(), cal, program, vblock, field_offset)?;

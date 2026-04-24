@@ -398,3 +398,139 @@ fn translation_plan_rejects_kind_mismatch() {
         "build_plan should reject struct-vs-enum mismatch"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Minimized repro for the `borrowed_return_survives_teardown_*` failures.
+//
+// The failing tests round-trip `BorrowedPayloadKind { Inline=1, SlotRef=2,
+// MmapRef=3 }` — an enum with explicit, non-default discriminants. Under
+// VOX_CODEC=jit the client ends up with the wrong variant's payload,
+// suggesting the JIT encoder or decoder treats the in-memory tag as a
+// variant INDEX (0,1,2) rather than the explicit DISCRIMINANT (1,2,3),
+// or vice versa. Under VOX_CODEC=reflect and VOX_CODEC=interp the same
+// scenario passes, so the IR lowering is correct — the bug lives in
+// Cranelift codegen for `WriteDiscriminant` / `ReadEnumTag`.
+//
+// This test isolates the encode and decode stubs directly, bypassing the
+// RPC harness, so iteration is fast and a failing assertion points at the
+// op that is wrong rather than at a string diff.
+// ---------------------------------------------------------------------------
+
+#[repr(u8)]
+#[derive(facet::Facet, Debug, Clone, Copy, PartialEq, Eq)]
+enum ExplicitDiscriminantKind {
+    Inline = 1,
+    SlotRef = 2,
+    MmapRef = 3,
+}
+
+#[test]
+fn jit_enum_explicit_discriminant_encode_roundtrip() {
+    use std::mem::MaybeUninit;
+
+    use vox_jit::{
+        CraneliftBackend,
+        abi::{DecodeCtx, DecodeStatus, EncodeCtx},
+        codegen::ChildEncoderMap,
+    };
+    use vox_jit_cal::{BorrowMode, CalibrationRegistry};
+    use vox_postcard::ir::{lower_encode, lower_with_cal};
+
+    let shape = <ExplicitDiscriminantKind as facet::Facet>::SHAPE;
+    let local_set = schema_set_for::<ExplicitDiscriminantKind>();
+    let plan = build_plan(&PlanInput {
+        remote: &local_set,
+        local: &local_set,
+    })
+    .expect("build_plan");
+
+    let cal = CalibrationRegistry::default();
+    let encode_program = lower_encode(shape, Some(&cal)).expect("lower_encode");
+    let decode_program = lower_with_cal(
+        &plan,
+        shape,
+        &local_set.registry,
+        Some(&cal),
+        BorrowMode::Owned,
+    )
+    .expect("lower_with_cal");
+
+    let mut backend = CraneliftBackend::new().expect("backend");
+    let encode_fn = backend
+        .compile_encode(shape, &encode_program, &cal, &ChildEncoderMap::new())
+        .expect("compile_encode");
+    let decode_fn = backend
+        .compile_decode_owned(shape, &decode_program, &cal)
+        .expect("compile_decode_owned");
+
+    // For each variant, verify:
+    //  (a) JIT-encoded bytes match what postcard reflectively produces,
+    //  (b) JIT-decoded value matches the original,
+    //  (c) decoding the reflectively-encoded bytes with JIT gives the
+    //      original (catches asymmetric encode/decode bugs).
+    for variant in [
+        ExplicitDiscriminantKind::Inline,
+        ExplicitDiscriminantKind::SlotRef,
+        ExplicitDiscriminantKind::MmapRef,
+    ] {
+        let reflective_bytes = to_vec(&variant).expect("reflective encode");
+        assert_eq!(
+            reflective_bytes.len(),
+            1,
+            "single-byte enum should encode to one byte: {variant:?} => {reflective_bytes:?}"
+        );
+
+        let mut ctx = EncodeCtx::with_capacity(16);
+        let src = &variant as *const _ as *const u8;
+        let ok = unsafe { encode_fn(&mut ctx, src) };
+        assert!(ok, "JIT encode returned false for {variant:?}");
+        let jit_bytes = ctx.into_vec();
+        assert_eq!(
+            jit_bytes, reflective_bytes,
+            "JIT encode disagrees with reflective oracle for {variant:?}: \
+             JIT={jit_bytes:?} reflective={reflective_bytes:?}"
+        );
+
+        let mut out = MaybeUninit::<ExplicitDiscriminantKind>::uninit();
+        unsafe {
+            std::ptr::write_bytes(
+                out.as_mut_ptr() as *mut u8,
+                0xAA,
+                std::mem::size_of::<ExplicitDiscriminantKind>(),
+            );
+        }
+        let mut dctx = DecodeCtx::new(&jit_bytes);
+        let status = unsafe { decode_fn(&mut dctx, out.as_mut_ptr() as *mut u8) };
+        assert_eq!(
+            status,
+            DecodeStatus::Ok,
+            "JIT decode status for {variant:?}"
+        );
+        let decoded = unsafe { out.assume_init() };
+        assert_eq!(
+            decoded, variant,
+            "JIT round-trip mismatch for {variant:?}: decoded as {decoded:?}"
+        );
+
+        let mut out2 = MaybeUninit::<ExplicitDiscriminantKind>::uninit();
+        unsafe {
+            std::ptr::write_bytes(
+                out2.as_mut_ptr() as *mut u8,
+                0xAA,
+                std::mem::size_of::<ExplicitDiscriminantKind>(),
+            );
+        }
+        let mut dctx2 = DecodeCtx::new(&reflective_bytes);
+        let status2 = unsafe { decode_fn(&mut dctx2, out2.as_mut_ptr() as *mut u8) };
+        assert_eq!(
+            status2,
+            DecodeStatus::Ok,
+            "JIT decode of reflective bytes for {variant:?}"
+        );
+        let decoded2 = unsafe { out2.assume_init() };
+        assert_eq!(
+            decoded2, variant,
+            "JIT decode of reflective bytes mismatched for {variant:?}: got {decoded2:?}"
+        );
+    }
+}

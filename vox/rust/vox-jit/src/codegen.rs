@@ -3394,39 +3394,9 @@ fn emit_encode_op(
             Ok(false)
         }
 
-        EncodeOp::WriteDiscriminant {
-            src_offset,
-            tag_width,
-        } => {
-            let tag_addr = ectx.src_at(*src_offset);
-            let disc = match tag_width {
-                TagWidth::U8 => {
-                    let b = ectx
-                        .b
-                        .ins()
-                        .load(types::I8, MemFlags::trusted(), tag_addr, 0);
-                    ectx.b.ins().uextend(types::I64, b)
-                }
-                TagWidth::U16 => {
-                    let h = ectx
-                        .b
-                        .ins()
-                        .load(types::I16, MemFlags::trusted(), tag_addr, 0);
-                    ectx.b.ins().uextend(types::I64, h)
-                }
-                TagWidth::U32 => {
-                    let w = ectx
-                        .b
-                        .ins()
-                        .load(types::I32, MemFlags::trusted(), tag_addr, 0);
-                    ectx.b.ins().uextend(types::I64, w)
-                }
-                TagWidth::U64 => ectx
-                    .b
-                    .ins()
-                    .load(types::I64, MemFlags::trusted(), tag_addr, 0),
-            };
-            ectx.call_write_varint(disc);
+        EncodeOp::WriteVariantIndex { index } => {
+            let idx = ectx.b.ins().iconst(types::I64, *index as i64);
+            ectx.call_write_varint(idx);
             Ok(false)
         }
 
