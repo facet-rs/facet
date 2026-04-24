@@ -3293,8 +3293,9 @@ fn emit_encode_op(
             tag_width,
             variant_blocks,
         } => {
-            emit_encode_branch(ectx, *src_offset, *tag_width, variant_blocks)?;
-            Ok(true)
+            emit_encode_branch(ectx, program, *src_offset, *tag_width, variant_blocks)?;
+            // emit_encode_branch leaves us in after_block — not a terminator.
+            Ok(false)
         }
 
         EncodeOp::EncodeOption {
@@ -3568,6 +3569,7 @@ fn emit_encode_slow_path(
 /// Emit a branch-on-encode: read discriminant, branch to per-variant block.
 fn emit_encode_branch(
     ectx: &mut EncodeCtx_<'_, '_>,
+    program: &EncodeProgram,
     src_offset: usize,
     tag_width: TagWidth,
     variant_blocks: &[(u64, usize)],
@@ -3602,12 +3604,21 @@ fn emit_encode_branch(
             .load(types::I64, MemFlags::trusted(), tag_addr, 0),
     };
 
+    let after_block = ectx.fresh_block();
+
+    // Fresh Cranelift blocks for each variant body — we don't reuse the
+    // pre-allocated block_map entries because those are stubbed to return_ok
+    // by the outer loop (marked as inlined below).
+    let variant_clif: Vec<Block> = (0..variant_blocks.len())
+        .map(|_| ectx.fresh_block())
+        .collect();
+
     // Chain of compare+brif, one per variant.
-    for &(disc_val, vblock_idx) in variant_blocks {
+    for (i, &(disc_val, _vblock_ir)) in variant_blocks.iter().enumerate() {
         let disc_const = ectx.b.ins().iconst(types::I64, disc_val as i64);
         let is_match = ectx.b.ins().icmp(IntCC::Equal, disc, disc_const);
 
-        let target = ectx.block_map[vblock_idx].unwrap();
+        let target = variant_clif[i];
         let next_block = ectx.fresh_block();
         ectx.b.ins().brif(is_match, target, &[], next_block, &[]);
         ectx.b.switch_to_block(next_block);
@@ -3616,6 +3627,37 @@ fn emit_encode_branch(
 
     // Fell through all variants — should not happen for valid data; return ok.
     ectx.return_ok();
+
+    // Emit each variant body into its fresh Cranelift block, then jump to
+    // after_block so the caller (e.g. a parent struct) can continue encoding
+    // subsequent fields.
+    for (i, &(_disc, vblock_ir)) in variant_blocks.iter().enumerate() {
+        let clif = variant_clif[i];
+        ectx.b.switch_to_block(clif);
+        ectx.b.seal_block(clif);
+
+        ectx.inlined_blocks.insert(vblock_ir);
+        let mut terminated = false;
+        for op in &program.blocks[vblock_ir].ops {
+            match op {
+                EncodeOp::Return => break,
+                _ => {
+                    let term = emit_encode_op(ectx, program, op)?;
+                    if term {
+                        terminated = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !terminated {
+            ectx.b.ins().jump(after_block, &[]);
+        }
+    }
+
+    ectx.b.switch_to_block(after_block);
+    ectx.b.seal_block(after_block);
+
     Ok(())
 }
 
