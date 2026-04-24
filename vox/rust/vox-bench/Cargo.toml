@@ -25,6 +25,7 @@ vox.workspace = true
 vox-core.workspace = true
 vox-types.workspace = true
 vox-postcard.workspace = true
+vox-jit.workspace = true
 spec-proto.workspace = true
 subject-rust.workspace = true
 facet.workspace = true

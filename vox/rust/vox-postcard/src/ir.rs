@@ -264,6 +264,22 @@ pub enum DecodeOp {
         err_bytes: Box<[u8]>,
     },
 
+    /// Decode a `Result<T, E>` via payload scratch storage, then initialize the
+    /// destination with the result vtable. This is used when payload types do
+    /// not provide defaults, so calibrated direct-write templates cannot be
+    /// built safely.
+    DecodeResultInit {
+        dst_offset: usize,
+        ok_block: usize,
+        err_block: usize,
+        ok_size: usize,
+        ok_align: usize,
+        err_size: usize,
+        err_align: usize,
+        init_ok_fn: facet_core::ResultInitOkFn,
+        init_err_fn: facet_core::ResultInitErrFn,
+    },
+
     // -----------------------------------------------------------------------
     // Enum handling
     // -----------------------------------------------------------------------
@@ -515,6 +531,22 @@ fn lower_value(
     block: usize,
     dst_offset: usize,
 ) -> Result<(), LowerError> {
+    // `Result<T, E>` is exposed as an opaque/proxy-like user shape by Facet,
+    // but its postcard ABI is structural. Route it by Def before generic
+    // proxy/opaque handling.
+    if let facet_core::Def::Result(_) = shape.def {
+        return lower_def(
+            plan,
+            shape,
+            registry,
+            cal,
+            borrow_mode,
+            program,
+            block,
+            dst_offset,
+        );
+    }
+
     if shape.opaque_adapter.is_some() {
         program.emit(block, DecodeOp::ReadOpaque { shape, dst_offset });
         return Ok(());
@@ -633,8 +665,6 @@ fn lower_value(
         return Ok(());
     }
 
-    // Def-based types before user types so Option<T>/Vec<T>/Box<T> don't get
-    // intercepted by their user-level representation first.
     match shape.def {
         facet_core::Def::Option(_)
         | facet_core::Def::Array(_)
@@ -768,7 +798,7 @@ fn lower_def(
             // benefits. The spec §Non-Goals does not require JIT for these.
             //
             // Slice: unsized — cannot be placed on the stack by the IR.
-            // Result/NdArray/DynamicValue/Undefined: no postcard ABI defined.
+            // NdArray/DynamicValue/Undefined: no postcard ABI defined.
             program.emit(
                 block,
                 DecodeOp::SlowPath {
@@ -812,33 +842,61 @@ fn lower_result(
         }
     };
 
-    let Some(layout) = calibrate_result_layout(shape, result_def) else {
-        program.emit(
-            block,
-            DecodeOp::SlowPath {
-                shape,
-                plan: Box::new(clone_plan(plan)),
-                dst_offset,
-            },
-        );
-        return Ok(());
-    };
-
     let ok_block = program.new_block();
     let err_block = program.new_block();
 
-    program.emit(
-        block,
-        DecodeOp::DecodeResult {
-            dst_offset,
-            ok_block,
-            err_block,
-            ok_offset: layout.ok_offset,
-            err_offset: layout.err_offset,
-            ok_bytes: layout.ok_bytes,
-            err_bytes: layout.err_bytes,
-        },
-    );
+    if let Some(layout) = calibrate_result_layout(shape, result_def) {
+        program.emit(
+            block,
+            DecodeOp::DecodeResult {
+                dst_offset,
+                ok_block,
+                err_block,
+                ok_offset: layout.ok_offset,
+                err_offset: layout.err_offset,
+                ok_bytes: layout.ok_bytes,
+                err_bytes: layout.err_bytes,
+            },
+        );
+    } else {
+        let Ok(ok_layout) = result_def.t.layout.sized_layout() else {
+            program.emit(
+                block,
+                DecodeOp::SlowPath {
+                    shape,
+                    plan: Box::new(clone_plan(plan)),
+                    dst_offset,
+                },
+            );
+            return Ok(());
+        };
+        let Ok(err_layout) = result_def.e.layout.sized_layout() else {
+            program.emit(
+                block,
+                DecodeOp::SlowPath {
+                    shape,
+                    plan: Box::new(clone_plan(plan)),
+                    dst_offset,
+                },
+            );
+            return Ok(());
+        };
+
+        program.emit(
+            block,
+            DecodeOp::DecodeResultInit {
+                dst_offset,
+                ok_block,
+                err_block,
+                ok_size: ok_layout.size(),
+                ok_align: ok_layout.align(),
+                err_size: err_layout.size(),
+                err_align: err_layout.align(),
+                init_ok_fn: result_def.vtable.init_ok,
+                init_err_fn: result_def.vtable.init_err,
+            },
+        );
+    }
 
     lower_value(
         ok_plan,
@@ -2078,6 +2136,74 @@ fn run_block(
                 }
             }
 
+            DecodeOp::DecodeResultInit {
+                dst_offset,
+                ok_block,
+                err_block,
+                ok_size,
+                ok_align,
+                err_size,
+                err_align,
+                init_ok_fn,
+                init_err_fn,
+            } => {
+                let variant_index = state.read_varint()? as usize;
+                let result_ptr = unsafe { base.add(*dst_offset) };
+                match variant_index {
+                    0 => {
+                        let layout = std::alloc::Layout::from_size_align(*ok_size, *ok_align)
+                            .map_err(|_| {
+                                DeserializeError::Custom("bad Result::Ok layout".into())
+                            })?;
+                        let tmp = facet_core::alloc_for_layout(layout);
+                        let tmp_ptr = unsafe { tmp.assume_init() };
+                        if let Err(err) = run_block(
+                            program,
+                            *ok_block,
+                            state,
+                            tmp_ptr.as_mut_byte_ptr(),
+                            registry,
+                            cal,
+                        ) {
+                            unsafe { facet_core::dealloc_for_layout(tmp_ptr, layout) };
+                            return Err(err);
+                        }
+                        unsafe {
+                            init_ok_fn(facet_core::PtrUninit::new(result_ptr), tmp_ptr);
+                            facet_core::dealloc_for_layout(tmp_ptr, layout);
+                        }
+                    }
+                    1 => {
+                        let layout = std::alloc::Layout::from_size_align(*err_size, *err_align)
+                            .map_err(|_| {
+                                DeserializeError::Custom("bad Result::Err layout".into())
+                            })?;
+                        let tmp = facet_core::alloc_for_layout(layout);
+                        let tmp_ptr = unsafe { tmp.assume_init() };
+                        if let Err(err) = run_block(
+                            program,
+                            *err_block,
+                            state,
+                            tmp_ptr.as_mut_byte_ptr(),
+                            registry,
+                            cal,
+                        ) {
+                            unsafe { facet_core::dealloc_for_layout(tmp_ptr, layout) };
+                            return Err(err);
+                        }
+                        unsafe {
+                            init_err_fn(facet_core::PtrUninit::new(result_ptr), tmp_ptr);
+                            facet_core::dealloc_for_layout(tmp_ptr, layout);
+                        }
+                    }
+                    other => {
+                        return Err(DeserializeError::UnknownVariant {
+                            remote_index: other,
+                        });
+                    }
+                }
+            }
+
             DecodeOp::ReadDiscriminant => {
                 state.discriminant = state.read_varint()?;
             }
@@ -2840,6 +2966,10 @@ fn lower_encode_value(
         )));
     }
 
+    if let Def::Result(result_def) = shape.def {
+        return lower_encode_result(shape, result_def, cal, program, block, src_offset);
+    }
+
     if shape.opaque_adapter.is_some() {
         program.emit(block, EncodeOp::WriteOpaque { shape, src_offset });
         return Ok(());
@@ -2876,7 +3006,6 @@ fn lower_encode_value(
         )));
     }
 
-    // Def-based types before user types (Option<T>, Vec<T>, etc.)
     match shape.def {
         Def::Option(opt_def) => {
             return lower_encode_option(opt_def, cal, program, block, src_offset);
@@ -2892,9 +3021,6 @@ fn lower_encode_value(
         }
         Def::Slice(slice_def) => {
             return lower_encode_slice(shape, slice_def, program, block, src_offset);
-        }
-        Def::Result(result_def) => {
-            return lower_encode_result(shape, result_def, cal, program, block, src_offset);
         }
         Def::Map(_) | Def::Set(_) => {
             return Err(EncodeLowerError::Unsupported(format!(

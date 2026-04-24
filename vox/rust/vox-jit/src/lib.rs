@@ -28,17 +28,14 @@ use std::sync::{Arc, Mutex, Once, OnceLock};
 
 use facet_core::{Def, Facet, Shape, Type, UserType};
 use vox_jit_abi::DescriptorHandle;
-use vox_jit_abi::{
-    DecodeCacheKey, DecodeCtx, DecodeStatus, EncodeCacheKey, EncodeCtx, vox_jit_buf_push_bytes,
-    vox_jit_buf_write_varint,
-};
+use vox_jit_abi::{DecodeCacheKey, DecodeCtx, DecodeStatus, EncodeCacheKey};
 use vox_jit_cal::{BorrowMode, CalibrationRegistry};
+use vox_postcard::TranslationPlan;
 use vox_postcard::error::DeserializeError;
 use vox_postcard::error::SerializeError;
 use vox_postcard::ir::{
     DecodeOp, DecodeProgram, EncodeOp, EncodeProgram, lower_encode, lower_with_cal,
 };
-use vox_postcard::{TranslationPlan, build_identity_plan};
 use vox_schema::SchemaRegistry;
 
 // ---------------------------------------------------------------------------
@@ -258,16 +255,6 @@ impl JitRuntime {
         plan: &TranslationPlan,
         registry: &SchemaRegistry,
     ) -> Option<Result<T, DeserializeError>> {
-        if let Def::Result(result_def) = T::SHAPE.def {
-            return self.try_decode_result::<T>(
-                input,
-                remote_schema_id,
-                plan,
-                registry,
-                BorrowMode::Owned,
-                result_def,
-            );
-        }
         let stub = self.prepare_decode_stub(
             remote_schema_id,
             T::SHAPE,
@@ -331,76 +318,6 @@ impl JitRuntime {
         ptr: facet::PtrConst,
         shape: &'static Shape,
     ) -> Option<Result<Vec<u8>, SerializeError>> {
-        if let Def::Result(result_def) = shape.def {
-            let mut ctx = EncodeCtx::with_capacity(64);
-            let ok = unsafe { (result_def.vtable.is_ok)(ptr) };
-            if ok {
-                if !unsafe { vox_jit_buf_write_varint(&mut ctx as *mut _, 0) } {
-                    return Some(Err(SerializeError::ReflectError(
-                        "JIT encode returned false (OOM)".into(),
-                    )));
-                }
-                let ok_ptr = unsafe { (result_def.vtable.get_ok)(ptr) };
-                if ok_ptr.is_null() {
-                    return Some(Err(SerializeError::ReflectError(
-                        "Result::Ok arm had null payload pointer".into(),
-                    )));
-                }
-                let inner = match self.try_encode_ptr(facet::PtrConst::new(ok_ptr), result_def.t) {
-                    Some(Ok(bytes)) => bytes,
-                    Some(Err(err)) => return Some(Err(err)),
-                    None => {
-                        if require_pure_jit() {
-                            panic!(
-                                "VOX_JIT_REQUIRE_PURE=1 and result Ok encode for '{}' could not stay on JIT",
-                                result_def.t
-                            );
-                        }
-                        return None;
-                    }
-                };
-                if !unsafe {
-                    vox_jit_buf_push_bytes(&mut ctx as *mut _, inner.as_ptr(), inner.len())
-                } {
-                    return Some(Err(SerializeError::ReflectError(
-                        "JIT encode returned false (OOM)".into(),
-                    )));
-                }
-                return Some(Ok(ctx.into_vec()));
-            }
-
-            if !unsafe { vox_jit_buf_write_varint(&mut ctx as *mut _, 1) } {
-                return Some(Err(SerializeError::ReflectError(
-                    "JIT encode returned false (OOM)".into(),
-                )));
-            }
-            let err_ptr = unsafe { (result_def.vtable.get_err)(ptr) };
-            if err_ptr.is_null() {
-                return Some(Err(SerializeError::ReflectError(
-                    "Result::Err arm had null payload pointer".into(),
-                )));
-            }
-            let inner = match self.try_encode_ptr(facet::PtrConst::new(err_ptr), result_def.e) {
-                Some(Ok(bytes)) => bytes,
-                Some(Err(err)) => return Some(Err(err)),
-                None => {
-                    if require_pure_jit() {
-                        panic!(
-                            "VOX_JIT_REQUIRE_PURE=1 and result Err encode for '{}' could not stay on JIT",
-                            result_def.e
-                        );
-                    }
-                    return None;
-                }
-            };
-            if !unsafe { vox_jit_buf_push_bytes(&mut ctx as *mut _, inner.as_ptr(), inner.len()) } {
-                return Some(Err(SerializeError::ReflectError(
-                    "JIT encode returned false (OOM)".into(),
-                )));
-            }
-            return Some(Ok(ctx.into_vec()));
-        }
-
         let stub = self.prepare_encode_stub(shape)?;
         let mut ctx = vox_jit_abi::EncodeCtx::with_capacity(64);
         let ok = unsafe { (stub.encode_fn)(&mut ctx as *mut _, ptr.as_ptr()) };
@@ -411,146 +328,6 @@ impl JitRuntime {
                 "JIT encode returned false (OOM)".into(),
             )))
         }
-    }
-
-    fn try_decode_into_ptr(
-        &self,
-        input: &[u8],
-        remote_schema_id: u64,
-        shape: &'static Shape,
-        plan: &TranslationPlan,
-        registry: &SchemaRegistry,
-        borrow_mode: BorrowMode,
-        dst: *mut u8,
-    ) -> Option<Result<(), DeserializeError>> {
-        let stub =
-            self.prepare_decode_stub(remote_schema_id, shape, plan, registry, borrow_mode)?;
-        let decode_fn = if borrow_mode == BorrowMode::Borrowed {
-            stub.borrowed_fn?
-        } else {
-            stub.owned_fn?
-        };
-        let mut ctx = DecodeCtx::new(input);
-        let status = unsafe { decode_fn(&mut ctx as *mut _, dst) };
-        if status == DecodeStatus::Ok {
-            Some(Ok(()))
-        } else {
-            Some(Err(decode_status_to_error(status, &ctx, input)))
-        }
-    }
-
-    fn try_decode_result<T: Facet<'static>>(
-        &self,
-        input: &[u8],
-        remote_schema_id: u64,
-        plan: &TranslationPlan,
-        registry: &SchemaRegistry,
-        borrow_mode: BorrowMode,
-        result_def: facet_core::ResultDef,
-    ) -> Option<Result<T, DeserializeError>> {
-        let ok_identity = build_identity_plan(result_def.t);
-        let err_identity = build_identity_plan(result_def.e);
-        let (variant_index, prefix_len) = match read_varint_prefix(input) {
-            Some(pair) => pair,
-            None => {
-                return Some(Err(DeserializeError::UnexpectedEof { pos: input.len() }));
-            }
-        };
-
-        let (inner_shape, inner_plan, init_fn, layout) = match variant_index {
-            0 => {
-                let inner_plan = match plan {
-                    TranslationPlan::Enum { nested, .. } => nested.get(&0).unwrap_or(&ok_identity),
-                    TranslationPlan::Identity => &ok_identity,
-                    _ => {
-                        if require_pure_jit() {
-                            panic!(
-                                "VOX_JIT_REQUIRE_PURE=1 and result decode for '{}' had unsupported translation plan {:?}",
-                                T::SHAPE,
-                                plan
-                            );
-                        }
-                        return None;
-                    }
-                };
-                let layout = match result_def.t.layout.sized_layout() {
-                    Ok(layout) => layout,
-                    Err(_) => return None,
-                };
-                (result_def.t, inner_plan, result_def.vtable.init_ok, layout)
-            }
-            1 => {
-                let inner_plan = match plan {
-                    TranslationPlan::Enum { nested, .. } => nested.get(&1).unwrap_or(&err_identity),
-                    TranslationPlan::Identity => &err_identity,
-                    _ => {
-                        if require_pure_jit() {
-                            panic!(
-                                "VOX_JIT_REQUIRE_PURE=1 and result decode for '{}' had unsupported translation plan {:?}",
-                                T::SHAPE,
-                                plan
-                            );
-                        }
-                        return None;
-                    }
-                };
-                let layout = match result_def.e.layout.sized_layout() {
-                    Ok(layout) => layout,
-                    Err(_) => return None,
-                };
-                (result_def.e, inner_plan, result_def.vtable.init_err, layout)
-            }
-            other => {
-                return Some(Err(DeserializeError::UnknownVariant {
-                    remote_index: other as usize,
-                }));
-            }
-        };
-
-        let tmp = facet_core::alloc_for_layout(layout);
-        let tmp_ptr = unsafe { tmp.assume_init() };
-        if layout.size() != 0 {
-            unsafe {
-                std::ptr::write_bytes(tmp_ptr.as_mut_byte_ptr(), 0, layout.size());
-            }
-        }
-        let inner_input = &input[prefix_len..];
-        let decode_result = self.try_decode_into_ptr(
-            inner_input,
-            remote_schema_id,
-            inner_shape,
-            inner_plan,
-            registry,
-            borrow_mode,
-            tmp_ptr.as_mut_byte_ptr(),
-        );
-        let decode_result = match decode_result {
-            Some(result) => result,
-            None => {
-                unsafe { facet_core::dealloc_for_layout(tmp_ptr, layout) };
-                if require_pure_jit() {
-                    panic!(
-                        "VOX_JIT_REQUIRE_PURE=1 and result decode for '{}' could not stay on JIT",
-                        inner_shape
-                    );
-                }
-                return None;
-            }
-        };
-        if let Err(err) = decode_result {
-            unsafe { facet_core::dealloc_for_layout(tmp_ptr, layout) };
-            return Some(Err(err));
-        }
-
-        let mut out = MaybeUninit::<T>::uninit();
-        unsafe {
-            init_fn(
-                facet_core::PtrUninit::new(out.as_mut_ptr() as *mut u8),
-                tmp_ptr,
-            );
-            facet_core::dealloc_for_layout(tmp_ptr, layout);
-        }
-        Some(Ok(unsafe { out.assume_init() }))
     }
 }
 
@@ -696,22 +473,6 @@ fn read_varint_at(input: &[u8], pos: usize) -> Option<u64> {
         }
         shift += 7;
         i += 1;
-    }
-    None
-}
-
-fn read_varint_prefix(input: &[u8]) -> Option<(u64, usize)> {
-    let mut value = 0u64;
-    let mut shift = 0u32;
-    let mut i = 0usize;
-    while i < input.len() && shift < 64 {
-        let byte = input[i];
-        value |= u64::from(byte & 0x7f) << shift;
-        i += 1;
-        if byte & 0x80 == 0 {
-            return Some((value, i));
-        }
-        shift += 7;
     }
     None
 }

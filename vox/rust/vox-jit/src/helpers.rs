@@ -3,11 +3,38 @@
 //! These are registered in the JITBuilder and called via `call_indirect` from
 //! generated stubs.
 
-use facet::PtrConst;
+use facet::{PtrConst, PtrMut, PtrUninit};
 use vox_jit_abi::{
     DecodeCtx, DecodeStatus, EncodeCtx, vox_jit_buf_push_bytes, vox_jit_buf_write_varint,
 };
 use vox_postcard::{TranslationPlan, ir::slow_path_decode_raw};
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_jit_result_is_ok_raw(
+    src_ptr: *const u8,
+    is_ok_fn: facet_core::ResultIsOkFn,
+) -> bool {
+    unsafe { is_ok_fn(PtrConst::new(src_ptr)) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_jit_result_get_payload_raw(
+    src_ptr: *const u8,
+    get_fn: facet_core::ResultGetOkFn,
+) -> *const u8 {
+    unsafe { get_fn(PtrConst::new(src_ptr)) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vox_jit_result_init_raw(
+    dst_ptr: *mut u8,
+    payload_ptr: *mut u8,
+    init_fn: facet_core::ResultInitOkFn,
+) {
+    unsafe {
+        init_fn(PtrUninit::new(dst_ptr), PtrMut::new(payload_ptr));
+    }
+}
 
 /// SlowPath helper: decode one field via the reflective interpreter and update
 /// `ctx.consumed`. Called by generated stubs when a `SlowPath` IR op is hit.

@@ -20,8 +20,8 @@
 #![allow(unsafe_code)]
 
 use cranelift_codegen::ir::{
-    AbiParam, Block, BlockArg, InstBuilder, MemFlags, Signature, Type, Value, condcodes::IntCC,
-    types,
+    AbiParam, Block, BlockArg, ExtFuncData, ExternalName, InstBuilder, LibCall, MemFlags,
+    Signature, StackSlotData, StackSlotKind, Type, Value, condcodes::IntCC, types,
 };
 use cranelift_codegen::{settings, settings::Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -29,9 +29,8 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
 
 use vox_jit_abi::{
-    BorrowedDecodeFn, DecodeCtx, DecodeStatus, EncodeFn, OwnedDecodeFn, vox_jit_box_alloc,
-    vox_jit_box_slice_alloc, vox_jit_buf_grow, vox_jit_buf_push_byte, vox_jit_buf_push_bytes,
-    vox_jit_buf_write_varint, vox_jit_buf_write_varint_signed, vox_jit_string_alloc,
+    BorrowedDecodeFn, DecodeCtx, DecodeStatus, EncodeCtx, EncodeFn, OwnedDecodeFn,
+    vox_jit_box_alloc, vox_jit_box_slice_alloc, vox_jit_buf_grow, vox_jit_string_alloc,
     vox_jit_utf8_validate, vox_jit_vec_alloc,
 };
 use vox_jit_cal::{
@@ -186,19 +185,6 @@ impl CraneliftBackend {
 
         // Register encode runtime helper symbols.
         jit_builder.symbol("vox_jit_buf_grow", vox_jit_buf_grow as *const u8);
-        jit_builder.symbol("vox_jit_buf_push_byte", vox_jit_buf_push_byte as *const u8);
-        jit_builder.symbol(
-            "vox_jit_buf_push_bytes",
-            vox_jit_buf_push_bytes as *const u8,
-        );
-        jit_builder.symbol(
-            "vox_jit_buf_write_varint",
-            vox_jit_buf_write_varint as *const u8,
-        );
-        jit_builder.symbol(
-            "vox_jit_buf_write_varint_signed",
-            vox_jit_buf_write_varint_signed as *const u8,
-        );
         jit_builder.symbol(
             "vox_jit_encode_string_like",
             crate::helpers::vox_jit_encode_string_like as *const u8,
@@ -961,6 +947,32 @@ fn emit_op(
                 *err_offset,
                 ok_bytes,
                 err_bytes,
+            )?;
+        }
+
+        DecodeOp::DecodeResultInit {
+            dst_offset,
+            ok_block,
+            err_block,
+            ok_size,
+            ok_align,
+            err_size,
+            err_align,
+            init_ok_fn,
+            init_err_fn,
+        } => {
+            emit_decode_result_init(
+                ctx,
+                program,
+                *dst_offset,
+                *ok_block,
+                *err_block,
+                *ok_size,
+                *ok_align,
+                *err_size,
+                *err_align,
+                *init_ok_fn,
+                *init_err_fn,
             )?;
         }
 
@@ -1892,6 +1904,133 @@ fn emit_decode_result(
     Ok(())
 }
 
+fn emit_decode_result_init(
+    ctx: &mut EmitCtx<'_, '_>,
+    program: &DecodeProgram,
+    dst_offset: usize,
+    ok_block_ir: usize,
+    err_block_ir: usize,
+    ok_size: usize,
+    ok_align: usize,
+    err_size: usize,
+    err_align: usize,
+    init_ok_fn: facet_core::ResultInitOkFn,
+    init_err_fn: facet_core::ResultInitErrFn,
+) -> Result<(), CodegenError> {
+    let variant = ctx.read_varint_u64()?;
+    let zero = ctx.b.ins().iconst(types::I64, 0);
+    let one = ctx.b.ins().iconst(types::I64, 1);
+    let is_ok_variant = ctx.b.ins().icmp(IntCC::Equal, variant, zero);
+    let is_err_variant = ctx.b.ins().icmp(IntCC::Equal, variant, one);
+
+    let ok_case = ctx.fresh_block();
+    let check_err = ctx.fresh_block();
+    let err_case = ctx.fresh_block();
+    let invalid = ctx.fresh_block();
+    let after_block = ctx.fresh_block();
+
+    ctx.b
+        .ins()
+        .brif(is_ok_variant, ok_case, &[], check_err, &[]);
+
+    ctx.b.switch_to_block(check_err);
+    ctx.b.seal_block(check_err);
+    ctx.b
+        .ins()
+        .brif(is_err_variant, err_case, &[], invalid, &[]);
+
+    ctx.b.switch_to_block(invalid);
+    ctx.b.seal_block(invalid);
+    ctx.return_err(DecodeStatus::UnknownVariant);
+
+    ctx.b.switch_to_block(ok_case);
+    ctx.b.seal_block(ok_case);
+    {
+        let ok_init = ctx.fresh_block();
+        let ok_slot = create_payload_stack_slot(ctx, ok_size, ok_align)?;
+        let ok_ptr = ctx.b.ins().stack_addr(ctx.ptr_ty, ok_slot, 0);
+        let saved_out = ctx.out_ptr;
+        ctx.out_ptr = ok_ptr;
+        emit_inline_block(ctx, program, ok_block_ir, ok_init)?;
+        ctx.out_ptr = saved_out;
+
+        ctx.b.switch_to_block(ok_init);
+        ctx.b.seal_block(ok_init);
+        emit_result_init_call(ctx, dst_offset, ok_ptr, init_ok_fn as *const ());
+        ctx.b.ins().jump(after_block, &[]);
+    }
+
+    ctx.b.switch_to_block(err_case);
+    ctx.b.seal_block(err_case);
+    {
+        let err_init = ctx.fresh_block();
+        let err_slot = create_payload_stack_slot(ctx, err_size, err_align)?;
+        let err_ptr = ctx.b.ins().stack_addr(ctx.ptr_ty, err_slot, 0);
+        let saved_out = ctx.out_ptr;
+        ctx.out_ptr = err_ptr;
+        emit_inline_block(ctx, program, err_block_ir, err_init)?;
+        ctx.out_ptr = saved_out;
+
+        ctx.b.switch_to_block(err_init);
+        ctx.b.seal_block(err_init);
+        emit_result_init_call(ctx, dst_offset, err_ptr, init_err_fn as *const ());
+        ctx.b.ins().jump(after_block, &[]);
+    }
+
+    ctx.b.switch_to_block(after_block);
+    ctx.b.seal_block(after_block);
+
+    Ok(())
+}
+
+fn create_payload_stack_slot(
+    ctx: &mut EmitCtx<'_, '_>,
+    size: usize,
+    align: usize,
+) -> Result<cranelift_codegen::ir::StackSlot, CodegenError> {
+    let size = u32::try_from(size.max(1))
+        .map_err(|_| CodegenError::UnsupportedOp("Result payload too large".into()))?;
+    if !align.is_power_of_two() {
+        return Err(CodegenError::UnsupportedOp(
+            "Result payload alignment is not a power of two".into(),
+        ));
+    }
+    let align_shift = u8::try_from(align.trailing_zeros())
+        .map_err(|_| CodegenError::UnsupportedOp("Result payload alignment too large".into()))?;
+    Ok(ctx.b.create_sized_stack_slot(StackSlotData::new(
+        StackSlotKind::ExplicitSlot,
+        size,
+        align_shift,
+    )))
+}
+
+fn emit_result_init_call(
+    ctx: &mut EmitCtx<'_, '_>,
+    dst_offset: usize,
+    payload_ptr: Value,
+    init_fn: *const (),
+) {
+    let call_conv = ctx.b.func.signature.call_conv;
+    let sig = ctx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ctx.ptr_ty),
+            AbiParam::new(ctx.ptr_ty),
+            AbiParam::new(ctx.ptr_ty),
+        ],
+        returns: vec![],
+        call_conv,
+    });
+    let result_ptr = ctx.dst_at(dst_offset);
+    let init_fn = ctx.b.ins().iconst(ctx.ptr_ty, init_fn as i64);
+    let callee = ctx.b.ins().iconst(
+        ctx.ptr_ty,
+        crate::helpers::vox_jit_result_init_raw as *const () as i64,
+    );
+    ctx.b
+        .ins()
+        .call_indirect(sig, callee, &[result_ptr, payload_ptr, init_fn]);
+}
+
 // ---------------------------------------------------------------------------
 // Array decode
 // ---------------------------------------------------------------------------
@@ -2688,38 +2827,133 @@ impl<'a, 'b> EncodeCtx_<'a, 'b> {
         self.b.ins().return_(&[fail]);
     }
 
-    /// Call `vox_jit_buf_push_byte(enc_ctx, byte)` and return on OOM.
-    fn call_push_byte(&mut self, byte: Value) {
+    fn off_buf_ptr() -> i32 {
+        core::mem::offset_of!(EncodeCtx, buf_ptr) as i32
+    }
+
+    fn off_buf_len() -> i32 {
+        core::mem::offset_of!(EncodeCtx, buf_len) as i32
+    }
+
+    fn off_buf_cap() -> i32 {
+        core::mem::offset_of!(EncodeCtx, buf_cap) as i32
+    }
+
+    fn load_buf_ptr(&mut self) -> Value {
+        self.b.ins().load(
+            self.ptr_ty,
+            MemFlags::trusted(),
+            self.enc_ctx,
+            Self::off_buf_ptr(),
+        )
+    }
+
+    fn load_buf_len(&mut self) -> Value {
+        self.b.ins().load(
+            self.ptr_ty,
+            MemFlags::trusted(),
+            self.enc_ctx,
+            Self::off_buf_len(),
+        )
+    }
+
+    fn load_buf_cap(&mut self) -> Value {
+        self.b.ins().load(
+            self.ptr_ty,
+            MemFlags::trusted(),
+            self.enc_ctx,
+            Self::off_buf_cap(),
+        )
+    }
+
+    fn store_buf_len(&mut self, new_len: Value) {
+        self.b.ins().store(
+            MemFlags::trusted(),
+            new_len,
+            self.enc_ctx,
+            Self::off_buf_len(),
+        );
+    }
+
+    /// Emit a call to `vox_jit_buf_grow(ctx, needed)`. Returns its `bool` result.
+    fn emit_call_grow(&mut self, needed: Value) -> Value {
         let call_conv = self.b.func.signature.call_conv;
         let sig = self.b.func.import_signature(Signature {
-            params: vec![AbiParam::new(self.ptr_ty), AbiParam::new(types::I8)],
+            params: vec![AbiParam::new(self.ptr_ty), AbiParam::new(self.ptr_ty)],
             returns: vec![AbiParam::new(types::I8)],
             call_conv,
         });
         let callee = self
             .b
             .ins()
-            .iconst(self.ptr_ty, vox_jit_buf_push_byte as *const () as i64);
+            .iconst(self.ptr_ty, vox_jit_buf_grow as *const () as i64);
         let call = self
             .b
             .ins()
-            .call_indirect(sig, callee, &[self.enc_ctx, byte]);
-        let ok = self.b.inst_results(call)[0];
+            .call_indirect(sig, callee, &[self.enc_ctx, needed]);
+        self.b.inst_results(call)[0]
+    }
 
+    /// Ensure `needed` bytes of capacity remain after `buf_len`. On shortfall,
+    /// call `vox_jit_buf_grow`; if grow fails, bail out via `return_fail`.
+    ///
+    /// After this call returns, the current block is the fast-path continuation
+    /// where writes can proceed. The return value is `(buf_ptr, buf_len)`
+    /// sampled after any grow — `buf_ptr` may have been reallocated.
+    fn reserve(&mut self, needed: Value) -> (Value, Value) {
+        let len = self.load_buf_len();
+        let cap = self.load_buf_cap();
+        let avail = self.b.ins().isub(cap, len);
+        let lacking = self.b.ins().icmp(IntCC::UnsignedLessThan, avail, needed);
+
+        let grow_block = self.fresh_block();
+        let fast_block = self.fresh_block();
+        self.b.append_block_param(fast_block, self.ptr_ty);
+
+        self.b.ins().brif(
+            lacking,
+            grow_block,
+            &[],
+            fast_block,
+            &[BlockArg::Value(len)],
+        );
+
+        // Slow path: grow, then branch to fast_block or fail_block.
+        self.b.switch_to_block(grow_block);
+        self.b.seal_block(grow_block);
+        let grow_ok = self.emit_call_grow(needed);
         let fail_block = self.fresh_block();
-        let cont_block = self.fresh_block();
-        self.b.ins().brif(ok, cont_block, &[], fail_block, &[]);
-
+        self.b.ins().brif(
+            grow_ok,
+            fast_block,
+            &[BlockArg::Value(len)],
+            fail_block,
+            &[],
+        );
         self.b.switch_to_block(fail_block);
         self.b.seal_block(fail_block);
         self.return_fail();
 
-        self.b.switch_to_block(cont_block);
-        self.b.seal_block(cont_block);
+        // Fast path: all predecessors have been emitted.
+        self.b.switch_to_block(fast_block);
+        self.b.seal_block(fast_block);
+        let len_p = self.b.block_params(fast_block)[0];
+        let ptr = self.load_buf_ptr();
+        (ptr, len_p)
     }
 
-    /// Call `vox_jit_buf_push_bytes(enc_ctx, data, len)` and return on OOM.
-    fn call_push_bytes(&mut self, data: Value, len: Value) {
+    /// Append one byte to the encode buffer. Grows inline on shortfall.
+    fn call_push_byte(&mut self, byte: Value) {
+        let one = self.b.ins().iconst(self.ptr_ty, 1);
+        let (ptr, len) = self.reserve(one);
+        let addr = self.b.ins().iadd(ptr, len);
+        self.b.ins().store(MemFlags::trusted(), byte, addr, 0);
+        let new_len = self.b.ins().iadd_imm(len, 1);
+        self.store_buf_len(new_len);
+    }
+
+    /// Emit a `libc.memcpy(dst, src, len)` call.
+    fn emit_memcpy(&mut self, dst: Value, src: Value, len: Value) {
         let call_conv = self.b.func.signature.call_conv;
         let sig = self.b.func.import_signature(Signature {
             params: vec![
@@ -2727,89 +2961,91 @@ impl<'a, 'b> EncodeCtx_<'a, 'b> {
                 AbiParam::new(self.ptr_ty),
                 AbiParam::new(self.ptr_ty),
             ],
-            returns: vec![AbiParam::new(types::I8)],
+            returns: vec![AbiParam::new(self.ptr_ty)],
             call_conv,
         });
-        let callee = self
-            .b
-            .ins()
-            .iconst(self.ptr_ty, vox_jit_buf_push_bytes as *const () as i64);
-        let call = self
-            .b
-            .ins()
-            .call_indirect(sig, callee, &[self.enc_ctx, data, len]);
-        let ok = self.b.inst_results(call)[0];
-
-        let fail_block = self.fresh_block();
-        let cont_block = self.fresh_block();
-        self.b.ins().brif(ok, cont_block, &[], fail_block, &[]);
-
-        self.b.switch_to_block(fail_block);
-        self.b.seal_block(fail_block);
-        self.return_fail();
-
-        self.b.switch_to_block(cont_block);
-        self.b.seal_block(cont_block);
+        let callee = self.b.func.import_function(ExtFuncData {
+            name: ExternalName::LibCall(LibCall::Memcpy),
+            signature: sig,
+            colocated: false,
+            patchable: false,
+        });
+        self.b.ins().call(callee, &[dst, src, len]);
     }
 
-    /// Call `vox_jit_buf_write_varint(enc_ctx, value)` and return on OOM.
+    /// Append `len` bytes from `data` to the encode buffer. Grows inline on
+    /// shortfall; the payload copy uses `libc.memcpy`.
+    fn call_push_bytes(&mut self, data: Value, len: Value) {
+        let (ptr, buf_len) = self.reserve(len);
+        let dst = self.b.ins().iadd(ptr, buf_len);
+        self.emit_memcpy(dst, data, len);
+        let new_len = self.b.ins().iadd(buf_len, len);
+        self.store_buf_len(new_len);
+    }
+
+    /// Append a `u64` as a postcard varint to the encode buffer.
+    ///
+    /// Reserves 10 bytes (max u64 varint width) up front, then emits a tight
+    /// loop that writes continuation-bit bytes until the remaining value fits
+    /// in 7 bits, writes the final byte, and commits the new buffer length.
     fn call_write_varint(&mut self, value: Value) {
-        let call_conv = self.b.func.signature.call_conv;
-        let sig = self.b.func.import_signature(Signature {
-            params: vec![AbiParam::new(self.ptr_ty), AbiParam::new(types::I64)],
-            returns: vec![AbiParam::new(types::I8)],
-            call_conv,
-        });
-        let callee = self
+        let ten = self.b.ins().iconst(self.ptr_ty, 10);
+        let (ptr, len0) = self.reserve(ten);
+        let start = self.b.ins().iadd(ptr, len0);
+
+        let var_val = self.b.declare_var(types::I64);
+        let var_wp = self.b.declare_var(self.ptr_ty);
+        self.b.def_var(var_val, value);
+        self.b.def_var(var_wp, start);
+
+        let header = self.fresh_block();
+        let body = self.fresh_block();
+        let tail = self.fresh_block();
+
+        self.b.ins().jump(header, &[]);
+
+        self.b.switch_to_block(header);
+        let cur_val = self.b.use_var(var_val);
+        let done = self
             .b
             .ins()
-            .iconst(self.ptr_ty, vox_jit_buf_write_varint as *const () as i64);
-        let call = self
-            .b
+            .icmp_imm(IntCC::UnsignedLessThan, cur_val, 0x80);
+        self.b.ins().brif(done, tail, &[], body, &[]);
+
+        self.b.switch_to_block(body);
+        self.b.seal_block(body);
+        let low = self.b.ins().ireduce(types::I8, cur_val);
+        let hi_bit = self.b.ins().iconst(types::I8, 0x80);
+        let byte = self.b.ins().bor(low, hi_bit);
+        let wp = self.b.use_var(var_wp);
+        self.b.ins().store(MemFlags::trusted(), byte, wp, 0);
+        let next_wp = self.b.ins().iadd_imm(wp, 1);
+        self.b.def_var(var_wp, next_wp);
+        let next_val = self.b.ins().ushr_imm(cur_val, 7);
+        self.b.def_var(var_val, next_val);
+        self.b.ins().jump(header, &[]);
+
+        self.b.seal_block(header);
+
+        self.b.switch_to_block(tail);
+        self.b.seal_block(tail);
+        let final_val = self.b.use_var(var_val);
+        let final_wp = self.b.use_var(var_wp);
+        let final_byte = self.b.ins().ireduce(types::I8, final_val);
+        self.b
             .ins()
-            .call_indirect(sig, callee, &[self.enc_ctx, value]);
-        let ok = self.b.inst_results(call)[0];
-
-        let fail_block = self.fresh_block();
-        let cont_block = self.fresh_block();
-        self.b.ins().brif(ok, cont_block, &[], fail_block, &[]);
-
-        self.b.switch_to_block(fail_block);
-        self.b.seal_block(fail_block);
-        self.return_fail();
-
-        self.b.switch_to_block(cont_block);
-        self.b.seal_block(cont_block);
+            .store(MemFlags::trusted(), final_byte, final_wp, 0);
+        let end_wp = self.b.ins().iadd_imm(final_wp, 1);
+        let new_len = self.b.ins().isub(end_wp, ptr);
+        self.store_buf_len(new_len);
     }
 
-    /// Call `vox_jit_buf_write_varint_signed(enc_ctx, value)` and return on OOM.
+    /// Append an `i64` as a zigzag-encoded postcard varint.
     fn call_write_varint_signed(&mut self, value: Value) {
-        let call_conv = self.b.func.signature.call_conv;
-        let sig = self.b.func.import_signature(Signature {
-            params: vec![AbiParam::new(self.ptr_ty), AbiParam::new(types::I64)],
-            returns: vec![AbiParam::new(types::I8)],
-            call_conv,
-        });
-        let callee = self.b.ins().iconst(
-            self.ptr_ty,
-            vox_jit_buf_write_varint_signed as *const () as i64,
-        );
-        let call = self
-            .b
-            .ins()
-            .call_indirect(sig, callee, &[self.enc_ctx, value]);
-        let ok = self.b.inst_results(call)[0];
-
-        let fail_block = self.fresh_block();
-        let cont_block = self.fresh_block();
-        self.b.ins().brif(ok, cont_block, &[], fail_block, &[]);
-
-        self.b.switch_to_block(fail_block);
-        self.b.seal_block(fail_block);
-        self.return_fail();
-
-        self.b.switch_to_block(cont_block);
-        self.b.seal_block(cont_block);
+        let shl = self.b.ins().ishl_imm(value, 1);
+        let asr = self.b.ins().sshr_imm(value, 63);
+        let zz = self.b.ins().bxor(shl, asr);
+        self.call_write_varint(zz);
     }
 }
 
@@ -3035,7 +3271,7 @@ fn emit_encode_op(
         }
 
         EncodeOp::EncodeResult {
-            shape,
+            shape: _,
             src_offset,
             ok_block,
             err_block,
@@ -3047,7 +3283,7 @@ fn emit_encode_op(
         } => {
             emit_encode_result(
                 ectx,
-                *shape,
+                program,
                 *src_offset,
                 *ok_block,
                 *err_block,
@@ -3454,32 +3690,113 @@ fn emit_encode_option(
 
 fn emit_encode_result(
     ectx: &mut EncodeCtx_<'_, '_>,
-    shape: &'static facet_core::Shape,
+    program: &EncodeProgram,
     src_offset: usize,
-    _ok_block_ir: usize,
-    _err_block_ir: usize,
-    ok_shape: &'static facet_core::Shape,
-    err_shape: &'static facet_core::Shape,
+    ok_block_ir: usize,
+    err_block_ir: usize,
+    _ok_shape: &'static facet_core::Shape,
+    _err_shape: &'static facet_core::Shape,
     is_ok_fn: facet_core::ResultIsOkFn,
     get_ok_fn: facet_core::ResultGetOkFn,
     get_err_fn: facet_core::ResultGetErrFn,
 ) -> Result<(), CodegenError> {
-    let _ = (
-        _ok_block_ir,
-        _err_block_ir,
-        ok_shape,
-        err_shape,
-        is_ok_fn,
-        get_ok_fn,
-        get_err_fn,
+    let result_ptr = ectx.src_at(src_offset);
+    let call_conv = ectx.b.func.signature.call_conv;
+    let is_ok_sig = ectx.b.func.import_signature(Signature {
+        params: vec![AbiParam::new(ectx.ptr_ty), AbiParam::new(ectx.ptr_ty)],
+        returns: vec![AbiParam::new(types::I8)],
+        call_conv,
+    });
+    let is_ok_fn = ectx
+        .b
+        .ins()
+        .iconst(ectx.ptr_ty, is_ok_fn as *const () as i64);
+    let is_ok_callee = ectx.b.ins().iconst(
+        ectx.ptr_ty,
+        crate::helpers::vox_jit_result_is_ok_raw as *const () as i64,
     );
-    emit_encode_helper_shape_op(
-        ectx,
-        shape,
-        src_offset,
-        crate::helpers::vox_jit_encode_result as *const (),
-    );
+    let is_ok_call = ectx
+        .b
+        .ins()
+        .call_indirect(is_ok_sig, is_ok_callee, &[result_ptr, is_ok_fn]);
+    let is_ok = ectx.b.inst_results(is_ok_call)[0];
+
+    let ok_block = ectx.fresh_block();
+    let err_block = ectx.fresh_block();
+    let after_block = ectx.fresh_block();
+    ectx.b.ins().brif(is_ok, ok_block, &[], err_block, &[]);
+
+    ectx.b.switch_to_block(ok_block);
+    ectx.b.seal_block(ok_block);
+    let zero_byte = ectx.b.ins().iconst(types::I8, 0);
+    ectx.call_push_byte(zero_byte);
+    let ok_ptr = emit_result_payload_ptr(ectx, result_ptr, get_ok_fn as *const ());
+    if !emit_encode_block_with_src(ectx, program, ok_block_ir, ok_ptr)? {
+        ectx.b.ins().jump(after_block, &[]);
+    }
+
+    ectx.b.switch_to_block(err_block);
+    ectx.b.seal_block(err_block);
+    let one_byte = ectx.b.ins().iconst(types::I8, 1);
+    ectx.call_push_byte(one_byte);
+    let err_ptr = emit_result_payload_ptr(ectx, result_ptr, get_err_fn as *const ());
+    if !emit_encode_block_with_src(ectx, program, err_block_ir, err_ptr)? {
+        ectx.b.ins().jump(after_block, &[]);
+    }
+
+    ectx.b.switch_to_block(after_block);
+    ectx.b.seal_block(after_block);
+
     Ok(())
+}
+
+fn emit_result_payload_ptr(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    result_ptr: Value,
+    get_fn: *const (),
+) -> Value {
+    let call_conv = ectx.b.func.signature.call_conv;
+    let get_sig = ectx.b.func.import_signature(Signature {
+        params: vec![AbiParam::new(ectx.ptr_ty), AbiParam::new(ectx.ptr_ty)],
+        returns: vec![AbiParam::new(ectx.ptr_ty)],
+        call_conv,
+    });
+    let get_fn = ectx.b.ins().iconst(ectx.ptr_ty, get_fn as i64);
+    let get_callee = ectx.b.ins().iconst(
+        ectx.ptr_ty,
+        crate::helpers::vox_jit_result_get_payload_raw as *const () as i64,
+    );
+    let get_call = ectx
+        .b
+        .ins()
+        .call_indirect(get_sig, get_callee, &[result_ptr, get_fn]);
+    ectx.b.inst_results(get_call)[0]
+}
+
+fn emit_encode_block_with_src(
+    ectx: &mut EncodeCtx_<'_, '_>,
+    program: &EncodeProgram,
+    block_ir: usize,
+    src_ptr: Value,
+) -> Result<bool, CodegenError> {
+    let saved_src = ectx.src_ptr;
+    ectx.src_ptr = src_ptr;
+    ectx.inlined_blocks.insert(block_ir);
+    let mut terminated = false;
+    for op in &program.blocks[block_ir].ops {
+        match op {
+            EncodeOp::Return => break,
+            _ => {
+                let term = emit_encode_op(ectx, program, op)?;
+                if term {
+                    terminated = true;
+                    break;
+                }
+            }
+        }
+    }
+    ectx.src_ptr = saved_src;
+    Ok(terminated)
 }
 
 fn emit_encode_borrow_pointer(
