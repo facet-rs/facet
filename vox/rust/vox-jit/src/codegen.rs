@@ -30,7 +30,8 @@ use cranelift_module::{Linkage, Module};
 
 use vox_jit_abi::{
     BorrowedDecodeFn, DecodeCtx, DecodeStatus, EncodeCtx, EncodeFn, OwnedDecodeFn,
-    vox_jit_box_alloc, vox_jit_box_slice_alloc, vox_jit_buf_grow, vox_jit_string_alloc,
+    vox_jit_alloc, vox_jit_box_alloc, vox_jit_box_slice_alloc, vox_jit_buf_grow,
+    vox_jit_string_alloc,
     vox_jit_utf8_validate, vox_jit_validate_bools, vox_jit_vec_alloc,
 };
 use vox_jit_cal::{
@@ -2590,41 +2591,67 @@ fn emit_alloc_box_owned(
     desc: &CalDescriptor,
     body_block: usize,
 ) -> Result<(), CodegenError> {
-    let desc_ptr_val = ctx
-        .b
-        .ins()
-        .iconst(ctx.ptr_ty, desc as *const CalDescriptor as i64);
+    // Sanity-check at codegen time so the generated code can use the
+    // `_unchecked` allocator paths. These are constants known here and would
+    // be wasted runtime work in the helper.
+    if desc.elem_align == 0 || !desc.elem_align.is_power_of_two() {
+        return Err(CodegenError::UnsupportedOp(format!(
+            "Box element align is not a non-zero power of two: {}",
+            desc.elem_align
+        )));
+    }
+
     let ptr_off = desc.ptr_offset as i32;
     let dst = ctx.dst_at(dst_offset);
 
-    let box_alloc_sig = make_box_alloc_sig(ctx);
-    let box_alloc_fn = ctx
-        .b
-        .ins()
-        .iconst(ctx.ptr_ty, vox_jit_box_alloc as *const () as i64);
-    let call = ctx
-        .b
-        .ins()
-        .call_indirect(box_alloc_sig, box_alloc_fn, &[desc_ptr_val, dst]);
-    let status = ctx.b.inst_results(call)[0];
-    let ok_val = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
-    let is_ok = ctx.b.ins().icmp(IntCC::Equal, status, ok_val);
-
+    // Compute alloc_ptr inline. Both arms agree on the value via a phi at
+    // the alloc_ok merge.
     let alloc_ok = ctx.fresh_block();
-    let alloc_err = ctx.fresh_block();
-    ctx.b.ins().brif(is_ok, alloc_ok, &[], alloc_err, &[]);
+    ctx.b.append_block_param(alloc_ok, ctx.ptr_ty);
 
-    ctx.b.switch_to_block(alloc_err);
-    ctx.b.seal_block(alloc_err);
-    ctx.return_err(DecodeStatus::AllocFailed);
+    if desc.elem_size == 0 {
+        // ZST Box: pointer is the alignment sentinel. No call, no null check.
+        let sentinel = ctx.b.ins().iconst(ctx.ptr_ty, desc.elem_align as i64);
+        ctx.b.ins().jump(alloc_ok, &[sentinel.into()]);
+    } else {
+        // Direct call to the global-allocator entry point. Both `size` and
+        // `align` are JIT-time constants emitted as iconsts. On x86_64-linux
+        // we resolve `__rust_alloc` itself by scanning `vox_jit_alloc`'s
+        // tail-jmp bytes — saves the call/ret pair through
+        // `__rust_no_alloc_shim_is_unstable_v2` that `std::alloc::alloc`
+        // adds. Elsewhere, fall back to `vox_jit_alloc` (one extra call/ret
+        // each but functionally equivalent).
+        let alloc_sig = make_global_alloc_sig(ctx);
+        let alloc_addr = vox_jit_abi::rust_alloc_fn_addr()
+            .unwrap_or(vox_jit_alloc as *const () as usize);
+        let alloc_fn_addr = ctx.b.ins().iconst(ctx.ptr_ty, alloc_addr as i64);
+        let size_val = ctx.b.ins().iconst(ctx.ptr_ty, desc.elem_size as i64);
+        let align_val = ctx.b.ins().iconst(ctx.ptr_ty, desc.elem_align as i64);
+        let call = ctx.b.ins().call_indirect(
+            alloc_sig,
+            alloc_fn_addr,
+            &[size_val, align_val],
+        );
+        let raw_ptr = ctx.b.inst_results(call)[0];
+
+        let zero = ctx.b.ins().iconst(ctx.ptr_ty, 0);
+        let is_null = ctx.b.ins().icmp(IntCC::Equal, raw_ptr, zero);
+
+        let alloc_err = ctx.fresh_block();
+        ctx.b.ins().brif(is_null, alloc_err, &[], alloc_ok, &[raw_ptr.into()]);
+
+        ctx.b.switch_to_block(alloc_err);
+        ctx.b.seal_block(alloc_err);
+        ctx.return_err(DecodeStatus::AllocFailed);
+    }
 
     ctx.b.switch_to_block(alloc_ok);
     ctx.b.seal_block(alloc_ok);
+    let alloc_ptr = ctx.b.block_params(alloc_ok)[0];
 
-    let alloc_ptr = ctx
-        .b
-        .ins()
-        .load(ctx.ptr_ty, MemFlags::trusted(), dst, ptr_off);
+    // Write alloc_ptr into the Box header at ptr_offset (unaligned-safe via
+    // MemFlags::trusted with explicit byte offset).
+    ctx.b.ins().store(MemFlags::trusted(), alloc_ptr, dst, ptr_off);
 
     // Inline the pointee decode. Use a continuation block so that if the
     // body contains nested Vecs (or other multi-block ops), all paths converge
@@ -3064,6 +3091,7 @@ fn make_alloc_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
 }
 
 /// Signature for `vox_jit_box_alloc(desc: *const OpaqueDescriptor, out_ptr: *mut u8) -> u32`.
+#[allow(dead_code)]
 fn make_box_alloc_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
     let call_conv = ctx.b.func.signature.call_conv;
     ctx.b.func.import_signature(Signature {
@@ -3072,6 +3100,19 @@ fn make_box_alloc_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRe
             AbiParam::new(ctx.ptr_ty), // out_ptr
         ],
         returns: vec![AbiParam::new(types::I32)],
+        call_conv,
+    })
+}
+
+/// Signature for `vox_jit_alloc(size: usize, align: usize) -> *mut u8`.
+fn make_global_alloc_sig(ctx: &mut EmitCtx<'_, '_>) -> cranelift_codegen::ir::SigRef {
+    let call_conv = ctx.b.func.signature.call_conv;
+    ctx.b.func.import_signature(Signature {
+        params: vec![
+            AbiParam::new(ctx.ptr_ty), // size
+            AbiParam::new(ctx.ptr_ty), // align
+        ],
+        returns: vec![AbiParam::new(ctx.ptr_ty)],
         call_conv,
     })
 }

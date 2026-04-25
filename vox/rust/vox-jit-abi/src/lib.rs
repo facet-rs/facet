@@ -302,6 +302,111 @@ pub unsafe extern "C" fn vox_jit_vec_drop_partial(
     // If layout reconstruction fails (calibration bug), we leak. Non-panicking.
 }
 
+/// Thin wrapper around the Rust global allocator. The codegen path inlines
+/// the alignment-sentinel-for-ZST and the destination-pointer-write directly
+/// into JIT'd code, so this helper is just `std::alloc::alloc` reached by an
+/// indirect call. `size` and `align` are JIT-time constants — alignment is
+/// validated power-of-two at codegen, so `Layout::from_size_align_unchecked`
+/// is safe here.
+///
+/// `#[inline(never)]` is load-bearing: [`rust_alloc_fn_addr`] scans this
+/// function's compiled bytes to extract the GOT-relative tail-jmp to
+/// `__rust_alloc`. If this gets inlined, that scan finds nothing.
+///
+/// # Safety
+/// - `align` must be a non-zero power of two.
+/// - `size > 0` (the codegen path emits the ZST sentinel itself).
+#[inline(never)]
+pub unsafe extern "C" fn vox_jit_alloc(size: usize, align: usize) -> *mut u8 {
+    let layout = unsafe { std::alloc::Layout::from_size_align_unchecked(size, align) };
+    unsafe { std::alloc::alloc(layout) }
+}
+
+/// Returns the address of `__rust_alloc`, the global allocator's actual
+/// entry point — bypassing `std::alloc::alloc`'s call to
+/// `__rust_no_alloc_shim_is_unstable_v2` (a stability marker that costs one
+/// call/ret pair on every allocation).
+///
+/// `__rust_alloc` is mangled with a per-build crate-disambiguator hash
+/// (`__rustc[<hash>]::__rust_alloc`), so it can't be linked by name. But
+/// the linker has already wired up a GOT entry to it for our use of
+/// `std::alloc::alloc`. We extract that entry by scanning [`vox_jit_alloc`]'s
+/// compiled bytes for its trailing `jmp qword [rip+disp]` instruction
+/// (opcode `ff 25`), following the displacement to the GOT slot, and
+/// dereferencing once.
+///
+/// Returns `None` on platforms where the byte-scan is not implemented
+/// (anything but x86_64-linux today). Callers should fall back to the
+/// `vox_jit_alloc` helper itself in that case — adds the shim cost but
+/// keeps working.
+///
+/// Panics if the scan finds zero or more than one `ff 25` pattern, or if
+/// the resolved GOT entry is null. Either case means our model of
+/// `vox_jit_alloc`'s code layout is wrong and we'd rather fail loud than
+/// return a wrong pointer.
+pub fn rust_alloc_fn_addr() -> Option<usize> {
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    {
+        static CACHED: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        Some(*CACHED.get_or_init(scan_rust_alloc_x86_64_linux))
+    }
+    #[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+    {
+        None
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn scan_rust_alloc_x86_64_linux() -> usize {
+    // Scan up to 96 bytes — vox_jit_alloc is much smaller than that, but
+    // enough headroom for any reasonable prologue/epilogue layout.
+    const SCAN_LEN: usize = 96;
+    let body = vox_jit_alloc as *const u8;
+
+    let mut found: Option<usize> = None;
+    for i in 0..SCAN_LEN.saturating_sub(6) {
+        let b0 = unsafe { body.add(i).read() };
+        let b1 = unsafe { body.add(i + 1).read() };
+        // ff 25 disp32 = jmp qword [rip + disp32].
+        if b0 != 0xff || b1 != 0x25 {
+            continue;
+        }
+
+        let disp = unsafe { (body.add(i + 2) as *const i32).read_unaligned() };
+        let rip_after = unsafe { body.add(i + 6) } as usize;
+        let got_entry = rip_after.wrapping_add_signed(disp as isize);
+        let addr = unsafe { (got_entry as *const usize).read() };
+
+        assert!(
+            addr != 0,
+            "vox_jit_abi: GOT entry pointed to by vox_jit_alloc's \
+             tail-jmp is null at instruction offset {i}"
+        );
+        assert!(
+            found.is_none(),
+            "vox_jit_abi: vox_jit_alloc body has more than one \
+             `ff 25` indirect-jmp pattern (found at offsets \
+             {} and {i}); compiler layout must have changed and \
+             we can no longer reliably extract __rust_alloc",
+            // Re-scan for the previous offset to include in the message.
+            (0..i).rev().find(|&j| unsafe {
+                body.add(j).read() == 0xff && body.add(j + 1).read() == 0x25
+            }).unwrap_or(0)
+        );
+
+        found = Some(addr);
+    }
+
+    found.unwrap_or_else(|| {
+        panic!(
+            "vox_jit_abi: no `ff 25` indirect-jmp pattern found in \
+             vox_jit_alloc body within first {SCAN_LEN} bytes; \
+             cannot extract __rust_alloc address. Either the compiler \
+             changed code layout, or vox_jit_alloc was unexpectedly inlined."
+        )
+    })
+}
+
 /// Allocate a single `T`-sized heap slot for a `Box<T>` and write the pointer
 /// into `out_ptr`.
 ///
