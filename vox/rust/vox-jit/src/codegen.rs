@@ -3879,7 +3879,7 @@ fn emit_inline_child_program(
     src_offset: usize,
 ) -> Result<(), CodegenError> {
     let child_program = child.program.as_ref();
-    let child_shape: &'static facet_core::Shape = child.key.local_shape;
+    let child_shape: &'static facet_core::Shape = child.local_shape;
 
     let inner_src = ectx.src_at(src_offset);
     let cont_block = ectx.b.create_block();

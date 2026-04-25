@@ -35,8 +35,7 @@ use std::sync::{Arc, Mutex, Once, OnceLock};
 use arc_swap::ArcSwap;
 
 use facet_core::{Def, Facet, Shape, Type, UserType};
-use vox_jit_abi::DescriptorHandle;
-use vox_jit_abi::{DecodeCacheKey, DecodeCtx, DecodeStatus, EncodeCacheKey};
+use vox_jit_abi::{DecodeCtx, DecodeStatus};
 use vox_jit_cal::{BorrowMode, CalibrationRegistry};
 use vox_postcard::TranslationPlan;
 use vox_postcard::error::DeserializeError;
@@ -118,36 +117,11 @@ impl JitRuntime {
         CodecMode::from_env() != CodecMode::Jit
     }
 
-    /// Build a `DecodeCacheKey` for the given parameters.
-    ///
-    /// Per §Caching: if `descriptor_handle` is `None` (required calibration
-    /// unavailable), the caller should NOT insert a decoder — fall back to
-    /// the IR interpreter instead. This method still builds the key for
-    /// lookup purposes, but insert is the caller's responsibility to gate.
-    ///
-    /// The `local_shape` field uses `Shape`'s own `PartialEq`/`Hash` impls —
-    /// not the pointer address. Two shapes at different addresses for the same
-    /// Rust type produce the same cache key.
-    pub fn decode_cache_key(
-        &self,
-        remote_schema_id: u64,
-        local_shape: &'static facet_core::Shape,
-        borrow_mode: BorrowMode,
-        descriptor_handle: Option<vox_jit_abi::DescriptorHandle>,
-    ) -> DecodeCacheKey {
-        DecodeCacheKey {
-            remote_schema_id,
-            local_shape,
-            borrow_mode,
-            target_isa: host_isa_name(),
-            descriptor_handle,
-        }
-    }
-
-    /// Compile (or look up) the encoder/decoder for `local_shape` and the
-    /// given remote schema, returning a `&'static` reference owned by this
-    /// runtime's process-wide cache. Conduits call this once at construction
-    /// to skip the global cache lookup on every hot-path encode/decode.
+    /// Compile (or look up) the decoder for `local_shape` translating from
+    /// the given remote schema, returning a `&'static` reference owned by
+    /// this runtime's process-wide cache. Conduits call this once at
+    /// construction to skip the global cache lookup on every hot-path
+    /// decode.
     pub fn prepare_decoder(
         &self,
         remote_schema_id: u64,
@@ -158,7 +132,7 @@ impl JitRuntime {
     ) -> Option<&'static cache::CompiledDecoder> {
         if let Some(decoder) = self
             .cache
-            .get_decode_fast(local_shape, borrow_mode, remote_schema_id)
+            .get_decode(local_shape, borrow_mode, remote_schema_id)
         {
             return Some(decoder);
         }
@@ -169,19 +143,6 @@ impl JitRuntime {
 
         let mut cal = self.cal.lock().unwrap();
         register_shape_tree(local_shape, &mut cal);
-        let descriptor_handle = calibration_token(&cal);
-        let key = self.decode_cache_key(
-            remote_schema_id,
-            local_shape,
-            borrow_mode,
-            descriptor_handle,
-        );
-
-        if let Some(decoder) = self.cache.get_decode(&key) {
-            self.cache
-                .insert_decode_fast(local_shape, borrow_mode, remote_schema_id, decoder);
-            return Some(decoder);
-        }
 
         let program = match lower_with_cal(plan, local_shape, registry, Some(&cal), borrow_mode) {
             Ok(program) => program,
@@ -218,7 +179,7 @@ impl JitRuntime {
             cache::CompiledDecoder {
                 owned_fn: None,
                 borrowed_fn: Some(borrowed_fn),
-                key: key.clone(),
+                local_shape,
             }
         } else {
             let owned_fn = match backend.compile_decode_owned(local_shape, &program, &cal) {
@@ -236,13 +197,10 @@ impl JitRuntime {
             cache::CompiledDecoder {
                 owned_fn: Some(owned_fn),
                 borrowed_fn: None,
-                key: key.clone(),
+                local_shape,
             }
         };
-        let decoder = self.cache.insert_decode(key.clone(), decoder);
-        self.cache
-            .insert_decode_fast(local_shape, borrow_mode, remote_schema_id, decoder);
-        Some(decoder)
+        Some(self.cache.insert_decode(local_shape, borrow_mode, remote_schema_id, decoder))
     }
 
     /// Compile (or look up) the encoder for `shape`, returning a `&'static`
@@ -250,10 +208,7 @@ impl JitRuntime {
     /// this once at construction to skip the global cache lookup on every
     /// hot-path encode.
     pub fn prepare_encoder(&self, shape: &'static Shape) -> Option<&'static cache::CompiledEncoder> {
-        // Fast path: pointer-identity lookup. No shape-tree walk, no cal
-        // mutex, no structural hashing. This is the hot path for repeated
-        // encode calls of the same type (i.e., every benchmark iteration).
-        if let Some(encoder) = self.cache.get_encode_fast(shape) {
+        if let Some(encoder) = self.cache.get_encode(shape) {
             return Some(encoder);
         }
 
@@ -272,21 +227,9 @@ impl JitRuntime {
         let _guard = InProgressGuard(shape);
 
         // Phase 1: lower the IR and collect nested shapes under cal lock.
-        let (program, children, key) = {
+        let (program, children) = {
             let mut cal = self.cal.lock().unwrap();
             register_shape_tree(shape, &mut cal);
-            let descriptor_handle = calibration_token(&cal);
-            let key = EncodeCacheKey {
-                local_shape: shape,
-                borrow_mode: BorrowMode::Owned,
-                target_isa: host_isa_name(),
-                descriptor_handle,
-            };
-
-            if let Some(encoder) = self.cache.get_encode(&key) {
-                self.cache.insert_encode_fast(shape, encoder);
-                return Some(encoder);
-            }
 
             let program = match lower_encode(shape, Some(&cal)) {
                 Ok(program) => program,
@@ -307,7 +250,7 @@ impl JitRuntime {
                 );
             }
             let children = codegen::collect_write_shape_children(&program);
-            (Arc::new(program), children, key)
+            (Arc::new(program), children)
         };
 
         // Phase 2: recurse for each nested WriteShape child with cal+backend
@@ -343,18 +286,16 @@ impl JitRuntime {
                 return None;
             }
         };
-        let encoder = self.cache.insert_encode(
-            key.clone(),
+        Some(self.cache.insert_encode(
+            shape,
             cache::CompiledEncoder {
-                key: key.clone(),
+                local_shape: shape,
                 encode_fn,
                 size_hint: std::sync::atomic::AtomicUsize::new(0),
                 program: program.clone(),
                 child_encoders,
             },
-        );
-        self.cache.insert_encode_fast(shape, encoder);
-        Some(encoder)
+        ))
     }
 
     pub fn try_decode_owned<T: Facet<'static>>(
@@ -373,22 +314,30 @@ impl JitRuntime {
             CodecMode::Jit => {}
         }
 
-        let stub = self.prepare_decoder(
+        // Try the JIT path; fall back to the IR interpreter when the lowered
+        // program contains an op the JIT can't compile (e.g. `SkipValue` for
+        // skipping unknown remote fields). The IR interpreter shares lowering
+        // with the JIT, so it sees the same plan.
+        if let Some(stub) = self.prepare_decoder(
             remote_schema_id,
             T::SHAPE,
             plan,
             registry,
             BorrowMode::Owned,
-        )?;
-        let decode_fn = stub.owned_fn?;
-        let mut ctx = DecodeCtx::new(input);
-        let mut out = MaybeUninit::<T>::uninit();
-        let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
-        if status == DecodeStatus::Ok {
-            Some(Ok(unsafe { out.assume_init() }))
-        } else {
-            Some(Err(decode_status_to_error(status, &ctx, input)))
+        ) && let Some(decode_fn) = stub.owned_fn
+        {
+            let mut ctx = DecodeCtx::new(input);
+            let mut out = MaybeUninit::<T>::uninit();
+            let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
+            return if status == DecodeStatus::Ok {
+                Some(Ok(unsafe { out.assume_init() }))
+            } else {
+                Some(Err(decode_status_to_error(status, &ctx, input)))
+            };
         }
+
+        let cal = self.cal.lock().unwrap();
+        Some(from_slice_ir::<T>(input, plan, registry, Some(&cal)))
     }
 
     pub fn try_decode_borrowed<'input, 'facet, T: Facet<'facet>>(
@@ -415,22 +364,26 @@ impl JitRuntime {
             CodecMode::Jit => {}
         }
 
-        let stub = self.prepare_decoder(
+        if let Some(stub) = self.prepare_decoder(
             remote_schema_id,
             T::SHAPE,
             plan,
             registry,
             BorrowMode::Borrowed,
-        )?;
-        let decode_fn = stub.borrowed_fn?;
-        let mut ctx = DecodeCtx::new(input);
-        let mut out = MaybeUninit::<T>::uninit();
-        let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
-        if status == DecodeStatus::Ok {
-            Some(Ok(unsafe { out.assume_init() }))
-        } else {
-            Some(Err(decode_status_to_error(status, &ctx, input)))
+        ) && let Some(decode_fn) = stub.borrowed_fn
+        {
+            let mut ctx = DecodeCtx::new(input);
+            let mut out = MaybeUninit::<T>::uninit();
+            let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
+            return if status == DecodeStatus::Ok {
+                Some(Ok(unsafe { out.assume_init() }))
+            } else {
+                Some(Err(decode_status_to_error(status, &ctx, input)))
+            };
         }
+
+        let cal = self.cal.lock().unwrap();
+        Some(from_slice_ir_borrowed::<T>(input, plan, registry, Some(&cal)))
     }
 
     pub fn try_encode_ptr(
@@ -719,13 +672,6 @@ fn runtime_encode_hook(
     shape: &'static Shape,
 ) -> Result<Option<Vec<u8>>, SerializeError> {
     global_runtime().try_encode_ptr(ptr, shape).transpose()
-}
-
-fn calibration_token(cal: &CalibrationRegistry) -> Option<DescriptorHandle> {
-    cal.iter()
-        .last()
-        .map(|(handle, _)| handle)
-        .or_else(|| cal.string_descriptor_handle())
 }
 
 fn register_shape_tree(shape: &'static Shape, cal: &mut CalibrationRegistry) {
