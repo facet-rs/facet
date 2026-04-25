@@ -205,7 +205,6 @@ pub type BorrowedDecodeFn = unsafe extern "C" fn(
 /// # Safety
 /// - `desc` must be a valid calibrated descriptor with `kind == Vec` or
 ///   `kind == String`. Do not call with `BoxOwned` or `BoxSlice` descriptors.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_vec_alloc(desc: *const OpaqueDescriptor, cap: usize) -> *mut u8 {
     let desc = unsafe { &*desc };
 
@@ -232,7 +231,6 @@ pub unsafe extern "C" fn vox_jit_vec_alloc(desc: *const OpaqueDescriptor, cap: u
 ///
 /// # Safety
 /// Same as `vox_jit_vec_alloc`. `desc.kind` must be `String`.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_string_alloc(
     desc: *const OpaqueDescriptor,
     cap: usize,
@@ -260,7 +258,6 @@ pub unsafe extern "C" fn vox_jit_string_alloc(
 /// - Elements `[0, init_count)` are fully initialized T values.
 /// - Elements `[init_count, cap)` are uninitialized and must not be dropped.
 /// - `drop_glue`, if provided, must correctly drop a single T at the given ptr.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_vec_drop_partial(
     desc: *const OpaqueDescriptor,
     container_ptr: *mut u8,
@@ -317,7 +314,6 @@ pub unsafe extern "C" fn vox_jit_vec_drop_partial(
 /// # Safety
 /// - `desc` valid with `kind == BoxOwned`.
 /// - `out_ptr` writable for `desc.size` bytes.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_box_alloc(
     desc: *const OpaqueDescriptor,
     out_ptr: *mut u8,
@@ -354,7 +350,6 @@ pub unsafe extern "C" fn vox_jit_box_alloc(
 /// # Safety
 /// - `desc` valid with `kind == BoxSlice`.
 /// - `out_ptr` writable for `desc.size` bytes.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_box_slice_alloc(
     desc: *const OpaqueDescriptor,
     len: usize,
@@ -404,7 +399,6 @@ pub unsafe extern "C" fn vox_jit_box_slice_alloc(
 ///
 /// # Safety
 /// `bytes` must point to at least `len` readable bytes.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_utf8_validate(bytes: *const u8, len: usize) -> DecodeStatus {
     let slice = unsafe { core::slice::from_raw_parts(bytes, len) };
     match core::str::from_utf8(slice) {
@@ -422,7 +416,6 @@ pub unsafe extern "C" fn vox_jit_utf8_validate(bytes: *const u8, len: usize) -> 
 ///
 /// # Safety
 /// `bytes` must point to at least `len` readable bytes.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_validate_bools(bytes: *const u8, len: usize) -> DecodeStatus {
     let slice = unsafe { core::slice::from_raw_parts(bytes, len) };
     let mut acc: u8 = 0;
@@ -518,7 +511,6 @@ pub type EncodeFn = unsafe extern "C" fn(ctx: *mut EncodeCtx, src_ptr: *const u8
 /// - `ctx` must be a valid, non-null `EncodeCtx`.
 /// - The new allocation replaces `ctx.buf_ptr`; any previously cached pointer
 ///   into the buffer is invalidated.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_buf_grow(ctx: *mut EncodeCtx, needed: usize) -> bool {
     let ctx = unsafe { &mut *ctx };
     let new_cap = (ctx.buf_cap * 2).max(ctx.buf_len + needed).max(64);
@@ -547,7 +539,6 @@ pub unsafe extern "C" fn vox_jit_buf_grow(ctx: *mut EncodeCtx, needed: usize) ->
 ///
 /// # Safety
 /// `ctx` must be a valid, non-null `EncodeCtx`.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_buf_push_byte(ctx: *mut EncodeCtx, byte: u8) -> bool {
     let ctx_ref = unsafe { &mut *ctx };
     if ctx_ref.buf_len >= ctx_ref.buf_cap && !unsafe { vox_jit_buf_grow(ctx, 1) } {
@@ -566,7 +557,6 @@ pub unsafe extern "C" fn vox_jit_buf_push_byte(ctx: *mut EncodeCtx, byte: u8) ->
 /// # Safety
 /// - `ctx` must be a valid, non-null `EncodeCtx`.
 /// - `data` must point to at least `len` readable bytes.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_buf_push_bytes(
     ctx: *mut EncodeCtx,
     data: *const u8,
@@ -594,7 +584,6 @@ pub unsafe extern "C" fn vox_jit_buf_push_bytes(
 ///
 /// # Safety
 /// `ctx` must be a valid, non-null `EncodeCtx`.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_buf_write_varint(ctx: *mut EncodeCtx, mut value: u64) -> bool {
     while value >= 0x80 {
         if !unsafe { vox_jit_buf_push_byte(ctx, (value as u8) | 0x80) } {
@@ -611,7 +600,6 @@ pub unsafe extern "C" fn vox_jit_buf_write_varint(ctx: *mut EncodeCtx, mut value
 ///
 /// # Safety
 /// `ctx` must be a valid, non-null `EncodeCtx`.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_buf_write_varint_signed(ctx: *mut EncodeCtx, value: i64) -> bool {
     let zigzag = ((value << 1) ^ (value >> 63)) as u64;
     unsafe { vox_jit_buf_write_varint(ctx, zigzag) }
@@ -630,7 +618,6 @@ pub unsafe extern "C" fn vox_jit_buf_write_varint_signed(ctx: *mut EncodeCtx, va
 /// - `desc` must be a valid calibrated Vec or String descriptor.
 /// - `src_ptr` must point to a valid, initialized container value.
 /// - `elem_encode_fn`, if non-null, must be a valid encode stub for the element type.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_buf_write_opaque_vec(
     ctx: *mut EncodeCtx,
     desc: *const OpaqueDescriptor,

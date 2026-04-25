@@ -9,7 +9,6 @@ use vox_jit_abi::{
 };
 use vox_postcard::{TranslationPlan, ir::slow_path_decode_raw};
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_result_is_ok_raw(
     src_ptr: *const u8,
     is_ok_fn: facet_core::ResultIsOkFn,
@@ -17,7 +16,6 @@ pub unsafe extern "C" fn vox_jit_result_is_ok_raw(
     unsafe { is_ok_fn(PtrConst::new(src_ptr)) }
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_result_get_payload_raw(
     src_ptr: *const u8,
     get_fn: facet_core::ResultGetOkFn,
@@ -25,7 +23,6 @@ pub unsafe extern "C" fn vox_jit_result_get_payload_raw(
     unsafe { get_fn(PtrConst::new(src_ptr)) }
 }
 
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_result_init_raw(
     dst_ptr: *mut u8,
     payload_ptr: *mut u8,
@@ -44,7 +41,6 @@ pub unsafe extern "C" fn vox_jit_result_init_raw(
 /// - `shape` must be a valid `&'static Shape`.
 /// - `plan` must be a valid `*const TranslationPlan`.
 /// - `dst_base.add(dst_offset)` must be writable for `shape.layout.size()` bytes.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_slow_path(
     ctx: *mut DecodeCtx,
     shape: &'static facet_core::Shape,
@@ -91,7 +87,6 @@ pub unsafe extern "C" fn vox_jit_slow_path(
 /// - `shape` must be a valid `&'static Shape`.
 /// - `dst_base.add(dst_offset)` must point to writable, properly-aligned,
 ///   uninitialized memory of at least `shape.layout.size()` bytes.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_write_default(
     shape: &'static facet_core::Shape,
     dst_base: *mut u8,
@@ -112,7 +107,6 @@ pub unsafe extern "C" fn vox_jit_write_default(
 
 /// Opaque decode helper: read a u32le-length-prefixed byte payload and
 /// initialize the destination via the shape's opaque adapter.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_decode_opaque(
     ctx: *mut DecodeCtx,
     shape: &'static facet_core::Shape,
@@ -158,7 +152,6 @@ pub unsafe extern "C" fn vox_jit_decode_opaque(
 /// - `ctx` must be a valid, non-null `EncodeCtx`.
 /// - `src_ptr` must point to a valid value matching `shape`.
 /// - `shape` must be a valid `&'static Shape`.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_encode_slow_path(
     ctx: *mut EncodeCtx,
     src_ptr: *const u8,
@@ -223,7 +216,6 @@ fn handle_pure_jit_encode_miss(kind: &str, shape: &'static facet_core::Shape) ->
 
 /// Encode an opaque-adapter field without using the reflective walker when the
 /// mapped inner value can be encoded by the JIT runtime.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_encode_opaque(
     ctx: *mut EncodeCtx,
     src_ptr: *const u8,
@@ -263,7 +255,6 @@ pub unsafe extern "C" fn vox_jit_encode_opaque(
 
 /// Encode a proxy field by converting to the proxy value and delegating the
 /// proxy shape back through the JIT runtime.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_encode_proxy(
     ctx: *mut EncodeCtx,
     src_ptr: *const u8,
@@ -309,7 +300,6 @@ pub unsafe extern "C" fn vox_jit_encode_proxy(
 /// Encode a `Result<T, E>` by selecting the active arm via the result vtable,
 /// writing postcard discriminant `0`/`1`, then delegating the inner value back
 /// through the JIT runtime.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_encode_result(
     ctx: *mut EncodeCtx,
     src_ptr: *const u8,
@@ -360,7 +350,6 @@ pub unsafe extern "C" fn vox_jit_encode_result(
 /// # Safety
 /// - `dst` must point to writable storage for `Cow<[u8]>`.
 /// - `data` must be valid for `len` bytes.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_init_cow_byte_slice_owned(
     dst: *mut u8,
     data: *const u8,
@@ -378,7 +367,6 @@ pub unsafe extern "C" fn vox_jit_init_cow_byte_slice_owned(
 /// # Safety
 /// - `dst` must point to writable storage for `Cow<[u8]>`.
 /// - `data` must be valid for `len` bytes and outlive the surrounding decode result.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_init_cow_byte_slice_borrowed(
     dst: *mut u8,
     data: *const u8,
@@ -397,7 +385,6 @@ pub unsafe extern "C" fn vox_jit_init_cow_byte_slice_borrowed(
 /// # Safety
 /// - `dst` must point to writable storage for `&[u8]`.
 /// - `data` must be valid for `len` bytes and outlive the surrounding decode result.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_init_byte_slice_ref(dst: *mut u8, data: *const u8, len: usize) {
     let bytes: &'static [u8] =
         unsafe { std::mem::transmute(std::slice::from_raw_parts(data, len)) };
@@ -407,7 +394,6 @@ pub unsafe extern "C" fn vox_jit_init_byte_slice_ref(dst: *mut u8, data: *const 
 }
 
 /// Initialize a `Cow<str>` with owned bytes after UTF-8 validation.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_init_cow_str_owned(dst: *mut u8, data: *const u8, len: usize) {
     let bytes = unsafe { std::slice::from_raw_parts(data, len) };
     let s = std::str::from_utf8(bytes).expect("JIT emitted invalid UTF-8 for Cow<str>");
@@ -418,7 +404,6 @@ pub unsafe extern "C" fn vox_jit_init_cow_str_owned(dst: *mut u8, data: *const u
 }
 
 /// Initialize a `Cow<str>` borrowing from the input buffer.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_init_cow_str_borrowed(dst: *mut u8, data: *const u8, len: usize) {
     let bytes = unsafe { std::slice::from_raw_parts(data, len) };
     let s = std::str::from_utf8(bytes).expect("JIT emitted invalid UTF-8 for Cow<str>");
@@ -430,7 +415,6 @@ pub unsafe extern "C" fn vox_jit_init_cow_str_borrowed(dst: *mut u8, data: *cons
 }
 
 /// Initialize a `&str` borrowing from the input buffer.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_init_str_ref(dst: *mut u8, data: *const u8, len: usize) {
     let bytes = unsafe { std::slice::from_raw_parts(data, len) };
     let s = std::str::from_utf8(bytes).expect("JIT emitted invalid UTF-8 for &str");
@@ -442,7 +426,6 @@ pub unsafe extern "C" fn vox_jit_init_str_ref(dst: *mut u8, data: *const u8, len
 
 /// Encode a string-like shape (`String`, `&str`, `Cow<str>`) without using
 /// the reflective walker.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_encode_string_like(
     ctx: *mut EncodeCtx,
     src_ptr: *const u8,
@@ -468,7 +451,6 @@ pub unsafe extern "C" fn vox_jit_encode_string_like(
 }
 
 /// Encode a field by delegating to a nested encoder for the exact shape.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_encode_shape(
     ctx: *mut EncodeCtx,
     src_ptr: *const u8,
@@ -491,7 +473,6 @@ pub unsafe extern "C" fn vox_jit_encode_shape(
 
 /// Encode a bytes-like shape (`Cow<[u8]>`, `&[u8]`) without using the
 /// reflective walker.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vox_jit_encode_bytes_like(
     ctx: *mut EncodeCtx,
     src_ptr: *const u8,
