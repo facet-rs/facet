@@ -206,6 +206,24 @@ where
             registry,
         }
     }
+
+    /// Like `new`, but skips the `jit_encode` parity check and warmup. For
+    /// shapes whose JIT encoder is not yet implemented (e.g. recursive
+    /// `Box<Self>`) we still want a `jit_decode` bench fixture — the wire
+    /// bytes from the reflective encoder are the same and that's all decode
+    /// needs.
+    fn new_decode_only(value: T) -> Self {
+        let bytes = vox_postcard::to_vec(&value).expect("reflective encode fixture");
+        let plan = vox_postcard::build_identity_plan(T::SHAPE);
+        let registry = vox_types::SchemaRegistry::new();
+        let _: T = jit_decode(&bytes, &plan, &registry);
+        Self {
+            value,
+            bytes,
+            plan,
+            registry,
+        }
+    }
 }
 
 
@@ -611,13 +629,39 @@ mod codec {
         }
     }
 
-    // Tree (recursive `Box<Tree>`) bench removed: vox-postcard's `lower_pointer`
-    // recursively inlines the pointee shape with no cycle detection, so a
-    // recursive type causes infinite recursion in the lowerer (stack overflow
-    // before any decode runs). Supporting recursive types requires a named
-    // block per shape + back-edge "call self" semantics in the IR — its own
-    // work item. See `rust/vox-bench/src/lib.rs::shapes::Tree` for the type;
-    // re-enable here once the lowerer learns recursion.
+    /// Recursive binary tree (`enum Tree { Leaf(u64), Node(Box<Tree>, Box<Tree>) }`).
+    /// Direct self-recursion via `Box<Tree>` — every internal node forces the
+    /// JIT/interpreter to recurse into the same decoder. Stresses cycle
+    /// detection in the lowerer and the self-recursive call path in codegen.
+    /// At depth 8 the tree has 511 nodes → 510 Box allocations.
+    ///
+    /// Decode-only for now: the JIT encode lowerer still needs a `Box<T>`
+    /// path (encode of `Box<T>` = deref + encode T); decode handles it
+    /// already via `CallSelf`.
+    mod tree {
+        use super::*;
+        use vox_bench::shapes::{Tree, make_tree};
+
+        #[divan::bench(args = [4u32, 6, 8])]
+        fn jit_decode(bencher: Bencher, depth: u32) {
+            let fixture = CodecFixture::<Tree>::new_decode_only(make_tree(depth, 0xC0FFEE));
+            bencher.bench_local(|| {
+                black_box(super::super::jit_decode::<Tree>(
+                    black_box(&fixture.bytes),
+                    &fixture.plan,
+                    &fixture.registry,
+                ))
+            });
+        }
+
+        #[divan::bench(args = [4u32, 6, 8])]
+        fn serde_decode(bencher: Bencher, depth: u32) {
+            let fixture = CodecFixture::<Tree>::new_decode_only(make_tree(depth, 0xC0FFEE));
+            bencher.bench_local(|| {
+                black_box(postcard::from_bytes::<Tree>(black_box(&fixture.bytes)).unwrap())
+            });
+        }
+    }
 
     /// Audio-shaped numerical buffers: large `Vec<f32>`, `Vec<f64>`, and
     /// `Vec<bool>`. f32/f64 wire format is fixed LE bytes, identical to the

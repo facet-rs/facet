@@ -680,6 +680,22 @@ fn runtime_encode_hook(
 }
 
 fn register_shape_tree(shape: &'static Shape, cal: &mut CalibrationRegistry) {
+    let mut visited = HashSet::new();
+    register_shape_tree_inner(shape, cal, &mut visited);
+}
+
+fn register_shape_tree_inner(
+    shape: &'static Shape,
+    cal: &mut CalibrationRegistry,
+    visited: &mut HashSet<&'static Shape>,
+) {
+    // Cycle guard for recursive types (`Box<Self>`, `Vec<Self>`, ...).
+    // Inserting on first visit ensures we calibrate the shape exactly once
+    // and don't loop forever walking pointee → enum variant → pointee → ...
+    if !visited.insert(shape) {
+        return;
+    }
+
     if shape == <String as Facet<'static>>::SHAPE
         && cal
             .lookup_by_shape(<String as Facet<'static>>::SHAPE)
@@ -701,13 +717,13 @@ fn register_shape_tree(shape: &'static Shape, cal: &mut CalibrationRegistry) {
     match shape.ty {
         Type::User(UserType::Struct(st)) => {
             for field in st.fields {
-                register_shape_tree(field.shape(), cal);
+                register_shape_tree_inner(field.shape(), cal, visited);
             }
         }
         Type::User(UserType::Enum(et)) => {
             for variant in et.variants {
                 for field in variant.data.fields {
-                    register_shape_tree(field.shape(), cal);
+                    register_shape_tree_inner(field.shape(), cal, visited);
                 }
             }
         }
@@ -715,18 +731,18 @@ fn register_shape_tree(shape: &'static Shape, cal: &mut CalibrationRegistry) {
     }
 
     match shape.def {
-        Def::Option(opt) => register_shape_tree(opt.t, cal),
+        Def::Option(opt) => register_shape_tree_inner(opt.t, cal, visited),
         Def::Result(result) => {
-            register_shape_tree(result.t, cal);
-            register_shape_tree(result.e, cal);
+            register_shape_tree_inner(result.t, cal, visited);
+            register_shape_tree_inner(result.e, cal, visited);
         }
-        Def::List(list) => register_shape_tree(list.t, cal),
+        Def::List(list) => register_shape_tree_inner(list.t, cal, visited),
         Def::Pointer(ptr) => {
             if let Some(inner) = ptr.pointee() {
-                register_shape_tree(inner, cal);
+                register_shape_tree_inner(inner, cal, visited);
             }
         }
-        Def::Array(arr) => register_shape_tree(arr.t, cal),
+        Def::Array(arr) => register_shape_tree_inner(arr.t, cal, visited),
         _ => {}
     }
 }

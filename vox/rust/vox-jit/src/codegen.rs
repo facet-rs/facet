@@ -312,10 +312,14 @@ impl CraneliftBackend {
         let mut ctx = self.module.make_context();
         ctx.func.signature = sig;
 
+        // Import the function being compiled into its own body so
+        // `DecodeOp::CallSelf` can emit a direct self-recursive call.
+        let self_func = self.module.declare_func_in_func(func_id, &mut ctx.func);
+
         let mut func_ctx = FunctionBuilderContext::new();
         {
             let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
-            emit_decode_function(&mut builder, program, descriptors, self.ptr_ty)?;
+            emit_decode_function(&mut builder, program, descriptors, self.ptr_ty, self_func)?;
             builder.finalize();
         }
 
@@ -456,6 +460,9 @@ struct EmitCtx<'a, 'b> {
     ctx_ptr: Value,
     out_ptr: Value,
     ptr_ty: Type,
+    /// FuncRef to the function currently being compiled. Used by
+    /// `DecodeOp::CallSelf` for direct self-recursive calls.
+    self_func: cranelift_codegen::ir::FuncRef,
     /// Variable tracking bytes consumed (written back to ctx on return).
     var_consumed: Variable,
     /// Variable tracking partially-initialized element count (committed len).
@@ -665,6 +672,7 @@ fn emit_decode_function(
     program: &DecodeProgram,
     descriptors: &CalibrationRegistry,
     ptr_ty: Type,
+    self_func: cranelift_codegen::ir::FuncRef,
 ) -> Result<(), CodegenError> {
     let entry = builder.create_block();
     builder.append_block_params_for_function_params(entry);
@@ -703,6 +711,7 @@ fn emit_decode_function(
         ctx_ptr,
         out_ptr,
         ptr_ty,
+        self_func,
         var_consumed,
         var_init_count,
         var_list_len,
@@ -1178,8 +1187,52 @@ fn emit_op(
             ctx.return_ok();
             return Ok(true);
         }
+
+        DecodeOp::CallSelf { dst_offset } => {
+            emit_call_self(ctx, *dst_offset)?;
+        }
     }
     Ok(false)
+}
+
+fn emit_call_self(
+    ctx: &mut EmitCtx<'_, '_>,
+    dst_offset: usize,
+) -> Result<(), CodegenError> {
+    // Flush ctx state so the recursive callee sees the current input cursor
+    // and partially-initialized count.
+    ctx.flush_ctx();
+
+    let dst = ctx.dst_at(dst_offset);
+    let self_func = ctx.self_func;
+    let call = ctx.b.ins().call(self_func, &[ctx.ctx_ptr, dst]);
+    let status = ctx.b.inst_results(call)[0];
+
+    let ok_val = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
+    let is_ok = ctx.b.ins().icmp(IntCC::Equal, status, ok_val);
+
+    let ok_block = ctx.fresh_block();
+    let err_block = ctx.fresh_block();
+    ctx.b.ins().brif(is_ok, ok_block, &[], err_block, &[]);
+
+    ctx.b.switch_to_block(err_block);
+    ctx.b.seal_block(err_block);
+    // Forward the recursive call's status. ctx already holds the latest
+    // consumed (the callee's flush_ctx wrote it back), so we don't need
+    // another flush here.
+    ctx.b.ins().return_(&[status]);
+
+    ctx.b.switch_to_block(ok_block);
+    ctx.b.seal_block(ok_block);
+
+    // Reload consumed (and reset init_count to 0 — the callee finished a
+    // fresh value so any partial-init state from before is no longer
+    // meaningful at this level).
+    ctx.reload_consumed_from_ctx();
+    let zero = ctx.b.ins().iconst(ctx.ptr_ty, 0);
+    ctx.b.def_var(ctx.var_init_count, zero);
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

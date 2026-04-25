@@ -14,7 +14,7 @@
 ///
 /// The IR does NOT mention `Peek`, `Partial`, or any facet_reflect primitive.
 /// All layout knowledge is baked in at lowering time.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use facet_core::{EnumRepr, Facet, ScalarType, Shape, Type, UserType};
 use vox_jit_cal::{BorrowMode, CalibrationRegistry, DescriptorHandle};
@@ -432,6 +432,16 @@ pub enum DecodeOp {
     /// End of the current block — execution falls through to the next
     /// instruction in the parent context (return from block call).
     Return,
+
+    /// Recursively decode `top_shape` (the program's root) into the
+    /// destination slot at `dst_offset`. Emitted by the lowerer when it
+    /// detects direct self-recursion (`Box<Self>`, `Vec<Self>`, etc.) so
+    /// the IR doesn't infinitely inline the same shape.
+    ///
+    /// Interpreter: re-runs block 0 of the same program with `out_ptr`
+    /// adjusted by `dst_offset`. JIT: emits a self-recursive call to the
+    /// same function being compiled.
+    CallSelf { dst_offset: usize },
 }
 
 // ---------------------------------------------------------------------------
@@ -458,6 +468,16 @@ pub struct DecodeProgram {
     pub root_size: usize,
     /// Required alignment of the root destination.
     pub root_align: usize,
+    /// Root shape this program decodes. `CallSelf` ops re-enter block 0,
+    /// so the JIT and interpreter can dispatch self-recursive calls
+    /// back into this same program.
+    pub top_shape: Option<&'static Shape>,
+    /// Shapes whose `lower_value` is currently on the lowering stack —
+    /// transient state used to detect direct self-recursion (`Box<Self>`,
+    /// `Vec<Self>`) and emit a `CallSelf` op instead of inlining the same
+    /// shape forever. Empty after lowering finishes.
+    #[doc(hidden)]
+    pub lowering_in_progress: HashSet<&'static Shape>,
 }
 
 impl DecodeProgram {
@@ -531,6 +551,8 @@ pub fn lower_with_cal(
         blocks: vec![DecodeBlock::default()],
         root_size: layout.size(),
         root_align: layout.align(),
+        top_shape: Some(shape),
+        lowering_in_progress: HashSet::new(),
     };
 
     let entry = 0;
@@ -545,11 +567,59 @@ pub fn lower_with_cal(
         0,
     )?;
     program.emit(entry, DecodeOp::Return);
+    debug_assert!(program.lowering_in_progress.is_empty());
 
     Ok(program)
 }
 
 fn lower_value(
+    plan: &TranslationPlan,
+    shape: &'static Shape,
+    registry: &SchemaRegistry,
+    cal: Option<&CalibrationRegistry>,
+    borrow_mode: BorrowMode,
+    program: &mut DecodeProgram,
+    block: usize,
+    dst_offset: usize,
+) -> Result<(), LowerError> {
+    // Cycle detection: if `shape` is already being lowered higher up the
+    // stack, we're staring at recursion (`Box<Self>`, `Vec<Self>`, ...).
+    // For self-recursion to the program's root we emit `CallSelf` so the
+    // JIT/interpreter recurses through the compiled function/program. For
+    // mutual recursion (in-progress but not the root) we punt to the
+    // reflective slow path — supporting that needs a per-shape compile
+    // pipeline we don't have on the decode side.
+    if program.lowering_in_progress.contains(&shape) {
+        if program.top_shape == Some(shape) {
+            program.emit(block, DecodeOp::CallSelf { dst_offset });
+        } else {
+            program.emit(
+                block,
+                DecodeOp::SlowPath {
+                    shape,
+                    plan: Box::new(clone_plan(plan)),
+                    dst_offset,
+                },
+            );
+        }
+        return Ok(());
+    }
+    program.lowering_in_progress.insert(shape);
+    let result = lower_value_inner(
+        plan,
+        shape,
+        registry,
+        cal,
+        borrow_mode,
+        program,
+        block,
+        dst_offset,
+    );
+    program.lowering_in_progress.remove(&shape);
+    result
+}
+
+fn lower_value_inner(
     plan: &TranslationPlan,
     shape: &'static Shape,
     registry: &SchemaRegistry,
@@ -2717,6 +2787,11 @@ fn run_block(
 
             DecodeOp::Return => {
                 return Ok(());
+            }
+
+            DecodeOp::CallSelf { dst_offset } => {
+                let new_base = unsafe { base.add(*dst_offset) };
+                run_block(program, 0, state, new_base, registry, cal)?;
             }
         }
 
