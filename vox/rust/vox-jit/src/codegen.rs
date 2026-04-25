@@ -1596,23 +1596,45 @@ fn emit_read_cow_str(
 }
 
 fn emit_read_str_ref(ctx: &mut EmitCtx<'_, '_>, dst_offset: usize) -> Result<(), CodegenError> {
+    // `&str` ABI is fixed by Rust: a 2-slot fat pointer `(ptr, len)`. No
+    // calibration needed; emit the two stores inline. UTF-8 is validated via
+    // the same helper `ReadString` uses, so a malformed input returns an
+    // `InvalidUtf8` error instead of panicking.
     let (data, len) = emit_read_byte_slice(ctx)?;
+
     let call_conv = ctx.b.func.signature.call_conv;
-    let sig = ctx.b.func.import_signature(Signature {
-        params: vec![
-            AbiParam::new(ctx.ptr_ty),
-            AbiParam::new(ctx.ptr_ty),
-            AbiParam::new(ctx.ptr_ty),
-        ],
-        returns: vec![],
-        call_conv,
-    });
-    let callee = ctx.b.ins().iconst(
-        ctx.ptr_ty,
-        crate::helpers::vox_jit_init_str_ref as *const () as i64,
-    );
+    let validate_sig = make_utf8_validate_sig(ctx);
+    let validate_fn = ctx
+        .b
+        .ins()
+        .iconst(ctx.ptr_ty, vox_jit_utf8_validate as *const () as i64);
+    let call = ctx
+        .b
+        .ins()
+        .call_indirect(validate_sig, validate_fn, &[data, len]);
+    let status = ctx.b.inst_results(call)[0];
+    let ok_val = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
+    let is_ok = ctx.b.ins().icmp(IntCC::Equal, status, ok_val);
+
+    let utf8_ok = ctx.fresh_block();
+    let utf8_err = ctx.fresh_block();
+    ctx.b.ins().brif(is_ok, utf8_ok, &[], utf8_err, &[]);
+
+    ctx.b.switch_to_block(utf8_err);
+    ctx.b.seal_block(utf8_err);
+    ctx.return_err(DecodeStatus::InvalidUtf8);
+
+    ctx.b.switch_to_block(utf8_ok);
+    ctx.b.seal_block(utf8_ok);
+
+    let _ = call_conv; // unused now that we're not building a call signature
     let dst = ctx.dst_at(dst_offset);
-    ctx.b.ins().call_indirect(sig, callee, &[dst, data, len]);
+    ctx.b
+        .ins()
+        .store(MemFlags::trusted(), data, dst, 0);
+    ctx.b
+        .ins()
+        .store(MemFlags::trusted(), len, dst, ctx.ptr_ty.bytes() as i32);
     Ok(())
 }
 

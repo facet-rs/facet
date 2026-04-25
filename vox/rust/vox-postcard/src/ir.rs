@@ -473,6 +473,12 @@ pub enum LowerError {
     UnstableEnumRepr,
     /// A required schema lookup failed during skip-op construction.
     SchemaMissing,
+    /// The shape is structurally lowerable but a required calibrated
+    /// descriptor or per-shape support is missing. Carries a human-readable
+    /// reason. Callers that want a pure-JIT pipeline should treat this as
+    /// fatal so the missing calibration gets added rather than silently
+    /// degrading to a slow path.
+    Unsupported(String),
 }
 
 // r[impl schema.errors.early-detection]
@@ -607,21 +613,31 @@ fn lower_value(
     // Scalars
     if let Some(scalar) = shape.scalar_type() {
         match scalar {
-            facet_core::ScalarType::String => {
-                if shape.is_type::<String>()
-                    && let Some(cal) = cal
-                    && let Some(handle) = cal.string_descriptor_handle()
-                {
-                    program.emit(
-                        block,
-                        DecodeOp::ReadString {
-                            dst_offset,
-                            descriptor: OpaqueDescriptorId(handle.0),
-                        },
-                    );
-                    return Ok(());
-                }
+            // `std::string::String` — 3-slot (ptr/len/cap) heap container.
+            // Uses the calibrated String descriptor; layout is whatever
+            // calibration measured for this build's `String` repr.
+            facet_core::ScalarType::String if shape.is_type::<String>() => {
+                let cal = cal.ok_or_else(|| {
+                    LowerError::Unsupported(
+                        "ScalarType::String requires a CalibrationRegistry".into(),
+                    )
+                })?;
+                let handle = cal.string_descriptor_handle().ok_or_else(|| {
+                    LowerError::Unsupported(
+                        "String descriptor not registered in CalibrationRegistry".into(),
+                    )
+                })?;
+                program.emit(
+                    block,
+                    DecodeOp::ReadString {
+                        dst_offset,
+                        descriptor: OpaqueDescriptorId(handle.0),
+                    },
+                );
+                return Ok(());
             }
+            // `Cow<str>` — handled by its own helper which knows the layout
+            // and picks borrowed vs owned at runtime.
             facet_core::ScalarType::CowStr => {
                 program.emit(
                     block,
@@ -632,7 +648,12 @@ fn lower_value(
                 );
                 return Ok(());
             }
-            facet_core::ScalarType::Str if borrow_mode == BorrowMode::Borrowed => {
+            // `&str` — 2-slot fat pointer (ptr, len). Layout is fixed by
+            // Rust's wide-pointer ABI, so no calibration is needed. Always
+            // points into the input buffer; the caller (e.g. SelfRef in
+            // `deserialize_postcard`) is responsible for keeping it alive
+            // for the lifetime of the decoded value.
+            facet_core::ScalarType::Str => {
                 program.emit(block, DecodeOp::ReadStrRef { dst_offset });
                 return Ok(());
             }
@@ -640,20 +661,16 @@ fn lower_value(
         }
 
         if let Some(prim) = WirePrimitive::from_scalar(scalar) {
-            // String scalars: use ReadString (calibrated) when possible so the
-            // JIT can emit the fast allocation path instead of calling SlowPath.
-            if matches!(prim, WirePrimitive::String)
-                && let Some(cal) = cal
-                && let Some(handle) = cal.string_descriptor_handle()
-            {
-                program.emit(
-                    block,
-                    DecodeOp::ReadString {
-                        dst_offset,
-                        descriptor: OpaqueDescriptorId(handle.0),
-                    },
-                );
-                return Ok(());
+            // `WirePrimitive::String` is reachable here only via custom
+            // `ScalarType::String` types that aren't `std::string::String`
+            // (handled above) — those would need a per-shape calibration.
+            // Reject loudly rather than silently writing the std-String
+            // layout into a destination of unknown size.
+            if matches!(prim, WirePrimitive::String) {
+                return Err(LowerError::Unsupported(format!(
+                    "ScalarType::String on non-`std::string::String` type {shape} requires \
+                     a per-shape string descriptor; not yet calibrated"
+                )));
             }
             program.emit(block, DecodeOp::ReadScalar { prim, dst_offset });
             return Ok(());
@@ -2818,6 +2835,7 @@ where
             DeserializeError::UnsupportedType("unstable enum repr".into())
         }
         LowerError::SchemaMissing => DeserializeError::Custom("schema missing during lower".into()),
+        LowerError::Unsupported(reason) => DeserializeError::UnsupportedType(reason),
     })?;
 
     let layout = shape
