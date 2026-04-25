@@ -61,3 +61,5 @@ rust-examples/bench_gnarly_report.html
 build/
 
 dhat-heap.json
+
+*.data
