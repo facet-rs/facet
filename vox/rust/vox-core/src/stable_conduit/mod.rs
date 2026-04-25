@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use facet::Facet;
 use facet_core::PtrConst;
-use facet_reflect::Peek;
 use vox_types::{
     Conduit, ConduitRx, ConduitTx, Link, LinkRx, LinkTx, MaybeSend, MsgFamily, Payload, SelfRef,
 };
@@ -671,26 +670,11 @@ fn encode_frame_bytes(
         ack,
         item: Payload::PostcardBytes(item_bytes),
     };
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let ptr = PtrConst::new((&raw const frame).cast::<u8>());
-        if let Some(result) =
-            vox_jit::global_runtime().try_encode_ptr(ptr, <Frame<'static> as Facet<'static>>::SHAPE)
-        {
-            return result.map_err(StableConduitError::Encode);
-        }
-    }
-    #[allow(unsafe_code)]
-    let peek = unsafe {
-        Peek::unchecked_new(
-            PtrConst::new((&raw const frame).cast::<u8>()),
-            <Frame<'static> as Facet<'static>>::SHAPE,
-        )
-    };
-    let plan = vox_postcard::peek_to_scatter_plan(peek).map_err(StableConduitError::Encode)?;
-    let mut frame_bytes = vec![0u8; plan.total_size()];
-    plan.write_into(&mut frame_bytes);
-    Ok(frame_bytes)
+    let ptr = PtrConst::new((&raw const frame).cast::<u8>());
+    vox_jit::global_runtime()
+        .try_encode_ptr(ptr, <Frame<'static> as Facet<'static>>::SHAPE)
+        .expect("JIT encode unavailable for Frame")
+        .map_err(StableConduitError::Encode)
 }
 
 pub struct StablePreparedMessage {
@@ -712,19 +696,11 @@ fn prepare_frame<F: MsgFamily, LS: LinkSource>(
 ) -> Result<StablePreparedMessage, StableConduitError> {
     let _ = shared;
     let item_bytes = {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let ptr = PtrConst::new((&raw const item).cast::<u8>());
-            if let Some(result) = vox_jit::global_runtime().try_encode_ptr(ptr, F::shape()) {
-                result.map_err(StableConduitError::Encode)?
-            } else {
-                vox_postcard::to_vec(&item).map_err(StableConduitError::Encode)?
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            vox_postcard::to_vec(&item).map_err(StableConduitError::Encode)?
-        }
+        let ptr = PtrConst::new((&raw const item).cast::<u8>());
+        vox_jit::global_runtime()
+            .try_encode_ptr(ptr, F::shape())
+            .expect("JIT encode unavailable for message family shape")
+            .map_err(StableConduitError::Encode)?
     };
     Ok(StablePreparedMessage {
         item_bytes,

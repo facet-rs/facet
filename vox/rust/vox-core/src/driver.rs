@@ -450,23 +450,15 @@ impl ReplySink for DriverReplySink {
             // Extract the root type ref before we strip schemas for storage.
             let root_type = extract_root_type_ref(&response.schemas);
 
-            // Serialize the response WITHOUT schemas for the operation store.
-            // Try JIT first; fall back to reflective only if the JIT can't
-            // lower this particular RequestResponse shape today (e.g. it
-            // contains a not-yet-calibrated container). Once everything is
-            // calibrated this fallback should be dead code.
             let schemas_for_wire = std::mem::take(&mut response.schemas);
             let response_shape =
                 <vox_types::RequestResponse<'_> as facet::Facet<'_>>::SHAPE;
             let response_ptr =
                 facet::PtrConst::new((&raw const response).cast::<u8>());
-            let encoded_bytes: Vec<u8> = match vox_jit::global_runtime()
+            let encoded_bytes: Vec<u8> = vox_jit::global_runtime()
                 .try_encode_ptr(response_ptr, response_shape)
-            {
-                Some(result) => result.expect("JIT encode failed for response store"),
-                None => vox_postcard::to_vec(&response)
-                    .expect("serialize operation response for store"),
-            };
+                .expect("JIT encode unavailable for RequestResponse")
+                .expect("JIT encode failed for response store");
             let encoded_for_store: PostcardPayload = encoded_bytes.into();
             response.schemas = schemas_for_wire;
 

@@ -38,7 +38,6 @@ pub use session::*;
 mod driver;
 pub use driver::*;
 
-use facet_reflect::Partial;
 use vox_types::{Backing, SelfRef};
 
 /// Pre-built translation plan for deserializing the `Message` wire type.
@@ -118,30 +117,9 @@ pub(crate) fn deserialize_postcard_with_jit_key<T: facet::Facet<'static>>(
     // SAFETY: backing is heap-allocated with a stable address.
     // The SelfRef::try_new contract guarantees value is dropped before backing.
     SelfRef::try_new(backing, |bytes| {
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(result) =
-            vox_jit::global_runtime().try_decode_owned::<T>(bytes, remote_schema_id, plan, registry)
-        {
-            return result;
-        }
-
-        let mut value = std::mem::MaybeUninit::<T>::uninit();
-        let ptr = facet_core::PtrUninit::from_maybe_uninit(&mut value);
-
-        // SAFETY: ptr points to valid, aligned, properly-sized memory for T.
-        #[allow(unsafe_code)]
-        let partial: Partial<'_, true> = unsafe { Partial::from_raw_with_shape(ptr, T::SHAPE) }
-            .map_err(|e| vox_postcard::DeserializeError::ReflectError(e.to_string()))?;
-
-        let partial = vox_postcard::deserialize_into(partial, bytes, plan, registry)?;
-
-        partial
-            .finish_in_place()
-            .map_err(|e| vox_postcard::DeserializeError::ReflectError(e.to_string()))?;
-
-        // SAFETY: finish_in_place succeeded, so value is fully initialized.
-        #[allow(unsafe_code)]
-        Ok(unsafe { value.assume_init() })
+        vox_jit::global_runtime()
+            .try_decode_owned::<T>(bytes, remote_schema_id, plan, registry)
+            .expect("JIT decode unavailable for type")
     })
 }
 

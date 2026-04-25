@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use facet_core::{PtrConst, Shape};
-use facet_reflect::Peek;
 
 use vox_types::{Conduit, ConduitRx, ConduitTx, Link, LinkTx, MaybeSend, MsgFamily, SelfRef};
 
@@ -115,20 +114,11 @@ fn encode_message<F: MsgFamily>(
     shape: &'static Shape,
     item: F::Msg<'_>,
 ) -> Result<Vec<u8>, BareConduitError> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let ptr = PtrConst::new((&raw const item).cast::<u8>());
-        if let Some(result) = vox_jit::global_runtime().try_encode_ptr(ptr, shape) {
-            return result.map_err(BareConduitError::Encode);
-        }
-    }
-
-    #[allow(unsafe_code)]
-    let peek = unsafe { Peek::unchecked_new(PtrConst::new((&raw const item).cast::<u8>()), shape) };
-    let plan = vox_postcard::peek_to_scatter_plan(peek).map_err(BareConduitError::Encode)?;
-    let mut bytes = vec![0u8; plan.total_size()];
-    plan.write_into(&mut bytes);
-    Ok(bytes)
+    let ptr = PtrConst::new((&raw const item).cast::<u8>());
+    vox_jit::global_runtime()
+        .try_encode_ptr(ptr, shape)
+        .expect("JIT encode unavailable for message shape")
+        .map_err(BareConduitError::Encode)
 }
 
 // ---------------------------------------------------------------------------

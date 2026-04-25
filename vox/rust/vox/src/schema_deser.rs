@@ -17,17 +17,14 @@ where
     'input: 'facet,
 {
     let resolved = resolve_plan::<T>(method_id, BindingDirection::Args, tracker)?;
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Some(result) = vox_jit::global_runtime().try_decode_borrowed::<T>(
-        bytes,
-        resolved.remote.root.id.0,
-        &resolved.plan,
-        &resolved.remote.registry,
-    ) {
-        return result;
-    }
-
-    vox_postcard::from_slice_borrowed_with_plan(bytes, &resolved.plan, &resolved.remote.registry)
+    vox_jit::global_runtime()
+        .try_decode_borrowed::<T>(
+            bytes,
+            resolved.remote.root.id.0,
+            &resolved.plan,
+            &resolved.remote.registry,
+        )
+        .expect("JIT decode unavailable for args type")
 }
 
 /// Deserialize a response (callee → caller direction), borrowed variant.
@@ -41,17 +38,14 @@ where
     'input: 'facet,
 {
     let resolved = resolve_plan::<T>(method_id, BindingDirection::Response, tracker)?;
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Some(result) = vox_jit::global_runtime().try_decode_borrowed::<T>(
-        bytes,
-        resolved.remote.root.id.0,
-        &resolved.plan,
-        &resolved.remote.registry,
-    ) {
-        return result;
-    }
-
-    vox_postcard::from_slice_borrowed_with_plan(bytes, &resolved.plan, &resolved.remote.registry)
+    vox_jit::global_runtime()
+        .try_decode_borrowed::<T>(
+            bytes,
+            resolved.remote.root.id.0,
+            &resolved.plan,
+            &resolved.remote.registry,
+        )
+        .expect("JIT decode unavailable for response type")
 }
 
 /// Deserialize a response (callee → caller direction), owned variant.
@@ -62,17 +56,14 @@ pub fn schema_deserialize_response<T: Facet<'static>>(
     tracker: &SchemaRecvTracker,
 ) -> Result<T, DeserializeError> {
     let resolved = resolve_plan::<T>(method_id, BindingDirection::Response, tracker)?;
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Some(result) = vox_jit::global_runtime().try_decode_owned::<T>(
-        bytes,
-        resolved.remote.root.id.0,
-        &resolved.plan,
-        &resolved.remote.registry,
-    ) {
-        return result;
-    }
-
-    vox_postcard::from_slice_with_plan(bytes, &resolved.plan, &resolved.remote.registry)
+    vox_jit::global_runtime()
+        .try_decode_owned::<T>(
+            bytes,
+            resolved.remote.root.id.0,
+            &resolved.plan,
+            &resolved.remote.registry,
+        )
+        .expect("JIT decode unavailable for response type")
 }
 
 struct ResolvedPlan {

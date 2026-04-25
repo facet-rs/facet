@@ -58,7 +58,14 @@ fn resume_key(b: &[u8]) -> ResumeKey {
 // Encode and send a frame directly onto a LinkTx.
 // The item is serialized to postcard and wrapped as a Payload.
 async fn send_frame<LTx: LinkTx>(tx: &LTx, seq: u32, ack: Option<u32>, item: &str) {
-    let item_bytes = vox_postcard::to_vec(&item.to_string()).unwrap();
+    let item_owned: String = item.to_string();
+    let item_bytes = vox_jit::global_runtime()
+        .try_encode_ptr(
+            PtrConst::new((&raw const item_owned).cast::<u8>()),
+            <String as facet::Facet<'_>>::SHAPE,
+        )
+        .expect("JIT encode unavailable for String")
+        .unwrap();
     let frame = Frame {
         seq: PacketSeq(seq),
         ack: ack.map(|n| PacketAck {
@@ -66,16 +73,13 @@ async fn send_frame<LTx: LinkTx>(tx: &LTx, seq: u32, ack: Option<u32>, item: &st
         }),
         item: Payload::PostcardBytes(&item_bytes),
     };
-    let peek = unsafe {
-        Peek::unchecked_new(
+    let frame_bytes = vox_jit::global_runtime()
+        .try_encode_ptr(
             PtrConst::new((&raw const frame).cast::<u8>()),
             <Frame<'static> as facet::Facet<'static>>::SHAPE,
         )
-    };
-    let plan = vox_postcard::peek_to_scatter_plan(peek).unwrap();
-
-    let mut frame_bytes = vec![0u8; plan.total_size()];
-    plan.write_into(&mut frame_bytes);
+        .expect("JIT encode unavailable for Frame")
+        .unwrap();
     tx.send(frame_bytes).await.unwrap();
 }
 
