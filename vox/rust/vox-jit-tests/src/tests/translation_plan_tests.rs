@@ -457,7 +457,12 @@ fn jit_enum_explicit_discriminant_encode_roundtrip() {
 
     let mut backend = CraneliftBackend::new().expect("backend");
     let encode_fn = backend
-        .compile_encode(shape, &encode_program, &cal, &ChildEncoderMap::new())
+        .compile_encode(
+            shape,
+            &encode_program,
+            &cal,
+            Arc::new(ChildEncoderMap::new()),
+        )
         .expect("compile_encode");
     let decode_fn = backend
         .compile_decode_owned(shape, &decode_program, &cal)
