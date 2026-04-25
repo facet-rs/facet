@@ -57,8 +57,10 @@ use vox_postcard::ir::{
 ///     stack;
 ///   - falling through to `vox_jit_encode_shape` — when the child isn't in
 ///     the map at all (runtime fallback path).
-pub type ChildEncoderMap =
-    std::collections::HashMap<crate::cache::ShapePtr, std::sync::Arc<crate::cache::CompiledEncodeStub>>;
+pub type ChildEncoderMap = std::collections::HashMap<
+    &'static facet_core::Shape,
+    std::sync::Arc<crate::cache::CompiledEncodeStub>,
+>;
 
 /// Walk an `EncodeProgram` and collect every distinct `WriteShape` child
 /// shape. Used by the runtime to pre-compile nested stubs before the
@@ -3010,7 +3012,8 @@ struct EncodeCtx_<'a, 'b> {
     /// Shapes whose encoders are currently on the inlining stack (including
     /// the top-level shape being compiled). A `WriteShape` whose child is
     /// on this stack falls back to `call_indirect` to break the cycle.
-    inlining_stack: Vec<*const facet_core::Shape>,
+    /// Compared via `Shape: Eq` (i.e. `ConstTypeId`).
+    inlining_stack: Vec<&'static facet_core::Shape>,
 }
 
 impl<'a, 'b> EncodeCtx_<'a, 'b> {
@@ -3467,7 +3470,7 @@ fn emit_encode_function(
         var_buf_cap,
         child_encoders,
         inline_frame: None,
-        inlining_stack: top_shape.map(|s| vec![s as *const _]).unwrap_or_default(),
+        inlining_stack: top_shape.map(|s| vec![s]).unwrap_or_default(),
     };
 
     emit_encode_block(&mut ectx, program, 0)?;
@@ -3528,10 +3531,8 @@ fn emit_encode_op(
         }
 
         EncodeOp::WriteShape { shape, src_offset } => {
-            let key = crate::cache::ShapePtr(*shape);
-            if let Some(child_stub) = ectx.child_encoders.get(&key).cloned() {
-                let shape_ptr = *shape as *const _;
-                let in_cycle = ectx.inlining_stack.contains(&shape_ptr);
+            if let Some(child_stub) = ectx.child_encoders.get(shape).cloned() {
+                let in_cycle = ectx.inlining_stack.iter().any(|s| *s == *shape);
                 if in_cycle {
                     emit_encode_direct_child(ectx, child_stub.encode_fn, *src_offset);
                 } else {
@@ -3878,7 +3879,7 @@ fn emit_inline_child_program(
     src_offset: usize,
 ) -> Result<(), CodegenError> {
     let child_program = child.program.as_ref();
-    let child_shape = child.key.local_shape as *const _;
+    let child_shape: &'static facet_core::Shape = child.key.local_shape;
 
     let inner_src = ectx.src_at(src_offset);
     let cont_block = ectx.b.create_block();

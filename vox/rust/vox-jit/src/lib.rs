@@ -303,11 +303,11 @@ impl JitRuntime {
         // to the runtime helper path at the WriteShape site.
         let mut child_encoders = ChildEncoderMap::new();
         for child in children {
-            if std::ptr::eq(child, shape) {
+            if child == shape {
                 continue;
             }
             if let Some(child_stub) = self.prepare_encode_stub(child) {
-                child_encoders.insert(cache::ShapePtr(child), child_stub);
+                child_encoders.insert(child, child_stub);
             }
         }
         let child_encoders = Arc::new(child_encoders);

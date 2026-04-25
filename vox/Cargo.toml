@@ -74,6 +74,7 @@ ur-taking-me-with-you = { path = "rust/ur-taking-me-with-you", version = "8.0.0"
 moire = { version = "1.0.0", git = "https://github.com/bearcove/moire", rev = "cf162e7" }
 moire-types = { version = "1.0.0", git = "https://github.com/bearcove/moire", rev = "cf162e7" }
 
+arc-swap = "1"
 bitflags = "2.11.0"
 structstruck = "0.5.1"
 bytes = "1"
