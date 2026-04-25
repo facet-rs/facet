@@ -3879,6 +3879,7 @@ dependencies = [
  "facet-error",
  "facet-reflect",
  "facet-testhelpers",
+ "futures-util",
  "getrandom 0.4.2",
  "moire",
  "smallvec 1.15.1",
