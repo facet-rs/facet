@@ -357,7 +357,8 @@ impl CraneliftBackend {
         let mut sig = self.module.make_signature();
         sig.params.push(AbiParam::new(self.ptr_ty)); // ctx: *mut DecodeCtx
         sig.params.push(AbiParam::new(self.ptr_ty)); // out_ptr: *mut u8
-        sig.returns.push(AbiParam::new(types::I32)); // DecodeStatus as u32
+        sig.params.push(AbiParam::new(self.ptr_ty)); // consumed_in: usize
+        sig.returns.push(AbiParam::new(types::I64)); // DecodeReturn (status<<56 | consumed)
         sig
     }
 
@@ -522,33 +523,58 @@ impl<'a, 'b> EmitCtx<'a, 'b> {
         self.b.def_var(self.var_consumed, val);
     }
 
-    /// Write back `consumed` and `init_count` to the context struct.
-    fn flush_ctx(&mut self) {
-        let consumed = self.b.use_var(self.var_consumed);
-        let off = core::mem::offset_of!(DecodeCtx, consumed) as i32;
-        self.b
-            .ins()
-            .store(MemFlags::trusted(), consumed, self.ctx_ptr, off);
-
-        let init_count = self.b.use_var(self.var_init_count);
-        let off2 = core::mem::offset_of!(DecodeCtx, init_count) as i32;
-        self.b
-            .ins()
-            .store(MemFlags::trusted(), init_count, self.ctx_ptr, off2);
-    }
-
-    /// Return `DecodeStatus::Ok` (writes back context first).
+    /// Return `DecodeStatus::Ok` packed with `consumed` (no memory flush —
+    /// callers read both from the return value).
     fn return_ok(&mut self) {
-        self.flush_ctx();
-        let ok = self.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
-        self.b.ins().return_(&[ok]);
+        let consumed = self.b.use_var(self.var_consumed);
+        let packed = self.pack_decode_return(DecodeStatus::Ok as i64, consumed);
+        self.b.ins().return_(&[packed]);
     }
 
-    /// Return a non-Ok status (writes back context first).
+    /// Return a non-Ok status packed with `consumed`.
     fn return_err(&mut self, status: DecodeStatus) {
-        self.flush_ctx();
-        let code = self.b.ins().iconst(types::I32, status as i64);
-        self.b.ins().return_(&[code]);
+        let consumed = self.b.use_var(self.var_consumed);
+        let packed = self.pack_decode_return(status as i64, consumed);
+        self.b.ins().return_(&[packed]);
+    }
+
+    /// Return a `status` value already in a Cranelift `Value` (e.g. forwarded
+    /// from a self-call result), packed with current `consumed`.
+    fn return_status_value(&mut self, status: Value, consumed: Value) {
+        let packed = self.pack_decode_return_values(status, consumed);
+        self.b.ins().return_(&[packed]);
+    }
+
+    /// Build the packed `DecodeReturn` u64: `(status << 56) | (consumed & 0x00FF_FFFF_FFFF_FFFF)`.
+    fn pack_decode_return(&mut self, status: i64, consumed: Value) -> Value {
+        let status_v = self.b.ins().iconst(types::I64, status << 56);
+        let mask = self
+            .b
+            .ins()
+            .iconst(types::I64, 0x00FF_FFFF_FFFF_FFFF);
+        let consumed64 = if self.ptr_ty == types::I64 {
+            consumed
+        } else {
+            self.b.ins().uextend(types::I64, consumed)
+        };
+        let consumed_masked = self.b.ins().band(consumed64, mask);
+        self.b.ins().bor(status_v, consumed_masked)
+    }
+
+    fn pack_decode_return_values(&mut self, status: Value, consumed: Value) -> Value {
+        let status64 = self.b.ins().uextend(types::I64, status);
+        let status_shifted = self.b.ins().ishl_imm(status64, 56);
+        let mask = self
+            .b
+            .ins()
+            .iconst(types::I64, 0x00FF_FFFF_FFFF_FFFF);
+        let consumed64 = if self.ptr_ty == types::I64 {
+            consumed
+        } else {
+            self.b.ins().uextend(types::I64, consumed)
+        };
+        let consumed_masked = self.b.ins().band(consumed64, mask);
+        self.b.ins().bor(status_shifted, consumed_masked)
     }
 
     /// Compute a pointer to `out_ptr + offset`.
@@ -681,17 +707,14 @@ fn emit_decode_function(
 
     let ctx_ptr = builder.block_params(entry)[0];
     let out_ptr = builder.block_params(entry)[1];
+    let init_consumed = builder.block_params(entry)[2];
 
     let var_consumed = builder.declare_var(ptr_ty);
     let var_init_count = builder.declare_var(ptr_ty);
     let var_list_len = builder.declare_var(ptr_ty);
     let var_discriminant = builder.declare_var(types::I64);
 
-    // Load initial consumed from ctx.
-    let off = core::mem::offset_of!(DecodeCtx, consumed) as i32;
-    let init_consumed = builder
-        .ins()
-        .load(ptr_ty, MemFlags::trusted(), ctx_ptr, off);
+    // Initial `consumed` arrives in a register (3rd param) — no memory load.
     builder.def_var(var_consumed, init_consumed);
     let zero = builder.ins().iconst(ptr_ty, 0);
     builder.def_var(var_init_count, zero);
@@ -737,9 +760,7 @@ fn emit_decode_function(
             let clif_block = ctx.block_map[block_idx].unwrap();
             ctx.b.switch_to_block(clif_block);
             ctx.b.seal_block(clif_block);
-            ctx.flush_ctx();
-            let ok = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
-            ctx.b.ins().return_(&[ok]);
+            ctx.return_ok();
             continue;
         }
         let clif_block = ctx.block_map[block_idx].unwrap();
@@ -1199,14 +1220,29 @@ fn emit_call_self(
     ctx: &mut EmitCtx<'_, '_>,
     dst_offset: usize,
 ) -> Result<(), CodegenError> {
-    // Flush ctx state so the recursive callee sees the current input cursor
-    // and partially-initialized count.
-    ctx.flush_ctx();
-
+    // Pass `consumed` directly as the third arg — no memory flush. The
+    // callee returns a packed `(status, consumed)` u64 we unpack into the
+    // current `var_consumed`.
+    let consumed_in = ctx.b.use_var(ctx.var_consumed);
     let dst = ctx.dst_at(dst_offset);
     let self_func = ctx.self_func;
-    let call = ctx.b.ins().call(self_func, &[ctx.ctx_ptr, dst]);
-    let status = ctx.b.inst_results(call)[0];
+    let call = ctx
+        .b
+        .ins()
+        .call(self_func, &[ctx.ctx_ptr, dst, consumed_in]);
+    let packed = ctx.b.inst_results(call)[0];
+
+    // Unpack the return: status = packed >> 56 (as i32),
+    //                    consumed = packed & 0x00FF_FFFF_FFFF_FFFF.
+    let status_64 = ctx.b.ins().ushr_imm(packed, 56);
+    let status = ctx.b.ins().ireduce(types::I32, status_64);
+    let mask = ctx.b.ins().iconst(types::I64, 0x00FF_FFFF_FFFF_FFFF);
+    let consumed_out_64 = ctx.b.ins().band(packed, mask);
+    let consumed_out = if ctx.ptr_ty == types::I64 {
+        consumed_out_64
+    } else {
+        ctx.b.ins().ireduce(ctx.ptr_ty, consumed_out_64)
+    };
 
     let ok_val = ctx.b.ins().iconst(types::I32, DecodeStatus::Ok as i64);
     let is_ok = ctx.b.ins().icmp(IntCC::Equal, status, ok_val);
@@ -1217,20 +1253,16 @@ fn emit_call_self(
 
     ctx.b.switch_to_block(err_block);
     ctx.b.seal_block(err_block);
-    // Forward the recursive call's status. ctx already holds the latest
-    // consumed (the callee's flush_ctx wrote it back), so we don't need
-    // another flush here.
-    ctx.b.ins().return_(&[status]);
+    // Forward the callee's return value verbatim — it already has both
+    // `status` and the latest `consumed` packed in.
+    ctx.b.ins().return_(&[packed]);
 
     ctx.b.switch_to_block(ok_block);
     ctx.b.seal_block(ok_block);
 
-    // Reload consumed (and reset init_count to 0 — the callee finished a
-    // fresh value so any partial-init state from before is no longer
-    // meaningful at this level).
-    ctx.reload_consumed_from_ctx();
-    let zero = ctx.b.ins().iconst(ctx.ptr_ty, 0);
-    ctx.b.def_var(ctx.var_init_count, zero);
+    // Adopt the callee's consumed. init_count is local per activation so
+    // the caller's value is unaffected by the recursive call.
+    ctx.b.def_var(ctx.var_consumed, consumed_out);
 
     Ok(())
 }
@@ -2829,9 +2861,10 @@ fn emit_slow_path(
 
     ctx.b.switch_to_block(err_block);
     ctx.b.seal_block(err_block);
-    // Return the helper's status directly.
-    ctx.flush_ctx();
-    ctx.b.ins().return_(&[status]);
+    // Forward the helper's status, packed with the consumed it left in ctx.
+    ctx.reload_consumed_from_ctx();
+    let consumed = ctx.b.use_var(ctx.var_consumed);
+    ctx.return_status_value(status, consumed);
 
     ctx.b.switch_to_block(ok_block);
     ctx.b.seal_block(ok_block);
@@ -2890,8 +2923,9 @@ fn emit_decode_opaque(
 
     ctx.b.switch_to_block(err_block);
     ctx.b.seal_block(err_block);
-    ctx.flush_ctx();
-    ctx.b.ins().return_(&[status]);
+    ctx.reload_consumed_from_ctx();
+    let consumed = ctx.b.use_var(ctx.var_consumed);
+    ctx.return_status_value(status, consumed);
 
     ctx.b.switch_to_block(ok_block);
     ctx.b.seal_block(ok_block);
@@ -2940,8 +2974,8 @@ fn emit_write_default(
 
     ctx.b.switch_to_block(err_block);
     ctx.b.seal_block(err_block);
-    ctx.flush_ctx();
-    ctx.b.ins().return_(&[status]);
+    let consumed = ctx.b.use_var(ctx.var_consumed);
+    ctx.return_status_value(status, consumed);
 
     ctx.b.switch_to_block(ok_block);
     ctx.b.seal_block(ok_block);
@@ -5738,7 +5772,8 @@ mod tests {
                 std::ptr::write_bytes(out.as_mut_ptr() as *mut u8, 0, layout.size());
             }
         }
-        let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
+        let ret = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8, 0) };
+        let status = ret.status();
         if status != DecodeStatus::Ok {
             return Err(CodegenError::UnsupportedOp(format!(
                 "decode status: {status:?}"

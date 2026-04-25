@@ -331,7 +331,10 @@ impl JitRuntime {
         {
             let mut ctx = DecodeCtx::new(input);
             let mut out = MaybeUninit::<T>::uninit();
-            let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
+            let ret =
+                unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8, 0) };
+            ctx.consumed = ret.consumed();
+            let status = ret.status();
             return if status == DecodeStatus::Ok {
                 Some(Ok(unsafe { out.assume_init() }))
             } else {
@@ -377,7 +380,10 @@ impl JitRuntime {
         {
             let mut ctx = DecodeCtx::new(input);
             let mut out = MaybeUninit::<T>::uninit();
-            let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
+            let ret =
+                unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8, 0) };
+            ctx.consumed = ret.consumed();
+            let status = ret.status();
             return if status == DecodeStatus::Ok {
                 Some(Ok(unsafe { out.assume_init() }))
             } else {
@@ -440,7 +446,9 @@ pub fn decode_owned_with<T: Facet<'static>>(
         .expect("owned decode_fn missing on owned decoder");
     let mut ctx = DecodeCtx::new(input);
     let mut out = MaybeUninit::<T>::uninit();
-    let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
+    let ret = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8, 0) };
+    ctx.consumed = ret.consumed();
+    let status = ret.status();
     if status == DecodeStatus::Ok {
         Ok(unsafe { out.assume_init() })
     } else {
@@ -462,7 +470,9 @@ where
         .expect("borrowed decode_fn missing on borrowed decoder");
     let mut ctx = DecodeCtx::new(input);
     let mut out = MaybeUninit::<T>::uninit();
-    let status = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8) };
+    let ret = unsafe { decode_fn(&mut ctx as *mut _, out.as_mut_ptr() as *mut u8, 0) };
+    ctx.consumed = ret.consumed();
+    let status = ret.status();
     if status == DecodeStatus::Ok {
         Ok(unsafe { out.assume_init() })
     } else {

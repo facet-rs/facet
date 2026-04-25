@@ -361,8 +361,8 @@ fn translation_fill_default_missing_field_jit() {
         );
     }
     let mut ctx = DecodeCtx::new(&bytes);
-    let status = unsafe { owned_fn(&mut ctx, out.as_mut_ptr() as *mut u8) };
-    assert_eq!(status, DecodeStatus::Ok, "JIT decode status");
+    let ret = unsafe { owned_fn(&mut ctx, out.as_mut_ptr() as *mut u8, 0) };
+    assert_eq!(ret.status(), DecodeStatus::Ok, "JIT decode status");
     let jit_result = unsafe { out.assume_init() };
     assert_eq!(jit_result.x, 6.0);
     assert_eq!(jit_result.y, 8.0);
@@ -507,9 +507,9 @@ fn jit_enum_explicit_discriminant_encode_roundtrip() {
             );
         }
         let mut dctx = DecodeCtx::new(&jit_bytes);
-        let status = unsafe { decode_fn(&mut dctx, out.as_mut_ptr() as *mut u8) };
+        let ret = unsafe { decode_fn(&mut dctx, out.as_mut_ptr() as *mut u8, 0) };
         assert_eq!(
-            status,
+            ret.status(),
             DecodeStatus::Ok,
             "JIT decode status for {variant:?}"
         );
@@ -528,9 +528,9 @@ fn jit_enum_explicit_discriminant_encode_roundtrip() {
             );
         }
         let mut dctx2 = DecodeCtx::new(&reflective_bytes);
-        let status2 = unsafe { decode_fn(&mut dctx2, out2.as_mut_ptr() as *mut u8) };
+        let ret2 = unsafe { decode_fn(&mut dctx2, out2.as_mut_ptr() as *mut u8, 0) };
         assert_eq!(
-            status2,
+            ret2.status(),
             DecodeStatus::Ok,
             "JIT decode of reflective bytes for {variant:?}"
         );

@@ -134,7 +134,8 @@ fn try_jit<T: Facet<'static>>(
 unsafe fn decode_via_stub<T>(owned_fn: OwnedDecodeFn, bytes: &[u8]) -> T {
     let mut out = MaybeUninit::<T>::uninit();
     let mut ctx = DecodeCtx::new(bytes);
-    let status = unsafe { owned_fn(&mut ctx, out.as_mut_ptr() as *mut u8) };
+    let ret = unsafe { owned_fn(&mut ctx, out.as_mut_ptr() as *mut u8, 0) };
+    let status = ret.status();
     assert!(status.is_ok(), "JIT stub returned error status: {status:?}");
     unsafe { out.assume_init() }
 }

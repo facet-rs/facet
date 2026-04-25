@@ -124,16 +124,63 @@ unsafe impl Send for DecodeCtx {}
 // Generated stub function pointer types
 // ---------------------------------------------------------------------------
 
-/// Owned-decode stub type: reads postcard bytes, writes a fully initialized
-/// value into `out_ptr`.
-pub type OwnedDecodeFn =
-    unsafe extern "C" fn(ctx: *mut DecodeCtx, out_ptr: *mut u8) -> DecodeStatus;
+/// Packed return value of a decode stub: high 8 bits hold the
+/// [`DecodeStatus`] discriminant, low 56 bits hold the new `consumed` byte
+/// count (input cursor position after the stub returns). Packing into a
+/// single 64-bit value keeps the return in a single integer register on
+/// every supported platform — the same `consumed` lived in memory before,
+/// which cost a flush+reload per call boundary.
+///
+/// 56 bits gives a 72 PB cap on a single decode call, far above any
+/// realistic message size. Status fits comfortably in 8 bits (we currently
+/// have 9 enumerants).
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct DecodeReturn(pub u64);
+
+const CONSUMED_MASK: u64 = 0x00FF_FFFF_FFFF_FFFF;
+
+impl DecodeReturn {
+    #[inline(always)]
+    pub fn pack(status: DecodeStatus, consumed: usize) -> Self {
+        let s = (status as u32) as u64;
+        DecodeReturn((s << 56) | ((consumed as u64) & CONSUMED_MASK))
+    }
+
+    #[inline(always)]
+    pub fn status(self) -> DecodeStatus {
+        // SAFETY: only `pack` constructs a `DecodeReturn`, and it always
+        // uses a valid `DecodeStatus` discriminant.
+        let raw = (self.0 >> 56) as u32;
+        unsafe { core::mem::transmute::<u32, DecodeStatus>(raw) }
+    }
+
+    #[inline(always)]
+    pub fn consumed(self) -> usize {
+        (self.0 & CONSUMED_MASK) as usize
+    }
+}
+
+/// Owned-decode stub type: reads postcard bytes from `ctx.input_ptr` starting
+/// at `consumed`, writes a fully initialized value into `out_ptr`. Returns
+/// the new `consumed` and a status, packed into a single u64 (see
+/// [`DecodeReturn`]). The stub does NOT update `ctx.consumed` itself on the
+/// fast path; the caller is responsible for storing the returned consumed
+/// back into `ctx` if any helper that reads `ctx.consumed` is invoked next.
+pub type OwnedDecodeFn = unsafe extern "C" fn(
+    ctx: *mut DecodeCtx,
+    out_ptr: *mut u8,
+    consumed: usize,
+) -> DecodeReturn;
 
 /// Borrowed-decode stub type: same as owned but the written value may contain
 /// pointers into `ctx.input_ptr`. Lifetime correctness is the caller's
 /// responsibility via surrounding Rust wrapper types.
-pub type BorrowedDecodeFn =
-    unsafe extern "C" fn(ctx: *mut DecodeCtx, out_ptr: *mut u8) -> DecodeStatus;
+pub type BorrowedDecodeFn = unsafe extern "C" fn(
+    ctx: *mut DecodeCtx,
+    out_ptr: *mut u8,
+    consumed: usize,
+) -> DecodeReturn;
 
 // ---------------------------------------------------------------------------
 // Runtime helpers — called by generated stubs via stable extern "C" symbols
